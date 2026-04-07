@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using FortniteFestival.Core.Scraping;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -60,7 +60,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         return (recon, scraperHandler, eventsHandler);
     }
 
-    // ─── DiscoverSeasonWindowsAsync ─────────────────────
+    // â”€â”€â”€ DiscoverSeasonWindowsAsync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task DiscoverSeasonWindowsAsync_CachedWindows_ReturnsCached()
@@ -121,12 +121,12 @@ public class HistoryReconstructorInstanceTests : IDisposable
             AccountId = "probe_acct", Score = 100, Rank = 1
         }]);
 
-        // Probe evergreen (season 1): found (non-error response → window exists)
+        // Probe evergreen (season 1): found (non-error response â†’ window exists)
         scraperHandler.EnqueueJsonOk("[]");
         // Probe season002 (season 2): found
         scraperHandler.EnqueueJsonOk("[]");
-        // Seasons 3 and 4: no more queued responses → MockHttpMessageHandler throws
-        // → ProbeSeasonWindowsAsync catches the exception → consecutiveFailures reaches 2 → stops
+        // Seasons 3 and 4: no more queued responses â†’ MockHttpMessageHandler throws
+        // â†’ ProbeSeasonWindowsAsync catches the exception â†’ consecutiveFailures reaches 2 â†’ stops
 
         var result = await recon.DiscoverSeasonWindowsAsync("token", "caller");
 
@@ -136,7 +136,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Equal("season002", result[1].WindowId);
     }
 
-    // ─── ReconstructAccountAsync ────────────────────────
+    // â”€â”€â”€ ReconstructAccountAsync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task ReconstructAccountAsync_AlreadyComplete_Returns0()
@@ -191,7 +191,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 5000, Rank = 100, Season = 3
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -200,7 +200,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
         };
 
-        // Seasonal lookups: season 1 → 1000, season 2 → 3000, season 3 → 5000
+        // Seasonal lookups: season 1 â†’ 1000, season 2 â†’ 3000, season 3 â†’ 5000
         scraperHandler.EnqueueJsonOk("""
         [{
             "teamId":"acct1","rank":500,"percentile":0.1,
@@ -241,7 +241,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 5000, Rank = 100, Season = 3
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -277,7 +277,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Equal(3, result);
     }
 
-    // ─── Seasonal lookup failure → skipped, continues ───
+    // â”€â”€â”€ Seasonal lookup failure â†’ skipped, continues â”€â”€â”€
 
     [Fact]
     public async Task ReconstructAccountAsync_SeasonalLookupFails_SkipsSongContinues()
@@ -289,7 +289,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 5000, Rank = 100, Season = 2
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -314,7 +314,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Equal(1, result);
     }
 
-    // ─── Missing season window → skipped ────────────────
+    // â”€â”€â”€ Missing season window â†’ skipped â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task ReconstructAccountAsync_MissingSeason_SkipsIt()
@@ -326,9 +326,9 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 3000, Rank = 200, Season = 3
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
 
-        // Only provide windows for season 1 and 3 — season 2 is missing
+        // Only provide windows for season 1 and 3 â€” season 2 is missing
         var windows = new List<SeasonWindowInfo>
         {
             new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
@@ -356,7 +356,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Equal(2, result);
     }
 
-    // ─── No entry from seasonal lookup → counted as query but no entry ──
+    // â”€â”€â”€ No entry from seasonal lookup â†’ counted as query but no entry â”€â”€
 
     [Fact]
     public async Task ReconstructAccountAsync_EmptySeasonalResult_Returns0()
@@ -368,7 +368,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 1000, Rank = 100, Season = 2
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -376,7 +376,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
         };
 
-        // Both seasons return empty — no entries for this account
+        // Both seasons return empty â€” no entries for this account
         scraperHandler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
         scraperHandler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
 
@@ -386,7 +386,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Equal(0, result);
     }
 
-    // ─── Already processed songs → skipped on resume ────
+    // â”€â”€â”€ Already processed songs â†’ skipped on resume â”€â”€â”€â”€
 
     [Fact]
     public async Task ReconstructAccountAsync_AlreadyProcessedPair_Skips()
@@ -402,8 +402,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 3000, Rank = 200, Season = 2
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
-        _metaDb.Db.UpsertFirstSeenSeason("songB", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
+        _metaDb.Db.UpsertFirstSeenSeason("songB", 1, 1, 1, null, 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -439,7 +439,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Equal(2, scraperHandler.Requests.Count);
     }
 
-    // ─── Per-song error during reconstruction → caught, continues ──
+    // â”€â”€â”€ Per-song error during reconstruction â†’ caught, continues â”€â”€
 
     [Fact]
     public async Task ReconstructAccountAsync_OneSongThrows_ContinuesToNext()
@@ -455,8 +455,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 3000, Rank = 200, Season = 2
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
-        _metaDb.Db.UpsertFirstSeenSeason("songB", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
+        _metaDb.Db.UpsertFirstSeenSeason("songB", 1, 1, 1, null, 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -487,11 +487,11 @@ public class HistoryReconstructorInstanceTests : IDisposable
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
 
-        // SongB contributes 2 entries (1000 → 3000), songA only has the non-failed season entry
+        // SongB contributes 2 entries (1000 â†’ 3000), songA only has the non-failed season entry
         Assert.True(result >= 2, $"Expected at least 2 history entries but got {result}");
     }
 
-    // ─── DiscoverSeasonWindows: probing fallback ────────
+    // â”€â”€â”€ DiscoverSeasonWindows: probing fallback â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task DiscoverSeasonWindowsAsync_ApiFails_ProbesCorrectly()
@@ -505,19 +505,19 @@ public class HistoryReconstructorInstanceTests : IDisposable
             AccountId = "someone", Score = 1000, Rank = 1, Season = 1
         }]);
 
-        // Events API throws → fallback to probing
+        // Events API throws â†’ fallback to probing
         eventsHandler.EnqueueException(new HttpRequestException("Events API down"));
 
         // Probing calls LookupSeasonalAsync; non-success = returns null (NOT exception)
         // so null return still adds the window. Only exceptions increment consecutiveFailures.
-        // Season 1 probe: success → window added
+        // Season 1 probe: success â†’ window added
         scraperHandler.EnqueueJsonOk("""
         { "page":0,"totalPages":1,"entries":[{
             "teamId":"probe","rank":1,"percentile":1.0,
             "sessionHistory":[{"trackedStats":{"SCORE":100}}]
         }]}
         """);
-        // Season 2 & 3: throw → two consecutive failures → stop
+        // Season 2 & 3: throw â†’ two consecutive failures â†’ stop
         scraperHandler.EnqueueException(new HttpRequestException("probe fail"));
         scraperHandler.EnqueueException(new HttpRequestException("probe fail"));
 
@@ -528,7 +528,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Equal(1, windows[0].SeasonNumber);
     }
 
-    // ─── Multi-session reconstruction ───────────────────
+    // â”€â”€â”€ Multi-session reconstruction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task ReconstructAccountAsync_MultipleSessionsPerSeason_CapturesAllImprovements()
@@ -541,7 +541,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 600000, Rank = 10, Season = 2
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -576,7 +576,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             "acct1", windows, "token", "caller", _pool);
 
         // All 5 sessions show strictly increasing scores:
-        // 100k → 250k → 400k → 500k → 600k
+        // 100k â†’ 250k â†’ 400k â†’ 500k â†’ 600k
         Assert.Equal(5, result);
 
         var history = _metaDb.Db.GetScoreHistory("acct1", 100);
@@ -593,7 +593,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 500000, Rank = 50, Season = 2
         }]);
-        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null, 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -601,7 +601,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
         };
 
-        // Season 1: 4 sessions, scores go 100k → 200k → 150k → 300k
+        // Season 1: 4 sessions, scores go 100k â†’ 200k â†’ 150k â†’ 300k
         scraperHandler.EnqueueJsonOk("""
         [{
             "teamId":"acct1","rank":100,"percentile":0.2,
@@ -614,7 +614,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         }]
         """);
 
-        // Season 2: 2 sessions, 400k → 500k
+        // Season 2: 2 sessions, 400k â†’ 500k
         scraperHandler.EnqueueJsonOk("""
         [{
             "teamId":"acct1","rank":50,"percentile":0.5,
@@ -632,7 +632,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Equal(6, result);
     }
 
-    // ─── FirstSeenSeason optimization ───────────────────
+    // â”€â”€â”€ FirstSeenSeason optimization â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task ReconstructAccountAsync_WithFirstSeenSeason_SkipsEarlierSeasons()
@@ -649,7 +649,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         // Record that songA first appeared in season 3
         _metaDb.Db.UpsertFirstSeenSeason("songA",
             firstSeenSeason: 3, minObservedSeason: 3,
-            estimatedSeason: 3, probeResult: "first_play");
+            estimatedSeason: 3, probeResult: "first_play", calculationVersion: 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -683,7 +683,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
 
-        // 3 entries: 3000 → 7000 → 10000
+        // 3 entries: 3000 â†’ 7000 â†’ 10000
         Assert.Equal(3, result);
         // Only 3 HTTP requests (seasons 3, 4, 5), not 5
         Assert.Equal(3, scraperHandler.Requests.Count);
@@ -704,7 +704,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         // Song has no real FirstSeenSeason, only EstimatedSeason
         _metaDb.Db.UpsertFirstSeenSeason("songB",
             firstSeenSeason: null, minObservedSeason: null,
-            estimatedSeason: 2, probeResult: null);
+            estimatedSeason: 2, probeResult: null, calculationVersion: 2);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -746,14 +746,14 @@ public class HistoryReconstructorInstanceTests : IDisposable
     {
         var (recon, scraperHandler, _) = CreateReconstructor();
 
-        // Song without any FirstSeenSeason data — likely not released yet
+        // Song without any FirstSeenSeason data â€” likely not released yet
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         guitarDb.UpsertEntries("songC", [new LeaderboardEntry
         {
             AccountId = "acct1", Score = 5000, Rank = 100, Season = 3
         }]);
 
-        // No UpsertFirstSeenSeason — songC is NOT in the firstSeenMap
+        // No UpsertFirstSeenSeason â€” songC is NOT in the firstSeenMap
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -762,7 +762,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
         };
 
-        // No HTTP requests should be made — the song is skipped entirely
+        // No HTTP requests should be made â€” the song is skipped entirely
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller", _pool);
 

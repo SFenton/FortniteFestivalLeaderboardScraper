@@ -5,21 +5,28 @@ namespace FSTService.Scraping;
 
 /// <summary>
 /// Determines the first season each song appeared in the Fortnite Festival
-/// leaderboard system. Uses observed season data from the instrument DBs and
-/// probes the Epic API for earlier seasons when necessary.
+/// leaderboard system by probing leaderboards directly via binary search.
 ///
 /// Algorithm per song:
-///   1. Find MIN(Season) across all instrument DBs for that song.
-///   2. If MIN is season 2, probe "evergreen" (season 1) to see if the song existed.
-///   3. If MIN is > 2, probe season (MIN - 1) to see if the song existed.
-///   4. If the probe finds a valid window (no HTTP error), the first-seen season is
-///      the probed season; otherwise it's the observed MIN.
-///   5. Store the result in IMetaDatabase.SongFirstSeenSeason.
+///   1. Get the sorted list of known seasons from season_windows.
+///   2. Binary search: probe LookupSeasonalAsync for the mid-point season.
+///      - Valid response (200 or no_score_found) → song existed → search earlier.
+///      - HttpRequestException (400) → song didn&apos;t exist → search later.
+///   3. The lowest valid season is first_seen_season.
+///   4. Store with calculation_version = CurrentVersion.
 ///
-/// Songs whose FirstSeenSeason is already set are skipped (NULL = needs calculation).
+/// Songs with calculation_version == CurrentVersion are skipped.
+/// Bumping CurrentVersion triggers recalculation of all songs.
 /// </summary>
 public class FirstSeenSeasonCalculator
 {
+    /// <summary>
+    /// Bump this constant to force recalculation of all songs.
+    /// v1 = original MIN(season) + single probe approach.
+    /// v2 = binary search across all seasons.
+    /// </summary>
+    public const int CurrentVersion = 2;
+
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
@@ -40,14 +47,14 @@ public class FirstSeenSeasonCalculator
     }
 
     /// <summary>
-    /// Calculate FirstSeenSeason for all songs that don't have one yet.
+    /// Calculate FirstSeenSeason for all songs that need it (missing or outdated version).
     /// </summary>
     /// <returns>Number of songs that had their FirstSeenSeason calculated.</returns>
     public virtual async Task<int> CalculateAsync(
         FestivalService festivalService,
         string accessToken,
         string callerAccountId,
-        int maxConcurrency = 10,
+        SharedDopPool pool,
         CancellationToken ct = default)
     {
         // Get all song IDs from the catalog
@@ -56,165 +63,167 @@ public class FirstSeenSeasonCalculator
             .Select(s => s.track.su)
             .ToList();
 
-        // Get songs that already have a stored value
-        var alreadyCalculated = _metaDb.GetSongsWithFirstSeenSeason();
+        // Get songs already at current version — these are skipped
+        var alreadyCurrent = _metaDb.GetSongIdsWithFirstSeenVersion(CurrentVersion);
 
-        // Filter to only songs that need calculation
+        // Filter to songs that need (re)calculation
         var songsToCalculate = allSongs
-            .Where(id => !alreadyCalculated.Contains(id))
+            .Where(id => !alreadyCurrent.Contains(id))
             .ToList();
 
         if (songsToCalculate.Count == 0)
         {
-            _log.LogDebug("FirstSeenSeason: all {Total} songs already calculated.", allSongs.Count);
+            _log.LogDebug("FirstSeenSeason: all {Total} songs already at version {Version}.", allSongs.Count, CurrentVersion);
             return 0;
         }
 
         _log.LogInformation(
-            "FirstSeenSeason: calculating for {Count} song(s) ({Already} already done, {Total} total).",
-            songsToCalculate.Count, alreadyCalculated.Count, allSongs.Count);
+            "FirstSeenSeason v{Version}: calculating for {Count} song(s) ({Already} already done, {Total} total).",
+            CurrentVersion, songsToCalculate.Count, alreadyCurrent.Count, allSongs.Count);
 
         _progress.BeginPhaseProgress(songsToCalculate.Count);
 
-        // Get season windows (needed for probing)
+        // Get known seasons sorted ascending
         var seasonWindows = _metaDb.GetSeasonWindows();
+        var seasons = seasonWindows
+            .Select(w => w.SeasonNumber)
+            .OrderBy(n => n)
+            .ToList();
 
-        // Compute global MAX(Season) — used as EstimatedSeason for songs with no entries
-        var globalMaxSeason = _persistence.GetMaxSeasonAcrossInstruments();
+        if (seasons.Count == 0)
+        {
+            _log.LogWarning("FirstSeenSeason: no season windows discovered. Cannot calculate.");
+            return 0;
+        }
 
-        // Phase 1: Resolve MIN(Season) from instrument DBs — pure local I/O, no DOP needed
+        // Also get MIN(season) per song from instrument DBs for diagnostic min_observed_season
         var songMinSeasons = new Dictionary<string, int?>(songsToCalculate.Count);
         foreach (var songId in songsToCalculate)
         {
             songMinSeasons[songId] = _persistence.GetMinSeasonAcrossInstruments(songId);
         }
 
-        // Phase 2: For songs that need probing, use DOP
-        var needsProbe = songMinSeasons
-            .Where(kvp => kvp.Value.HasValue && kvp.Value.Value >= 2)
-            .Select(kvp => (SongId: kvp.Key, MinSeason: kvp.Value!.Value))
-            .ToList();
+        _log.LogInformation("FirstSeenSeason: binary searching across {SeasonCount} seasons for {SongCount} song(s)...",
+            seasons.Count, songsToCalculate.Count);
 
-        // Songs with no entries or MIN season 1 can be resolved immediately
         int calculated = 0;
-        foreach (var songId in songsToCalculate)
+
+        var tasks = songsToCalculate.Select(async songId =>
         {
-            var min = songMinSeasons[songId];
-            if (!min.HasValue)
-            {
-                // No entries at all — store EstimatedSeason = global max, FirstSeenSeason = null
-                if (globalMaxSeason.HasValue)
-                {
-                    _metaDb.UpsertFirstSeenSeason(songId, null, null, globalMaxSeason.Value, "no_entries_estimated");
-                    calculated++;
-                    _progress.ReportPhaseItemComplete();
-                    _log.LogDebug("FirstSeenSeason: {SongId} has no entries. EstimatedSeason={Max}.",
-                        songId, globalMaxSeason.Value);
-                }
-                continue;
-            }
-            if (min.Value == 1)
-            {
-                // Already the earliest possible season
-                _metaDb.UpsertFirstSeenSeason(songId, 1, 1, 1, "min_is_1");
-                calculated++;
-                _progress.ReportPhaseItemComplete();
-            }
-        }
-
-        if (needsProbe.Count == 0)
-        {
-            _log.LogInformation("FirstSeenSeason: {Calculated} song(s) resolved without probing.", calculated);
-            return calculated;
-        }
-
-        _log.LogInformation("FirstSeenSeason: probing {Count} song(s) for earlier seasons...", needsProbe.Count);
-
-        // Use SemaphoreSlim for DOP control (lightweight — no adaptive needed for this)
-        using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-
-        var tasks = needsProbe.Select(async item =>
-        {
-            await semaphore.WaitAsync(ct);
             try
             {
-                var result = await ProbeEarlierSeasonAsync(
-                    item.SongId, item.MinSeason,
-                    accessToken, callerAccountId, ct);
+                var result = await BinarySearchFirstSeenAsync(
+                    songId, seasons, accessToken, callerAccountId, pool, ct);
+
+                var minObserved = songMinSeasons.GetValueOrDefault(songId);
 
                 _metaDb.UpsertFirstSeenSeason(
-                    item.SongId, result.FirstSeenSeason,
-                    item.MinSeason, result.FirstSeenSeason, result.ProbeResult);
+                    songId, result.FirstSeenSeason, minObserved,
+                    result.FirstSeenSeason ?? seasons[^1],
+                    result.ProbeResult, CurrentVersion);
 
-                _progress.ReportPhaseRequest();
                 _progress.ReportPhaseItemComplete();
                 return 1;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogDebug(ex, "FirstSeenSeason probe failed for {SongId}. Using observed MIN={Min}.",
-                    item.SongId, item.MinSeason);
+                _log.LogWarning(ex, "FirstSeenSeason binary search failed for {SongId}.", songId);
 
-                // Fall back to observed min
+                // Store as unresolved at current version so we don't retry indefinitely
+                var minObserved = songMinSeasons.GetValueOrDefault(songId);
                 _metaDb.UpsertFirstSeenSeason(
-                    item.SongId, item.MinSeason,
-                    item.MinSeason, item.MinSeason, "probe_failed");
+                    songId, minObserved, minObserved,
+                    minObserved ?? seasons[^1],
+                    "binary_search_failed", CurrentVersion);
 
-                _progress.ReportPhaseRequest();
                 _progress.ReportPhaseItemComplete();
                 return 1;
-            }
-            finally
-            {
-                semaphore.Release();
             }
         }).ToList();
 
         var results = await Task.WhenAll(tasks);
-        calculated += results.Sum();
+        calculated = results.Sum();
 
-        _log.LogInformation("FirstSeenSeason: calculated for {Count} song(s) total.", calculated);
+        _log.LogInformation("FirstSeenSeason v{Version}: calculated for {Count} song(s).", CurrentVersion, calculated);
         return calculated;
     }
 
     /// <summary>
-    /// Probe the season before the observed minimum to see if the song existed earlier.
+    /// Binary search across known seasons to find the earliest one where the song exists.
+    /// A valid API response (200 or no_score_found) means the song existed in that season.
+    /// An HttpRequestException (400) means it did not.
     /// </summary>
-    private async Task<(int FirstSeenSeason, string ProbeResult)> ProbeEarlierSeasonAsync(
-        string songId, int minObservedSeason,
+    internal async Task<(int? FirstSeenSeason, string ProbeResult)> BinarySearchFirstSeenAsync(
+        string songId, IReadOnlyList<int> seasons,
         string accessToken, string callerAccountId,
-        CancellationToken ct)
+        SharedDopPool pool, CancellationToken ct)
     {
-        // Determine which season to probe
-        int probeSeasonNumber = minObservedSeason - 1;
-        var seasonPrefix = HistoryReconstructor.GetSeasonPrefix(probeSeasonNumber);
+        int lo = 0, hi = seasons.Count - 1;
+        int? bestFound = null;
+        int probeCount = 0;
+
+        while (lo <= hi)
+        {
+            int mid = lo + (hi - lo) / 2;
+            int season = seasons[mid];
+            bool exists = await ProbeSeasonAsync(songId, season, accessToken, callerAccountId, pool, ct);
+            probeCount++;
+
+            if (exists)
+            {
+                bestFound = season;
+                hi = mid - 1; // search earlier
+            }
+            else
+            {
+                lo = mid + 1; // search later
+            }
+        }
+
+        if (bestFound is null)
+        {
+            _log.LogDebug("FirstSeenSeason: {SongId} not found in any of {Count} seasons after {Probes} probes.",
+                songId, seasons.Count, probeCount);
+            return (null, $"not_found_in_any_season({probeCount}_probes)");
+        }
+
+        var prefix = HistoryReconstructor.GetSeasonPrefix(bestFound.Value);
+        _log.LogDebug("FirstSeenSeason: {SongId} first seen in {Prefix} after {Probes} probes.",
+            songId, prefix, probeCount);
+        return (bestFound.Value, $"found_{prefix}_via_binary_search({probeCount}_probes)");
+    }
+
+    /// <summary>
+    /// Probe a single season to check if a song's leaderboard exists.
+    /// Returns true if the API returns a valid response (song existed), false on HttpRequestException.
+    /// </summary>
+    private async Task<bool> ProbeSeasonAsync(
+        string songId, int seasonNumber,
+        string accessToken, string callerAccountId,
+        SharedDopPool pool, CancellationToken ct)
+    {
+        var seasonPrefix = HistoryReconstructor.GetSeasonPrefix(seasonNumber);
+        var lowToken = await pool.AcquireLowAsync(ct);
 
         try
         {
-            // Use LookupSeasonalAsync to probe the season.
-            // If the API returns no_score_found, the window exists (song was present).
-            // If the API throws, the window doesn't exist for this song.
-            // We use callerAccountId as the target — we don't care about the actual score,
-            // just whether the window is valid.
-            var entry = await _scraper.LookupSeasonalAsync(
+            await _scraper.LookupSeasonalAsync(
                 songId, "Solo_Guitar", seasonPrefix,
                 callerAccountId, accessToken, callerAccountId, ct: ct);
 
-            // Window exists — the song was present in the earlier season.
-            // entry may be null (no_score_found) or non-null (we had a score), either way it's valid.
-            _log.LogDebug("FirstSeenSeason: {SongId} existed in season {Season} (probe={Prefix}).",
-                songId, probeSeasonNumber, seasonPrefix);
-
-            return (probeSeasonNumber, $"found_in_{seasonPrefix}");
+            pool.ReportSuccess();
+            _progress.ReportPhaseRequest();
+            return true;
         }
         catch (HttpRequestException)
         {
-            // API error — likely the window doesn't exist for this song in the earlier season.
-            // The observed MIN is correct.
-            _log.LogDebug("FirstSeenSeason: {SongId} not found in season {Season} (probe={Prefix}). Using MIN={Min}.",
-                songId, probeSeasonNumber, seasonPrefix, minObservedSeason);
-
-            return (minObservedSeason, $"not_found_in_{seasonPrefix}");
+            pool.ReportFailure();
+            _progress.ReportPhaseRequest();
+            return false;
+        }
+        finally
+        {
+            pool.ReleaseLow(lowToken);
         }
     }
 }

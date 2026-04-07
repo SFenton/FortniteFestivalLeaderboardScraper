@@ -172,7 +172,7 @@ public sealed class PostScrapeOrchestrator
                 {
                     var firstSeenCount = await _firstSeenCalculator.CalculateAsync(
                         service, firstSeenToken, _tokenManager.AccountId!,
-                        _options.Value.PageConcurrency, ct);
+                        _pool, ct);
                     if (firstSeenCount > 0)
                         _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
                 }

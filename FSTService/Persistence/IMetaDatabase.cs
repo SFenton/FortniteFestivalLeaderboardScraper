@@ -99,9 +99,9 @@ public interface IMetaDatabase : IDisposable
     List<PlayerStatsTiersRow> GetPlayerStatsTiers(string accountId);
 
     // ── First seen season ────────────────────────────────────────────
-    HashSet<string> GetSongsWithFirstSeenSeason();
-    void UpsertFirstSeenSeason(string songId, int? firstSeenSeason, int? minObservedSeason, int estimatedSeason, string? probeResult);
-    Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason)> GetAllFirstSeenSeasons();
+    HashSet<string> GetSongIdsWithFirstSeenVersion(int currentVersion);
+    void UpsertFirstSeenSeason(string songId, int? firstSeenSeason, int? minObservedSeason, int estimatedSeason, string? probeResult, int calculationVersion);
+    Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason, int? CalculationVersion)> GetAllFirstSeenSeasons();
 
     // ── Leaderboard population ───────────────────────────────────────
     void RaiseLeaderboardPopulationFloor(string songId, string instrument, long floor);

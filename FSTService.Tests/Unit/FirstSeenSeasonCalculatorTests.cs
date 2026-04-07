@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
 using FortniteFestival.Core;
+using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -11,8 +12,8 @@ using NSubstitute;
 namespace FSTService.Tests.Unit;
 
 /// <summary>
-/// Tests for <see cref="FirstSeenSeasonCalculator"/> — verifies season probing logic,
-/// MIN(Season) detection, and idempotent skip behavior.
+/// Tests for <see cref="FirstSeenSeasonCalculator"/> — verifies binary-search season
+/// probing, version gating, and edge cases.
 /// </summary>
 public class FirstSeenSeasonCalculatorTests : IDisposable
 {
@@ -21,6 +22,8 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly ScrapeProgressTracker _progress = new();
     private readonly ILogger<FirstSeenSeasonCalculator> _log = Substitute.For<ILogger<FirstSeenSeasonCalculator>>();
+    private readonly AdaptiveConcurrencyLimiter _limiter;
+    private readonly SharedDopPool _pool;
 
     public FirstSeenSeasonCalculatorTests()
     {
@@ -32,10 +35,13 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         var persLog = Substitute.For<ILogger<GlobalLeaderboardPersistence>>();
         _persistence = new GlobalLeaderboardPersistence(_metaDb.Db, loggerFactory, persLog, _metaDb.DataSource);
         _persistence.Initialize();
+        _limiter = new AdaptiveConcurrencyLimiter(16, minDop: 2, maxDop: 64, Substitute.For<ILogger>());
+        _pool = new SharedDopPool(_limiter, lowPrioritySlots: 16);
     }
 
     public void Dispose()
     {
+        _pool.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
         try { Directory.Delete(_dataDir, true); } catch { }
@@ -70,6 +76,12 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         track = new Track { su = id, tt = $"Song {id}", an = "Artist" }
     };
 
+    private void SeedSeasonWindows(params int[] seasonNumbers)
+    {
+        foreach (var s in seasonNumbers)
+            _metaDb.Db.UpsertSeasonWindow(s, $"evt_{s}", $"window_{s}");
+    }
+
     private void SeedEntries(string instrument, string songId, int season, int count = 1)
     {
         var db = _persistence.GetOrCreateInstrumentDb(instrument);
@@ -90,6 +102,19 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         db.UpsertEntries(songId, entries);
     }
 
+    /// <summary>Enqueue a valid probe response (song exists in this season).</summary>
+    private static void EnqueueProbeSuccess(MockHttpMessageHandler handler)
+    {
+        handler.EnqueueJsonResponse(HttpStatusCode.NotFound,
+            "{\"errorCode\": \"errors.com.epicgames.events.no_score_found\"}");
+    }
+
+    /// <summary>Enqueue an invalid probe response (song does not exist in this season).</summary>
+    private static void EnqueueProbeFailure(MockHttpMessageHandler handler)
+    {
+        handler.EnqueueError(HttpStatusCode.BadRequest, "invalid event");
+    }
+
     // ─── No songs → returns 0 ────────────────────────────
 
     [Fact]
@@ -97,203 +122,254 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
     {
         var (calculator, _) = CreateCalculator();
         var service = CreateServiceWithSongs(Array.Empty<Song>());
+        SeedSeasonWindows(1, 2, 3, 4, 5);
 
-        var result = await calculator.CalculateAsync(service, "token", "caller");
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
 
         Assert.Equal(0, result);
     }
 
-    // ─── Song with MIN season 1 → no probe, stored as 1 ──
+    // ─── No season windows → returns 0 ──────────────────
 
     [Fact]
-    public async Task CalculateAsync_MinSeason1_NoProbeNeeded()
+    public async Task CalculateAsync_NoSeasonWindows_Returns0()
+    {
+        var (calculator, _) = CreateCalculator();
+        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        // No season windows seeded
+
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+
+        Assert.Equal(0, result);
+    }
+
+    // ─── Binary search finds song in season 1 (exists in all seasons) ──
+
+    [Fact]
+    public async Task CalculateAsync_SongExistsInAllSeasons_FindsSeason1()
     {
         var (calculator, handler) = CreateCalculator();
         var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        SeedSeasonWindows(1, 2, 3, 4, 5, 6, 7);
 
-        SeedEntries("Solo_Guitar", "song1", season: 1, count: 3);
-        SeedEntries("Solo_Drums", "song1", season: 2, count: 2);
+        // Binary search: 7 seasons → mid=4(ok), mid=2(ok), mid=1(ok) → found season 1
+        EnqueueProbeSuccess(handler); // season 4 → exists
+        EnqueueProbeSuccess(handler); // season 2 → exists
+        EnqueueProbeSuccess(handler); // season 1 → exists
 
-        var result = await calculator.CalculateAsync(service, "token", "caller");
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
 
         Assert.Equal(1, result);
-        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
-        // No HTTP requests should have been made
+        var all = _metaDb.Db.GetAllFirstSeenSeasons();
+        Assert.Equal(1, all["song1"].FirstSeenSeason);
+        Assert.Equal(FirstSeenSeasonCalculator.CurrentVersion, all["song1"].CalculationVersion);
+    }
+
+    // ─── Binary search narrows to mid-range season ──────
+
+    [Fact]
+    public async Task CalculateAsync_SongAppearsInSeason5_BinarySearchFindsIt()
+    {
+        var (calculator, handler) = CreateCalculator();
+        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        SeedSeasonWindows(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+
+        // 10 seasons. Binary search:
+        // mid=5(ok) → search lower
+        // mid=2(fail) → search higher
+        // mid=3(fail) → search higher
+        // mid=4(fail) → search higher → lo=5, hi=4 → done, bestFound=5
+        EnqueueProbeSuccess(handler); // season 5 → exists
+        EnqueueProbeFailure(handler); // season 2 → doesn't exist
+        EnqueueProbeFailure(handler); // season 3 → doesn't exist
+        EnqueueProbeFailure(handler); // season 4 → doesn't exist
+
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+
+        Assert.Equal(1, result);
+        Assert.Equal(5, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
+    }
+
+    // ─── Song not found in any season → null firstSeen ──
+
+    [Fact]
+    public async Task CalculateAsync_SongNotInAnySeason_NullFirstSeen()
+    {
+        var (calculator, handler) = CreateCalculator();
+        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        SeedSeasonWindows(1, 2, 3, 4);
+
+        // Binary search: all probes fail
+        // mid=2(fail), mid=3(fail), mid=4(fail)
+        EnqueueProbeFailure(handler); // season 2
+        EnqueueProbeFailure(handler); // season 3
+        EnqueueProbeFailure(handler); // season 4
+
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+
+        Assert.Equal(1, result);
+        var all = _metaDb.Db.GetAllFirstSeenSeasons();
+        Assert.Null(all["song1"].FirstSeenSeason);
+        Assert.Equal(4, all["song1"].EstimatedSeason); // last known season
+        Assert.Equal(FirstSeenSeasonCalculator.CurrentVersion, all["song1"].CalculationVersion);
+    }
+
+    // ─── Version gating: current version skipped ────────
+
+    [Fact]
+    public async Task CalculateAsync_AlreadyAtCurrentVersion_Skips()
+    {
+        var (calculator, handler) = CreateCalculator();
+        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        SeedSeasonWindows(1, 2, 3, 4, 5);
+
+        // Pre-populate at current version
+        _metaDb.Db.UpsertFirstSeenSeason("song1", 2, 3, 2, "found_season002_via_binary_search(3_probes)",
+            FirstSeenSeasonCalculator.CurrentVersion);
+
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+
+        Assert.Equal(0, result);
+        Assert.Equal(2, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
         Assert.Empty(handler.Requests);
     }
 
-    // ─── Song with MIN season 3, probe season 2 succeeds → stored as 2 ──
+    // ─── Old version → recalculated ─────────────────────
 
     [Fact]
-    public async Task CalculateAsync_MinSeason3_ProbeFindsEarlier_StoresProbed()
+    public async Task CalculateAsync_OldVersion_Recalculates()
     {
         var (calculator, handler) = CreateCalculator();
         var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        SeedSeasonWindows(1, 2, 3);
 
-        SeedEntries("Solo_Guitar", "song1", season: 3, count: 2);
+        // Pre-populate at old version (1)
+        _metaDb.Db.UpsertFirstSeenSeason("song1", 3, 3, 3, "not_found_in_season002", 1);
 
-        // V2 lookup returns no_score_found → window exists but caller has no score
-        handler.EnqueueJsonResponse(HttpStatusCode.NotFound,
-            "{\"errorCode\": \"errors.com.epicgames.events.no_score_found\"}");
+        // Binary search across 3 seasons: mid=2(ok), mid=1(fail) → found season 2
+        EnqueueProbeSuccess(handler); // season 2 → exists
+        EnqueueProbeFailure(handler); // season 1 → doesn't exist
 
-        var result = await calculator.CalculateAsync(service, "token", "caller");
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
 
         Assert.Equal(1, result);
-        Assert.Equal(2, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
+        var all = _metaDb.Db.GetAllFirstSeenSeasons();
+        Assert.Equal(2, all["song1"].FirstSeenSeason);
+        Assert.Equal(FirstSeenSeasonCalculator.CurrentVersion, all["song1"].CalculationVersion);
+    }
+
+    // ─── Idempotent re-run: no extra API calls ──────────
+
+    [Fact]
+    public async Task CalculateAsync_RerunAfterComplete_NoApiCalls()
+    {
+        var (calculator, handler) = CreateCalculator();
+        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        SeedSeasonWindows(1, 2, 3);
+
+        // First run: binary search → mid=2(ok), mid=1(ok) → found season 1
+        EnqueueProbeSuccess(handler); // season 2
+        EnqueueProbeSuccess(handler); // season 1
+
+        var result1 = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        Assert.Equal(1, result1);
+        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
+
+        // Second run: should skip (current version)
+        var result2 = await calculator.CalculateAsync(service, "token", "caller", _pool);
+        Assert.Equal(0, result2);
+        Assert.Equal(2, handler.Requests.Count); // no new requests from second run
+    }
+
+    // ─── Single season → one probe ──────────────────────
+
+    [Fact]
+    public async Task CalculateAsync_SingleSeason_OneProbe()
+    {
+        var (calculator, handler) = CreateCalculator();
+        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        SeedSeasonWindows(1);
+
+        EnqueueProbeSuccess(handler); // season 1 → exists
+
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
+
+        Assert.Equal(1, result);
+        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
         Assert.Single(handler.Requests);
     }
 
-    // ─── Song with MIN season 3, probe season 2 fails → stored as 3 ──
+    // ─── min_observed_season is stored as diagnostic ─────
 
     [Fact]
-    public async Task CalculateAsync_MinSeason3_ProbeFailsHttpError_StoresMin()
+    public async Task CalculateAsync_StoresMinObservedSeason()
     {
         var (calculator, handler) = CreateCalculator();
         var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+        SeedSeasonWindows(1, 2, 3, 4, 5);
+        SeedEntries("Solo_Guitar", "song1", season: 3, count: 2);
 
-        SeedEntries("Solo_Bass", "song1", season: 3, count: 1);
+        // Binary search: mid=3(ok), mid=1(fail), mid=2(ok) → found season 2
+        EnqueueProbeSuccess(handler); // season 3
+        EnqueueProbeFailure(handler); // season 1
+        EnqueueProbeSuccess(handler); // season 2
 
-        // API returns 400 or similar → window doesn't exist
-        handler.EnqueueError(HttpStatusCode.BadRequest, "invalid event");
-
-        var result = await calculator.CalculateAsync(service, "token", "caller");
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
 
         Assert.Equal(1, result);
-        Assert.Equal(3, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
+        Assert.Equal(2, _metaDb.Db.GetAllFirstSeenSeasons()["song1"].FirstSeenSeason);
     }
 
-    // ─── Song with MIN season 2, probe evergreen succeeds → stored as 1 ──
+    // ─── Fatal exception in probe → catch stores fallback ──
 
     [Fact]
-    public async Task CalculateAsync_MinSeason2_ProbeEvergreenSucceeds_StoresAs1()
+    public async Task CalculateAsync_ProbeThrowsNonHttp_CatchFallsBack()
     {
         var (calculator, handler) = CreateCalculator();
         var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
-
+        SeedSeasonWindows(1, 2, 3);
         SeedEntries("Solo_Guitar", "song1", season: 2, count: 1);
 
-        // V2 lookup with "evergreen" window succeeds (200 with a real entry)
-        handler.EnqueueJsonOk(BuildV2LookupResponse("song1", "Solo_Guitar", "caller", 1000, 1));
+        // The first probe throws an unexpected exception
+        handler.EnqueueException(new InvalidOperationException("unexpected internal error"));
 
-        var result = await calculator.CalculateAsync(service, "token", "caller");
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
 
         Assert.Equal(1, result);
-        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
-    }
-
-    // ─── Already calculated → skipped ────────────────────
-
-    [Fact]
-    public async Task CalculateAsync_AlreadyCalculated_Skips()
-    {
-        var (calculator, handler) = CreateCalculator();
-        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
-
-        SeedEntries("Solo_Guitar", "song1", season: 3, count: 1);
-
-        // Pre-populate
-        _metaDb.Db.UpsertFirstSeenSeason("song1", 2, 3, 2, "found_in_season002");
-
-        var result = await calculator.CalculateAsync(service, "token", "caller");
-
-        Assert.Equal(0, result);
-        // Should still be the pre-populated value
-        Assert.Equal(2, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
-        Assert.Empty(handler.Requests);
-    }
-
-    // ─── Song with no entries → skipped (no crash) ───────
-
-    [Fact]
-    public async Task CalculateAsync_NoEntries_SkipsGracefully()
-    {
-        var (calculator, handler) = CreateCalculator();
-        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
-
-        // No entries seeded — but no global max either (empty DBs)
-
-        var result = await calculator.CalculateAsync(service, "token", "caller");
-
-        // No global max available, so nothing can be estimated
-        Assert.Equal(0, result);
-        Assert.Null(_metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
-        Assert.Empty(handler.Requests);
-    }
-
-    // ─── Song with no entries but other songs exist → estimated ───
-
-    [Fact]
-    public async Task CalculateAsync_NoEntries_WithGlobalMax_StoresEstimated()
-    {
-        var (calculator, handler) = CreateCalculator();
-        var service = CreateServiceWithSongs(new[] { MakeSong("song1"), MakeSong("song2") });
-
-        // song1 has entries (provides global max), song2 has none
-        SeedEntries("Solo_Guitar", "song1", season: 1);
-        SeedEntries("Solo_Guitar", "song1", season: 7);
-
-        var result = await calculator.CalculateAsync(service, "token", "caller");
-
-        // song1 → firstSeen=1, song2 → estimated=7 (global max)
-        Assert.Equal(2, result);
-        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
-        Assert.Null(_metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song2").FirstSeenSeason);
-
         var all = _metaDb.Db.GetAllFirstSeenSeasons();
-        Assert.Equal(7, all["song2"].EstimatedSeason);
-        Assert.Null(all["song2"].FirstSeenSeason);
+        // Falls back to min_observed_season (2) since binary search failed
+        Assert.Equal(2, all["song1"].FirstSeenSeason);
+        Assert.Equal(FirstSeenSeasonCalculator.CurrentVersion, all["song1"].CalculationVersion);
     }
 
-    // ─── Multiple songs, mixed results ──────────────────
+    // ─── Multiple songs: binary search per song ─────────
 
     [Fact]
-    public async Task CalculateAsync_MultipleSongs_ProcessesAll()
+    public async Task CalculateAsync_MultipleSongs_EachGetsBinarySearch()
     {
         var (calculator, handler) = CreateCalculator();
         var service = CreateServiceWithSongs(new[]
         {
-            MakeSong("s1"), // MIN=1 → no probe
-            MakeSong("s2"), // MIN=4 → probe season 3
-            MakeSong("s3"), // no entries → skip
+            MakeSong("s1"),
+            MakeSong("s2"),
         });
+        SeedSeasonWindows(1, 2, 3);
 
-        SeedEntries("Solo_Guitar", "s1", season: 1);
-        SeedEntries("Solo_Guitar", "s2", season: 4);
+        // s1: mid=2(ok), mid=1(ok) → season 1
+        // s2: mid=2(fail), mid=3(ok) → season 3
+        // Note: due to parallel execution, order depends on task scheduling.
+        // Use maxConcurrency=1 to ensure sequential ordering.
+        EnqueueProbeSuccess(handler); // s1: season 2
+        EnqueueProbeSuccess(handler); // s1: season 1
+        EnqueueProbeFailure(handler); // s2: season 2
+        EnqueueProbeSuccess(handler); // s2: season 3
 
-        // Probe for s2 → season 3 not found
-        handler.EnqueueError(HttpStatusCode.BadRequest, "invalid event");
+        var result = await calculator.CalculateAsync(service, "token", "caller", _pool);
 
-        var result = await calculator.CalculateAsync(service, "token", "caller");
-
-        // s1 → calculated (min 1), s2 → calculated (probe failed, stays 4), s3 → estimated (global max = 4)
-        Assert.Equal(3, result);
-        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("s1").FirstSeenSeason);
-        Assert.Equal(4, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("s2").FirstSeenSeason);
-        Assert.Null(_metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("s3").FirstSeenSeason);
-
+        Assert.Equal(2, result);
         var all = _metaDb.Db.GetAllFirstSeenSeasons();
-        Assert.Equal(4, all["s3"].EstimatedSeason);
-    }
-
-    // ─── MIN across multiple instruments ────────────────
-
-    [Fact]
-    public async Task CalculateAsync_MinAcrossInstruments_UsesGlobalMin()
-    {
-        var (calculator, handler) = CreateCalculator();
-        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
-
-        SeedEntries("Solo_Guitar", "song1", season: 5);
-        SeedEntries("Solo_Drums", "song1", season: 3);
-        SeedEntries("Solo_Vocals", "song1", season: 4);
-
-        // Probe for season 2 → not found
-        handler.EnqueueError(HttpStatusCode.BadRequest, "invalid event");
-
-        var result = await calculator.CalculateAsync(service, "token", "caller");
-
-        Assert.Equal(1, result);
-        Assert.Equal(3, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
+        Assert.Equal(1, all["s1"].FirstSeenSeason);
+        Assert.Equal(3, all["s2"].FirstSeenSeason);
     }
 
     // ─── Helper: build a V2 lookup response JSON ────────
@@ -335,26 +411,5 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
             ]
         }
         """;
-    }
-
-    // ─── Probe throws non-HttpRequestException → catch block fallback ──
-
-    [Fact]
-    public async Task CalculateAsync_ProbeThrowsNonHttp_CatchFallsBackToMin()
-    {
-        var (calculator, handler) = CreateCalculator();
-        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
-
-        SeedEntries("Solo_Guitar", "song1", season: 3, count: 1);
-
-        // Enqueue an unexpected exception (not HttpRequestException) to trigger
-        // the catch (Exception ex) block in the CalculateAsync lambda.
-        handler.EnqueueException(new InvalidOperationException("unexpected internal error"));
-
-        var result = await calculator.CalculateAsync(service, "token", "caller");
-
-        Assert.Equal(1, result);
-        // Falls back to observed MIN season
-        Assert.Equal(3, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
     }
 }

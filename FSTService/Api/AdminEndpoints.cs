@@ -161,6 +161,7 @@ public static partial class ApiEndpoints
                 songId = kvp.Key,
                 firstSeenSeason = kvp.Value.FirstSeenSeason,
                 estimatedSeason = kvp.Value.EstimatedSeason,
+                calculationVersion = kvp.Value.CalculationVersion,
             }).ToList();
             return Results.Ok(new { count = songs.Count, songs });
         })
@@ -171,11 +172,9 @@ public static partial class ApiEndpoints
             FirstSeenSeasonCalculator calculator,
             FestivalService festivalService,
             TokenManager tokenManager,
-            IOptions<ScraperOptions> scraperOptions,
+            SharedDopPool pool,
             CancellationToken ct) =>
         {
-            var dop = scraperOptions.Value.PageConcurrency;
-
             var accessToken = await tokenManager.GetAccessTokenAsync(ct);
             if (accessToken is null)
                 return Results.Problem("No access token available. Service may need re-authentication.");
@@ -190,7 +189,7 @@ public static partial class ApiEndpoints
             }
 
             var calculated = await calculator.CalculateAsync(
-                festivalService, accessToken, callerAccountId, dop, ct);
+                festivalService, accessToken, callerAccountId, pool, ct);
 
             return Results.Ok(new
             {

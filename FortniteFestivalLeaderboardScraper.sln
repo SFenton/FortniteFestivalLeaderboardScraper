@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FSTService.Tests", "FSTServ
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SongMachineHarness", "SongMachineHarness\SongMachineHarness.csproj", "{E5C95FB2-DB96-4A74-A41E-BE1293E9D0C2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FirstSeenHarness", "FirstSeenHarness\FirstSeenHarness.csproj", "{F95C9B19-12C9-4B1E-B829-B7B3094EC610}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -84,6 +86,18 @@ Global
 		{E5C95FB2-DB96-4A74-A41E-BE1293E9D0C2}.Release|x64.Build.0 = Release|Any CPU
 		{E5C95FB2-DB96-4A74-A41E-BE1293E9D0C2}.Release|x86.ActiveCfg = Release|Any CPU
 		{E5C95FB2-DB96-4A74-A41E-BE1293E9D0C2}.Release|x86.Build.0 = Release|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Debug|x64.Build.0 = Debug|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Debug|x86.Build.0 = Debug|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Release|x64.ActiveCfg = Release|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Release|x64.Build.0 = Release|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Release|x86.ActiveCfg = Release|Any CPU
+		{F95C9B19-12C9-4B1E-B829-B7B3094EC610}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

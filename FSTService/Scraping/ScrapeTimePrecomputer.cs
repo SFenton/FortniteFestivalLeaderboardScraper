@@ -1223,6 +1223,7 @@ public sealed class ScrapeTimePrecomputer
             songId = kvp.Key,
             firstSeenSeason = kvp.Value.FirstSeenSeason,
             estimatedSeason = kvp.Value.EstimatedSeason,
+            calculationVersion = kvp.Value.CalculationVersion,
         }).ToList();
         var payload = new { count = songs.Count, songs };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);

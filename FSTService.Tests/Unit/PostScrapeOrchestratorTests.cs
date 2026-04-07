@@ -544,7 +544,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _firstSeenCalculator.CalculateAsync(
             Arg.Any<FestivalService>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<int>(), Arg.Any<CancellationToken>())
+            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>())
             .Returns(5);
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
@@ -555,7 +555,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         // FirstSeenCalculator should have been called with the token
         await _firstSeenCalculator.Received(1).CalculateAsync(
             Arg.Any<FestivalService>(), "test-token", "caller-1",
-            Arg.Any<int>(), Arg.Any<CancellationToken>());
+            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -567,7 +567,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _firstSeenCalculator.CalculateAsync(
             Arg.Any<FestivalService>(), Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<int>(), Arg.Any<CancellationToken>())
+            Arg.Any<SharedDopPool>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("test error"));
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);

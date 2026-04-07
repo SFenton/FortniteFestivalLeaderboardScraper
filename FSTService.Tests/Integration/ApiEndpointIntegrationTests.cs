@@ -1054,7 +1054,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         using (var scope = _factory.Services.CreateScope())
         {
             var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.UpsertFirstSeenSeason("testSong1", 2, 1, 2, "found");
+            metaDb.UpsertFirstSeenSeason("testSong1", 2, 1, 2, "found", 2);
         }
 
         var response = await _client.GetAsync("/api/firstseen");

@@ -252,7 +252,8 @@ export type ScrapeProgress = {
 export type FirstSeenEntry = {
   songId: string;
   firstSeenSeason: number;
-  estimatedSeason?: boolean;
+  estimatedSeason?: number;
+  calculationVersion?: number;
 };
 
 export type FirstSeenResponse = {

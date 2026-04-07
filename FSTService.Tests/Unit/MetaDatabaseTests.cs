@@ -429,52 +429,59 @@ public sealed class MetaDatabaseTests : IDisposable
     [Fact]
     public void UpsertFirstSeenSeason_roundtrip()
     {
-        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, "found_at_season_5");
+        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, "found_at_season_5", 2);
         var dict = Db.GetAllFirstSeenSeasons();
         Assert.Equal(5, dict["song_1"].FirstSeenSeason);
+        Assert.Equal(2, dict["song_1"].CalculationVersion);
     }
 
     [Fact]
-    public void GetSongsWithFirstSeenSeason_returns_set()
+    public void GetSongIdsWithFirstSeenVersion_returns_matching_set()
     {
-        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, null);
-        Db.UpsertFirstSeenSeason("song_2", null, 3, 3, "not_found");
+        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, null, 2);
+        Db.UpsertFirstSeenSeason("song_2", null, 3, 3, "not_found", 1);
 
-        var set = Db.GetSongsWithFirstSeenSeason();
-        Assert.Equal(2, set.Count);
-        Assert.Contains("song_1", set);
-        Assert.Contains("song_2", set);
+        var v2Set = Db.GetSongIdsWithFirstSeenVersion(2);
+        Assert.Single(v2Set);
+        Assert.Contains("song_1", v2Set);
+
+        var v1Set = Db.GetSongIdsWithFirstSeenVersion(1);
+        Assert.Single(v1Set);
+        Assert.Contains("song_2", v1Set);
     }
 
     [Fact]
     public void GetAllFirstSeenSeasons_returns_dictionary()
     {
-        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, null);
-        Db.UpsertFirstSeenSeason("song_2", null, 3, 3, null);
+        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, null, 2);
+        Db.UpsertFirstSeenSeason("song_2", null, 3, 3, null, 1);
 
         var dict = Db.GetAllFirstSeenSeasons();
         Assert.Equal(2, dict.Count);
         Assert.Equal(5, dict["song_1"].FirstSeenSeason);
         Assert.Equal(5, dict["song_1"].EstimatedSeason);
+        Assert.Equal(2, dict["song_1"].CalculationVersion);
         Assert.Null(dict["song_2"].FirstSeenSeason);
         Assert.Equal(3, dict["song_2"].EstimatedSeason);
+        Assert.Equal(1, dict["song_2"].CalculationVersion);
     }
 
     [Fact]
     public void UpsertFirstSeenSeason_updates_existing()
     {
-        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, "initial");
-        Db.UpsertFirstSeenSeason("song_1", 3, 2, 3, "updated");
+        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, "initial", 1);
+        Db.UpsertFirstSeenSeason("song_1", 3, 2, 3, "updated", 2);
 
         var dict = Db.GetAllFirstSeenSeasons();
         Assert.Equal(3, dict["song_1"].FirstSeenSeason);
         Assert.Equal(3, dict["song_1"].EstimatedSeason);
+        Assert.Equal(2, dict["song_1"].CalculationVersion);
     }
 
     [Fact]
     public void UpsertFirstSeenSeason_nullable_firstSeen()
     {
-        Db.UpsertFirstSeenSeason("song_1", null, 3, 3, null);
+        Db.UpsertFirstSeenSeason("song_1", null, 3, 3, null, 2);
 
         var dict = Db.GetAllFirstSeenSeasons();
         Assert.Null(dict["song_1"].FirstSeenSeason);
@@ -558,8 +565,8 @@ public sealed class MetaDatabaseTests : IDisposable
     [Fact]
     public void GetAllFirstSeenSeasons_returns_all_entries()
     {
-        Db.UpsertFirstSeenSeason("song_a", 3, 2, 3, "found");
-        Db.UpsertFirstSeenSeason("song_b", null, null, 5, "estimated");
+        Db.UpsertFirstSeenSeason("song_a", 3, 2, 3, "found", 2);
+        Db.UpsertFirstSeenSeason("song_b", null, null, 5, "estimated", 2);
 
         var all = Db.GetAllFirstSeenSeasons();
         Assert.Equal(2, all.Count);

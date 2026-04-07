@@ -420,13 +420,15 @@ public static class DatabaseInitializer
         -- =====================================================================
 
         CREATE TABLE IF NOT EXISTS song_first_seen_season (
-            song_id            TEXT    PRIMARY KEY,
-            first_seen_season  INTEGER,
-            min_observed_season INTEGER,
-            estimated_season   INTEGER NOT NULL,
-            probe_result       TEXT,
-            calculated_at      TIMESTAMPTZ NOT NULL
+            song_id               TEXT    PRIMARY KEY,
+            first_seen_season     INTEGER,
+            min_observed_season   INTEGER,
+            estimated_season      INTEGER NOT NULL,
+            probe_result          TEXT,
+            calculated_at         TIMESTAMPTZ NOT NULL,
+            calculation_version   INTEGER
         );
+        ALTER TABLE song_first_seen_season ADD COLUMN IF NOT EXISTS calculation_version INTEGER;
 
         -- =====================================================================
         -- EPIC USER TOKENS (from fst-meta.db)
