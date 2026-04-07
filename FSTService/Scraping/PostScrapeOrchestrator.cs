@@ -340,7 +340,7 @@ public sealed class PostScrapeOrchestrator
             _progress.SetSubOperation("processing_songs");
             var result = await _cyclicalMachine.AttachAsync(
                 users, chartedSongIds, seasonWindows,
-                isHighPriority: true, ct);
+                SongMachineSource.PostScrape, isHighPriority: true, ct: ct);
 
             if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
                 _log.LogInformation("Song machine updated {Entries} entries, {Sessions} sessions for {Users} users.",

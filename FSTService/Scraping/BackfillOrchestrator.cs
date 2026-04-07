@@ -137,7 +137,7 @@ public sealed class BackfillOrchestrator
             _progress.SetSubOperation("processing_songs");
             var result = await _cyclicalMachine.AttachAsync(
                 users, chartedSongIds, seasonWindows,
-                isHighPriority: false, ct);
+                SongMachineSource.Backfill, isHighPriority: false, ct);
 
             _log.LogInformation(
                 "Backfill complete: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",
@@ -268,7 +268,7 @@ public sealed class BackfillOrchestrator
             _progress.SetSubOperation("processing_songs");
             var result = await _cyclicalMachine.AttachAsync(
                 users, chartedSongIds, seasonWindows,
-                isHighPriority: false, ct);
+                SongMachineSource.HistoryRecon, isHighPriority: false, ct: ct);
 
             _log.LogInformation(
                 "History recon complete: {Sessions} sessions inserted, {ApiCalls} API calls for {Users} users.",
