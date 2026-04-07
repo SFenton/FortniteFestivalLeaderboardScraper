@@ -369,13 +369,17 @@ export const SongRow = memo(function SongRow({ song,
 
   if (isMobile && chipRow) {
     const mergedChipStyle = animStyle ? { ...rowStyle, ...animStyle } : rowStyle;
+    // When sorting by lastplayed with no instrument filter, pull the lastplayed
+    // entry out of the detailStrip and render it as a centered third row.
+    const lastPlayedEntry = sortMode === 'lastplayed' ? entries.find(e => e.key === 'lastplayed') : undefined;
+    const stripEntries = lastPlayedEntry ? entries.filter(e => e.key !== 'lastplayed') : entries;
     return (
       externalHref ? (
         /* v8 ignore start -- external href mobile render */
         <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={mergedChipStyle} onAnimationEnd={handleAnimEnd}>
           <div style={s.mobileTopRow}>
             {songInfo}
-            {entries.length > 0 && <div style={s.detailStrip}>{entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}</div>}
+            {stripEntries.length > 0 && <div style={s.detailStrip}>{stripEntries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}</div>}
           </div>
           <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
             {instrumentChips!.map(c => (
@@ -384,13 +388,14 @@ export const SongRow = memo(function SongRow({ song,
               </div>
             ))}
           </div>
+          {lastPlayedEntry && <div style={s.lastPlayedCenteredRow}>{lastPlayedEntry.el}</div>}
           {externalIndicator}
         </a>
       ) : (
       <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={rowClassName} style={mergedChipStyle} onAnimationEnd={handleAnimEnd}>
         <div style={s.mobileTopRow}>
           {songInfo}
-          {entries.length > 0 && <div style={s.detailStrip}>{entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}{invalidIcon}</div>}
+          {stripEntries.length > 0 && <div style={s.detailStrip}>{stripEntries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}{invalidIcon}</div>}
         </div>
         <div style={s.mobileChipRowWrapper}>
           <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
@@ -400,8 +405,9 @@ export const SongRow = memo(function SongRow({ song,
               </div>
             ))}
           </div>
-          {invalidIcon && !entries.length && <div style={s.mobileChipInvalidIcon}>{invalidIcon}</div>}
+          {invalidIcon && !stripEntries.length && <div style={s.mobileChipInvalidIcon}>{invalidIcon}</div>}
         </div>
+        {lastPlayedEntry && <div style={s.lastPlayedCenteredRow}>{lastPlayedEntry.el}</div>}
       </Link>
       )
     );
@@ -474,6 +480,7 @@ function useStyles() {
     scoreMeta: { ...flexRow, gap: Gap.xl, flexShrink: 1, minWidth: 0, overflow: 'hidden' } as CSSProperties,
     mobileChipRowWrapper: { position: Position.relative, display: Display.flex, alignItems: Align.center, justifyContent: Justify.center } as CSSProperties,
     mobileChipInvalidIcon: { position: Position.absolute, right: 0, top: '50%', transform: 'translateY(-50%)' } as CSSProperties,
+    lastPlayedCenteredRow: { display: Display.flex, justifyContent: Justify.center, alignItems: Align.center } as CSSProperties,
     externalIndicator: { ...flexRow, gap: Gap.xs, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle } as CSSProperties,
     // Metadata item wrapper styles (kept fixed so resize does not bounce between wrap states)
     metadataItemAlone: { flexShrink: 0 } as CSSProperties,
