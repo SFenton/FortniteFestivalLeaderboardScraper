@@ -245,11 +245,13 @@ describe('PercentileToggles', () => {
 
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FestivalProvider } from '../../../src/contexts/FestivalContext';
+import { FeatureFlagsProvider } from '../../../src/contexts/FeatureFlagsContext';
+import { ShopProvider } from '../../../src/contexts/ShopContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 function ModalProviders({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return <QueryClientProvider client={qc}><SettingsProvider><FestivalProvider>{children}</FestivalProvider></SettingsProvider></QueryClientProvider>;
+  return <QueryClientProvider client={qc}><SettingsProvider><FeatureFlagsProvider><FestivalProvider><ShopProvider>{children}</ShopProvider></FestivalProvider></FeatureFlagsProvider></SettingsProvider></QueryClientProvider>;
 }
 
 describe('SeasonToggles', () => {
@@ -298,7 +300,7 @@ describe('FilterModal', () => {
     percentileFilter: {} as Record<number, boolean>,
     difficultyFilter: {} as Record<number, boolean>,
   };
-  const defaults = { visible: true, draft, availableSeasons: [] as number[], onChange: vi.fn(), onCancel: vi.fn(), onReset: vi.fn(), onApply: vi.fn() };
+  const defaults = { visible: true, draft, savedDraft: draft, availableSeasons: [] as number[], onChange: vi.fn(), onCancel: vi.fn(), onReset: vi.fn(), onApply: vi.fn() };
 
   it('renders when visible', () => {
     render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
@@ -306,7 +308,8 @@ describe('FilterModal', () => {
   });
 
   it('calls onApply on apply click', () => {
-    render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
+    const changedDraft = { ...draft, missingScores: { Solo_Guitar: true } as Record<string, boolean> };
+    render(<ModalProviders><FilterModal {...defaults} draft={changedDraft} /></ModalProviders>);
     const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();

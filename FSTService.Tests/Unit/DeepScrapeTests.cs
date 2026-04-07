@@ -475,8 +475,6 @@ public class DeepScrapeTests
         Assert.Equal(2, result.DeferredDeepScrape.Wave2Start);
         Assert.Equal(10, result.DeferredDeepScrape.ReportedPages);
         Assert.Equal(2, result.DeferredDeepScrape.InitialValidCount); // p2=900, p3=800
-        Assert.NotNull(result.DeferredDeepScrape.Wave1Entries);
-        Assert.Equal(2, result.DeferredDeepScrape.Wave1Entries.Count); // pages 0 and 1
     }
 
     [Fact]

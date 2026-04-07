@@ -871,11 +871,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         {
             _progress.ReportPage0(1);
             _progress.ReportLeaderboardComplete(instrument);
+            var entries = page0.firstPage?.Entries ?? [];
             return new GlobalLeaderboardResult
             {
                 SongId = songId,
                 Instrument = instrument,
-                Entries = page0.firstPage?.Entries ?? [],
+                Entries = entries,
+                EntriesCount = entries.Count,
                 TotalPages = page0.firstPage?.TotalPages ?? 0,
                 ReportedTotalPages = page0.firstPage?.TotalPages ?? 0,
                 PagesScraped = page0.firstPage is not null ? 1 : 0,
@@ -1027,6 +1029,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     SongId = songId,
                     Instrument = instrument,
                     Entries = wave1Ordered,
+                    EntriesCount = wave1Ordered.Count,
                     TotalPages = totalPages,
                     ReportedTotalPages = reportedPages,
                     PagesScraped = allEntries.Count,
@@ -1041,7 +1044,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         Wave2Start = wave2Start,
                         ReportedPages = reportedPages,
                         InitialValidCount = validCount,
-                        Wave1Entries = allEntries,
                     },
                 };
             }
@@ -1274,6 +1276,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             SongId = songId,
             Instrument = instrument,
             Entries = ordered,
+            EntriesCount = ordered.Count,
             TotalPages = totalPages,
             ReportedTotalPages = reportedPages,
             PagesScraped = allEntries.Count,
@@ -1414,6 +1417,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             // progress counter doesn't race ahead of actual persistence.
             if (onSongComplete is not null)
                 await onSongComplete(req.SongId, songResults);
+
+            // Release entry data now that persistence has consumed it.
+            // The result shells remain in the dictionary for population updates
+            // (which only need EntriesCount and ReportedTotalPages).
+            foreach (var r in songResults)
+            {
+                r.Entries = [];
+                r.DeferredDeepScrape = null;
+            }
+
             _progress.ReportSongComplete();
         }).ToList();
 
@@ -1452,6 +1465,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         // Fire callback with deep scrape results for persistence (upsert handles merges)
                         if (onSongComplete is not null)
                             await onSongComplete(deepResult.SongId, [deepResult]);
+
+                        // Release entry data after persistence callback
+                        deepResult.Entries = [];
                     },
                     ct);
             }
@@ -1527,6 +1543,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                 if (onSongComplete is not null)
                     await onSongComplete(req.SongId, songResults);
+
+                // Release entry data after persistence callback
+                foreach (var r in songResults)
+                {
+                    r.Entries = [];
+                    r.DeferredDeepScrape = null;
+                }
+
                 _progress.ReportSongComplete();
             }
             finally
@@ -1578,11 +1602,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         {
             _progress.ReportPage0(1);
             _progress.ReportLeaderboardComplete(instrument);
+            var entries = page0.Page?.Entries ?? [];
             return new GlobalLeaderboardResult
             {
                 SongId = songId,
                 Instrument = instrument,
-                Entries = page0.Page?.Entries ?? [],
+                Entries = entries,
+                EntriesCount = entries.Count,
                 TotalPages = page0.Page?.TotalPages ?? 0,
                 ReportedTotalPages = page0.Page?.TotalPages ?? 0,
                 PagesScraped = page0.Page is not null ? 1 : 0,
@@ -1684,6 +1710,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             SongId = songId,
             Instrument = instrument,
             Entries = ordered,
+            EntriesCount = ordered.Count,
             TotalPages = totalPages,
             ReportedTotalPages = reportedPages,
             PagesScraped = allEntries.Count,
@@ -1889,8 +1916,6 @@ public sealed class DeepScrapeMetadata
     public required int ReportedPages { get; init; }
     /// <summary>Valid entries (≤ ValidCutoff) already captured in wave 1.</summary>
     public required int InitialValidCount { get; init; }
-    /// <summary>Wave 1 entries keyed by page number, needed for merging with deep scrape results.</summary>
-    public required ConcurrentDictionary<int, List<LeaderboardEntry>> Wave1Entries { get; init; }
 }
 
 /// <summary>
@@ -1900,7 +1925,9 @@ public sealed class GlobalLeaderboardResult
 {
     public string SongId { get; init; } = "";
     public string Instrument { get; init; } = "";
-    public List<LeaderboardEntry> Entries { get; init; } = [];
+    public List<LeaderboardEntry> Entries { get; set; } = [];
+    /// <summary>Snapshot of <c>Entries.Count</c> taken at construction time. Survives after <c>Entries</c> is cleared to free memory.</summary>
+    public int EntriesCount { get; init; }
     public int TotalPages { get; init; }
     /// <summary>The uncapped page count reported by Epic's API. Use <c>ReportedTotalPages * 100</c> for population estimate.</summary>
     public int ReportedTotalPages { get; init; }
@@ -1911,5 +1938,5 @@ public sealed class GlobalLeaderboardResult
     /// When non-null, deep scraping was triggered but deferred for coordinated execution.
     /// The coordinator should use this metadata to run wave 2 breadth-first across all deferred combos.
     /// </summary>
-    public DeepScrapeMetadata? DeferredDeepScrape { get; init; }
+    public DeepScrapeMetadata? DeferredDeepScrape { get; set; }
 }

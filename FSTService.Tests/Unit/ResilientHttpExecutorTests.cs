@@ -290,39 +290,35 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
-    public async Task SendAsync_Cdn403_RetriesUntilSuccess()
+    public async Task SendAsync_Cdn403_ThrowsCdnBlockedException()
     {
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // 3 CDN blocks, then success
+        // CDN block → throws CdnBlockedException, launches probe in background
         handler.EnqueueHtml403();
-        handler.EnqueueHtml403();
-        handler.EnqueueHtml403();
+        // Enqueue success for the background probe so it doesn't hang
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-retry-test");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(4, handler.Requests.Count); // 1 initial + 3 CDN retries
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-retry-test"));
     }
 
     [Fact]
-    public async Task SendAsync_Cdn403_RetriesBeyondSchedule_EventuallyRecovers()
+    public async Task SendAsync_Cdn403_LaunchesProbeAndThrows()
     {
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // 15 CDN blocks (1 initial + 14 retries — well past the 9-element schedule)
-        // then a success. The executor should keep retrying at 60 s (zero in test) indefinitely.
-        for (int i = 0; i < 15; i++)
-            handler.EnqueueHtml403();
-        handler.EnqueueJsonOk("""{"result":"recovered"}""");
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"probe-ok"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-beyond-schedule-test");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-beyond-schedule-test"));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(16, handler.Requests.Count); // 1 initial + 14 CDN retries + 1 success
+        // After probe clears, subsequent sends should succeed
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     [Fact]
@@ -331,21 +327,21 @@ public sealed class ResilientHttpExecutorTests
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // 2 CDN blocks, then success
         handler.EnqueueHtml403();
-        handler.EnqueueHtml403();
+        // Enqueue success for probe
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        // Use a real limiter to verify failure/success reporting
         var limiter = new AdaptiveConcurrencyLimiter(
             initialDop: 100, minDop: 1, maxDop: 200,
             Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
 
-        await executor.SendAsync(
-            () => MakeRequest(), limiter: limiter, label: "cdn-limiter-test");
+        // CDN 403 → SlashDop + ReportFailure → throw
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(
+                () => MakeRequest(), limiter: limiter, label: "cdn-limiter-test"));
 
-        // Limiter should still function (failures were reported, then success)
-        Assert.True(limiter.CurrentDop >= 1);
+        // Limiter DOP was slashed on CDN block (100 → minDop 1)
+        Assert.True(limiter.CurrentDop < 100);
     }
 
     [Fact]
@@ -354,22 +350,18 @@ public sealed class ResilientHttpExecutorTests
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // CDN 403 on initial request → CDN retry succeeds with 500 → normal retry → success
-        handler.EnqueueHtml403();                                    // initial: CDN block
-        handler.EnqueueError(HttpStatusCode.InternalServerError, ""); // CDN retry 1: 500 (not CDN)
-        handler.EnqueueJsonOk("""{"result":"ok"}""");                // normal retry: success
+        // CDN 403 → throws CdnBlockedException immediately
+        handler.EnqueueHtml403();
+        // Enqueue a success for the background probe
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        // maxRetries=1 means 2 normal attempts. CDN retry should not eat into that.
-        var response = await executor.SendAsync(
-            () => MakeRequest(), maxRetries: 1, label: "cdn-budget-test");
+        // The CDN 403 throws immediately — doesn't consume the normal retry budget
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(
+                () => MakeRequest(), maxRetries: 1, label: "cdn-budget-test"));
 
-        // CDN retry returns 500 to main loop → main loop has attempt budget left → retries → success
-        // Actually: CDN sub-loop returns 500, main loop returns it to caller since 403 handler
-        // exits early via RetryCdnBlockAsync which returns the 500.
-        // The 500 is returned directly — the main loop's retry logic doesn't re-evaluate.
-        // So the result is the 500, not the success. Let me adjust this test.
-        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
-        Assert.Equal(2, handler.Requests.Count);
+        // At least 1 request sent (the initial CDN 403); probe may have started
+        Assert.True(handler.Requests.Count >= 1);
     }
 
     [Fact]
@@ -378,64 +370,54 @@ public sealed class ResilientHttpExecutorTests
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // CDN block then immediate JSON success
+        // CDN block → throws, probe gets JSON success → CDN clears
         handler.EnqueueHtml403();
         handler.EnqueueJsonOk("""{"result":"recovered"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-recover-test");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-recover-test"));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("recovered", body);
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     [Fact]
-    public async Task SendAsync_Cdn403_ThenJson403_ReturnsJson403()
+    public async Task SendAsync_Cdn403_ThenJson403_ProbeDetectsJson403AsClear()
     {
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // CDN block then JSON 403 (API error, not CDN)
+        // CDN block → throws, then probe gets JSON 403 (not CDN) → CDN clears
         handler.EnqueueHtml403();
         handler.EnqueueJsonResponse(HttpStatusCode.Forbidden, """{"errorCode":"auth_failed"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-then-json-test");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-then-json-test"));
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("auth_failed", body);
-        Assert.Equal(2, handler.Requests.Count);
+        // Wait for probe to clear CDN (JSON 403 is not a CDN block)
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     // ─── CDN non-probe path ─────────────────────────────────────
 
     [Fact]
-    public async Task SendAsync_CdnNonProbe_RetriesHttpRequestException()
+    public async Task SendAsync_CdnNonProbe_ProbeHandlesHttpRequestException()
     {
-        // Simulate the non-probe path: first CDN block becomes the probe,
-        // the second CDN block enters the non-probe path.
-        // To test the non-probe's error handling, we need two concurrent calls.
-        // Instead, we test the integrated behavior: CDN block → probe starts →
-        // probe succeeds → non-probe retries after cooldown with network error → eventually succeeds.
-        //
-        // Simpler approach: single call where the probe clears, then we get a network
-        // error on the probe's retry (which is the same code path).
-        // For non-probe specifically: the non-probe path fires when _cdnGate is held.
-        // We can't easily test concurrency in a unit test, so we test the probe path handles
-        // HttpRequestException (which uses the same pattern), and separately verify
-        // that a CDN block → network error → success works end-to-end.
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // CDN block → probe retries → network error → success
+        // CDN block → throws, probe gets network error → retries → success
         handler.EnqueueHtml403();
         handler.EnqueueException(new HttpRequestException("ResponseEnded"));
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-netfail-test");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-netfail-test"));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(3, handler.Requests.Count);
+        // Wait for probe to clear
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     [Fact]
@@ -444,16 +426,17 @@ public sealed class ResilientHttpExecutorTests
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // CDN block → probe retries → still CDN blocked → eventually succeeds
+        // CDN block → throws, probe retries → still CDN blocked → eventually clears
         handler.EnqueueHtml403();
         handler.EnqueueHtml403();
         handler.EnqueueHtml403();
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-reblock-test");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-reblock-test"));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(4, handler.Requests.Count);
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     [Fact]
@@ -462,14 +445,15 @@ public sealed class ResilientHttpExecutorTests
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // CDN block → probe clears → non-CDN 404 returned to caller
+        // CDN block → throws, probe gets 404 (non-CDN) → CDN clears
         handler.EnqueueHtml403();
         handler.EnqueueError(HttpStatusCode.NotFound, "not found");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-then-404-test");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-then-404-test"));
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        Assert.Equal(2, handler.Requests.Count);
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     [Fact]
@@ -478,15 +462,16 @@ public sealed class ResilientHttpExecutorTests
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // CDN block → probe retries → timeout → success
+        // CDN block → throws, probe retries → timeout → success → CDN clears
         handler.EnqueueHtml403();
         handler.EnqueueException(new TaskCanceledException("timed out"));
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-timeout-test");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-timeout-test"));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(3, handler.Requests.Count);
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     // ─── CDN slot lifecycle (release during wait, reacquire for send) ────
@@ -494,8 +479,9 @@ public sealed class ResilientHttpExecutorTests
     [Fact]
     public async Task SendAsync_CdnBlock_ReleasesSlotDuringCooldown()
     {
-        // Verify that the limiter slot is released while the CDN retry is waiting,
-        // and reacquired before the probe HTTP send.
+        // With throw-based CDN handling, SendAsync throws CdnBlockedException.
+        // The caller (WithCdnResilienceAsync) releases the slot. Verify the throw
+        // doesn't consume or break the limiter.
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
@@ -506,18 +492,16 @@ public sealed class ResilientHttpExecutorTests
             initialDop: 1, minDop: 1, maxDop: 1,
             Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
 
-        // Acquire the single slot (simulating what the caller does)
         await limiter.WaitAsync(CancellationToken.None);
 
-        // SendAsync enters CDN retry → must release the slot → reacquire for probe → return holding slot
-        var response = await executor.SendAsync(
-            () => MakeRequest(), limiter: limiter, label: "cdn-slot-release-test");
+        // CDN 403 → throws CdnBlockedException (caller still holds slot)
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(
+                () => MakeRequest(), limiter: limiter, label: "cdn-slot-release-test"));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        // The method returns holding exactly one slot, so Release() should work
+        // Caller releases slot (simulating WithCdnResilienceAsync catch block)
         limiter.Release();
-        // If we can acquire again, the slot was properly returned through the full lifecycle
+        // Slot should be available for reacquisition
         await limiter.WaitAsync(CancellationToken.None);
         limiter.Release();
     }
@@ -525,16 +509,13 @@ public sealed class ResilientHttpExecutorTests
     [Fact]
     public async Task SendAsync_CdnBlock_DoesNotDeadlockWithSingleSlot()
     {
-        // With DOP=1, the old code would deadlock because the CDN retry
-        // holds the single slot while sleeping, and can't reacquire.
-        // The new code releases and reacquires, so DOP=1 works fine.
+        // With throw-based CDN handling, DOP=1 can't deadlock because
+        // SendAsync throws immediately and the caller releases the slot.
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // 3 CDN blocks then success
         handler.EnqueueHtml403();
-        handler.EnqueueHtml403();
-        handler.EnqueueHtml403();
+        // Enqueue success for probe
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
         var limiter = new AdaptiveConcurrencyLimiter(
@@ -543,13 +524,11 @@ public sealed class ResilientHttpExecutorTests
 
         await limiter.WaitAsync(CancellationToken.None);
 
-        var response = await executor.SendAsync(
-            () => MakeRequest(), limiter: limiter, label: "cdn-dop1-test");
+        // CDN 403 → throws immediately (no deadlock)
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(
+                () => MakeRequest(), limiter: limiter, label: "cdn-dop1-test"));
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(4, handler.Requests.Count);
-
-        // Caller releases — should not throw
         limiter.Release();
     }
 
@@ -592,8 +571,7 @@ public sealed class ResilientHttpExecutorTests
     [Fact]
     public async Task SendAsync_CdnBlock_ProbeNetworkError_ReleasesSlotBeforeRetry()
     {
-        // When a probe HTTP send fails with a network error, the slot should
-        // be released before looping back to wait for the next delay.
+        // Probe handles network errors gracefully and continues retrying.
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
@@ -601,17 +579,12 @@ public sealed class ResilientHttpExecutorTests
         handler.EnqueueException(new HttpRequestException("Connection reset"));
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        var limiter = new AdaptiveConcurrencyLimiter(
-            initialDop: 1, minDop: 1, maxDop: 1,
-            Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
+        // CDN 403 → throws, probe gets network error → retries → success
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "cdn-probe-netfail-slot-test"));
 
-        await limiter.WaitAsync(CancellationToken.None);
-
-        var response = await executor.SendAsync(
-            () => MakeRequest(), limiter: limiter, label: "cdn-probe-netfail-slot-test");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        limiter.Release();
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
 // ─── ResetCdnState ──────────────────────────────────────────
@@ -622,21 +595,30 @@ public sealed class ResilientHttpExecutorTests
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // Trigger a CDN block then success to advance _cdnRetryIndex
+        // Trigger a CDN block to advance _cdnRetryIndex
         handler.EnqueueHtml403();
         handler.EnqueueHtml403();
         handler.EnqueueJsonOk("""{"result":"ok"}""");
-        await executor.SendAsync(() => MakeRequest(), label: "setup");
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "setup"));
+
+        // Wait for probe to clear
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
 
         // Reset CDN state
         executor.ResetCdnState();
+        Assert.False(executor.IsCdnBlocked);
 
         // Next CDN block should start from index 0 (not continue from previous)
         handler.EnqueueHtml403();
         handler.EnqueueJsonOk("""{"result":"ok2"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "after-reset");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "after-reset"));
+
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     // ─── CDN probe SlashDop ─────────────────────────────────────
@@ -654,15 +636,13 @@ public sealed class ResilientHttpExecutorTests
             initialDop: 100, minDop: 4, maxDop: 200,
             Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
 
-        await limiter.WaitAsync(CancellationToken.None);
+        // CDN 403 → SlashDop + throw
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(
+                () => MakeRequest(), limiter: limiter, label: "slash-test"));
 
-        var response = await executor.SendAsync(
-            () => MakeRequest(), limiter: limiter, label: "slash-test");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         // DOP should have been slashed to minDop (4)
         Assert.Equal(4, limiter.CurrentDop);
-        limiter.Release();
     }
 
     // ─── CDN probe exhausts MaxCdnRetries ───────────────────────
@@ -673,12 +653,16 @@ public sealed class ResilientHttpExecutorTests
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // Enqueue enough CDN blocks to exceed MaxCdnRetries (1 initial + 15 retries = 16)
+        // Initial CDN 403 + enough for probe to exhaust MaxCdnRetries
         for (int i = 0; i < ResilientHttpExecutor.MaxCdnRetries + 1; i++)
             handler.EnqueueHtml403();
 
-        await Assert.ThrowsAsync<HttpRequestException>(
+        // Caller gets CdnBlockedException immediately
+        await Assert.ThrowsAsync<CdnBlockedException>(
             () => executor.SendAsync(() => MakeRequest(), label: "cdn-exhaust-test"));
+
+        // Probe exhausts retries → _cdnResolved signals false
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
     }
 
     [Fact]
@@ -696,11 +680,12 @@ public sealed class ResilientHttpExecutorTests
 
         await limiter.WaitAsync(CancellationToken.None);
 
-        await Assert.ThrowsAsync<HttpRequestException>(
+        // Caller gets CdnBlockedException (slot still held by caller)
+        await Assert.ThrowsAsync<CdnBlockedException>(
             () => executor.SendAsync(
                 () => MakeRequest(), limiter: limiter, label: "cdn-exhaust-slot-test"));
 
-        // Caller's finally will Release() — verify no underflow by releasing and reacquiring
+        // Caller releases slot — verify no underflow
         limiter.Release();
         await limiter.WaitAsync(CancellationToken.None);
         limiter.Release();
@@ -711,34 +696,34 @@ public sealed class ResilientHttpExecutorTests
     [Fact]
     public async Task SendAsync_CdnBlock_NonProbeWaitsForProbeSignal()
     {
-        // Two concurrent calls: one becomes probe, the other becomes non-probe.
-        // Probe succeeds → non-probe resumes and sends its own request.
+        // Two concurrent calls: both get CdnBlockedException.
+        // The first triggers the probe; the second detects IsCdnBlocked.
+        // Probe succeeds → CDN clears.
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
         executor.MaxJitterMs = 0;
 
-        // Request 1 (initial): CDN block → enters RetryCdnBlockAsync, becomes probe
-        // Request 2 (initial): CDN block → enters RetryCdnBlockAsync, becomes non-probe
-        // Request 3 (probe retry): success → probe signals, non-probe wakes
-        // Request 4 (non-probe resume): success
-        handler.EnqueueHtml403(); // call 1 initial
-        handler.EnqueueHtml403(); // call 2 initial
-        handler.EnqueueJsonOk("""{"result":"probe-ok"}""");  // probe retry
-        handler.EnqueueJsonOk("""{"result":"nonprobe-ok"}"""); // non-probe resume
+        handler.EnqueueHtml403(); // call 1 initial → triggers probe
+        handler.EnqueueHtml403(); // call 2 initial (or pre-send IsCdnBlocked throw)
+        handler.EnqueueJsonOk("""{"result":"probe-ok"}""");  // probe retry → clears
 
         var task1 = executor.SendAsync(() => MakeRequest(), label: "call-1");
         var task2 = executor.SendAsync(() => MakeRequest(), label: "call-2");
 
-        var results = await Task.WhenAll(task1, task2);
+        // Both should throw CdnBlockedException
+        await Assert.ThrowsAsync<CdnBlockedException>(() => task1);
+        await Assert.ThrowsAsync<CdnBlockedException>(() => task2);
 
-        Assert.All(results, r => Assert.True(r.IsSuccessStatusCode));
-        Assert.Equal(4, handler.Requests.Count);
+        // Probe clears the CDN block
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(executor.IsCdnBlocked);
     }
 
     [Fact]
     public async Task SendAsync_CdnBlock_NonProbeGetsFail_WhenProbeExhausts()
     {
-        // Two concurrent calls: probe exhausts retries → non-probe gets failure too.
+        // Two concurrent calls: both get CdnBlockedException immediately.
+        // Probe exhausts retries in the background.
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
         executor.MaxJitterMs = 0;
@@ -753,9 +738,12 @@ public sealed class ResilientHttpExecutorTests
         var task1 = executor.SendAsync(() => MakeRequest(), label: "call-1");
         var task2 = executor.SendAsync(() => MakeRequest(), label: "call-2");
 
-        // Both should throw — probe exhausted, non-probe gets the failure signal
-        var exceptions = await Assert.ThrowsAsync<HttpRequestException>(() => Task.WhenAll(task1, task2));
-        Assert.Contains("exhausted", exceptions.Message);
+        // Both throw CdnBlockedException immediately
+        await Assert.ThrowsAsync<CdnBlockedException>(() => task1);
+        await Assert.ThrowsAsync<CdnBlockedException>(() => task2);
+
+        // Probe exhausts and signals
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
     }
 
     // ─── WithCdnResilienceAsync ─────────────────────────────────

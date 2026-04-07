@@ -489,7 +489,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     const filterBtn = screen.getByLabelText('Filter');
     await act(async () => { fireEvent.click(filterBtn); await vi.advanceTimersByTimeAsync(400); });
     // Click Reset to exercise resetFilter
-    const resetBtns = screen.getAllByRole('button', { name: 'Reset' });
+    const resetBtns = Array.from(document.body.querySelectorAll('button')).filter(b => b.textContent === 'Reset');
     await act(async () => { fireEvent.click(resetBtns[resetBtns.length - 1]!); });
     expect(container.textContent).toBeTruthy();
   });

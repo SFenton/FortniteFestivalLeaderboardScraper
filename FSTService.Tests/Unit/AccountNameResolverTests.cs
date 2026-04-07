@@ -160,8 +160,8 @@ public class AccountNameResolverTests
 
         metaDb.Db.InsertAccountIds(new[] { "acct1" });
 
-        // First attempt: 403 (triggers token refresh + retry)
-        handler.EnqueueError(HttpStatusCode.Forbidden, "token expired");
+        // First attempt: JSON 403 (triggers token refresh + retry; JSON body avoids CDN detection)
+        handler.EnqueueJsonResponse(HttpStatusCode.Forbidden, """{"errorCode":"token_expired"}""");
         // Second attempt: success
         handler.EnqueueJsonOk("""[{"id":"acct1","displayName":"RetryPlayer"}]""");
 

@@ -37,7 +37,7 @@ describe('api/client', () => {
     it('sends If-None-Match when cached ETag exists', async () => {
       // Seed localStorage with a cached response + etag
       const cached = { songs: [{ songId: 's1', title: 'Old' }], count: 1, currentSeason: 5 };
-      localStorage.setItem('fst_songs_cache', JSON.stringify({ data: cached, etag: '"abc123"' }));
+      localStorage.setItem('fst_songs_cache', JSON.stringify({ data: cached, etag: '"abc123"', v: 2 }));
 
       (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
         ok: false,

@@ -166,11 +166,13 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         // Should not have called machine
-        await _machine.DidNotReceive().RunAsync(
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+        await _cyclicalMachine.DidNotReceive().AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+            Arg.Any<SongMachineSource>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -187,12 +189,13 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         // Machine should have been called with the queued account
-        await _machine.Received(1).RunAsync(
-            Arg.Any<IReadOnlyList<string>>(),
+        await _cyclicalMachine.Received(1).AttachAsync(
             Arg.Is<IReadOnlyList<UserWorkItem>>(u => u.Count == 1 && u[0].AccountId == "acct1"),
+            Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            "token", "callerAcct", Arg.Any<SharedDopPool>(),
-            false, Arg.Any<int>(), true, Arg.Any<int>(), Arg.Any<CancellationToken>());
+            Arg.Any<SongMachineSource>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -209,11 +212,13 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         // Machine called for backfill
-        await _machine.Received(1).RunAsync(
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+        await _cyclicalMachine.Received(1).AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+            Arg.Any<SongMachineSource>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -225,11 +230,13 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             .Returns(Task.FromResult<string?>("token"));
         _tokenManager.AccountId.Returns("callerAcct");
 
-        _machine.RunAsync(
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+        _cyclicalMachine.AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            Arg.Any<SongMachineSource>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("machine failure"));
 
         var orchestrator = CreateBackfillOrchestrator();

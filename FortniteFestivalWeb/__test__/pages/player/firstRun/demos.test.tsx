@@ -18,6 +18,7 @@ vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsMobile: () => mockIsMobile,
   useIsMobileChrome: () => mockIsMobileChrome,
   useIsWideDesktop: () => mockIsWideDesktop,
+  useIsNarrow: () => false,
 }));
 
 // Mock useDemoSongs for TopSongsDemo

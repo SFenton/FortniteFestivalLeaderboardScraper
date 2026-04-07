@@ -348,7 +348,7 @@ describe('PlayerPage — extra coverage', () => {
       expect(screen.getAllByText('Full Combos').length).toBeGreaterThan(0);
       expect(screen.getAllByText('Gold Stars').length).toBeGreaterThan(0);
       expect(screen.getAllByText('Avg Accuracy').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('Best Rank').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Best Song Rank').length).toBeGreaterThan(0);
     });
   });
 
@@ -464,7 +464,7 @@ describe('PlayerPage — extra coverage', () => {
   it('displays best rank in summary when player has ranked scores', async () => {
     renderPlayerPage('/player/test-player-1');
     await waitFor(() => {
-      expect(screen.getAllByText('Best Rank').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Best Song Rank').length).toBeGreaterThan(0);
     });
   });
 });
@@ -499,7 +499,7 @@ describe('PlayerPage — coverage: instrument stats + percentile + top/bottom so
     expect(document.body.textContent).toContain('Full Combos');
     expect(document.body.textContent).toContain('Gold Stars');
     expect(document.body.textContent).toContain('Avg Accuracy');
-    expect(document.body.textContent).toContain('Best Rank');
+    expect(document.body.textContent).toContain('Best Song Rank');
   });
 
   it('renders top and bottom songs sections', async () => {
@@ -557,7 +557,7 @@ describe('PlayerPage — coverage: sync banner', () => {
     });
 
     await waitFor(() => {
-      expect(document.body.textContent).toContain('Syncing');
+      expect(document.body.textContent).toContain('Checking scores');
     }, { timeout: 3000 });
   });
 

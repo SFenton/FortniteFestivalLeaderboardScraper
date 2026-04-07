@@ -33,6 +33,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
     protected readonly BackfillQueue _backfillQueue;
     protected readonly PostScrapeRefresher _refresher;
     protected readonly SongProcessingMachine _machine;
+    protected readonly CyclicalSongMachine _cyclicalMachine;
     protected readonly SharedDopPool _pool;
     protected readonly HistoryReconstructor _historyReconstructor;
     protected readonly FirstSeenSeasonCalculator _firstSeenCalculator;
@@ -95,7 +96,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
             _persistence, _progress,
             new UserSyncProgressTracker(new NotificationService(NullLogger<NotificationService>.Instance), NullLogger<UserSyncProgressTracker>.Instance),
-            Substitute.For<ILogger<SongProcessingMachine>>());
+            Substitute.For<ILogger<SongProcessingMachine>>(),
+            (ResilientHttpExecutor?)null);
         _machine.RunAsync(
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
@@ -104,6 +106,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             .Returns(new SongProcessingMachine.MachineResult());
 
         _pool = new SharedDopPool(16, minDop: 2, maxDop: 64, lowPriorityPercent: 20, Substitute.For<ILogger>());
+
+        _cyclicalMachine = CreateMockCyclicalMachine();
 
         _historyReconstructor = Substitute.For<HistoryReconstructor>(
             _scraper, _persistence, new HttpClient(), _progress,
@@ -169,7 +173,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             serviceProvider,
             _historyReconstructor,
             _pool,
-            CreateMockCyclicalMachine(),
+            _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, notifications,
             _tokenManager, _progress, pathDataStore, precomputer, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
@@ -178,7 +182,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _backfillQueue, _historyReconstructor,
             rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
-            CreateMockCyclicalMachine(), _pool,
+            _cyclicalMachine, _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
         _shopMetaDb = new FSTService.Persistence.MetaDatabase(
@@ -206,7 +210,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _tokenManager, _scraper, _persistence,
             _festivalService, dbInitializer,
             scrapeOrchestrator, postScrapeOrchestrator, backfillOrchestrator,
-            CreateMockCyclicalMachine(),
+            _cyclicalMachine,
             pathGenerator, pathDataStore,
             new Api.SongsCacheService(),
             new Api.ResponseCacheService(TimeSpan.FromMinutes(2)),
@@ -233,7 +237,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _backfillQueue, _historyReconstructor,
             rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
-            CreateMockCyclicalMachine(), _pool,
+            _cyclicalMachine, _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());
     }
 

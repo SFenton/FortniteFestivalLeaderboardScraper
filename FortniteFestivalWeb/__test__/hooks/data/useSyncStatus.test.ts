@@ -126,21 +126,21 @@ describe('useSyncStatus', () => {
     expect(result.current.justCompleted).toBe(false);
   });
 
-  it('combined progress is 0.5 * backfill when in backfill phase', async () => {
+  it('combined progress is (1/3) * backfill when in backfill phase', async () => {
     mockGetStatus.mockResolvedValue({
       backfill: { status: 'in_progress', songsChecked: 50, totalSongsToCheck: 100, entriesFound: 5, startedAt: null, completedAt: null },
       historyRecon: null } as any);
     const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
     await flush();
-    expect(result.current.progress).toBeCloseTo(0.25); // 0.5 * 0.5
+    expect(result.current.progress).toBeCloseTo(1/3 * 0.5); // (1/3) * 0.5
   });
 
-  it('combined progress is 0.5 + 0.5 * history when in history phase', async () => {
+  it('combined progress is (1/3) + (1/3) * history when in history phase', async () => {
     mockGetStatus.mockResolvedValue({
       backfill: { status: 'complete', songsChecked: 100, totalSongsToCheck: 100, entriesFound: 10, startedAt: null, completedAt: null },
       historyRecon: { status: 'in_progress', songsProcessed: 50, totalSongsToProcess: 100, seasonsQueried: 0, historyEntriesFound: 0, startedAt: null, completedAt: null }, } as any);
     const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
     await flush();
-    expect(result.current.progress).toBeCloseTo(0.75); // 0.5 + 0.5 * 0.5
+    expect(result.current.progress).toBeCloseTo(1/3 + 1/3 * 0.5); // (1/3) + (1/3) * 0.5
   });
 });

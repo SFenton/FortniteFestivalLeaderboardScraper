@@ -13,6 +13,7 @@ vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsMobile: () => false,
   useIsMobileChrome: () => false,
   useIsWideDesktop: () => true,
+  useIsNarrow: () => false,
 }));
 
 vi.mock('../../../../src/hooks/data/useDemoSongs', () => ({

@@ -790,7 +790,7 @@ public class GlobalLeaderboardScraperTests
             requests, "token", "acct", sequential: true, pageConcurrency: 1);
 
         Assert.Single(results);
-        Assert.Equal(1, results["s1"][0].Entries.Count);
+        Assert.Equal(1, results["s1"][0].EntriesCount);
     }
 
     [Fact]
@@ -811,7 +811,7 @@ public class GlobalLeaderboardScraperTests
         var results = await scraper.ScrapeManySongsAsync(
             requests, "token", "acct", sequential: true, pageConcurrency: 5);
 
-        Assert.Equal(2, results["s1"][0].Entries.Count);
+        Assert.Equal(2, results["s1"][0].EntriesCount);
         Assert.Equal(2, results["s1"][0].TotalPages);
     }
 

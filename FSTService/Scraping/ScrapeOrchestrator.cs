@@ -185,7 +185,7 @@ public sealed class ScrapeOrchestrator
                 if (r.ReportedTotalPages > 0)
                 {
                     long totalEntries = r.ReportedTotalPages <= 100
-                        ? r.Entries.Count
+                        ? r.EntriesCount
                         : (long)r.ReportedTotalPages * 100;
                     populationItems.Add((r.SongId, r.Instrument, totalEntries));
                 }

@@ -25,6 +25,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly AccountNameResolver _nameResolver;
     private readonly PostScrapeRefresher _refresher;
     private readonly SongProcessingMachine _machine;
+    private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly SharedDopPool _pool;
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
@@ -80,7 +81,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             scraper, new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
             _persistence, new ScrapeProgressTracker(),
             new UserSyncProgressTracker(new NotificationService(NullLogger<NotificationService>.Instance), NullLogger<UserSyncProgressTracker>.Instance),
-            Substitute.For<ILogger<SongProcessingMachine>>());
+            Substitute.For<ILogger<SongProcessingMachine>>(),
+            (ResilientHttpExecutor?)null);
         _machine.RunAsync(
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
@@ -104,13 +106,15 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
 
+        _cyclicalMachine = CreateMockCyclicalMachine();
+
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _refresher,
             serviceProvider,
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
-            CreateMockCyclicalMachine(),
+            _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
@@ -183,18 +187,13 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
 
-        // Verify the song processing machine was invoked with the correct token
-        await _machine.Received(1).RunAsync(
-            Arg.Any<IReadOnlyList<string>>(),
+        // Verify the cyclical machine was invoked
+        await _cyclicalMachine.Received(1).AttachAsync(
             Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
-            Arg.Is("test-access-token"),
-            Arg.Is("caller-001"),
-            Arg.Any<SharedDopPool>(),
+            Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<int>(),
-            Arg.Any<bool>(),
-            Arg.Any<int>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -219,12 +218,14 @@ public class PostScrapeOrchestratorTests : IDisposable
             .Returns("test-access-token");
         _tokenManager.AccountId.Returns("caller-001");
 
-        _machine.RunAsync(
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+        _cyclicalMachine.AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Throws(new InvalidOperationException("API error"));
+            Arg.Any<SongMachineSource>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("API error"));
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 

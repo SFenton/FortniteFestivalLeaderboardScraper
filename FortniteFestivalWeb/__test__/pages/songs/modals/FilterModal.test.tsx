@@ -490,7 +490,7 @@ describe('FilterModal', () => {
     const props = defaultProps();
     renderModal(props);
     // i18n: resetLabel renders as title div; button uses common.reset = 'Reset'
-    const resetBtn = screen.getAllByRole('button', { name: 'Reset' });
+    const resetBtn = Array.from(document.body.querySelectorAll('button')).filter(b => b.textContent === 'Reset');
     fireEvent.click(resetBtn[resetBtn.length - 1]!);
     expect(props.onReset).toHaveBeenCalledTimes(1);
   });

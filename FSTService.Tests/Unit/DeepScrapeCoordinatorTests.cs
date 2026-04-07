@@ -284,14 +284,12 @@ public class DeepScrapeCoordinatorTests
                 SongId = "s1", Instrument = "Solo_Guitar", Label = "Song One",
                 ValidCutoff = 1000, Wave2Start = 100,
                 ReportedPages = 500, InitialValidCount = 50,
-                Wave1Entries = new ConcurrentDictionary<int, List<LeaderboardEntry>>(),
             },
             new()
             {
                 SongId = "s2", Instrument = "Solo_Bass", Label = null,
                 ValidCutoff = 2000, Wave2Start = 50,
                 ReportedPages = 300, InitialValidCount = 10,
-                Wave1Entries = new ConcurrentDictionary<int, List<LeaderboardEntry>>(),
             },
         };
 

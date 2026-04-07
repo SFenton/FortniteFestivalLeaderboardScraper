@@ -18,6 +18,7 @@ vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsMobile: () => mockIsMobile,
   useIsMobileChrome: () => mockIsMobileChrome,
   useIsWideDesktop: () => mockIsWideDesktop,
+  useIsNarrow: () => false,
 }));
 
 // Controllable player data mock
@@ -459,8 +460,8 @@ describe('MetadataDemo', () => {
   it('renders metadata strips in desktop mode', () => {
     mockIsMobile = false;
     const { container } = wrap(<MetadataDemo />);
-    // scoreMeta style: gap 12px + flex-shrink: 0
-    const metaStrips = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.flexShrink === '0'
+    // scoreMeta style: gap 12px + flex-shrink: 1
+    const metaStrips = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.flexShrink === '1'
     );
     expect(metaStrips.length).toBeGreaterThanOrEqual(1);
   });

@@ -21,9 +21,9 @@ beforeEach(() => {
 
 describe('songSettings', () => {
   describe('getInstrumentSortModes', () => {
-    it('returns 7 instrument sort modes', () => {
+    it('returns 8 instrument sort modes', () => {
       const modes = INSTRUMENT_SORT_MODES;
-      expect(modes).toHaveLength(7);
+      expect(modes).toHaveLength(8);
       expect(modes.map(m => m.mode)).toContain('score');
       expect(modes.map(m => m.mode)).toContain('intensity');
       expect(modes.map(m => m.mode)).toContain('maxdistance');
@@ -64,8 +64,8 @@ describe('songSettings', () => {
   });
 
   describe('DEFAULT_METADATA_ORDER', () => {
-    it('contains 6 keys', () => {
-      expect(DEFAULT_METADATA_ORDER).toHaveLength(6);
+    it('contains 7 keys', () => {
+      expect(DEFAULT_METADATA_ORDER).toHaveLength(7);
     });
   });
 
@@ -131,11 +131,11 @@ describe('songSettings', () => {
       const oldOrder = ['score', 'percentage', 'percentile', 'stars', 'seasonachieved'];
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: oldOrder }));
       const loaded = loadSongSettings();
-      expect(loaded.metadataOrder).toEqual([...oldOrder, 'intensity']);
+      expect(loaded.metadataOrder).toEqual([...oldOrder, 'intensity', 'lastplayed']);
     });
 
     it('preserves existing metadataOrder when it already has all keys', () => {
-      const fullOrder = ['percentage', 'score', 'percentile', 'stars', 'seasonachieved', 'intensity'];
+      const fullOrder = ['percentage', 'score', 'percentile', 'stars', 'seasonachieved', 'intensity', 'lastplayed'];
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: fullOrder }));
       const loaded = loadSongSettings();
       expect(loaded.metadataOrder).toEqual(fullOrder);
@@ -146,7 +146,7 @@ describe('songSettings', () => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: oldOrder }));
       const loaded = loadSongSettings();
       expect(loaded.metadataOrder).not.toContain('maxdistance');
-      expect(loaded.metadataOrder).toEqual(['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity']);
+      expect(loaded.metadataOrder).toEqual(['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'lastplayed']);
     });
   });
 

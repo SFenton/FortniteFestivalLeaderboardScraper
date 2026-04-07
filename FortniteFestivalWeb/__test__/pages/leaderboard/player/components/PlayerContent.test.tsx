@@ -3,6 +3,7 @@ import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsProvider } from '../../../../../src/contexts/SettingsContext';
+import { FeatureFlagsProvider } from '../../../../../src/contexts/FeatureFlagsContext';
 import { FestivalProvider } from '../../../../../src/contexts/FestivalContext';
 import { FabSearchProvider } from '../../../../../src/contexts/FabSearchContext';
 import { SearchQueryProvider, useSearchQuery } from '../../../../../src/contexts/SearchQueryContext';
@@ -80,6 +81,7 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
   return (
     <QueryClientProvider client={qc}>
     <SettingsProvider>
+      <FeatureFlagsProvider>
       <FestivalProvider>
         <FabSearchProvider>
           <SearchQueryProvider>
@@ -93,6 +95,7 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
           </SearchQueryProvider>
         </FabSearchProvider>
       </FestivalProvider>
+      </FeatureFlagsProvider>
     </SettingsProvider>
     </QueryClientProvider>
   );

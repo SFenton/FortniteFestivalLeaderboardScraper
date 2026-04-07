@@ -142,7 +142,8 @@ export function findStatsTier(tiers: PlayerStatsTier[] | undefined, leeway: numb
 }
 
 /** Get the tiers array for a specific instrument from the stats response. */
-export function getInstrumentTiers(instruments: PlayerStatsInstrument[], inst: string): PlayerStatsTier[] | undefined {
+export function getInstrumentTiers(instruments: PlayerStatsInstrument[] | undefined, inst: string): PlayerStatsTier[] | undefined {
+  if (!instruments) return undefined;
   return instruments.find(i => i.instrument === inst)?.tiers;
 }
 
