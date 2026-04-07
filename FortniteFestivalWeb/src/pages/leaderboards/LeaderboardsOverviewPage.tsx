@@ -87,8 +87,8 @@ export default function LeaderboardsOverviewPage() {
   const playerQueries = useQueries({
     queries: player
       ? instruments.map((inst) => ({
-          queryKey: queryKeys.playerRanking(inst, player.accountId, leewayParam),
-          queryFn: () => api.getPlayerRanking(inst, player.accountId, leewayParam),
+          queryKey: queryKeys.playerRanking(inst, player.accountId, leewayParam, metric),
+          queryFn: () => api.getPlayerRanking(inst, player.accountId, leewayParam, metric),
         }))
       : [],
   });

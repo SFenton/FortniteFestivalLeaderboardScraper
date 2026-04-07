@@ -76,7 +76,7 @@ public interface IInstrumentDatabase : IDisposable
 
     // ── Leeway-aware ranking queries ─────────────────────────────────
     (List<AccountRankingDto> Entries, int TotalCount) GetRankingsAtLeeway(double leewayBucket, string rankBy = "adjusted", int page = 1, int pageSize = 50);
-    AccountRankingDto? GetAccountRankingAtLeeway(string accountId, double leewayBucket);
+    AccountRankingDto? GetAccountRankingAtLeeway(string accountId, double leewayBucket, string rankBy = "adjusted");
 
     // ── Cache pre-warming ────────────────────────────────────────────
     void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds);

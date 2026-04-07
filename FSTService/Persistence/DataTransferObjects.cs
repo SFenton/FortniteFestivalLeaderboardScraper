@@ -376,19 +376,19 @@ public sealed class AccountRankingDto
 
     public double RawSkillRating { get; init; }
     public double AdjustedSkillRating { get; init; }
-    public int AdjustedSkillRank { get; init; }
+    public int AdjustedSkillRank { get; set; }
 
     public double WeightedRating { get; init; }
-    public int WeightedRank { get; init; }
+    public int WeightedRank { get; set; }
 
     public double FcRate { get; init; }
-    public int FcRateRank { get; init; }
+    public int FcRateRank { get; set; }
 
     public long TotalScore { get; init; }
-    public int TotalScoreRank { get; init; }
+    public int TotalScoreRank { get; set; }
 
     public double MaxScorePercent { get; init; }
-    public int MaxScorePercentRank { get; init; }
+    public int MaxScorePercentRank { get; set; }
 
     public double AvgAccuracy { get; init; }
     public int FullComboCount { get; init; }

@@ -22,8 +22,8 @@ export const queryKeys = {
     ['rivalDetail', accountId, combo, rivalId] as const,
   rankings: (instrument: string, rankBy?: string, page?: number, pageSize?: number, leeway?: number | null) =>
     ['rankings', instrument, { rankBy, page, pageSize, leeway }] as const,
-  playerRanking: (instrument: string, accountId: string, leeway?: number | null) =>
-    ['playerRanking', instrument, accountId, { leeway }] as const,
+  playerRanking: (instrument: string, accountId: string, leeway?: number | null, rankBy?: string) =>
+    ['playerRanking', instrument, accountId, { leeway, rankBy }] as const,
   compositeRankings: (page?: number, pageSize?: number) =>
     ['compositeRankings', { page, pageSize }] as const,
   playerCompositeRanking: (accountId: string) =>

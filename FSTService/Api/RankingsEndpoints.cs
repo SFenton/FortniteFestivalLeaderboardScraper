@@ -91,14 +91,16 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string instrument,
             string accountId,
+            string? rankBy,
             double? leeway,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            var metric = rankBy ?? "adjusted";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var bucket = InstrumentDatabase.QuantizeBucket(leeway);
-            var ranking = db.GetAccountRankingAtLeeway(accountId, bucket);
+            var ranking = db.GetAccountRankingAtLeeway(accountId, bucket, metric);
             if (ranking is null)
                 return Results.NotFound(new { error = "Account not found in rankings for this instrument." });
 

@@ -67,10 +67,10 @@ export default function CompetePage() {
   const { data: playerRanking } = useQuery<PlayerRankingResult>({
     queryKey: isMulti
       ? queryKeys.playerComboRanking(accountId, comboId!, 'totalscore')
-      : queryKeys.playerRanking(previewInstrument ?? 'Solo_Guitar', accountId, leewayParam),
+      : queryKeys.playerRanking(previewInstrument ?? 'Solo_Guitar', accountId, leewayParam, 'totalscore'),
     queryFn: () => isMulti
       ? api.getPlayerComboRanking(accountId, comboId!, 'totalscore')
-      : api.getPlayerRanking(previewInstrument!, accountId, leewayParam),
+      : api.getPlayerRanking(previewInstrument!, accountId, leewayParam, 'totalscore'),
     enabled: !!accountId && !!previewInstrument,
   });
 

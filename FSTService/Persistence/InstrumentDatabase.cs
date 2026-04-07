@@ -848,45 +848,92 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     }
 
     /// <summary>
-    /// Single account ranking with leeway-aware metrics. Uses base ranks from account_rankings
-    /// (approximate at non-base leeway; exact ranks require the paginated endpoint or rank tier system).
+    /// Single account ranking with leeway-aware metrics and positional rank for the requested metric.
+    /// Computes an exact rank via COUNT for <paramref name="rankBy"/> at the given leeway bucket.
     /// </summary>
-    public AccountRankingDto? GetAccountRankingAtLeeway(string accountId, double leewayBucket)
+    public AccountRankingDto? GetAccountRankingAtLeeway(string accountId, double leewayBucket, string rankBy = "adjusted")
     {
+        var (effectiveCol, dir) = EffectiveRankByColumn(rankBy);
         using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText =
-            "SELECT ar.account_id, " +
-            "COALESCE(rd.songs_played, ar.songs_played), " +
-            "ar.total_charted_songs, " +
-            "COALESCE(rd.coverage, ar.coverage), " +
-            "ar.raw_skill_rating, " +
-            "COALESCE(rd.adjusted_skill, ar.adjusted_skill_rating), " +
-            "ar.adjusted_skill_rank, " +
-            "COALESCE(rd.weighted, ar.weighted_rating), " +
-            "ar.weighted_rank, " +
-            "COALESCE(rd.fc_rate, ar.fc_rate), " +
-            "ar.fc_rate_rank, " +
-            "COALESCE(rd.total_score, ar.total_score), " +
-            "ar.total_score_rank, " +
-            "COALESCE(rd.max_score_pct, ar.max_score_percent), " +
-            "ar.max_score_percent_rank, " +
-            "COALESCE(rd.avg_accuracy, ar.avg_accuracy), " +
-            "COALESCE(rd.full_combo_count, ar.full_combo_count), " +
-            "ar.avg_stars, " +
-            "COALESCE(rd.best_rank, ar.best_rank), " +
-            "ar.avg_rank, " +
-            "ar.computed_at, " +
-            "ar.raw_max_score_percent " +
-            "FROM account_rankings ar " +
-            "LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id " +
-            "AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket " +
-            "WHERE ar.instrument = @instrument AND ar.account_id = @accountId";
-        cmd.Parameters.AddWithValue("instrument", Instrument);
-        cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
-        cmd.Parameters.AddWithValue("accountId", accountId);
-        using var r = cmd.ExecuteReader();
-        return r.Read() ? ReadAccountRanking(r) : null;
+
+        // 1. Fetch the account's full ranking row with leeway-aware metrics.
+        AccountRankingDto? dto;
+        double playerMetricValue;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText =
+                "SELECT ar.account_id, " +
+                "COALESCE(rd.songs_played, ar.songs_played), " +
+                "ar.total_charted_songs, " +
+                "COALESCE(rd.coverage, ar.coverage), " +
+                "ar.raw_skill_rating, " +
+                "COALESCE(rd.adjusted_skill, ar.adjusted_skill_rating), " +
+                "ar.adjusted_skill_rank, " +
+                "COALESCE(rd.weighted, ar.weighted_rating), " +
+                "ar.weighted_rank, " +
+                "COALESCE(rd.fc_rate, ar.fc_rate), " +
+                "ar.fc_rate_rank, " +
+                "COALESCE(rd.total_score, ar.total_score), " +
+                "ar.total_score_rank, " +
+                "COALESCE(rd.max_score_pct, ar.max_score_percent), " +
+                "ar.max_score_percent_rank, " +
+                "COALESCE(rd.avg_accuracy, ar.avg_accuracy), " +
+                "COALESCE(rd.full_combo_count, ar.full_combo_count), " +
+                "ar.avg_stars, " +
+                "COALESCE(rd.best_rank, ar.best_rank), " +
+                "ar.avg_rank, " +
+                "ar.computed_at, " +
+                "ar.raw_max_score_percent " +
+                "FROM account_rankings ar " +
+                "LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id " +
+                "AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket " +
+                "WHERE ar.instrument = @instrument AND ar.account_id = @accountId";
+            cmd.Parameters.AddWithValue("instrument", Instrument);
+            cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
+            cmd.Parameters.AddWithValue("accountId", accountId);
+            using var r = cmd.ExecuteReader();
+            if (!r.Read()) return null;
+            dto = ReadAccountRanking(r);
+            // Extract the leeway-aware metric value for the requested rank-by column.
+            playerMetricValue = rankBy switch
+            {
+                "weighted" => dto.WeightedRating,
+                "fcrate" => dto.FcRate,
+                "totalscore" => (double)dto.TotalScore,
+                "maxscore" => dto.MaxScorePercent,
+                _ => dto.AdjustedSkillRating,
+            };
+        }
+
+        // 2. Compute exact positional rank: count accounts that sort above this player.
+        //    For ASC metrics (lower is better): count those with metric < player.
+        //    For DESC metrics (higher is better): count those with metric > player.
+        string comparison = dir == "ASC" ? "<" : ">";
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText =
+                "SELECT COUNT(*) FROM account_rankings ar " +
+                "LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id " +
+                "AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket " +
+                $"WHERE ar.instrument = @instrument AND {effectiveCol} {comparison} @playerValue";
+            cmd.Parameters.AddWithValue("instrument", Instrument);
+            cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
+            cmd.Parameters.AddWithValue("playerValue", playerMetricValue);
+            int aboveCount = Convert.ToInt32(cmd.ExecuteScalar());
+            int positionalRank = aboveCount + 1;
+
+            // Overwrite only the requested metric's rank field.
+            switch (rankBy)
+            {
+                case "weighted": dto.WeightedRank = positionalRank; break;
+                case "fcrate": dto.FcRateRank = positionalRank; break;
+                case "totalscore": dto.TotalScoreRank = positionalRank; break;
+                case "maxscore": dto.MaxScorePercentRank = positionalRank; break;
+                default: dto.AdjustedSkillRank = positionalRank; break;
+            }
+        }
+
+        return dto;
     }
 
     // ── Ranking deltas ───────────────────────────────────────────────

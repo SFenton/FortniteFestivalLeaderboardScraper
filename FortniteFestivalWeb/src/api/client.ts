@@ -208,10 +208,12 @@ export const api = {
       `/api/rankings/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 
-  getPlayerRanking: (instrument: InstrumentKey, accountId: string, leeway?: number | null) =>
-    get<AccountRankingDto>(
-      `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}${leeway != null ? `?leeway=${leeway}` : ''}`,
-    ),
+  getPlayerRanking: (instrument: InstrumentKey, accountId: string, leeway?: number | null, rankBy?: string) => {
+    const params = [leeway != null ? `leeway=${leeway}` : '', rankBy ? `rankBy=${encodeURIComponent(rankBy)}` : ''].filter(Boolean).join('&');
+    return get<AccountRankingDto>(
+      `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}${params ? `?${params}` : ''}`,
+    );
+  },
 
   getCompositeRankings: (page = 1, pageSize = 10) =>
     get<CompositePageResponse>(

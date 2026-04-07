@@ -102,8 +102,8 @@ export default function FullRankingsPage() {
   });
 
   const { data: playerRanking } = useQuery({
-    queryKey: player ? queryKeys.playerRanking(instrument, player.accountId, leewayParam) : ['disabled'],
-    queryFn: () => api.getPlayerRanking(instrument, player!.accountId, leewayParam),
+    queryKey: player ? queryKeys.playerRanking(instrument, player.accountId, leewayParam, metric) : ['disabled'],
+    queryFn: () => api.getPlayerRanking(instrument, player!.accountId, leewayParam, metric),
     enabled: !!player,
   });
 
