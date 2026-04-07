@@ -139,8 +139,16 @@ public sealed class ScrapeOrchestrator
                     }
                     hasData = true;
 
+                    // Deduplicate entries by account ID (same account can appear on
+                    // multiple pages when Epic's leaderboard shifts between fetches).
+                    // Keep the highest-score entry per account to match finalization semantics.
+                    var deduped = result.Entries
+                        .GroupBy(e => e.AccountId, StringComparer.OrdinalIgnoreCase)
+                        .Select(g => g.OrderByDescending(e => e.Score).First())
+                        .ToList();
+
                     // Stage all entries (page number estimated from position)
-                    var taggedEntries = result.Entries
+                    var taggedEntries = deduped
                         .Select((e, i) => (PageNum: i / 100, Entry: e))
                         .ToList();
                     _persistence.Meta.StageChunk(scrapeId, songId, result.Instrument, taggedEntries);

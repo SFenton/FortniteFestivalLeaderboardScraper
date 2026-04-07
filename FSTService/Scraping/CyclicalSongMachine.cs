@@ -345,6 +345,9 @@ public class CyclicalSongMachine
             songId => GatherCoreUsersForSong(songId, currentSeason),
             coreSeasonPrefixMap, accessToken, callerAccountId, opts, ct);
 
+        // Flush backfill summary counters so API shows progress mid-cycle
+        FlushBackfillSummaryCounters();
+
         // Mark core pass complete and release core-only attachments
         foreach (var (_, att) in _attachments)
         {
@@ -404,6 +407,9 @@ public class CyclicalSongMachine
         if (OwnsProgress)
             _progress.SetAdaptiveLimiter(null);
 
+        // Final flush of backfill summary counters before completing attachments
+        FlushBackfillSummaryCounters();
+
         CompleteFinishedAttachments();
 
         _log.LogInformation(
@@ -462,6 +468,15 @@ public class CyclicalSongMachine
 
                     foreach (var user in users)
                     {
+                        if (user.Purposes.HasFlag(WorkPurpose.Backfill))
+                        {
+                            // Report backfill progress per song (6 instruments checked)
+                            int pairsChecked = instruments.Count;
+                            bool found = result.EntriesUpdated > 0;
+                            for (int bi = 0; bi < pairsChecked; bi++)
+                                _syncTracker.ReportBackfillItem(user.AccountId, found);
+                        }
+
                         if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
                         {
                             _syncTracker.ReportHistoryItem(
@@ -657,7 +672,7 @@ public class CyclicalSongMachine
                 {
                     mergedChecked = new HashSet<(string, string)>(existing.AlreadyChecked ?? []);
                     if (user.AlreadyChecked is not null)
-                        mergedChecked.IntersectWith(user.AlreadyChecked);
+                        mergedChecked.UnionWith(user.AlreadyChecked);
                 }
 
                 merged[user.AccountId] = new UserWorkItem
@@ -822,6 +837,28 @@ public class CyclicalSongMachine
                 return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Flush in-memory backfill progress from <see cref="UserSyncProgressTracker"/> into
+    /// the <c>backfill_status</c> summary table so that API consumers see advancing counters.
+    /// </summary>
+    private void FlushBackfillSummaryCounters()
+    {
+        foreach (var (_, att) in _attachments)
+        {
+            if (att.IsCompleted) continue;
+            foreach (var user in att.Users)
+            {
+                if (!user.Purposes.HasFlag(WorkPurpose.Backfill)) continue;
+                var p = _syncTracker.GetProgress(user.AccountId);
+                if (p is null) continue;
+                int checked_ = Volatile.Read(ref p.ItemsCompleted);
+                int found = Volatile.Read(ref p.EntriesFound);
+                if (checked_ > 0)
+                    _persistence.Meta.UpdateBackfillProgress(user.AccountId, checked_, found);
+            }
+        }
     }
 
     // ─── Season windows ─────────────────────────────────────

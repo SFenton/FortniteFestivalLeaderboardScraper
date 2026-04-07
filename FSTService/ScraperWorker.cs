@@ -408,6 +408,15 @@ public sealed class ScraperWorker : BackgroundService
                 _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
             return;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Non-CDN persistence or data errors should not kill the host.
+            // Log and let the main loop retry next pass.
+            _log.LogError(ex,
+                "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
+                "Will retry next pass.");
+            return;
+        }
 
         // Observe the path generation task that ran in parallel with the scrape
         try { await pathGenTask; }

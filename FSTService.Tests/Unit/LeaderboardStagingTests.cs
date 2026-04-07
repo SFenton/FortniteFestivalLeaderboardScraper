@@ -371,6 +371,46 @@ public class LeaderboardStagingTests : IDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────
 
+    [Fact]
+    public void StageChunk_DuplicateAccountId_Throws()
+    {
+        // Verify that staging a chunk with duplicate account IDs causes a PK violation.
+        // This confirms the crash root cause — callers must dedupe before staging.
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var entries = new List<(int PageNum, LeaderboardEntry Entry)>
+        {
+            (0, new LeaderboardEntry { AccountId = "dup_acct", Score = 50000, Season = 1, Source = "scrape" }),
+            (1, new LeaderboardEntry { AccountId = "dup_acct", Score = 49000, Season = 1, Source = "scrape" }),
+        };
+
+        Assert.ThrowsAny<Exception>(() =>
+            _metaFixture.Db.StageChunk(scrapeId, "song1", TestInstrument, entries));
+    }
+
+    [Fact]
+    public void StageChunk_DedupedEntries_Succeeds()
+    {
+        // After deduplication (keeping highest score per account), staging should succeed.
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var rawEntries = new List<LeaderboardEntry>
+        {
+            new() { AccountId = "dup_acct", Score = 50000, Season = 1, Source = "scrape" },
+            new() { AccountId = "dup_acct", Score = 49000, Season = 1, Source = "scrape" },
+            new() { AccountId = "other", Score = 48000, Season = 1, Source = "scrape" },
+        };
+
+        var deduped = rawEntries
+            .GroupBy(e => e.AccountId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(e => e.Score).First())
+            .Select((e, i) => (PageNum: i / 100, Entry: e))
+            .ToList();
+
+        _metaFixture.Db.StageChunk(scrapeId, "song1", TestInstrument, deduped);
+
+        var count = _metaFixture.Db.GetStagedEntryCount(scrapeId, "song1", TestInstrument);
+        Assert.Equal(2, count);
+    }
+
     private static List<(int PageNum, LeaderboardEntry Entry)> MakeEntries(
         int page, int count, int startIndex = 0, int baseScore = 50000)
     {
