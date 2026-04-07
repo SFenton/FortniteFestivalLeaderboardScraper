@@ -337,8 +337,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             });
         }
 
-        // Act
-        var response = await _client.GetAsync($"/api/player/rankAcct?songId={song}");
+        // Act — leeway=0 triggers computed rank path (without leeway, stored rank is used)
+        var response = await _client.GetAsync($"/api/player/rankAcct?songId={song}&leeway=0");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -370,7 +370,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             });
         }
 
-        var response = await _client.GetAsync($"/api/player/rankFbAcct?songId={song}");
+        var response = await _client.GetAsync($"/api/player/rankFbAcct?songId={song}&leeway=0");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -398,8 +398,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             });
         }
 
-        // Get player rank from /api/player
-        var playerResponse = await _client.GetAsync($"/api/player/rcAcct2?songId={song}");
+        // Get player rank from /api/player — leeway=0 triggers computed rank
+        var playerResponse = await _client.GetAsync($"/api/player/rcAcct2?songId={song}&leeway=0");
         Assert.Equal(HttpStatusCode.OK, playerResponse.StatusCode);
         var playerJson = await playerResponse.Content.ReadFromJsonAsync<JsonElement>();
         var playerRank = playerJson.GetProperty("scores")[0].GetProperty("rk").GetInt32();
@@ -505,7 +505,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             });
         }
 
-        var response = await _client.GetAsync($"/api/player/fbPlayer?songId={song}");
+        var response = await _client.GetAsync($"/api/player/fbPlayer?songId={song}&leeway=0");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -1758,7 +1758,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         db.RecomputeAllRanks();
         db.ComputeSongStats();
         db.ComputeAccountRankings(totalChartedSongs: 1);
-        db.SnapshotRankHistory(topN: 100);
+        db.SnapshotRankHistory();
 
         var response = await _client.GetAsync("/api/rankings/Solo_Guitar/hist_p1/history?days=7");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

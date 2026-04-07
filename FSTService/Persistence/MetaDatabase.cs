@@ -797,14 +797,68 @@ public sealed class MetaDatabase : IMetaDatabase
         return (above, self, below);
     }
 
-    public void SnapshotCompositeRankHistory(int topN, IReadOnlySet<string>? additionalAccountIds = null, int retentionDays = 365)
+    public void SnapshotCompositeRankHistory(int retentionDays = 365)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var cutoff = today.AddDays(-retentionDays);
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO composite_rank_history (account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played) SELECT account_id, @today, composite_rank, composite_rating, instruments_played, total_songs_played FROM composite_rankings WHERE composite_rank <= @topN ON CONFLICT (account_id, snapshot_date) DO UPDATE SET composite_rank = EXCLUDED.composite_rank, composite_rating = EXCLUDED.composite_rating, instruments_played = EXCLUDED.instruments_played, total_songs_played = EXCLUDED.total_songs_played"; c.Parameters.AddWithValue("today", today); c.Parameters.AddWithValue("topN", topN); c.ExecuteNonQuery(); }
-        if (additionalAccountIds is { Count: > 0 }) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO composite_rank_history (account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played) SELECT account_id, @today, composite_rank, composite_rating, instruments_played, total_songs_played FROM composite_rankings WHERE account_id = @aid ON CONFLICT (account_id, snapshot_date) DO UPDATE SET composite_rank = EXCLUDED.composite_rank, composite_rating = EXCLUDED.composite_rating, instruments_played = EXCLUDED.instruments_played, total_songs_played = EXCLUDED.total_songs_played"; c.Parameters.Add("today", NpgsqlTypes.NpgsqlDbType.Date); c.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text); c.Prepare(); foreach (var aid in additionalAccountIds) { c.Parameters["today"].Value = today; c.Parameters["aid"].Value = aid; c.ExecuteNonQuery(); } }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM composite_rank_history WHERE snapshot_date < @cutoff"; c.Parameters.AddWithValue("cutoff", today.AddDays(-retentionDays)); c.ExecuteNonQuery(); }
+
+        // Step A: Build temp table of each account's latest composite snapshot
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = @"
+                CREATE TEMP TABLE _latest_composite ON COMMIT DROP AS
+                SELECT DISTINCT ON (account_id)
+                    account_id, composite_rank, composite_rating, instruments_played, total_songs_played
+                FROM composite_rank_history
+                ORDER BY account_id, snapshot_date DESC";
+            c.ExecuteNonQuery();
+        }
+
+        // Step B: Insert only changed or new accounts
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = @"
+                INSERT INTO composite_rank_history (account_id, snapshot_date, composite_rank,
+                    composite_rating, instruments_played, total_songs_played)
+                SELECT cr.account_id, @today, cr.composite_rank,
+                    cr.composite_rating, cr.instruments_played, cr.total_songs_played
+                FROM composite_rankings cr
+                LEFT JOIN _latest_composite lc ON lc.account_id = cr.account_id
+                WHERE lc.account_id IS NULL
+                  OR lc.composite_rank IS DISTINCT FROM cr.composite_rank
+                  OR lc.composite_rating IS DISTINCT FROM cr.composite_rating
+                  OR lc.instruments_played IS DISTINCT FROM cr.instruments_played
+                  OR lc.total_songs_played IS DISTINCT FROM cr.total_songs_played
+                ON CONFLICT (account_id, snapshot_date) DO UPDATE SET
+                    composite_rank = EXCLUDED.composite_rank,
+                    composite_rating = EXCLUDED.composite_rating,
+                    instruments_played = EXCLUDED.instruments_played,
+                    total_songs_played = EXCLUDED.total_songs_played";
+            c.Parameters.AddWithValue("today", today);
+            c.ExecuteNonQuery();
+        }
+
+        // Step C: Look-back trim retention
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = @"
+                DELETE FROM composite_rank_history crh
+                WHERE crh.snapshot_date < @cutoff
+                  AND EXISTS (
+                    SELECT 1 FROM composite_rank_history crh2
+                    WHERE crh2.account_id = crh.account_id
+                      AND crh2.snapshot_date > crh.snapshot_date
+                      AND crh2.snapshot_date <= @cutoff
+                  )";
+            c.Parameters.AddWithValue("cutoff", cutoff);
+            c.ExecuteNonQuery();
+        }
+
         tx.Commit();
     }
 

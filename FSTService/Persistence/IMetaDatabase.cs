@@ -137,7 +137,7 @@ public interface IMetaDatabase : IDisposable
     (List<CompositeRankingDto> Entries, int TotalCount) GetCompositeRankings(int page = 1, int pageSize = 50);
     CompositeRankingDto? GetCompositeRanking(string accountId);
     (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(string accountId, int radius = 5);
-    void SnapshotCompositeRankHistory(int topN, IReadOnlySet<string>? additionalAccountIds = null, int retentionDays = 365);
+    void SnapshotCompositeRankHistory(int retentionDays = 365);
 
     // ── Composite ranking deltas ─────────────────────────────────────
     void TruncateCompositeRankingDeltas();

@@ -431,7 +431,7 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Db.ComputeSongStats();
         Db.ComputeAccountRankings(totalChartedSongs: 1);
 
-        var count = Db.SnapshotRankHistory(topN: 10);
+        var count = Db.SnapshotRankHistory();
 
         Assert.Equal(2, count);
 
@@ -460,11 +460,10 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Db.ComputeSongStats();
         Db.ComputeAccountRankings(totalChartedSongs: 1);
 
-        // Top 2 + additional account p4 (rank 5)
-        var additional = new HashSet<string> { "p4" };
-        var count = Db.SnapshotRankHistory(topN: 2, additionalAccountIds: additional);
+        // All accounts are now snapshotted (sparse change-detection)
+        var count = Db.SnapshotRankHistory();
 
-        Assert.Equal(3, count); // top 2 + p4
+        Assert.True(count >= 2); // all accounts with data
         var p4History = Db.GetRankHistory("p4", days: 1);
         Assert.NotEmpty(p4History);
         Assert.NotNull(p4History[0].TotalScore);
@@ -815,7 +814,7 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
             ("p2", -3.0, 10, 0.01, 0.06, 0.8, 50000, 0.95, 8, 95.5, 1, 0.5),
         ]);
 
-        Db.SnapshotRankHistoryDeltas(topN: 10);
+        Db.SnapshotRankHistoryDeltas();
 
         // p2 should have rank deltas if its effective rank changed
         var p2Deltas = Db.GetTodayRankDeltas("p2");
@@ -834,7 +833,7 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
 
         // No ranking_deltas written → no buckets → no history deltas
         Db.TruncateRankingDeltas();
-        Db.SnapshotRankHistoryDeltas(topN: 10);
+        Db.SnapshotRankHistoryDeltas();
 
         var deltas = Db.GetTodayRankDeltas("p1");
         Assert.Empty(deltas);
@@ -861,14 +860,14 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Db.RecomputeAllRanks();
         Db.ComputeSongStats();
         Db.ComputeAccountRankings(totalChartedSongs: 1);
-        Db.SnapshotRankHistory(topN: 10);
+        Db.SnapshotRankHistory();
 
         // Write ranking deltas at bucket -3.0
         Db.TruncateRankingDeltas();
         Db.WriteRankingDeltas([
             ("p1", -3.0, 10, 0.01, 0.06, 0.8, 50000, 0.95, 8, 95.5, 1, 0.5),
         ]);
-        Db.SnapshotRankHistoryDeltas(topN: 10);
+        Db.SnapshotRankHistoryDeltas();
 
         // Query merged history at bucket -3.0
         var history = Db.GetRankHistoryAtLeeway("p1", -3.0, days: 1);
@@ -883,7 +882,7 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Db.RecomputeAllRanks();
         Db.ComputeSongStats();
         Db.ComputeAccountRankings(totalChartedSongs: 1);
-        Db.SnapshotRankHistory(topN: 10);
+        Db.SnapshotRankHistory();
 
         // No ranking_deltas at this bucket
         var history = Db.GetRankHistoryAtLeeway("p1", -3.0, days: 1);

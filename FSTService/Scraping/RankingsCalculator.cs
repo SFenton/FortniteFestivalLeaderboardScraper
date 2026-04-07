@@ -23,9 +23,6 @@ namespace FSTService.Scraping;
 /// </summary>
 public sealed class RankingsCalculator
 {
-    private const int HistoryTopN = 10_000;
-
-    /// <summary>Number of songs at which the Bayesian adjustment reaches 50% weight.</summary>
     private const int CredibilityThreshold = 50;
 
     /// <summary>The assumed population median percentile (0.5 = 50th percentile).</summary>
@@ -65,7 +62,6 @@ public sealed class RankingsCalculator
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
         var instruments = _persistence.GetInstrumentKeys();
-        var registeredIds = _metaDb.GetRegisteredAccountIds();
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
@@ -184,13 +180,13 @@ public sealed class RankingsCalculator
         {
             ct.ThrowIfCancellationRequested();
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            db.SnapshotRankHistory(HistoryTopN, registeredIds);
-            db.SnapshotRankHistoryDeltas(HistoryTopN, registeredIds);
+            db.SnapshotRankHistory();
+            db.SnapshotRankHistoryDeltas();
             _progress.ReportPhaseItemComplete();
         }, ct)).ToList();
 
         await Task.WhenAll(snapshotTasks);
-        _metaDb.SnapshotCompositeRankHistory(HistoryTopN, registeredIds);
+        _metaDb.SnapshotCompositeRankHistory();
         _progress.ReportPhaseItemComplete();
 
         // ── Phase 5: All-combo rankings ──

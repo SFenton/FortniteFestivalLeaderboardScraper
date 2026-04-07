@@ -507,6 +507,18 @@ export type RankHistoryResponse = {
   instrument: string;
   accountId: string;
   history: RankHistoryEntry[];
+  /** Present only for leeway-filtered requests — sparse rank delta entries. */
+  deltas?: RankHistoryDeltaEntry[];
+};
+
+/** Daily rank delta entry for a specific leeway bucket. */
+export type RankHistoryDeltaEntry = {
+  snapshotDate: string;
+  adjustedRankDelta: number;
+  weightedRankDelta: number;
+  fcRateRankDelta: number;
+  totalScoreRankDelta: number;
+  maxScoreRankDelta: number;
 };
 
 /** Per-instrument ranking entry as returned by /api/rankings/{instrument}. */

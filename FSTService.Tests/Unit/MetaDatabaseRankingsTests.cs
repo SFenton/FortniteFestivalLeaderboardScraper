@@ -115,9 +115,9 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             new CompositeRankingDto { AccountId = "p2", InstrumentsPlayed = 1, TotalSongsPlayed = 5, CompositeRating = 0.2, CompositeRank = 2 },
         ]);
 
-        Db.SnapshotCompositeRankHistory(topN: 1); // Only top 1
+        Db.SnapshotCompositeRankHistory(); // All accounts with data
 
-        // p1 (rank 1) should be snapshotted, p2 (rank 2) should not be (unless additional)
+        // Both p1 and p2 should be snapshotted (sparse change-detection, no topN filter)
     }
 
     [Fact]
@@ -128,8 +128,8 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             new CompositeRankingDto { AccountId = "p2", InstrumentsPlayed = 1, TotalSongsPlayed = 5, CompositeRating = 0.2, CompositeRank = 2 },
         ]);
 
-        Db.SnapshotCompositeRankHistory(topN: 0, additionalAccountIds: new HashSet<string> { "p2" });
-        // p2 should be included as additional even though top 0
+        Db.SnapshotCompositeRankHistory();
+        // All accounts are included (no topN filtering)
     }
 
     // ═══════════════════════════════════════════════════════════

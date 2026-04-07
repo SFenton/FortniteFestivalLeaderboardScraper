@@ -3,6 +3,7 @@ import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import type { RankHistoryEntry, RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { fillRankHistoryGaps, mergeRankHistoryWithDeltas } from '../../utils/fillRankHistoryGaps';
 
 export type RankHistoryChartPoint = {
   date: string;
@@ -101,7 +102,10 @@ export function useRankHistory(
 
   const chartData: RankHistoryChartPoint[] = useMemo(() => {
     if (!data?.history) return [];
-    return data.history.map((entry) => {
+    const filled = data.deltas
+      ? mergeRankHistoryWithDeltas(data.history, data.deltas)
+      : fillRankHistoryGaps(data.history);
+    return filled.map((entry) => {
       const d = new Date(entry.snapshotDate);
       return {
         date: entry.snapshotDate,
@@ -143,7 +147,10 @@ export function useRankHistoryAll(
       const q = queries[i];
       const data = q?.data;
       const chartData: RankHistoryChartPoint[] = data?.history
-        ? data.history.map((entry) => {
+        ? (data.deltas
+            ? mergeRankHistoryWithDeltas(data.history, data.deltas)
+            : fillRankHistoryGaps(data.history)
+          ).map((entry) => {
             const d = new Date(entry.snapshotDate);
             return {
               date: entry.snapshotDate,

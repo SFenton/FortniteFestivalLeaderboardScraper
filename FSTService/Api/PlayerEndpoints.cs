@@ -79,9 +79,14 @@ public static partial class ApiEndpoints
                 }
             }
 
+            // When leeway is null, skip expensive CTE window-function ranking queries;
+            // use stored rank from leaderboard_entries instead (~500ms → ~0ms).
+            // When leeway is provided but max scores aren't built yet, fall back to unfiltered.
             var rankings = maxScoresByInstrument is not null
                 ? persistence.GetPlayerRankingsFiltered(accountId, maxScoresByInstrument, songId, instrumentFilter)
-                : persistence.GetPlayerRankings(accountId, songId, instrumentFilter);
+                : leeway.HasValue
+                    ? persistence.GetPlayerRankings(accountId, songId, instrumentFilter)
+                    : new Dictionary<(string SongId, string Instrument), int>();
 
             var population = maxScoresByInstrument is not null
                 ? persistence.GetFilteredPopulation(maxScoresByInstrument, instrumentFilter)
@@ -270,7 +275,7 @@ public static partial class ApiEndpoints
 
                         var result = await cyclicalMachine.AttachAsync(
                             [user], chartedSongIds, seasonWindows: [],
-                            isHighPriority: false, ct: CancellationToken.None);
+                            SongMachineSource.PlayerTrackCover, isHighPriority: false, ct: CancellationToken.None);
 
                         // Per-user completion actions
                         metaDb.CompleteBackfill(accountId);
@@ -415,6 +420,7 @@ public static partial class ApiEndpoints
             string accountId,
             IMetaDatabase metaDb,
             GlobalLeaderboardPersistence persistence,
+            IPathDataStore pathStore,
             ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
@@ -433,8 +439,18 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
-            // Return tiered stats if available, else fall back to legacy flat stats
+            // Return tiered stats if available, else compute on-demand for unregistered players
             var tierRows = metaDb.GetPlayerStatsTiers(accountId);
+            if (tierRows.Count == 0)
+            {
+                var allScores = persistence.GetPlayerProfile(accountId);
+                if (allScores.Count > 0)
+                {
+                    ComputeAndStorePlayerStats(accountId, allScores, pathStore, persistence, metaDb);
+                    tierRows = metaDb.GetPlayerStatsTiers(accountId);
+                }
+            }
+
             if (tierRows.Count > 0)
             {
                 int totalSongs = persistence.GetTotalSongCount();
@@ -581,5 +597,63 @@ public static partial class ApiEndpoints
         })
         .WithTags("Players")
         .RequireRateLimiting("public");
+    }
+
+    /// <summary>
+    /// Compute and persist player stats tiers on-demand for unregistered players
+    /// who have leaderboard data but no cached stats.
+    /// </summary>
+    private static void ComputeAndStorePlayerStats(
+        string accountId,
+        List<PlayerScoreDto> allScores,
+        IPathDataStore pathStore,
+        GlobalLeaderboardPersistence persistence,
+        IMetaDatabase metaDb)
+    {
+        var allMaxScores = pathStore.GetAllMaxScores();
+        var instrumentKeys = persistence.GetInstrumentKeys();
+        int totalSongs = persistence.GetTotalSongCount();
+        var population = metaDb.GetAllLeaderboardPopulation();
+
+        var byInstrument = new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in allScores)
+        {
+            if (!byInstrument.TryGetValue(s.Instrument, out var list))
+            {
+                list = new List<PlayerScoreDto>();
+                byInstrument[s.Instrument] = list;
+            }
+            list.Add(s);
+        }
+
+        var rows = new List<PlayerStatsTiersRow>();
+        var perInstrumentTiers = new Dictionary<string, List<PlayerStatsTier>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var inst in instrumentKeys)
+        {
+            if (!byInstrument.TryGetValue(inst, out var scores) || scores.Count == 0) continue;
+            var tiers = PlayerStatsCalculator.ComputeTiers(scores, allMaxScores, inst, totalSongs, population);
+            perInstrumentTiers[inst] = tiers;
+            rows.Add(new PlayerStatsTiersRow
+            {
+                AccountId = accountId,
+                Instrument = inst,
+                TiersJson = JsonSerializer.Serialize(tiers),
+            });
+        }
+
+        if (perInstrumentTiers.Count > 0)
+        {
+            var overallTiers = PlayerStatsCalculator.ComputeOverallTiers(perInstrumentTiers, totalSongs);
+            rows.Add(new PlayerStatsTiersRow
+            {
+                AccountId = accountId,
+                Instrument = "Overall",
+                TiersJson = JsonSerializer.Serialize(overallTiers),
+            });
+        }
+
+        if (rows.Count > 0)
+            metaDb.UpsertPlayerStatsTiersBatch(rows);
     }
 }

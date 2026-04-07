@@ -175,7 +175,7 @@ public sealed class RankingsEndpointsTests : IDisposable
     {
         SeedAndComputeRankings("Solo_Guitar", songCount: 1, playersPerSong: 3);
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-        db.SnapshotRankHistory(topN: 10);
+        db.SnapshotRankHistory();
 
         var history = db.GetRankHistory("p0", days: 7);
         Assert.Single(history);

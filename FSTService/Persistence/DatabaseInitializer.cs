@@ -208,6 +208,10 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS rank_history_pro_guitar     PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS rank_history_pro_bass       PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralBass');
 
+        -- Efficient change-detection: latest snapshot per (instrument, account)
+        CREATE INDEX IF NOT EXISTS ix_rh_latest
+            ON rank_history (instrument, account_id, snapshot_date DESC);
+
         -- =====================================================================
         -- VALID SCORE OVERRIDES (partitioned by instrument)
         -- =====================================================================
@@ -678,6 +682,10 @@ public static class DatabaseInitializer
             PRIMARY KEY (account_id, snapshot_date)
         );
 
+        -- Efficient change-detection: latest composite snapshot per account
+        CREATE INDEX IF NOT EXISTS ix_crh_latest
+            ON composite_rank_history (account_id, snapshot_date DESC);
+
         -- =====================================================================
         -- COMBO LEADERBOARD (from fst-meta.db)
         -- =====================================================================
@@ -791,6 +799,10 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS rank_history_deltas_solo_vocals    PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_guitar     PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_bass       PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralBass');
+
+        -- Efficient change-detection: latest delta per (instrument, bucket, account)
+        CREATE INDEX IF NOT EXISTS ix_rhd_latest
+            ON rank_history_deltas (instrument, leeway_bucket, account_id, snapshot_date DESC);
 
         -- =====================================================================
         -- COMPOSITE RANKING DELTAS (leeway-responsive composite rankings)

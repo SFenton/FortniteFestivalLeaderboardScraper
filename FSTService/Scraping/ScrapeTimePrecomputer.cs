@@ -112,21 +112,6 @@ public sealed class ScrapeTimePrecomputer
         _progress.SetSubOperation("static_data");
         PrecomputeFirstSeen();
 
-        // ── Cleanup: evict player entries for unregistered accounts ─
-        var registeredSet = new HashSet<string>(registeredIds, StringComparer.OrdinalIgnoreCase);
-        var removed = 0;
-        foreach (var key in _store.Keys)
-        {
-            if (key.StartsWith("player:", StringComparison.Ordinal)
-                && !registeredSet.Contains(ExtractAccountId(key)))
-            {
-                _store.TryRemove(key, out _);
-                removed++;
-            }
-        }
-        if (removed > 0)
-            _log.LogInformation("Evicted {Count} stale precomputed player entries.", removed);
-
         // ── Flush to PostgreSQL and free RAM ─────────────────────
         _log.LogInformation("Flushing {Count} precomputed responses to PostgreSQL...", _store.Count);
         _metaDb.ClearCachedResponses();

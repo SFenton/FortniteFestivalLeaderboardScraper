@@ -154,8 +154,9 @@ public static partial class ApiEndpoints
             if (leeway is not null)
             {
                 var bucket = InstrumentDatabase.QuantizeBucket(leeway);
-                var history = db.GetRankHistoryAtLeeway(accountId, bucket, days ?? 30);
-                return Results.Ok(new { instrument, accountId, history });
+                var history = db.GetRankHistory(accountId, days ?? 30);
+                var deltas = db.GetRankHistoryDeltas(accountId, bucket, days ?? 30);
+                return Results.Ok(new { instrument, accountId, history, deltas });
             }
             var baseHistory = db.GetRankHistory(accountId, days ?? 30);
             return Results.Ok(new { instrument, accountId, history = baseHistory });

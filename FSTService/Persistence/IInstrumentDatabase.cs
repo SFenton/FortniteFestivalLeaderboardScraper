@@ -65,11 +65,12 @@ public interface IInstrumentDatabase : IDisposable
 
     // ── Account rankings ─────────────────────────────────────────────
     int ComputeAccountRankings(int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, double thresholdMultiplier = 1.05);
-    int SnapshotRankHistory(int topN, IReadOnlySet<string>? additionalAccountIds = null, int retentionDays = 365);
+    int SnapshotRankHistory(int retentionDays = 365);
     (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(string rankBy = "adjusted", int page = 1, int pageSize = 50);
     AccountRankingDto? GetAccountRanking(string accountId);
     (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore");
     List<RankHistoryDto> GetRankHistory(string accountId, int days = 30);
+    List<RankHistoryDeltaDto> GetRankHistoryDeltas(string accountId, double leewayBucket, int days = 30);
     int GetRankedAccountCount();
     List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries();
     List<(string AccountId, double AdjustedSkillRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> GetAllRankingSummariesFull();
@@ -98,7 +99,7 @@ public interface IInstrumentDatabase : IDisposable
     List<(double LeewayBucket, int DeltaAdj, int DeltaWgt, int DeltaFc, int DeltaTs, int DeltaMs)> GetTodayRankDeltas(string accountId);
 
     // ── Rank history deltas ──────────────────────────────────────────
-    void SnapshotRankHistoryDeltas(int topN, IReadOnlySet<string>? additionalAccountIds = null);
+    void SnapshotRankHistoryDeltas(int retentionDays = 365);
     List<RankHistoryDto> GetRankHistoryAtLeeway(string accountId, double leewayBucket, int days = 30);
 
     // ── Maintenance ──────────────────────────────────────────────────
