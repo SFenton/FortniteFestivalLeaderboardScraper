@@ -1,4 +1,6 @@
 using FSTService.Scraping;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FSTService.Tests.Unit;
 
@@ -926,5 +928,84 @@ public class ScrapeProgressTrackerTests
 
         var progress = _tracker.GetProgressResponse();
         Assert.Null(progress.Current?.Attachments);
+    }
+
+    // ─── PostScrape per-user progress hydration ─────────────
+
+    [Fact]
+    public void UpdateAttachmentUserProgress_PostScrapeUsersGetNonZeroCounters()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+
+        var users = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.PostScrape, AllTimeNeeded = true } };
+        _tracker.RegisterAttachment("att-1", SongMachineSource.PostScrape, users, songCount: 10);
+
+        // Simulate sync tracker having PostScrape progress
+        var syncTracker = new UserSyncProgressTracker(
+            new Api.NotificationService(NullLogger<Api.NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+        syncTracker.BeginPostScrape("user1", 60);
+        syncTracker.ReportPostScrapeWork("user1", 12, 3);
+
+        _tracker.UpdateAttachmentUserProgress("att-1", syncTracker);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.NotNull(progress.Current?.Attachments);
+        var att = progress.Current!.Attachments![0];
+        var user = att.Users[0];
+        Assert.Equal("PostScrape", user.Phase);
+        Assert.Equal(60, user.TotalItems);
+        Assert.Equal(12, user.ItemsCompleted);
+        Assert.Equal(3, user.EntriesFound);
+    }
+
+    [Fact]
+    public void UserSyncProgressTracker_BeginPostScrape_SetsPhaseAndCounters()
+    {
+        var syncTracker = new UserSyncProgressTracker(
+            new Api.NotificationService(NullLogger<Api.NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+
+        syncTracker.BeginPostScrape("user1", 120);
+
+        var p = syncTracker.GetProgress("user1");
+        Assert.NotNull(p);
+        Assert.Equal(SyncProgressPhase.PostScrape, p!.Phase);
+        Assert.Equal(120, p.TotalItems);
+        Assert.Equal(0, p.ItemsCompleted);
+        Assert.Equal(0, p.EntriesFound);
+    }
+
+    [Fact]
+    public void UserSyncProgressTracker_IsActiveHigherPriority_ReturnsTrueForBackfill()
+    {
+        var syncTracker = new UserSyncProgressTracker(
+            new Api.NotificationService(NullLogger<Api.NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+
+        syncTracker.BeginBackfill("user1", 100);
+        Assert.True(syncTracker.IsActiveHigherPriority("user1"));
+    }
+
+    [Fact]
+    public void UserSyncProgressTracker_IsActiveHigherPriority_ReturnsFalseForPostScrape()
+    {
+        var syncTracker = new UserSyncProgressTracker(
+            new Api.NotificationService(NullLogger<Api.NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+
+        syncTracker.BeginPostScrape("user1", 60);
+        Assert.False(syncTracker.IsActiveHigherPriority("user1"));
+    }
+
+    [Fact]
+    public void UserSyncProgressTracker_IsActiveHigherPriority_ReturnsFalseForUnknown()
+    {
+        var syncTracker = new UserSyncProgressTracker(
+            new Api.NotificationService(NullLogger<Api.NotificationService>.Instance),
+            NullLogger<UserSyncProgressTracker>.Instance);
+
+        Assert.False(syncTracker.IsActiveHigherPriority("nobody"));
     }
 }

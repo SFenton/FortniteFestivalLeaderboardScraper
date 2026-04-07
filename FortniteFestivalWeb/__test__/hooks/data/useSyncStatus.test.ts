@@ -14,7 +14,11 @@ vi.mock('../../../src/api/client', () => ({
 }));
 
 const mockSend = vi.fn();
-const mockSubscribe = vi.fn(() => () => {});
+const wsHandlers = new Set<(msg: any) => void>();
+const mockSubscribe = vi.fn((handler: (msg: any) => void) => {
+  wsHandlers.add(handler);
+  return () => { wsHandlers.delete(handler); };
+});
 vi.mock('../../../src/hooks/data/useAppWebSocket', () => ({
   useAppWebSocket: () => ({
     connected: true,
@@ -38,6 +42,7 @@ describe('useSyncStatus', () => {
     mockTrackPlayer.mockReset();
     mockTrackPlayer.mockResolvedValue(undefined as any);
     mockSend.mockReset();
+    wsHandlers.clear();
   });
   afterEach(() => { vi.useRealTimers(); });
 
@@ -181,5 +186,33 @@ describe('useSyncStatus', () => {
     expect(mockSend).toHaveBeenCalledWith(
       JSON.stringify({ action: 'unsubscribe_sync' }),
     );
+  });
+
+  // ── PostScrape phase via WebSocket ──
+
+  it('maps postscrape WS phase to syncing state', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    // Dispatch a postscrape WS message through all registered handlers
+    await act(async () => {
+      const msg = {
+        type: 'sync_progress',
+        accountId: 'acc1',
+        phase: 'postscrape',
+        itemsCompleted: 30,
+        totalItems: 100,
+        entriesFound: 5,
+      } as any;
+      wsHandlers.forEach(h => h(msg));
+    });
+
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('postscrape');
+    expect(result.current.itemsCompleted).toBe(30);
+    expect(result.current.totalItems).toBe(100);
+    expect(result.current.entriesFound).toBe(5);
+    expect(result.current.progress).toBeCloseTo(0.3);
   });
 });

@@ -78,11 +78,12 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         backfill: SyncPhase.Backfill,
         history: SyncPhase.History,
         rivals: SyncPhase.Rivals,
+        postscrape: SyncPhase.PostScrape,
         complete: SyncPhase.Complete,
         error: SyncPhase.Error,
       };
       const phase = phaseMap[sp.phase] ?? SyncPhase.Idle;
-      const isSyncing = phase === SyncPhase.Backfill || phase === SyncPhase.History || phase === SyncPhase.Rivals;
+      const isSyncing = phase === SyncPhase.Backfill || phase === SyncPhase.History || phase === SyncPhase.Rivals || phase === SyncPhase.PostScrape;
       const phaseProgress = sp.totalItems > 0 ? sp.itemsCompleted / sp.totalItems : 0;
 
       if (isSyncing) wasSyncingRef.current = true;
@@ -276,6 +277,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   const clearCompleted = useCallback(() => setJustCompleted(false), []);
 
   // Combined progress (0..1) across all 3 phases (equally weighted at 1/3 each)
+  // PostScrape is standalone and uses its own itemsCompleted/totalItems ratio
   const progress = useMemo(() => {
     switch (syncState.phase) {
       case SyncPhase.Backfill:
@@ -284,12 +286,14 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         return (1 / 3) + syncState.historyProgress * (1 / 3);
       case SyncPhase.Rivals:
         return (2 / 3) + syncState.rivalsProgress * (1 / 3);
+      case SyncPhase.PostScrape:
+        return syncState.totalItems > 0 ? syncState.itemsCompleted / syncState.totalItems : 0;
       case SyncPhase.Complete:
         return 1;
       default:
         return 0;
     }
-  }, [syncState.phase, syncState.backfillProgress, syncState.historyProgress, syncState.rivalsProgress]);
+  }, [syncState.phase, syncState.backfillProgress, syncState.historyProgress, syncState.rivalsProgress, syncState.itemsCompleted, syncState.totalItems]);
 
   return useMemo(
     () => ({ ...syncState, progress, justCompleted, clearCompleted }),

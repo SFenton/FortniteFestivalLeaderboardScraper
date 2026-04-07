@@ -102,6 +102,7 @@ export enum SyncPhase {
   Backfill = 'backfill',
   History = 'history',
   Rivals = 'rivals',
+  PostScrape = 'postscrape',
   Complete = 'complete',
   Error = 'error',
 }

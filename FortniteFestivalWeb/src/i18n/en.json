@@ -119,6 +119,7 @@
     "syncStep_backfill": "Checking scores",
     "syncStep_history": "Building history",
     "syncStep_rivals": "Computing rivals",
+    "syncStep_postscrape": "Refreshing scores",
     "syncStepOf": "Step {{step}} of {{totalSteps}}",
     "syncNewScores": "{{count}} new scores found",
     "syncSeasons": "{{count}} seasons queried",

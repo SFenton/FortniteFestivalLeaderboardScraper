@@ -70,6 +70,19 @@ public sealed class UserSyncProgressTracker
         PushProgress(accountId, p);
     }
 
+    public void BeginPostScrape(string accountId, int totalItems)
+    {
+        var p = GetOrCreate(accountId);
+        p.Phase = SyncProgressPhase.PostScrape;
+        p.ItemsCompleted = 0;
+        p.TotalItems = totalItems;
+        p.EntriesFound = 0;
+        p.CurrentSongName = null;
+        p.StartedAtUtc = DateTime.UtcNow;
+        p.Stopwatch.Restart();
+        PushProgress(accountId, p);
+    }
+
     // ─── Report item completion ─────────────────────────────
 
     public void ReportBackfillItem(string accountId, bool entryFound, string? currentSongName = null)
@@ -97,6 +110,26 @@ public sealed class UserSyncProgressTracker
         Interlocked.Increment(ref p.ItemsCompleted);
         Volatile.Write(ref p.RivalsFound, rivalsFound);
         PushProgressIfThrottled(accountId, p);
+    }
+
+    public void ReportPostScrapeWork(string accountId, int completedUnits, int entriesFound, string? currentSongName = null)
+    {
+        if (!_progress.TryGetValue(accountId, out var p)) return;
+        Interlocked.Add(ref p.ItemsCompleted, completedUnits);
+        if (entriesFound > 0) Interlocked.Add(ref p.EntriesFound, entriesFound);
+        if (currentSongName is not null) p.CurrentSongName = currentSongName;
+        PushProgressIfThrottled(accountId, p);
+    }
+
+    /// <summary>
+    /// Returns true if the account has an active phase that takes precedence over PostScrape
+    /// (Backfill, History, or Rivals). Used to avoid clobbering registration sync state.
+    /// </summary>
+    public bool IsActiveHigherPriority(string accountId)
+    {
+        if (!_progress.TryGetValue(accountId, out var p)) return false;
+        var phase = p.Phase;
+        return phase is SyncProgressPhase.Backfill or SyncProgressPhase.History or SyncProgressPhase.Rivals;
     }
 
     // ─── Terminal states ────────────────────────────────────
@@ -200,6 +233,7 @@ public enum SyncProgressPhase
     Backfill,
     History,
     Rivals,
+    PostScrape,
     Complete,
     Error,
 }

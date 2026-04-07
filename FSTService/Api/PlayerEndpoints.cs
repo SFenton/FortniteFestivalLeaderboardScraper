@@ -352,6 +352,10 @@ public static partial class ApiEndpoints
             int? liveRivalsCombos = null;
             int? liveRivalsFound = null;
             string? liveCurrentSongName = null;
+            int? livePostScrapeCompleted = null;
+            int? livePostScrapeTotal = null;
+            int? livePostScrapeEntries = null;
+            string? livePostScrapeSongName = null;
 
             if (liveProgress is not null)
             {
@@ -373,6 +377,13 @@ public static partial class ApiEndpoints
                 {
                     liveRivalsCombos = Volatile.Read(ref liveProgress.ItemsCompleted);
                     liveRivalsFound = Volatile.Read(ref liveProgress.RivalsFound);
+                }
+                else if (phase == SyncProgressPhase.PostScrape)
+                {
+                    livePostScrapeCompleted = Volatile.Read(ref liveProgress.ItemsCompleted);
+                    livePostScrapeTotal = liveProgress.TotalItems;
+                    livePostScrapeEntries = Volatile.Read(ref liveProgress.EntriesFound);
+                    livePostScrapeSongName = liveProgress.CurrentSongName;
                 }
             }
 
@@ -409,6 +420,14 @@ public static partial class ApiEndpoints
                     rivalsFound = liveRivalsFound ?? rivals.RivalsFound,
                     startedAt = rivals.StartedAt,
                     completedAt = rivals.CompletedAt,
+                },
+                postScrape = livePostScrapeTotal is null ? null : new
+                {
+                    status = "in_progress",
+                    itemsCompleted = livePostScrapeCompleted ?? 0,
+                    totalItems = livePostScrapeTotal.Value,
+                    entriesFound = livePostScrapeEntries ?? 0,
+                    currentSongName = livePostScrapeSongName,
                 },
             });
         })

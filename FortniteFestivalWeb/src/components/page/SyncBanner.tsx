@@ -28,6 +28,7 @@ function getStepInfo(phase: SyncPhase): { step: number; totalSteps: number } {
     case 'backfill': return { step: 1, totalSteps: 3 };
     case 'history': return { step: 2, totalSteps: 3 };
     case 'rivals': return { step: 3, totalSteps: 3 };
+    case 'postscrape': return { step: 0, totalSteps: 0 };
     default: return { step: 0, totalSteps: 3 };
   }
 }
@@ -50,7 +51,10 @@ const SyncBanner = memo(function SyncBanner({
   const { t } = useTranslation();
   const s = useSyncBannerStyles();
   const { step, totalSteps } = getStepInfo(phase);
-  const unified = getUnifiedProgress(phase, backfillProgress, historyProgress, rivalsProgress);
+  const isPostScrape = phase === 'postscrape';
+  const unified = isPostScrape
+    ? (totalItems > 0 ? itemsCompleted / totalItems : 0)
+    : getUnifiedProgress(phase, backfillProgress, historyProgress, rivalsProgress);
   const pct = Math.round(unified * 100);
   const isIndeterminate = itemsCompleted === 0 && totalItems === 0;
 
@@ -94,6 +98,9 @@ const SyncBanner = memo(function SyncBanner({
         )}
         {phase === 'rivals' && rivalsFound > 0 && (
           <span>{t('player.syncRivalsFound', { count: rivalsFound })}</span>
+        )}
+        {phase === 'postscrape' && entriesFound > 0 && (
+          <span>{t('player.syncNewScores', { count: entriesFound })}</span>
         )}
       </div>
 

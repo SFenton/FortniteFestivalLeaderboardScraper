@@ -112,7 +112,7 @@ export type ShopSnapshotMessage = {
 export type SyncProgressMessage = {
   type: 'sync_progress';
   accountId: string;
-  phase: 'backfill' | 'history' | 'rivals' | 'complete' | 'error';
+  phase: 'backfill' | 'history' | 'rivals' | 'postscrape' | 'complete' | 'error';
   itemsCompleted: number;
   totalItems: number;
   entriesFound: number;

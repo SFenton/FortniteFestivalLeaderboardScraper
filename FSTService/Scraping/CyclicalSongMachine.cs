@@ -124,6 +124,17 @@ public class CyclicalSongMachine
         _attachments[callerId] = attachment;
         _progress.RegisterAttachment(callerId, source, users, songIds.Count);
 
+        // Initialize PostScrape per-user progress for users that don't have a higher-priority phase active
+        var instrumentCount = GlobalLeaderboardScraper.AllInstruments.Count;
+        foreach (var user in users)
+        {
+            if (!user.Purposes.HasFlag(WorkPurpose.PostScrape)) continue;
+            if (_syncTracker.IsActiveHigherPriority(user.AccountId)) continue;
+
+            int totalUnits = ComputePostScrapeWorkUnits(user, songIds.Count, instrumentCount);
+            _syncTracker.BeginPostScrape(user.AccountId, totalUnits);
+        }
+
         _log.LogInformation(
             "Attachment {CallerId} added: {Users} users, {Songs} songs, priority={Priority}.",
             callerId, users.Count, songIds.Count, isHighPriority ? "high" : "low");
@@ -458,6 +469,22 @@ public class CyclicalSongMachine
                                 seasonsQueried: seasonPrefixMap.Count,
                                 entriesFound: result.SessionsInserted);
                         }
+                        else if (user.Purposes.HasFlag(WorkPurpose.PostScrape)
+                                 && !_syncTracker.IsActiveHigherPriority(user.AccountId))
+                        {
+                            int units = instruments.Count * ((user.AllTimeNeeded ? 1 : 0) + seasonPrefixMap.Count);
+                            _syncTracker.ReportPostScrapeWork(
+                                user.AccountId,
+                                completedUnits: units,
+                                entriesFound: result.EntriesUpdated);
+                        }
+                    }
+
+                    // Update attachment user counters from the live sync tracker
+                    foreach (var (attCallerId, att) in _attachments)
+                    {
+                        if (att.IsCompleted) continue;
+                        _progress.UpdateAttachmentUserProgress(attCallerId, _syncTracker);
                     }
 
                     if (OwnsProgress)
@@ -610,17 +637,44 @@ public class CyclicalSongMachine
         return (DeduplicateUsers(users), highPriority);
     }
 
-    /// <summary>Deduplicate a user list by AccountId, keeping the first occurrence.</summary>
+    /// <summary>
+    /// Deduplicate users by AccountId, merging purposes, alltime requirement, and seasons
+    /// so that overlapping PostScrape + Backfill|HistoryRecon work is not dropped.
+    /// </summary>
     private static List<UserWorkItem> DeduplicateUsers(List<UserWorkItem> users)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var result = new List<UserWorkItem>();
+        var merged = new Dictionary<string, UserWorkItem>(StringComparer.OrdinalIgnoreCase);
         foreach (var user in users)
         {
-            if (seen.Add(user.AccountId))
-                result.Add(user);
+            if (merged.TryGetValue(user.AccountId, out var existing))
+            {
+                // Merge: union purposes, OR alltime, union seasons, union already-checked
+                var mergedSeasons = new HashSet<int>(existing.SeasonsNeeded);
+                mergedSeasons.UnionWith(user.SeasonsNeeded);
+
+                HashSet<(string, string)>? mergedChecked = null;
+                if (existing.AlreadyChecked is not null || user.AlreadyChecked is not null)
+                {
+                    mergedChecked = new HashSet<(string, string)>(existing.AlreadyChecked ?? []);
+                    if (user.AlreadyChecked is not null)
+                        mergedChecked.IntersectWith(user.AlreadyChecked);
+                }
+
+                merged[user.AccountId] = new UserWorkItem
+                {
+                    AccountId = user.AccountId,
+                    Purposes = existing.Purposes | user.Purposes,
+                    AllTimeNeeded = existing.AllTimeNeeded || user.AllTimeNeeded,
+                    SeasonsNeeded = mergedSeasons,
+                    AlreadyChecked = mergedChecked,
+                };
+            }
+            else
+            {
+                merged[user.AccountId] = user;
+            }
         }
-        return result;
+        return merged.Values.ToList();
     }
 
     private int GetTotalUserCount()
@@ -674,10 +728,12 @@ public class CyclicalSongMachine
         {
             if (att.IsFullyComplete)
             {
+                CompletePostScrapeUsersForAttachment(att);
                 att.Complete();
                 _attachments.TryRemove(callerId, out _);
                 if (OwnsProgress)
                 {
+                    _progress.UpdateAttachmentUserProgress(callerId, _syncTracker);
                     for (int i = 0; i < att.Users.Count; i++)
                         _progress.ReportPhaseAccountComplete();
                     _progress.CompleteAttachment(callerId);
@@ -706,10 +762,12 @@ public class CyclicalSongMachine
             if (!att.IsFullyComplete) continue;
             if (AttachmentNeedsHistorical(att, currentSeason)) continue;
 
+            CompletePostScrapeUsersForAttachment(att);
             att.Complete();
             _attachments.TryRemove(callerId, out _);
             if (OwnsProgress)
             {
+                _progress.UpdateAttachmentUserProgress(callerId, _syncTracker);
                 for (int i = 0; i < att.Users.Count; i++)
                     _progress.ReportPhaseAccountComplete();
                 _progress.CompleteAttachment(callerId);
@@ -722,6 +780,36 @@ public class CyclicalSongMachine
             _log.LogInformation(
                 "Attachment {CallerId} completed (core-only): {Updated} entries, {Sessions} sessions, {ApiCalls} API calls.",
                 callerId, att.TotalEntriesUpdated, att.TotalSessionsInserted, att.TotalApiCalls);
+        }
+    }
+
+    /// <summary>
+    /// Compute total work units for a PostScrape user: per-song, each instrument does
+    /// (AllTimeNeeded ? 1 : 0) alltime lookups + SeasonsNeeded.Count seasonal lookups.
+    /// </summary>
+    private static int ComputePostScrapeWorkUnits(UserWorkItem user, int songCount, int instrumentCount)
+    {
+        int unitsPerSongInstrument = (user.AllTimeNeeded ? 1 : 0) + user.SeasonsNeeded.Count;
+        int total = songCount * instrumentCount * unitsPerSongInstrument;
+        if (user.AlreadyChecked is not null)
+            total -= user.AlreadyChecked.Count * unitsPerSongInstrument;
+        return Math.Max(total, 0);
+    }
+
+    /// <summary>
+    /// Mark PostScrape-only users as Complete in the sync tracker when an attachment finishes.
+    /// Skipped for users that have a higher-priority phase active (Backfill/History/Rivals).
+    /// </summary>
+    private void CompletePostScrapeUsersForAttachment(MachineAttachment att)
+    {
+        foreach (var user in att.Users)
+        {
+            if (!user.Purposes.HasFlag(WorkPurpose.PostScrape)) continue;
+            if (_syncTracker.IsActiveHigherPriority(user.AccountId)) continue;
+
+            var p = _syncTracker.GetProgress(user.AccountId);
+            if (p is not null && p.Phase == SyncProgressPhase.PostScrape)
+                _syncTracker.Complete(user.AccountId);
         }
     }
 
