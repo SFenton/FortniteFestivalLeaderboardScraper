@@ -56,6 +56,14 @@ public class CyclicalSongMachine
 
     private int _attachmentCounter;
 
+    /// <summary>
+    /// Whether a caller has set the global progress phase to SongMachine.
+    /// When false (e.g. fire-and-forget track backfills), the machine skips
+    /// all <see cref="ScrapeProgressTracker"/> writes so it doesn't clobber
+    /// the phase that the main scrape loop is reporting.
+    /// </summary>
+    private bool OwnsProgress => _progress.Phase == ScrapeProgressTracker.ScrapePhase.SongMachine;
+
     public CyclicalSongMachine(
         SongProcessingMachine inner,
         HistoryReconstructor historyReconstructor,
@@ -243,10 +251,6 @@ public class CyclicalSongMachine
             // Complete any stragglers with what we have
             CompleteFinishedAttachments();
 
-            // Transition progress to Idle so the API stops reporting SongMachine as running.
-            // SetPhase snapshots the SongMachine operation into completedOperations.
-            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Idle);
-
             _log.LogInformation("CyclicalSongMachine going idle. {Remaining} attachments remain.",
                 _attachments.Count);
         }
@@ -314,10 +318,12 @@ public class CyclicalSongMachine
         if (seasonPrefixMap.TryGetValue(currentSeason, out var curPrefix))
             coreSeasonPrefixMap[currentSeason] = curPrefix;
 
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
-        _progress.SetAdaptiveLimiter(_pool.Limiter);
-        _progress.BeginPhaseProgress(coreSongs.Count);
-        _progress.SetPhaseAccounts(GetTotalUserCount());
+        if (OwnsProgress)
+        {
+            _progress.SetAdaptiveLimiter(_pool.Limiter);
+            _progress.BeginPhaseProgress(coreSongs.Count);
+            _progress.SetPhaseAccounts(GetTotalUserCount());
+        }
 
         _log.LogInformation(
             "CyclicalSongMachine core pass: {Songs} songs, {Attachments} attachments, {Users} users, season={Season}.",
@@ -362,8 +368,11 @@ public class CyclicalSongMachine
 
             int historicalUserCount = GetHistoricalUserCount(currentSeason);
 
-            _progress.AddPhaseItems(historicalSongs.Count);
-            _progress.SetPhaseAccounts(historicalUserCount);
+            if (OwnsProgress)
+            {
+                _progress.AddPhaseItems(historicalSongs.Count);
+                _progress.SetPhaseAccounts(historicalUserCount);
+            }
 
             _log.LogInformation(
                 "CyclicalSongMachine historical pass: {Songs} songs, {Seasons} seasons, {Users} backfill users.",
@@ -381,7 +390,8 @@ public class CyclicalSongMachine
             }
         }
 
-        _progress.SetAdaptiveLimiter(null);
+        if (OwnsProgress)
+            _progress.SetAdaptiveLimiter(null);
 
         CompleteFinishedAttachments();
 
@@ -423,7 +433,8 @@ public class CyclicalSongMachine
                     var (users, highPriority) = gatherUsers(songEntry.SongId);
                     if (users.Count == 0)
                     {
-                        _progress.ReportPhaseItemComplete();
+                        if (OwnsProgress)
+                            _progress.ReportPhaseItemComplete();
                         return;
                     }
 
@@ -449,7 +460,8 @@ public class CyclicalSongMachine
                         }
                     }
 
-                    _progress.ReportPhaseItemComplete();
+                    if (OwnsProgress)
+                        _progress.ReportPhaseItemComplete();
                 }
                 finally
                 {
@@ -664,9 +676,16 @@ public class CyclicalSongMachine
             {
                 att.Complete();
                 _attachments.TryRemove(callerId, out _);
-                for (int i = 0; i < att.Users.Count; i++)
-                    _progress.ReportPhaseAccountComplete();
-                _progress.CompleteAttachment(callerId);
+                if (OwnsProgress)
+                {
+                    for (int i = 0; i < att.Users.Count; i++)
+                        _progress.ReportPhaseAccountComplete();
+                    _progress.CompleteAttachment(callerId);
+                }
+                else
+                {
+                    _progress.UnregisterAttachment(callerId);
+                }
 
                 _log.LogInformation(
                     "Attachment {CallerId} completed: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls.",
@@ -689,9 +708,16 @@ public class CyclicalSongMachine
 
             att.Complete();
             _attachments.TryRemove(callerId, out _);
-            for (int i = 0; i < att.Users.Count; i++)
-                _progress.ReportPhaseAccountComplete();
-            _progress.CompleteAttachment(callerId);
+            if (OwnsProgress)
+            {
+                for (int i = 0; i < att.Users.Count; i++)
+                    _progress.ReportPhaseAccountComplete();
+                _progress.CompleteAttachment(callerId);
+            }
+            else
+            {
+                _progress.UnregisterAttachment(callerId);
+            }
 
             _log.LogInformation(
                 "Attachment {CallerId} completed (core-only): {Updated} entries, {Sessions} sessions, {ApiCalls} API calls.",
