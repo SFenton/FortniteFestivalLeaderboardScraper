@@ -9,6 +9,7 @@ export enum LoadPhase {
   Loading = 'loading',
   SpinnerOut = 'spinnerOut',
   ContentIn = 'contentIn',
+  ContentOut = 'contentOut',
 }
 
 /** Sort modes for player score history views. */
