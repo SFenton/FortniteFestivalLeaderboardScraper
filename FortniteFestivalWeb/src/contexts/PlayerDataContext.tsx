@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useState,
   type ReactNode,
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -28,6 +29,8 @@ type PlayerDataContextValue = {
   currentSongName: string | null;
   seasonsQueried: number;
   rivalsFound: number;
+  justCompleted: boolean;
+  clearCompleted: () => void;
 };
 
 const PlayerDataContext = createContext<PlayerDataContextValue | null>(null);
@@ -50,11 +53,16 @@ export function PlayerDataProvider({
   const { isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, justCompleted, clearCompleted } =
     useSyncStatus(accountId);
 
-  // Auto-reload when sync completes
+  // Separate flag that consumers can read independently of the one-shot justCompleted
+  const [syncCompleted, setSyncCompleted] = useState(false);
+  const clearSyncCompleted = useCallback(() => setSyncCompleted(false), []);
+
+  // Auto-reload when sync completes + set consumer-visible flag
   /* v8 ignore start — sync-complete invalidation */
   useEffect(() => {
     if (justCompleted && accountId) {
       clearCompleted();
+      setSyncCompleted(true);
       void qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
     }
   }, [justCompleted, accountId, clearCompleted, qc]);
@@ -86,7 +94,9 @@ export function PlayerDataProvider({
     currentSongName,
     seasonsQueried,
     rivalsFound,
-  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound]);
+    justCompleted: syncCompleted,
+    clearCompleted: clearSyncCompleted,
+  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, syncCompleted, clearSyncCompleted]);
 
   return (
     <PlayerDataContext.Provider value={value}>

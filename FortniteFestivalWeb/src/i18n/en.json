@@ -115,6 +115,7 @@
     "backfillProgress": "Checking scores: {{checked}} / {{total}}",
     "historyProgress": "Building history: {{processed}} / {{total}}",
     "syncComplete": "Sync complete",
+    "syncCompleteDesc": "Your data is up to date",
     "syncStep_backfill": "Checking scores",
     "syncStep_history": "Building history",
     "syncStep_rivals": "Computing rivals",
