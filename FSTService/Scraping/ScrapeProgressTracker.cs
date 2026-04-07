@@ -50,6 +50,59 @@ public sealed class ScrapeProgressTracker
 
     private readonly List<OperationSnapshot> _completedOperations = new();
 
+    // ─── Pass history (48h rolling window) ──────────────────
+
+    private static readonly TimeSpan PassRetention = TimeSpan.FromHours(48);
+    private readonly List<PassRecord> _passHistory = new();
+    private int _passIdCounter;
+    private PassRecord? _currentPass;
+
+    // ─── Attachment tracking ────────────────────────────────
+
+    private readonly ConcurrentDictionary<string, AttachmentProgressEntry> _attachments = new(StringComparer.Ordinal);
+
+    /// <summary>Register an attachment so the progress API can report it.</summary>
+    public void RegisterAttachment(string callerId, SongMachineSource source, IReadOnlyList<UserWorkItem> users, int songCount)
+    {
+        var entry = new AttachmentProgressEntry
+        {
+            CallerId = callerId,
+            Source = source,
+            SongCount = songCount,
+            StartedAtUtc = DateTime.UtcNow,
+            Users = users.Select(u => new UserProgressSummary
+            {
+                AccountId = u.AccountId,
+                Phase = u.Purposes.HasFlag(WorkPurpose.HistoryRecon) ? "HistoryRecon"
+                      : u.Purposes.HasFlag(WorkPurpose.Backfill) ? "Backfill"
+                      : "PostScrape",
+            }).ToList(),
+        };
+        _attachments[callerId] = entry;
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Remove an attachment when it completes or is cancelled.</summary>
+    public void UnregisterAttachment(string callerId)
+    {
+        _attachments.TryRemove(callerId, out _);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Update per-user progress for an attachment from the sync tracker.</summary>
+    public void UpdateAttachmentUserProgress(string callerId, UserSyncProgressTracker syncTracker)
+    {
+        if (!_attachments.TryGetValue(callerId, out var entry)) return;
+        foreach (var user in entry.Users)
+        {
+            var p = syncTracker.GetProgress(user.AccountId);
+            if (p is null) continue;
+            user.ItemsCompleted = Volatile.Read(ref p.ItemsCompleted);
+            user.TotalItems = p.TotalItems;
+            user.EntriesFound = Volatile.Read(ref p.EntriesFound);
+        }
+    }
+
     // ─── Scraping counters ──────────────────────────────────
 
     private int _totalLeaderboards;
@@ -108,7 +161,7 @@ public sealed class ScrapeProgressTracker
 
     // ─── Lifecycle ──────────────────────────────────────────
 
-    /// <summary>Begin a new scrape pass. Resets all counters and history.</summary>
+    /// <summary>Begin a new scrape pass. Resets counters for the new pass but preserves pass history.</summary>
     public void BeginPass(int totalLeaderboards, int totalSongs, int cachedTotalPages)
     {
         _totalLeaderboards = totalLeaderboards;
@@ -136,6 +189,16 @@ public sealed class ScrapeProgressTracker
         _passStopwatch.Restart();
         _phaseStopwatch.Restart();
         _phase = ScrapePhase.Scraping;
+
+        // Create a new pass record (preserving prior passes for 48h window)
+        _currentPass = new PassRecord
+        {
+            PassId = Interlocked.Increment(ref _passIdCounter),
+            StartedAtUtc = _startedAtUtc,
+            Status = "Running",
+        };
+        _passHistory.Add(_currentPass);
+
         Interlocked.Increment(ref _changeSequence);
     }
 
@@ -267,7 +330,10 @@ public sealed class ScrapeProgressTracker
         // Snapshot the finishing operation before switching
         var currentOp = BuildCurrentOperationSnapshot();
         if (currentOp is not null)
+        {
             _completedOperations.Add(currentOp);
+            _currentPass?.Operations.Add(currentOp);
+        }
 
         ResetGenericCounters();
         _subOperation = null;
@@ -283,12 +349,25 @@ public sealed class ScrapeProgressTracker
         // Snapshot the final operation
         var currentOp = BuildCurrentOperationSnapshot();
         if (currentOp is not null)
+        {
             _completedOperations.Add(currentOp);
+            _currentPass?.Operations.Add(currentOp);
+        }
 
         _passStopwatch.Stop();
         _phaseStopwatch.Stop();
         _subOperation = null;
         _phase = ScrapePhase.Idle;
+
+        // Finalize the current pass record
+        if (_currentPass is not null)
+        {
+            _currentPass.EndedAtUtc = DateTime.UtcNow;
+            _currentPass.ElapsedSeconds = Math.Round(_passStopwatch.Elapsed.TotalSeconds, 1);
+            _currentPass.Status = "Completed";
+            _currentPass = null;
+        }
+
         Interlocked.Increment(ref _changeSequence);
     }
 
@@ -370,6 +449,10 @@ public sealed class ScrapeProgressTracker
         if (cached is not null && cached.Sequence == currentSeq)
             return cached.Response;
 
+        // Evict passes older than 48h
+        var cutoff = DateTime.UtcNow - PassRetention;
+        _passHistory.RemoveAll(p => p.Status == "Completed" && p.StartedAtUtc < cutoff);
+
         // Build the running operations list (main scrape phase + path gen if active)
         var running = new List<object>();
         var currentOp = BuildCurrentOperationSnapshot();
@@ -385,6 +468,10 @@ public sealed class ScrapeProgressTracker
         if (_lastPathGenSnapshot is not null)
             completed.Add(_lastPathGenSnapshot);
 
+        // Build pass history snapshot (update current pass's elapsed time)
+        if (_currentPass is not null)
+            _currentPass.ElapsedSeconds = Math.Round(_passStopwatch.Elapsed.TotalSeconds, 1);
+
         var response = new ProgressResponse
         {
             Current = currentOp,
@@ -393,6 +480,15 @@ public sealed class ScrapeProgressTracker
             Completed = completed,
             PassElapsedSeconds = Math.Round(_passStopwatch.Elapsed.TotalSeconds, 1),
             PathGeneration = pathGenSnapshot,
+            Passes = _passHistory.Select(p => new PassRecord
+            {
+                PassId = p.PassId,
+                StartedAtUtc = p.StartedAtUtc,
+                EndedAtUtc = p.EndedAtUtc,
+                ElapsedSeconds = p.ElapsedSeconds,
+                Status = p.Status,
+                Operations = p.Operations.ToList(),
+            }).ToList(),
         };
 
         _cachedResponse = new CachedProgressResponse(response, currentSeq);
@@ -574,6 +670,21 @@ public sealed class ScrapeProgressTracker
             MaxRequestsPerSecond = _adaptiveLimiter?.MaxRequestsPerSecond is > 0 ? _adaptiveLimiter.MaxRequestsPerSecond : null,
             RequestsPerSecond = requests > 0 && elapsed.TotalSeconds > 0
                 ? Math.Round(requests / elapsed.TotalSeconds, 1) : null,
+            Attachments = _attachments.IsEmpty ? null : _attachments.Values.Select(a => new AttachmentSummary
+            {
+                CallerId = a.CallerId,
+                Source = a.Source.ToString(),
+                SongCount = a.SongCount,
+                StartedAtUtc = a.StartedAtUtc,
+                Users = a.Users.Select(u => new UserProgressSummary
+                {
+                    AccountId = u.AccountId,
+                    Phase = u.Phase,
+                    ItemsCompleted = u.ItemsCompleted,
+                    TotalItems = u.TotalItems,
+                    EntriesFound = u.EntriesFound,
+                }).ToList(),
+            }).ToList(),
         };
     }
 
@@ -652,6 +763,11 @@ public sealed class ProgressResponse
     public List<OperationSnapshot> CompletedOperations { get; init; } = new();
     /// <summary>Path generation progress (runs in parallel with scraping). Null if never started.</summary>
     public PathGenerationProgress? PathGeneration { get; init; }
+
+    // ── Pass history (rolling 48h window) ──
+
+    /// <summary>Historical and current pass records. Completed passes older than 48h are evicted.</summary>
+    public List<PassRecord> Passes { get; init; } = new();
 }
 
 /// <summary>
@@ -691,6 +807,9 @@ public sealed class OperationSnapshot
     public ProgressCounter? Accounts { get; init; }
     public ProgressCounter? WorkItems { get; init; }
     public int? EntriesUpdated { get; init; }
+
+    // ── Attachment progress ──
+    public List<AttachmentSummary>? Attachments { get; init; }
 }
 
 public sealed class ProgressCounter
@@ -727,4 +846,57 @@ public sealed class PathGenerationProgress
     public double ProgressPercent { get; init; }
     /// <summary>Title of the song currently being processed, or null.</summary>
     public string? CurrentSong { get; init; }
+}
+
+// ─── Pass & attachment tracking DTOs ────────────────────────
+
+/// <summary>
+/// A single scrape pass — may be the current pass or a historical one.
+/// Completed passes older than 48h are evicted from the response.
+/// </summary>
+public sealed class PassRecord
+{
+    public int PassId { get; init; }
+    public DateTime StartedAtUtc { get; init; }
+    public DateTime? EndedAtUtc { get; set; }
+    public double ElapsedSeconds { get; set; }
+    public string Status { get; set; } = "Running";
+    public List<OperationSnapshot> Operations { get; set; } = new();
+}
+
+/// <summary>
+/// Internal mutable tracking entry for an active SongMachine attachment.
+/// Not serialized directly — projected to <see cref="AttachmentSummary"/> for API output.
+/// </summary>
+internal sealed class AttachmentProgressEntry
+{
+    public required string CallerId { get; init; }
+    public required SongMachineSource Source { get; init; }
+    public required int SongCount { get; init; }
+    public DateTime StartedAtUtc { get; init; }
+    public required List<UserProgressSummary> Users { get; init; }
+}
+
+/// <summary>
+/// API-facing snapshot of an active SongMachine attachment.
+/// </summary>
+public sealed class AttachmentSummary
+{
+    public string CallerId { get; init; } = "";
+    public string Source { get; init; } = "";
+    public int SongCount { get; init; }
+    public DateTime StartedAtUtc { get; init; }
+    public List<UserProgressSummary> Users { get; init; } = new();
+}
+
+/// <summary>
+/// Per-user progress within an attachment. Mutable internally; projected as init-only for API output.
+/// </summary>
+public sealed class UserProgressSummary
+{
+    public string AccountId { get; set; } = "";
+    public string Phase { get; set; } = "";
+    public int ItemsCompleted { get; set; }
+    public int TotalItems { get; set; }
+    public int EntriesFound { get; set; }
 }

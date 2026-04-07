@@ -95,6 +95,7 @@ public class CyclicalSongMachine
     /// superset — the cycle song list is not modified. New songs are picked up next cycle.
     /// </param>
     /// <param name="seasonWindows">Season windows for seasonal queries.</param>
+    /// <param name="source">Which orchestrator is attaching (for progress tracking).</param>
     /// <param name="isHighPriority">True for post-scrape, false for backfill.</param>
     /// <param name="ct">Cancellation token for this caller.</param>
     /// <returns>Aggregated result for this caller's users when all songs are processed.</returns>
@@ -102,6 +103,7 @@ public class CyclicalSongMachine
         IReadOnlyList<UserWorkItem> users,
         IReadOnlyList<string> songIds,
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
+        SongMachineSource source,
         bool isHighPriority,
         CancellationToken ct = default)
     {
@@ -109,9 +111,10 @@ public class CyclicalSongMachine
             return Task.FromResult(new SongProcessingMachine.MachineResult());
 
         var callerId = $"attach-{Interlocked.Increment(ref _attachmentCounter)}";
-        var attachment = new MachineAttachment(callerId, users, songIds, seasonWindows, isHighPriority, ct);
+        var attachment = new MachineAttachment(callerId, users, songIds, seasonWindows, source, isHighPriority, ct);
 
         _attachments[callerId] = attachment;
+        _progress.RegisterAttachment(callerId, source, users, songIds.Count);
 
         _log.LogInformation(
             "Attachment {CallerId} added: {Users} users, {Songs} songs, priority={Priority}.",
@@ -126,6 +129,7 @@ public class CyclicalSongMachine
             if (_attachments.TryRemove(callerId, out var removed))
             {
                 removed.TryCancel();
+                _progress.UnregisterAttachment(callerId);
                 _log.LogDebug("Attachment {CallerId} cancelled by caller.", callerId);
             }
         });
@@ -161,8 +165,11 @@ public class CyclicalSongMachine
     {
         _lifetimeCts?.Cancel();
 
-        foreach (var (_, attachment) in _attachments)
+        foreach (var (callerId, attachment) in _attachments)
+        {
             attachment.TryCancel();
+            _progress.UnregisterAttachment(callerId);
+        }
 
         _attachments.Clear();
     }
@@ -355,7 +362,7 @@ public class CyclicalSongMachine
 
             int historicalUserCount = GetHistoricalUserCount(currentSeason);
 
-            _progress.BeginPhaseProgress(historicalSongs.Count);
+            _progress.AddPhaseItems(historicalSongs.Count);
             _progress.SetPhaseAccounts(historicalUserCount);
 
             _log.LogInformation(
@@ -414,7 +421,11 @@ public class CyclicalSongMachine
                 try
                 {
                     var (users, highPriority) = gatherUsers(songEntry.SongId);
-                    if (users.Count == 0) return;
+                    if (users.Count == 0)
+                    {
+                        _progress.ReportPhaseItemComplete();
+                        return;
+                    }
 
                     var result = await _inner.ProcessSongForUsersAsync(
                         songEntry.SongId, instruments, users, seasonPrefixMap,
@@ -653,6 +664,7 @@ public class CyclicalSongMachine
             {
                 att.Complete();
                 _attachments.TryRemove(callerId, out _);
+                _progress.UnregisterAttachment(callerId);
 
                 _log.LogInformation(
                     "Attachment {CallerId} completed: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls.",
@@ -675,6 +687,7 @@ public class CyclicalSongMachine
 
             att.Complete();
             _attachments.TryRemove(callerId, out _);
+            _progress.UnregisterAttachment(callerId);
 
             _log.LogInformation(
                 "Attachment {CallerId} completed (core-only): {Updated} entries, {Sessions} sessions, {ApiCalls} API calls.",
@@ -738,6 +751,7 @@ public class CyclicalSongMachine
         public IReadOnlyList<UserWorkItem> Users { get; }
         public IReadOnlyList<string> SongIds { get; }
         public IReadOnlyList<SeasonWindowInfo> SeasonWindows { get; }
+        public SongMachineSource Source { get; }
         public bool IsHighPriority { get; }
         public TaskCompletionSource<SongProcessingMachine.MachineResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -767,6 +781,7 @@ public class CyclicalSongMachine
             IReadOnlyList<UserWorkItem> users,
             IReadOnlyList<string> songIds,
             IReadOnlyList<SeasonWindowInfo> seasonWindows,
+            SongMachineSource source,
             bool isHighPriority,
             CancellationToken callerCt)
         {
@@ -774,6 +789,7 @@ public class CyclicalSongMachine
             Users = users;
             SongIds = songIds;
             SeasonWindows = seasonWindows;
+            Source = source;
             IsHighPriority = isHighPriority;
             _callerCt = callerCt;
             _songIdSet = new HashSet<string>(songIds, StringComparer.Ordinal);

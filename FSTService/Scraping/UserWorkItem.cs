@@ -1,5 +1,14 @@
 namespace FSTService.Scraping;
 
+/// <summary>Identifies the orchestrator that attached users to the CyclicalSongMachine.</summary>
+public enum SongMachineSource
+{
+    PostScrape,
+    Backfill,
+    HistoryRecon,
+    PlayerTrackCover,
+}
+
 /// <summary>
 /// Specifies what kind of work the machine should perform for a user.
 /// Flags allow a single user to participate in multiple work types simultaneously.

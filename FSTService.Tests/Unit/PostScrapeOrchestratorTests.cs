@@ -134,6 +134,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
             Arg.Any<CancellationToken>())
             .Returns(new SongProcessingMachine.MachineResult());
