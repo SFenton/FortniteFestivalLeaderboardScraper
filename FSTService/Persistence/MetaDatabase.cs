@@ -928,6 +928,52 @@ public sealed class MetaDatabase : IMetaDatabase
     // ── Maintenance ──────────────────────────────────────────────────
     public void Checkpoint() { }
 
+    // ── API response cache ───────────────────────────────────────────
+
+    public (byte[] Json, string ETag)? GetCachedResponse(string cacheKey)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT json_data, etag FROM api_response_cache WHERE cache_key = @key";
+        cmd.Parameters.AddWithValue("key", cacheKey);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return ((byte[])r[0], r.GetString(1));
+    }
+
+    public void BulkSetCachedResponses(IEnumerable<(string Key, byte[] Json, string ETag)> entries)
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO api_response_cache (cache_key, json_data, etag, cached_at)
+            VALUES (@key, @json, @etag, now())
+            ON CONFLICT (cache_key) DO UPDATE SET json_data = EXCLUDED.json_data, etag = EXCLUDED.etag, cached_at = now()
+            """;
+        cmd.Parameters.Add(new NpgsqlParameter("key", NpgsqlDbType.Text));
+        cmd.Parameters.Add(new NpgsqlParameter("json", NpgsqlDbType.Bytea));
+        cmd.Parameters.Add(new NpgsqlParameter("etag", NpgsqlDbType.Text));
+        cmd.Prepare();
+        foreach (var (key, json, etag) in entries)
+        {
+            cmd.Parameters["key"].Value = key;
+            cmd.Parameters["json"].Value = json;
+            cmd.Parameters["etag"].Value = etag;
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    public void ClearCachedResponses()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "TRUNCATE api_response_cache";
+        cmd.ExecuteNonQuery();
+    }
+
     // ── Private helpers ──────────────────────────────────────────────
 
     private void SimpleUpdate(string sql, string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = sql; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }

@@ -376,12 +376,7 @@ var app = builder.Build();
         var precomputer = app.Services.GetRequiredService<ScrapeTimePrecomputer>();
         await precomputer.PrecomputeAllAsync(CancellationToken.None);
 
-        var dataDir = Path.GetFullPath(scraperOpts2.DataDirectory);
-        var precomputeDir = Path.Combine(dataDir, ScrapeTimePrecomputer.PrecomputedSubdir);
-        await precomputer.SaveToDiskAsync(precomputeDir, CancellationToken.None);
-
-        precompLog.LogInformation("--precompute: saved {Count} responses to {Dir}. Exiting.",
-            precomputer.Count, precomputeDir);
+        precompLog.LogInformation("--precompute: precomputed responses persisted to PostgreSQL. Exiting.");
         return;
     }
 }

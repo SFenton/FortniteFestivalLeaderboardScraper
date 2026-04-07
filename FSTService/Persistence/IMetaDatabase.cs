@@ -159,6 +159,11 @@ public interface IMetaDatabase : IDisposable
         double AdjustedRating, double WeightedRating, double FcRate,
         long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)> deltas);
 
+    // ── API response cache ───────────────────────────────────────────
+    (byte[] Json, string ETag)? GetCachedResponse(string cacheKey);
+    void BulkSetCachedResponses(IEnumerable<(string Key, byte[] Json, string ETag)> entries);
+    void ClearCachedResponses();
+
     // ── Maintenance ──────────────────────────────────────────────────
     void Checkpoint();
 }

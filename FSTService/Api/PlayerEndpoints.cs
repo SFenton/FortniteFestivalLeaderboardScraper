@@ -563,7 +563,7 @@ public static partial class ApiEndpoints
             }
 
             // ── Check precomputed store for unfiltered requests ──
-            if (songId is null && instrument is null && (limit is null || limit >= 50000))
+            if (songId is null && instrument is null && (limit is null || limit >= 1000))
             {
                 {
                     var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"history:{accountId}"));
@@ -571,7 +571,7 @@ public static partial class ApiEndpoints
                 }
             }
 
-            var history = metaDb.GetScoreHistory(accountId, limit ?? 50000, songId, instrument);
+            var history = metaDb.GetScoreHistory(accountId, limit ?? 1000, songId, instrument);
             return Results.Ok(new
             {
                 accountId,

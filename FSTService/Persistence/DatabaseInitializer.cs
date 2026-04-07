@@ -837,5 +837,16 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_comrd_account
             ON combo_ranking_deltas (account_id, combo_id);
 
+        -- =====================================================================
+        -- API RESPONSE CACHE (precomputed JSON responses, replaces RAM store)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS api_response_cache (
+            cache_key   TEXT        NOT NULL PRIMARY KEY,
+            json_data   BYTEA       NOT NULL,
+            etag        TEXT        NOT NULL,
+            cached_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
         """;
 }

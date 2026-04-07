@@ -137,15 +137,12 @@ public sealed class ScraperWorker : BackgroundService
                     registeredIds, TimeSpan.FromMinutes(2), stoppingToken);
         }
 
-        // Load precomputed API responses from disk (if available from --precompute).
-        // This makes the first requests after launch instant for registered players.
+        // Precomputed API responses are now served from PostgreSQL.
+        // No disk load needed — data persists across restarts in the api_response_cache table.
         {
-            var precomputeDir = Path.Combine(Path.GetFullPath(opts.DataDirectory), ScrapeTimePrecomputer.PrecomputedSubdir);
-            if (await _precomputer.LoadFromDiskAsync(precomputeDir, stoppingToken))
-            {
-                _log.LogInformation("Loaded {Count} precomputed responses from disk.", _precomputer.Count);
-                PrimeSongsCache(); // Rebuild with population tiers
-            }
+            if (_precomputer.Count == 0)
+                _log.LogInformation("No precomputed responses in RAM buffer (served from PostgreSQL).");
+            PrimeSongsCache(); // Rebuild with population tiers
         }
 
         // --api-only mode: skip all background work, let the API serve requests
@@ -372,7 +369,8 @@ public sealed class ScraperWorker : BackgroundService
         ScraperOptions opts,
         CancellationToken ct)
     {
-        _log.LogInformation("Starting scrape pass...");
+        var processMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
+        _log.LogInformation("Starting scrape pass... (Process memory: {MemoryMB} MB)", processMemMb);
 
         // Stale precomputed data (from last scrape) is served during the scrape pass.
         // PrecomputeAllAsync at post-scrape overwrites entries atomically, so we don't
@@ -423,21 +421,16 @@ public sealed class ScraperWorker : BackgroundService
         // in the normal scrape pass.
         await _postScrapeOrchestrator.RunAsync(result.Context, service, ct);
 
-        // Persist precomputed responses to disk so the next service restart
-        // serves instant API responses from the first request.
-        try
-        {
-            var precomputeDir = Path.Combine(Path.GetFullPath(_options.Value.DataDirectory), ScrapeTimePrecomputer.PrecomputedSubdir);
-            await _precomputer.SaveToDiskAsync(precomputeDir, ct);
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to persist precomputed data to disk (non-fatal).");
-        }
+        // Precomputed responses are flushed to PostgreSQL inside PrecomputeAllAsync().
+        // No disk persistence needed.
 
         PrimeSongsCache();
         _playerCache.InvalidateAll();
         _leaderboardAllCache.InvalidateAll();
+
+        var endMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
+        _log.LogInformation("Scrape pass complete. (Process memory: {MemoryMB} MB)", endMemMb);
+
         _progress.EndPass();
     }
 

@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -47,9 +46,11 @@ public sealed class ScrapeTimePrecomputer
     /// <summary>Returns a precomputed response if available, else null.</summary>
     public (byte[] Json, string ETag)? TryGet(string cacheKey)
     {
+        // Check transient buffer first (during active precomputation)
         if (_store.TryGetValue(cacheKey, out var entry))
             return (entry.Json, entry.ETag);
-        return null;
+        // Fall back to PostgreSQL cache
+        return _metaDb.GetCachedResponse(cacheKey);
     }
 
     /// <summary>Gets the precomputed population tier data for the songs endpoint.</summary>
@@ -60,6 +61,7 @@ public sealed class ScrapeTimePrecomputer
     public void InvalidateAll()
     {
         _store.Clear();
+        _metaDb.ClearCachedResponses();
         _populationTiers = null;
     }
 
@@ -125,9 +127,16 @@ public sealed class ScrapeTimePrecomputer
         if (removed > 0)
             _log.LogInformation("Evicted {Count} stale precomputed player entries.", removed);
 
+        // ── Flush to PostgreSQL and free RAM ─────────────────────
+        _log.LogInformation("Flushing {Count} precomputed responses to PostgreSQL...", _store.Count);
+        _metaDb.ClearCachedResponses();
+        _metaDb.BulkSetCachedResponses(_store.Select(kv => (kv.Key, kv.Value.Json, kv.Value.ETag)));
+        _store.Clear();
+        _log.LogInformation("Precomputed responses persisted to PostgreSQL and RAM freed.");
+
         sw.Stop();
-        _log.LogInformation("Scrape-time precomputation complete: {PlayerCount} players, {LbCount} leaderboard-all pages in {Elapsed}s.",
-            registeredIds.Count, _store.Count - registeredIds.Count, sw.Elapsed.TotalSeconds);
+        _log.LogInformation("Scrape-time precomputation complete: {PlayerCount} players in {Elapsed}s.",
+            registeredIds.Count, sw.Elapsed.TotalSeconds);
     }
 
     private static string ExtractAccountId(string cacheKey)
@@ -159,6 +168,18 @@ public sealed class ScrapeTimePrecomputer
         PrecomputePlayerRivalsOverview(accountId);
         PrecomputePlayerRivalsAll(accountId, displayNames);
         PrecomputePlayerLeaderboardRivals(accountId, instrumentKeys, displayNames);
+
+        // Flush this user's entries to PostgreSQL and free RAM
+        var userEntries = _store
+            .Where(kv => kv.Key.StartsWith($"player:{accountId}", StringComparison.Ordinal))
+            .Select(kv => (kv.Key, kv.Value.Json, kv.Value.ETag))
+            .ToList();
+        if (userEntries.Count > 0)
+        {
+            _metaDb.BulkSetCachedResponses(userEntries);
+            foreach (var (key, _, _) in userEntries)
+                _store.TryRemove(key, out _);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -739,7 +760,7 @@ public sealed class ScrapeTimePrecomputer
 
     private void PrecomputePlayerHistory(string accountId)
     {
-        var history = _metaDb.GetScoreHistory(accountId, 50000);
+        var history = _metaDb.GetScoreHistory(accountId, 1000);
         var payload = new
         {
             accountId,
@@ -1229,125 +1250,6 @@ public sealed class ScrapeTimePrecomputer
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
         Store("firstseen", jsonBytes);
     }
-
-    // ═══════════════════════════════════════════════════════════════
-    // Disk Persistence (for --precompute mode and warm startup)
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Save all precomputed data to a directory as GZip'd JSON files.
-    /// Called by the <c>--precompute</c> CLI mode.
-    /// </summary>
-    public async Task SaveToDiskAsync(string directory, CancellationToken ct = default)
-    {
-        Directory.CreateDirectory(directory);
-
-        // Save the response store: { key → base64(gzip(json)) }
-        var storeEntries = new Dictionary<string, string>(_store.Count);
-        foreach (var (key, resp) in _store)
-        {
-            using var ms = new MemoryStream();
-            using (var gz = new GZipStream(ms, CompressionLevel.Optimal, leaveOpen: true))
-                await gz.WriteAsync(resp.Json, ct);
-            storeEntries[key] = Convert.ToBase64String(ms.ToArray());
-        }
-
-        var storePath = Path.Combine(directory, "responses.json.gz");
-        await using (var fs = File.Create(storePath))
-        await using (var gz = new GZipStream(fs, CompressionLevel.Optimal))
-        {
-            await JsonSerializer.SerializeAsync(gz, storeEntries, cancellationToken: ct);
-        }
-
-        // Save population tiers
-        if (_populationTiers is not null)
-        {
-            var tiersPath = Path.Combine(directory, "population-tiers.json.gz");
-            // Convert tuple keys to serializable format
-            var serializable = new Dictionary<string, PopulationTierData>();
-            foreach (var ((songId, instrument), data) in _populationTiers)
-                serializable[$"{songId}|{instrument}"] = data;
-
-            await using var fs = File.Create(tiersPath);
-            await using var gzs = new GZipStream(fs, CompressionLevel.Optimal);
-            await JsonSerializer.SerializeAsync(gzs, serializable, cancellationToken: ct);
-        }
-
-        _log.LogInformation("Saved {Count} precomputed responses to {Dir}", _store.Count, directory);
-    }
-
-    /// <summary>
-    /// Load precomputed data from disk. Returns true if data was loaded.
-    /// Called at service startup before the first scrape.
-    /// </summary>
-    public async Task<bool> LoadFromDiskAsync(string directory, CancellationToken ct = default)
-    {
-        var storePath = Path.Combine(directory, "responses.json.gz");
-        if (!File.Exists(storePath))
-            return false;
-
-        try
-        {
-            // Load response store
-            Dictionary<string, string>? storeEntries;
-            await using (var fs = File.OpenRead(storePath))
-            await using (var gz = new GZipStream(fs, CompressionMode.Decompress))
-            {
-                storeEntries = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(gz, cancellationToken: ct);
-            }
-
-            if (storeEntries is not null)
-            {
-                foreach (var (key, b64) in storeEntries)
-                {
-                    var compressed = Convert.FromBase64String(b64);
-                    using var ms = new MemoryStream(compressed);
-                    using var gzd = new GZipStream(ms, CompressionMode.Decompress);
-                    using var output = new MemoryStream();
-                    await gzd.CopyToAsync(output, ct);
-                    var json = output.ToArray();
-                    var hash = SHA256.HashData(json);
-                    var etag = $"\"{Convert.ToBase64String(hash, 0, 16)}\"";
-                    _store[key] = new PrecomputedResponse(json, etag);
-                }
-            }
-
-            // Load population tiers
-            var tiersPath = Path.Combine(directory, "population-tiers.json.gz");
-            if (File.Exists(tiersPath))
-            {
-                await using var fs = File.OpenRead(tiersPath);
-                await using var gzd = new GZipStream(fs, CompressionMode.Decompress);
-                var serializable = await JsonSerializer.DeserializeAsync<Dictionary<string, PopulationTierData>>(gzd, cancellationToken: ct);
-                if (serializable is not null)
-                {
-                    var tiers = new Dictionary<(string, string), PopulationTierData>();
-                    foreach (var (compoundKey, data) in serializable)
-                    {
-                        var parts = compoundKey.Split('|', 2);
-                        if (parts.Length == 2)
-                            tiers[(parts[0], parts[1])] = data;
-                    }
-                    _populationTiers = tiers;
-                }
-            }
-
-            _log.LogInformation("Loaded {Count} precomputed responses from {Dir}", _store.Count, directory);
-            return _store.Count > 0;
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Failed to load precomputed data from {Dir}, will recompute", directory);
-            return false;
-        }
-    }
-
-    /// <summary>Default subdirectory name for precomputed data under the data directory.</summary>
-    public const string PrecomputedSubdir = "precomputed";
-
-    // ═══════════════════════════════════════════════════════════════
-    // Add a wrapper on GlobalLeaderboardPersistence for stored rankings
-    // ═══════════════════════════════════════════════════════════════
 
     // ═══════════════════════════════════════════════════════════════
     // DTOs (internal, serialized to JSON)

@@ -279,7 +279,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveAndLoad_RoundTrips_Correctly()
+    public async Task PrecomputeAll_FlushesToPostgreSQLAndClearsRAM()
     {
         RegisterUser("user1");
         SeedSong("s1", "Solo_Guitar", 100000,
@@ -287,41 +287,42 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
 
         await _sut.PrecomputeAllAsync(CancellationToken.None);
 
-        var precomputeDir = Path.Combine(_tempDir, "precomputed");
-        await _sut.SaveToDiskAsync(precomputeDir);
+        // _store should be cleared after flush
+        Assert.Equal(0, _sut.Count);
 
-        // Verify files were created
-        Assert.True(File.Exists(Path.Combine(precomputeDir, "responses.json.gz")));
-        Assert.True(File.Exists(Path.Combine(precomputeDir, "population-tiers.json.gz")));
+        // But responses should be available via TryGet (reads from PostgreSQL cache)
+        var response = _sut.TryGet("player:user1:::");
+        Assert.NotNull(response);
 
-        // Create a fresh precomputer and load
-        var sut2 = new ScrapeTimePrecomputer(
-            _persistence, _metaDb, _pathDataStore,
-            new ScrapeProgressTracker(),
-            Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
-
-        Assert.Equal(0, sut2.Count);
-        var loaded = await sut2.LoadFromDiskAsync(precomputeDir);
-        Assert.True(loaded);
-        Assert.True(sut2.Count > 0);
-
-        // Verify the player response round-trips
-        var original = _sut.TryGet("player:user1:::");
-        var restored = sut2.TryGet("player:user1:::");
-        Assert.NotNull(original);
-        Assert.NotNull(restored);
-        Assert.Equal(original.Value.ETag, restored.Value.ETag);
-
-        // Verify population tiers round-trip
-        Assert.NotNull(sut2.GetPopulationTiers());
+        // Verify population tiers survived (stored separately, not in PostgreSQL)
+        Assert.NotNull(_sut.GetPopulationTiers());
     }
 
     [Fact]
-    public async Task LoadFromDisk_MissingDirectory_ReturnsFalse()
+    public async Task PrecomputeAll_ClearsStalePostgreSQLDataBeforeFlush()
     {
-        var loaded = await _sut.LoadFromDiskAsync(Path.Combine(_tempDir, "nonexistent"));
-        Assert.False(loaded);
+        RegisterUser("user1");
+        SeedSong("s1", "Solo_Guitar", 100000,
+            ("user1", 95000));
+
+        // First precomputation
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        // Verify data is in cache
+        Assert.NotNull(_sut.TryGet("player:user1:::"));
+
+        // Second precomputation should TRUNCATE and re-insert
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+        Assert.NotNull(_sut.TryGet("player:user1:::"));
+    }
+
+    [Fact]
+    public void GetCachedResponse_MissingKey_ReturnsNull()
+    {
+        // ClearCachedResponses should not throw even with empty table
+        _metaDb.ClearCachedResponses();
+        var response = _sut.TryGet("nonexistent:key");
+        Assert.Null(response);
     }
 
     // ── Helpers ──────────────────────────────────────────────────

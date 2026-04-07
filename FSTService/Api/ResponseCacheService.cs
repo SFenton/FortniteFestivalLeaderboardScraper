@@ -7,14 +7,16 @@ namespace FSTService.Api;
 /// General-purpose keyed response cache with ETag support.
 /// Used for per-account player profiles and per-song leaderboards.
 /// </summary>
-public sealed class ResponseCacheService
+public sealed class ResponseCacheService : IDisposable
 {
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
     private readonly TimeSpan _ttl;
+    private readonly Timer _evictionTimer;
 
     public ResponseCacheService(TimeSpan ttl)
     {
         _ttl = ttl;
+        _evictionTimer = new Timer(_ => Cleanup(), null, ttl, ttl);
     }
 
     /// <summary>
@@ -52,6 +54,21 @@ public sealed class ResponseCacheService
     public void InvalidateAll()
     {
         _cache.Clear();
+    }
+
+    private void Cleanup()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var key in _cache.Keys)
+        {
+            if (_cache.TryGetValue(key, out var entry) && now - entry.CachedAt >= _ttl)
+                _cache.TryRemove(key, out _);
+        }
+    }
+
+    public void Dispose()
+    {
+        _evictionTimer.Dispose();
     }
 
     private sealed record CacheEntry(byte[] Json, string ETag, DateTime CachedAt);
