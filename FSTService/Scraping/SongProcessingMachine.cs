@@ -41,6 +41,9 @@ public class SongProcessingMachine
         _executor = executor ?? (scraper as GlobalLeaderboardScraper)?.Executor;
     }
 
+    /// <summary>The underlying HTTP executor, if available. Used by <see cref="CyclicalSongMachine"/> to wire CDN probe callbacks.</summary>
+    internal ResilientHttpExecutor? Executor => _executor;
+
     /// <summary>
     /// Fallback for when no <see cref="ResilientHttpExecutor"/> is available (e.g. tests
     /// with a mock <see cref="ILeaderboardQuerier"/>). Acquires a slot, runs work,

@@ -33,6 +33,8 @@ type PlayerDataContextValue = {
   throttleStatusKey: string | null;
   pendingRankUpdate: boolean;
   estimatedRankUpdateMinutes: number | null;
+  probeStatusKey: string | null;
+  nextRetrySeconds: number | null;
   justCompleted: boolean;
   clearCompleted: () => void;
 };
@@ -54,7 +56,7 @@ export function PlayerDataProvider({
     enabled: !!accountId,
   });
 
-  const { isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, justCompleted, clearCompleted } =
+  const { isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted, clearCompleted } =
     useSyncStatus(accountId);
 
   // Separate flag that consumers can read independently of the one-shot justCompleted
@@ -102,9 +104,11 @@ export function PlayerDataProvider({
     throttleStatusKey,
     pendingRankUpdate,
     estimatedRankUpdateMinutes,
+    probeStatusKey,
+    nextRetrySeconds,
     justCompleted: syncCompleted,
     clearCompleted: clearSyncCompleted,
-  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, syncCompleted, clearSyncCompleted]);
+  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, syncCompleted, clearSyncCompleted]);
 
   return (
     <PlayerDataContext.Provider value={value}>

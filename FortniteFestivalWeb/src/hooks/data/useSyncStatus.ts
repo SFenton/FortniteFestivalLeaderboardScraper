@@ -36,6 +36,10 @@ type SyncState = {
   pendingRankUpdate: boolean;
   /** Estimated minutes until next global ranking pass */
   estimatedRankUpdateMinutes: number | null;
+  /** CDN probe status key (e.g. "probe_retrying", "probe_waiting") */
+  probeStatusKey: string | null;
+  /** Seconds until next probe retry */
+  nextRetrySeconds: number | null;
 };
 
 import { SYNC_POLL_ACTIVE_MS, SYNC_POLL_IDLE_MS } from '@festival/theme';
@@ -61,6 +65,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     throttleStatusKey: null,
     pendingRankUpdate: false,
     estimatedRankUpdateMinutes: null,
+    probeStatusKey: null,
+    nextRetrySeconds: null,
   });
   const [justCompleted, setJustCompleted] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -68,6 +74,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   const syncKickedRef = useRef(false);
   const mountedRef = useRef(true);
   const lastWsMsgRef = useRef(0);
+  /** Timestamp (ms) until which probe status is locked to prevent blips */
+  const probeLockedUntilRef = useRef(0);
   const { subscribe, connected: wsConnected, send: wsSend } = useAppWebSocket();
 
   const stopPolling = useCallback(() => {
@@ -100,23 +108,49 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
 
       if (isSyncing) wasSyncingRef.current = true;
 
-      setSyncState(prev => ({
-        isSyncing,
-        phase,
-        backfillProgress: phase === SyncPhase.Backfill ? phaseProgress : (prev.backfillProgress > 0 ? 1 : prev.backfillProgress),
-        historyProgress: phase === SyncPhase.History ? phaseProgress : (phase === SyncPhase.Rivals || phase === SyncPhase.Complete ? 1 : prev.historyProgress),
-        rivalsProgress: phase === SyncPhase.Rivals ? phaseProgress : (phase === SyncPhase.Complete ? 1 : prev.rivalsProgress),
-        entriesFound: sp.entriesFound,
-        itemsCompleted: sp.itemsCompleted,
-        totalItems: sp.totalItems,
-        currentSongName: sp.currentSongName ?? null,
-        seasonsQueried: sp.seasonsQueried ?? prev.seasonsQueried,
-        rivalsFound: sp.rivalsFound ?? prev.rivalsFound,
-        isThrottled: sp.isThrottled ?? false,
-        throttleStatusKey: sp.throttleStatusKey ?? null,
-        pendingRankUpdate: sp.pendingRankUpdate ?? false,
-        estimatedRankUpdateMinutes: sp.estimatedRankUpdateMinutes ?? null,
-      }));
+      setSyncState(prev => {
+        // 3s minimum display for probe states to prevent blips
+        const now = Date.now();
+        const incomingProbe = sp.probeStatusKey ?? null;
+        const lockActive = now < probeLockedUntilRef.current;
+        let effectiveProbe: string | null;
+        let effectiveRetry: number | null;
+
+        if (incomingProbe) {
+          // New probe state — set/extend lock
+          probeLockedUntilRef.current = now + 3000;
+          effectiveProbe = incomingProbe;
+          effectiveRetry = sp.nextRetrySeconds ?? null;
+        } else if (lockActive) {
+          // Lock still active — keep previous probe display
+          effectiveProbe = prev.probeStatusKey;
+          effectiveRetry = prev.nextRetrySeconds;
+        } else {
+          // No probe, lock expired — clear
+          effectiveProbe = null;
+          effectiveRetry = null;
+        }
+
+        return {
+          isSyncing,
+          phase,
+          backfillProgress: phase === SyncPhase.Backfill ? phaseProgress : (prev.backfillProgress > 0 ? 1 : prev.backfillProgress),
+          historyProgress: phase === SyncPhase.History ? phaseProgress : (phase === SyncPhase.Rivals || phase === SyncPhase.Complete ? 1 : prev.historyProgress),
+          rivalsProgress: phase === SyncPhase.Rivals ? phaseProgress : (phase === SyncPhase.Complete ? 1 : prev.rivalsProgress),
+          entriesFound: sp.entriesFound,
+          itemsCompleted: sp.itemsCompleted,
+          totalItems: sp.totalItems,
+          currentSongName: sp.currentSongName ?? null,
+          seasonsQueried: sp.seasonsQueried ?? prev.seasonsQueried,
+          rivalsFound: sp.rivalsFound ?? prev.rivalsFound,
+          isThrottled: sp.isThrottled ?? false,
+          throttleStatusKey: sp.throttleStatusKey ?? null,
+          pendingRankUpdate: sp.pendingRankUpdate ?? false,
+          estimatedRankUpdateMinutes: sp.estimatedRankUpdateMinutes ?? null,
+          probeStatusKey: effectiveProbe,
+          nextRetrySeconds: effectiveRetry,
+        };
+      });
 
       if (!isSyncing && phase === SyncPhase.Complete && (wasSyncingRef.current || syncKickedRef.current)) {
         setJustCompleted(true);

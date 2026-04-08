@@ -128,6 +128,12 @@ export type SyncProgressMessage = {
   pendingRankUpdate?: boolean;
   /** Estimated minutes until next global ranking pass. */
   estimatedRankUpdateMinutes?: number;
+  /** Status key for CDN probe state (e.g. "probe_retrying", "probe_waiting"). */
+  probeStatusKey?: string;
+  /** Seconds until next probe retry (during probe_waiting state). */
+  nextRetrySeconds?: number;
+  /** Current probe attempt number (1-based). */
+  probeAttempt?: number;
 };
 
 export type WsNotificationMessage =

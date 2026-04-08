@@ -61,6 +61,8 @@ export interface PlayerContentProps {
   rivalsFound: number;
   isThrottled: boolean;
   throttleStatusKey: string | null;
+  probeStatusKey: string | null;
+  nextRetrySeconds: number | null;
   pendingRankUpdate: boolean;
   estimatedRankUpdateMinutes: number | null;
   isTrackedPlayer: boolean;
@@ -85,6 +87,8 @@ export default function PlayerContent({
   rivalsFound,
   isThrottled,
   throttleStatusKey,
+  probeStatusKey,
+  nextRetrySeconds,
   pendingRankUpdate,
   estimatedRankUpdateMinutes,
   isTrackedPlayer,
@@ -278,6 +282,8 @@ export default function PlayerContent({
         rivalsFound={rivalsFound}
         isThrottled={isThrottled}
         throttleStatusKey={throttleStatusKey}
+        probeStatusKey={probeStatusKey}
+        nextRetrySeconds={nextRetrySeconds}
       />
     ) : (showCompleteBanner && onCompleteBannerDismissed) ? (
       <SyncCompleteBanner

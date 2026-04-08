@@ -61,6 +61,7 @@ const METADATA_MIN_WIDTH: Record<string, number> = {
   stars: 120,       // 5 gold stars (~104px) + gap share
   seasonachieved: 48, // SeasonPill (~32px) + gap share
   intensity: 44,    // DifficultyBars (~28px) + gap share
+  difficulty: 44,   // DifficultyPill (~28px) + gap share
   maxdistance: 76,  // PercentilePill with % (~60px) + gap share
   maxscorediff: 92,  // PercentilePill with -XXX,XXX (~76px) + gap share
 };
@@ -101,7 +102,8 @@ export default function SongsPage() {
     if (!appSettings.metadataShowPercentage) hidden.add('percentage');
     if (!appSettings.metadataShowPercentile) hidden.add('percentile');
     if (!appSettings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
-    if (!appSettings.metadataShowDifficulty) hidden.add('intensity');
+    if (!appSettings.metadataShowIntensity) hidden.add('intensity');
+    if (!appSettings.metadataShowGameDifficulty) hidden.add('difficulty');
     if (!appSettings.metadataShowStars) hidden.add('stars');
     if (!appSettings.metadataShowLastPlayed || settings.sortMode !== 'lastplayed') hidden.add('lastplayed');
 
@@ -136,7 +138,8 @@ export default function SongsPage() {
     appSettings.metadataShowPercentage,
     appSettings.metadataShowPercentile,
     appSettings.metadataShowSeasonAchieved,
-    appSettings.metadataShowDifficulty,
+    appSettings.metadataShowIntensity,
+    appSettings.metadataShowGameDifficulty,
     appSettings.metadataShowStars,
     appSettings.metadataShowLastPlayed,
   ]);
@@ -261,7 +264,7 @@ export default function SongsPage() {
     fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
   }, [fabSearch]);
   /* v8 ignore stop */
-  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted } = usePlayerData();
+  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted } = usePlayerData();
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
 
   // Show completion banner when sync finishes
@@ -583,7 +586,8 @@ export default function SongsPage() {
             percentage: appSettings.metadataShowPercentage,
             percentile: appSettings.metadataShowPercentile,
             seasonachieved: appSettings.metadataShowSeasonAchieved,
-            intensity: appSettings.metadataShowDifficulty,
+            intensity: appSettings.metadataShowIntensity,
+            difficulty: appSettings.metadataShowGameDifficulty,
             stars: appSettings.metadataShowStars,
             lastplayed: appSettings.metadataShowLastPlayed,
           }}
@@ -620,6 +624,8 @@ export default function SongsPage() {
             rivalsFound={rivalsFound}
             isThrottled={isThrottled}
             throttleStatusKey={throttleStatusKey}
+            probeStatusKey={probeStatusKey}
+            nextRetrySeconds={nextRetrySeconds}
           />
         )}
         {!isSyncing && showCompleteBanner && (

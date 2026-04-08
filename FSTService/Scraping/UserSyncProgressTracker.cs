@@ -152,6 +152,43 @@ public sealed class UserSyncProgressTracker
     }
 
     /// <summary>
+    /// Report a CDN probe lifecycle event for an account. Pushes immediately
+    /// (not throttled) since probes are infrequent (one every 0.5–60 s).
+    /// </summary>
+    public void ReportCdnProbe(string accountId, CdnProbeEvent evt)
+    {
+        if (!_progress.TryGetValue(accountId, out var p)) return;
+
+        switch (evt.State)
+        {
+            case CdnProbeState.Waiting:
+                p.ProbeStatusKey = "probe_waiting";
+                p.NextRetrySeconds = evt.NextRetrySeconds;
+                p.ProbeAttempt = evt.Attempt;
+                break;
+            case CdnProbeState.Probing:
+                p.ProbeStatusKey = "probe_retrying";
+                p.NextRetrySeconds = 0;
+                p.ProbeAttempt = evt.Attempt;
+                break;
+            case CdnProbeState.Cleared:
+                p.ProbeStatusKey = null;
+                p.NextRetrySeconds = 0;
+                p.ProbeAttempt = 0;
+                p.IsThrottled = false;
+                p.ThrottleStatusKey = null;
+                break;
+            case CdnProbeState.Exhausted:
+                p.ProbeStatusKey = "probe_exhausted";
+                p.NextRetrySeconds = 0;
+                p.ProbeAttempt = evt.Attempt;
+                break;
+        }
+
+        PushProgress(accountId, p);
+    }
+
+    /// <summary>
     /// Returns true if the account has an active phase that takes precedence over PostScrape
     /// (Backfill, History, or Rivals). Used to avoid clobbering registration sync state.
     /// </summary>
@@ -267,6 +304,9 @@ public sealed class UserSyncProgressTracker
             elapsedSeconds = Math.Round(p.Stopwatch.Elapsed.TotalSeconds, 1),
             isThrottled = p.IsThrottled,
             throttleStatusKey = p.ThrottleStatusKey,
+            probeStatusKey = p.ProbeStatusKey,
+            nextRetrySeconds = p.NextRetrySeconds > 0 ? Math.Round(p.NextRetrySeconds, 1) : (double?)null,
+            probeAttempt = p.ProbeAttempt > 0 ? p.ProbeAttempt : (int?)null,
             pendingRankUpdate = isComplete ? true : (bool?)null,
             estimatedRankUpdateMinutes = estimatedRankMinutes,
         };
@@ -322,6 +362,15 @@ public sealed class UserSyncProgress
 
     /// <summary>Status key for throttle reason (e.g. "throttle_cdn_busy"). Frontend translates locally.</summary>
     public volatile string? ThrottleStatusKey;
+
+    /// <summary>Status key for CDN probe state (e.g. "probe_retrying", "probe_waiting"). Null when no probe active.</summary>
+    public volatile string? ProbeStatusKey;
+
+    /// <summary>Seconds until next probe retry (populated during <see cref="CdnProbeState.Waiting"/>).</summary>
+    public double NextRetrySeconds;
+
+    /// <summary>Current probe attempt number (1-based).</summary>
+    public int ProbeAttempt;
 
     /// <summary>Tick count of last WebSocket push (for throttling).</summary>
     public long LastPushTicks;

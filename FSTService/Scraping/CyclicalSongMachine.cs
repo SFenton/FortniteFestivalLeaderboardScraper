@@ -438,6 +438,22 @@ public class CyclicalSongMachine
 
         try
         {
+            // Wire CDN probe callback so probe lifecycle events are pushed
+            // to all active syncing users via WebSocket.
+            var executor = _inner.Executor;
+            if (executor is not null)
+            {
+                executor.OnCdnProbeEvent = evt =>
+                {
+                    foreach (var (_, att) in _attachments)
+                    {
+                        if (att.IsCompleted) continue;
+                        foreach (var user in att.Users)
+                            _syncTracker.ReportCdnProbe(user.AccountId, evt);
+                    }
+                };
+            }
+
             var songTasks = songsToProcess.Select(async songEntry =>
             {
                 ct.ThrowIfCancellationRequested();
@@ -531,6 +547,9 @@ public class CyclicalSongMachine
         }
         finally
         {
+            // Clear CDN probe callback to avoid stale references
+            if (_inner.Executor is not null)
+                _inner.Executor.OnCdnProbeEvent = null;
             songGate?.Dispose();
         }
     }

@@ -12,6 +12,22 @@ public sealed class CdnBlockedException : Exception
     public CdnBlockedException(string message) : base(message) { }
 }
 
+/// <summary>State of a CDN probe attempt, fired via <see cref="ResilientHttpExecutor.OnCdnProbeEvent"/>.</summary>
+public enum CdnProbeState
+{
+    /// <summary>Waiting before the next probe attempt (delay countdown).</summary>
+    Waiting,
+    /// <summary>Sending a probe HTTP request.</summary>
+    Probing,
+    /// <summary>Probe succeeded — CDN block is cleared.</summary>
+    Cleared,
+    /// <summary>All probe retries exhausted — gave up.</summary>
+    Exhausted,
+}
+
+/// <summary>Event fired during CDN probe lifecycle.</summary>
+public readonly record struct CdnProbeEvent(CdnProbeState State, int Attempt, int MaxRetries, double NextRetrySeconds);
+
 /// <summary>
 /// Sends HTTP requests with automatic retry on transient failures
 /// (429 rate-limit, 5xx server errors, network errors, timeouts)
@@ -99,6 +115,13 @@ public sealed class ResilientHttpExecutor
     public long CdnProbeSuccesses => Volatile.Read(ref _cdnProbeSuccesses);
     /// <summary>Total HTTP sends (including probes, retries, everything).</summary>
     public long TotalHttpSends => Volatile.Read(ref _totalHttpSends);
+
+    /// <summary>
+    /// Optional callback fired during CDN probe lifecycle. Set by the caller
+    /// (e.g. <see cref="CyclicalSongMachine"/>) to propagate probe state to
+    /// per-user sync progress trackers.
+    /// </summary>
+    public Action<CdnProbeEvent>? OnCdnProbeEvent { get; set; }
 
     // ── Shared CDN cooldown state ─────────────────────────────
     // When a CDN block is detected, the probe walks a backoff schedule.
@@ -321,10 +344,14 @@ public sealed class ResilientHttpExecutor
                         "CDN probe for {Operation} (attempt {CdnAttempt}/{MaxRetries}), waiting {Delay:F1}s",
                         label ?? "request", i + 1, MaxCdnRetries, delay.TotalSeconds);
 
+                    OnCdnProbeEvent?.Invoke(new CdnProbeEvent(CdnProbeState.Waiting, i + 1, MaxCdnRetries, delay.TotalSeconds));
+
                     await Task.Delay(delay, ct);
 
                     // Only acquire a rate token — NOT a DOP slot
                     await (limiter?.AcquireRateTokenAsync(ct) ?? Task.CompletedTask);
+
+                    OnCdnProbeEvent?.Invoke(new CdnProbeEvent(CdnProbeState.Probing, i + 1, MaxCdnRetries, 0));
 
                     HttpResponseMessage res;
                     try
@@ -368,6 +395,7 @@ public sealed class ResilientHttpExecutor
                     _log.LogWarning(
                         "CDN cleared after {ProbeAttempt} probes (total sends: {TotalSends}, blocks: {Blocks})",
                         i + 1, TotalHttpSends, CdnBlocksDetected);
+                    OnCdnProbeEvent?.Invoke(new CdnProbeEvent(CdnProbeState.Cleared, i + 1, MaxCdnRetries, 0));
                     tcs.TrySetResult(true);
                     return;
                 }
@@ -376,6 +404,7 @@ public sealed class ResilientHttpExecutor
                 _log.LogError("CDN probe gave up after {MaxRetries} retries.", MaxCdnRetries);
                 _cdnCooldownUntil = default;
                 _cdnRetryIndex = 0;
+                OnCdnProbeEvent?.Invoke(new CdnProbeEvent(CdnProbeState.Exhausted, MaxCdnRetries, MaxCdnRetries, 0));
                 tcs.TrySetResult(false);
             }
             catch (OperationCanceledException)

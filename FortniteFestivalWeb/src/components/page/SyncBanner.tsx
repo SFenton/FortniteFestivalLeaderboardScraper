@@ -23,6 +23,8 @@ interface SyncBannerProps {
   rivalsFound: number;
   isThrottled: boolean;
   throttleStatusKey: string | null;
+  probeStatusKey: string | null;
+  nextRetrySeconds: number | null;
 }
 
 function getStepInfo(phase: SyncPhase): { step: number; totalSteps: number } {
@@ -49,6 +51,7 @@ const SyncBanner = memo(function SyncBanner({
   phase, backfillProgress, historyProgress, rivalsProgress,
   itemsCompleted, totalItems, entriesFound, currentSongName,
   seasonsQueried, rivalsFound, isThrottled, throttleStatusKey,
+  probeStatusKey, nextRetrySeconds,
 }: SyncBannerProps) {
   const { t } = useTranslation();
   const s = useSyncBannerStyles();
@@ -58,7 +61,16 @@ const SyncBanner = memo(function SyncBanner({
     ? (totalItems > 0 ? itemsCompleted / totalItems : 0)
     : getUnifiedProgress(phase, backfillProgress, historyProgress, rivalsProgress);
   const pct = Math.round(unified * 100);
-  const isIndeterminate = (itemsCompleted === 0 && totalItems === 0) || isThrottled;
+  const isIndeterminate = (itemsCompleted === 0 && totalItems === 0) || isThrottled || !!probeStatusKey;
+
+  // Probe status takes priority over throttle for display text
+  const statusWarning = probeStatusKey
+    ? (probeStatusKey === 'probe_waiting' && nextRetrySeconds != null
+      ? t(`player.${probeStatusKey}` as const, { seconds: Math.ceil(nextRetrySeconds) })
+      : t(`player.${probeStatusKey}` as const))
+    : (isThrottled && throttleStatusKey
+      ? t(`player.${throttleStatusKey}` as const)
+      : null);
 
   return (
     <div style={s.syncBanner}>
@@ -84,10 +96,10 @@ const SyncBanner = memo(function SyncBanner({
         }} />
       </div>
 
-      {/* Throttle warning */}
-      {isThrottled && throttleStatusKey && (
+      {/* Throttle / probe warning */}
+      {statusWarning && (
         <div style={s.syncThrottleWarning}>
-          {t(`player.${throttleStatusKey}` as const)}
+          {statusWarning}
         </div>
       )}
 
