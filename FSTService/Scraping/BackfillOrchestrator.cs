@@ -23,6 +23,8 @@ public sealed class BackfillOrchestrator
     private readonly IOptions<ScraperOptions> _options;
     private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly SharedDopPool _pool;
+    private readonly BatchResultProcessor _resultProcessor;
+    private readonly ScrapeTimePrecomputer _precomputer;
     private readonly ILogger<BackfillOrchestrator> _log;
 
     public BackfillOrchestrator(
@@ -36,6 +38,8 @@ public sealed class BackfillOrchestrator
         IOptions<ScraperOptions> options,
         CyclicalSongMachine cyclicalMachine,
         SharedDopPool pool,
+        BatchResultProcessor resultProcessor,
+        ScrapeTimePrecomputer precomputer,
         ILogger<BackfillOrchestrator> log)
     {
         _backfillQueue = backfillQueue;
@@ -48,6 +52,8 @@ public sealed class BackfillOrchestrator
         _options = options;
         _cyclicalMachine = cyclicalMachine;
         _pool = pool;
+        _resultProcessor = resultProcessor;
+        _precomputer = precomputer;
         _log = log;
     }
 
@@ -134,6 +140,9 @@ public sealed class BackfillOrchestrator
 
         try
         {
+            // Enable staging mode so DB writes are buffered until per-user flush
+            _resultProcessor.SetStagingAccounts(accountIds);
+
             _progress.SetSubOperation("processing_songs");
             var result = await _cyclicalMachine.AttachAsync(
                 users, chartedSongIds, seasonWindows,
@@ -143,14 +152,16 @@ public sealed class BackfillOrchestrator
                 "Backfill complete: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",
                 result.EntriesUpdated, result.SessionsInserted, result.ApiCalls, result.UsersProcessed);
 
-            // Per-user completion actions
+            // Per-user completion: flush staged data → mark complete → rivals → precompute → notify
             _progress.SetSubOperation("completing_user_actions");
             foreach (var user in users)
             {
                 try
                 {
+                    _resultProcessor.FlushStagedData(user.AccountId);
                     _persistence.Meta.CompleteBackfill(user.AccountId);
                     _rivalsOrchestrator.ComputeForUser(user.AccountId);
+                    _precomputer.PrecomputeUser(user.AccountId);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
                 }
                 catch (Exception ex)
@@ -178,6 +189,10 @@ public sealed class BackfillOrchestrator
         catch (Exception ex)
         {
             _log.LogError(ex, "Backfill via SongProcessingMachine failed. Will retry next pass.");
+        }
+        finally
+        {
+            _resultProcessor.ClearStagingAccounts();
         }
     }
 

@@ -179,11 +179,14 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _tokenManager, _progress, pathDataStore, precomputer, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 
+        var resultProcessor = new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>());
+
         var backfillOrchestrator = new BackfillOrchestrator(
             _backfillQueue, _historyReconstructor,
             rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
             _cyclicalMachine, _pool,
+            resultProcessor, precomputer,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
         _shopMetaDb = new FSTService.Persistence.MetaDatabase(
@@ -253,6 +256,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
             _cyclicalMachine, _pool,
+            new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
+            new ScrapeTimePrecomputer(_persistence, _persistence.Meta, new PathDataStore(SharedPostgresContainer.CreateDatabase()), _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
             Substitute.For<ILogger<BackfillOrchestrator>>());
     }
 

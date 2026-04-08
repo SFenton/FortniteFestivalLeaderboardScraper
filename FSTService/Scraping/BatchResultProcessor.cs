@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
@@ -8,12 +9,23 @@ namespace FSTService.Scraping;
 ///
 /// Consolidates logic previously duplicated across <see cref="PostScrapeRefresher"/>
 /// and <see cref="HistoryReconstructor"/>.
+///
+/// When <see cref="SetStagingAccounts"/> is active, writes for designated accounts
+/// are buffered in memory instead of hitting the DB. Call <see cref="FlushStagedData"/>
+/// per account to atomically persist all buffered writes at once.
 /// </summary>
 public class BatchResultProcessor
 {
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<BatchResultProcessor> _log;
+
+    // ── Staging mode ─────────────────────────────────────────────
+    private volatile HashSet<string>? _stagingAccountIds;
+    private readonly ConcurrentDictionary<string, ConcurrentBag<(string Instrument, string SongId, LeaderboardEntry Entry)>> _stagedEntries = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConcurrentBag<ScoreChangeRecord>> _stagedScoreChanges = new(StringComparer.OrdinalIgnoreCase);
+    // Population floor raises are metadata-only (not user-visible); buffer and apply on flush.
+    private readonly ConcurrentDictionary<string, ConcurrentBag<(string SongId, string Instrument, long MaxRank)>> _stagedPopulation = new(StringComparer.OrdinalIgnoreCase);
 
     public BatchResultProcessor(
         GlobalLeaderboardPersistence persistence,
@@ -90,13 +102,52 @@ public class BatchResultProcessor
         }
 
         // ── Batch writes: 1 lock acquisition each instead of N ──
-        if (scoreChanges.Count > 0)
-            _metaDb.InsertScoreChanges(scoreChanges);
+        // Split staged vs direct writes
+        var directChanges = new List<ScoreChangeRecord>();
+        var directEntries = new List<LeaderboardEntry>();
+        long directMaxRank = 0;
 
-        instrumentDb.UpsertEntries(songId, entriesToUpsert);
+        foreach (var change in scoreChanges)
+        {
+            if (IsStaged(change.AccountId))
+                StageScoreChanges(change.AccountId, [change]);
+            else
+                directChanges.Add(change);
+        }
 
-        if (maxRank > 0)
-            _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, maxRank);
+        foreach (var entry in entriesToUpsert)
+        {
+            if (IsStaged(entry.AccountId))
+            {
+                StageEntry(entry.AccountId, instrument, songId, entry);
+            }
+            else
+            {
+                directEntries.Add(entry);
+                if (entry.Rank > directMaxRank)
+                    directMaxRank = entry.Rank;
+            }
+        }
+
+        if (directChanges.Count > 0)
+            _metaDb.InsertScoreChanges(directChanges);
+
+        if (directEntries.Count > 0)
+            instrumentDb.UpsertEntries(songId, directEntries);
+
+        if (directMaxRank > 0)
+            _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, directMaxRank);
+
+        // Stage population floor for staged accounts (max rank across all staged entries)
+        var stagedAccountsInBatch = entriesToUpsert
+            .Where(e => IsStaged(e.AccountId))
+            .GroupBy(e => e.AccountId, StringComparer.OrdinalIgnoreCase);
+        foreach (var group in stagedAccountsInBatch)
+        {
+            var groupMaxRank = group.Max(e => e.Rank);
+            if (groupMaxRank > 0)
+                StagePopulation(group.Key, songId, instrument, groupMaxRank);
+        }
 
         return entriesToUpsert.Count;
     }
@@ -138,9 +189,20 @@ public class BatchResultProcessor
             });
         }
 
-        // ── Single batch write ──
+        // ── Single batch write (split staged vs direct) ──
         if (scoreChanges.Count > 0)
-            _metaDb.InsertScoreChanges(scoreChanges);
+        {
+            var directChanges = new List<ScoreChangeRecord>();
+            foreach (var change in scoreChanges)
+            {
+                if (IsStaged(change.AccountId))
+                    StageScoreChanges(change.AccountId, [change]);
+                else
+                    directChanges.Add(change);
+            }
+            if (directChanges.Count > 0)
+                _metaDb.InsertScoreChanges(directChanges);
+        }
 
         return scoreChanges.Count;
     }
@@ -214,7 +276,18 @@ public class BatchResultProcessor
         }
 
         if (scoreChanges.Count > 0)
-            _metaDb.InsertScoreChanges(scoreChanges);
+        {
+            var directChanges = new List<ScoreChangeRecord>();
+            foreach (var change in scoreChanges)
+            {
+                if (IsStaged(change.AccountId))
+                    StageScoreChanges(change.AccountId, [change]);
+                else
+                    directChanges.Add(change);
+            }
+            if (directChanges.Count > 0)
+                _metaDb.InsertScoreChanges(directChanges);
+        }
 
         return scoreChanges.Count;
     }
@@ -230,4 +303,98 @@ public class BatchResultProcessor
     /// </summary>
     public void MarkHistoryReconProcessed(string accountId, string songId, string instrument)
         => _metaDb.MarkHistoryReconSongProcessed(accountId, songId, instrument);
+
+    // ══════════════════════════════════════════════════════════════
+    // Staging mode — buffer writes for designated accounts
+    // ══════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Enable staging mode for the given accounts. All DB writes for these
+    /// accounts will be buffered in memory until <see cref="FlushStagedData"/>
+    /// is called. Thread-safe: concurrent calls to Process* methods are safe.
+    /// </summary>
+    public void SetStagingAccounts(IReadOnlyCollection<string> accountIds)
+    {
+        _stagingAccountIds = new HashSet<string>(accountIds, StringComparer.OrdinalIgnoreCase);
+        _log.LogInformation("Staging mode enabled for {Count} accounts.", accountIds.Count);
+    }
+
+    /// <summary>Disable staging mode. Does NOT flush buffered data.</summary>
+    public void ClearStagingAccounts()
+    {
+        _stagingAccountIds = null;
+    }
+
+    /// <summary>Returns true if the account is in staging mode.</summary>
+    private bool IsStaged(string accountId) => _stagingAccountIds?.Contains(accountId) == true;
+
+    /// <summary>
+    /// Flush all buffered writes for the given account to the database.
+    /// Leaderboard entry upserts and score history inserts are written in
+    /// rapid succession so the data becomes visible near-atomically.
+    /// Clears the buffers for this account afterward.
+    /// </summary>
+    public void FlushStagedData(string accountId)
+    {
+        // ── Leaderboard entries ──────────────────────────────────
+        if (_stagedEntries.TryRemove(accountId, out var entryBag))
+        {
+            // Group by (instrument, songId) for batch upsert
+            var byKey = new Dictionary<(string Instrument, string SongId), List<LeaderboardEntry>>();
+            foreach (var (instrument, songId, entry) in entryBag)
+            {
+                var key = (instrument, songId);
+                if (!byKey.TryGetValue(key, out var list))
+                {
+                    list = [];
+                    byKey[key] = list;
+                }
+                list.Add(entry);
+            }
+
+            foreach (var ((instrument, songId), entries) in byKey)
+            {
+                var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
+                instrumentDb.UpsertEntries(songId, entries);
+            }
+        }
+
+        // ── Score history ────────────────────────────────────────
+        if (_stagedScoreChanges.TryRemove(accountId, out var changeBag))
+        {
+            var changes = changeBag.ToList();
+            if (changes.Count > 0)
+                _metaDb.InsertScoreChanges(changes);
+        }
+
+        // ── Population floors ────────────────────────────────────
+        if (_stagedPopulation.TryRemove(accountId, out var popBag))
+        {
+            foreach (var (songId, instrument, maxRank) in popBag)
+                _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, maxRank);
+        }
+
+        _log.LogDebug("Flushed staged data for account {AccountId}.", accountId);
+    }
+
+    // ── Private staging helpers ──────────────────────────────────
+
+    private void StageEntry(string accountId, string instrument, string songId, LeaderboardEntry entry)
+    {
+        var bag = _stagedEntries.GetOrAdd(accountId, _ => []);
+        bag.Add((instrument, songId, entry));
+    }
+
+    private void StageScoreChanges(string accountId, IReadOnlyList<ScoreChangeRecord> changes)
+    {
+        var bag = _stagedScoreChanges.GetOrAdd(accountId, _ => []);
+        foreach (var change in changes)
+            bag.Add(change);
+    }
+
+    private void StagePopulation(string accountId, string songId, string instrument, long maxRank)
+    {
+        var bag = _stagedPopulation.GetOrAdd(accountId, _ => []);
+        bag.Add((songId, instrument, maxRank));
+    }
 }
