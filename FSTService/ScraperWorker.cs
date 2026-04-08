@@ -407,6 +407,11 @@ public sealed class ScraperWorker : BackgroundService
         await service.SyncSongsAsync();
         _persistence.InvalidateTotalSongCount();
 
+        // Make new songs visible immediately — SongsCacheService is independent
+        // of the ResponseCacheService freeze, so this doesn't conflict with scrape
+        // atomicity. Without this, new songs are invisible until the scrape completes.
+        PrimeSongsCache();
+
         // Fire-and-forget path generation (runs in parallel with the scrape)
         var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);
 
