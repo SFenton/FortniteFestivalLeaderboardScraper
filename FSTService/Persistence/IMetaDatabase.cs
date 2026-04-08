@@ -166,6 +166,19 @@ public interface IMetaDatabase : IDisposable
     void BulkSetCachedResponses(IEnumerable<(string Key, byte[] Json, string ETag)> entries);
     void ClearCachedResponses();
 
+    /// <summary>
+    /// Bulk-insert precomputed responses into the staging table
+    /// (api_response_cache_staging) without touching the live table.
+    /// </summary>
+    void BulkSetCachedResponsesStaging(IEnumerable<(string Key, byte[] Json, string ETag)> entries);
+
+    /// <summary>
+    /// Atomically swap the staging table into the live api_response_cache table.
+    /// Runs TRUNCATE live → INSERT INTO live SELECT * FROM staging → TRUNCATE staging
+    /// inside a single transaction so the API never sees an empty cache.
+    /// </summary>
+    void SwapCachedResponsesFromStaging();
+
     // ── Maintenance ──────────────────────────────────────────────────
     void Checkpoint();
 

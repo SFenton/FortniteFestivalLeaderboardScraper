@@ -895,6 +895,14 @@ public static class DatabaseInitializer
             cached_at   TIMESTAMPTZ NOT NULL DEFAULT now()
         );
 
+        -- Staging sibling for shadow precomputation (atomic swap into api_response_cache)
+        CREATE TABLE IF NOT EXISTS api_response_cache_staging (
+            cache_key   TEXT        NOT NULL PRIMARY KEY,
+            json_data   BYTEA       NOT NULL,
+            etag        TEXT        NOT NULL,
+            cached_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
         -- =====================================================================
         -- LEADERBOARD STAGING (chunked scrape entries, merged on finalize)
         -- =====================================================================

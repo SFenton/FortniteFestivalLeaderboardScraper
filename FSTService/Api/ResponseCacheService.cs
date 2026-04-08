@@ -12,6 +12,7 @@ public sealed class ResponseCacheService : IDisposable
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
     private readonly TimeSpan _ttl;
     private readonly Timer _evictionTimer;
+    private volatile bool _frozen;
 
     public ResponseCacheService(TimeSpan ttl)
     {
@@ -20,11 +21,25 @@ public sealed class ResponseCacheService : IDisposable
     }
 
     /// <summary>
+    /// When true, <see cref="Get"/> skips TTL checks and <see cref="Cleanup"/>
+    /// skips eviction — all cached entries are treated as fresh.
+    /// Used during scrape passes to prevent partial data from leaking through.
+    /// </summary>
+    public bool IsFrozen => _frozen;
+
+    /// <summary>Freeze the cache — entries never expire until <see cref="Unfreeze"/> is called.</summary>
+    public void Freeze() => _frozen = true;
+
+    /// <summary>Unfreeze the cache — normal TTL-based expiration resumes.</summary>
+    public void Unfreeze() => _frozen = false;
+
+    /// <summary>
     /// Returns (json, etag) if cached and not expired; otherwise null.
+    /// When frozen, TTL is ignored and all entries are treated as fresh.
     /// </summary>
     public (byte[] Json, string ETag)? Get(string key)
     {
-        if (_cache.TryGetValue(key, out var entry) && DateTime.UtcNow - entry.CachedAt < _ttl)
+        if (_cache.TryGetValue(key, out var entry) && (_frozen || DateTime.UtcNow - entry.CachedAt < _ttl))
             return (entry.Json, entry.ETag);
         return null;
     }
@@ -67,6 +82,8 @@ public sealed class ResponseCacheService : IDisposable
 
     private void Cleanup()
     {
+        if (_frozen) return;
+
         var now = DateTime.UtcNow;
         foreach (var key in _cache.Keys)
         {

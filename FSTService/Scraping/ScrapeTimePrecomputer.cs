@@ -125,10 +125,10 @@ public sealed class ScrapeTimePrecomputer
         staging.Complete();
         await staging.WaitForDrainAsync();
 
-        // ── Flush from staging file to PostgreSQL ────────────────
+        // ── Flush from staging file to PostgreSQL staging table, then atomic swap ──
         _log.LogInformation("All phases complete. {Count:N0} records staged to disk.", staging.RecordCount);
-        _metaDb.ClearCachedResponses();
-        staging.FlushToPostgres(_metaDb);
+        staging.FlushToPostgres(_metaDb, useStaging: true);
+        _metaDb.SwapCachedResponsesFromStaging();
         _staging = null;
 
         sw.Stop();

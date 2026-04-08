@@ -63,8 +63,10 @@ public sealed class DiskStagingWriter : IAsyncDisposable
 
     /// <summary>
     /// Stream the staging file into PostgreSQL via bulk UPSERT, then delete the file.
+    /// When <paramref name="useStaging"/> is true, writes to api_response_cache_staging
+    /// instead of the live table (for atomic swap via <see cref="IMetaDatabase.SwapCachedResponsesFromStaging"/>).
     /// </summary>
-    public void FlushToPostgres(IMetaDatabase metaDb)
+    public void FlushToPostgres(IMetaDatabase metaDb, bool useStaging = false)
     {
         if (!File.Exists(_stagingPath) || RecordCount == 0)
         {
@@ -72,10 +74,13 @@ public sealed class DiskStagingWriter : IAsyncDisposable
             return;
         }
 
-        _log.LogInformation("Flushing {Count:N0} staged records from {Path} to PostgreSQL...",
-            RecordCount, Path.GetFileName(_stagingPath));
+        _log.LogInformation("Flushing {Count:N0} staged records from {Path} to PostgreSQL{Target}...",
+            RecordCount, Path.GetFileName(_stagingPath), useStaging ? " (staging table)" : "");
 
-        metaDb.BulkSetCachedResponses(ReadStagingFile());
+        if (useStaging)
+            metaDb.BulkSetCachedResponsesStaging(ReadStagingFile());
+        else
+            metaDb.BulkSetCachedResponses(ReadStagingFile());
 
         _log.LogInformation("Flush complete. Deleting staging file.");
         TryDeleteStagingFile();

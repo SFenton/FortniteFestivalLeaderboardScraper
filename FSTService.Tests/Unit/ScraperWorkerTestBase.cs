@@ -207,6 +207,15 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _scraper, _persistence, pathDataStore, _pool, _progress, options,
             Substitute.For<ILogger<ScrapeOrchestrator>>());
 
+        var playerCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(2));
+        var leaderboardAllCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(5));
+        var neighborhoodCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(2));
+        var rivalsCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(5));
+        var leaderboardRivalsCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(5));
+        var lifecycle = new ScrapeLifecycleNotifier(
+            playerCache, leaderboardAllCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache,
+            Substitute.For<ILogger<ScrapeLifecycleNotifier>>());
+
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence,
             _festivalService, dbInitializer,
@@ -214,8 +223,9 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _cyclicalMachine,
             pathGenerator, pathDataStore,
             new Api.SongsCacheService(),
-            new Api.ResponseCacheService(TimeSpan.FromMinutes(2)),
-            new Api.ResponseCacheService(TimeSpan.FromMinutes(5)),
+            playerCache,
+            leaderboardAllCache,
+            lifecycle,
             precomputer,
             _progress,
             new FSTService.Scraping.UserSyncProgressTracker(

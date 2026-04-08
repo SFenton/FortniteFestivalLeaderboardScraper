@@ -37,6 +37,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly SongsCacheService _songsCache;
     private readonly ResponseCacheService _playerCache;
     private readonly ResponseCacheService _leaderboardAllCache;
+    private readonly ScrapeLifecycleNotifier _lifecycle;
     private readonly ScrapeTimePrecomputer _precomputer;
     private readonly ScrapeProgressTracker _progress;
     private readonly UserSyncProgressTracker _syncTracker;
@@ -63,6 +64,7 @@ public sealed class ScraperWorker : BackgroundService
         SongsCacheService songsCache,
         [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache,
         [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService leaderboardAllCache,
+        ScrapeLifecycleNotifier lifecycle,
         ScrapeTimePrecomputer precomputer,
         ScrapeProgressTracker progress,
         UserSyncProgressTracker syncTracker,
@@ -85,6 +87,7 @@ public sealed class ScraperWorker : BackgroundService
         _songsCache = songsCache;
         _playerCache = playerCache;
         _leaderboardAllCache = leaderboardAllCache;
+        _lifecycle = lifecycle;
         _precomputer = precomputer;
         _progress = progress;
         _syncTracker = syncTracker;
@@ -405,6 +408,9 @@ public sealed class ScraperWorker : BackgroundService
         var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);
 
         // ── Core scrape: delegate to ScrapeOrchestrator ──
+        // Freeze all response caches so API consumers see consistent (stale) data
+        // throughout the scrape + post-scrape enrichment + precomputation cycle.
+        _lifecycle.ScrapeStarting();
         ScrapePassResult result;
         try
         {
@@ -419,6 +425,7 @@ public sealed class ScraperWorker : BackgroundService
                 "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
                 "Partial data from this pass was already persisted via pipelined writers.",
                 _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
+            _lifecycle.ScrapeCompleted();
             return;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -428,6 +435,7 @@ public sealed class ScraperWorker : BackgroundService
             _log.LogError(ex,
                 "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
                 "Will retry next pass.");
+            _lifecycle.ScrapeCompleted();
             return;
         }
 
@@ -447,8 +455,9 @@ public sealed class ScraperWorker : BackgroundService
         // No disk persistence needed.
 
         PrimeSongsCache();
-        _playerCache.InvalidateAll();
-        _leaderboardAllCache.InvalidateAll();
+
+        // Unfreeze all response caches and invalidate — API consumers now see fresh data atomically.
+        _lifecycle.ScrapeCompleted();
 
         var endMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
         _log.LogInformation("Scrape pass complete. (Process memory: {MemoryMB} MB)", endMemMb);
