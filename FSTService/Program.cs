@@ -355,10 +355,29 @@ builder.Services.AddHostedService<ScraperWorker>();
 
 var app = builder.Build();
 
-// Initialize PostgreSQL schema
+// Initialize PostgreSQL schema (retry with backoff — PG may still be recovering after OOM/crash)
 {
     var pgDs = app.Services.GetRequiredService<NpgsqlDataSource>();
-    await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(pgDs);
+    var startupLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    const int maxRetries = 10;
+    for (int attempt = 1; ; attempt++)
+    {
+        try
+        {
+            await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(pgDs);
+            break;
+        }
+        catch (Exception ex) when (attempt < maxRetries &&
+            (ex is NpgsqlException || ex is System.Net.Sockets.SocketException ||
+             ex.InnerException is System.Net.Sockets.SocketException))
+        {
+            var delay = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt - 1), 30));
+            startupLog.LogWarning(ex,
+                "Schema init attempt {Attempt}/{MaxRetries} failed. Retrying in {Delay}s...",
+                attempt, maxRetries, delay.TotalSeconds);
+            await Task.Delay(delay);
+        }
+    }
 }
 
 // One-shot precompute: --precompute

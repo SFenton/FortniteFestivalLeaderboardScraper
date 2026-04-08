@@ -136,7 +136,15 @@ public sealed class PostScrapeOrchestrator
     {
         var heapBefore = GC.GetTotalMemory(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        await phase();
+        try
+        {
+            await phase();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "PostScrape phase [{Phase}] failed. Will retry next pass.", phaseName);
+        }
         sw.Stop();
         var heapAfter = GC.GetTotalMemory(false);
         _log.LogInformation(
@@ -147,11 +155,20 @@ public sealed class PostScrapeOrchestrator
     /// <summary>
     /// Run a post-scrape phase that returns a result, with timing and heap telemetry.
     /// </summary>
-    private async Task<T> RunPhaseAsync<T>(string phaseName, Func<Task<T>> phase)
+    private async Task<T> RunPhaseAsync<T>(string phaseName, Func<Task<T>> phase, T defaultValue = default!)
     {
         var heapBefore = GC.GetTotalMemory(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var result = await phase();
+        T result = defaultValue;
+        try
+        {
+            result = await phase();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "PostScrape phase [{Phase}] failed. Will retry next pass.", phaseName);
+        }
         sw.Stop();
         var heapAfter = GC.GetTotalMemory(false);
         _log.LogInformation(

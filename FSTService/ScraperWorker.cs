@@ -473,7 +473,15 @@ public sealed class ScraperWorker : BackgroundService
         // backfill and history reconstruction alongside post-scrape refresh,
         // so explicit RunBackfillAsync/RunHistoryReconAsync are no longer needed
         // in the normal scrape pass.
-        await _postScrapeOrchestrator.RunAsync(result.Context, service, ct);
+        try
+        {
+            await _postScrapeOrchestrator.RunAsync(result.Context, service, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
+        }
 
         // Precomputed responses are flushed to PostgreSQL inside PrecomputeAllAsync().
         // No disk persistence needed.

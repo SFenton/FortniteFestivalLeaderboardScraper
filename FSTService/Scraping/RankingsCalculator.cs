@@ -72,9 +72,16 @@ public sealed class RankingsCalculator
         // Total steps: instruments(6) + composite(1) + snapshots(instruments+1) + combos(1) = 15
         _progress.BeginPhaseProgress(instruments.Count + 1 + instruments.Count + 1 + 1);
         _progress.SetSubOperation("per_instrument_rankings");
-        var tasks = instruments.Select(instrument => Task.Run(() =>
+
+        // Cap at 2 concurrent instruments to avoid OOM-killing PostgreSQL.
+        // Each instrument's ranking pipeline uses ~1GB work_mem (temp table +
+        // indexes + 5 ROW_NUMBER window functions). 6 concurrent × ~1GB +
+        // shared_buffers exceeds the container memory limit.
+        await Parallel.ForEachAsync(instruments,
+            new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct },
+            (instrument, innerCt) =>
         {
-            ct.ThrowIfCancellationRequested();
+            innerCt.ThrowIfCancellationRequested();
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
 
             // Build per-song max scores for this instrument
@@ -143,7 +150,7 @@ public sealed class RankingsCalculator
             if (totalCharted == 0)
             {
                 _log.LogWarning("No charted songs for {Instrument}, skipping rankings.", instrument);
-                return;
+                return ValueTask.CompletedTask;
             }
 
             using var conn = db.OpenConnection();
@@ -166,10 +173,9 @@ public sealed class RankingsCalculator
             {
                 _log.LogDebug("{Instrument}: skipping ranking delta computation (ComputeRankingDeltas=false).", instrument);
             }
-        }, ct)).ToList();
 
-        await Task.WhenAll(tasks);
-        ct.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        });
 
         _log.LogInformation("Per-instrument rankings + deltas complete in {Elapsed}.", sw.Elapsed);
 
