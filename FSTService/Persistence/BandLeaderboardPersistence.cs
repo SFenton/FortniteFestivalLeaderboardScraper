@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using FSTService.Scraping;
 using Npgsql;
 using NpgsqlTypes;
@@ -18,6 +19,105 @@ public sealed class BandLeaderboardPersistence
     {
         _dataSource = dataSource;
         _log = log;
+    }
+
+    // ─── Per-band-type bounded channels for async batched writes ──────
+
+    private record struct BandWorkItem(string SongId, string BandType, IReadOnlyList<BandLeaderboardEntry> Entries);
+
+    private Dictionary<string, Channel<BandWorkItem>>? _channels;
+    private List<Task>? _writerTasks;
+
+    /// <summary>
+    /// Start per-band-type writer tasks. Each band type (Duets, Trios, Quad)
+    /// gets its own bounded channel and dedicated writer task so they don't
+    /// block each other. Naturally extends when new band types are added.
+    /// </summary>
+    public void StartWriter(IEnumerable<string>? bandTypes = null, int channelCapacity = 128, int writeBatchSize = 10, CancellationToken ct = default)
+    {
+        var types = bandTypes ?? ["Band_Duets", "Band_Trios", "Band_Quad"];
+        _channels = new Dictionary<string, Channel<BandWorkItem>>(StringComparer.OrdinalIgnoreCase);
+        _writerTasks = new List<Task>();
+
+        foreach (var bandType in types)
+        {
+            var channel = Channel.CreateBounded<BandWorkItem>(new BoundedChannelOptions(channelCapacity)
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.Wait,
+            });
+            _channels[bandType] = channel;
+
+            var task = Task.Run(async () =>
+            {
+                await RunBandWriterAsync(channel.Reader, writeBatchSize, ct);
+            }, ct);
+            _writerTasks.Add(task);
+        }
+
+        _log.LogInformation("Started {Count} per-band-type writers (capacity {Cap}, batch {Batch}).",
+            _writerTasks.Count, channelCapacity, writeBatchSize);
+    }
+
+    /// <summary>Enqueue a band page for async persistence. Applies back-pressure when full.</summary>
+    public async ValueTask EnqueueAsync(string songId, string bandType,
+                                         IReadOnlyList<BandLeaderboardEntry> entries,
+                                         CancellationToken ct = default)
+    {
+        if (_channels is null)
+            throw new InvalidOperationException("Band writers not started. Call StartWriter() first.");
+
+        if (!_channels.TryGetValue(bandType, out var channel))
+        {
+            _log.LogWarning("No band writer channel for {BandType}. Dropping page.", bandType);
+            return;
+        }
+
+        await channel.Writer.WriteAsync(new BandWorkItem(songId, bandType, entries), ct);
+    }
+
+    /// <summary>Signal all band writers that no more items will arrive, then wait for drain.</summary>
+    public async Task DrainWriterAsync()
+    {
+        if (_channels is null || _writerTasks is null) return;
+
+        foreach (var channel in _channels.Values)
+            channel.Writer.TryComplete();
+
+        await Task.WhenAll(_writerTasks);
+
+        _log.LogInformation("All per-band-type writers drained.");
+        _channels = null;
+        _writerTasks = null;
+    }
+
+    private async Task RunBandWriterAsync(ChannelReader<BandWorkItem> reader, int batchSize,
+                                           CancellationToken ct)
+    {
+        var batch = new List<BandWorkItem>(batchSize);
+
+        while (await reader.WaitToReadAsync(ct))
+        {
+            batch.Clear();
+            while (batch.Count < batchSize && reader.TryRead(out var item))
+                batch.Add(item);
+
+            if (batch.Count == 0) continue;
+
+            foreach (var item in batch)
+            {
+                try
+                {
+                    UpsertBandEntries(item.SongId, item.BandType, item.Entries);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Band writer error for {SongId}/{BandType}. Data will be retried next pass.",
+                        item.SongId, item.BandType);
+                }
+            }
+        }
     }
 
     /// <summary>

@@ -485,6 +485,116 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         }
     }
 
+    // ─── Per-page write channel ────────────────────────────────────
+
+    private record struct PageWorkItem(string SongId, string Instrument, IReadOnlyList<LeaderboardEntry> Entries);
+
+    private Dictionary<string, Channel<PageWorkItem>>? _pageChannels;
+    private List<Task>? _pageWriterTasks;
+
+    /// <summary>
+    /// Start per-instrument page-writer tasks. Each instrument gets a bounded
+    /// channel and a dedicated writer task that batches page upserts into single
+    /// PG transactions to amortize commit overhead and limit open connections.
+    /// </summary>
+    public void StartPageWriters(int channelCapacity = 256, int writeBatchSize = 20, CancellationToken ct = default)
+    {
+        _pageChannels = new Dictionary<string, Channel<PageWorkItem>>(StringComparer.OrdinalIgnoreCase);
+        _pageWriterTasks = new List<Task>();
+
+        foreach (var instrument in _instrumentDbs.Keys)
+        {
+            var channel = Channel.CreateBounded<PageWorkItem>(new BoundedChannelOptions(channelCapacity)
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.Wait,
+            });
+            _pageChannels[instrument] = channel;
+
+            var db = (InstrumentDatabase)_instrumentDbs[instrument];
+            var task = Task.Run(async () =>
+            {
+                await RunPageWriterAsync(channel.Reader, db, writeBatchSize, ct);
+            }, ct);
+            _pageWriterTasks.Add(task);
+        }
+
+        _log.LogInformation("Started {Count} per-instrument page writers (capacity {Cap}, batch {Batch}).",
+            _pageWriterTasks.Count, channelCapacity, writeBatchSize);
+    }
+
+    /// <summary>
+    /// Enqueue a page of entries for asynchronous batched persistence.
+    /// Applies back-pressure when the per-instrument channel is full.
+    /// </summary>
+    public async ValueTask EnqueuePageAsync(string songId, string instrument,
+                                             IReadOnlyList<LeaderboardEntry> entries,
+                                             CancellationToken ct = default)
+    {
+        if (_pageChannels is null)
+            throw new InvalidOperationException("Page writers not started. Call StartPageWriters() first.");
+
+        if (!_pageChannels.TryGetValue(instrument, out var channel))
+        {
+            _log.LogWarning("No page writer channel for instrument {Instrument}. Dropping page.", instrument);
+            return;
+        }
+
+        await channel.Writer.WriteAsync(new PageWorkItem(songId, instrument, entries), ct);
+    }
+
+    /// <summary>
+    /// Signal all page writers that no more items will arrive, then wait for
+    /// them to drain. Call after the scrape loop completes.
+    /// </summary>
+    public async Task DrainPageWritersAsync()
+    {
+        if (_pageChannels is null || _pageWriterTasks is null) return;
+
+        foreach (var channel in _pageChannels.Values)
+            channel.Writer.TryComplete();
+
+        await Task.WhenAll(_pageWriterTasks);
+
+        _log.LogInformation("All per-instrument page writers drained.");
+        _pageChannels = null;
+        _pageWriterTasks = null;
+    }
+
+    private async Task RunPageWriterAsync(ChannelReader<PageWorkItem> reader,
+                                           InstrumentDatabase db, int batchSize,
+                                           CancellationToken ct)
+    {
+        var batch = new List<PageWorkItem>(batchSize);
+
+        while (await reader.WaitToReadAsync(ct))
+        {
+            batch.Clear();
+            while (batch.Count < batchSize && reader.TryRead(out var item))
+                batch.Add(item);
+
+            if (batch.Count == 0) continue;
+
+            try
+            {
+                using var conn = db.DataSource.OpenConnection();
+                using var tx = conn.BeginTransaction();
+                using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
+
+                foreach (var item in batch)
+                    db.UpsertEntries(item.SongId, item.Entries, conn, tx);
+
+                tx.Commit();
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Page writer batch commit failed for {Instrument} ({Count} pages). Data will be retried next pass.",
+                    db.Instrument, batch.Count);
+            }
+        }
+    }
+
     /// <summary>
     /// Run WAL checkpoints on all instrument databases and the meta database.
 

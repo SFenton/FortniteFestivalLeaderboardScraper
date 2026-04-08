@@ -108,13 +108,17 @@ public sealed class ScrapeOrchestrator
             .ToDictionary(i => i, _ => scrapeRequests.Count);
         _progress.SetInstrumentTotals(instrumentTotals);
 
-        // ── Direct-to-live persistence ──
-        // Entries are persisted per-page directly into leaderboard_entries via
-        // INSERT...ON CONFLICT as pages arrive, eliminating the staging table
-        // and the post-scrape finalization phase entirely.
+        // ── Pipelined persistence via bounded channels ──
+        // Per-page entries are enqueued into per-instrument bounded channels.
+        // Dedicated writer tasks drain them in batches with a single PG connection
+        // per instrument, providing backpressure, transaction batching, and
+        // isolation from transient DB connection failures.
         var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
         int totalRequests = 0;
         long totalBytes = 0;
+
+        _persistence.StartPageWriters(ct: passCt);
+        _bandPersistence.StartWriter(ct: passCt);
 
         // Snapshot registered users' current scores for change detection at end.
         var previousState = registeredIds.Count > 0
@@ -141,9 +145,8 @@ public sealed class ScrapeOrchestrator
                     // persisted per-page and result.Entries is empty.
                     if (result.Entries.Count > 0)
                     {
-                        int affected = _persistence.UpsertPageEntries(songId, result.Instrument, result.Entries);
-                        if (affected > 0)
-                            aggregates.AddRankChangedSongId(songId);
+                        await _persistence.EnqueuePageAsync(songId, result.Instrument, result.Entries, passCt);
+                        aggregates.AddRankChangedSongId(songId);
 
                         // Track registered user appearances
                         if (registeredIds.Count > 0)
@@ -179,9 +182,9 @@ public sealed class ScrapeOrchestrator
             validCutoffMultiplier: opts.ValidCutoffMultiplier,
             onPageScraped: (songId, instrument, entries) =>
             {
-                int affected = _persistence.UpsertPageEntries(songId, instrument, entries);
-                if (affected > 0)
-                    aggregates.AddRankChangedSongId(songId);
+                _persistence.EnqueuePageAsync(songId, instrument, entries, passCt)
+                    .AsTask().GetAwaiter().GetResult();
+                aggregates.AddRankChangedSongId(songId);
 
                 aggregates.AddEntries(entries.Count);
 
@@ -197,8 +200,14 @@ public sealed class ScrapeOrchestrator
             onBandPageScraped: (songId, bandType, entries) =>
             {
                 if (entries.Count > 0)
-                    _bandPersistence.UpsertBandEntries(songId, bandType, entries);
+                    _bandPersistence.EnqueueAsync(songId, bandType, entries, passCt)
+                        .AsTask().GetAwaiter().GetResult();
             });
+
+        // ── Drain pipelined writers before score change detection ──
+        _progress.SetSubOperation("draining_writers");
+        await _persistence.DrainPageWritersAsync();
+        await _bandPersistence.DrainWriterAsync();
 
         // ── Detect score changes for registered users ──
         _progress.SetSubOperation("detecting_score_changes");
