@@ -228,7 +228,7 @@ public sealed class ScrapeOrchestrator
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        Parallel.ForEach(instruments, instrument =>
+        Parallel.ForEach(instruments, new ParallelOptions { MaxDegreeOfParallelism = 2 }, instrument =>
         {
             try
             {

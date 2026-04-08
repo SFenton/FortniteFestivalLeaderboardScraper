@@ -922,6 +922,8 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_staging_scrape
             ON leaderboard_staging (scrape_id);
+        CREATE INDEX IF NOT EXISTS ix_staging_instrument
+            ON leaderboard_staging (scrape_id, instrument);
         CREATE INDEX IF NOT EXISTS ix_staging_combo
             ON leaderboard_staging (scrape_id, song_id, instrument);
 

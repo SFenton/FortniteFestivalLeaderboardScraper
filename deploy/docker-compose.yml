@@ -24,15 +24,15 @@ services:
     command:
       - "postgres"
       - "-c" 
-      - "shared_buffers=2GB"
+      - "shared_buffers=3GB"
       - "-c"
-      - "work_mem=64MB"
+      - "work_mem=128MB"
       - "-c"
-      - "maintenance_work_mem=512MB"
+      - "maintenance_work_mem=1GB"
       - "-c"
-      - "effective_cache_size=4GB"
+      - "effective_cache_size=8GB"
       - "-c"
-      - "max_wal_size=4GB"
+      - "max_wal_size=16GB"
       - "-c"
       - "wal_buffers=64MB"
       - "-c"
@@ -46,7 +46,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 10G
 
   fstservice:
     image: ghcr.io/sfenton/fstservice:latest

@@ -540,6 +540,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
+                cmd.CommandTimeout = 600; // 10 min — bulk merge of ~5M staging rows per instrument
                 cmd.CommandText =
                     "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
                     "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at, staged_at " +
