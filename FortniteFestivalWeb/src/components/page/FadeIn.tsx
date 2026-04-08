@@ -1,4 +1,4 @@
-import { useCallback, useMemo, memo, type CSSProperties, type ReactNode, type ElementType, type ComponentPropsWithRef } from 'react';
+import { useCallback, useRef, useMemo, memo, type CSSProperties, type ReactNode, type ElementType, type ComponentPropsWithRef } from 'react';
 import { Opacity, FADE_DURATION } from '@festival/theme';
 
 type FadeInOwnProps<T extends ElementType = 'div'> = {
@@ -33,18 +33,25 @@ function FadeInInner<T extends ElementType = 'div'>({
   className,
   ...rest
 }: FadeInProps<T>) {
+  // Once the entry animation has completed, lock out further animations so
+  // that a delay-prop drift (e.g. an earlier sibling unmounting and shifting
+  // indices) doesn't cause a visible re-stagger.
+  const animatedRef = useRef(false);
+
   /* v8 ignore start — animation cleanup */
   const handleEnd = useCallback((e: { currentTarget: unknown }) => {
     const el = e.currentTarget as HTMLElement;
     el.style.opacity = '';
     el.style.animation = '';
+    animatedRef.current = true;
     /* v8 ignore stop */
   }, []);
 
-  const s = useStyles(delay, hidden);
+  const effectiveDelay = animatedRef.current ? undefined : delay;
+  const s = useStyles(effectiveDelay, hidden);
   const Component: ElementType = as ?? 'div';
 
-  if (delay == null) return <Component className={className} style={style} {...rest}>{children}</Component>;
+  if (effectiveDelay == null) return <Component className={className} style={style} {...rest}>{children}</Component>;
 
   return (
     <Component
