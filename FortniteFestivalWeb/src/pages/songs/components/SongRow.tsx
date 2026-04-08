@@ -43,6 +43,7 @@ function renderMetadataElement(
   maxScore?: number,
   sortMode?: string,
   compact?: boolean,
+  scoreTextAlign?: 'left' | 'right' | 'center',
 ): React.ReactNode | null {
   const stars = score.stars ?? 0;
   const scoreWidth = compact ? undefined : '78px';
@@ -59,7 +60,7 @@ function renderMetadataElement(
           </span>
         );
       }
-      return <ScorePill score={score.score} width={scoreWidth} bold />;
+      return <ScorePill score={score.score} width={scoreWidth} bold textAlign={scoreTextAlign} />;
     case 'percentage':
       return (score.accuracy ?? 0) > 0 ? (
         <AccuracyDisplay
@@ -257,6 +258,12 @@ export const SongRow = memo(function SongRow({ song,
       if (!score || instrumentChips) continue;
       const el = renderMetadataElement(key, score, displayOrder, songIntensityRaw, maxScore, sortMode);
       if (el) result.push({ key, el });
+    }
+    // Center-align single-score pill when sandwiched by visible neighbors
+    const scoreIdx = result.findIndex(e => e.key === 'score');
+    if (scoreIdx > 0 && scoreIdx < result.length - 1 && score) {
+      const el = renderMetadataElement('score', score, displayOrder, songIntensityRaw, maxScore, sortMode, false, 'center');
+      if (el) result[scoreIdx] = { key: 'score', el };
     }
     return result;
   }, [score, displayOrder, songIntensityRaw, maxScore, sortMode, instrumentChips, instrumentFilter, allScoreMap]);

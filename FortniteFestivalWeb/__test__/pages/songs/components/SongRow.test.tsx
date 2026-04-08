@@ -615,3 +615,65 @@ describe('SongRow — maxdistance sort mode', () => {
     expect(screen.queryByText('200,000')).toBeNull();
   });
 });
+
+describe('SongRow — score alignment (sandwiched centering)', () => {
+  function getScoreStyle(): CSSStyleDeclaration | undefined {
+    return screen.getByText('150,000').style;
+  }
+
+  it('centers single-score when sandwiched between two visible metadata items', () => {
+    renderSongRow({
+      sortMode: 'title' as SongSortMode,
+      metadataOrder: ['percentage', 'score', 'percentile'],
+    });
+    expect(getScoreStyle()?.textAlign).toBe('center');
+  });
+
+  it('right-aligns single-score when first in metadata order', () => {
+    renderSongRow({
+      sortMode: 'title' as SongSortMode,
+      metadataOrder: ['score', 'percentage', 'percentile'],
+    });
+    expect(getScoreStyle()?.textAlign).toBe('right');
+  });
+
+  it('right-aligns single-score when last in metadata order', () => {
+    renderSongRow({
+      sortMode: 'title' as SongSortMode,
+      metadataOrder: ['percentage', 'percentile', 'score'],
+    });
+    expect(getScoreStyle()?.textAlign).toBe('right');
+  });
+
+  it('right-aligns single-score when promoted by sort mode', () => {
+    // Sorting by score promotes it to index 0 → not sandwiched
+    renderSongRow({
+      sortMode: 'score' as SongSortMode,
+      metadataOrder: ['percentage', 'score', 'percentile'],
+    });
+    expect(getScoreStyle()?.textAlign).toBe('right');
+  });
+
+  it('right-aligns single-score when only visible metadata item', () => {
+    renderSongRow({
+      sortMode: 'title' as SongSortMode,
+      metadataOrder: ['score'],
+    });
+    expect(getScoreStyle()?.textAlign).toBe('right');
+  });
+
+  it('does not center dual-score in maxdistance mode even when sandwiched', () => {
+    const songWithMax: Song = {
+      ...baseSong,
+      maxScores: { Solo_Guitar: 200000 } as Partial<Record<InstrumentKey, number>>,
+    };
+    renderSongRow({
+      song: songWithMax,
+      score: ps({ score: 150000 }),
+      sortMode: 'maxdistance' as SongSortMode,
+      metadataOrder: ['score', 'maxdistance', 'percentage', 'percentile'],
+    });
+    // Primary score in dual format should stay right-aligned
+    expect(getScoreStyle()?.textAlign).toBe('right');
+  });
+});
