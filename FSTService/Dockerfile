@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpng16-16t64 libglx0 libopengl0 libegl1 libfontconfig1 \
     libglib2.0-0t64 libxkbcommon0 libgl1 libfreetype6 libdbus-1-3 \
+    libharfbuzz0b libmd4c0 libdouble-conversion3 libb2-1 \
+    libpcre2-16-0 libboost-thread1.83.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Reuse the existing 'ubuntu' user (UID 1000) for container hardening.
