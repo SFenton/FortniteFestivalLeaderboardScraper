@@ -217,4 +217,28 @@ describe('useSyncStatus', () => {
     expect(result.current.entriesFound).toBe(5);
     expect(result.current.progress).toBeCloseTo(0.3);
   });
+
+  // ── backfillKicked deferred poll ──
+
+  it('defers first checkStatus when backfillKicked to preserve optimistic banner', async () => {
+    mockTrackPlayer.mockResolvedValue({ backfillKicked: true } as any);
+    // getSyncStatus returns idle (simulating stale cache)
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    // Optimistic state should be active immediately after trackPlayer resolves
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('backfill');
+
+    // getSyncStatus should NOT have been called yet (deferred by SYNC_POLL_ACTIVE_MS)
+    expect(mockGetStatus).not.toHaveBeenCalled();
+
+    // Advance past the deferred poll interval (3s)
+    await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
+
+    // Now the first poll should have fired
+    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+  });
 });

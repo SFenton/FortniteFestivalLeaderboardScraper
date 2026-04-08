@@ -243,6 +243,14 @@ public static partial class ApiEndpoints
             {
                 backfillKicked = true;
 
+                // Register live progress *before* Task.Run so the sync-status
+                // endpoint sees an active entry and bypasses the stale precomputed
+                // cache.  The estimate may be rough (Songs might not be initialized
+                // yet); Task.Run will call BeginBackfill again with the exact count.
+                var estimatedPairs = Math.Max(festivalService.Songs.Count, 200)
+                    * GlobalLeaderboardScraper.AllInstruments.Count;
+                syncTracker.BeginBackfill(accountId, estimatedPairs);
+
                 // Fire-and-forget: attach to cyclical machine for backfill + history recon
                 _ = Task.Run(async () =>
                 {

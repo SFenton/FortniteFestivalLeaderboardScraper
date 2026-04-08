@@ -330,8 +330,17 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         }
       }
 
-      // Check status immediately (this schedules the next poll if needed)
-      await checkStatus();
+      // If backfill was just kicked, the backend hasn't registered live progress
+      // yet (syncTracker.BeginBackfill runs inside Task.Run). An immediate
+      // checkStatus() would hit the stale precomputed cache and overwrite our
+      // optimistic isSyncing=true. Defer the first poll so the backend has time
+      // to register, preserving the optimistic banner.
+      if (syncKickedRef.current) {
+        stopPolling();
+        pollRef.current = setTimeout(checkStatus, SYNC_POLL_ACTIVE_MS);
+      } else {
+        await checkStatus();
+      }
     };
 
     const onVisibility = () => {
