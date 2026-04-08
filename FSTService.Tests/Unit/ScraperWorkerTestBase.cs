@@ -206,8 +206,12 @@ public abstract class ScraperWorkerTestBase : IDisposable
         dbInitializer.StartAsync(CancellationToken.None);
         dbInitializer.WaitForReadyAsync().GetAwaiter().GetResult();
 
+        var bandPersistence = new BandLeaderboardPersistence(
+            null!,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
         var scrapeOrchestrator = new ScrapeOrchestrator(
-            _scraper, _persistence, pathDataStore, _pool, _progress, options,
+            _scraper, _persistence, bandPersistence, pathDataStore, _pool, _progress, options,
             Substitute.For<ILogger<ScrapeOrchestrator>>());
 
         var playerCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(2));
@@ -219,9 +223,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
             playerCache, leaderboardAllCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache,
             Substitute.For<ILogger<ScrapeLifecycleNotifier>>());
 
-        var bandPersistence = new BandLeaderboardPersistence(
-            null!,
-            Substitute.For<ILogger<BandLeaderboardPersistence>>());
         var bandScrapePhase = new BandScrapePhase(
             _scraper, bandPersistence, pathDataStore, _progress, options,
             Substitute.For<ILogger<BandScrapePhase>>());

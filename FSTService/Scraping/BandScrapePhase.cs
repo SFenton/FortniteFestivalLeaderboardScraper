@@ -246,7 +246,7 @@ public sealed class BandScrapePhase
     /// Check each member's individual score against the CHOpt max for their instrument.
     /// Sets <see cref="BandLeaderboardEntry.IsOverThreshold"/> if any member exceeds 0.95× CHOpt max.
     /// </summary>
-    private static void ApplyChOptValidation(BandLeaderboardEntry entry, SongMaxScores? maxScores)
+    internal static void ApplyChOptValidation(BandLeaderboardEntry entry, SongMaxScores? maxScores)
     {
         if (maxScores is null || entry.MemberStats.Count == 0)
             return;

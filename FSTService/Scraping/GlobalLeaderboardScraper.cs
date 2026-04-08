@@ -1374,13 +1374,17 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int validEntryTarget = 0,
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
         bool deferDeepScrape = false,
-        double validCutoffMultiplier = 0.95)
+        double validCutoffMultiplier = 0.95,
+        Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
+        Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null)
     {
         if (sequential)
             return await ScrapeManySongsSequentialAsync(
                 requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency,
                 maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages, validEntryTarget,
-                sharedLimiter, validCutoffMultiplier: validCutoffMultiplier);
+                sharedLimiter, validCutoffMultiplier: validCutoffMultiplier,
+                onPageScraped: onPageScraped,
+                onBandPageScraped: onBandPageScraped);
 
         var ownsLimiter = sharedLimiter is null;
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
@@ -1502,7 +1506,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
-        double validCutoffMultiplier = 0.95)
+        double validCutoffMultiplier = 0.95,
+        Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
+        Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null)
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
@@ -1530,12 +1536,19 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 var instTasks = req.Instruments.Select(inst =>
                 {
                     int? choptMax = req.MaxScores?.GetByInstrument(inst);
+                    // Band instruments use a separate fetch + parse path
+                    if (BandInstrumentMapping.AllBandTypes.Contains(inst))
+                        return ScrapeBandLeaderboardSequentialAsync(
+                            req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter,
+                            maxScores: req.MaxScores,
+                            onBandPageScraped: onBandPageScraped);
                     return ScrapeLeaderboardSequentialAsync(
                         req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter,
                         choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
                         overThresholdExtraPages: overThresholdExtraPages,
                         validEntryTarget: validEntryTarget,
-                        validCutoffMultiplier: validCutoffMultiplier);
+                        validCutoffMultiplier: validCutoffMultiplier,
+                        onPageScraped: onPageScraped);
                 }).ToList();
 
                 var songResults = (await Task.WhenAll(instTasks)).ToList();
@@ -1571,6 +1584,115 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     }
 
     /// <summary>
+    /// Band leaderboard fetching for one song/bandType with page-level persistence.
+    /// Fetches pages sequentially, calls onBandPageScraped per page, returns metadata-only result.
+    /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Requires real HTTP; tested manually via --once mode.")]
+    private async Task<GlobalLeaderboardResult> ScrapeBandLeaderboardSequentialAsync(
+        string songId,
+        string bandType,
+        string accessToken,
+        string accountId,
+        CancellationToken ct,
+        string? label = null,
+        int maxPages = 0,
+        AdaptiveConcurrencyLimiter? limiter = null,
+        SongMaxScores? maxScores = null,
+        Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null)
+    {
+        // ── Page 0 ──
+        var page0 = await FetchBandPageAsync(songId, bandType, 0, accessToken, accountId, limiter, ct);
+
+        if (page0 is null || page0.Entries.Count == 0)
+        {
+            _progress.ReportPage0(1);
+            _progress.ReportLeaderboardComplete(bandType);
+            return new GlobalLeaderboardResult
+            {
+                SongId = songId,
+                Instrument = bandType,
+                Entries = [],
+                EntriesCount = 0,
+                TotalPages = page0?.TotalPages ?? 0,
+                ReportedTotalPages = page0?.TotalPages ?? 0,
+                PagesScraped = page0 is not null ? 1 : 0,
+                Requests = 1,
+                BytesReceived = 0,
+            };
+        }
+
+        int reportedPages = page0.TotalPages;
+        int totalPages = reportedPages;
+        if (maxPages > 0 && totalPages > maxPages)
+            totalPages = maxPages;
+
+        _progress.ReportPage0(totalPages);
+        _progress.ReportPageFetched(0);
+
+        // Validate and persist page 0
+        foreach (var entry in page0.Entries)
+            BandScrapePhase.ApplyChOptValidation(entry, maxScores);
+        onBandPageScraped?.Invoke(songId, bandType, page0.Entries);
+
+        int entriesCount = page0.Entries.Count;
+        int requestCount = 1;
+        int pagesScraped = 1;
+
+        // ── Remaining pages ──
+        for (int page = 1; page < totalPages; page++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            bool acquired = false;
+            try
+            {
+                if (limiter is not null)
+                {
+                    await limiter.WaitAsync(ct);
+                    acquired = true;
+                }
+
+                var parsed = await FetchBandPageAsync(songId, bandType, page, accessToken, accountId, limiter, ct);
+                requestCount++;
+                _progress.ReportPageFetched(0);
+
+                if (parsed is null || parsed.Entries.Count == 0)
+                    break;
+
+                foreach (var entry in parsed.Entries)
+                    BandScrapePhase.ApplyChOptValidation(entry, maxScores);
+                onBandPageScraped?.Invoke(songId, bandType, parsed.Entries);
+
+                entriesCount += parsed.Entries.Count;
+                pagesScraped++;
+
+                // Short page means we've exhausted the leaderboard
+                if (parsed.Entries.Count < 25)
+                    break;
+            }
+            finally
+            {
+                if (acquired) limiter?.Release();
+            }
+        }
+
+        _progress.ReportLeaderboardComplete(bandType);
+
+        return new GlobalLeaderboardResult
+        {
+            SongId = songId,
+            Instrument = bandType,
+            Entries = [],
+            EntriesCount = entriesCount,
+            TotalPages = totalPages,
+            ReportedTotalPages = reportedPages,
+            PagesScraped = pagesScraped,
+            Requests = requestCount,
+            BytesReceived = 0,
+        };
+    }
+
+    /// <summary>
     /// Page fetching for one song/instrument with bounded concurrency.
     /// pageConcurrency=1 → fully sequential. pageConcurrency=10 → 10 pages at a time.
     /// </summary>
@@ -1588,7 +1710,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
-        double validCutoffMultiplier = 0.95)
+        double validCutoffMultiplier = 0.95,
+        Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null)
     {
         // ── Page 0 ──
         var page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);
@@ -1624,8 +1747,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         _progress.ReportPage0(totalPages);
 
-        var allEntries = new ConcurrentDictionary<int, List<LeaderboardEntry>>();
-        allEntries[0] = page0.Page.Entries;
+        var allEntries = onPageScraped is null ? new ConcurrentDictionary<int, List<LeaderboardEntry>>() : null;
+        int entriesCount = page0.Page.Entries.Count;
+        int pagesScraped = 1;
+
+        // Persist or accumulate page 0
+        if (onPageScraped is not null)
+            onPageScraped(songId, instrument, page0.Page.Entries);
+        else
+            allEntries![0] = page0.Page.Entries;
+
         int requestCount = 1;
         long totalBytes = page0.BodyLength;
         int consecutive403s = 0;
@@ -1662,7 +1793,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                     if (parsed is not null)
                     {
-                        allEntries[pageNum] = parsed.Entries;
+                        if (onPageScraped is not null)
+                            onPageScraped(songId, instrument, parsed.Entries);
+                        else
+                            allEntries![pageNum] = parsed.Entries;
+                        Interlocked.Add(ref entriesCount, parsed.Entries.Count);
+                        Interlocked.Increment(ref pagesScraped);
                         Interlocked.Exchange(ref consecutive403s, 0);
                     }
                     else if (status == FetchStatus.Forbidden)
@@ -1671,12 +1807,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         if (count >= ForbiddenThreshold &&
                             Interlocked.CompareExchange(ref boundaryLogged, 1, 0) == 0)
                         {
-                            var entryCount = allEntries.Values.Sum(e => e.Count);
                             _log.LogInformation(
                                 "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
                                 "Epic reported {ReportedPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
                                 label ?? songId, songId, instrument, pageNum,
-                                reportedPages, allEntries.Count, entryCount);
+                                reportedPages, pagesScraped, entriesCount);
                             try { pageCts.Cancel(); } catch { }
                         }
                         else if (!pageCts.IsCancellationRequested && count >= ForbiddenThreshold)
@@ -1698,10 +1833,22 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             await Task.WhenAll(tasks);
         }
 
-        var ordered = allEntries
-            .OrderBy(x => x.Key)
-            .SelectMany(x => x.Value)
-            .ToList();
+        // When entries were persisted per-page via callback, return metadata only.
+        // When no callback was provided (e.g. tests), return accumulated entries.
+        List<LeaderboardEntry> ordered;
+        if (onPageScraped is not null)
+        {
+            ordered = [];
+        }
+        else
+        {
+            ordered = allEntries!
+                .OrderBy(x => x.Key)
+                .SelectMany(x => x.Value)
+                .ToList();
+            entriesCount = ordered.Count;
+            pagesScraped = allEntries!.Count;
+        }
 
         _progress.ReportLeaderboardComplete(instrument);
 
@@ -1710,10 +1857,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             SongId = songId,
             Instrument = instrument,
             Entries = ordered,
-            EntriesCount = ordered.Count,
+            EntriesCount = entriesCount,
             TotalPages = totalPages,
             ReportedTotalPages = reportedPages,
-            PagesScraped = allEntries.Count,
+            PagesScraped = pagesScraped,
             Requests = requestCount,
             BytesReceived = totalBytes,
         };

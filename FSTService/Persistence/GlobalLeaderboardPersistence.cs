@@ -488,6 +488,92 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>
     /// Run WAL checkpoints on all instrument databases and the meta database.
 
+    // ─── Direct-to-live persistence ────────────────────────────────
+
+    /// <summary>
+    /// Upsert a page of leaderboard entries directly into the live table.
+    /// Called per-page during scraping, eliminating the staging table.
+    /// Returns the number of rows inserted or updated.
+    /// </summary>
+    public int UpsertPageEntries(string songId, string instrument, IReadOnlyList<LeaderboardEntry> entries)
+    {
+        if (entries.Count == 0) return 0;
+        var db = GetOrCreateInstrumentDb(instrument);
+        return db.UpsertEntries(songId, entries);
+    }
+
+    /// <summary>
+    /// Take a snapshot of all entries for the given account IDs across all instruments.
+    /// Used for score change detection: snapshot before scrape, diff after.
+    /// </summary>
+    public ConcurrentDictionary<(string SongId, string Instrument, string AccountId), LeaderboardEntry>
+        SnapshotRegisteredUsers(IReadOnlyCollection<string> accountIds)
+    {
+        var result = new ConcurrentDictionary<(string SongId, string Instrument, string AccountId), LeaderboardEntry>();
+        if (accountIds.Count == 0) return result;
+
+        foreach (var (instrument, db) in _instrumentDbs)
+        {
+            var pgDb = (InstrumentDatabase)db;
+            var entries = pgDb.GetAllEntriesForAccounts(accountIds);
+            foreach (var ((songId, accountId), entry) in entries)
+                result[(songId, instrument, accountId)] = entry;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Compare current entries for registered users against a pre-scrape snapshot
+    /// and return all detected score changes (improvements and new entries).
+    /// </summary>
+    public List<ScoreChangeRecord> DetectScoreChanges(
+        ConcurrentDictionary<(string SongId, string Instrument, string AccountId), LeaderboardEntry> previousState,
+        IReadOnlyCollection<string> accountIds)
+    {
+        var changes = new List<ScoreChangeRecord>();
+        if (accountIds.Count == 0) return changes;
+
+        var currentState = SnapshotRegisteredUsers(accountIds);
+
+        // Detect score changes on existing entries
+        foreach (var ((songId, instrument, accountId), prev) in previousState)
+        {
+            if (!currentState.TryGetValue((songId, instrument, accountId), out var current)) continue;
+            if (current.Score == prev.Score) continue;
+
+            changes.Add(new ScoreChangeRecord
+            {
+                SongId = songId, Instrument = instrument, AccountId = accountId,
+                OldScore = prev.Score, NewScore = current.Score,
+                OldRank = prev.Rank, NewRank = current.Rank,
+                Accuracy = current.Accuracy, IsFullCombo = current.IsFullCombo,
+                Stars = current.Stars, Percentile = current.Percentile,
+                Season = current.Season, ScoreAchievedAt = current.EndTime,
+                AllTimeRank = current.Rank, Difficulty = current.Difficulty,
+            });
+        }
+
+        // Detect new entries (accounts in current that weren't in previous)
+        foreach (var ((songId, instrument, accountId), current) in currentState)
+        {
+            if (previousState.ContainsKey((songId, instrument, accountId))) continue;
+
+            changes.Add(new ScoreChangeRecord
+            {
+                SongId = songId, Instrument = instrument, AccountId = accountId,
+                OldScore = null, NewScore = current.Score,
+                OldRank = null, NewRank = current.Rank,
+                Accuracy = current.Accuracy, IsFullCombo = current.IsFullCombo,
+                Stars = current.Stars, Percentile = current.Percentile,
+                Season = current.Season, ScoreAchievedAt = current.EndTime,
+                AllTimeRank = current.Rank, Difficulty = current.Difficulty,
+            });
+        }
+
+        return changes;
+    }
+
     // ─── Staged leaderboard finalization ────────────────────────────
 
     /// <summary>
