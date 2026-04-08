@@ -560,7 +560,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
                     "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
                     "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
-                    "last_updated_at = EXCLUDED.last_updated_at";
+                    "last_updated_at = EXCLUDED.last_updated_at " +
+                    "WHERE EXCLUDED.score != leaderboard_entries.score " +
+                    "OR (EXCLUDED.rank > 0 AND EXCLUDED.rank != leaderboard_entries.rank) " +
+                    "OR (EXCLUDED.api_rank > 0 AND EXCLUDED.api_rank != leaderboard_entries.api_rank) " +
+                    "OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) " +
+                    "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
+                    "OR (leaderboard_entries.source NOT IN ('scrape','backfill') AND EXCLUDED.source IN ('scrape','backfill'))";
                 cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
                 cmd.Parameters.AddWithValue("songId", songId);
                 cmd.Parameters.AddWithValue("instrument", instrument);

@@ -215,28 +215,36 @@ public sealed class ScrapeOrchestrator
             validCutoffMultiplier: opts.ValidCutoffMultiplier);
 
         // ── Finalize all staged leaderboards into the live table ──
+        // Parallelized by instrument: each instrument is a separate partition,
+        // so concurrent finalizations have zero contention.
         _progress.SetSubOperation("finalizing_staged");
         var stagedMeta = _persistence.Meta.GetStagingMeta(scrapeId);
         int totalFinalized = 0;
         int totalScoreChanges = 0;
-        foreach (var meta in stagedMeta)
+
+        var instrumentGroups = stagedMeta
+            .Where(m => m.EntriesStaged > 0)
+            .GroupBy(m => m.Instrument);
+
+        Parallel.ForEach(instrumentGroups, instrumentGroup =>
         {
-            if (meta.EntriesStaged == 0) continue;
-            try
+            foreach (var meta in instrumentGroup)
             {
-                int wave = meta.DeepScrapeStatus == "eligible" ? 1 : 1;
-                var (merged, changes) = _persistence.FinalizeLeaderboardFromStaging(
-                    scrapeId, meta.SongId, meta.Instrument, registeredIds, wave);
-                totalFinalized += merged;
-                totalScoreChanges += changes;
-                aggregates.AddChanges(changes);
+                try
+                {
+                    var (merged, changes) = _persistence.FinalizeLeaderboardFromStaging(
+                        scrapeId, meta.SongId, meta.Instrument, registeredIds, wave: 1);
+                    Interlocked.Add(ref totalFinalized, merged);
+                    Interlocked.Add(ref totalScoreChanges, changes);
+                    aggregates.AddChanges(changes);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogError(ex, "Failed to finalize staged leaderboard {Song}/{Instrument}.",
+                        meta.SongId, meta.Instrument);
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogError(ex, "Failed to finalize staged leaderboard {Song}/{Instrument}.",
-                    meta.SongId, meta.Instrument);
-            }
-        }
+        });
 
         _log.LogInformation(
             "Finalized {Combos:N0} staged leaderboards: {Entries:N0} rows merged, {Changes:N0} score changes.",
