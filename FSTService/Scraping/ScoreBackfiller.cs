@@ -126,7 +126,7 @@ public class ScoreBackfiller
 
                     // Per-item real-time progress via WebSocket
                     songNames.TryGetValue(item.SongId, out var songName);
-                    _syncTracker.ReportBackfillItem(accountId, found, songName);
+                    _syncTracker.ReportBackfillItem(accountId, item.SongId, item.Instrument, found, songName);
                     return found;
                 }
                 finally

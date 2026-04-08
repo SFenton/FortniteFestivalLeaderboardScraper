@@ -20,6 +20,7 @@ public sealed class NotificationService
     private readonly ILogger<NotificationService> _log;
     private IShopProvider? _shopProvider;
     private FestivalService? _festivalService;
+    private UserSyncProgressTracker? _syncTracker;
 
     public NotificationService(ILogger<NotificationService> log)
     {
@@ -36,6 +37,12 @@ public sealed class NotificationService
     /// Set the festival service for enriching shop snapshots with song metadata.
     /// </summary>
     public void SetFestivalService(FestivalService service) => _festivalService = service;
+
+    /// <summary>
+    /// Set the sync tracker for pushing current state on subscribe.
+    /// Called during startup to break the circular dependency.
+    /// </summary>
+    public void SetSyncTracker(UserSyncProgressTracker tracker) => _syncTracker = tracker;
 
     /// <summary>
     /// Register a WebSocket connection for the given account+device pair.
@@ -253,6 +260,23 @@ public sealed class NotificationService
                                 currentKey = requestedAccountId;
                                 AddConnection(currentKey, deviceId, ws);
                                 _log.LogDebug("WebSocket {DeviceId} subscribed to account {AccountId}.", deviceId, currentKey);
+
+                                // Send current sync state immediately so late subscribers
+                                // don't miss fast backfills that complete before the WS connects.
+                                if (_syncTracker?.GetProgress(requestedAccountId) is { } currentProgress)
+                                {
+                                    try
+                                    {
+                                        var payload = _syncTracker.BuildPayloadForAccount(requestedAccountId, currentProgress);
+                                        var payloadJson = JsonSerializer.Serialize(payload);
+                                        var payloadBytes = Encoding.UTF8.GetBytes(payloadJson);
+                                        await ws.SendAsync(payloadBytes, WebSocketMessageType.Text, true, ct);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _log.LogDebug(ex, "Failed to send initial sync state to {DeviceId}.", deviceId);
+                                    }
+                                }
                             }
                             else if (action == "unsubscribe_sync")
                             {

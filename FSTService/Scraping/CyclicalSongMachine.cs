@@ -481,11 +481,12 @@ public class CyclicalSongMachine
                     {
                         if (user.Purposes.HasFlag(WorkPurpose.Backfill))
                         {
-                            // Report backfill progress per song (6 instruments checked)
-                            int pairsChecked = instruments.Count;
+                            // Report backfill progress per song (6 instruments checked).
+                            // Pairs are deduplicated in the tracker so the historical pass
+                            // won't inflate the counter beyond songs × instruments.
                             bool found = result.EntriesUpdated > 0;
-                            for (int bi = 0; bi < pairsChecked; bi++)
-                                _syncTracker.ReportBackfillItem(user.AccountId, found);
+                            foreach (var inst in instruments)
+                                _syncTracker.ReportBackfillItem(user.AccountId, songEntry.SongId, inst, found);
                         }
 
                         if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon))

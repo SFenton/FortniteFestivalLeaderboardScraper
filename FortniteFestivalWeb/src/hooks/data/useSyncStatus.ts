@@ -96,7 +96,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       };
       const phase = phaseMap[sp.phase] ?? SyncPhase.Idle;
       const isSyncing = phase === SyncPhase.Backfill || phase === SyncPhase.History || phase === SyncPhase.Rivals || phase === SyncPhase.PostScrape;
-      const phaseProgress = sp.totalItems > 0 ? sp.itemsCompleted / sp.totalItems : 0;
+      const phaseProgress = sp.totalItems > 0 ? Math.min(sp.itemsCompleted / sp.totalItems, 1) : 0;
 
       if (isSyncing) wasSyncingRef.current = true;
 
@@ -173,17 +173,17 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       const bfStatus = bf?.status ?? null;
       const bfActive = bfStatus === BackfillStatus.Pending || bfStatus === BackfillStatus.InProgress;
       const bfProgress = bf && bf.totalSongsToCheck > 0
-        ? bf.songsChecked / bf.totalSongsToCheck : 0;
+        ? Math.min(bf.songsChecked / bf.totalSongsToCheck, 1) : 0;
 
       const hrStatus = hr?.status ?? null;
       const hrActive = hrStatus === BackfillStatus.Pending || hrStatus === BackfillStatus.InProgress;
       const hrProgress = hr && hr.totalSongsToProcess > 0
-        ? hr.songsProcessed / hr.totalSongsToProcess : 0;
+        ? Math.min(hr.songsProcessed / hr.totalSongsToProcess, 1) : 0;
 
       const rvStatus = rv?.status ?? null;
       const rvActive = rvStatus === BackfillStatus.Pending || rvStatus === BackfillStatus.InProgress;
       const rvProgress = rv && rv.totalCombosToCompute > 0
-        ? rv.combosComputed / rv.totalCombosToCompute : 0;
+        ? Math.min(rv.combosComputed / rv.totalCombosToCompute, 1) : 0;
 
       const isSyncing = bfActive || hrActive || rvActive;
 
@@ -258,7 +258,17 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       if (track) {
         try {
           const res = await api.trackPlayer(accountId);
-          if (res.backfillKicked) syncKickedRef.current = true;
+          if (res.backfillKicked) {
+            syncKickedRef.current = true;
+            wasSyncingRef.current = true;
+            // Optimistic: show banner immediately so fast backfills don't race
+            // past the first HTTP poll without the user ever seeing the banner.
+            setSyncState(prev => ({
+              ...prev,
+              isSyncing: true,
+              phase: SyncPhase.Backfill,
+            }));
+          }
         } catch {
           // Ignore if track fails (e.g. in api-only mode without scraper)
         }

@@ -241,9 +241,6 @@ public static partial class ApiEndpoints
             bool backfillKicked = false;
             if (existingStatus is null || existingStatus.Status == "error")
             {
-                var songCount = Math.Max(festivalService.Songs.Count, 200);
-                metaDb.EnqueueBackfill(accountId, songCount * 6); // songs × instruments
-                metaDb.StartBackfill(accountId);
                 backfillKicked = true;
 
                 // Fire-and-forget: attach to cyclical machine for backfill + history recon
@@ -260,6 +257,12 @@ public static partial class ApiEndpoints
                             .Select(s => s.track.su!)
                             .ToList();
 
+                        // Enqueue inside Task.Run so Songs is guaranteed initialized and
+                        // the denominator matches the deduplicated pair count exactly.
+                        var totalPairs = chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
+                        metaDb.EnqueueBackfill(accountId, totalPairs);
+                        metaDb.StartBackfill(accountId);
+
                         var alreadyChecked = metaDb.GetCheckedBackfillPairs(accountId);
 
                         var user = new UserWorkItem
@@ -271,7 +274,7 @@ public static partial class ApiEndpoints
                             AlreadyChecked = alreadyChecked,
                         };
 
-                        syncTracker.BeginBackfill(accountId, chartedSongIds.Count * 6);
+                        syncTracker.BeginBackfill(accountId, totalPairs);
 
                         var result = await cyclicalMachine.AttachAsync(
                             [user], chartedSongIds, seasonWindows: [],

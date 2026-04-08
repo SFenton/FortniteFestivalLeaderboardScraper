@@ -401,6 +401,7 @@ shopService.SetShopCacheService(shopCacheService);
 shopService.SetJsonSerializerOptions(jsonOpts);
 notificationService.SetShopProvider(shopService);
 notificationService.SetFestivalService(festivalService);
+notificationService.SetSyncTracker(app.Services.GetRequiredService<UserSyncProgressTracker>());
 
 app.UseCors();
 app.UseWebSockets();

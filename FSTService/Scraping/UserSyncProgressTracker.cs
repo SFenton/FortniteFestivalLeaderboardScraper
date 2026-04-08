@@ -52,6 +52,7 @@ public sealed class UserSyncProgressTracker
         p.TotalItems = totalItems;
         p.EntriesFound = 0;
         p.CurrentSongName = null;
+        p.CheckedBackfillPairs.Clear();
         p.StartedAtUtc = DateTime.UtcNow;
         p.Stopwatch.Restart();
         PushProgress(accountId, p);
@@ -97,10 +98,13 @@ public sealed class UserSyncProgressTracker
 
     // ─── Report item completion ─────────────────────────────
 
-    public void ReportBackfillItem(string accountId, bool entryFound, string? currentSongName = null)
+    public void ReportBackfillItem(string accountId, string songId, string instrument, bool entryFound, string? currentSongName = null)
     {
         if (!_progress.TryGetValue(accountId, out var p)) return;
-        Interlocked.Increment(ref p.ItemsCompleted);
+        // Deduplicate: only count each (song, instrument) pair once across core + historical passes.
+        // The ConcurrentDictionary naturally ignores duplicates from the historical pass.
+        if (p.CheckedBackfillPairs.TryAdd((songId, instrument), 0))
+            Volatile.Write(ref p.ItemsCompleted, p.CheckedBackfillPairs.Count);
         if (entryFound) Interlocked.Increment(ref p.EntriesFound);
         if (currentSongName is not null) p.CurrentSongName = currentSongName;
         PushProgressIfThrottled(accountId, p);
@@ -228,6 +232,15 @@ public sealed class UserSyncProgressTracker
 
     private object BuildPayload(string accountId, UserSyncProgress p)
     {
+        return BuildPayloadForAccount(accountId, p);
+    }
+
+    /// <summary>
+    /// Build the JSON-serializable sync_progress payload for an account.
+    /// Public so <see cref="NotificationService"/> can send current state on subscribe.
+    /// </summary>
+    public object BuildPayloadForAccount(string accountId, UserSyncProgress p)
+    {
         var isComplete = p.Phase == SyncProgressPhase.Complete;
         int? estimatedRankMinutes = null;
         if (isComplete)
@@ -296,6 +309,13 @@ public sealed class UserSyncProgress
     public volatile string? ErrorMessage;
     public DateTime StartedAtUtc = DateTime.UtcNow;
     public readonly Stopwatch Stopwatch = new();
+
+    /// <summary>
+    /// Deduplicated set of (songId, instrument) pairs reported during backfill.
+    /// Prevents double-counting when CyclicalSongMachine processes the same pair
+    /// in both core (alltime + current season) and historical (prior seasons) passes.
+    /// </summary>
+    public readonly ConcurrentDictionary<(string SongId, string Instrument), byte> CheckedBackfillPairs = new();
 
     /// <summary>Whether the adaptive limiter has significantly reduced DOP (CDN throttle).</summary>
     public volatile bool IsThrottled;
