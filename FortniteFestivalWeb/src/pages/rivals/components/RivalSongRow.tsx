@@ -113,14 +113,14 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
       <div style={st.scores}>
         <div style={st.scoreColumn}>
           <span style={st.scoreLabel}>{t('rivals.detail.you')}</span>
-          <span style={st.scoreRank}>#{song.userRank}</span>
+          <span style={st.scoreRank}>#{song.userRank.toLocaleString()}</span>
           {song.userScore != null && (
             <span style={st.scoreValue}>{song.userScore.toLocaleString()}</span>
           )}
         </div>
         <div style={st.scoreColumn}>
           <span style={st.scoreLabel}>{t('rivals.detail.them')}</span>
-          <span style={st.scoreRank}>#{song.rivalRank}</span>
+          <span style={st.scoreRank}>#{song.rivalRank.toLocaleString()}</span>
           {song.rivalScore != null && (
             <span style={st.scoreValue}>{song.rivalScore.toLocaleString()}</span>
           )}

@@ -18,8 +18,9 @@ import { formatLeaderboardPercentile, rankColor } from '@festival/core';
 import GraphCard from '../../../components/common/GraphCard';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
+import { computeRankWidth } from '../helpers/rankingHelpers';
 import {
-  Colors, Font, Gap, Size, Layout, Radius, Weight,
+  Colors, Font, FontVariant, Gap, Size, Layout, Radius, Weight,
   frostedCard, padding, border, transition,
   CHART_ANIM_DURATION,
 } from '@festival/theme';
@@ -95,6 +96,21 @@ export default memo(function RankHistoryChart({
     if (chartData.length === 0) return [];
     return [...chartData].reverse().slice(0, 5);
   }, [chartData]);
+
+  // Stable column widths derived from ALL chart history points
+  const rankWidth = useMemo(() => {
+    const ranks = chartData.map(p => p.rank).filter(r => r > 0);
+    return computeRankWidth(ranks);
+  }, [chartData]);
+
+  const valueWidth = useMemo(() => {
+    if (chartData.length === 0) return undefined;
+    let maxLen = 1;
+    for (const p of chartData) {
+      maxLen = Math.max(maxLen, formatDetailValue(p.value, metric).length);
+    }
+    return `${maxLen}ch`;
+  }, [chartData, metric]);
 
   // Compute rank domain (inverted — rank 1 at top)
   const rankDomain = useMemo(() => {
@@ -241,15 +257,15 @@ export default memo(function RankHistoryChart({
     return (
       <>
         <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
-        <span style={{ fontWeight: Weight.semibold, color: rankColor(point.rank, totalAccounts) }}>#{point.rank}</span>
+        <span style={{ fontWeight: Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
         {percentileStr
           ? <PercentilePill display={percentileStr} />
           : isPctMetric
             ? <PercentilePill display={formatDetailValue(point.value, metric)} tier={pct >= 99 ? 'top1' : pct >= 95 ? 'top5' : 'default'} />
-            : <span style={{ color: Colors.textPrimary }}>{formatDetailValue(point.value, metric)}</span>}
+            : <span style={{ color: Colors.textPrimary, ...(valueWidth ? { width: valueWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>{formatDetailValue(point.value, metric)}</span>}
       </>
     );
-  }, [metric, usePercentile, totalAccounts]);
+  }, [metric, usePercentile, totalAccounts, rankWidth, valueWidth]);
 
   const renderListItem = useCallback((point: RankHistoryChartPoint, i: number, phase: 'idle' | 'in' | 'out') => {
     let animStyle: React.CSSProperties = {};
@@ -274,15 +290,15 @@ export default memo(function RankHistoryChart({
     return (
       <div key={point.date} style={{ ...(i === 0 ? listCardBest : listCardBase), ...animStyle }}>
         <span style={{ flex: 1, color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{dateStr}</span>
-        <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts) }}>#{point.rank}</span>
+        <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
         {percentileStr
           ? <PercentilePill display={percentileStr} />
           : isPctMetric
             ? <PercentilePill display={formatDetailValue(point.value, metric)} tier={pct >= 99 ? 'top1' : pct >= 95 ? 'top5' : 'default'} />
-            : <span style={{ color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{formatDetailValue(point.value, metric)}</span>}
+            : <span style={{ color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined), ...(valueWidth ? { width: valueWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>{formatDetailValue(point.value, metric)}</span>}
       </div>
     );
-  }, [metric, usePercentile, totalAccounts]);
+  }, [metric, usePercentile, totalAccounts, rankWidth, valueWidth]);
 
   if (!accountId) return null;
 

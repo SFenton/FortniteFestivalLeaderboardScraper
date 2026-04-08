@@ -214,5 +214,11 @@ describe('RivalSongRow', () => {
       render(<RivalSongRow song={makeSong({ title: undefined, songId: 'fallback-id' })} onClick={vi.fn()} />);
       expect(screen.getByText('fallback-id')).toBeDefined();
     });
+
+    it('formats inline ranks with commas for large values', () => {
+      render(<RivalSongRow song={makeSong({ userRank: 29921, rivalRank: 15000 })} onClick={vi.fn()} />);
+      expect(screen.getByText('#29,921')).toBeDefined();
+      expect(screen.getByText('#15,000')).toBeDefined();
+    });
   });
 });
