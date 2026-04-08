@@ -1291,32 +1291,48 @@ public sealed class MetaDatabase : IMetaDatabase
     public int CleanupAbandonedStaging(long currentScrapeId)
     {
         using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
         int total = 0;
 
-        using (var cmd = conn.CreateCommand())
+        // Delete staging rows in batches to avoid a single massive DELETE that
+        // generates excessive WAL and exceeds command timeouts. Each batch
+        // runs in its own transaction so progress is incremental.
+        const int batchSize = 500_000;
+        int deleted;
+        do
         {
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandText = "DELETE FROM leaderboard_staging WHERE scrape_id < @id";
+            cmd.CommandTimeout = 300; // 5 min per batch
+            cmd.CommandText =
+                "DELETE FROM leaderboard_staging WHERE ctid = ANY(" +
+                "ARRAY(SELECT ctid FROM leaderboard_staging WHERE scrape_id < @id LIMIT @limit))";
             cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
-            total += cmd.ExecuteNonQuery();
-        }
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = "DELETE FROM leaderboard_staging_meta WHERE scrape_id < @id";
-            cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
-            total += cmd.ExecuteNonQuery();
-        }
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = "DELETE FROM deep_scrape_queue WHERE scrape_id < @id";
-            cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
-            total += cmd.ExecuteNonQuery();
-        }
+            cmd.Parameters.AddWithValue("limit", batchSize);
+            deleted = cmd.ExecuteNonQuery();
+            tx.Commit();
+            total += deleted;
+        } while (deleted >= batchSize);
 
-        tx.Commit();
+        // staging_meta and deep_scrape_queue are tiny — single deletes are fine
+        using (var tx = conn.BeginTransaction())
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "DELETE FROM leaderboard_staging_meta WHERE scrape_id < @id";
+                cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
+                total += cmd.ExecuteNonQuery();
+            }
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "DELETE FROM deep_scrape_queue WHERE scrape_id < @id";
+                cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
+                total += cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
         return total;
     }
 
