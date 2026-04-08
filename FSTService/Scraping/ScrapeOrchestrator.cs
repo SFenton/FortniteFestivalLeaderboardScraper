@@ -222,33 +222,31 @@ public sealed class ScrapeOrchestrator
         int totalFinalized = 0;
         int totalScoreChanges = 0;
 
-        var instrumentGroups = stagedMeta
+        var instruments = stagedMeta
             .Where(m => m.EntriesStaged > 0)
-            .GroupBy(m => m.Instrument);
+            .Select(m => m.Instrument)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        Parallel.ForEach(instrumentGroups, instrumentGroup =>
+        Parallel.ForEach(instruments, instrument =>
         {
-            foreach (var meta in instrumentGroup)
+            try
             {
-                try
-                {
-                    var (merged, changes) = _persistence.FinalizeLeaderboardFromStaging(
-                        scrapeId, meta.SongId, meta.Instrument, registeredIds, wave: 1);
-                    Interlocked.Add(ref totalFinalized, merged);
-                    Interlocked.Add(ref totalScoreChanges, changes);
-                    aggregates.AddChanges(changes);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogError(ex, "Failed to finalize staged leaderboard {Song}/{Instrument}.",
-                        meta.SongId, meta.Instrument);
-                }
+                var (merged, changes) = _persistence.FinalizeInstrumentFromStaging(
+                    scrapeId, instrument, registeredIds, wave: 1);
+                Interlocked.Add(ref totalFinalized, merged);
+                Interlocked.Add(ref totalScoreChanges, changes);
+                aggregates.AddChanges(changes);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex, "Failed to finalize staged leaderboards for {Instrument}.", instrument);
             }
         });
 
         _log.LogInformation(
-            "Finalized {Combos:N0} staged leaderboards: {Entries:N0} rows merged, {Changes:N0} score changes.",
-            stagedMeta.Count(m => m.EntriesStaged > 0), totalFinalized, totalScoreChanges);
+            "Finalized {Instruments} instruments: {Entries:N0} rows merged, {Changes:N0} score changes.",
+            instruments.Count, totalFinalized, totalScoreChanges);
 
         // Checkpoint all WAL files after the heavy write phase to keep them small
         // and prevent auto-checkpoints from firing during API reads.

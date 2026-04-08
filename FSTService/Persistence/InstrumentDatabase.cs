@@ -399,6 +399,24 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return dict;
     }
 
+    /// <summary>
+    /// Get all entries across all songs for the given accounts on this instrument.
+    /// Keyed by (songId, accountId).
+    /// </summary>
+    public Dictionary<(string SongId, string AccountId), LeaderboardEntry> GetAllEntriesForAccounts(IReadOnlyCollection<string> accountIds)
+    {
+        if (accountIds.Count == 0) return new();
+        using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
+        var pNames = new string[accountIds.Count]; int i = 0;
+        foreach (var id in accountIds) { pNames[i] = $"@a{i}"; cmd.Parameters.AddWithValue($"a{i}", id); i++; }
+        cmd.CommandText = $"SELECT song_id, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank, source FROM leaderboard_entries WHERE instrument = @instrument AND account_id IN ({string.Join(",", pNames)})";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var dict = new Dictionary<(string, string), LeaderboardEntry>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) dict[(r.GetString(0), r.GetString(1))] = new LeaderboardEntry { AccountId = r.GetString(1), Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? 0 : r.GetInt32(3), IsFullCombo = !r.IsDBNull(4) && r.GetBoolean(4), Stars = r.IsDBNull(5) ? 0 : r.GetInt32(5), Season = r.IsDBNull(6) ? 0 : r.GetInt32(6), Difficulty = r.IsDBNull(7) ? 0 : r.GetInt32(7), Percentile = r.IsDBNull(8) ? 0 : r.GetDouble(8), EndTime = r.IsDBNull(9) ? null : r.GetString(9), Rank = r.IsDBNull(10) ? 0 : r.GetInt32(10), ApiRank = r.IsDBNull(11) ? 0 : r.GetInt32(11), Source = r.IsDBNull(12) ? "scrape" : r.GetString(12) };
+        return dict;
+    }
+
     public int? GetMinSeason(string songId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT MIN(season) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND season > 0"; cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument); var r = cmd.ExecuteScalar(); return r is DBNull or null ? null : Convert.ToInt32(r); }
     public int? GetMaxSeason() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT MAX(season) FROM leaderboard_entries WHERE instrument = @instrument AND season > 0"; cmd.Parameters.AddWithValue("instrument", Instrument); var r = cmd.ExecuteScalar(); return r is DBNull or null ? null : Convert.ToInt32(r); }
     public long GetTotalEntryCount() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE instrument = @instrument"; cmd.Parameters.AddWithValue("instrument", Instrument); return (long)cmd.ExecuteScalar()!; }

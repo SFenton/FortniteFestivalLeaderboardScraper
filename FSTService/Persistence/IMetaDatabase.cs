@@ -203,6 +203,12 @@ public interface IMetaDatabase : IDisposable
     /// <summary>Delete staged entries for one leaderboard combo.</summary>
     int DeleteStagedEntries(long scrapeId, string songId, string instrument);
 
+    /// <summary>Delete all staged entries for an instrument in one scrape run.</summary>
+    int DeleteStagedEntriesForInstrument(long scrapeId, string instrument);
+
+    /// <summary>Mark all songs for an instrument's wave as finalized.</summary>
+    void MarkWaveFinalizedForInstrument(long scrapeId, string instrument, int wave);
+
     /// <summary>Count staged entries for one leaderboard combo.</summary>
     int GetStagedEntryCount(long scrapeId, string songId, string instrument);
 }

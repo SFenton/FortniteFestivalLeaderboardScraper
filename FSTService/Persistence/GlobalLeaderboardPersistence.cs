@@ -484,27 +484,26 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     // ─── Staged leaderboard finalization ────────────────────────────
 
     /// <summary>
-    /// Finalize one leaderboard combo from staging into the live table.
-    /// Merges staged rows using the same ON CONFLICT semantics as <see cref="InstrumentDatabase.UpsertEntries"/>,
-    /// detects score changes for registered users, and deletes staged rows on success.
-    /// Safe for two-pass finalization (wave 1 then wave 2) because the ON CONFLICT
-    /// merge is idempotent for same-account upserts.
+    /// Finalize ALL staged leaderboards for one instrument in a single pass.
+    /// Processes all songs at once instead of looping per-song, reducing DB round-trips
+    /// from ~9 per song (thousands total) to ~5-7 per instrument (tens total).
     /// </summary>
     /// <returns>Number of rows merged and score changes detected.</returns>
-    public (int RowsMerged, int ScoreChanges) FinalizeLeaderboardFromStaging(
-        long scrapeId, string songId, string instrument,
+    public (int RowsMerged, int ScoreChanges) FinalizeInstrumentFromStaging(
+        long scrapeId, string instrument,
         IReadOnlySet<string>? registeredAccountIds = null, int wave = 1)
     {
         var db = GetOrCreateInstrumentDb(instrument);
         var pgDb = (InstrumentDatabase)db;
 
-        // ── Pre-merge: snapshot registered users for score-change detection ──
-        Dictionary<string, LeaderboardEntry>? previousState = null;
+        // ── Pre-merge: snapshot registered users across ALL songs for this instrument ──
+        Dictionary<(string SongId, string AccountId), LeaderboardEntry>? previousState = null;
+        List<string>? relevantIds = null;
         if (registeredAccountIds is { Count: > 0 })
         {
-            // Find which registered users appear in the staged data
-            var relevantIds = new List<string>();
-            using (var conn = _pgDataSource.OpenConnection())
+            // Find which registered users appear in the staged data for this instrument
+            relevantIds = new List<string>();
+            using (var conn = _pgDataSource!.OpenConnection())
             using (var cmd = conn.CreateCommand())
             {
                 var paramNames = new string[registeredAccountIds.Count];
@@ -517,22 +516,21 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 }
                 cmd.CommandText =
                     $"SELECT DISTINCT account_id FROM leaderboard_staging " +
-                    $"WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument " +
+                    $"WHERE scrape_id = @scrapeId AND instrument = @instrument " +
                     $"AND account_id IN ({string.Join(",", paramNames)})";
                 cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
-                cmd.Parameters.AddWithValue("songId", songId);
                 cmd.Parameters.AddWithValue("instrument", instrument);
                 using var r = cmd.ExecuteReader();
                 while (r.Read()) relevantIds.Add(r.GetString(0));
             }
 
             if (relevantIds.Count > 0)
-                previousState = db.GetEntriesForAccounts(songId, relevantIds);
+                previousState = pgDb.GetAllEntriesForAccounts(relevantIds);
             else
-                previousState = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
+                previousState = new();
         }
 
-        // ── Merge staged rows into the live leaderboard table ──
+        // ── Merge ALL staged rows for this instrument into the live table ──
         int rowsMerged;
         using (var conn = pgDb.DataSource.OpenConnection())
         using (var tx = conn.BeginTransaction())
@@ -546,7 +544,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
                     "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at, staged_at " +
                     "FROM leaderboard_staging " +
-                    "WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument " +
+                    "WHERE scrape_id = @scrapeId AND instrument = @instrument " +
                     "ORDER BY song_id, instrument, account_id, score DESC " +
                     "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
                     "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
@@ -568,7 +566,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
                     "OR (leaderboard_entries.source NOT IN ('scrape','backfill') AND EXCLUDED.source IN ('scrape','backfill'))";
                 cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
-                cmd.Parameters.AddWithValue("songId", songId);
                 cmd.Parameters.AddWithValue("instrument", instrument);
                 rowsMerged = cmd.ExecuteNonQuery();
             }
@@ -578,15 +575,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         // ── Post-merge: detect score changes for registered users ──
         int scoreChanges = 0;
-        if (previousState is not null && registeredAccountIds is { Count: > 0 })
+        if (previousState is not null && relevantIds is { Count: > 0 })
         {
             var changes = new List<ScoreChangeRecord>();
-            // Read updated entries for previously-snapshotted accounts
-            var currentState = db.GetEntriesForAccounts(songId, previousState.Keys.ToList());
+            var currentState = pgDb.GetAllEntriesForAccounts(relevantIds);
 
-            foreach (var (accountId, prev) in previousState)
+            foreach (var ((songId, accountId), prev) in previousState)
             {
-                if (!currentState.TryGetValue(accountId, out var current)) continue;
+                if (!currentState.TryGetValue((songId, accountId), out var current)) continue;
                 if (current.Score == prev.Score) continue;
 
                 changes.Add(new ScoreChangeRecord
@@ -601,6 +597,23 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 });
             }
 
+            // Also detect new entries (accounts in staging that weren't in previousState)
+            foreach (var ((songId, accountId), current) in currentState)
+            {
+                if (previousState.ContainsKey((songId, accountId))) continue;
+
+                changes.Add(new ScoreChangeRecord
+                {
+                    SongId = songId, Instrument = instrument, AccountId = accountId,
+                    OldScore = null, NewScore = current.Score,
+                    OldRank = null, NewRank = current.Rank,
+                    Accuracy = current.Accuracy, IsFullCombo = current.IsFullCombo,
+                    Stars = current.Stars, Percentile = current.Percentile,
+                    Season = current.Season, ScoreAchievedAt = current.EndTime,
+                    AllTimeRank = current.Rank, Difficulty = current.Difficulty,
+                });
+            }
+
             if (changes.Count > 0)
             {
                 _metaDb.InsertScoreChanges(changes);
@@ -608,21 +621,20 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             }
         }
 
-        // ── Delete staged rows for this combo ──
-        _metaDb.DeleteStagedEntries(scrapeId, songId, instrument);
+        // ── Delete ALL staged rows for this instrument ──
+        _metaDb.DeleteStagedEntriesForInstrument(scrapeId, instrument);
 
-        // ── Mark wave as finalized ──
-        _metaDb.MarkWaveFinalized(scrapeId, songId, instrument, wave);
+        // ── Mark wave as finalized for all songs on this instrument ──
+        _metaDb.MarkWaveFinalizedForInstrument(scrapeId, instrument, wave);
 
         // ── Defer account IDs for name resolution ──
         if (rowsMerged > 0)
         {
-            using var conn = _pgDataSource.OpenConnection();
+            using var conn = _pgDataSource!.OpenConnection();
             using var cmd = conn.CreateCommand();
             cmd.CommandText =
                 "SELECT DISTINCT account_id FROM leaderboard_entries " +
-                "WHERE song_id = @songId AND instrument = @instrument";
-            cmd.Parameters.AddWithValue("songId", songId);
+                "WHERE instrument = @instrument";
             cmd.Parameters.AddWithValue("instrument", instrument);
             var ids = new List<string>();
             using var r = cmd.ExecuteReader();
@@ -636,8 +648,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             }
         }
 
-        _log.LogDebug("Finalized wave {Wave} for {Song}/{Instrument}: {Merged} rows merged, {Changes} score changes.",
-            wave, songId, instrument, rowsMerged, scoreChanges);
+        _log.LogInformation("Finalized wave {Wave} for {Instrument}: {Merged} rows merged, {Changes} score changes.",
+            wave, instrument, rowsMerged, scoreChanges);
 
         return (rowsMerged, scoreChanges);
     }

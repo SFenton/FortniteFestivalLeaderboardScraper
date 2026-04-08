@@ -1281,6 +1281,28 @@ public sealed class MetaDatabase : IMetaDatabase
         return cmd.ExecuteNonQuery();
     }
 
+    public int DeleteStagedEntriesForInstrument(long scrapeId, string instrument)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM leaderboard_staging WHERE scrape_id = @scrapeId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        return cmd.ExecuteNonQuery();
+    }
+
+    public void MarkWaveFinalizedForInstrument(long scrapeId, string instrument, int wave)
+    {
+        var column = wave == 1 ? "wave1_finalized_at" : "wave2_finalized_at";
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"UPDATE leaderboard_staging_meta SET {column} = @now WHERE scrape_id = @scrapeId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.ExecuteNonQuery();
+    }
+
     public int GetStagedEntryCount(long scrapeId, string songId, string instrument)
     {
         using var conn = _ds.OpenConnection();

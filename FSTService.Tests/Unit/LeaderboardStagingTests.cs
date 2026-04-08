@@ -10,7 +10,7 @@ namespace FSTService.Tests.Unit;
 /// <summary>
 /// Tests for the leaderboard staging infrastructure (Phase 1):
 /// schema creation, StageChunk, UpsertStagingMeta, EnqueueDeepScrapeJob,
-/// FinalizeLeaderboardFromStaging, cleanup, and two-pass finalization.
+/// FinalizeInstrumentFromStaging, cleanup, and two-pass finalization.
 /// </summary>
 public class LeaderboardStagingTests : IDisposable
 {
@@ -199,7 +199,7 @@ public class LeaderboardStagingTests : IDisposable
         Assert.Empty(_metaFixture.Db.GetDeepScrapeJobs(oldScrapeId));
     }
 
-    // ── FinalizeLeaderboardFromStaging ──────────────────────────────
+    // ── FinalizeInstrumentFromStaging ───────────────────────────────
 
     [Fact]
     public void FinalizeLeaderboard_MergesIntoLiveTable()
@@ -214,8 +214,8 @@ public class LeaderboardStagingTests : IDisposable
             Requests = 1, BytesReceived = 5000,
         });
 
-        var (rowsMerged, scoreChanges) = _persistence.FinalizeLeaderboardFromStaging(
-            scrapeId, "song1", TestInstrument);
+        var (rowsMerged, scoreChanges) = _persistence.FinalizeInstrumentFromStaging(
+            scrapeId, TestInstrument);
 
         Assert.Equal(10, rowsMerged);
         Assert.Equal(0, scoreChanges);
@@ -260,8 +260,8 @@ public class LeaderboardStagingTests : IDisposable
 
         var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId };
 
-        var (rowsMerged, scoreChanges) = _persistence.FinalizeLeaderboardFromStaging(
-            scrapeId, "song1", TestInstrument, registeredIds);
+        var (rowsMerged, scoreChanges) = _persistence.FinalizeInstrumentFromStaging(
+            scrapeId, TestInstrument, registeredIds);
 
         Assert.Equal(1, rowsMerged);
         Assert.Equal(1, scoreChanges);
@@ -287,8 +287,8 @@ public class LeaderboardStagingTests : IDisposable
         });
 
         // Finalize wave 1
-        var (w1Merged, _) = _persistence.FinalizeLeaderboardFromStaging(
-            scrapeId, "song1", TestInstrument, wave: 1);
+        var (w1Merged, _) = _persistence.FinalizeInstrumentFromStaging(
+            scrapeId, TestInstrument, wave: 1);
         Assert.Equal(5, w1Merged);
 
         // Verify wave 1 finalized
@@ -302,8 +302,8 @@ public class LeaderboardStagingTests : IDisposable
         _metaFixture.Db.StageChunk(scrapeId, "song1", TestInstrument, wave2Entries);
 
         // Finalize wave 2
-        var (w2Merged, _) = _persistence.FinalizeLeaderboardFromStaging(
-            scrapeId, "song1", TestInstrument, wave: 2);
+        var (w2Merged, _) = _persistence.FinalizeInstrumentFromStaging(
+            scrapeId, TestInstrument, wave: 2);
         Assert.Equal(3, w2Merged);
 
         // Verify both waves finalized
@@ -329,7 +329,7 @@ public class LeaderboardStagingTests : IDisposable
             ReportedPages = 100, PagesScraped = 1, EntriesStaged = 3,
             Requests = 1, BytesReceived = 1500,
         });
-        _persistence.FinalizeLeaderboardFromStaging(scrapeId, "song1", TestInstrument, wave: 1);
+        _persistence.FinalizeInstrumentFromStaging(scrapeId, TestInstrument, wave: 1);
 
         // Stage wave 2 with overlapping account (same account, same score = no-op merge)
         _metaFixture.Db.StageChunk(scrapeId, "song1", TestInstrument,
@@ -340,8 +340,8 @@ public class LeaderboardStagingTests : IDisposable
                 Stars = 4, Season = 1,
             })
         ]);
-        var (w2Merged, _) = _persistence.FinalizeLeaderboardFromStaging(
-            scrapeId, "song1", TestInstrument, wave: 2);
+        var (w2Merged, _) = _persistence.FinalizeInstrumentFromStaging(
+            scrapeId, TestInstrument, wave: 2);
 
         // Should merge without error (idempotent ON CONFLICT)
         Assert.True(w2Merged >= 0);
