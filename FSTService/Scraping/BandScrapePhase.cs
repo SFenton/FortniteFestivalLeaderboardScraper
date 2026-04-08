@@ -96,6 +96,7 @@ public sealed class BandScrapePhase
                     {
                         var persisted = _persistence.UpsertBandEntries(songId, bandType, result.Entries);
                         Interlocked.Add(ref totalEntries, persisted);
+                        _progress.ReportPhaseEntryUpdated(persisted);
                         songHasData = true;
                     }
 
@@ -154,6 +155,7 @@ public sealed class BandScrapePhase
         // Fetch page 0 to discover totalPages
         var page0 = await _scraper.FetchBandPageAsync(songId, bandType, 0, accessToken, callerAccountId, limiter, ct);
         requests++;
+        _progress.ReportPhaseRequest();
 
         if (page0 is null || page0.Entries.Count == 0)
             return new BandLeaderboardScrapeResult { Requests = requests };
@@ -177,6 +179,7 @@ public sealed class BandScrapePhase
 
             var parsed = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct);
             requests++;
+            _progress.ReportPhaseRequest();
 
             if (parsed is null || parsed.Entries.Count == 0)
                 break;
@@ -204,6 +207,7 @@ public sealed class BandScrapePhase
 
                 var parsed = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct);
                 requests++;
+                _progress.ReportPhaseRequest();
 
                 if (parsed is null || parsed.Entries.Count == 0)
                     break;

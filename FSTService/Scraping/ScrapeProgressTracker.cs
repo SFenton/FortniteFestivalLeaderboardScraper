@@ -552,7 +552,8 @@ public sealed class ScrapeProgressTracker
             ScrapePhase.ComputingRivals or
             ScrapePhase.Precomputing or
             ScrapePhase.Finalizing or
-            ScrapePhase.SongMachine => BuildGenericPhaseSnapshot(phase.ToString(), elapsed),
+            ScrapePhase.SongMachine or
+            ScrapePhase.BandScraping => BuildGenericPhaseSnapshot(phase.ToString(), elapsed),
             ScrapePhase.PostScrapeEnrichment => BuildPostScrapeEnrichmentSnapshot(elapsed),
             _ => null,
         };
