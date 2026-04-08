@@ -545,25 +545,49 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public int RecomputeAllRanks()
     {
-        // Fetch all distinct song IDs for this instrument.
-        var songIds = new List<string>();
-        using (var conn = _ds.OpenConnection())
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandTimeout = 60;
-            cmd.CommandText = "SELECT DISTINCT song_id FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape'";
-            cmd.Parameters.AddWithValue("instrument", Instrument);
-            using var r = cmd.ExecuteReader();
-            while (r.Read()) songIds.Add(r.GetString(0));
-        }
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
 
-        int total = 0;
-        for (int i = 0; i < songIds.Count; i++)
-        {
-            total += RecomputeRanksForSong(songIds[i]);
-            if ((i + 1) % 100 == 0)
-                _log.LogDebug("Rank recomputation progress for {Instrument}: {Done}/{Total} songs.", Instrument, i + 1, songIds.Count);
-        }
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = 300;
+        cmd.CommandText =
+            "UPDATE leaderboard_entries le SET rank = sub.rn FROM " +
+            "(SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn " +
+            "FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape') sub " +
+            "WHERE le.song_id = sub.song_id AND le.account_id = sub.account_id " +
+            "AND le.instrument = @instrument AND le.source = 'scrape' " +
+            "AND le.rank IS DISTINCT FROM sub.rn";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        int total = cmd.ExecuteNonQuery();
+        tx.Commit();
+        return total;
+    }
+
+    public int RecomputeRanksForSongs(IReadOnlyCollection<string> songIds)
+    {
+        if (songIds.Count == 0)
+            return 0;
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = 300;
+        cmd.CommandText =
+            "UPDATE leaderboard_entries le SET rank = sub.rn FROM " +
+            "(SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn " +
+            "FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape' AND song_id = ANY(@songIds)) sub " +
+            "WHERE le.song_id = sub.song_id AND le.account_id = sub.account_id " +
+            "AND le.instrument = @instrument AND le.source = 'scrape' " +
+            "AND le.rank IS DISTINCT FROM sub.rn";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.Add(new NpgsqlParameter("songIds", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = songIds.ToArray() });
+        int total = cmd.ExecuteNonQuery();
+        tx.Commit();
         return total;
     }
 

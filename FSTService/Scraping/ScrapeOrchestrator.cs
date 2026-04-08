@@ -232,11 +232,13 @@ public sealed class ScrapeOrchestrator
         {
             try
             {
-                var (merged, changes) = _persistence.FinalizeInstrumentFromStaging(
+                var (merged, changes, affectedSongs) = _persistence.FinalizeInstrumentFromStaging(
                     scrapeId, instrument, registeredIds, wave: 1);
                 Interlocked.Add(ref totalFinalized, merged);
                 Interlocked.Add(ref totalScoreChanges, changes);
                 aggregates.AddChanges(changes);
+                foreach (var songId in affectedSongs)
+                    aggregates.AddRankChangedSongId(songId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

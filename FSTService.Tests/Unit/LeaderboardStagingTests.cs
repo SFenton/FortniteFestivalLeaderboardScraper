@@ -214,11 +214,12 @@ public class LeaderboardStagingTests : IDisposable
             Requests = 1, BytesReceived = 5000,
         });
 
-        var (rowsMerged, scoreChanges) = _persistence.FinalizeInstrumentFromStaging(
+        var (rowsMerged, scoreChanges, affectedSongs) = _persistence.FinalizeInstrumentFromStaging(
             scrapeId, TestInstrument);
 
         Assert.Equal(10, rowsMerged);
         Assert.Equal(0, scoreChanges);
+        Assert.Equal(1, affectedSongs.Count); // one song had entries merged
 
         // Staged rows should be deleted
         Assert.Equal(0, _metaFixture.Db.GetStagedEntryCount(scrapeId, "song1", TestInstrument));
@@ -260,7 +261,7 @@ public class LeaderboardStagingTests : IDisposable
 
         var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId };
 
-        var (rowsMerged, scoreChanges) = _persistence.FinalizeInstrumentFromStaging(
+        var (rowsMerged, scoreChanges, _) = _persistence.FinalizeInstrumentFromStaging(
             scrapeId, TestInstrument, registeredIds);
 
         Assert.Equal(1, rowsMerged);
@@ -287,7 +288,7 @@ public class LeaderboardStagingTests : IDisposable
         });
 
         // Finalize wave 1
-        var (w1Merged, _) = _persistence.FinalizeInstrumentFromStaging(
+        var (w1Merged, _, _) = _persistence.FinalizeInstrumentFromStaging(
             scrapeId, TestInstrument, wave: 1);
         Assert.Equal(5, w1Merged);
 
@@ -302,7 +303,7 @@ public class LeaderboardStagingTests : IDisposable
         _metaFixture.Db.StageChunk(scrapeId, "song1", TestInstrument, wave2Entries);
 
         // Finalize wave 2
-        var (w2Merged, _) = _persistence.FinalizeInstrumentFromStaging(
+        var (w2Merged, _, _) = _persistence.FinalizeInstrumentFromStaging(
             scrapeId, TestInstrument, wave: 2);
         Assert.Equal(3, w2Merged);
 
@@ -340,7 +341,7 @@ public class LeaderboardStagingTests : IDisposable
                 Stars = 4, Season = 1,
             })
         ]);
-        var (w2Merged, _) = _persistence.FinalizeInstrumentFromStaging(
+        var (w2Merged, _, _) = _persistence.FinalizeInstrumentFromStaging(
             scrapeId, TestInstrument, wave: 2);
 
         // Should merge without error (idempotent ON CONFLICT)

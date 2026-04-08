@@ -242,6 +242,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             _seenRegisteredEntries = new();
         private readonly ConcurrentDictionary<string, byte> _deferredAccountIds = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, byte> _changedSongIds = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, byte> _rankChangedSongIds = new(StringComparer.OrdinalIgnoreCase);
 
         public int TotalEntries => _totalEntries;
         public int TotalChanges => _totalChanges;
@@ -262,6 +263,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         /// <summary>Song IDs where entries were inserted or scores changed during this pass.</summary>
         public IReadOnlyCollection<string> ChangedSongIds => _changedSongIds.Keys.ToArray();
 
+        /// <summary>Song IDs where scores changed, requiring rank recomputation.</summary>
+        public IReadOnlyCollection<string> RankChangedSongIds => _rankChangedSongIds.Keys.ToArray();
+
         public void AddEntries(int count) => Interlocked.Add(ref _totalEntries, count);
         public void AddChanges(int count) => Interlocked.Add(ref _totalChanges, count);
         public void IncrementSongsWithData() => Interlocked.Increment(ref _songsWithData);
@@ -281,6 +285,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         /// <summary>Mark a song as having data changes (new entries or score changes).</summary>
         public void AddChangedSongId(string songId) => _changedSongIds.TryAdd(songId, 0);
+
+        /// <summary>Mark a song as having score changes that require rank recomputation.</summary>
+        public void AddRankChangedSongId(string songId) => _rankChangedSongIds.TryAdd(songId, 0);
 
         /// <summary>Thread-safe HashSet built on ConcurrentDictionary.</summary>
         private sealed class ConcurrentHashSet : IReadOnlyCollection<string>
@@ -489,7 +496,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// from ~9 per song (thousands total) to ~5-7 per instrument (tens total).
     /// </summary>
     /// <returns>Number of rows merged and score changes detected.</returns>
-    public (int RowsMerged, int ScoreChanges) FinalizeInstrumentFromStaging(
+    public (int RowsMerged, int ScoreChanges, IReadOnlySet<string> AffectedSongIds) FinalizeInstrumentFromStaging(
         long scrapeId, string instrument,
         IReadOnlySet<string>? registeredAccountIds = null, int wave = 1)
     {
@@ -575,7 +582,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             "OR (EXCLUDED.api_rank > 0 AND EXCLUDED.api_rank != leaderboard_entries.api_rank) " +
             "OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) " +
             "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
-            "OR (leaderboard_entries.source NOT IN ('scrape','backfill') AND EXCLUDED.source IN ('scrape','backfill'))";
+            "OR (leaderboard_entries.source NOT IN ('scrape','backfill') AND EXCLUDED.source IN ('scrape','backfill')) " +
+            "RETURNING song_id";
+
+        var affectedSongIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (int batchStart = 0; batchStart < stagedSongIds.Count; batchStart += songBatchSize)
         {
@@ -594,7 +604,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
                 cmd.Parameters.AddWithValue("instrument", instrument);
                 cmd.Parameters.AddWithValue("songIds", batchIds.ToArray());
-                rowsMerged += cmd.ExecuteNonQuery();
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    rowsMerged++;
+                    affectedSongIds.Add(r.GetString(0));
+                }
             }
 
             tx.Commit();
@@ -675,10 +690,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             }
         }
 
-        _log.LogInformation("Finalized wave {Wave} for {Instrument}: {Merged} rows merged, {Changes} score changes.",
-            wave, instrument, rowsMerged, scoreChanges);
+        _log.LogInformation("Finalized wave {Wave} for {Instrument}: {Merged} rows merged, {Changes} score changes, {AffectedSongs} songs affected.",
+            wave, instrument, rowsMerged, scoreChanges, affectedSongIds.Count);
 
-        return (rowsMerged, scoreChanges);
+        return (rowsMerged, scoreChanges, affectedSongIds);
     }
 
     /// <summary>
@@ -990,14 +1005,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         if (_pgDataSource is not null)
         {
-            // PostgreSQL mode: run sequentially — all instruments share the same
-            // database, so parallel massive UPDATEs contend for WAL writer, buffer
-            // pool, and checkpointer, causing Npgsql read-timeouts.
-            foreach (var kvp in _instrumentDbs)
+            // PostgreSQL mode: limited parallelism — each instrument partition is
+            // independent, but too many concurrent massive UPDATEs contend for WAL
+            // writer. DOP=2 balances throughput vs contention.
+            Parallel.ForEach(_instrumentDbs, new ParallelOptions { MaxDegreeOfParallelism = 2 }, kvp =>
             {
                 var updated = kvp.Value.RecomputeAllRanks();
                 results[kvp.Key] = updated;
-            }
+            });
         }
         else
         {
@@ -1028,35 +1043,33 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (songIds.Count == 0)
             return RecomputeAllRanks();
 
-        int total = 0;
+        var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
         if (_pgDataSource is not null)
         {
-            foreach (var kvp in _instrumentDbs)
+            // PostgreSQL mode: limited parallelism — bulk query per instrument is
+            // a single UPDATE, so WAL contention is manageable at DOP=2.
+            Parallel.ForEach(_instrumentDbs, new ParallelOptions { MaxDegreeOfParallelism = 2 }, kvp =>
             {
-                int instTotal = 0;
-                foreach (var songId in songIds)
-                    instTotal += kvp.Value.RecomputeRanksForSong(songId);
-                _log.LogInformation("Recomputed ranks for {Instrument}: {Updated} entries across {Songs} changed songs.",
-                    kvp.Key, instTotal, songIds.Count);
-                total += instTotal;
-            }
+                var updated = kvp.Value.RecomputeRanksForSongs(songIds);
+                results[kvp.Key] = updated;
+            });
         }
         else
         {
-            var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             Parallel.ForEach(_instrumentDbs, kvp =>
             {
-                int instTotal = 0;
-                foreach (var songId in songIds)
-                    instTotal += kvp.Value.RecomputeRanksForSong(songId);
-                results[kvp.Key] = instTotal;
+                var updated = kvp.Value.RecomputeRanksForSongs(songIds);
+                results[kvp.Key] = updated;
             });
-            foreach (var (instrument, updated) in results)
-            {
-                _log.LogInformation("Recomputed ranks for {Instrument}: {Updated} entries across {Songs} changed songs.",
-                    instrument, updated, songIds.Count);
-                total += updated;
-            }
+        }
+
+        int total = 0;
+        foreach (var (instrument, updated) in results)
+        {
+            _log.LogInformation("Recomputed ranks for {Instrument}: {Updated} entries across {Songs} changed songs.",
+                instrument, updated, songIds.Count);
+            total += updated;
         }
         return total;
     }
