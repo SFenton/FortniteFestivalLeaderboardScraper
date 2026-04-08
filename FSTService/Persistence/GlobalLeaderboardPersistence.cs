@@ -530,45 +530,71 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 previousState = new();
         }
 
-        // ── Merge ALL staged rows for this instrument into the live table ──
-        int rowsMerged;
+        // ── Merge staged rows for this instrument into the live table (batched by song) ──
+        // Processing all ~5M+ rows in a single INSERT overwhelms PG with WAL writes
+        // and exceeds command timeouts. Batching by groups of songs keeps each
+        // transaction manageable (~10K rows/song × batch_size).
+        int rowsMerged = 0;
+        const int songBatchSize = 100;
+
+        List<string> stagedSongIds;
         using (var conn = pgDb.DataSource.OpenConnection())
-        using (var tx = conn.BeginTransaction())
+        using (var cmd = conn.CreateCommand())
         {
+            cmd.CommandText =
+                "SELECT DISTINCT song_id FROM leaderboard_staging " +
+                "WHERE scrape_id = @scrapeId AND instrument = @instrument";
+            cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+            cmd.Parameters.AddWithValue("instrument", instrument);
+            stagedSongIds = new List<string>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) stagedSongIds.Add(r.GetString(0));
+        }
+
+        const string mergeSql =
+            "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
+            "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at, staged_at " +
+            "FROM leaderboard_staging " +
+            "WHERE scrape_id = @scrapeId AND instrument = @instrument AND song_id = ANY(@songIds) " +
+            "ORDER BY song_id, instrument, account_id, score DESC " +
+            "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
+            "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
+            "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
+            "is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.is_full_combo ELSE leaderboard_entries.is_full_combo END, " +
+            "stars = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.stars ELSE leaderboard_entries.stars END, " +
+            "season = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.season ELSE leaderboard_entries.season END, " +
+            "difficulty = CASE WHEN EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0 THEN EXCLUDED.difficulty WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.difficulty ELSE leaderboard_entries.difficulty END, " +
+            "percentile = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.percentile WHEN EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0 THEN EXCLUDED.percentile ELSE leaderboard_entries.percentile END, " +
+            "rank = CASE WHEN EXCLUDED.rank > 0 THEN EXCLUDED.rank ELSE leaderboard_entries.rank END, " +
+            "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
+            "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
+            "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+            "last_updated_at = EXCLUDED.last_updated_at " +
+            "WHERE EXCLUDED.score != leaderboard_entries.score " +
+            "OR (EXCLUDED.rank > 0 AND EXCLUDED.rank != leaderboard_entries.rank) " +
+            "OR (EXCLUDED.api_rank > 0 AND EXCLUDED.api_rank != leaderboard_entries.api_rank) " +
+            "OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) " +
+            "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
+            "OR (leaderboard_entries.source NOT IN ('scrape','backfill') AND EXCLUDED.source IN ('scrape','backfill'))";
+
+        for (int batchStart = 0; batchStart < stagedSongIds.Count; batchStart += songBatchSize)
+        {
+            var batchIds = stagedSongIds.GetRange(batchStart, Math.Min(songBatchSize, stagedSongIds.Count - batchStart));
+
+            using var conn = pgDb.DataSource.OpenConnection();
+            using var tx = conn.BeginTransaction();
+
             using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
 
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandTimeout = 600; // 10 min — bulk merge of ~5M staging rows per instrument
-                cmd.CommandText =
-                    "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
-                    "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at, staged_at " +
-                    "FROM leaderboard_staging " +
-                    "WHERE scrape_id = @scrapeId AND instrument = @instrument " +
-                    "ORDER BY song_id, instrument, account_id, score DESC " +
-                    "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
-                    "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
-                    "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
-                    "is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.is_full_combo ELSE leaderboard_entries.is_full_combo END, " +
-                    "stars = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.stars ELSE leaderboard_entries.stars END, " +
-                    "season = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.season ELSE leaderboard_entries.season END, " +
-                    "difficulty = CASE WHEN EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0 THEN EXCLUDED.difficulty WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.difficulty ELSE leaderboard_entries.difficulty END, " +
-                    "percentile = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.percentile WHEN EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0 THEN EXCLUDED.percentile ELSE leaderboard_entries.percentile END, " +
-                    "rank = CASE WHEN EXCLUDED.rank > 0 THEN EXCLUDED.rank ELSE leaderboard_entries.rank END, " +
-                    "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
-                    "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
-                    "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
-                    "last_updated_at = EXCLUDED.last_updated_at " +
-                    "WHERE EXCLUDED.score != leaderboard_entries.score " +
-                    "OR (EXCLUDED.rank > 0 AND EXCLUDED.rank != leaderboard_entries.rank) " +
-                    "OR (EXCLUDED.api_rank > 0 AND EXCLUDED.api_rank != leaderboard_entries.api_rank) " +
-                    "OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) " +
-                    "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
-                    "OR (leaderboard_entries.source NOT IN ('scrape','backfill') AND EXCLUDED.source IN ('scrape','backfill'))";
+                cmd.CommandTimeout = 300; // 5 min — each batch is ~100 songs (~1M rows)
+                cmd.CommandText = mergeSql;
                 cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
                 cmd.Parameters.AddWithValue("instrument", instrument);
-                rowsMerged = cmd.ExecuteNonQuery();
+                cmd.Parameters.AddWithValue("songIds", batchIds.ToArray());
+                rowsMerged += cmd.ExecuteNonQuery();
             }
 
             tx.Commit();
