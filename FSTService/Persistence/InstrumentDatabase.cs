@@ -2037,22 +2037,24 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.Parameters.AddWithValue("C", populationMedian);
 
         var results = new List<(string, double, AccountAggregateMetrics)>();
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
+        using (var r = cmd.ExecuteReader())
         {
-            results.Add((r.GetString(1), r.GetDouble(0), new AccountAggregateMetrics
+            while (r.Read())
             {
-                SongsPlayed = r.GetInt32(2),
-                Coverage = r.GetDouble(3),
-                AdjustedSkill = r.GetDouble(4),
-                Weighted = r.GetDouble(5),
-                FcRate = r.GetDouble(6),
-                TotalScore = r.GetInt64(7),
-                MaxScorePct = r.GetDouble(8),
-                AvgAccuracy = r.GetDouble(9),
-                FullComboCount = r.GetInt32(10),
-                BestRank = r.GetInt32(11),
-            }));
+                results.Add((r.GetString(1), r.GetDouble(0), new AccountAggregateMetrics
+                {
+                    SongsPlayed = r.GetInt32(2),
+                    Coverage = r.GetDouble(3),
+                    AdjustedSkill = r.GetDouble(4),
+                    Weighted = r.GetDouble(5),
+                    FcRate = r.GetDouble(6),
+                    TotalScore = r.GetInt64(7),
+                    MaxScorePct = r.GetDouble(8),
+                    AvgAccuracy = r.GetDouble(9),
+                    FullComboCount = r.GetInt32(10),
+                    BestRank = r.GetInt32(11),
+                }));
+            }
         }
 
         // Cleanup

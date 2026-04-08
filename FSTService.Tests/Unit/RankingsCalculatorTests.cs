@@ -574,4 +574,34 @@ public sealed class RankingsCalculatorTests : IDisposable
         var history = guitarDb.GetRankHistory("p1", 1);
         Assert.Single(history);
     }
+
+    [Fact]
+    public async Task ComputeAllAsync_BandEntries_ProducesDeltasWithoutException()
+    {
+        // Score 1020 on max_score 1000 → 102% → inside the 95%-105% band.
+        // This exercises ComputeRankingDeltasFromMaterialized →
+        // ComputeAllBucketDeltas on a real PostgreSQL connection.
+        _pathStore.UpdateMaxScores("song_0", new SongMaxScores { MaxLeadScore = 1000 }, "hash_band");
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_0", [
+            MakeEntry("p1", 1020, rank: 1),
+            MakeEntry("p2", 900, rank: 2),
+        ]);
+        guitarDb.RecomputeAllRanks();
+
+        var svc = CreateFestivalServiceWithSongs(1);
+
+        // This formerly threw NpgsqlOperationInProgressException when the
+        // bucket-delta reader wasn't closed before cleanup ran.
+        await _sut.ComputeAllAsync(svc, CancellationToken.None);
+
+        // Base rankings should exist
+        var r1 = guitarDb.GetAccountRanking("p1");
+        Assert.NotNull(r1);
+
+        // The primary assertion is that we didn't throw
+        // NpgsqlOperationInProgressException. Deltas may or may not be
+        // written depending on whether metrics actually changed vs base.
+    }
 }

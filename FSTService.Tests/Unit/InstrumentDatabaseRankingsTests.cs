@@ -896,4 +896,58 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
     {
         Assert.Empty(Db.GetRankHistoryAtLeeway("nonexistent", -3.0, days: 1));
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // ComputeAllBucketDeltas — Reader lifetime regression
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void ComputeAllBucketDeltas_DoesNotThrow_WhenAffectedAccountsExist()
+    {
+        // Score 1020 on max_score 1000 → 102% → in the 95%-105% band
+        Db.UpsertEntries("song1", [
+            MakeEntry("p1", 1020, rank: 1),
+            MakeEntry("p2", 900, rank: 2),
+        ]);
+        Db.RecomputeAllRanks();
+
+        var maxScores = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["song1"] = 1000
+        };
+        Db.ComputeSongStats(maxScores);
+        Db.PopulateValidScoreOverrides([]);
+
+        using var conn = Db.OpenConnection();
+        Db.MaterializeValidEntries(conn, 0.95);
+
+        // Discover band entries (scores between 95% and 105% of max)
+        var bandEntries = Db.GetBandEntriesFromMaterialized(conn, 0.95, 1.05);
+        Assert.NotEmpty(bandEntries); // p1 at 102% should be in the band
+
+        // Build cumulative bucket mapping
+        var affectedByBucket = new SortedDictionary<double, HashSet<string>>();
+        var allAffected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (accountId, leeway) in bandEntries)
+        {
+            double bucket = Math.Ceiling(leeway * 10) / 10.0;
+            bucket = Math.Clamp(bucket, -4.9, 5.0);
+            bucket = Math.Round(bucket, 1);
+            if (!affectedByBucket.TryGetValue(bucket, out var set))
+            {
+                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                affectedByBucket[bucket] = set;
+            }
+            set.Add(accountId);
+            allAffected.Add(accountId);
+        }
+
+        // This formerly threw NpgsqlOperationInProgressException because the
+        // ExecuteReader was still open when cleanup ran on the same connection.
+        var results = Db.ComputeAllBucketDeltas(
+            conn, affectedByBucket, allAffected,
+            totalChartedSongs: 1, credibilityThreshold: 5, populationMedian: 0.5);
+
+        Assert.NotEmpty(results);
+    }
 }
