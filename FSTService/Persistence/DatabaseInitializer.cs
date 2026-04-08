@@ -1015,6 +1015,47 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS band_entries_trios  PARTITION OF band_entries FOR VALUES IN ('Band_Trios');
         CREATE TABLE IF NOT EXISTS band_entries_quad   PARTITION OF band_entries FOR VALUES IN ('Band_Quad');
 
+        -- ── Migration: add instrument_combo column to existing band tables ──
+        -- CREATE TABLE IF NOT EXISTS won't alter existing tables, so we add the
+        -- column separately for databases created before instrument_combo was introduced.
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'band_entries' AND column_name = 'instrument_combo'
+            ) THEN
+                -- Add column to parent (cascades to partitions)
+                ALTER TABLE band_entries ADD COLUMN instrument_combo TEXT NOT NULL DEFAULT '';
+                -- Recreate PK to include instrument_combo (drop old, add new)
+                ALTER TABLE band_entries_duets DROP CONSTRAINT IF EXISTS band_entries_duets_pkey;
+                ALTER TABLE band_entries_trios DROP CONSTRAINT IF EXISTS band_entries_trios_pkey;
+                ALTER TABLE band_entries_quad  DROP CONSTRAINT IF EXISTS band_entries_quad_pkey;
+                ALTER TABLE band_entries DROP CONSTRAINT IF EXISTS band_entries_pkey;
+                ALTER TABLE band_entries ADD PRIMARY KEY (song_id, band_type, team_key, instrument_combo);
+            END IF;
+        END $$;
+
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'band_member_stats' AND column_name = 'instrument_combo'
+            ) THEN
+                ALTER TABLE band_member_stats ADD COLUMN instrument_combo TEXT NOT NULL DEFAULT '';
+                ALTER TABLE band_member_stats DROP CONSTRAINT IF EXISTS band_member_stats_pkey;
+                ALTER TABLE band_member_stats ADD PRIMARY KEY (song_id, band_type, team_key, instrument_combo, member_index);
+            END IF;
+        END $$;
+
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'band_members' AND column_name = 'instrument_combo'
+            ) THEN
+                ALTER TABLE band_members ADD COLUMN instrument_combo TEXT NOT NULL DEFAULT '';
+                ALTER TABLE band_members DROP CONSTRAINT IF EXISTS band_members_pkey;
+                ALTER TABLE band_members ADD PRIMARY KEY (account_id, song_id, band_type, team_key, instrument_combo);
+            END IF;
+        END $$;
+
         CREATE INDEX IF NOT EXISTS ix_be_song_score
             ON band_entries (song_id, band_type, score DESC);
         CREATE INDEX IF NOT EXISTS ix_be_song_rank
