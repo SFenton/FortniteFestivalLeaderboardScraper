@@ -29,6 +29,10 @@ type PlayerDataContextValue = {
   currentSongName: string | null;
   seasonsQueried: number;
   rivalsFound: number;
+  isThrottled: boolean;
+  throttleStatusKey: string | null;
+  pendingRankUpdate: boolean;
+  estimatedRankUpdateMinutes: number | null;
   justCompleted: boolean;
   clearCompleted: () => void;
 };
@@ -50,7 +54,7 @@ export function PlayerDataProvider({
     enabled: !!accountId,
   });
 
-  const { isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, justCompleted, clearCompleted } =
+  const { isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, justCompleted, clearCompleted } =
     useSyncStatus(accountId);
 
   // Separate flag that consumers can read independently of the one-shot justCompleted
@@ -94,9 +98,13 @@ export function PlayerDataProvider({
     currentSongName,
     seasonsQueried,
     rivalsFound,
+    isThrottled,
+    throttleStatusKey,
+    pendingRankUpdate,
+    estimatedRankUpdateMinutes,
     justCompleted: syncCompleted,
     clearCompleted: clearSyncCompleted,
-  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, syncCompleted, clearSyncCompleted]);
+  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, syncCompleted, clearSyncCompleted]);
 
   return (
     <PlayerDataContext.Provider value={value}>

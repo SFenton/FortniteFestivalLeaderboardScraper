@@ -39,6 +39,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly ResponseCacheService _leaderboardAllCache;
     private readonly ScrapeTimePrecomputer _precomputer;
     private readonly ScrapeProgressTracker _progress;
+    private readonly UserSyncProgressTracker _syncTracker;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
@@ -64,6 +65,7 @@ public sealed class ScraperWorker : BackgroundService
         [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService leaderboardAllCache,
         ScrapeTimePrecomputer precomputer,
         ScrapeProgressTracker progress,
+        UserSyncProgressTracker syncTracker,
         IOptions<ScraperOptions> options,
         IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
         IHostApplicationLifetime lifetime,
@@ -85,6 +87,7 @@ public sealed class ScraperWorker : BackgroundService
         _leaderboardAllCache = leaderboardAllCache;
         _precomputer = precomputer;
         _progress = progress;
+        _syncTracker = syncTracker;
         _options = options;
         _jsonOpts = jsonOptions.Value.SerializerOptions;
         _lifetime = lifetime;
@@ -223,10 +226,20 @@ public sealed class ScraperWorker : BackgroundService
         // but won't be included in an already-running scrape pass.
         _backgroundSyncTask = BackgroundSongSyncLoopAsync(_festivalService, opts.SongSyncInterval, stoppingToken);
 
+        // Register next-rank-update provider so sync completion messages include
+        // an estimated time for global rankings recalculation.
+        DateTime? lastScrapeEndUtc = null;
+        _syncTracker.SetNextRankUpdateProvider(() =>
+        {
+            if (lastScrapeEndUtc is null) return null;
+            return lastScrapeEndUtc.Value + opts.ScrapeInterval;
+        });
+
         // Main scrape loop
         while (!stoppingToken.IsCancellationRequested)
         {
             await RunScrapePassAsync(_festivalService, opts, stoppingToken);
+            lastScrapeEndUtc = DateTime.UtcNow;
 
             if (opts.RunOnce)
             {

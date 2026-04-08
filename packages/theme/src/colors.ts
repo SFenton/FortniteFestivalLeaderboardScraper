@@ -66,6 +66,7 @@ export const Colors = {
   statusGreenStroke: '#1E7F46',
   statusRed: '#C62828',
   statusRedStroke: '#8B0000',
+  statusAmber: '#F5A623',
 
   // Rival pill backgrounds
   rivalGreenBg: 'rgba(76, 175, 80, 0.15)',

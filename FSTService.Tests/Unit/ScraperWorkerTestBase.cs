@@ -217,7 +217,11 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new Api.ResponseCacheService(TimeSpan.FromMinutes(2)),
             new Api.ResponseCacheService(TimeSpan.FromMinutes(5)),
             precomputer,
-            _progress, options,
+            _progress,
+            new FSTService.Scraping.UserSyncProgressTracker(
+                new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
+                Substitute.For<ILogger<FSTService.Scraping.UserSyncProgressTracker>>()),
+            options,
             Options.Create(new Microsoft.AspNetCore.Http.Json.JsonOptions()),
             _lifetime, _log);
     }

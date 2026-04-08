@@ -104,11 +104,15 @@ public sealed class RivalsOrchestrator
             _persistence.Meta.StartRivals(accountId, totalCombos);
             _syncTracker.BeginRivals(accountId, totalCombos);
 
-            var result = _calculator.ComputeRivals(accountId, dirtyInstruments);
+            var result = _calculator.ComputeRivals(accountId, dirtyInstruments,
+                onProgress: combosCompleted =>
+                {
+                    _syncTracker.ReportRivalsItem(accountId, combosCompleted, rivalsFound: 0);
+                });
 
             _persistence.Meta.ReplaceRivalsData(accountId, result.Rivals, result.Samples);
             _persistence.Meta.CompleteRivals(accountId, result.CombosComputed, result.Rivals.Count);
-            _syncTracker.ReportRivalsItem(accountId, result.Rivals.Count);
+            _syncTracker.ReportRivalsItem(accountId, result.CombosComputed, result.Rivals.Count);
             _syncTracker.Complete(accountId);
             _rivalsCache.InvalidateAll();
             _calculator.InvalidateSongGapsCache();

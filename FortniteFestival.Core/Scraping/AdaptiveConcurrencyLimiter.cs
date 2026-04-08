@@ -121,6 +121,14 @@ namespace FortniteFestival.Core.Scraping
         /// <summary>Available rate-limiter tokens (-1 if no rate limiter configured).</summary>
         public int RateTokensAvailable => _rateBucket?.CurrentCount ?? -1;
 
+        /// <summary>Configured maximum DOP.</summary>
+        public int MaxDop => _maxDop;
+
+        /// <summary>
+        /// Current DOP as a percentage of max (0–100). Low values indicate CDN throttling.
+        /// </summary>
+        public int ThrottlePercent => (int)(100.0 * CurrentDop / _maxDop);
+
         public AdaptiveConcurrencyLimiter(int initialDop, int minDop, int maxDop, ILogger log,
             int maxRequestsPerSecond = 0, int initialSsthresh = 0)
         {

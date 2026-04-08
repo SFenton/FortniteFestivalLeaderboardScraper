@@ -21,6 +21,8 @@ interface SyncBannerProps {
   currentSongName: string | null;
   seasonsQueried: number;
   rivalsFound: number;
+  isThrottled: boolean;
+  throttleStatusKey: string | null;
 }
 
 function getStepInfo(phase: SyncPhase): { step: number; totalSteps: number } {
@@ -46,7 +48,7 @@ function getUnifiedProgress(phase: SyncPhase, bf: number, hr: number, rv: number
 const SyncBanner = memo(function SyncBanner({
   phase, backfillProgress, historyProgress, rivalsProgress,
   itemsCompleted, totalItems, entriesFound, currentSongName,
-  seasonsQueried, rivalsFound,
+  seasonsQueried, rivalsFound, isThrottled, throttleStatusKey,
 }: SyncBannerProps) {
   const { t } = useTranslation();
   const s = useSyncBannerStyles();
@@ -56,7 +58,7 @@ const SyncBanner = memo(function SyncBanner({
     ? (totalItems > 0 ? itemsCompleted / totalItems : 0)
     : getUnifiedProgress(phase, backfillProgress, historyProgress, rivalsProgress);
   const pct = Math.round(unified * 100);
-  const isIndeterminate = itemsCompleted === 0 && totalItems === 0;
+  const isIndeterminate = (itemsCompleted === 0 && totalItems === 0) || isThrottled;
 
   return (
     <div style={s.syncBanner}>
@@ -78,9 +80,16 @@ const SyncBanner = memo(function SyncBanner({
       <div style={s.syncProgressBar}>
         <div style={{
           ...s.syncProgressInner,
-          ...(isIndeterminate ? s.syncProgressIndeterminate : { width: `${pct}%` }),
+          ...(isThrottled ? s.syncProgressThrottled : isIndeterminate ? s.syncProgressIndeterminate : { width: `${pct}%` }),
         }} />
       </div>
+
+      {/* Throttle warning */}
+      {isThrottled && throttleStatusKey && (
+        <div style={s.syncThrottleWarning}>
+          {t(`player.${throttleStatusKey}` as const)}
+        </div>
+      )}
 
       {/* Counts row */}
       <div style={s.syncCounts}>
@@ -166,6 +175,12 @@ function useSyncBannerStyles() {
       width: '30%',
       animation: 'indeterminate-bar 1.5s ease-in-out infinite',
     } as CSSProperties,
+    syncProgressThrottled: {
+      width: '100%',
+      background: Colors.statusAmber,
+      opacity: 0.5,
+      animation: 'indeterminate-bar 2s ease-in-out infinite',
+    } as CSSProperties,
     syncCounts: {
       ...flexRow,
       gap: Gap.lg,
@@ -180,6 +195,11 @@ function useSyncBannerStyles() {
       overflow: 'hidden' as const,
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap' as const,
+    } as CSSProperties,
+    syncThrottleWarning: {
+      fontSize: Font.sm,
+      color: Colors.statusAmber,
+      fontWeight: Weight.semibold,
     } as CSSProperties,
   }), []);
 }

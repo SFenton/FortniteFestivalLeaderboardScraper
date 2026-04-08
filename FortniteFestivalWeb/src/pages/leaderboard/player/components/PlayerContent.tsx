@@ -18,6 +18,7 @@ import { playerPageStyles as pps } from '../../../../components/player/playerPag
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../../../components/page/SyncCompleteBanner';
+import CollapseOnExit from '../../../../components/page/CollapseOnExit';
 import { useSettings, isInstrumentVisible } from '../../../../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings } from '../../../../utils/songSettings';
 import Page from '../../../Page';
@@ -58,6 +59,10 @@ export interface PlayerContentProps {
   currentSongName: string | null;
   seasonsQueried: number;
   rivalsFound: number;
+  isThrottled: boolean;
+  throttleStatusKey: string | null;
+  pendingRankUpdate: boolean;
+  estimatedRankUpdateMinutes: number | null;
   isTrackedPlayer: boolean;
   skipAnim: boolean;
   showCompleteBanner?: boolean;
@@ -78,6 +83,10 @@ export default function PlayerContent({
   currentSongName,
   seasonsQueried,
   rivalsFound,
+  isThrottled,
+  throttleStatusKey,
+  pendingRankUpdate,
+  estimatedRankUpdateMinutes,
   isTrackedPlayer,
   skipAnim,
   showCompleteBanner,
@@ -90,6 +99,9 @@ export default function PlayerContent({
   const navigate = useNavigate();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
+  const bannerVisible = isSyncing || !!(showCompleteBanner && onCompleteBannerDismissed);
+  const [bannerCollapsed, setBannerCollapsed] = useState(!bannerVisible);
+  useEffect(() => { if (bannerVisible) setBannerCollapsed(false); }, [bannerVisible]);
   const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway, leewayParam } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
 
@@ -250,33 +262,40 @@ export default function PlayerContent({
     borderRadius: Radius.md,
   };
 
-  // --- Sync banner ---
-  if (isSyncing) {
+  // --- Sync banner (with graceful exit collapse) ---
+  if (bannerVisible || !bannerCollapsed) {
+    const bannerContent = isSyncing ? (
+      <SyncBanner
+        phase={syncPhase}
+        backfillProgress={backfillProgress}
+        historyProgress={historyProgress}
+        rivalsProgress={rivalsProgress}
+        itemsCompleted={itemsCompleted}
+        totalItems={totalItems}
+        entriesFound={entriesFound}
+        currentSongName={currentSongName}
+        seasonsQueried={seasonsQueried}
+        rivalsFound={rivalsFound}
+        isThrottled={isThrottled}
+        throttleStatusKey={throttleStatusKey}
+      />
+    ) : (showCompleteBanner && onCompleteBannerDismissed) ? (
+      <SyncCompleteBanner
+        onDismissed={onCompleteBannerDismissed}
+        pendingRankUpdate={pendingRankUpdate}
+        estimatedRankUpdateMinutes={estimatedRankUpdateMinutes}
+      />
+    ) : null;
+
     items.push({
-      key: 'sync',
+      key: 'sync-slot',
       span: true,
-      heightEstimate: 150,
+      heightEstimate: isSyncing ? 150 : 80,
       node: (
-        <SyncBanner
-          phase={syncPhase}
-          backfillProgress={backfillProgress}
-          historyProgress={historyProgress}
-          rivalsProgress={rivalsProgress}
-          itemsCompleted={itemsCompleted}
-          totalItems={totalItems}
-          entriesFound={entriesFound}
-          currentSongName={currentSongName}
-          seasonsQueried={seasonsQueried}
-          rivalsFound={rivalsFound}
-        />
+        <CollapseOnExit show={bannerVisible} onCollapsed={() => setBannerCollapsed(true)}>
+          {bannerContent}
+        </CollapseOnExit>
       ),
-    });
-  } else if (showCompleteBanner && onCompleteBannerDismissed) {
-    items.push({
-      key: 'sync-complete',
-      span: true,
-      heightEstimate: 80,
-      node: <SyncCompleteBanner onDismissed={onCompleteBannerDismissed} />,
     });
   }
 

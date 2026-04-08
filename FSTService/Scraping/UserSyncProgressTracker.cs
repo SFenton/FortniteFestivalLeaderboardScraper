@@ -24,11 +24,23 @@ public sealed class UserSyncProgressTracker
     private readonly NotificationService _notifications;
     private readonly ILogger<UserSyncProgressTracker> _log;
 
+    /// <summary>
+    /// Optional provider for next-scrape timing, used to estimate when global ranks
+    /// will be recalculated after a user sync completes.
+    /// </summary>
+    private Func<DateTime?>? _nextRankUpdateProvider;
+
     public UserSyncProgressTracker(NotificationService notifications, ILogger<UserSyncProgressTracker> log)
     {
         _notifications = notifications;
         _log = log;
     }
+
+    /// <summary>
+    /// Register a callback that returns the estimated UTC time of the next global ranking pass.
+    /// Called when building the completion payload to populate <c>estimatedRankUpdateMinutes</c>.
+    /// </summary>
+    public void SetNextRankUpdateProvider(Func<DateTime?> provider) => _nextRankUpdateProvider = provider;
 
     // ─── Begin phase ────────────────────────────────────────
 
@@ -104,10 +116,10 @@ public sealed class UserSyncProgressTracker
         PushProgressIfThrottled(accountId, p);
     }
 
-    public void ReportRivalsItem(string accountId, int rivalsFound)
+    public void ReportRivalsItem(string accountId, int combosCompleted, int rivalsFound)
     {
         if (!_progress.TryGetValue(accountId, out var p)) return;
-        Interlocked.Increment(ref p.ItemsCompleted);
+        Volatile.Write(ref p.ItemsCompleted, combosCompleted);
         Volatile.Write(ref p.RivalsFound, rivalsFound);
         PushProgressIfThrottled(accountId, p);
     }
@@ -118,6 +130,20 @@ public sealed class UserSyncProgressTracker
         Interlocked.Add(ref p.ItemsCompleted, completedUnits);
         if (entriesFound > 0) Interlocked.Add(ref p.EntriesFound, entriesFound);
         if (currentSongName is not null) p.CurrentSongName = currentSongName;
+        PushProgressIfThrottled(accountId, p);
+    }
+
+    // ─── Throttle state ─────────────────────────────────────
+
+    /// <summary>
+    /// Report CDN throttle state for an account. Called by <see cref="CyclicalSongMachine"/>
+    /// when the adaptive limiter significantly reduces DOP.
+    /// </summary>
+    public void ReportThrottleState(string accountId, bool isThrottled, string? statusKey = null)
+    {
+        if (!_progress.TryGetValue(accountId, out var p)) return;
+        p.IsThrottled = isThrottled;
+        p.ThrottleStatusKey = isThrottled ? statusKey : null;
         PushProgressIfThrottled(accountId, p);
     }
 
@@ -200,8 +226,20 @@ public sealed class UserSyncProgressTracker
         }
     }
 
-    private static object BuildPayload(string accountId, UserSyncProgress p)
+    private object BuildPayload(string accountId, UserSyncProgress p)
     {
+        var isComplete = p.Phase == SyncProgressPhase.Complete;
+        int? estimatedRankMinutes = null;
+        if (isComplete)
+        {
+            var nextUpdate = _nextRankUpdateProvider?.Invoke();
+            if (nextUpdate.HasValue)
+            {
+                var remaining = nextUpdate.Value - DateTime.UtcNow;
+                estimatedRankMinutes = Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes));
+            }
+        }
+
         return new
         {
             type = "sync_progress",
@@ -214,6 +252,10 @@ public sealed class UserSyncProgressTracker
             seasonsQueried = Volatile.Read(ref p.SeasonsQueried),
             rivalsFound = Volatile.Read(ref p.RivalsFound),
             elapsedSeconds = Math.Round(p.Stopwatch.Elapsed.TotalSeconds, 1),
+            isThrottled = p.IsThrottled,
+            throttleStatusKey = p.ThrottleStatusKey,
+            pendingRankUpdate = isComplete ? true : (bool?)null,
+            estimatedRankUpdateMinutes = estimatedRankMinutes,
         };
     }
 
@@ -254,6 +296,12 @@ public sealed class UserSyncProgress
     public volatile string? ErrorMessage;
     public DateTime StartedAtUtc = DateTime.UtcNow;
     public readonly Stopwatch Stopwatch = new();
+
+    /// <summary>Whether the adaptive limiter has significantly reduced DOP (CDN throttle).</summary>
+    public volatile bool IsThrottled;
+
+    /// <summary>Status key for throttle reason (e.g. "throttle_cdn_busy"). Frontend translates locally.</summary>
+    public volatile string? ThrottleStatusKey;
 
     /// <summary>Tick count of last WebSocket push (for throttling).</summary>
     public long LastPushTicks;

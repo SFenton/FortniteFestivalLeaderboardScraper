@@ -120,6 +120,14 @@ export type SyncProgressMessage = {
   seasonsQueried?: number;
   rivalsFound?: number;
   elapsedSeconds?: number;
+  /** Whether the adaptive limiter has significantly reduced DOP (CDN throttle). */
+  isThrottled?: boolean;
+  /** Status key for throttle reason (e.g. "throttle_cdn_busy"). Frontend translates locally. */
+  throttleStatusKey?: string;
+  /** True when sync is complete and global ranks have not yet been recalculated. */
+  pendingRankUpdate?: boolean;
+  /** Estimated minutes until next global ranking pass. */
+  estimatedRankUpdateMinutes?: number;
 };
 
 export type WsNotificationMessage =

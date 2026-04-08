@@ -261,7 +261,7 @@ export default function SongsPage() {
     fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
   }, [fabSearch]);
   /* v8 ignore stop */
-  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted } = usePlayerData();
+  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted } = usePlayerData();
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
 
   // Show completion banner when sync finishes
@@ -618,10 +618,16 @@ export default function SongsPage() {
             currentSongName={currentSongName}
             seasonsQueried={seasonsQueried}
             rivalsFound={rivalsFound}
+            isThrottled={isThrottled}
+            throttleStatusKey={throttleStatusKey}
           />
         )}
         {!isSyncing && showCompleteBanner && (
-          <SyncCompleteBanner onDismissed={() => setShowCompleteBanner(false)} />
+          <SyncCompleteBanner
+            onDismissed={() => setShowCompleteBanner(false)}
+            pendingRankUpdate={pendingRankUpdate}
+            estimatedRankUpdateMinutes={estimatedRankUpdateMinutes}
+          />
         )}
         {loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (
           <EmptyState

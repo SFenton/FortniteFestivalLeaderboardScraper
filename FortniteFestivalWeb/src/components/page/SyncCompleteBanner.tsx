@@ -9,20 +9,26 @@ import { useTranslation } from 'react-i18next';
 import { Colors, Font, Weight, Gap, Radius, frostedCard, flexRow, FADE_DURATION } from '@festival/theme';
 
 const AUTO_DISMISS_MS = 3_000;
+const AUTO_DISMISS_WITH_RANKING_MS = 10_000;
 
 interface SyncCompleteBannerProps {
   onDismissed: () => void;
+  pendingRankUpdate?: boolean;
+  estimatedRankUpdateMinutes?: number | null;
 }
 
-const SyncCompleteBanner = memo(function SyncCompleteBanner({ onDismissed }: SyncCompleteBannerProps) {
+const SyncCompleteBanner = memo(function SyncCompleteBanner({
+  onDismissed, pendingRankUpdate, estimatedRankUpdateMinutes,
+}: SyncCompleteBannerProps) {
   const { t } = useTranslation();
   const [exiting, setExiting] = useState(false);
   const s = useStyles(exiting);
+  const dismissMs = pendingRankUpdate ? AUTO_DISMISS_WITH_RANKING_MS : AUTO_DISMISS_MS;
 
   useEffect(() => {
-    const timer = setTimeout(() => setExiting(true), AUTO_DISMISS_MS);
+    const timer = setTimeout(() => setExiting(true), dismissMs);
     return () => clearTimeout(timer);
-  }, []);
+  }, [dismissMs]);
 
   return (
     <div style={s.banner} onAnimationEnd={exiting ? onDismissed : undefined}>
@@ -30,6 +36,13 @@ const SyncCompleteBanner = memo(function SyncCompleteBanner({ onDismissed }: Syn
       <div style={s.text}>
         <span style={s.title}>{t('player.syncComplete')}</span>
         <span style={s.desc}>{t('player.syncCompleteDesc')}</span>
+        {pendingRankUpdate && (
+          <span style={s.rankingNote}>
+            {t('player.syncPendingRanks', {
+              minutes: estimatedRankUpdateMinutes ?? undefined,
+            })}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -70,6 +83,11 @@ function useStyles(exiting: boolean) {
     desc: {
       fontSize: Font.sm,
       color: Colors.textSecondary,
+    } as CSSProperties,
+    rankingNote: {
+      fontSize: Font.sm,
+      color: Colors.textTertiary,
+      fontStyle: 'italic' as const,
     } as CSSProperties,
   }), [exiting]);
 }

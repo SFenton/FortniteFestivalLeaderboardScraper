@@ -460,6 +460,17 @@ public class CyclicalSongMachine
                         accessToken, callerAccountId, _pool, highPriority,
                         opts.LookupBatchSize, ct);
 
+                    // Check CDN throttle state and surface to each user's sync progress.
+                    // Throttle when limiter DOP drops below 25% of max.
+                    var limiter = _pool.Limiter;
+                    bool isThrottled = limiter.ThrottlePercent < 25;
+                    foreach (var user in users)
+                    {
+                        _syncTracker.ReportThrottleState(
+                            user.AccountId, isThrottled,
+                            isThrottled ? "throttle_cdn_busy" : null);
+                    }
+
                     foreach (var (_, att) in _attachments)
                     {
                         if (att.IsCompleted) continue;

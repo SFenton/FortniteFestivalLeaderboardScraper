@@ -28,6 +28,14 @@ type SyncState = {
   seasonsQueried: number;
   /** Number of rivals found (rivals phase) */
   rivalsFound: number;
+  /** Whether the CDN limiter has significantly reduced DOP */
+  isThrottled: boolean;
+  /** Status key for throttle reason (frontend translates) */
+  throttleStatusKey: string | null;
+  /** True when sync is complete but global ranks not yet recalculated */
+  pendingRankUpdate: boolean;
+  /** Estimated minutes until next global ranking pass */
+  estimatedRankUpdateMinutes: number | null;
 };
 
 import { SYNC_POLL_ACTIVE_MS, SYNC_POLL_IDLE_MS } from '@festival/theme';
@@ -49,6 +57,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     currentSongName: null,
     seasonsQueried: 0,
     rivalsFound: 0,
+    isThrottled: false,
+    throttleStatusKey: null,
+    pendingRankUpdate: false,
+    estimatedRankUpdateMinutes: null,
   });
   const [justCompleted, setJustCompleted] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -100,6 +112,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         currentSongName: sp.currentSongName ?? null,
         seasonsQueried: sp.seasonsQueried ?? prev.seasonsQueried,
         rivalsFound: sp.rivalsFound ?? prev.rivalsFound,
+        isThrottled: sp.isThrottled ?? false,
+        throttleStatusKey: sp.throttleStatusKey ?? null,
+        pendingRankUpdate: sp.pendingRankUpdate ?? false,
+        estimatedRankUpdateMinutes: sp.estimatedRankUpdateMinutes ?? null,
       }));
 
       if (!isSyncing && phase === SyncPhase.Complete && (wasSyncingRef.current || syncKickedRef.current)) {

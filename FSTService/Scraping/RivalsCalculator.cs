@@ -72,11 +72,12 @@ public sealed class RivalsCalculator
     /// Compute rivals for a single user across all valid instruments and combos.
     /// Returns the total number of rival rows produced.
     /// </summary>
-    public RivalsResult ComputeRivals(string userId, IReadOnlySet<string>? dirtyInstruments = null)
+    public RivalsResult ComputeRivals(string userId, IReadOnlySet<string>? dirtyInstruments = null, Action<int>? onProgress = null)
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
         var perInstrument = new Dictionary<string, InstrumentRivalsData>(StringComparer.OrdinalIgnoreCase);
         var allCandidates = new Dictionary<string, Dictionary<string, RivalCandidate>>(StringComparer.OrdinalIgnoreCase);
+        int progressCount = 0;
 
         // Step 1+3: Gather user entries and scan neighborhoods per instrument
         foreach (var instrument in instrumentKeys)
@@ -154,6 +155,8 @@ public sealed class RivalsCalculator
                 Candidates = candidates,
             };
             allCandidates[instrument] = candidates;
+            progressCount++;
+            onProgress?.Invoke(progressCount);
         }
 
         if (perInstrument.Count == 0)
@@ -186,6 +189,8 @@ public sealed class RivalsCalculator
             var combinedCandidates = IntersectCandidates(instruments, allCandidates);
             SelectRivals(userId, comboId, combinedCandidates.Values, MinSharedSongsPerInstrumentInCombo,
                 RivalsPerDirection, now, rivalRows);
+            progressCount++;
+            onProgress?.Invoke(progressCount);
         }
 
         // Step 6: Sample selection — for each selected rival per instrument,
