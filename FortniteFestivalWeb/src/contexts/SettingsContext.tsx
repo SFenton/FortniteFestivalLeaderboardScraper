@@ -40,7 +40,8 @@ export type AppSettings = {
   metadataShowPercentage: boolean;
   metadataShowPercentile: boolean;
   metadataShowSeasonAchieved: boolean;
-  metadataShowDifficulty: boolean;
+  metadataShowIntensity: boolean;
+  metadataShowGameDifficulty: boolean;
   metadataShowStars: boolean;
   metadataShowLastPlayed: boolean;
 };
@@ -68,7 +69,8 @@ export const defaultAppSettings = (): AppSettings => ({
   metadataShowPercentage: true,
   metadataShowPercentile: true,
   metadataShowSeasonAchieved: true,
-  metadataShowDifficulty: true,
+  metadataShowIntensity: true,
+  metadataShowGameDifficulty: true,
   metadataShowStars: true,
   metadataShowLastPlayed: true,
 });
@@ -120,6 +122,11 @@ function loadSettings(): AppSettings {
     }
     // Strip removed settings keys
     delete (merged as Record<string, unknown>).metadataShowMaxDistance;
+    // Migrate metadataShowDifficulty → metadataShowIntensity (one-time rename)
+    if ('metadataShowDifficulty' in parsed && !('metadataShowIntensity' in parsed)) {
+      merged.metadataShowIntensity = (parsed as Record<string, unknown>).metadataShowDifficulty;
+    }
+    delete (merged as Record<string, unknown>).metadataShowDifficulty;
     return merged;
   } catch {
     return defaultAppSettings();

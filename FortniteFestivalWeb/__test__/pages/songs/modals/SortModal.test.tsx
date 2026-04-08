@@ -144,6 +144,7 @@ describe('SortModal', () => {
       percentile: false,
       seasonachieved: false,
       intensity: false,
+      difficulty: false,
       stars: false,
       lastplayed: false,
     };
@@ -163,6 +164,7 @@ describe('SortModal', () => {
       percentile: false,
       seasonachieved: false,
       intensity: false,
+      difficulty: false,
       stars: false,
       lastplayed: false,
     };
@@ -222,6 +224,7 @@ describe('SortModal', () => {
       percentile: false,
       seasonachieved: false,
       intensity: false,
+      difficulty: false,
       stars: false,
       lastplayed: false,
     };
@@ -236,6 +239,7 @@ describe('SortModal', () => {
       percentile: false,
       seasonachieved: false,
       intensity: false,
+      difficulty: false,
       stars: false,
       lastplayed: false,
     };

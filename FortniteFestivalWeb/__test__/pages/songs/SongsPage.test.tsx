@@ -196,7 +196,8 @@ describe('SongsPage', () => {
       metadataShowPercentage: false,
       metadataShowPercentile: true,
       metadataShowSeasonAchieved: true,
-      metadataShowDifficulty: true,
+      metadataShowIntensity: true,
+      metadataShowGameDifficulty: true,
       metadataShowStars: true,
     }));
     const { container } = renderSongsPage();

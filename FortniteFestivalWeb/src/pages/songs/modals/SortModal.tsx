@@ -27,6 +27,7 @@ export type MetadataVisibility = {
   percentile: boolean;
   seasonachieved: boolean;
   intensity: boolean;
+  difficulty: boolean;
   stars: boolean;
   lastplayed: boolean;
 };
@@ -63,6 +64,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
         const visMap: Record<string, boolean> = {
           score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
           stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
+          difficulty: mv.difficulty,
         };
         return visMap[mode] !== false;
       })
@@ -73,13 +75,14 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
         const visMap: Record<string, boolean> = {
           score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
           stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
+          difficulty: mv.difficulty,
           lastplayed: mv.lastplayed,
         };
         return visMap[k] !== false;
       })
     : draft.metadataOrder;
 
-  const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.stars || mv.seasonachieved || mv.intensity || mv.lastplayed);
+  const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.stars || mv.seasonachieved || mv.intensity || mv.difficulty || mv.lastplayed);
 
   return (
     <Modal visible={visible} title={t('common.sortSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('sort.resetLabel')} resetHint={t('sort.resetHint')} applyLabel={t('sort.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (

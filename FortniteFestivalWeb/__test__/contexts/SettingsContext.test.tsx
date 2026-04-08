@@ -39,7 +39,8 @@ describe('SettingsContext', () => {
       expect(d.metadataShowPercentage).toBe(true);
       expect(d.metadataShowPercentile).toBe(true);
       expect(d.metadataShowSeasonAchieved).toBe(true);
-      expect(d.metadataShowDifficulty).toBe(true);
+      expect(d.metadataShowIntensity).toBe(true);
+      expect(d.metadataShowGameDifficulty).toBe(true);
       expect(d.metadataShowStars).toBe(true);
     });
 

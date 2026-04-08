@@ -24,6 +24,8 @@ export function compareByMode(mode: SongSortMode, a?: PlayerScore, b?: PlayerSco
       return (a.stars ?? 0) - (b.stars ?? 0);
     case 'seasonachieved':
       return (a.season ?? 0) - (b.season ?? 0);
+    case 'difficulty':
+      return (a.difficulty ?? -1) - (b.difficulty ?? -1);
     case 'hasfc':
       return (a.isFullCombo ? 1 : 0) - (b.isFullCombo ? 1 : 0);
     case 'lastplayed': {

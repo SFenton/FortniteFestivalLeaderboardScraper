@@ -64,7 +64,8 @@ export type Settings = {
   metadataShowPercentage: boolean;
   metadataShowPercentile: boolean;
   metadataShowSeasonAchieved: boolean;
-  metadataShowDifficulty: boolean;
+  metadataShowIntensity: boolean;
+  metadataShowGameDifficulty: boolean;
   metadataShowIsFC: boolean;
   metadataShowStars: boolean;
 
@@ -121,7 +122,8 @@ export const defaultSettings = (): Settings => ({
   metadataShowPercentage: true,
   metadataShowPercentile: true,
   metadataShowSeasonAchieved: true,
-  metadataShowDifficulty: true,
+  metadataShowIntensity: true,
+  metadataShowGameDifficulty: true,
   metadataShowIsFC: true,
   metadataShowStars: true,
 

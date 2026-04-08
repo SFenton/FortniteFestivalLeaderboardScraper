@@ -75,7 +75,8 @@ type MetadataKey =
   | 'metadataShowPercentage'
   | 'metadataShowPercentile'
   | 'metadataShowSeasonAchieved'
-  | 'metadataShowDifficulty'
+  | 'metadataShowIntensity'
+  | 'metadataShowGameDifficulty'
   | 'metadataShowStars'
   | 'metadataShowLastPlayed';
 
@@ -84,7 +85,8 @@ const METADATA_TOGGLES: { key: MetadataKey; i18nKey: string }[] = [
   { key: 'metadataShowPercentage', i18nKey: 'metadata.percentage' },
   { key: 'metadataShowPercentile', i18nKey: 'metadata.percentile' },
   { key: 'metadataShowSeasonAchieved', i18nKey: 'metadata.seasonAchieved' },
-  { key: 'metadataShowDifficulty', i18nKey: 'metadata.intensity' },
+  { key: 'metadataShowIntensity', i18nKey: 'metadata.intensity' },
+  { key: 'metadataShowGameDifficulty', i18nKey: 'metadata.difficulty' },
   { key: 'metadataShowStars', i18nKey: 'metadata.stars' },
   { key: 'metadataShowLastPlayed', i18nKey: 'metadata.lastPlayed' },
 ];
@@ -237,10 +239,11 @@ export default function SettingsPage() {
     if (!settings.metadataShowPercentage) hidden.add('percentage');
     if (!settings.metadataShowPercentile) hidden.add('percentile');
     if (!settings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
-    if (!settings.metadataShowDifficulty) hidden.add('intensity');
+    if (!settings.metadataShowIntensity) hidden.add('intensity');
+    if (!settings.metadataShowGameDifficulty) hidden.add('difficulty');
     if (!settings.metadataShowStars) hidden.add('stars');
     return hidden;
-  }, [settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowDifficulty, settings.metadataShowStars]);
+  }, [settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowIntensity, settings.metadataShowGameDifficulty, settings.metadataShowStars]);
 
   const visualOrderItems = useMemo(
     () =>

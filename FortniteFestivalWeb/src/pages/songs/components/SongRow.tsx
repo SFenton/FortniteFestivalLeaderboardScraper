@@ -16,6 +16,7 @@ import SongInfo from '../../../components/songs/metadata/SongInfo';
 import SeasonPill from '../../../components/songs/metadata/SeasonPill';
 import MiniStars from '../../../components/songs/metadata/MiniStars';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
+import DifficultyPill from '../../../components/songs/metadata/DifficultyPill';
 import ScorePill from '../../../components/songs/metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
 import { resolvePillFitsTopRow } from '../layoutMode';
@@ -86,6 +87,8 @@ function renderMetadataElement(
     }
     case 'intensity':
       return songIntensityRaw != null ? <DifficultyBars level={songIntensityRaw} raw /> : null;
+    case 'difficulty':
+      return score.difficulty != null && score.difficulty >= 0 ? <DifficultyPill difficulty={score.difficulty} /> : null;
     case 'maxdistance': {
       if (score.score <= 0) return null;
       if (!maxScore) return <PercentilePill display="—" />;
