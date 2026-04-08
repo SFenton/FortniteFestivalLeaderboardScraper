@@ -58,6 +58,10 @@ public sealed class ScrapeOrchestrator
         // Reset CDN cooldown state from any previous pass to avoid stale backoff
         _globalScraper.ResetCdnState();
 
+        // Reset DOP to initial configured value so a CDN slash from a previous
+        // pass doesn't leave us stuck at minDop for the next pass.
+        _pool.ResetDop();
+
         // Per-pass timeout as a safety net against infinite hangs
         using var passCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         if (opts.ScrapePassTimeoutMinutes > 0)

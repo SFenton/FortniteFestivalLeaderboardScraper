@@ -129,6 +129,12 @@ public sealed class SharedDopPool : IDisposable
     /// <summary>Report a failed/retried request to the AIMD algorithm.</summary>
     public void ReportFailure() => _inner.ReportFailure();
 
+    /// <summary>
+    /// Reset DOP to the initial configured value. Call between scrape passes
+    /// so a CDN slash from a previous pass doesn't cripple the next one.
+    /// </summary>
+    public void ResetDop() => _inner.ResetDop();
+
     public void Dispose()
     {
         _lowPriorityGate.Dispose();

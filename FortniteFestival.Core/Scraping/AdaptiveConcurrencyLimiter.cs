@@ -30,6 +30,7 @@ namespace FortniteFestival.Core.Scraping
         private readonly ILogger _log;
         private readonly int _minDop;
         private readonly int _maxDop;
+        private readonly int _initialDop;
         private int _currentDop;
 
         // ── Sliding window counters ──
@@ -134,7 +135,8 @@ namespace FortniteFestival.Core.Scraping
         {
             _minDop = Math.Max(1, minDop);
             _maxDop = Math.Max(_minDop, maxDop);
-            _currentDop = Math.Clamp(initialDop, _minDop, _maxDop);
+            _initialDop = Math.Clamp(initialDop, _minDop, _maxDop);
+            _currentDop = _initialDop;
             _ssthresh = Math.Max(0, initialSsthresh);
             _log = log;
             _maxRequestsPerSecond = Math.Max(0, maxRequestsPerSecond);
@@ -207,9 +209,21 @@ namespace FortniteFestival.Core.Scraping
             if (_rateBucket == null) return;
 
             // Release up to _tokensPerTick, but don't exceed the semaphore maximum.
+            // Timer callbacks can overlap when the thread pool is saturated, so two
+            // threads may both read CurrentCount, both compute toRelease > 0, and
+            // both call Release() — the second hits SemaphoreFullException. Catch it.
             int toRelease = Math.Min(_tokensPerTick, _tokensPerTick - _rateBucket.CurrentCount);
             if (toRelease > 0)
-                _rateBucket.Release(toRelease);
+            {
+                try
+                {
+                    _rateBucket.Release(toRelease);
+                }
+                catch (SemaphoreFullException)
+                {
+                    // Already at max — harmless race between overlapping timer callbacks.
+                }
+            }
         }
 
         /// <summary>Release a concurrency slot. If there is outstanding release debt
@@ -410,6 +424,58 @@ namespace FortniteFestival.Core.Scraping
                 _log.LogWarning(
                     "CDN emergency DOP slash: {OldDop} → {NewDop} (ssthresh={Ssthresh}, drained {Drained}, debt {Debt})",
                     oldDop, target, _ssthresh, drained, undrained);
+            }
+        }
+
+        /// <summary>
+        /// Reset DOP to the initial configured value. Call between scrape passes
+        /// so a CDN slash from a previous pass doesn't cripple the next one.
+        /// </summary>
+        public void ResetDop()
+        {
+            lock (_evaluationLock)
+            {
+                int oldDop = _currentDop;
+                if (oldDop == _initialDop && _ssthresh == 0)
+                    return; // Already at initial state
+
+                int delta = _initialDop - oldDop;
+
+                if (delta > 0)
+                {
+                    // Increase: release tokens into the semaphore.
+                    // Reclaim debt tokens first before releasing into the semaphore.
+                    int toRelease = delta;
+                    while (toRelease > 0)
+                    {
+                        int debt = Volatile.Read(ref _releaseDebt);
+                        if (debt <= 0) break;
+                        int reclaim = Math.Min(toRelease, debt);
+                        if (Interlocked.CompareExchange(ref _releaseDebt, debt - reclaim, debt) == debt)
+                            toRelease -= reclaim;
+                    }
+                    if (toRelease > 0)
+                        _semaphore.Release(toRelease);
+                }
+                else if (delta < 0)
+                {
+                    // Decrease: drain tokens (shouldn't happen if initial <= max, but be safe)
+                    int toDrain = -delta;
+                    for (int i = 0; i < toDrain; i++)
+                    {
+                        if (!_semaphore.Wait(0)) break;
+                    }
+                }
+
+                _currentDop = _initialDop;
+                _ssthresh = 0;
+                _windowSuccesses = 0;
+                _windowFailures = 0;
+                _windowStopwatch.Restart();
+
+                _log.LogInformation(
+                    "DOP reset: {OldDop} → {NewDop} (initial value restored for new pass)",
+                    oldDop, _initialDop);
             }
         }
 
