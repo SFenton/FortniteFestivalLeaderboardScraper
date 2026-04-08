@@ -219,10 +219,17 @@ public abstract class ScraperWorkerTestBase : IDisposable
             playerCache, leaderboardAllCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache,
             Substitute.For<ILogger<ScrapeLifecycleNotifier>>());
 
+        var bandPersistence = new BandLeaderboardPersistence(
+            null!,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        var bandScrapePhase = new BandScrapePhase(
+            _scraper, bandPersistence, pathDataStore, _progress, options,
+            Substitute.For<ILogger<BandScrapePhase>>());
+
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence,
             _festivalService, dbInitializer,
-            scrapeOrchestrator, postScrapeOrchestrator, backfillOrchestrator,
+            scrapeOrchestrator, postScrapeOrchestrator, bandScrapePhase, backfillOrchestrator,
             _cyclicalMachine,
             pathGenerator, pathDataStore,
             new Api.SongsCacheService(),

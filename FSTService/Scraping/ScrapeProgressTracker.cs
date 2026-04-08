@@ -31,6 +31,7 @@ public sealed class ScrapeProgressTracker
         ReconstructingHistory,
         SongMachine,
         Precomputing,
+        BandScraping,
         Finalizing,
     }
 

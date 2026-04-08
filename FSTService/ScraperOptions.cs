@@ -259,4 +259,32 @@ public sealed class ScraperOptions
     /// When <see cref="FullCrawlEnabled"/> is true, consider increasing to 300+.
     /// </summary>
     public int ScrapePassTimeoutMinutes { get; set; } = 45;
+
+    // ─── Band Scraping ─────────────────────────────────
+
+    /// <summary>
+    /// When true, scrape Band_Duets, Band_Trios, and Band_Quad leaderboards
+    /// in a separate phase after solo instrument scraping completes.
+    /// Default false — requires explicit opt-in.
+    /// </summary>
+    public bool EnableBandScraping { get; set; }
+
+    /// <summary>
+    /// Maximum pages to fetch per band leaderboard (100 entries per page).
+    /// Band leaderboards use per-member CHOpt validation instead of a single
+    /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>
+    /// valid entries are found or pages are exhausted.
+    /// Default 100 = top 10,000 entries.
+    /// </summary>
+    public int BandMaxPagesPerLeaderboard { get; set; } = 100;
+
+    /// <summary>
+    /// Target number of valid band entries per (song, band_type).
+    /// An entry is valid when ALL members' individual scores are ≤ CHOptMax × 0.95
+    /// for their respective instruments. Over-threshold entries are still persisted
+    /// (client-side filter controls visibility) but do not count toward the target.
+    /// Pagination stops once this many valid entries are collected or pages are exhausted.
+    /// Default 10,000.
+    /// </summary>
+    public int BandValidEntryTarget { get; set; } = 10_000;
 }

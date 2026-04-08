@@ -1761,6 +1761,97 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     }
 
     /// <summary>
+    /// Parsed result of a band leaderboard page.
+    /// </summary>
+    internal sealed class ParsedBandPage
+    {
+        public int Page { get; init; }
+        public int TotalPages { get; init; }
+        public List<BandLeaderboardEntry> Entries { get; init; } = [];
+    }
+
+    /// <summary>
+    /// Parse a V1 band leaderboard page response, extracting <see cref="BandLeaderboardEntry"/>
+    /// entries with per-member stats from <c>trackedStats</c>.
+    /// </summary>
+    internal static async Task<ParsedBandPage?> ParseBandPageAsync(Stream stream, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            var root = doc.RootElement;
+
+            var page = root.TryGetProperty("page", out var p) && p.ValueKind == JsonValueKind.Number
+                ? p.GetInt32() : 0;
+            var totalPages = root.TryGetProperty("totalPages", out var tp) && tp.ValueKind == JsonValueKind.Number
+                ? tp.GetInt32() : 0;
+
+            var entries = new List<BandLeaderboardEntry>();
+
+            if (root.TryGetProperty("entries", out var entArr) && entArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var e in entArr.EnumerateArray())
+                {
+                    var bandEntry = ParseBandEntryElement(e);
+                    if (bandEntry is not null)
+                        entries.Add(bandEntry);
+                }
+            }
+
+            return new ParsedBandPage { Page = page, TotalPages = totalPages, Entries = entries };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Fetch a single page of a band leaderboard (V1 GET).
+    /// Returns the parsed band page or null on failure.
+    /// </summary>
+    internal async Task<ParsedBandPage?> FetchBandPageAsync(
+        string songId,
+        string bandType,
+        int page,
+        string accessToken,
+        string accountId,
+        AdaptiveConcurrencyLimiter? limiter,
+        CancellationToken ct)
+    {
+        var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{bandType}" +
+                  $"/alltime/{accountId}?page={page}&rank=0&appId=Fortnite&showLiveSessions=false";
+
+        var label = $"{songId}/{bandType}/page({page})";
+
+        HttpRequestMessage CreateRequest()
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            return req;
+        }
+
+        HttpResponseMessage res;
+        try
+        {
+            res = await _executor.SendAsync(CreateRequest, limiter, label, MaxRetries, ct);
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+
+        using (res)
+        {
+            if (!res.IsSuccessStatusCode)
+                return null;
+
+            await using var stream = await res.Content.ReadAsStreamAsync(ct);
+            return await ParseBandPageAsync(stream, ct);
+        }
+    }
+
+    /// <summary>
     /// Parse a V2 leaderboard response, which is a flat JSON array of entry objects
     /// (unlike V1 which wraps entries in <c>{"entries": [...]}</c>).
     /// </summary>
@@ -1852,6 +1943,214 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         return entry;
     }
+
+    // ─── Band entry parsing ─────────────────────────────
+
+    /// <summary>
+    /// Parse a band leaderboard entry from a V1 or V2 JSON element.
+    /// Extracts <c>teamAccountIds</c>, sorts them to form a deterministic <c>TeamKey</c>,
+    /// and parses <c>trackedStats</c> for per-member instrument/score data.
+    /// Returns null if the entry has empty/invalid member IDs.
+    /// </summary>
+    internal static BandLeaderboardEntry? ParseBandEntryElement(JsonElement e)
+    {
+        // Extract team member IDs
+        if (!e.TryGetProperty("teamAccountIds", out var taIds) || taIds.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var members = new List<string>();
+        foreach (var id in taIds.EnumerateArray())
+        {
+            if (id.ValueKind != JsonValueKind.String)
+                continue;
+            var accountId = id.GetString();
+            if (string.IsNullOrWhiteSpace(accountId))
+                continue;
+            members.Add(accountId);
+        }
+
+        if (members.Count < 2)
+            return null; // Need at least 2 members for a band
+
+        // Sort lexicographically for deterministic team_key (Epic's ordering is NOT stable)
+        var sorted = members.OrderBy(m => m, StringComparer.OrdinalIgnoreCase).ToList();
+        var teamKey = string.Join(':', sorted);
+
+        var entry = new BandLeaderboardEntry
+        {
+            TeamKey = teamKey,
+            TeamMembers = members.ToArray(),
+        };
+
+        if (e.TryGetProperty("rank", out var rk) && rk.ValueKind == JsonValueKind.Number)
+            entry.Rank = rk.GetInt32();
+        if (e.TryGetProperty("percentile", out var pct) && pct.ValueKind == JsonValueKind.Number)
+            entry.Percentile = pct.GetDouble();
+
+        // Parse trackedStats from the best session (highest SCORE)
+        if (e.TryGetProperty("sessionHistory", out var sh) && sh.ValueKind == JsonValueKind.Array)
+        {
+            ParseBandBestSession(entry, sh);
+        }
+        else
+        {
+            // V1 may have score at top level without sessionHistory
+            if (e.TryGetProperty("score", out var topScore) && topScore.ValueKind == JsonValueKind.Number)
+                entry.Score = topScore.GetInt32();
+            if (e.TryGetProperty("pointsEarned", out var pts) && pts.ValueKind == JsonValueKind.Number && entry.Score == 0)
+                entry.Score = pts.GetInt32();
+        }
+
+        return entry;
+    }
+
+    /// <summary>
+    /// Parse the best session from a band entry's <c>sessionHistory</c> array.
+    /// Extracts band-level stats (<c>B_*</c>) and per-member stats (<c>M_{i}_*</c>).
+    /// </summary>
+    private static void ParseBandBestSession(BandLeaderboardEntry entry, JsonElement sessionHistory)
+    {
+        int bestScore = 0;
+        JsonElement bestStats = default;
+        string? bestEndTime = null;
+
+        foreach (var session in sessionHistory.EnumerateArray())
+        {
+            if (!session.TryGetProperty("trackedStats", out var ts) || ts.ValueKind != JsonValueKind.Object)
+                continue;
+
+            int score = ts.TryGetProperty("SCORE", out var sc) && sc.ValueKind == JsonValueKind.Number
+                ? sc.GetInt32() : 0;
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestStats = ts;
+                bestEndTime = session.TryGetProperty("endTime", out var et) && et.ValueKind == JsonValueKind.String
+                    ? et.GetString() : null;
+            }
+        }
+
+        if (bestScore == 0)
+            return;
+
+        entry.Score = bestScore;
+        entry.EndTime = bestEndTime;
+
+        // Band-level stats
+        entry.Accuracy = GetIntStat(bestStats, "ACCURACY");
+        entry.IsFullCombo = GetIntStat(bestStats, "FULL_COMBO") == 1;
+        entry.Stars = GetIntStat(bestStats, "STARS_EARNED");
+        entry.Difficulty = GetIntStat(bestStats, "DIFFICULTY");
+        entry.Season = GetIntStat(bestStats, "SEASON");
+        entry.BaseScore = GetNullableIntStat(bestStats, "B_BASESCORE");
+        entry.InstrumentBonus = GetNullableIntStat(bestStats, "B_INSTRUMENT_BONUS");
+        entry.OverdriveBonus = GetNullableIntStat(bestStats, "B_OVERDRIVE_BONUS");
+
+        // Per-member stats: parse M_{i}_* fields
+        ParseBandMemberStats(entry, bestStats);
+    }
+
+    /// <summary>
+    /// Extract per-member stats from <c>trackedStats</c> using the <c>M_{i}_*</c> field pattern.
+    /// Maps member index → account ID via <c>M_{i}_ID_{accountId}</c> keys.
+    /// </summary>
+    private static void ParseBandMemberStats(BandLeaderboardEntry entry, JsonElement stats)
+    {
+        // Discover member count from INSTRUMENT_{i} fields
+        var memberStats = new Dictionary<int, BandMemberStats>();
+
+        foreach (var prop in stats.EnumerateObject())
+        {
+            var name = prop.Name;
+
+            // M_{i}_ID_{accountId} → maps index to account
+            if (name.StartsWith("M_") && name.Contains("_ID_"))
+            {
+                var parts = name.Split('_', 4); // M, {i}, ID, {accountId}
+                if (parts.Length >= 4 && int.TryParse(parts[1], out var idx))
+                {
+                    var ms = GetOrCreateMemberStats(memberStats, idx);
+                    ms.AccountId = parts[3];
+                }
+            }
+            // M_{i}_INSTRUMENT
+            else if (name.StartsWith("M_") && name.EndsWith("_INSTRUMENT"))
+            {
+                var parts = name.Split('_', 3);
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var idx) && prop.Value.ValueKind == JsonValueKind.Number)
+                {
+                    GetOrCreateMemberStats(memberStats, idx).InstrumentId = prop.Value.GetInt32();
+                }
+            }
+            // M_{i}_SCORE
+            else if (name.StartsWith("M_") && name.EndsWith("_SCORE"))
+            {
+                var parts = name.Split('_', 3);
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var idx) && prop.Value.ValueKind == JsonValueKind.Number)
+                {
+                    GetOrCreateMemberStats(memberStats, idx).Score = prop.Value.GetInt32();
+                }
+            }
+            // M_{i}_ACCURACY
+            else if (name.StartsWith("M_") && name.EndsWith("_ACCURACY"))
+            {
+                var parts = name.Split('_', 3);
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var idx) && prop.Value.ValueKind == JsonValueKind.Number)
+                {
+                    GetOrCreateMemberStats(memberStats, idx).Accuracy = prop.Value.GetInt32();
+                }
+            }
+            // M_{i}_FULL_COMBO
+            else if (name.StartsWith("M_") && name.EndsWith("_FULL_COMBO"))
+            {
+                var parts = name.Split('_', 3);
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var idx) && prop.Value.ValueKind == JsonValueKind.Number)
+                {
+                    GetOrCreateMemberStats(memberStats, idx).IsFullCombo = prop.Value.GetInt32() == 1;
+                }
+            }
+            // M_{i}_STARS_EARNED
+            else if (name.StartsWith("M_") && name.EndsWith("_STARS_EARNED"))
+            {
+                var parts = name.Split('_', 3);
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var idx) && prop.Value.ValueKind == JsonValueKind.Number)
+                {
+                    GetOrCreateMemberStats(memberStats, idx).Stars = prop.Value.GetInt32();
+                }
+            }
+            // M_{i}_DIFFICULTY
+            else if (name.StartsWith("M_") && name.EndsWith("_DIFFICULTY"))
+            {
+                var parts = name.Split('_', 3);
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var idx) && prop.Value.ValueKind == JsonValueKind.Number)
+                {
+                    GetOrCreateMemberStats(memberStats, idx).Difficulty = prop.Value.GetInt32();
+                }
+            }
+        }
+
+        entry.MemberStats = memberStats
+            .OrderBy(kv => kv.Key)
+            .Select(kv => kv.Value)
+            .ToList();
+    }
+
+    private static BandMemberStats GetOrCreateMemberStats(Dictionary<int, BandMemberStats> dict, int index)
+    {
+        if (!dict.TryGetValue(index, out var ms))
+        {
+            ms = new BandMemberStats { MemberIndex = index };
+            dict[index] = ms;
+        }
+        return ms;
+    }
+
+    private static int GetIntStat(JsonElement stats, string key) =>
+        stats.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : 0;
+
+    private static int? GetNullableIntStat(JsonElement stats, string key) =>
+        stats.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
 }
 
 // ─── Models ──────────────────────────────────────

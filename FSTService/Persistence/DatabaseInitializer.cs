@@ -980,5 +980,77 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_dsq_status
             ON deep_scrape_queue (scrape_id, status);
 
+        -- =====================================================================
+        -- BAND LEADERBOARDS (Duets, Trios, Quads)
+        -- =====================================================================
+
+        -- Band entries: one row per (song, band_type, team_key).
+        -- team_key = sorted colon-joined account IDs (deterministic, Epic doesn't sort).
+        CREATE TABLE IF NOT EXISTS band_entries (
+            song_id             TEXT             NOT NULL,
+            band_type           TEXT             NOT NULL,
+            team_key            TEXT             NOT NULL,
+            team_members        TEXT[]           NOT NULL,
+            score               INT              NOT NULL,
+            base_score          INT,
+            instrument_bonus    INT,
+            overdrive_bonus     INT,
+            accuracy            INT,
+            is_full_combo       BOOLEAN,
+            stars               INT,
+            difficulty          INT,
+            season              INT,
+            rank                INT              DEFAULT 0,
+            percentile          DOUBLE PRECISION,
+            end_time            TEXT,
+            source              TEXT             NOT NULL DEFAULT 'scrape',
+            is_over_threshold   BOOLEAN          NOT NULL DEFAULT FALSE,
+            first_seen_at       TIMESTAMPTZ      NOT NULL DEFAULT now(),
+            last_updated_at     TIMESTAMPTZ      NOT NULL DEFAULT now(),
+            PRIMARY KEY (song_id, band_type, team_key)
+        ) PARTITION BY LIST (band_type);
+
+        CREATE TABLE IF NOT EXISTS band_entries_duets  PARTITION OF band_entries FOR VALUES IN ('Band_Duets');
+        CREATE TABLE IF NOT EXISTS band_entries_trios  PARTITION OF band_entries FOR VALUES IN ('Band_Trios');
+        CREATE TABLE IF NOT EXISTS band_entries_quad   PARTITION OF band_entries FOR VALUES IN ('Band_Quad');
+
+        CREATE INDEX IF NOT EXISTS ix_be_song_score
+            ON band_entries (song_id, band_type, score DESC);
+        CREATE INDEX IF NOT EXISTS ix_be_song_rank
+            ON band_entries (song_id, band_type, rank);
+
+        -- Per-member stats for each band entry.
+        -- Populated from trackedStats M_{i}_* fields during V1 parsing or V2 enrichment.
+        CREATE TABLE IF NOT EXISTS band_member_stats (
+            song_id             TEXT    NOT NULL,
+            band_type           TEXT    NOT NULL,
+            team_key            TEXT    NOT NULL,
+            member_index        INT     NOT NULL,
+            account_id          TEXT    NOT NULL,
+            instrument_id       INT,
+            score               INT,
+            accuracy            INT,
+            is_full_combo       BOOLEAN,
+            stars               INT,
+            difficulty          INT,
+            PRIMARY KEY (song_id, band_type, team_key, member_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_bms_account
+            ON band_member_stats (account_id);
+
+        -- Denormalized lookup: all bands a player appears in.
+        -- Enables "find all bands for player X" queries without scanning band_member_stats.
+        CREATE TABLE IF NOT EXISTS band_members (
+            account_id          TEXT    NOT NULL,
+            song_id             TEXT    NOT NULL,
+            band_type           TEXT    NOT NULL,
+            team_key            TEXT    NOT NULL,
+            PRIMARY KEY (account_id, song_id, band_type, team_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_bm_song_type
+            ON band_members (song_id, band_type);
+
         """;
 }

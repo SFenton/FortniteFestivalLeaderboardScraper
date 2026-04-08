@@ -209,6 +209,8 @@ builder.Services.AddSingleton<ScrapeLifecycleNotifier>();
 builder.Services.AddSingleton<RankingsCalculator>();
 builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
+builder.Services.AddSingleton<BandScrapePhase>();
+builder.Services.AddSingleton<BandLeaderboardPersistence>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
 builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
 {

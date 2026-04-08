@@ -30,6 +30,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly StartupInitializer _dbInitializer;
     private readonly ScrapeOrchestrator _scrapeOrchestrator;
     private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
+    private readonly BandScrapePhase _bandScrapePhase;
     private readonly BackfillOrchestrator _backfillOrchestrator;
     private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly PathGenerator _pathGenerator;
@@ -57,6 +58,7 @@ public sealed class ScraperWorker : BackgroundService
         StartupInitializer dbInitializer,
         ScrapeOrchestrator scrapeOrchestrator,
         PostScrapeOrchestrator postScrapeOrchestrator,
+        BandScrapePhase bandScrapePhase,
         BackfillOrchestrator backfillOrchestrator,
         CyclicalSongMachine cyclicalMachine,
         PathGenerator pathGenerator,
@@ -80,6 +82,7 @@ public sealed class ScraperWorker : BackgroundService
         _dbInitializer = dbInitializer;
         _scrapeOrchestrator = scrapeOrchestrator;
         _postScrapeOrchestrator = postScrapeOrchestrator;
+        _bandScrapePhase = bandScrapePhase;
         _backfillOrchestrator = backfillOrchestrator;
         _cyclicalMachine = cyclicalMachine;
         _pathGenerator = pathGenerator;
@@ -443,6 +446,22 @@ public sealed class ScraperWorker : BackgroundService
         try { await pathGenTask; }
         catch (OperationCanceledException) { /* expected on shutdown */ }
         catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
+
+        // ── Band scrape phase (separate from solo, runs after solo completes) ──
+        try
+        {
+            var bandResult = await _bandScrapePhase.ExecuteAsync(
+                service.Songs.ToList(), accessToken, _tokenManager.AccountId!,
+                null, ct);
+            if (bandResult.TotalEntries > 0)
+                _log.LogInformation("Band scrape: {Entries:N0} entries across {Songs} songs.",
+                    bandResult.TotalEntries, bandResult.SongsWithData);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Band scrape phase failed. Solo data is unaffected.");
+        }
 
         // ── Post-pass: enrichment, refresh, backfill, history recon, cleanup ──
         // The SongProcessingMachine inside PostScrapeOrchestrator now handles
