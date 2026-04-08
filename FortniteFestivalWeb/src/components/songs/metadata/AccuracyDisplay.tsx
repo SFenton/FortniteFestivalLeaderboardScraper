@@ -1,7 +1,8 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { memo, useMemo } from 'react';
-import { accuracyColor, ACCURACY_SCALE } from '@festival/core';
-import { goldOutlineSkew } from '@festival/theme';
+import { memo, useMemo, type CSSProperties } from 'react';
+import { accuracyBgColor, ACCURACY_SCALE } from '@festival/core';
+import { Colors, MetadataSize, Weight, goldOutlineSkew, Display, TextAlign, BoxSizing, CssValue, border, padding } from '@festival/theme';
+import { Border, Gap, Radius } from '@festival/theme';
 import { formatAccuracyText } from '../../../utils/formatters';
 
 export interface AccuracyDisplayProps {
@@ -27,7 +28,7 @@ const AccuracyDisplay = memo(function AccuracyDisplay({
     return <span style={s.fcBadge}>{text}</span>;
   }
 
-  return <span style={{ color: accuracyColor(pct) }}>{text}</span>;
+  return <span style={{ ...s.accuracyPill, backgroundColor: accuracyBgColor(pct) }}>{text}</span>;
 });
 
 export default AccuracyDisplay;
@@ -38,6 +39,18 @@ function useStyles() {
   return useMemo(() => ({
     fcBadge: {
       ...goldOutlineSkew,
-    },
+      minWidth: MetadataSize.accuracyPillMinWidth,
+    } as CSSProperties,
+    accuracyPill: {
+      padding: padding(Gap.xs, Gap.sm),
+      borderRadius: Radius.xs,
+      display: Display.inlineBlock,
+      textAlign: TextAlign.center,
+      boxSizing: BoxSizing.borderBox,
+      minWidth: MetadataSize.accuracyPillMinWidth,
+      fontWeight: Weight.semibold,
+      color: Colors.textPrimary,
+      border: border(Border.thick, CssValue.transparent),
+    } as CSSProperties,
   }), []);
 }

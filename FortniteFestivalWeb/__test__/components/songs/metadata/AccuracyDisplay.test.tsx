@@ -41,9 +41,10 @@ describe('AccuracyDisplay', () => {
     expect(span?.style.fontStyle).toBe('italic');
   });
 
-  it('applies color style for non-FC accuracy', () => {
+  it('applies accuracy pill style for non-FC accuracy', () => {
     const { container } = render(<AccuracyDisplay accuracy={500000} />);
     const span = container.querySelector('span');
-    expect(span?.style.color).toMatch(/^rgb\(/);
+    expect(span?.style.backgroundColor).toMatch(/^rgba\(/);
+    expect(span?.style.minWidth).toBeTruthy();
   });
 });

@@ -146,6 +146,19 @@ export function accuracyColor(pct: number): string {
 }
 
 /**
+ * Interpolate an accuracy percentage (0-100) to a semi-transparent RGBA color
+ * string suitable for pill backgrounds on dark themes.
+ * Uses the same red→green scale as {@link accuracyColor} at 25% opacity.
+ */
+export function accuracyBgColor(pct: number): string {
+  const t = clamp(pct / 100, 0, 1);
+  const r = Math.round(220 * (1 - t) + 46 * t);
+  const g = Math.round(40 * (1 - t) + 204 * t);
+  const b = Math.round(40 * (1 - t) + 113 * t);
+  return `rgba(${r},${g},${b},0.25)`;
+}
+
+/**
  * Interpolate a rank position to an RGB color string on the red→green scale.
  * Rank 1 out of many → near-green; last rank → near-red.
  * Returns a neutral gray when totalAccounts or rank is invalid.
