@@ -1025,10 +1025,7 @@ public static class DatabaseInitializer
             ) THEN
                 -- Add column to parent (cascades to partitions)
                 ALTER TABLE band_entries ADD COLUMN instrument_combo TEXT NOT NULL DEFAULT '';
-                -- Recreate PK to include instrument_combo (drop old, add new)
-                ALTER TABLE band_entries_duets DROP CONSTRAINT IF EXISTS band_entries_duets_pkey;
-                ALTER TABLE band_entries_trios DROP CONSTRAINT IF EXISTS band_entries_trios_pkey;
-                ALTER TABLE band_entries_quad  DROP CONSTRAINT IF EXISTS band_entries_quad_pkey;
+                -- Recreate PK to include instrument_combo (parent drop cascades to partitions)
                 ALTER TABLE band_entries DROP CONSTRAINT IF EXISTS band_entries_pkey;
                 ALTER TABLE band_entries ADD PRIMARY KEY (song_id, band_type, team_key, instrument_combo);
             END IF;
