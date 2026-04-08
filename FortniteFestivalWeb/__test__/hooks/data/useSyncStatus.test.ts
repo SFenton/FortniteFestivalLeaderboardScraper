@@ -183,6 +183,8 @@ describe('useSyncStatus', () => {
     await flush();
     mockSend.mockReset();
     unmount();
+    // Unsubscribe is deferred (50ms) to avoid chatter during transient remounts
+    await act(async () => { await vi.advanceTimersByTimeAsync(60); });
     expect(mockSend).toHaveBeenCalledWith(
       JSON.stringify({ action: 'unsubscribe_sync' }),
     );

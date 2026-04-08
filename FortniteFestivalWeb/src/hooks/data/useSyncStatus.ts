@@ -173,11 +173,33 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   // ── WebSocket account subscription ──
   // Tell the server which accountId this client cares about so per-account
   // sync_progress messages are routed to this connection.
+  // Track what we last subscribed to so we don't re-send identical messages
+  // during transient remount cycles (StrictMode, route transitions).
+  const subscribedAccountRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!accountId || !wsConnected) return;
-    wsSend(JSON.stringify({ action: 'subscribe_sync', accountId }));
+    // Avoid duplicate subscribe if we already subscribed for this account
+    if (subscribedAccountRef.current !== accountId) {
+      subscribedAccountRef.current = accountId;
+      wsSend(JSON.stringify({ action: 'subscribe_sync', accountId }));
+    }
     return () => {
-      wsSend(JSON.stringify({ action: 'unsubscribe_sync' }));
+      // Only unsubscribe if we actually subscribed and the component is
+      // genuinely tearing down (not a transient StrictMode remount).
+      // Use a micro-delay so an immediate remount can cancel the unsub.
+      const unsub = subscribedAccountRef.current;
+      subscribedAccountRef.current = null;
+      if (unsub) {
+        // Defer so transient unmount/remount from StrictMode skips unsubscribe
+        const timer = setTimeout(() => {
+          // If ref is still null after the microtask, no remount reclaimed it
+          if (subscribedAccountRef.current === null) {
+            wsSend(JSON.stringify({ action: 'unsubscribe_sync' }));
+          }
+        }, 50);
+        return () => clearTimeout(timer);
+      }
     };
   }, [accountId, wsConnected, wsSend]);
 
