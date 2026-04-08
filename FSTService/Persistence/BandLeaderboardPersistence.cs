@@ -41,7 +41,8 @@ public sealed class BandLeaderboardPersistence
                 cmd.Transaction = tx;
                 cmd.CommandText = """
                     CREATE TEMP TABLE _be_staging (
-                        song_id TEXT, band_type TEXT, team_key TEXT, team_members TEXT[],
+                        song_id TEXT, band_type TEXT, team_key TEXT, instrument_combo TEXT,
+                        team_members TEXT[],
                         score INT, base_score INT, instrument_bonus INT, overdrive_bonus INT,
                         accuracy INT, is_full_combo BOOLEAN, stars INT, difficulty INT,
                         season INT, rank INT, percentile DOUBLE PRECISION, end_time TEXT,
@@ -52,7 +53,7 @@ public sealed class BandLeaderboardPersistence
             }
 
             using (var writer = conn.BeginBinaryImport(
-                "COPY _be_staging (song_id, band_type, team_key, team_members, score, base_score, " +
+                "COPY _be_staging (song_id, band_type, team_key, instrument_combo, team_members, score, base_score, " +
                 "instrument_bonus, overdrive_bonus, accuracy, is_full_combo, stars, difficulty, " +
                 "season, rank, percentile, end_time, source, is_over_threshold, ts) FROM STDIN (FORMAT BINARY)"))
             {
@@ -62,6 +63,7 @@ public sealed class BandLeaderboardPersistence
                     writer.Write(songId, NpgsqlDbType.Text);
                     writer.Write(bandType, NpgsqlDbType.Text);
                     writer.Write(e.TeamKey, NpgsqlDbType.Text);
+                    writer.Write(e.InstrumentCombo, NpgsqlDbType.Text);
                     writer.Write(e.TeamMembers, NpgsqlDbType.Array | NpgsqlDbType.Text);
                     writer.Write(e.Score, NpgsqlDbType.Integer);
                     WriteNullableInt(writer, e.BaseScore);
@@ -89,18 +91,18 @@ public sealed class BandLeaderboardPersistence
             {
                 cmd.Transaction = tx;
                 cmd.CommandText = """
-                    INSERT INTO band_entries (song_id, band_type, team_key, team_members, score,
+                    INSERT INTO band_entries (song_id, band_type, team_key, instrument_combo, team_members, score,
                         base_score, instrument_bonus, overdrive_bonus, accuracy, is_full_combo,
                         stars, difficulty, season, rank, percentile, end_time, source,
                         is_over_threshold, first_seen_at, last_updated_at)
-                    SELECT DISTINCT ON (song_id, band_type, team_key)
-                        song_id, band_type, team_key, team_members, score,
+                    SELECT DISTINCT ON (song_id, band_type, team_key, instrument_combo)
+                        song_id, band_type, team_key, instrument_combo, team_members, score,
                         base_score, instrument_bonus, overdrive_bonus, accuracy, is_full_combo,
                         stars, difficulty, season, rank, percentile, end_time, source,
                         is_over_threshold, ts, ts
                     FROM _be_staging
-                    ORDER BY song_id, band_type, team_key, score DESC
-                    ON CONFLICT (song_id, band_type, team_key) DO UPDATE SET
+                    ORDER BY song_id, band_type, team_key, instrument_combo, score DESC
+                    ON CONFLICT (song_id, band_type, team_key, instrument_combo) DO UPDATE SET
                         score = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.score ELSE band_entries.score END,
                         base_score = COALESCE(EXCLUDED.base_score, band_entries.base_score),
                         instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, band_entries.instrument_bonus),
@@ -122,7 +124,7 @@ public sealed class BandLeaderboardPersistence
             // ── 3. COPY band_member_stats ──
             var allMemberStats = entries
                 .Where(e => e.MemberStats.Count > 0)
-                .SelectMany(e => e.MemberStats.Select(ms => (e.TeamKey, ms)))
+                .SelectMany(e => e.MemberStats.Select(ms => (e.TeamKey, e.InstrumentCombo, ms)))
                 .ToList();
 
             if (allMemberStats.Count > 0)
@@ -132,7 +134,7 @@ public sealed class BandLeaderboardPersistence
                     cmd.Transaction = tx;
                     cmd.CommandText = """
                         CREATE TEMP TABLE _bms_staging (
-                            song_id TEXT, band_type TEXT, team_key TEXT,
+                            song_id TEXT, band_type TEXT, team_key TEXT, instrument_combo TEXT,
                             member_index INT, account_id TEXT, instrument_id INT,
                             score INT, accuracy INT, is_full_combo BOOLEAN,
                             stars INT, difficulty INT
@@ -142,15 +144,16 @@ public sealed class BandLeaderboardPersistence
                 }
 
                 using (var writer = conn.BeginBinaryImport(
-                    "COPY _bms_staging (song_id, band_type, team_key, member_index, account_id, " +
+                    "COPY _bms_staging (song_id, band_type, team_key, instrument_combo, member_index, account_id, " +
                     "instrument_id, score, accuracy, is_full_combo, stars, difficulty) FROM STDIN (FORMAT BINARY)"))
                 {
-                    foreach (var (teamKey, ms) in allMemberStats)
+                    foreach (var (teamKey, instrumentCombo, ms) in allMemberStats)
                     {
                         writer.StartRow();
                         writer.Write(songId, NpgsqlDbType.Text);
                         writer.Write(bandType, NpgsqlDbType.Text);
                         writer.Write(teamKey, NpgsqlDbType.Text);
+                        writer.Write(instrumentCombo, NpgsqlDbType.Text);
                         writer.Write(ms.MemberIndex, NpgsqlDbType.Integer);
                         writer.Write(ms.AccountId, NpgsqlDbType.Text);
                         writer.Write(ms.InstrumentId, NpgsqlDbType.Integer);
@@ -167,12 +170,12 @@ public sealed class BandLeaderboardPersistence
                 {
                     cmd.Transaction = tx;
                     cmd.CommandText = """
-                        INSERT INTO band_member_stats (song_id, band_type, team_key, member_index,
+                        INSERT INTO band_member_stats (song_id, band_type, team_key, instrument_combo, member_index,
                             account_id, instrument_id, score, accuracy, is_full_combo, stars, difficulty)
-                        SELECT song_id, band_type, team_key, member_index,
+                        SELECT song_id, band_type, team_key, instrument_combo, member_index,
                             account_id, instrument_id, score, accuracy, is_full_combo, stars, difficulty
                         FROM _bms_staging
-                        ON CONFLICT (song_id, band_type, team_key, member_index) DO UPDATE SET
+                        ON CONFLICT (song_id, band_type, team_key, instrument_combo, member_index) DO UPDATE SET
                             account_id = EXCLUDED.account_id,
                             instrument_id = EXCLUDED.instrument_id,
                             score = EXCLUDED.score,
@@ -187,7 +190,7 @@ public sealed class BandLeaderboardPersistence
 
             // ── 4. COPY band_members (denormalized lookup) ──
             var memberLookups = entries
-                .SelectMany(e => e.TeamMembers.Select(m => (AccountId: m, e.TeamKey)))
+                .SelectMany(e => e.TeamMembers.Select(m => (AccountId: m, e.TeamKey, e.InstrumentCombo)))
                 .Where(x => !string.IsNullOrEmpty(x.AccountId))
                 .Distinct()
                 .ToList();
@@ -199,22 +202,23 @@ public sealed class BandLeaderboardPersistence
                     cmd.Transaction = tx;
                     cmd.CommandText = """
                         CREATE TEMP TABLE _bm_staging (
-                            account_id TEXT, song_id TEXT, band_type TEXT, team_key TEXT
+                            account_id TEXT, song_id TEXT, band_type TEXT, team_key TEXT, instrument_combo TEXT
                         ) ON COMMIT DROP
                         """;
                     cmd.ExecuteNonQuery();
                 }
 
                 using (var writer = conn.BeginBinaryImport(
-                    "COPY _bm_staging (account_id, song_id, band_type, team_key) FROM STDIN (FORMAT BINARY)"))
+                    "COPY _bm_staging (account_id, song_id, band_type, team_key, instrument_combo) FROM STDIN (FORMAT BINARY)"))
                 {
-                    foreach (var (accountId, teamKey) in memberLookups)
+                    foreach (var (accountId, teamKey, instrumentCombo) in memberLookups)
                     {
                         writer.StartRow();
                         writer.Write(accountId, NpgsqlDbType.Text);
                         writer.Write(songId, NpgsqlDbType.Text);
                         writer.Write(bandType, NpgsqlDbType.Text);
                         writer.Write(teamKey, NpgsqlDbType.Text);
+                        writer.Write(instrumentCombo, NpgsqlDbType.Text);
                     }
                     writer.Complete();
                 }
@@ -223,9 +227,9 @@ public sealed class BandLeaderboardPersistence
                 {
                     cmd.Transaction = tx;
                     cmd.CommandText = """
-                        INSERT INTO band_members (account_id, song_id, band_type, team_key)
-                        SELECT account_id, song_id, band_type, team_key FROM _bm_staging
-                        ON CONFLICT (account_id, song_id, band_type, team_key) DO NOTHING
+                        INSERT INTO band_members (account_id, song_id, band_type, team_key, instrument_combo)
+                        SELECT account_id, song_id, band_type, team_key, instrument_combo FROM _bm_staging
+                        ON CONFLICT (account_id, song_id, band_type, team_key, instrument_combo) DO NOTHING
                         """;
                     cmd.ExecuteNonQuery();
                 }

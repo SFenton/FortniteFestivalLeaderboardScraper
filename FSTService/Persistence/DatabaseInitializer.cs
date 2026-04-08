@@ -990,6 +990,7 @@ public static class DatabaseInitializer
             song_id             TEXT             NOT NULL,
             band_type           TEXT             NOT NULL,
             team_key            TEXT             NOT NULL,
+            instrument_combo    TEXT             NOT NULL DEFAULT '',
             team_members        TEXT[]           NOT NULL,
             score               INT              NOT NULL,
             base_score          INT,
@@ -1007,7 +1008,7 @@ public static class DatabaseInitializer
             is_over_threshold   BOOLEAN          NOT NULL DEFAULT FALSE,
             first_seen_at       TIMESTAMPTZ      NOT NULL DEFAULT now(),
             last_updated_at     TIMESTAMPTZ      NOT NULL DEFAULT now(),
-            PRIMARY KEY (song_id, band_type, team_key)
+            PRIMARY KEY (song_id, band_type, team_key, instrument_combo)
         ) PARTITION BY LIST (band_type);
 
         CREATE TABLE IF NOT EXISTS band_entries_duets  PARTITION OF band_entries FOR VALUES IN ('Band_Duets');
@@ -1018,6 +1019,8 @@ public static class DatabaseInitializer
             ON band_entries (song_id, band_type, score DESC);
         CREATE INDEX IF NOT EXISTS ix_be_song_rank
             ON band_entries (song_id, band_type, rank);
+        CREATE INDEX IF NOT EXISTS ix_be_combo
+            ON band_entries (song_id, band_type, instrument_combo);
 
         -- Per-member stats for each band entry.
         -- Populated from trackedStats M_{i}_* fields during V1 parsing or V2 enrichment.
@@ -1025,6 +1028,7 @@ public static class DatabaseInitializer
             song_id             TEXT    NOT NULL,
             band_type           TEXT    NOT NULL,
             team_key            TEXT    NOT NULL,
+            instrument_combo    TEXT    NOT NULL DEFAULT '',
             member_index        INT     NOT NULL,
             account_id          TEXT    NOT NULL,
             instrument_id       INT,
@@ -1033,7 +1037,7 @@ public static class DatabaseInitializer
             is_full_combo       BOOLEAN,
             stars               INT,
             difficulty          INT,
-            PRIMARY KEY (song_id, band_type, team_key, member_index)
+            PRIMARY KEY (song_id, band_type, team_key, instrument_combo, member_index)
         );
 
         CREATE INDEX IF NOT EXISTS ix_bms_account
@@ -1046,7 +1050,8 @@ public static class DatabaseInitializer
             song_id             TEXT    NOT NULL,
             band_type           TEXT    NOT NULL,
             team_key            TEXT    NOT NULL,
-            PRIMARY KEY (account_id, song_id, band_type, team_key)
+            instrument_combo    TEXT    NOT NULL DEFAULT '',
+            PRIMARY KEY (account_id, song_id, band_type, team_key, instrument_combo)
         );
 
         CREATE INDEX IF NOT EXISTS ix_bm_song_type

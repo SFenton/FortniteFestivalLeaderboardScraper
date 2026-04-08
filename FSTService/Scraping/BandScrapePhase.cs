@@ -225,9 +225,10 @@ public sealed class BandScrapePhase
             }
         }
 
-        // Deduplicate by team_key (same team can appear on multiple pages)
+        // Deduplicate by (team_key, instrument_combo) — same team with same instruments
+        // can appear on multiple pages; different instrument combos are separate entries
         var deduped = allEntries
-            .GroupBy(e => e.TeamKey, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(e => $"{e.TeamKey}|{e.InstrumentCombo}", StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderByDescending(e => e.Score).First())
             .ToList();
 

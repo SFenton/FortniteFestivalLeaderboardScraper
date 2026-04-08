@@ -58,6 +58,13 @@ public sealed class BandLeaderboardEntry
     public string Source { get; set; } = "scrape";
 
     /// <summary>
+    /// Canonical instrument combo: sorted Epic instrument IDs colon-joined (e.g., "0:1:3" = Guitar+Bass+Drums).
+    /// Part of the primary key — same team on the same song with different instrument combos are separate entries.
+    /// Empty string when member stats are not yet available.
+    /// </summary>
+    public string InstrumentCombo { get; set; } = "";
+
+    /// <summary>
     /// Per-member stats extracted from <c>trackedStats</c>.
     /// Populated during V1 parsing (for CHOpt validation) and V2 enrichment.
     /// </summary>

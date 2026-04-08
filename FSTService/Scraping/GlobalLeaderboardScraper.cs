@@ -2049,6 +2049,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         // Per-member stats: parse M_{i}_* fields
         ParseBandMemberStats(entry, bestStats);
+
+        // Build canonical instrument combo from member stats (sorted instrument IDs, colon-joined)
+        if (entry.MemberStats.Count > 0)
+        {
+            entry.InstrumentCombo = string.Join(':',
+                entry.MemberStats.Select(m => m.InstrumentId).OrderBy(id => id));
+        }
     }
 
     /// <summary>
