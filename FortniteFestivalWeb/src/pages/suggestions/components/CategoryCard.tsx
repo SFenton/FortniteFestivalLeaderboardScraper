@@ -8,14 +8,16 @@ import { useTranslation } from 'react-i18next';
 import { InstrumentKeys, type InstrumentKey } from '@festival/core/instruments';
 import type { LeaderboardData } from '@festival/core/models';
 import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
+import { ACCURACY_SCALE } from '@festival/core';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/display/InstrumentIcons';
+import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
 import SongInfo from '../../../components/songs/metadata/SongInfo';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import SeasonPill from '../../../components/songs/metadata/SeasonPill';
 import { useIsNarrow } from '../../../hooks/ui/useIsMobile';
 import {
   Colors, Font, Weight, Gap, Radius, Layout, Border, InstrumentSize, FontVariant,
-  Display, Align, Justify, TextAlign, ObjectFit, Overflow, CssValue, CssProp,
+  Display, Align, Justify, ObjectFit, Overflow, CssValue, CssProp,
   flexRow, flexColumn, flexCenter, frostedCardSurface, border, padding, transition,
 } from '@festival/theme';
 import { resolveCategoryI18n } from '../suggestionsHelpers';
@@ -184,15 +186,9 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
 
   if (layout === 'unfcAccuracy') {
     const pct = song.percent;
-    const display = typeof pct === 'number' && pct > 0
-      ? `${Math.max(0, Math.min(99, Math.floor(pct)))}%`
-      : null;
-    if (!display || typeof pct !== 'number') return null;
-    const t = Math.min(Math.max(pct / 100, 0), 1);
-    const r = Math.round(220 * (1 - t) + 46 * t);
-    const g = Math.round(40 * (1 - t) + 204 * t);
-    const b = Math.round(40 * (1 - t) + 113 * t);
-    return <span style={{ ...categoryCardStyles.unfcPct, color: `rgb(${r},${g},${b})` }}>{display}</span>;
+    if (typeof pct !== 'number' || pct <= 0) return null;
+    const clamped = Math.max(0, Math.min(99, Math.floor(pct)));
+    return <AccuracyDisplay accuracy={clamped * ACCURACY_SCALE} />;
   }
 
   if (layout === 'season') {
@@ -336,14 +332,6 @@ const categoryCardStyles = {
     borderRadius: CssValue.circle,
     border: border(Gap.xs, 'currentColor'),
     ...flexCenter,
-  } as CSSProperties,
-  unfcPct: {
-    fontSize: Font.lg,
-    fontWeight: Weight.semibold,
-    minWidth: Layout.unfcMinWidth,
-    textAlign: TextAlign.center,
-    flexShrink: 0,
-    fontVariantNumeric: FontVariant.tabularNums,
   } as CSSProperties,
   starPngImg: {
     width: Layout.starPngSize,
