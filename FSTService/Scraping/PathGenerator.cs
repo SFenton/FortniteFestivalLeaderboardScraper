@@ -55,7 +55,7 @@ public sealed class PathGenerator
     /// <summary>
     /// Result of generating paths for a single song/instrument/difficulty.
     /// </summary>
-    public sealed record PathResult(string Instrument, string Difficulty, int? MaxScore, string? ImagePath);
+    public sealed record PathResult(string Instrument, string Difficulty, int? MaxScore, string? ImagePath, string? JsonPath = null);
 
     /// <summary>
     /// Result of generating paths for an entire song.
@@ -208,16 +208,21 @@ public sealed class PathGenerator
                     ct.ThrowIfCancellationRequested();
 
                     var outputImage = Path.Combine(instrumentDir, $"{difficulty}.png");
+                    // Generate JSON data alongside the image for expert difficulty
+                    var jsonOutput = difficulty == "expert"
+                        ? Path.Combine(instrumentDir, "expert.json")
+                        : null;
 
                     await _concurrency.WaitAsync(ct);
                     try
                     {
-                        var maxScore = await RunCHOptAsync(choptPath, midiFile, choptInstrument, difficulty, outputImage, ct);
+                        var maxScore = await RunCHOptAsync(choptPath, midiFile, choptInstrument, difficulty, outputImage, ct, jsonOutput);
                         results.Add(new PathResult(
                             instrument,
                             difficulty,
                             maxScore,
-                            File.Exists(outputImage) ? outputImage : null));
+                            File.Exists(outputImage) ? outputImage : null,
+                            jsonOutput is not null && File.Exists(jsonOutput) ? jsonOutput : null));
 
                         if (difficulty == "expert")
                         {
@@ -262,7 +267,8 @@ public sealed class PathGenerator
         string instrument,
         string difficulty,
         string outputImage,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? jsonOutputPath = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -282,6 +288,11 @@ public sealed class PathGenerator
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+
+        // When JSON output is requested, add --json flag so CHOpt emits
+        // structured path data (per-activation score/OD) to stdout.
+        if (jsonOutputPath is not null)
+            psi.ArgumentList.Add("--json");
 
         // CHOpt bundles Qt6 libraries in a sibling "libs/" directory.
         // Set LD_LIBRARY_PATH so the dynamic linker finds them at runtime.
@@ -308,6 +319,14 @@ public sealed class PathGenerator
             return null;
         }
 
+        // When --json is active, stdout contains the full JSON document.
+        // Write it to disk and parse the total score from the JSON.
+        if (jsonOutputPath is not null)
+        {
+            await File.WriteAllTextAsync(jsonOutputPath, stdout, ct);
+            return ParseTotalScoreFromJson(stdout);
+        }
+
         return ParseTotalScore(stdout);
     }
 
@@ -329,6 +348,24 @@ public sealed class PathGenerator
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Parse "totalScore" from CHOpt JSON output.
+    /// </summary>
+    public static int? ParseTotalScoreFromJson(string jsonOutput)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(jsonOutput);
+            if (doc.RootElement.TryGetProperty("totalScore", out var scoreProp))
+                return scoreProp.GetInt32();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Fall back to text parsing if JSON is malformed
+        }
+        return ParseTotalScore(jsonOutput);
     }
 
     private async Task<byte[]> DownloadDatAsync(string url, CancellationToken ct)

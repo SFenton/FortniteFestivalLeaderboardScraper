@@ -97,5 +97,33 @@ public static partial class ApiEndpoints
         })
         .WithTags("Paths")
         .RequireRateLimiting("public");
+
+        // ── Path JSON data (expert difficulty, structured activation/score/OD data) ─
+        app.MapGet("/api/paths/{songId}/{instrument}/data", (
+            string songId,
+            string instrument,
+            IOptions<ScraperOptions> options) =>
+        {
+            var allowedInstruments = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "Solo_Guitar", "Solo_Bass", "Solo_Drums",
+                "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass"
+            };
+            if (!allowedInstruments.Contains(instrument))
+                return Results.BadRequest(new { error = "Invalid instrument name." });
+
+            var dataDir = Path.GetFullPath(options.Value.DataDirectory);
+            var jsonPath = Path.Combine(dataDir, "paths", songId, instrument, "expert.json");
+
+            if (!Path.GetFullPath(jsonPath).StartsWith(dataDir, StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error = "Invalid path." });
+
+            if (!File.Exists(jsonPath))
+                return Results.NotFound(new { error = "Path data not yet generated for this song/instrument." });
+
+            return Results.File(jsonPath, "application/json");
+        })
+        .WithTags("Paths")
+        .RequireRateLimiting("public");
     }
 }

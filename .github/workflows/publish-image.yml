@@ -11,6 +11,7 @@ on:
       - "FortniteFestivalWeb/**"
       - "FortniteFestivalRN/**"
       - "packages/**"
+      - "tools/chopt-cli-linux/**"
       - ".github/workflows/publish-image.yml"
   pull_request:
     branches: [master]
@@ -21,6 +22,7 @@ on:
       - "FortniteFestivalWeb/**"
       - "FortniteFestivalRN/**"
       - "packages/**"
+      - "tools/chopt-cli-linux/**"
       - ".github/workflows/publish-image.yml"
   workflow_dispatch: # Allow manual trigger
 
