@@ -208,10 +208,8 @@ public sealed class PathGenerator
                     ct.ThrowIfCancellationRequested();
 
                     var outputImage = Path.Combine(instrumentDir, $"{difficulty}.png");
-                    // Generate JSON data alongside the image for expert difficulty
-                    var jsonOutput = difficulty == "expert"
-                        ? Path.Combine(instrumentDir, "expert.json")
-                        : null;
+                    // Generate JSON data alongside the image for every difficulty
+                    var jsonOutput = Path.Combine(instrumentDir, $"{difficulty}.json");
 
                     await _concurrency.WaitAsync(ct);
                     try
@@ -222,7 +220,7 @@ public sealed class PathGenerator
                             difficulty,
                             maxScore,
                             File.Exists(outputImage) ? outputImage : null,
-                            jsonOutput is not null && File.Exists(jsonOutput) ? jsonOutput : null));
+                            File.Exists(jsonOutput) ? jsonOutput : null));
 
                         if (difficulty == "expert")
                         {

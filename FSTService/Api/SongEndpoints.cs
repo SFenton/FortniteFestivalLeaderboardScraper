@@ -98,10 +98,11 @@ public static partial class ApiEndpoints
         .WithTags("Paths")
         .RequireRateLimiting("public");
 
-        // ── Path JSON data (expert difficulty, structured activation/score/OD data) ─
-        app.MapGet("/api/paths/{songId}/{instrument}/data", (
+        // ── Path JSON data (structured activation/score/OD data per difficulty) ─
+        app.MapGet("/api/paths/{songId}/{instrument}/{difficulty}/data", (
             string songId,
             string instrument,
+            string difficulty,
             IOptions<ScraperOptions> options) =>
         {
             var allowedInstruments = new HashSet<string>(StringComparer.Ordinal)
@@ -112,14 +113,21 @@ public static partial class ApiEndpoints
             if (!allowedInstruments.Contains(instrument))
                 return Results.BadRequest(new { error = "Invalid instrument name." });
 
+            var allowedDifficulties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "easy", "medium", "hard", "expert"
+            };
+            if (!allowedDifficulties.Contains(difficulty))
+                return Results.BadRequest(new { error = "Invalid difficulty. Use easy, medium, hard, or expert." });
+
             var dataDir = Path.GetFullPath(options.Value.DataDirectory);
-            var jsonPath = Path.Combine(dataDir, "paths", songId, instrument, "expert.json");
+            var jsonPath = Path.Combine(dataDir, "paths", songId, instrument, $"{difficulty.ToLowerInvariant()}.json");
 
             if (!Path.GetFullPath(jsonPath).StartsWith(dataDir, StringComparison.OrdinalIgnoreCase))
                 return Results.BadRequest(new { error = "Invalid path." });
 
             if (!File.Exists(jsonPath))
-                return Results.NotFound(new { error = "Path data not yet generated for this song/instrument." });
+                return Results.NotFound(new { error = "Path data not yet generated for this song/instrument/difficulty." });
 
             return Results.File(jsonPath, "application/json");
         })
