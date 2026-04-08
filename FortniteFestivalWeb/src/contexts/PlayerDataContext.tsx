@@ -13,6 +13,27 @@ import { queryKeys } from '../api/queryKeys';
 import { useSyncStatus, type SyncPhase } from '../hooks/data/useSyncStatus';
 import type { PlayerResponse } from '@festival/core/api/serverTypes';
 
+const DISMISSED_STORAGE_KEY = 'fst:syncBannerDismissed';
+
+function loadDismissed(accountId: string | undefined): boolean {
+  if (!accountId) return false;
+  try {
+    const raw = localStorage.getItem(DISMISSED_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return parsed?.accountId === accountId && parsed?.dismissed === true;
+  } catch { return false; }
+}
+
+function saveDismissed(accountId: string | undefined, dismissed: boolean) {
+  if (!accountId) return;
+  if (dismissed) {
+    localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify({ accountId, dismissed: true }));
+  } else {
+    localStorage.removeItem(DISMISSED_STORAGE_KEY);
+  }
+}
+
 type PlayerDataContextValue = {
   playerData: PlayerResponse | null;
   playerLoading: boolean;
@@ -37,6 +58,10 @@ type PlayerDataContextValue = {
   nextRetrySeconds: number | null;
   justCompleted: boolean;
   clearCompleted: () => void;
+  /** True when the sync-complete banner has been dismissed (persisted across refresh). */
+  syncBannerDismissed: boolean;
+  /** Dismiss the sync-complete banner globally (persists to localStorage). */
+  dismissSyncBanner: () => void;
 };
 
 const PlayerDataContext = createContext<PlayerDataContextValue | null>(null);
@@ -63,12 +88,22 @@ export function PlayerDataProvider({
   const [syncCompleted, setSyncCompleted] = useState(false);
   const clearSyncCompleted = useCallback(() => setSyncCompleted(false), []);
 
+  // Persisted dismissal state for sync-complete banner (scoped by account)
+  const [syncBannerDismissed, setSyncBannerDismissed] = useState(() => loadDismissed(accountId));
+  const dismissSyncBanner = useCallback(() => {
+    setSyncBannerDismissed(true);
+    saveDismissed(accountId, true);
+  }, [accountId]);
+
   // Auto-reload when sync completes + set consumer-visible flag
+  // Also reset dismissal so the new completion banner shows
   /* v8 ignore start — sync-complete invalidation */
   useEffect(() => {
     if (justCompleted && accountId) {
       clearCompleted();
       setSyncCompleted(true);
+      setSyncBannerDismissed(false);
+      saveDismissed(accountId, false);
       void qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
     }
   }, [justCompleted, accountId, clearCompleted, qc]);
@@ -108,7 +143,9 @@ export function PlayerDataProvider({
     nextRetrySeconds,
     justCompleted: syncCompleted,
     clearCompleted: clearSyncCompleted,
-  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, syncCompleted, clearSyncCompleted]);
+    syncBannerDismissed,
+    dismissSyncBanner,
+  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, syncCompleted, clearSyncCompleted, syncBannerDismissed, dismissSyncBanner]);
 
   return (
     <PlayerDataContext.Provider value={value}>

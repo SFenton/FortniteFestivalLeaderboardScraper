@@ -95,4 +95,37 @@ describe('PlayerDataContext', () => {
     });
     expect(result.current.playerData).toBeNull();
   });
+
+  it('syncBannerDismissed defaults to false', () => {
+    const { result } = renderHook(() => usePlayerData(), {
+      wrapper: createWrapper('acc-1'),
+    });
+    expect(result.current.syncBannerDismissed).toBe(false);
+  });
+
+  it('dismissSyncBanner sets dismissed and persists to localStorage', () => {
+    const { result } = renderHook(() => usePlayerData(), {
+      wrapper: createWrapper('acc-1'),
+    });
+    act(() => { result.current.dismissSyncBanner(); });
+    expect(result.current.syncBannerDismissed).toBe(true);
+    const stored = JSON.parse(localStorage.getItem('fst:syncBannerDismissed')!);
+    expect(stored).toEqual({ accountId: 'acc-1', dismissed: true });
+  });
+
+  it('hydrates dismissal state from localStorage on mount', () => {
+    localStorage.setItem('fst:syncBannerDismissed', JSON.stringify({ accountId: 'acc-1', dismissed: true }));
+    const { result } = renderHook(() => usePlayerData(), {
+      wrapper: createWrapper('acc-1'),
+    });
+    expect(result.current.syncBannerDismissed).toBe(true);
+  });
+
+  it('does not hydrate dismissal for a different accountId', () => {
+    localStorage.setItem('fst:syncBannerDismissed', JSON.stringify({ accountId: 'other', dismissed: true }));
+    const { result } = renderHook(() => usePlayerData(), {
+      wrapper: createWrapper('acc-1'),
+    });
+    expect(result.current.syncBannerDismissed).toBe(false);
+  });
 });

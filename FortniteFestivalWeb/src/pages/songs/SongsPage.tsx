@@ -27,6 +27,7 @@ import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import SyncBanner from '../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../components/page/SyncCompleteBanner';
+import CollapseOnExit from '../../components/page/CollapseOnExit';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import PageHeader from '../../components/common/PageHeader';
@@ -264,16 +265,26 @@ export default function SongsPage() {
     fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
   }, [fabSearch]);
   /* v8 ignore stop */
-  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted } = usePlayerData();
+  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted, syncBannerDismissed, dismissSyncBanner } = usePlayerData();
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
 
-  // Show completion banner when sync finishes
+  // Show completion banner when sync finishes (unless already globally dismissed)
   useEffect(() => {
     if (ctxJustCompleted) {
       ctxClearCompleted();
-      setShowCompleteBanner(true);
+      if (!syncBannerDismissed) setShowCompleteBanner(true);
     }
-  }, [ctxJustCompleted, ctxClearCompleted]);
+  }, [ctxJustCompleted, ctxClearCompleted, syncBannerDismissed]);
+
+  // Hide local banner when dismissed globally from another page
+  useEffect(() => {
+    if (syncBannerDismissed) setShowCompleteBanner(false);
+  }, [syncBannerDismissed]);
+
+  // Sync banner collapse animation state (matches PlayerContent pattern)
+  const bannerVisible = isSyncing || (!syncBannerDismissed && showCompleteBanner);
+  const [bannerCollapsed, setBannerCollapsed] = useState(!bannerVisible);
+  useEffect(() => { if (bannerVisible) setBannerCollapsed(false); }, [bannerVisible]);
 
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
@@ -610,30 +621,33 @@ export default function SongsPage() {
       </>}
     >
       <div ref={containerRef} style={songsStyles.container}>
-        {isSyncing && (
-          <SyncBanner
-            phase={syncPhase}
-            backfillProgress={backfillProgress}
-            historyProgress={historyProgress}
-            rivalsProgress={rivalsProgress}
-            itemsCompleted={itemsCompleted}
-            totalItems={totalItems}
-            entriesFound={entriesFound}
-            currentSongName={currentSongName}
-            seasonsQueried={seasonsQueried}
-            rivalsFound={rivalsFound}
-            isThrottled={isThrottled}
-            throttleStatusKey={throttleStatusKey}
-            probeStatusKey={probeStatusKey}
-            nextRetrySeconds={nextRetrySeconds}
-          />
-        )}
-        {!isSyncing && showCompleteBanner && (
-          <SyncCompleteBanner
-            onDismissed={() => setShowCompleteBanner(false)}
-            pendingRankUpdate={pendingRankUpdate}
-            estimatedRankUpdateMinutes={estimatedRankUpdateMinutes}
-          />
+        {(bannerVisible || !bannerCollapsed) && (
+          <CollapseOnExit show={bannerVisible} onCollapsed={() => setBannerCollapsed(true)}>
+            {isSyncing ? (
+              <SyncBanner
+                phase={syncPhase}
+                backfillProgress={backfillProgress}
+                historyProgress={historyProgress}
+                rivalsProgress={rivalsProgress}
+                itemsCompleted={itemsCompleted}
+                totalItems={totalItems}
+                entriesFound={entriesFound}
+                currentSongName={currentSongName}
+                seasonsQueried={seasonsQueried}
+                rivalsFound={rivalsFound}
+                isThrottled={isThrottled}
+                throttleStatusKey={throttleStatusKey}
+                probeStatusKey={probeStatusKey}
+                nextRetrySeconds={nextRetrySeconds}
+              />
+            ) : showCompleteBanner ? (
+              <SyncCompleteBanner
+                onDismissed={() => { setShowCompleteBanner(false); dismissSyncBanner(); }}
+                pendingRankUpdate={pendingRankUpdate}
+                estimatedRankUpdateMinutes={estimatedRankUpdateMinutes}
+              />
+            ) : null}
+          </CollapseOnExit>
         )}
         {loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (
           <EmptyState

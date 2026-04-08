@@ -65,6 +65,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const clearCompleted = isTrackedPlayer ? ctx.clearCompleted : localClearCompleted;
 
   // Track whether we're showing the completion banner (auto-dismisses after 3s)
+  // For tracked player, also check shared dismissal state
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
 
   // When sync completes, trigger content fade-out then re-stagger with new data
@@ -73,7 +74,9 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   useEffect(() => {
     if (!justCompleted || !accountId) return;
     clearCompleted();
-    setShowCompleteBanner(true);
+    if (!(isTrackedPlayer && ctx.syncBannerDismissed)) {
+      setShowCompleteBanner(true);
+    }
 
     // Reset rendered cache so re-stagger plays with fresh animation
     if (isTrackedPlayer) _renderedTrackedAccount = null;
@@ -83,7 +86,12 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     // Trigger content fade-out; after it completes, useLoadPhase transitions
     // to Loading, then we invalidate queries so fresh data triggers re-stagger
     triggerContentOutRef.current();
-  }, [justCompleted, clearCompleted, accountId, isTrackedPlayer]);
+  }, [justCompleted, clearCompleted, accountId, isTrackedPlayer, ctx.syncBannerDismissed]);
+
+  // Hide local banner when dismissed globally from another page (tracked player only)
+  useEffect(() => {
+    if (isTrackedPlayer && ctx.syncBannerDismissed) setShowCompleteBanner(false);
+  }, [isTrackedPlayer, ctx.syncBannerDismissed]);
 
   // Resolve effective values: context for tracked player, query for others
   const data = isTrackedPlayer ? ctx.playerData : (queryData ?? null);
@@ -168,7 +176,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
         </div>
       )}
       {loadPhase === LoadPhase.ContentIn && data && (
-        <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isThrottled={isThrottled} throttleStatusKey={throttleStatusKey} probeStatusKey={probeStatusKey} nextRetrySeconds={nextRetrySeconds} pendingRankUpdate={pendingRankUpdate} estimatedRankUpdateMinutes={estimatedRankUpdateMinutes} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} showCompleteBanner={showCompleteBanner} onCompleteBannerDismissed={() => setShowCompleteBanner(false)} />
+        <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isThrottled={isThrottled} throttleStatusKey={throttleStatusKey} probeStatusKey={probeStatusKey} nextRetrySeconds={nextRetrySeconds} pendingRankUpdate={pendingRankUpdate} estimatedRankUpdateMinutes={estimatedRankUpdateMinutes} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} showCompleteBanner={showCompleteBanner} onCompleteBannerDismissed={() => { setShowCompleteBanner(false); if (isTrackedPlayer) ctx.dismissSyncBanner(); }} />
       )}
       {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </>

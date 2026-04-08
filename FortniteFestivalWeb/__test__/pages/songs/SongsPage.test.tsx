@@ -160,6 +160,16 @@ describe('SongsPage', () => {
     expect(container.textContent).toContain('Alpha Song');
   });
 
+  it('hides completion banner when globally dismissed via localStorage', async () => {
+    // Persist dismissal for the tracked player before render
+    localStorage.setItem('fst:syncBannerDismissed', JSON.stringify({ accountId: 'test-player-1', dismissed: true }));
+    const { container } = renderSongsPage('/songs', 'test-player-1');
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+    // Completion banner text should not appear
+    expect(container.textContent).not.toContain('Sync complete');
+  });
+
   it('renders correctly on mobile viewport', async () => {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
