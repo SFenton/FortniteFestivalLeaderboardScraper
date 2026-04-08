@@ -36,7 +36,7 @@ public sealed class RankingsCalculatorTests : IDisposable
         _pathStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
 
         _sut = new RankingsCalculator(_persistence, _metaFixture.Db,
-            _pathStore, new ScrapeProgressTracker(), Substitute.For<ILogger<RankingsCalculator>>());
+            _pathStore, new ScrapeProgressTracker(), Options.Create(new FeatureOptions()), Substitute.For<ILogger<RankingsCalculator>>());
     }
 
     public void Dispose()

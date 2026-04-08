@@ -1,5 +1,6 @@
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
 
@@ -38,6 +39,7 @@ public sealed class RankingsCalculator
     private readonly IMetaDatabase _metaDb;
     private readonly IPathDataStore _pathStore;
     private readonly ScrapeProgressTracker _progress;
+    private readonly FeatureOptions _features;
     private readonly ILogger<RankingsCalculator> _log;
 
     public RankingsCalculator(
@@ -45,12 +47,14 @@ public sealed class RankingsCalculator
         IMetaDatabase metaDb,
         IPathDataStore pathStore,
         ScrapeProgressTracker progress,
+        IOptions<FeatureOptions> features,
         ILogger<RankingsCalculator> log)
     {
         _persistence = persistence;
         _metaDb = metaDb;
         _pathStore = pathStore;
         _progress = progress;
+        _features = features.Value;
         _log = log;
     }
 
@@ -154,7 +158,14 @@ public sealed class RankingsCalculator
             _progress.ReportPhaseItemComplete();
 
             // Phase 2.5: Ranking deltas — uses the same materialized temp table
-            ComputeRankingDeltasFromMaterialized(instrument, conn, db, totalCharted);
+            if (_features.ComputeRankingDeltas)
+            {
+                ComputeRankingDeltasFromMaterialized(instrument, conn, db, totalCharted);
+            }
+            else
+            {
+                _log.LogDebug("{Instrument}: skipping ranking delta computation (ComputeRankingDeltas=false).", instrument);
+            }
         }, ct)).ToList();
 
         await Task.WhenAll(tasks);

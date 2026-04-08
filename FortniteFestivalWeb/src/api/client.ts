@@ -203,13 +203,13 @@ export const api = {
 
   // ─── Rankings ──────────────────────────────────────────────────
 
-  getRankings: (instrument: InstrumentKey, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10, leeway?: number | null) =>
+  getRankings: (instrument: InstrumentKey, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10) =>
     get<RankingsPageResponse>(
-      `/api/rankings/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}${leeway != null ? `&leeway=${leeway}` : ''}`,
+      `/api/rankings/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}`,
     ),
 
-  getPlayerRanking: (instrument: InstrumentKey, accountId: string, leeway?: number | null, rankBy?: string) => {
-    const params = [leeway != null ? `leeway=${leeway}` : '', rankBy ? `rankBy=${encodeURIComponent(rankBy)}` : ''].filter(Boolean).join('&');
+  getPlayerRanking: (instrument: InstrumentKey, accountId: string, rankBy?: string) => {
+    const params = rankBy ? `rankBy=${encodeURIComponent(rankBy)}` : '';
     return get<AccountRankingDto>(
       `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}${params ? `?${params}` : ''}`,
     );

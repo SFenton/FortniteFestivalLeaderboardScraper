@@ -159,7 +159,7 @@ public sealed class RankingsEndpointsTests : IDisposable
 
         var pathStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
         var calc = new RankingsCalculator(_persistence, _metaFixture.Db,
-            pathStore, new ScrapeProgressTracker(), Substitute.For<ILogger<RankingsCalculator>>());
+            pathStore, new ScrapeProgressTracker(), Options.Create(new FeatureOptions()), Substitute.For<ILogger<RankingsCalculator>>());
         calc.ComputeCompositeRankings(["Solo_Guitar", "Solo_Bass"]);
 
         var (entries, total) = _metaFixture.Db.GetCompositeRankings(1, 50);

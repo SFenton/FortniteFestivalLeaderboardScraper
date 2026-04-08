@@ -159,7 +159,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
 
-        var rankingsCalculator = new RankingsCalculator(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var rankingsCalculator = new RankingsCalculator(_persistence, _persistence.Meta, pathDataStore, _progress, Options.Create(new FeatureOptions()), Substitute.For<ILogger<RankingsCalculator>>());
         var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _persistence.Meta, options, Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
 
         // ServiceProvider returns the mocked machine

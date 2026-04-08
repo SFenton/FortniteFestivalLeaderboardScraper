@@ -8,7 +8,6 @@ import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { rankingsCache } from '../../api/pageCache';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
-import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { comboIdFromInstruments } from '@festival/core/combos';
@@ -38,7 +37,6 @@ export default function CompetePage() {
   const navigate = useNavigate();
   const { player } = useTrackedPlayer();
   const { settings } = useSettings();
-  const { leewayParam } = useScoreFilter();
   const isMobile = useIsMobileChrome();
 
   const accountId = player?.accountId ?? '';
@@ -56,10 +54,10 @@ export default function CompetePage() {
   const { data: leaderboardData, isLoading: leaderboardLoading, error: leaderboardError } = useQuery<RankingsPageResponse | ComboPageResponse>({
     queryKey: isMulti
       ? queryKeys.comboRankings(comboId!, 'totalscore', 1, 10)
-      : queryKeys.rankings(previewInstrument ?? 'Solo_Guitar', 'totalscore', 1, 10, leewayParam),
+      : queryKeys.rankings(previewInstrument ?? 'Solo_Guitar', 'totalscore', 1, 10),
     queryFn: () => isMulti
       ? api.getComboRankings(comboId!, 'totalscore', 1, 10)
-      : api.getRankings(previewInstrument!, 'totalscore', 1, 10, leewayParam),
+      : api.getRankings(previewInstrument!, 'totalscore', 1, 10),
     enabled: !!previewInstrument,
   });
 
@@ -67,10 +65,10 @@ export default function CompetePage() {
   const { data: playerRanking } = useQuery<PlayerRankingResult>({
     queryKey: isMulti
       ? queryKeys.playerComboRanking(accountId, comboId!, 'totalscore')
-      : queryKeys.playerRanking(previewInstrument ?? 'Solo_Guitar', accountId, leewayParam, 'totalscore'),
+      : queryKeys.playerRanking(previewInstrument ?? 'Solo_Guitar', accountId, 'totalscore'),
     queryFn: () => isMulti
       ? api.getPlayerComboRanking(accountId, comboId!, 'totalscore')
-      : api.getPlayerRanking(previewInstrument!, accountId, leewayParam, 'totalscore'),
+      : api.getPlayerRanking(previewInstrument!, accountId, 'totalscore'),
     enabled: !!accountId && !!previewInstrument,
   });
 

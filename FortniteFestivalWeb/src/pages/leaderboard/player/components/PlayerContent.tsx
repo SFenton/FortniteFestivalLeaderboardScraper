@@ -106,7 +106,7 @@ export default function PlayerContent({
   const bannerVisible = isSyncing || !!(showCompleteBanner && onCompleteBannerDismissed);
   const [bannerCollapsed, setBannerCollapsed] = useState(!bannerVisible);
   useEffect(() => { if (bannerVisible) setBannerCollapsed(false); }, [bannerVisible]);
-  const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway, leewayParam } = useScoreFilter();
+  const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
 
   // Fetch pre-computed tiered stats from backend
@@ -172,8 +172,8 @@ export default function PlayerContent({
 
   const instrumentRankingQueries = useQueries({
     queries: visibleKeys.map((inst) => ({
-      queryKey: queryKeys.playerRanking(inst, data.accountId, leewayParam),
-      queryFn: () => api.getPlayerRanking(inst, data.accountId, leewayParam),
+      queryKey: queryKeys.playerRanking(inst, data.accountId),
+      queryFn: () => api.getPlayerRanking(inst, data.accountId),
       staleTime: 5 * 60_000,
       enabled: !hasRankTiers,
     })),
