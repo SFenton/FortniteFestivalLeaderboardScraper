@@ -8,9 +8,6 @@ public sealed class FeatureOptions
 {
     public const string Section = "Features";
 
-    /// <summary>Item Shop page, navigation links, sort option, pulsing, settings toggles.</summary>
-    public bool Shop { get; set; }
-
     /// <summary>Rivals pages and navigation links.</summary>
     public bool Rivals { get; set; }
 

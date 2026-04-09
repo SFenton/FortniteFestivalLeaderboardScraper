@@ -16,7 +16,7 @@ vi.mock('@festival/core/suggestions/suggestionGenerator', () => {
 });
 
 vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true }),
+  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true }),
 }));
 
 vi.mock('../../../src/contexts/SettingsContext', () => ({

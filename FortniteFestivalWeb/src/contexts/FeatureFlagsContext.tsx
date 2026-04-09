@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 /* ── Types ── */
 
 export type FeatureFlags = {
-  shop: boolean;
   rivals: boolean;
   compete: boolean;
   leaderboards: boolean;
@@ -12,8 +11,8 @@ export type FeatureFlags = {
   difficulty: boolean;
 };
 
-const ALL_ON: FeatureFlags = { shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true };
-const ALL_OFF: FeatureFlags = { shop: false, rivals: false, compete: false, leaderboards: false, firstRun: false, difficulty: false };
+const ALL_ON: FeatureFlags = { rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true };
+const ALL_OFF: FeatureFlags = { rivals: false, compete: false, leaderboards: false, firstRun: false, difficulty: false };
 
 /* ── Context ── */
 

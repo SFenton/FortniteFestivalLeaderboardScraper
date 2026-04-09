@@ -2,7 +2,6 @@ import { createContext, useContext, useMemo, useState, useEffect, type ReactNode
 import type { ShopSong } from '@festival/core/api/serverTypes';
 import { useFestival } from './FestivalContext';
 import { useShopWebSocket, type ShopState } from '../hooks/data/useShopWebSocket';
-import { useFeatureFlags } from './FeatureFlagsContext';
 import { api } from '../api/client';
 
 type ShopContextValue = {
@@ -22,13 +21,11 @@ const ShopContext = createContext<ShopContextValue | null>(null);
 
 export function ShopProvider({ children }: { children: ReactNode }) {
   const { state: { songs } } = useFestival();
-  const flags = useFeatureFlags();
 
   // Fetch /api/shop as the initial data source
   const [shopData, setShopData] = useState<ShopSong[] | null>(null);
 
   useEffect(() => {
-    if (!flags.shop) return;
     let cancelled = false;
     try {
       api.getShop()
@@ -40,7 +37,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
       /* api.getShop may not exist in test environments */
     }
     return () => { cancelled = true; };
-  }, [flags.shop]);
+  }, []);
 
   // Build initial IDs from /api/shop response
   const initialShopIds = useMemo(() => {

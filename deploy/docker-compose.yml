@@ -80,10 +80,11 @@ services:
       - Scraper__SongConcurrency=${SONG_CONCURRENCY:-1}
       # ── Hard cap on API requests per second, 0 = unlimited (default: 0) ──
       - Scraper__MaxRequestsPerSecond=${MAX_REQUESTS_PER_SECOND:-0}
+      # ── Initial DOP: start low and ramp via AIMD slow-start to avoid CDN burst blocks (default: 4) ──
+      - Scraper__InitialDop=${INITIAL_DOP:-4}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       # ── Feature flags (default: all OFF in production) ──
-      - Features__Shop=${FEATURE_SHOP:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
       - Features__FirstRun=${FEATURE_FIRST_RUN:-false}

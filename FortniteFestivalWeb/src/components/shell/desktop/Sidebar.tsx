@@ -103,7 +103,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
           </NavLink>
           )}
           {/* v8 ignore start -- shop-visibility link */}
-          {flags.shop && !settings.hideItemShop && (
+          {!settings.hideItemShop && (
             <NavLink to="/shop" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               <span style={s.sidebarLinkIcon}><IoBagHandle size={20} /></span>
               {t('nav.shop', 'Shop')}

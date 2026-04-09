@@ -1380,18 +1380,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     {
         if (sequential)
         {
-            if (sharedLimiter is not null)
-            {
-                _log.LogDebug(
-                    "Sequential scrape ignores shared limiter and uses a local bounded limiter derived from song/page concurrency.");
-            }
-
             return await ScrapeManySongsSequentialAsync(
                 requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency,
                 maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages, validEntryTarget,
                 validCutoffMultiplier: validCutoffMultiplier,
                 onPageScraped: onPageScraped,
-                onBandPageScraped: onBandPageScraped);
+                onBandPageScraped: onBandPageScraped,
+                sharedLimiter: sharedLimiter,
+                maxConcurrency: maxConcurrency);
         }
 
         var ownsLimiter = sharedLimiter is null;
@@ -1496,8 +1492,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     }
 
     /// <summary>
-    /// Sequential scrape: one song at a time, instruments in parallel, pages with bounded concurrency.
-    /// Max concurrent requests = ~6 instruments × pageConcurrency.
+    /// Sequential scrape: one song at a time (or songConcurrency at a time),
+    /// instruments in parallel, pages gated by the shared adaptive limiter.
     /// </summary>
     [ExcludeFromCodeCoverage(Justification = "Requires real HTTP with 5s retry delays; tested manually via --once mode.")]
     private async Task<Dictionary<string, List<GlobalLeaderboardResult>>> ScrapeManySongsSequentialAsync(
@@ -1515,19 +1511,20 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int validEntryTarget = 0,
         double validCutoffMultiplier = 0.95,
         Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
-        Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null)
+        Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null,
+        AdaptiveConcurrencyLimiter? sharedLimiter = null,
+        int maxConcurrency = DefaultMaxConcurrency)
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
-        int maxDop = effectiveSongConcurrency * 6 * Math.Max(1, pageConcurrency);
-        int initialDop = Math.Max(1, maxDop / 2);
+
+        var ownsLimiter = sharedLimiter is null;
+        var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
+            maxConcurrency, minDop: 4, maxDop: maxConcurrency, _log, maxRequestsPerSecond);
 
         _log.LogInformation(
-            "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, ~{MaxConcurrent} max concurrent requests, adaptive)",
-            requests.Count, effectiveSongConcurrency, maxDop);
-
-        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log,
-            maxRequestsPerSecond);
+            "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, DOP={MaxDop}, adaptive)",
+            requests.Count, effectiveSongConcurrency, limiter.MaxDop);
         try
         {
         _progress.SetAdaptiveLimiter(limiter);
@@ -1548,7 +1545,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         overThresholdExtraPages: overThresholdExtraPages,
                         validEntryTarget: validEntryTarget,
                         validCutoffMultiplier: validCutoffMultiplier,
-                        pageConcurrency: pageConcurrency,
                         onPageScraped: onPageScraped,
                         onBandPageScraped: onBandPageScraped,
                         maxScores: req.MaxScores);
@@ -1582,13 +1578,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         finally
         {
             _progress.SetAdaptiveLimiter(null);
+            if (ownsLimiter && limiter is IDisposable d) d.Dispose();
         }
     }
 
     /// <summary>
-    /// Page fetching for one song/instrument with bounded concurrency.
+    /// Page fetching for one song/instrument gated by the shared adaptive limiter.
     /// Handles both solo instruments and band types (Band_Duets/Trios/Quad).
-    /// pageConcurrency=1 → fully sequential. pageConcurrency=10 → 10 pages at a time.
     /// </summary>
     [ExcludeFromCodeCoverage(Justification = "Requires real HTTP with 5s retry delays; tested manually via --once mode.")]
     private async Task<GlobalLeaderboardResult> ScrapeLeaderboardSequentialAsync(
@@ -1605,7 +1601,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
         double validCutoffMultiplier = 0.95,
-        int pageConcurrency = 10,
         Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
         Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null,
         SongMaxScores? maxScores = null)
@@ -1622,7 +1617,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         if (isBand)
         {
-            bandPage0 = await FetchBandPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);
+            bandPage0 = await _executor.WithCdnResilienceAsync(
+                work: () => FetchBandPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct),
+                ct,
+                acquireSlot: limiter is not null ? () => limiter.WaitAsync(ct) : null,
+                releaseSlot: limiter is not null ? limiter.Release : null);
             if (bandPage0 is not null)
             {
                 _progress.ReportPageFetched(0);
@@ -1632,7 +1631,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }
         else
         {
-            var fetched = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);
+            var fetched = await _executor.WithCdnResilienceAsync(
+                work: () => FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct),
+                ct,
+                acquireSlot: limiter is not null ? () => limiter.WaitAsync(ct) : null,
+                releaseSlot: limiter is not null ? limiter.Release : null);
             soloPage0 = fetched.Page;
             page0BodyLen = fetched.BodyLength;
             if (soloPage0 is not null)
@@ -1692,8 +1695,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         if (totalPages > 1)
         {
             using var pageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            int effectivePageConcurrency = Math.Max(1, pageConcurrency);
-            using var pageSemaphore = new SemaphoreSlim(effectivePageConcurrency, effectivePageConcurrency);
 
             var tasks = new List<Task>(totalPages - 1);
             for (int p = 1; p < totalPages; p++)
@@ -1705,23 +1706,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             async Task FetchPageWithLimiterAsync(int pageNum)
             {
                 if (pageCts.IsCancellationRequested) return;
-                bool pageGateAcquired = false;
-                bool acquired = false;
                 try
                 {
-                    await pageSemaphore.WaitAsync(pageCts.Token);
-                    pageGateAcquired = true;
-
-                    if (limiter is not null)
-                    {
-                        await limiter.WaitAsync(pageCts.Token);
-                        acquired = true;
-                    }
-
                     if (isBand)
                     {
-                        var bandParsed = await FetchBandPageAsync(
-                            songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token);
+                        var bandParsed = await _executor.WithCdnResilienceAsync(
+                            work: () => FetchBandPageAsync(
+                                songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token),
+                            pageCts.Token,
+                            acquireSlot: limiter is not null ? () => limiter.WaitAsync(pageCts.Token) : null,
+                            releaseSlot: limiter is not null ? limiter.Release : null);
                         Interlocked.Increment(ref requestCount);
                         _progress.ReportPageFetched(0);
 
@@ -1736,8 +1730,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     }
                     else
                     {
-                    var (parsed, bodyLen, status) = await FetchPageAsync(
-                        songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token);
+                    var (parsed, bodyLen, status) = await _executor.WithCdnResilienceAsync(
+                        work: () => FetchPageAsync(
+                            songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token),
+                        pageCts.Token,
+                        acquireSlot: limiter is not null ? () => limiter.WaitAsync(pageCts.Token) : null,
+                        releaseSlot: limiter is not null ? limiter.Release : null);
                     Interlocked.Increment(ref requestCount);
                     Interlocked.Add(ref totalBytes, bodyLen);
                     _progress.ReportPageFetched(bodyLen);
@@ -1775,11 +1773,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 catch (OperationCanceledException) when (pageCts.IsCancellationRequested && !ct.IsCancellationRequested)
                 {
                     // Cancelled due to access boundary — not an error
-                }
-                finally
-                {
-                    if (acquired) limiter?.Release();
-                    if (pageGateAcquired) pageSemaphore.Release();
                 }
             }
 

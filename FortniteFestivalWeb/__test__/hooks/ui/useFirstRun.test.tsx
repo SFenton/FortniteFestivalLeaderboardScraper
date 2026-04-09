@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 
 const mockFlags = vi.hoisted(() => ({
-  shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true,
+  rivals: true, compete: true, leaderboards: true, firstRun: true,
 }));
 
 vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({

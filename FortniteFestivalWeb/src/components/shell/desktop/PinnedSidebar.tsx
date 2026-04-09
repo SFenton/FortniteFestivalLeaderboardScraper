@@ -64,7 +64,7 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
         </NavLink>
         )}
         {/* v8 ignore start -- shop-visibility link */}
-        {flags.shop && !settings.hideItemShop && (
+        {!settings.hideItemShop && (
           <NavLink to="/shop" style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoBagHandle size={20} /></span>
             {t('nav.shop', 'Shop')}

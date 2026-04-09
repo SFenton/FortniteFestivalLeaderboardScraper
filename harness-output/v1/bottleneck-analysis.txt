@@ -1,0 +1,20 @@
+═══════════════════════════════════════════════════════
+  Bottleneck Analysis
+═══════════════════════════════════════════════════════
+
+── Time Breakdown (cumulative wall-clock across all tasks) ─
+  Slot wait (DOP):    69781.3s  (45.3%)
+  Rate token wait:    36465.6s  (23.7%)
+  HTTP wire time:     47651.9s  (31.0%)
+  Persistence:        0.0s  (0.0%)
+  Grand total:        153898.8s
+
+── Primary Bottleneck ──────────────────────────────────
+  DOP slot wait: 69781.3s (45.3% of total)
+
+── Recommendations ─────────────────────────────────────
+  ⚠ DOP slots are the bottleneck.
+    → Increase --dop (more concurrent requests)
+    → Check if AIMD is reducing DOP (CDN blocks?)
+
+═══════════════════════════════════════════════════════

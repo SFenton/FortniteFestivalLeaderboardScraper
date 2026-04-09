@@ -37,12 +37,12 @@ test.describe('Feature Flags FRE', () => {
     expect(count).toBeGreaterThanOrEqual(3);
   });
 
-  test('shop flag OFF — shop-related songs slides absent', async ({ page, fre, freState }) => {
-    await freState.setFeatureFlags({ shop: false });
+  test('shop hidden — shop-related songs slides absent', async ({ page, fre, freState }) => {
+    await freState.setSettings({ hideItemShop: true });
     await goto(page, '/songs');
     await fre.waitForVisible();
 
-    // Without shop feature, isShopVisible = false → no shop slides
+    // With hideItemShop, isShopVisible = false → no shop slides
     // Should only show ungated non-shop slides (3 for no player)
     await fre.assertSlideCount(3);
   });
@@ -79,7 +79,7 @@ test.describe('Feature Flags FRE', () => {
 
   test('multiple flags OFF — only eligible pages show FRE', async ({ page, fre, freState }) => {
     await freState.setTrackedPlayer();
-    await freState.setFeatureFlags({ shop: false, rivals: false, compete: false });
+    await freState.setFeatureFlags({ rivals: false, compete: false });
     await freState.setSettings({ hideItemShop: true });
 
     // Songs page — should still work

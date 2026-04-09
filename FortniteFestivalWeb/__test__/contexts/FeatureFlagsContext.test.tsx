@@ -5,14 +5,13 @@ import type { ReactNode } from 'react';
 
 // Dynamic flag values that individual tests can override
 const flagValues = vi.hoisted(() => ({
-  shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true,
+  rivals: true, compete: true, leaderboards: true, firstRun: true,
 }));
 
 // Track whether fetch should fail
 const fetchShouldFail = vi.hoisted(() => ({ value: false }));
 
 beforeEach(() => {
-  flagValues.shop = true;
   flagValues.rivals = true;
   flagValues.compete = true;
   flagValues.leaderboards = true;
@@ -53,7 +52,6 @@ describe('FeatureFlagsContext', () => {
       const wrapper = makeWrapper();
       const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
-      expect(result.current.shop).toBe(true);
       expect(result.current.rivals).toBe(true);
       expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(true);
@@ -75,10 +73,9 @@ describe('FeatureFlagsContext', () => {
       const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
       await waitFor(() => {
-        expect(result.current.shop).toBe(true);
+        expect(result.current.rivals).toBe(true);
       });
 
-      expect(result.current.rivals).toBe(true);
       expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(true);
       expect(result.current.firstRun).toBe(true);
@@ -86,7 +83,6 @@ describe('FeatureFlagsContext', () => {
     });
 
     it('returns partial flags when server sends partial response', async () => {
-      flagValues.shop = false;
       flagValues.leaderboards = false;
 
       const wrapper = makeWrapper();
@@ -96,7 +92,6 @@ describe('FeatureFlagsContext', () => {
         expect(result.current.rivals).toBe(true);
       });
 
-      expect(result.current.shop).toBe(false);
       expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(false);
     });
@@ -111,7 +106,6 @@ describe('FeatureFlagsContext', () => {
         expect(fetch).toHaveBeenCalled();
       });
 
-      expect(result.current.shop).toBe(false);
       expect(result.current.rivals).toBe(false);
       expect(result.current.compete).toBe(false);
       expect(result.current.leaderboards).toBe(false);

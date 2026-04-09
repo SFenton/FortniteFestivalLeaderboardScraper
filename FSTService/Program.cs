@@ -184,7 +184,8 @@ builder.Services.AddSingleton<SharedDopPool>(sp =>
     var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
     var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("SharedDopPool");
     int dop = opts.DegreeOfParallelism;
-    return new SharedDopPool(dop, minDop: 4, maxDop: dop,
+    int initialDop = Math.Clamp(opts.InitialDop, 4, dop);
+    return new SharedDopPool(initialDop, minDop: 4, maxDop: dop,
         opts.LowPriorityPercent, log, opts.MaxRequestsPerSecond);
 });
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();

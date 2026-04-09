@@ -231,6 +231,15 @@ public sealed class ScraperOptions
     public int LowPriorityPercent { get; set; } = 20;
 
     /// <summary>
+    /// Initial DOP when the pool is created or reset between passes.
+    /// The AIMD limiter starts at this value and ramps up toward
+    /// <see cref="DegreeOfParallelism"/> via slow-start (multiplicative ×1.333
+    /// per evaluation window). Avoids an immediate burst that triggers CDN blocks.
+    /// Default 4. Set via <c>Scraper__InitialDop</c> env var.
+    /// </summary>
+    public int InitialDop { get; set; } = 4;
+
+    /// <summary>
     /// Capacity of each per-instrument bounded channel in the persistence pipeline.
     /// Higher values allow more buffering between scraper and writer tasks; lower
     /// values apply earlier back-pressure. Default 128.

@@ -183,7 +183,7 @@ public sealed class ScrapeOrchestrator
             validEntryTarget: opts.ValidEntryTarget,
             // Sequential mode derives its own bounded limiter from song/page
             // concurrency settings; sharing the global pool can overrun the cap.
-            sharedLimiter: opts.SequentialScrape ? null : _pool.Limiter,
+            sharedLimiter: _pool.Limiter,
             deferDeepScrape: true,
             validCutoffMultiplier: opts.ValidCutoffMultiplier,
             onPageScraped: (songId, instrument, entries) =>

@@ -70,7 +70,7 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
       ) : (
         <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
-      <Route path="/shop" element={<FeatureGate flag="shop"><ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary></FeatureGate>} />
+      <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
       <Route path="/leaderboards" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary></FeatureGate>} />
       <Route path="/leaderboards/all" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary></FeatureGate>} />
       {player ? (

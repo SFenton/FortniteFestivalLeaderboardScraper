@@ -11,7 +11,6 @@ public static partial class ApiEndpoints
             var f = opts.Value;
             return Results.Ok(new
             {
-                shop = f.Shop,
                 rivals = f.Rivals,
                 compete = f.Compete,
                 leaderboards = f.Leaderboards,

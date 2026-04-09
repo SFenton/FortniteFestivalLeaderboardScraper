@@ -21,7 +21,7 @@ vi.mock('../../../../../src/components/songs/metadata/SeasonPill', () => ({
   default: ({ season }: any) => <span data-testid="season">S{season}</span>,
 }));
 vi.mock('../../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true }),
+  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true }),
   FeatureFlagsProvider: ({ children }: any) => children,
 }));
 

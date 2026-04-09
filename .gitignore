@@ -314,8 +314,8 @@ FortniteFestivalWeb/coverage
 #Playwright
 .playwright-mcp
 
-# SongMachineHarness output
-SongMachineHarness/harness-output/
-harness-output/
-SongMachineHarness/accounts.txt
-SongMachineHarness/songs.txt
+# Harness output
+FSTService.Harnesses/*/harness-output/
+FSTService.Harnesses/harness-output/
+FSTService.Harnesses/SongMachineHarness/accounts.txt
+FSTService.Harnesses/SongMachineHarness/songs.txt

@@ -372,7 +372,6 @@ export default function SettingsPage() {
           </FadeInDiv>
 
           {/* ── Item Shop ── */}
-          {flags.shop && (
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <SectionHeader title={t('settings.itemShop', 'Item Shop')} description={t('settings.itemShopHint', 'Control how Item Shop availability is displayed.')} />
           <Card>
@@ -393,7 +392,6 @@ export default function SettingsPage() {
             />
           </Card>
           </FadeInDiv>
-          )}
 
           {/* ── Instruments ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
@@ -511,14 +509,12 @@ export default function SettingsPage() {
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
             )}
-            {flags.shop && (
             <button style={modalCss.toggleRowSmallerGap} onClick={shopReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.shop')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            )}
           </Card>
           </FadeInDiv>
           )}

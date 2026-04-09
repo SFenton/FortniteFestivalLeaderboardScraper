@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 // Mock feature flags
 const mockFlags = vi.hoisted(() => ({
-  shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true,
+  rivals: true, compete: true, leaderboards: true, firstRun: true,
 }));
 
 vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
@@ -13,7 +13,7 @@ vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
 
 import FeatureGate from '../../../src/components/routing/FeatureGate';
 
-function renderWithRoute(flag: 'shop' | 'rivals' | 'compete' | 'leaderboards', initialPath = '/test') {
+function renderWithRoute(flag: 'rivals' | 'compete' | 'leaderboards', initialPath = '/test') {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
@@ -28,21 +28,15 @@ function renderWithRoute(flag: 'shop' | 'rivals' | 'compete' | 'leaderboards', i
 
 describe('FeatureGate', () => {
   it('renders children when flag is on', () => {
-    mockFlags.shop = true;
-    renderWithRoute('shop');
+    mockFlags.rivals = true;
+    renderWithRoute('rivals');
     expect(screen.getByTestId('child')).toBeTruthy();
   });
 
   it('redirects to /songs when flag is off', () => {
-    mockFlags.shop = false;
-    renderWithRoute('shop');
-    expect(screen.queryByTestId('child')).toBeNull();
-    expect(screen.getByTestId('redirected')).toBeTruthy();
-  });
-
-  it('works with rivals flag', () => {
     mockFlags.rivals = false;
     renderWithRoute('rivals');
+    expect(screen.queryByTestId('child')).toBeNull();
     expect(screen.getByTestId('redirected')).toBeTruthy();
   });
 

@@ -130,6 +130,17 @@ namespace FortniteFestival.Core.Scraping
         /// </summary>
         public int ThrottlePercent => (int)(100.0 * CurrentDop / _maxDop);
 
+        // ── Optional timing callbacks (zero-cost when null) ──
+        // Used by diagnostic harnesses to measure time spent waiting for slots/tokens.
+
+#pragma warning disable CS8632 // nullable annotations (net472 compat)
+        /// <summary>Called after acquiring a DOP slot with the elapsed wait time in milliseconds.</summary>
+        public Action<long>? OnSlotAcquired { get; set; }
+
+        /// <summary>Called after acquiring a rate token with the elapsed wait time in milliseconds.</summary>
+        public Action<long>? OnRateTokenAcquired { get; set; }
+#pragma warning restore CS8632
+
         public AdaptiveConcurrencyLimiter(int initialDop, int minDop, int maxDop, ILogger log,
             int maxRequestsPerSecond = 0, int initialSsthresh = 0)
         {
@@ -177,13 +188,19 @@ namespace FortniteFestival.Core.Scraping
             // failures. CB caused thundering-herd on close (all queued slots released at
             // once). Keeping fields/methods for potential re-enablement.
 
+            long slotStart = OnSlotAcquired != null ? Stopwatch.GetTimestamp() : 0;
             await _semaphore.WaitAsync(ct);
+            if (OnSlotAcquired != null)
+                OnSlotAcquired((long)Stopwatch.GetElapsedTime(slotStart).TotalMilliseconds);
 
             if (_rateBucket != null)
             {
                 try
                 {
+                    long tokenStart = OnRateTokenAcquired != null ? Stopwatch.GetTimestamp() : 0;
                     await _rateBucket.WaitAsync(ct);
+                    if (OnRateTokenAcquired != null)
+                        OnRateTokenAcquired((long)Stopwatch.GetElapsedTime(tokenStart).TotalMilliseconds);
                 }
                 catch
                 {
@@ -201,7 +218,12 @@ namespace FortniteFestival.Core.Scraping
         public async Task AcquireRateTokenAsync(CancellationToken ct)
         {
             if (_rateBucket != null)
+            {
+                long tokenStart = OnRateTokenAcquired != null ? Stopwatch.GetTimestamp() : 0;
                 await _rateBucket.WaitAsync(ct);
+                if (OnRateTokenAcquired != null)
+                    OnRateTokenAcquired((long)Stopwatch.GetElapsedTime(tokenStart).TotalMilliseconds);
+            }
         }
 
         private void RefillRateBucket(object state)
