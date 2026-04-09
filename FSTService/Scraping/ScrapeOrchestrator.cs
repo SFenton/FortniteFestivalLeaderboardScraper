@@ -181,7 +181,9 @@ public sealed class ScrapeOrchestrator
             overThresholdMultiplier: opts.OverThresholdMultiplier,
             overThresholdExtraPages: opts.OverThresholdExtraPages,
             validEntryTarget: opts.ValidEntryTarget,
-            sharedLimiter: _pool.Limiter,
+            // Sequential mode derives its own bounded limiter from song/page
+            // concurrency settings; sharing the global pool can overrun the cap.
+            sharedLimiter: opts.SequentialScrape ? null : _pool.Limiter,
             deferDeepScrape: true,
             validCutoffMultiplier: opts.ValidCutoffMultiplier,
             onPageScraped: (songId, instrument, entries) =>
@@ -350,7 +352,7 @@ public sealed class ScrapeOrchestrator
                 EndTime = entry.EndTime,
                 Source = "solo_extract",
                 InstrumentCombo = entry.InstrumentCombo ?? "",
-                MemberStats = entry.BandMembers, 
+                MemberStats = entry.BandMembers,
             };
 
             _bandPersistence.EnqueueAsync(songId, bandType, [bandEntry], ct)

@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text;
+using System.Text.Json;
 using FortniteFestival.Core;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -18,6 +20,99 @@ public class GlobalLeaderboardScraperTests
         var http = new HttpClient(handler);
         var scraper = new GlobalLeaderboardScraper(http, _progress, _log, maxLookupRetries: 0);
         return (scraper, handler);
+    }
+
+    /// <summary>
+    /// Response handler used to measure concurrent in-flight requests while returning
+    /// deterministic V1 leaderboard pages.
+    /// </summary>
+    private sealed class DelayedLeaderboardHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly TimeSpan _delay;
+        private readonly int _totalPages;
+        private int _inFlight;
+        private int _maxInFlight;
+
+        public int MaxInFlight => Volatile.Read(ref _maxInFlight);
+
+        public DelayedLeaderboardHttpMessageHandler(TimeSpan delay, int totalPages)
+        {
+            _delay = delay;
+            _totalPages = totalPages;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var currentInFlight = Interlocked.Increment(ref _inFlight);
+            while (true)
+            {
+                var max = Volatile.Read(ref _maxInFlight);
+                if (currentInFlight <= max) break;
+                if (Interlocked.CompareExchange(ref _maxInFlight, currentInFlight, max) == max) break;
+            }
+
+            try
+            {
+                await Task.Delay(_delay, cancellationToken);
+
+                var page = GetPage(request.RequestUri);
+                var isFirstPage = page == 0;
+                var payload = new
+                {
+                    page,
+                    totalPages = _totalPages,
+                    entries = new[]
+                    {
+                        new
+                        {
+                            teamId = isFirstPage ? "p0" : $"p{page}",
+                            rank = isFirstPage ? 1 : page + 1,
+                            percentile = isFirstPage ? 1.0 : 0.5,
+                            sessionHistory = new[]
+                            {
+                                new
+                                {
+                                    trackedStats = new
+                                    {
+                                        SCORE = isFirstPage ? 500 : 500 - page,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                };
+                var json = JsonSerializer.Serialize(payload);
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json"),
+                };
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _inFlight);
+            }
+        }
+
+        private static int GetPage(Uri? uri)
+        {
+            if (uri is null) return 0;
+
+            var query = uri.Query.TrimStart('?');
+            var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                if (!part.StartsWith("page=", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var rawValue = part.Substring("page=".Length);
+                if (int.TryParse(rawValue, out var page))
+                    return page;
+            }
+
+            return 0;
+        }
     }
 
     // ─── AllInstruments ─────────────────────────────────
@@ -857,6 +952,63 @@ public class GlobalLeaderboardScraperTests
         var r = results["s1"][0];
         Assert.Equal(500, r.ReportedTotalPages); // uncapped
         Assert.Equal(1, r.TotalPages);            // capped
+    }
+
+    [Fact]
+    public async Task ScrapeManySongsAsync_Sequential_RespectsPageConcurrencyLimit()
+    {
+        var handler = new DelayedLeaderboardHttpMessageHandler(TimeSpan.FromMilliseconds(40), totalPages: 8);
+        var http = new HttpClient(handler);
+        var scraper = new GlobalLeaderboardScraper(http, _progress, _log, maxLookupRetries: 0);
+
+        var requests = new List<GlobalLeaderboardScraper.SongScrapeRequest>
+        {
+            new() { SongId = "s1", Instruments = new[] { "Solo_Guitar" }, Label = "Song 1" },
+        };
+
+        var results = await scraper.ScrapeManySongsAsync(
+            requests,
+            "token",
+            "acct",
+            sequential: true,
+            pageConcurrency: 2,
+            songConcurrency: 1,
+            maxPages: 8);
+
+        Assert.Single(results);
+        Assert.True(
+            handler.MaxInFlight <= 2,
+            $"Expected at most 2 concurrent page requests, observed {handler.MaxInFlight}.");
+    }
+
+    [Fact]
+    public async Task ScrapeManySongsAsync_Sequential_IgnoresSharedLimiter()
+    {
+        var (scraper, handler) = CreateScraper();
+        handler.EnqueueJsonOk(OnePage);
+
+        using var sharedLimiter = new FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter(
+            initialDop: 64,
+            minDop: 4,
+            maxDop: 64,
+            _log);
+
+        var requests = new List<GlobalLeaderboardScraper.SongScrapeRequest>
+        {
+            new() { SongId = "s1", Instruments = new[] { "Solo_Guitar" }, Label = "Song 1" },
+        };
+
+        var results = await scraper.ScrapeManySongsAsync(
+            requests,
+            "token",
+            "acct",
+            sequential: true,
+            pageConcurrency: 1,
+            songConcurrency: 1,
+            sharedLimiter: sharedLimiter);
+
+        Assert.Single(results);
+        Assert.Equal(0, sharedLimiter.TotalRequests);
     }
 
     // ─── Semaphore safety on cancellation ───────────────

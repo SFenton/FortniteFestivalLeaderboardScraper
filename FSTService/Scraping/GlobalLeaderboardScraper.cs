@@ -1379,12 +1379,20 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null)
     {
         if (sequential)
+        {
+            if (sharedLimiter is not null)
+            {
+                _log.LogDebug(
+                    "Sequential scrape ignores shared limiter and uses a local bounded limiter derived from song/page concurrency.");
+            }
+
             return await ScrapeManySongsSequentialAsync(
                 requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency,
                 maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages, validEntryTarget,
-                sharedLimiter, validCutoffMultiplier: validCutoffMultiplier,
+                validCutoffMultiplier: validCutoffMultiplier,
                 onPageScraped: onPageScraped,
                 onBandPageScraped: onBandPageScraped);
+        }
 
         var ownsLimiter = sharedLimiter is null;
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
@@ -1505,7 +1513,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
-        AdaptiveConcurrencyLimiter? sharedLimiter = null,
         double validCutoffMultiplier = 0.95,
         Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
         Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null)
@@ -1519,8 +1526,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, ~{MaxConcurrent} max concurrent requests, adaptive)",
             requests.Count, effectiveSongConcurrency, maxDop);
 
-        var ownsLimiter = sharedLimiter is null;
-        var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log,
+        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log,
             maxRequestsPerSecond);
         try
         {
@@ -1542,6 +1548,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         overThresholdExtraPages: overThresholdExtraPages,
                         validEntryTarget: validEntryTarget,
                         validCutoffMultiplier: validCutoffMultiplier,
+                        pageConcurrency: pageConcurrency,
                         onPageScraped: onPageScraped,
                         onBandPageScraped: onBandPageScraped,
                         maxScores: req.MaxScores);
@@ -1569,13 +1576,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }).ToList();
 
         await Task.WhenAll(tasks);
-        _progress.SetAdaptiveLimiter(null);
 
         return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
         }
         finally
         {
-            if (ownsLimiter) limiter.Dispose();
+            _progress.SetAdaptiveLimiter(null);
         }
     }
 
@@ -1599,6 +1605,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
         double validCutoffMultiplier = 0.95,
+        int pageConcurrency = 10,
         Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
         Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null,
         SongMaxScores? maxScores = null)
@@ -1685,6 +1692,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         if (totalPages > 1)
         {
             using var pageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            int effectivePageConcurrency = Math.Max(1, pageConcurrency);
+            using var pageSemaphore = new SemaphoreSlim(effectivePageConcurrency, effectivePageConcurrency);
 
             var tasks = new List<Task>(totalPages - 1);
             for (int p = 1; p < totalPages; p++)
@@ -1696,9 +1705,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             async Task FetchPageWithLimiterAsync(int pageNum)
             {
                 if (pageCts.IsCancellationRequested) return;
+                bool pageGateAcquired = false;
                 bool acquired = false;
                 try
                 {
+                    await pageSemaphore.WaitAsync(pageCts.Token);
+                    pageGateAcquired = true;
+
                     if (limiter is not null)
                     {
                         await limiter.WaitAsync(pageCts.Token);
@@ -1766,6 +1779,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 finally
                 {
                     if (acquired) limiter?.Release();
+                    if (pageGateAcquired) pageSemaphore.Release();
                 }
             }
 
