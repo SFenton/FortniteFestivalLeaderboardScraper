@@ -436,6 +436,18 @@ public sealed class ScraperWorker : BackgroundService
             _lifecycle.ScrapeCompleted();
             return;
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Per-pass timeout fired (ScrapePassTimeoutMinutes) but the host is NOT
+            // shutting down. Treat as a recoverable event — partial data was already
+            // persisted via pipelined writers. The main loop will retry next pass.
+            _log.LogWarning(
+                "Scrape pass timed out after {TimeoutMinutes} minutes. " +
+                "Partial data from this pass was already persisted. Will retry next pass.",
+                opts.ScrapePassTimeoutMinutes);
+            _lifecycle.ScrapeCompleted();
+            return;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Non-CDN persistence or data errors should not kill the host.

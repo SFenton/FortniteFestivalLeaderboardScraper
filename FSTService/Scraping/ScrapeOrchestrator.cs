@@ -156,6 +156,10 @@ public sealed class ScrapeOrchestrator
                                     .Where(e => registeredIds.Contains(e.AccountId))
                                     .Select(e => (e.AccountId, songId, result.Instrument)));
                         }
+
+                        // Extract band entries from solo entries whose best session was a group play
+                        if (opts.EnableBandScraping)
+                            ExtractBandEntriesFromSoloPage(songId, result.Entries, passCt);
                     }
 
                     aggregates.AddEntries(result.EntriesCount);
@@ -196,6 +200,10 @@ public sealed class ScrapeOrchestrator
                             .Where(e => registeredIds.Contains(e.AccountId))
                             .Select(e => (e.AccountId, songId, instrument)));
                 }
+
+                // Extract band entries from solo entries whose best session was a group play
+                if (opts.EnableBandScraping)
+                    ExtractBandEntriesFromSoloPage(songId, entries, passCt);
             },
             onBandPageScraped: (songId, bandType, entries) =>
             {
@@ -290,6 +298,66 @@ public sealed class ScrapeOrchestrator
         };
     }
 
+    /// <summary>
+    /// Scan solo leaderboard entries for band context (best session was a group play)
+    /// and emit <see cref="BandLeaderboardEntry"/> objects to the band persistence pipeline.
+    /// The <c>M_{i}_ID_*</c> fields in trackedStats reveal teammate account IDs,
+    /// eliminating the need for separate Band_Duets/Trios/Quad API calls.
+    /// </summary>
+    private void ExtractBandEntriesFromSoloPage(
+        string songId,
+        IReadOnlyList<LeaderboardEntry> entries,
+        CancellationToken ct)
+    {
+        foreach (var entry in entries)
+        {
+            if (entry.BandMembers is not { Count: >= 2 })
+                continue;
+
+            // Determine band type from member count
+            var bandType = entry.BandMembers.Count switch
+            {
+                2 => "Band_Duets",
+                3 => "Band_Trios",
+                _ => "Band_Quad", // 4+
+            };
+
+            // Build team key from sorted member account IDs (same logic as ParseBandEntryElement)
+            var sortedIds = entry.BandMembers
+                .Select(m => m.AccountId)
+                .Where(id => !string.IsNullOrEmpty(id))
+                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (sortedIds.Count < 2)
+                continue;
+
+            var teamKey = string.Join(':', sortedIds);
+
+            var bandEntry = new BandLeaderboardEntry
+            {
+                TeamKey = teamKey,
+                TeamMembers = sortedIds.ToArray(),
+                Score = entry.BandScore ?? entry.Score,
+                BaseScore = entry.BaseScore,
+                InstrumentBonus = entry.InstrumentBonus,
+                OverdriveBonus = entry.OverdriveBonus,
+                Accuracy = entry.Accuracy,
+                IsFullCombo = entry.IsFullCombo,
+                Stars = entry.Stars,
+                Difficulty = entry.Difficulty,
+                Season = entry.Season,
+                EndTime = entry.EndTime,
+                Source = "solo_extract",
+                InstrumentCombo = entry.InstrumentCombo ?? "",
+                MemberStats = entry.BandMembers,
+            };
+
+            _bandPersistence.EnqueueAsync(songId, bandType, [bandEntry], ct)
+                .AsTask().GetAwaiter().GetResult();
+        }
+    }
+
     // ─── Scrape-specific utility methods ───────────────────────
 
     internal static IReadOnlyList<string> GetEnabledInstruments(ScraperOptions opts)
@@ -301,12 +369,8 @@ public sealed class ScrapeOrchestrator
         if (opts.QueryDrums)   instruments.Add("Solo_Drums");
         if (opts.QueryProLead) instruments.Add("Solo_PeripheralGuitar");
         if (opts.QueryProBass) instruments.Add("Solo_PeripheralBass");
-        if (opts.EnableBandScraping)
-        {
-            instruments.Add("Band_Duets");
-            instruments.Add("Band_Trios");
-            instruments.Add("Band_Quad");
-        }
+        // Band data (Duets/Trios/Quad) is extracted from solo entry trackedStats
+        // when EnableBandScraping=true — no separate band API calls needed.
         return instruments;
     }
 

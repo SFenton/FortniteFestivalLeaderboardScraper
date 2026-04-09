@@ -587,6 +587,69 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
     }
 
+    [Fact]
+    public async Task RunScrapePass_PassTimeout_CaughtGracefully()
+    {
+        var service = CreateServiceWithSongs(("s1", "Song", "Artist"));
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+
+        // Simulate pass timeout: scraper throws OperationCanceledException
+        _scraper.ScrapeManySongsAsync(
+            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
+            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
+            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
+            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>())
+            .ThrowsAsync(new OperationCanceledException());
+
+        var opts = new ScraperOptions { DataDirectory = _tempDir, ScrapePassTimeoutMinutes = 30 };
+        var worker = CreateWorker(opts);
+
+        // Host token is NOT cancelled — this is a pass timeout, not a shutdown.
+        // Should not throw; the timeout should be caught and logged as a warning.
+        await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RunScrapePass_HostShutdown_Propagates()
+    {
+        var service = CreateServiceWithSongs(("s1", "Song", "Artist"));
+
+        using var cts = new CancellationTokenSource();
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+
+        // Simulate host shutdown: scraper throws OperationCanceledException
+        // AND the host cancellation token is cancelled
+        _scraper.ScrapeManySongsAsync(
+            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
+            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
+            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
+            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>())
+            .ThrowsAsync(new OperationCanceledException());
+
+        var opts = new ScraperOptions { DataDirectory = _tempDir };
+        var worker = CreateWorker(opts);
+
+        cts.Cancel(); // Host is shutting down
+
+        // Should propagate so ExecuteAsync's shutdown handler catches it
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, cts.Token));
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // BackgroundSongSyncLoopAsync
     // ═══════════════════════════════════════════════════════════════

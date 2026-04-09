@@ -255,10 +255,11 @@ public sealed class ScraperOptions
     /// Maximum time (in minutes) for a single scrape pass before it is cancelled.
     /// Acts as a safety net against infinite hangs. The CDN slot-release mechanism
     /// is the primary defence; this is a backstop.
-    /// Default 45 minutes. Set to 0 to disable.
-    /// When <see cref="FullCrawlEnabled"/> is true, consider increasing to 300+.
+    /// Default 0 (disabled). Set to a positive value (e.g. 45) to enable.
+    /// When <see cref="FullCrawlEnabled"/> is true, consider 300+.
+    /// Override via environment variable: Scraper__ScrapePassTimeoutMinutes.
     /// </summary>
-    public int ScrapePassTimeoutMinutes { get; set; } = 45;
+    public int ScrapePassTimeoutMinutes { get; set; }
 
     // ─── Band Scraping ─────────────────────────────────
 

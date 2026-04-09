@@ -4,9 +4,9 @@ using System.Text.Json;
 
 // Config
 var accountId = "195e93ef108143b2975ee46662d4d0e1"; // SFentonX
-var songSu = "fefd057e-ebe2-4909-ba35-1752d86b6b17"; // TTFAF
-var instrument = "Solo_Guitar";
-var seasonNum = "012";
+var songSu = "aa144fd6-c51c-49b8-8798-1ad23f60d41f"; // The Night Porter
+var instrument = "Solo_Drums";
+var seasonNum = "013";
 
 // Switch client — supports device_code, has FNFestival permissions
 var switchClientId = "98f7e42c2e3a4f86a74eb43fbb41ed39";
@@ -93,13 +93,13 @@ while (DateTimeOffset.UtcNow < deadline)
 
 if (gameToken is null) { Console.WriteLine("\nTimeout — not approved in time."); return; }
 
-// Step 4: Call V1 with teamAccountIds — query captainparticles using SFentonX's token
-var targetAccountId = "cb8ebb19b32c40d1a736d7f8efec17ac"; // captainparticles
-var eventId = $"alltime_{songSu}_{instrument}";
-var windowId = "alltime";
+// Step 4: Call V1 with teamAccountIds — query SFentonX's own entry
+var targetAccountId = "195e93ef108143b2975ee46662d4d0e1"; // SFentonX (self)
+var eventId = $"season{seasonNum}_{songSu}";
+var windowId = $"{songSu}_{instrument}";
 var url = $"https://events-public-service-live.ol.epicgames.com/api/v1/leaderboards/FNFestival/{eventId}/{windowId}/{gameAcctId}?teamAccountIds={targetAccountId}&appId=Fortnite&showLiveSessions=false";
 
-Console.WriteLine($"\nStep 4: Calling V1 with teamAccountIds={targetAccountId} (captainparticles)...\n");
+Console.WriteLine($"\nStep 4: Calling V1 for SFentonX — The Night Porter / Solo_Drums / Season 013...\n");
 Console.WriteLine($"URL: {url}\n");
 
 var apiReq = new HttpRequestMessage(HttpMethod.Get, url);
@@ -108,28 +108,15 @@ var apiResp = await http.SendAsync(apiReq);
 Console.WriteLine($"V1 Status: {apiResp.StatusCode}");
 var apiBody = await apiResp.Content.ReadAsStringAsync();
 
+// Dump full pretty-printed JSON
 try
 {
     var parsed = JsonDocument.Parse(apiBody);
-    var entries = parsed.RootElement.GetProperty("entries");
-    Console.WriteLine($"Total entries returned: {entries.GetArrayLength()}\n");
-
-    foreach (var entry in entries.EnumerateArray())
-    {
-        var teamIds = entry.GetProperty("teamAccountIds");
-        var teamId = teamIds.GetArrayLength() > 0 ? teamIds[0].GetString() : "?";
-
-        Console.WriteLine($"--- Entry for {teamId} ---");
-        Console.WriteLine($"  Score:      {entry.GetProperty("score").GetInt64()}");
-        Console.WriteLine($"  Rank:       {entry.GetProperty("rank").GetInt32()}");
-        Console.WriteLine($"  Percentile: {entry.GetProperty("percentile").GetDouble()}");
-        Console.WriteLine($"  Sessions:   {entry.GetProperty("sessionHistory").GetArrayLength()}");
-        Console.WriteLine();
-    }
+    var pretty = JsonSerializer.Serialize(parsed, new JsonSerializerOptions { WriteIndented = true });
+    Console.WriteLine(pretty);
 }
 catch (Exception ex)
 {
     Console.WriteLine($"Parse error: {ex.Message}");
-    // Print first 2000 chars of raw body
-    Console.WriteLine(apiBody.Length > 2000 ? apiBody[..2000] : apiBody);
+    Console.WriteLine(apiBody.Length > 4000 ? apiBody[..4000] : apiBody);
 }

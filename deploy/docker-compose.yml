@@ -93,6 +93,7 @@ services:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00
       # - Scraper__DegreeOfParallelism=16
+      # - Scraper__ScrapePassTimeoutMinutes=45
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
       interval: 30s

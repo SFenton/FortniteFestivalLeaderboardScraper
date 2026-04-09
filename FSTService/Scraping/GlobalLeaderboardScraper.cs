@@ -1991,6 +1991,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             int bestSeason = 0;
             int bestDifficulty = 0;
             string? bestEndTime = null;
+            JsonElement bestStats = default;
+            bool hasBestStats = false;
 
             foreach (var session in sh.EnumerateArray())
             {
@@ -2015,6 +2017,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         ? df.GetInt32() : 0;
                     bestEndTime = session.TryGetProperty("endTime", out var et) && et.ValueKind == JsonValueKind.String
                         ? et.GetString() : null;
+                    bestStats = ts;
+                    hasBestStats = true;
                 }
             }
 
@@ -2025,9 +2029,39 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             entry.Season = bestSeason;
             entry.Difficulty = bestDifficulty;
             entry.EndTime = bestEndTime;
+
+            // Extract band context from best session if it was a group play.
+            // Presence of M_1_* fields indicates multiple members.
+            if (hasBestStats)
+            {
+                ExtractBandContext(entry, bestStats);
+            }
         }
 
         return entry;
+    }
+
+    /// <summary>
+    /// Check if the best session's trackedStats contains multi-member (band) context
+    /// and populate the entry's band fields if so.
+    /// </summary>
+    private static void ExtractBandContext(LeaderboardEntry entry, JsonElement stats)
+    {
+        // Quick check: if M_1_INSTRUMENT exists, this was a group session
+        if (!stats.TryGetProperty("M_1_INSTRUMENT", out _))
+            return;
+
+        var members = ParseMemberStats(stats);
+        if (members.Count < 2)
+            return;
+
+        entry.BandMembers = members;
+        entry.BandScore = GetNullableIntStat(stats, "B_SCORE");
+        entry.BaseScore = GetNullableIntStat(stats, "B_BASESCORE");
+        entry.InstrumentBonus = GetNullableIntStat(stats, "B_INSTRUMENT_BONUS");
+        entry.OverdriveBonus = GetNullableIntStat(stats, "B_OVERDRIVE_BONUS");
+        entry.InstrumentCombo = string.Join(':',
+            members.Select(m => m.InstrumentId).OrderBy(id => id));
     }
 
     // ─── Band entry parsing ─────────────────────────────
@@ -2147,10 +2181,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     /// <summary>
     /// Extract per-member stats from <c>trackedStats</c> using the <c>M_{i}_*</c> field pattern.
     /// Maps member index → account ID via <c>M_{i}_ID_{accountId}</c> keys.
+    /// Shared between band entry parsing and solo entry band-context extraction.
     /// </summary>
-    private static void ParseBandMemberStats(BandLeaderboardEntry entry, JsonElement stats)
+    internal static List<BandMemberStats> ParseMemberStats(JsonElement stats)
     {
-        // Discover member count from INSTRUMENT_{i} fields
         var memberStats = new Dictionary<int, BandMemberStats>();
 
         foreach (var prop in stats.EnumerateObject())
@@ -2223,10 +2257,19 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             }
         }
 
-        entry.MemberStats = memberStats
+        return memberStats
             .OrderBy(kv => kv.Key)
             .Select(kv => kv.Value)
             .ToList();
+    }
+
+    /// <summary>
+    /// Extract per-member stats and apply to a <see cref="BandLeaderboardEntry"/>.
+    /// Delegates to <see cref="ParseMemberStats"/> for the actual field extraction.
+    /// </summary>
+    private static void ParseBandMemberStats(BandLeaderboardEntry entry, JsonElement stats)
+    {
+        entry.MemberStats = ParseMemberStats(stats);
     }
 
     private static BandMemberStats GetOrCreateMemberStats(Dictionary<int, BandMemberStats> dict, int index)
@@ -2269,6 +2312,33 @@ public sealed class LeaderboardEntry
     public int ApiRank { get; set; }
     /// <summary>Origin of this entry: "scrape" (global scrape), "backfill" (user backfill target), "neighbor" (backfill neighborhood).</summary>
     public string Source { get; set; } = "scrape";
+
+    // ─── Band context (populated when best session was a group play) ───
+
+    /// <summary>
+    /// Per-member stats extracted from <c>M_{i}_*</c> fields in trackedStats.
+    /// Null when the best session was truly solo (only M_0 present).
+    /// When non-null, contains 2–4 members including the entry owner.
+    /// </summary>
+    public List<BandMemberStats>? BandMembers { get; set; }
+
+    /// <summary>Band total score (<c>B_SCORE</c>). Null for solo sessions.</summary>
+    public int? BandScore { get; set; }
+
+    /// <summary>Sum of member base scores before bonuses (<c>B_BASESCORE</c>). Null for solo sessions.</summary>
+    public int? BaseScore { get; set; }
+
+    /// <summary>Instrument diversity bonus (<c>B_INSTRUMENT_BONUS</c>). Null for solo sessions.</summary>
+    public int? InstrumentBonus { get; set; }
+
+    /// <summary>Overdrive bonus (<c>B_OVERDRIVE_BONUS</c>). Null for solo sessions.</summary>
+    public int? OverdriveBonus { get; set; }
+
+    /// <summary>
+    /// Sorted instrument IDs colon-joined (e.g., "0:3:4" = Guitar+Drums+ProGuitar).
+    /// Null for solo sessions.
+    /// </summary>
+    public string? InstrumentCombo { get; set; }
 }
 
 /// <summary>
