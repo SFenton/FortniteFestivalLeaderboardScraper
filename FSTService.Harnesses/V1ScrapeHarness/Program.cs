@@ -239,32 +239,23 @@ liveReporter.Start();
 if (persistence is not null)
     persistence.StartPageWriters(ct: cts.Token);
 
-// Persistence timing wrapper for onSongComplete callback
-Func<string, List<GlobalLeaderboardResult>, ValueTask>? onSongComplete = null;
+// Per-page persistence callback — matches production ScrapeOrchestrator exactly.
+// Pages stream into the bounded channel during the fetch loop, providing backpressure.
+Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>? onPageScraped = null;
 if (!noPersist && persistence is not null)
 {
-    onSongComplete = async (songId, results) =>
+    onPageScraped = async (songId, instrument, entries) =>
     {
-        var persistStart = harnessStopwatch.ElapsedMilliseconds;
-        int entryCount = 0;
+        var enqueueStart = harnessStopwatch.ElapsedMilliseconds;
+        await persistence.EnqueuePageAsync(songId, instrument, entries, cts.Token);
+        var enqueueMs = harnessStopwatch.ElapsedMilliseconds - enqueueStart;
 
-        foreach (var result in results)
-        {
-            if (result.Entries.Count == 0) continue;
-            entryCount += result.Entries.Count;
-
-            var enqueueStart = harnessStopwatch.ElapsedMilliseconds;
-            await persistence.EnqueuePageAsync(songId, result.Instrument, result.Entries, cts.Token);
-            var enqueueMs = harnessStopwatch.ElapsedMilliseconds - enqueueStart;
-        }
-
-        var totalMs = harnessStopwatch.ElapsedMilliseconds - persistStart;
         collector.RecordPersistTiming(new PersistTimingSample(
-            TimestampMs: persistStart,
+            TimestampMs: enqueueStart,
             SongId: songId,
-            EntryCount: entryCount,
-            EnqueueMs: totalMs,  // approximate — sum of enqueues
-            TotalMs: totalMs));
+            EntryCount: entries.Count,
+            EnqueueMs: enqueueMs,
+            TotalMs: enqueueMs));
     };
 }
 
@@ -285,7 +276,7 @@ try
         token,
         caller,
         maxConcurrency: dop,
-        onSongComplete: onSongComplete,
+        onSongComplete: null,
         ct: cts.Token,
         maxPages: maxPages,
         sequential: sequential,
@@ -293,7 +284,8 @@ try
         songConcurrency: songConcurrency == 0 ? 1 : songConcurrency,
         maxRequestsPerSecond: rps,
         sharedLimiter: pool.Limiter,
-        deferDeepScrape: false);
+        deferDeepScrape: false,
+        onPageScraped: onPageScraped);
 }
 catch (OperationCanceledException)
 {
