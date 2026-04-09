@@ -103,7 +103,7 @@ Console.WriteLine($"DOP:      {maxDop}  RPS: {maxRps}  SongDOP: {SongDop}  Batch
 
 // ─── Resume state from previous run ─────────────────────────
 
-int initialDop = initialDopOverride ?? maxDop;
+int initialDop = initialDopOverride ?? Math.Min(4, maxDop);
 int initialSsthresh = 0;
 var stateFile = Path.Combine(outputDir, "dop-state.json");
 
