@@ -285,8 +285,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>());
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -325,8 +325,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>())
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
             .Returns(Task.FromResult(mockResults));
 
         var opts = new ScraperOptions
@@ -347,8 +347,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>());
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>());
     }
 
     [Fact]
@@ -374,8 +374,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>());
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>());
     }
 
     [Fact]
@@ -402,8 +402,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>());
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>());
     }
 
     [Fact]
@@ -424,8 +424,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>())
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>
             {
                 ["s1"] = new() { new() { SongId = "s1", Instrument = "Solo_Guitar", Entries = new(), TotalPages = 0, PagesScraped = 0, Requests = 1, BytesReceived = 100 } },
@@ -449,8 +449,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>());
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -477,8 +477,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>());
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>());
     }
 
     [Fact]
@@ -514,8 +514,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>())
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
             .Returns(async callInfo =>
             {
                 // Invoke the callback so the persistence pipeline processes entries
@@ -549,8 +549,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>());
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>());
 
         // Verify name resolution was attempted
         await _nameResolver.Received().ResolveNewAccountsAsync(
@@ -573,8 +573,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>())
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -604,8 +604,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>())
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
             .ThrowsAsync(new OperationCanceledException());
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, ScrapePassTimeoutMinutes = 30 };
@@ -636,8 +636,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Action<string, string, IReadOnlyList<LeaderboardEntry>>?>(),
-            Arg.Any<Action<string, string, IReadOnlyList<BandLeaderboardEntry>>?>())
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
             .ThrowsAsync(new OperationCanceledException());
 
         var opts = new ScraperOptions { DataDirectory = _tempDir };

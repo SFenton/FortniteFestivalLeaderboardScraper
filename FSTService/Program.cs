@@ -34,6 +34,18 @@ if (File.Exists(envPath))
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ─── ThreadPool tuning ──────────────────────────────────────
+// Default min threads = processor count, which on small VPS (2–4 cores)
+// causes starvation when DOP ≫ cores. Sync-over-async persistence
+// callbacks and high-concurrency HTTP work both need thread headroom.
+{
+    ThreadPool.GetMinThreads(out int prevWorker, out int prevIo);
+    int target = Math.Max(200, prevWorker);
+    ThreadPool.SetMinThreads(target, target);
+    ThreadPool.GetMinThreads(out int newWorker, out int newIo);
+    Console.WriteLine($"ThreadPool.SetMinThreads({target}, {target}) — was ({prevWorker}, {prevIo})");
+}
+
 // ─── JSON options ───────────────────────────────────────────
 
 builder.Services.ConfigureHttpJsonOptions(opts =>

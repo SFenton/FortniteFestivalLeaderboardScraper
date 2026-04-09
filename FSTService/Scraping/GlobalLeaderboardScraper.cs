@@ -1375,8 +1375,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
         bool deferDeepScrape = false,
         double validCutoffMultiplier = 0.95,
-        Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
-        Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null)
+        Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>? onPageScraped = null,
+        Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>? onBandPageScraped = null)
     {
         if (sequential)
         {
@@ -1510,8 +1510,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
         double validCutoffMultiplier = 0.95,
-        Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
-        Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null,
+        Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>? onPageScraped = null,
+        Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>? onBandPageScraped = null,
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
         int maxConcurrency = DefaultMaxConcurrency)
     {
@@ -1601,8 +1601,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
         double validCutoffMultiplier = 0.95,
-        Action<string, string, IReadOnlyList<LeaderboardEntry>>? onPageScraped = null,
-        Action<string, string, IReadOnlyList<BandLeaderboardEntry>>? onBandPageScraped = null,
+        Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>? onPageScraped = null,
+        Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>? onBandPageScraped = null,
         SongMaxScores? maxScores = null)
     {
         bool isBand = BandInstrumentMapping.AllBandTypes.Contains(instrument);
@@ -1680,10 +1680,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         {
             foreach (var entry in bandPage0!.Entries)
                 BandScrapePhase.ApplyChOptValidation(entry, maxScores);
-            onBandPageScraped?.Invoke(songId, instrument, bandPage0.Entries);
+            if (onBandPageScraped is not null)
+                await onBandPageScraped(songId, instrument, bandPage0.Entries);
         }
         else if (onPageScraped is not null)
-            onPageScraped(songId, instrument, soloPage0!.Entries);
+            await onPageScraped(songId, instrument, soloPage0!.Entries);
         else
             allEntries![0] = soloPage0!.Entries;
 
@@ -1723,7 +1724,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         {
                             foreach (var entry in bandParsed.Entries)
                                 BandScrapePhase.ApplyChOptValidation(entry, maxScores);
-                            onBandPageScraped?.Invoke(songId, instrument, bandParsed.Entries);
+                            if (onBandPageScraped is not null)
+                                await onBandPageScraped(songId, instrument, bandParsed.Entries);
                             Interlocked.Add(ref entriesCount, bandParsed.Entries.Count);
                             Interlocked.Increment(ref pagesScraped);
                         }
@@ -1743,7 +1745,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     if (parsed is not null)
                     {
                         if (onPageScraped is not null)
-                            onPageScraped(songId, instrument, parsed.Entries);
+                            await onPageScraped(songId, instrument, parsed.Entries);
                         else
                             allEntries![pageNum] = parsed.Entries;
                         Interlocked.Add(ref entriesCount, parsed.Entries.Count);

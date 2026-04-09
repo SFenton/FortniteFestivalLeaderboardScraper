@@ -186,10 +186,9 @@ public sealed class ScrapeOrchestrator
             sharedLimiter: _pool.Limiter,
             deferDeepScrape: true,
             validCutoffMultiplier: opts.ValidCutoffMultiplier,
-            onPageScraped: (songId, instrument, entries) =>
+            onPageScraped: async (songId, instrument, entries) =>
             {
-                _persistence.EnqueuePageAsync(songId, instrument, entries, passCt)
-                    .AsTask().GetAwaiter().GetResult();
+                await _persistence.EnqueuePageAsync(songId, instrument, entries, passCt);
                 aggregates.AddRankChangedSongId(songId);
 
                 aggregates.AddEntries(entries.Count);
@@ -207,11 +206,10 @@ public sealed class ScrapeOrchestrator
                 if (opts.EnableBandScraping)
                     ExtractBandEntriesFromSoloPage(songId, entries, passCt);
             },
-            onBandPageScraped: (songId, bandType, entries) =>
+            onBandPageScraped: async (songId, bandType, entries) =>
             {
                 if (entries.Count > 0)
-                    _bandPersistence.EnqueueAsync(songId, bandType, entries, passCt)
-                        .AsTask().GetAwaiter().GetResult();
+                    await _bandPersistence.EnqueueAsync(songId, bandType, entries, passCt);
             });
 
         // ── Drain pipelined writers before score change detection ──
