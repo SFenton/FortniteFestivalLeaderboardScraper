@@ -62,12 +62,12 @@ function renderMetadataElement(
       }
       return <ScorePill score={score.score} width={scoreWidth} bold textAlign={scoreTextAlign} />;
     case 'percentage':
-      return (score.accuracy ?? 0) > 0 ? (
+      return (
         <AccuracyDisplay
           accuracy={score.accuracy}
           isFullCombo={!!score.isFullCombo}
         />
-      ) : null;
+      );
     case 'stars':
       return stars > 0 ? (
         <MiniStars starsCount={stars} isFullCombo={!!score.isFullCombo} />

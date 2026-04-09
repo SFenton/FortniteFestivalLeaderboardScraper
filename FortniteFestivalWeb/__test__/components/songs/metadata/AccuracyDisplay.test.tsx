@@ -3,19 +3,23 @@ import { render } from '@testing-library/react';
 import AccuracyDisplay from '../../../../src/components/songs/metadata/AccuracyDisplay';
 
 describe('AccuracyDisplay', () => {
-  it('renders fallback for null accuracy', () => {
+  it('renders 0% pill for null accuracy', () => {
     const { container } = render(<AccuracyDisplay accuracy={null} />);
-    expect(container.textContent).toBe('—');
+    expect(container.textContent).toBe('0%');
+    const span = container.querySelector('span');
+    expect(span?.style.backgroundColor).toMatch(/^rgba\(220/);
   });
 
-  it('renders fallback for zero accuracy', () => {
+  it('renders 0% pill for zero accuracy', () => {
     const { container } = render(<AccuracyDisplay accuracy={0} />);
-    expect(container.textContent).toBe('—');
+    expect(container.textContent).toBe('0%');
+    const span = container.querySelector('span');
+    expect(span?.style.backgroundColor).toMatch(/^rgba\(220/);
   });
 
-  it('renders custom fallback text', () => {
-    const { container } = render(<AccuracyDisplay accuracy={null} fallback="N/A" />);
-    expect(container.textContent).toBe('N/A');
+  it('renders 0% pill for undefined accuracy', () => {
+    const { container } = render(<AccuracyDisplay accuracy={undefined} />);
+    expect(container.textContent).toBe('0%');
   });
 
   it('renders formatted percentage for normal accuracy', () => {

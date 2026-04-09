@@ -403,9 +403,10 @@ describe('SongRow false-path branches', () => {
     expect(screen.queryByText('0')).toBeNull();
   });
 
-  it('accuracy=0 → no accuracy rendered', () => {
+  it('accuracy=0 → renders accuracy pill with 0', () => {
     renderSongRow({ score: ps({ accuracy: 0 }), metadataOrder: ['percentage'] });
-    expect(screen.queryByTestId('accuracy')).toBeNull();
+    expect(screen.queryByTestId('accuracy')).toBeTruthy();
+    expect(screen.getByTestId('accuracy').textContent).toBe('0');
   });
 
   it('stars=0 → no stars rendered', () => {
@@ -445,9 +446,9 @@ describe('SongRow false-path branches', () => {
 });
 
 describe('SongRow ?? fallback branches', () => {
-  it('accuracy=undefined triggers ?? 0 fallback', () => {
+  it('accuracy=undefined → renders accuracy pill', () => {
     renderSongRow({ score: ps({ accuracy: undefined }), metadataOrder: ['percentage'] });
-    expect(screen.queryByTestId('accuracy')).toBeNull();
+    expect(screen.queryByTestId('accuracy')).toBeTruthy();
   });
 
   it('stars=undefined triggers ?? 0 fallback', () => {

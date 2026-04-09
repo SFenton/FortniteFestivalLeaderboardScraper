@@ -17,11 +17,7 @@ const AccuracyDisplay = memo(function AccuracyDisplay({
   fallback = '\u2014',
 }: AccuracyDisplayProps) {
   const s = useStyles();
-  if (accuracy == null || accuracy <= 0) {
-    return <>{fallback}</>;
-  }
-
-  const pct = accuracy / ACCURACY_SCALE;
+  const pct = (accuracy != null && accuracy > 0) ? accuracy / ACCURACY_SCALE : 0;
   const text = formatAccuracyText(pct);
 
   if (isFullCombo) {
