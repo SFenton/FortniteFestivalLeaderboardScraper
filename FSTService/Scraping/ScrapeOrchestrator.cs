@@ -350,7 +350,7 @@ public sealed class ScrapeOrchestrator
                 EndTime = entry.EndTime,
                 Source = "solo_extract",
                 InstrumentCombo = entry.InstrumentCombo ?? "",
-                MemberStats = entry.BandMembers,
+                MemberStats = entry.BandMembers, 
             };
 
             _bandPersistence.EnqueueAsync(songId, bandType, [bandEntry], ct)
