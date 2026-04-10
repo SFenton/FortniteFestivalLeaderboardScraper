@@ -55,6 +55,7 @@ export interface PathActivation {
   endBeat: number;
   startSeconds?: number;
   endSeconds?: number;
+  scoreBeforeActivation?: number;
   startNotes?: PathStartNote[];
 }
 
@@ -138,8 +139,6 @@ function buildRows(data: PathDataResponse): TableRow[] {
       // Merge chord members at the same beat into one row
       const prev = rows.length > 0 ? rows[rows.length - 1] : undefined;
       if (prev && Math.abs(prev.beat - sn.beat) < MERGE_EPSILON) {
-        // Take the higher cumulative score (it accumulates per sub-note)
-        prev.cumulativeScore = Math.max(prev.cumulativeScore, sn.cumulativeScore);
         continue;
       }
       const frets = findChord(sn.beat);
@@ -148,7 +147,7 @@ function buildRows(data: PathDataResponse): TableRow[] {
         beat: sn.beat,
         seconds: sn.seconds ?? 0,
         odPercent: sn.odPercent * 100,
-        cumulativeScore: sn.cumulativeScore,
+        cumulativeScore: act.scoreBeforeActivation ?? sn.cumulativeScore,
       });
     }
   }
