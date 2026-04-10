@@ -8,6 +8,7 @@ import { ToggleRow } from '../../components/common/ToggleRow';
 import SectionHeader from '../../components/common/SectionHeader';
 import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
+import { DEFAULT_COLUMN_ORDER, type ColumnKey } from '../songinfo/components/path/PathDataTable';
 import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
@@ -257,6 +258,24 @@ export default function SettingsPage() {
   );
   /* v8 ignore stop */
 
+  const PATH_COLUMN_LABELS: Record<ColumnKey, string> = {
+    note: t('paths.colNote'),
+    beat: t('paths.colBeat'),
+    time: t('paths.colTime'),
+    od: t('paths.colOd'),
+    score: t('paths.colScore'),
+  };
+
+  const pathColumnOrderItems = useMemo(
+    () =>
+      settings.pathColumnOrder.map(k => ({
+        key: k,
+        label: PATH_COLUMN_LABELS[k] ?? k,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- PATH_COLUMN_LABELS is stable per render
+    [settings.pathColumnOrder],
+  );
+
   let staggerIndex = 0;
   const stagger = (idx: number): number | undefined => skipAnimRef.current ? undefined : idx * STAGGER_INTERVAL;
   const headerStagger: CSSProperties = !skipAnimRef.current
@@ -329,6 +348,22 @@ export default function SettingsPage() {
                     /* v8 ignore stop */
                   />
                 </div>
+              </div>
+            </div>
+            <div style={st.standaloneRow}>
+              <div style={st.standaloneLabel}>{t('settings.pathColumnOrder')}</div>
+              <div style={st.standaloneDesc}>
+                {t('settings.pathColumnOrderDesc')}
+              </div>
+              <div style={st.reorderListWrap}>
+                <ReorderList
+                  items={pathColumnOrderItems}
+                  /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
+                  onReorder={items => {
+                    updateSettings({ pathColumnOrder: items.map(i => i.key) as ColumnKey[] });
+                  }}
+                  /* v8 ignore stop */
+                />
               </div>
             </div>
             <ToggleRow
@@ -579,10 +614,23 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     reorderListWrap: {
       marginTop: Gap.md,
     } as CSSProperties,
+    standaloneRow: {
+    } as CSSProperties,
+    standaloneLabel: {
+      fontSize: isMobile ? Font.lg : Font.md,
+      fontWeight: Weight.semibold,
+      color: Colors.textPrimary,
+    } as CSSProperties,
+    standaloneDesc: {
+      fontSize: isMobile ? Font.md : Font.sm,
+      color: Colors.textMuted,
+      marginTop: Gap.xs,
+    } as CSSProperties,
     visualOrderCollapseGrid: {
       display: Display.grid,
       gridTemplateRows: visualOrderOpen ? '1fr' : '0fr',
       transition: transition(CssProp.gridTemplateRows, FAST_FADE_MS),
+      ...(!visualOrderOpen && { marginTop: -Gap.md }),
     } as CSSProperties,
     visualOrderCollapseInner: {
       overflow: Overflow.hidden,

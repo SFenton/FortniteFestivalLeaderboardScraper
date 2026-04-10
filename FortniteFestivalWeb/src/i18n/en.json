@@ -285,6 +285,8 @@
     "filterInvalidScoresToggleDesc": "When enabled, the app will attempt to filter out invalid leaderboard values based on the maximum score derived from the CHOpt path.",
     "maxScoreLeewayDesc": "This slider controls a percentage value that allows for some expanded range of scores to still be valid. For example, a CHOpt path with a max score of 100k and {{leeway}}% leeway will allow the app to accept scores up to {{maxScore}} as \u201Cvalid\u201D.",
     "songRowVisualOrderDesc": "When filtering to a single instrument in the song list, extra metadata is displayed. Choose the order it appears in on the bottom row.",
+    "pathColumnOrder": "CHOpt Text Path Column Order",
+    "pathColumnOrderDesc": "Choose the order columns appear in the CHOpt text path view. You can also drag column headers directly in the path modal.",
     "showInstruments": "Show Instruments",
     "showInstrumentsHint": "Choose which instruments to display throughout the app.",
     "showMetadata": "Show Instrument Metadata",

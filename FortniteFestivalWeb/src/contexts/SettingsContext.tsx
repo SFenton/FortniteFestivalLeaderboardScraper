@@ -10,6 +10,8 @@ import {
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
 import { DEFAULT_METADATA_ORDER } from '../utils/songSettings';
+import { DEFAULT_COLUMN_ORDER } from '../pages/songinfo/components/path/PathDataTable';
+import type { ColumnKey } from '../pages/songinfo/components/path/PathDataTable';
 
 /* ── Settings shape ── */
 
@@ -18,6 +20,7 @@ export type AppSettings = {
   songsHideInstrumentIcons: boolean;
   songRowVisualOrderEnabled: boolean;
   songRowVisualOrder: string[];
+  pathColumnOrder: ColumnKey[];
   filterInvalidScores: boolean;
   filterInvalidScoresLeeway: number;
   enableExperimentalRanks: boolean;
@@ -50,6 +53,7 @@ export const defaultAppSettings = (): AppSettings => ({
   songsHideInstrumentIcons: false,
   songRowVisualOrderEnabled: false,
   songRowVisualOrder: [...DEFAULT_METADATA_ORDER],
+  pathColumnOrder: [...DEFAULT_COLUMN_ORDER],
   filterInvalidScores: false,
   filterInvalidScoresLeeway: 1,
   enableExperimentalRanks: false,
@@ -119,6 +123,13 @@ function loadSettings(): AppSettings {
       merged.songRowVisualOrder = merged.songRowVisualOrder.filter((k: string) => allowed.has(k));
       const missing = DEFAULT_METADATA_ORDER.filter(k => !merged.songRowVisualOrder.includes(k));
       if (missing.length > 0) merged.songRowVisualOrder = [...merged.songRowVisualOrder, ...missing];
+    }
+    // Migrate pathColumnOrder: strip invalid keys, append new keys
+    if (Array.isArray(merged.pathColumnOrder)) {
+      const allowedCols = new Set<string>(DEFAULT_COLUMN_ORDER);
+      merged.pathColumnOrder = merged.pathColumnOrder.filter((k: string) => allowedCols.has(k));
+      const missingCols = DEFAULT_COLUMN_ORDER.filter(k => !merged.pathColumnOrder.includes(k));
+      if (missingCols.length > 0) merged.pathColumnOrder = [...merged.pathColumnOrder, ...missingCols];
     }
     // Strip removed settings keys
     delete (merged as Record<string, unknown>).metadataShowMaxDistance;

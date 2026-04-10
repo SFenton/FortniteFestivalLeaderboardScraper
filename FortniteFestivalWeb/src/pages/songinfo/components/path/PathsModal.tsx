@@ -18,7 +18,7 @@ import {
 import { modalStyles } from '../../../../components/modals/modalStyles';
 import anim from '../../../../styles/animations.module.css';
 import { ZoomableImage } from './ZoomableImage';
-import PathDataTable, { type PathDataResponse, PathDataHeader, DEFAULT_COLUMN_ORDER, type ColumnKey } from './PathDataTable';
+import PathDataTable, { type PathDataResponse, PathDataHeader, type ColumnKey } from './PathDataTable';
 
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
@@ -101,7 +101,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
   const instruments = visibleInstruments(settings);
   const selectorItems = useMemo<InstrumentSelectorItem[]>(
     () => instruments.map(key => ({ key, label: INSTRUMENT_LABELS[key] })),
@@ -113,7 +113,8 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
   const [instOpen, setInstOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [choptOpen, setChoptOpen] = useState(false);
-  const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(DEFAULT_COLUMN_ORDER);
+  const columnOrder = settings.pathColumnOrder;
+  const setColumnOrder = useCallback((order: ColumnKey[]) => updateSettings({ pathColumnOrder: order }), [updateSettings]);
   const accordionTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const st = usePathsModalStyles();
 

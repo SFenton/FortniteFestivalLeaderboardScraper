@@ -109,7 +109,7 @@ export default memo(function RankHistoryChart({
     for (const p of chartData) {
       maxLen = Math.max(maxLen, formatDetailValue(p.value, metric).length);
     }
-    return `${maxLen}ch`;
+    return Math.ceil(maxLen * Layout.rankCharWidth) + Layout.rankColumnPadding;
   }, [chartData, metric]);
 
   // Compute rank domain (inverted — rank 1 at top)
