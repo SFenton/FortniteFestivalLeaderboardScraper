@@ -13,7 +13,7 @@ import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
 import { useViewTransition } from '../../hooks/ui/useViewTransition';
 import { ActionPill } from '../../components/common/ActionPill';
 import { Size, QUERY_NARROW_GRID, Colors, Font, Gap, flexColumn } from '@festival/theme';
-import { staggerDelay as calcStagger, estimateVisibleCount } from '@festival/ui-utils';
+import { staggerDelay as calcStagger, estimateVisibleCount, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import { useStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { SongRow } from '../songs/components/SongRow';
 import { visibleInstruments } from '../../contexts/SettingsContext';
@@ -103,9 +103,9 @@ export default function ShopPage() {
   // Stagger: animate items on the first render that has data.
   // Skip when the page has been rendered before this session (layout remount, back-nav, etc.).
   const location = useLocation();
-  const isRealBackNav = navType === 'POP' && !!location.state;
+  const isRealBackNav = navType === 'POP' && !!location.state && !IS_PAGE_RELOAD;
   const skipShopAnim = hasVisitedPage('shop') || isRealBackNav;
-  markPageVisited('shop');
+  useEffect(() => { markPageVisited('shop'); }, []);
   const shouldStaggerInitRef = useRef(false);
   // Grid: estimate visible items as cols × visible rows (cards are square).
   // Computed every render (cheap) so it stays correct after resize.
@@ -135,6 +135,7 @@ export default function ShopPage() {
   // Combine phases: transition.phase drives spinner during view toggle;
   // on initial load the phase is already ContentIn (no spinner needed).
   const loadPhase = transition.phase;
+
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: false, shopHighlightEnabled: true }), []);
 
   return (

@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties }
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
+import { staggerDelay, estimateVisibleCount, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import { useStaggerStyle, buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { useFestival } from '../../contexts/FestivalContext';
@@ -175,7 +175,7 @@ export default function SongsPage() {
   const navType = useNavigationType();
   const location = useLocation();
   const forceRestagger = !!(location.state as Record<string, unknown> | null)?.restagger;
-  const isBackNav = navType === 'POP' && !!(location.state as Record<string, unknown> | null);
+  const isBackNav = navType === 'POP' && !!(location.state as Record<string, unknown> | null) && !IS_PAGE_RELOAD;
 
   const [search, setSearchLocal] = useState(searchQuery.query);
   const setSearch = useCallback((q: string) => {
@@ -437,7 +437,7 @@ export default function SongsPage() {
   // Capture "first visit this session" before marking as rendered
   const skipAnimRef = useRef((hasVisitedPage('songs') || isBackNav) && !forceRestagger);
   const skipAnim = skipAnimRef.current;
-  markPageVisited('songs');
+  useEffect(() => { markPageVisited('songs'); }, []);
   // Skip spinner + stagger only when data is actually available
   const [loadPhase, setLoadPhase] = useState<LoadPhase>(
     dataReady ? LoadPhase.ContentIn : LoadPhase.Loading,

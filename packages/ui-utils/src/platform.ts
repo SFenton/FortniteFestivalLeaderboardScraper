@@ -17,3 +17,7 @@ export const IS_IOS = _hasForce ? (_forceIos && !_forceDesktop) : _isIos;
 export const IS_ANDROID = _hasForce ? (_forceAndroid && !_forceDesktop) : _isAndroid;
 export const IS_PWA = _hasForce ? (_forcePwa && !_forceDesktop) : _isPwa;
 export const IS_MOBILE_DEVICE = IS_IOS || IS_ANDROID;
+
+/** True when this page load is a browser refresh (F5 / reload button). */
+export const IS_PAGE_RELOAD =
+  (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined)?.type === 'reload';

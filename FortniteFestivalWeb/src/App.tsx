@@ -98,7 +98,7 @@ import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
-import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
+import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
 import ConfirmAlert from './components/modals/ConfirmAlert';
 import { APP_VERSION } from './hooks/data/useVersions';
@@ -620,9 +620,12 @@ function ScrollToTop() {
     }
   }, []);
   useEffect(() => {
-    if (pathname === AppRoutes.suggestions || pathname === AppRoutes.songs) return;
-    // Song detail pages manage their own scroll restoration
-    if (RoutePatterns.songDetail.test(pathname)) return;
+    // On browser refresh, always scroll to top — page exemptions only apply to in-app navigation
+    if (!IS_PAGE_RELOAD) {
+      if (pathname === AppRoutes.suggestions || pathname === AppRoutes.songs) return;
+      // Song detail pages manage their own scroll restoration
+      if (RoutePatterns.songDetail.test(pathname)) return;
+    }
     scrollContainerRef.current?.scrollTo(0, 0);
   }, [pathname, scrollContainerRef]);
   return null;
