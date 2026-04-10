@@ -109,7 +109,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
   );
   const [selected, setSelected] = useState<InstrumentKey>(DEFAULT_INSTRUMENT);
   const [difficulty, setDifficulty] = useState<Difficulty>('expert');
-  const [choptDisplay, setChoptDisplay] = useState<ChoptDisplay>('image');
+  const [choptDisplay, setChoptDisplay] = useState<ChoptDisplay>(settings.pathDefaultView);
   const [instOpen, setInstOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [choptOpen, setChoptOpen] = useState(false);
@@ -167,7 +167,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
       setAnimIn(false);
       setSelected(DEFAULT_INSTRUMENT);
       setDifficulty('expert');
-      setChoptDisplay('image');
+      setChoptDisplay(settings.pathDefaultView);
       setInstOpen(false);
       setDiffOpen(false);
       setChoptOpen(false);

@@ -5,6 +5,7 @@ import { useSettings } from '../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { ToggleRow } from '../../components/common/ToggleRow';
+import { RadioRow } from '../../components/common/RadioRow';
 import SectionHeader from '../../components/common/SectionHeader';
 import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
@@ -349,6 +350,22 @@ export default function SettingsPage() {
                   />
                 </div>
               </div>
+            </div>
+            <div style={st.standaloneRow}>
+              <div style={st.standaloneLabel}>{t('settings.pathDefaultView')}</div>
+              <div style={st.standaloneDesc}>
+                {t('settings.pathDefaultViewDesc')}
+              </div>
+              <RadioRow
+                label={t('settings.pathDefaultViewImage')}
+                selected={settings.pathDefaultView === 'image'}
+                onSelect={() => updateSettings({ pathDefaultView: 'image' })}
+              />
+              <RadioRow
+                label={t('settings.pathDefaultViewText')}
+                selected={settings.pathDefaultView === 'text'}
+                onSelect={() => updateSettings({ pathDefaultView: 'text' })}
+              />
             </div>
             <div style={st.standaloneRow}>
               <div style={st.standaloneLabel}>{t('settings.pathColumnOrder')}</div>

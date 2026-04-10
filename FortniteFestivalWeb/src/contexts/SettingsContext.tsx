@@ -21,6 +21,7 @@ export type AppSettings = {
   songRowVisualOrderEnabled: boolean;
   songRowVisualOrder: string[];
   pathColumnOrder: ColumnKey[];
+  pathDefaultView: 'image' | 'text';
   filterInvalidScores: boolean;
   filterInvalidScoresLeeway: number;
   enableExperimentalRanks: boolean;
@@ -54,6 +55,7 @@ export const defaultAppSettings = (): AppSettings => ({
   songRowVisualOrderEnabled: false,
   songRowVisualOrder: [...DEFAULT_METADATA_ORDER],
   pathColumnOrder: [...DEFAULT_COLUMN_ORDER],
+  pathDefaultView: 'image',
   filterInvalidScores: false,
   filterInvalidScoresLeeway: 1,
   enableExperimentalRanks: false,
