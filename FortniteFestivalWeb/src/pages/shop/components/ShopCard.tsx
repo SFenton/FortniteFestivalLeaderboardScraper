@@ -1,5 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { memo, useRef, useCallback, useMemo, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { ShopSong } from '@festival/core/api/serverTypes';
 import { Colors, Font, Weight, Gap, Radius, Display, Position, Overflow, ObjectFit, Opacity, CssValue, FADE_DURATION, frostedCard } from '@festival/theme';
 import { truncate } from '@festival/theme';
@@ -13,6 +14,7 @@ interface ShopCardProps {
 
 /* v8 ignore start -- visual component tested via ShopPage integration */
 export default memo(function ShopCard({ song, leavingTomorrow, staggerDelay }: ShopCardProps) {
+  const { t } = useTranslation();
   const href = song.shopUrl ?? `/songs/${song.songId}`;
   const isExternal = !!song.shopUrl;
   const ref = useRef<HTMLAnchorElement>(null);
@@ -50,6 +52,11 @@ export default memo(function ShopCard({ song, leavingTomorrow, staggerDelay }: S
         <div style={s.title}>{song.title}</div>
         <div style={s.artist}>{song.artist}</div>
       </div>
+      {leavingTomorrow && (
+        <span className={anim.leavingTomorrowPill} style={s.leavingPill}>
+          {t('filter.shopLeavingTomorrow')}
+        </span>
+      )}
     </a>
   );
 });
@@ -96,6 +103,12 @@ function useStyles() {
       color: Colors.textSubtle,
       ...truncate,
       marginTop: Gap.xs,
+    } as CSSProperties,
+    leavingPill: {
+      position: Position.absolute,
+      top: Gap.lg,
+      right: Gap.lg,
+      zIndex: 2,
     } as CSSProperties,
   }), []);
 }

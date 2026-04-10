@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { IoClose, IoChevronDown } from 'react-icons/io5';
+import { IoClose, IoChevronDown, IoImage, IoReaderOutline } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../../hooks/ui/useVisualViewport';
@@ -18,10 +18,14 @@ import {
 import { modalStyles } from '../../../../components/modals/modalStyles';
 import anim from '../../../../styles/animations.module.css';
 import { ZoomableImage } from './ZoomableImage';
+import PathDataTable, { type PathDataResponse } from './PathDataTable';
 
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
 type Difficulty = typeof DIFFICULTIES[number];
+
+const CHOPT_DISPLAYS = ['image', 'text'] as const;
+type ChoptDisplay = typeof CHOPT_DISPLAYS[number];
 
 const ACCORDION_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
 const DIFF_TRANSITION = transitions(
@@ -73,6 +77,13 @@ function usePathsModalStyles() {
         border: border(1, Colors.purpleHighlightBorder), boxShadow: Shadow.frostedActive,
         color: Colors.textPrimary,
       } as CSSProperties,
+      desktopRow: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: Gap.md, overflow: Overflow.hidden } as CSSProperties,
+      desktopSelector: {
+        ...frostedCard, display: Display.flex, alignItems: 'center', gap: Gap.md,
+        padding: selectorPad, borderRadius: Radius.md, color: Colors.textPrimary,
+        fontSize: Font.md, fontWeight: Weight.semibold, cursor: Cursor.pointer,
+      } as CSSProperties,
+      choptGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: Gap.sm, overflow: Overflow.hidden } as CSSProperties,
     };
   }, []);
 }
@@ -99,34 +110,54 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
   );
   const [selected, setSelected] = useState<InstrumentKey>(DEFAULT_INSTRUMENT);
   const [difficulty, setDifficulty] = useState<Difficulty>('expert');
+  const [choptDisplay, setChoptDisplay] = useState<ChoptDisplay>('image');
   const [instOpen, setInstOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [choptOpen, setChoptOpen] = useState(false);
   const accordionTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const st = usePathsModalStyles();
+
+  const closeAllAccordions = useCallback(() => {
+    setInstOpen(false);
+    setDiffOpen(false);
+    setChoptOpen(false);
+  }, []);
 
   const toggleInst = useCallback(() => {
     clearTimeout(accordionTimer.current);
     if (instOpen) {
       setInstOpen(false);
-    } else if (diffOpen) {
-      setDiffOpen(false);
+    } else if (diffOpen || choptOpen) {
+      closeAllAccordions();
       accordionTimer.current = setTimeout(() => setInstOpen(true), 300);
     } else {
       setInstOpen(true);
     }
-  }, [instOpen, diffOpen]);
+  }, [instOpen, diffOpen, choptOpen, closeAllAccordions]);
 
   const toggleDiff = useCallback(() => {
     clearTimeout(accordionTimer.current);
     if (diffOpen) {
       setDiffOpen(false);
-    } else if (instOpen) {
-      setInstOpen(false);
+    } else if (instOpen || choptOpen) {
+      closeAllAccordions();
       accordionTimer.current = setTimeout(() => setDiffOpen(true), 300);
     } else {
       setDiffOpen(true);
     }
-  }, [instOpen, diffOpen]);
+  }, [instOpen, diffOpen, choptOpen, closeAllAccordions]);
+
+  const toggleChopt = useCallback(() => {
+    clearTimeout(accordionTimer.current);
+    if (choptOpen) {
+      setChoptOpen(false);
+    } else if (instOpen || diffOpen) {
+      closeAllAccordions();
+      accordionTimer.current = setTimeout(() => setChoptOpen(true), 300);
+    } else {
+      setChoptOpen(true);
+    }
+  }, [instOpen, diffOpen, choptOpen, closeAllAccordions]);
 
   useEffect(() => {
     if (visible) {
@@ -135,8 +166,10 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
       setAnimIn(false);
       setSelected(DEFAULT_INSTRUMENT);
       setDifficulty('expert');
+      setChoptDisplay('image');
       setInstOpen(false);
       setDiffOpen(false);
+      setChoptOpen(false);
       clearTimeout(accordionTimer.current);
     }
   }, [visible]);
@@ -266,26 +299,63 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
           </div>
         ) : (
           <div style={st.controls}>
-            <InstrumentSelector
-              instruments={selectorItems}
-              selected={selected}
-              onSelect={(key) => { if (key) setSelected(key); }}
-              required
-            />
-            <div style={st.diffGridDesktop}>
-              {DIFFICULTIES.map(d => (
-                <button
-                  key={d}
-                  style={difficulty === d ? st.diffBtnActive : st.diffBtn}
-                  onClick={() => setDifficulty(d)}
-                >
-                  {t(`paths.${d}`)}
-                </button>
-              ))}
+            <div style={st.desktopRow}>
+              <button style={st.desktopSelector} onClick={toggleInst}>
+                <InstrumentIcon instrument={selected} size={28} />
+                <span style={st.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
+                <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
+              </button>
+              <button style={st.desktopSelector} onClick={toggleDiff}>
+                <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
+                <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
+              </button>
+              <button style={st.desktopSelector} onClick={toggleChopt}>
+                {choptDisplay === 'image' ? <IoImage size={20} /> : <IoReaderOutline size={20} />}
+                <span style={st.mobileSelectorLabel}>{t(`paths.chopt_${choptDisplay}`)}</span>
+                <IoChevronDown size={16} style={{ ...st.chevron, transform: choptOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
+              </button>
+            </div>
+            <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
+              <div style={st.accordionInner}>
+                <div />
+                <InstrumentSelector
+                  instruments={selectorItems}
+                  selected={selected}
+                  onSelect={(key) => { if (key) setSelected(key); }}
+                  required
+                />
+                <button style={st.closeBtn} onClick={() => setInstOpen(false)}>{t('common.close')}</button>
+              </div>
+            </div>
+            <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
+              <div style={{ ...st.diffGridMobile, paddingTop: Gap.md }}>
+                {DIFFICULTIES.map(d => (
+                  <button
+                    key={d}
+                    style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                    onClick={() => { setDifficulty(d); setDiffOpen(false); }}
+                  >
+                    {t(`paths.${d}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}>
+              <div style={{ ...st.choptGrid, paddingTop: Gap.md }}>
+                {CHOPT_DISPLAYS.map(d => (
+                  <button
+                    key={d}
+                    style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                    onClick={() => { setChoptDisplay(d); setChoptOpen(false); }}
+                  >
+                    {t(`paths.chopt_${d}`)}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
-        <PathImage songId={songId} instrument={selected} difficulty={difficulty} />
+        <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} />
       </div>
     </>,
     document.body,
@@ -296,8 +366,10 @@ type Phase = 'fadeOutImage' | 'spinner' | 'fadeOutSpinner' | 'imageReady' | 'fad
 const FADE_MS = 300;
 const MIN_SPINNER_MS = 400;
 
-function PathImage({ songId, instrument, difficulty }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty }) {
+function PathImage({ songId, instrument, difficulty, displayMode }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay }) {
   const { t } = useTranslation();
+
+  // ── Image mode state ──
   const [phase, setPhase] = useState<Phase>('spinner');
   const [displaySrc, setDisplaySrc] = useState('');
   const [error, setError] = useState(false);
@@ -306,24 +378,46 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
   const imgRef = useRef<HTMLImageElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  // When target changes, start the transition sequence
+  // ── Text mode state ──
+  const [pathData, setPathData] = useState<PathDataResponse | null>(null);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState(false);
+
+  // ── Text mode fetch ──
   useEffect(() => {
+    if (displayMode !== 'text') return;
+    setDataLoading(true);
+    setDataError(false);
+    setPathData(null);
+    let cancelled = false;
+    fetch(`/api/paths/${songId}/${instrument}/${difficulty}/data`)
+      .then(res => {
+        if (!res.ok) throw new Error(`API ${res.status}`);
+        return res.json() as Promise<PathDataResponse>;
+      })
+      .then(data => { if (!cancelled) { setPathData(data); setDataLoading(false); } })
+      .catch(() => { if (!cancelled) { setDataError(true); setDataLoading(false); } });
+    return () => { cancelled = true; };
+  }, [displayMode, songId, instrument, difficulty]);
+
+  // ── Image mode: target change ──
+  useEffect(() => {
+    if (displayMode !== 'image') return;
     pendingRef.current = targetSrc;
     setError(false);
 
     if (displaySrc) {
-      // We have an image showing — fade it out first
       setPhase('fadeOutImage');
     } else {
-      // First load — go straight to spinner
       setPhase('spinner');
       loadImage(targetSrc);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetSrc]);
+  }, [targetSrc, displayMode]);
 
-  // Handle phase transitions after fade-out of image
+  // ── Image mode: phase transitions ──
   useEffect(() => {
+    if (displayMode !== 'image') return;
     if (phase === 'fadeOutImage') {
       timerRef.current = setTimeout(() => {
         setPhase('spinner');
@@ -332,7 +426,6 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
       return () => clearTimeout(timerRef.current);
     }
     if (phase === 'imageReady') {
-      // Image is mounted but invisible — trigger fade-in on next frame
       const raf = requestAnimationFrame(() => {
         setPhase('fadeInImage');
         timerRef.current = setTimeout(() => setPhase('idle'), FADE_MS);
@@ -340,7 +433,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
       return () => { cancelAnimationFrame(raf); clearTimeout(timerRef.current); };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- loadImage is stable useCallback, defined below
-  }, [phase]);
+  }, [phase, displayMode]);
 
   const loadImage = useCallback((src: string) => {
     const spinnerStart = Date.now();
@@ -348,7 +441,6 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
     img.src = src;
 
     const onReady = (success: boolean) => {
-      // Ignore if a newer request has been made
       if (pendingRef.current !== src) return;
       const elapsed = Date.now() - spinnerStart;
       const remaining = Math.max(0, MIN_SPINNER_MS - elapsed);
@@ -364,7 +456,6 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
           } else {
             setError(true);
           }
-          // Mount image hidden, then fade in on next frame
           setPhase('imageReady');
         }, FADE_MS);
       }, remaining);
@@ -374,10 +465,15 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
     img.onerror = () => onReady(false);
   }, []);
 
-  const spinnerVisible = phase === 'spinner';
-  const spinnerMounted = phase === 'spinner' || phase === 'fadeOutSpinner';
-  const imageMounted = displaySrc && (phase === 'imageReady' || phase === 'fadeInImage' || phase === 'idle' || phase === 'fadeOutImage');
+  const spinnerVisible = displayMode === 'image' ? phase === 'spinner' : dataLoading;
+  const spinnerMounted = displayMode === 'image'
+    ? (phase === 'spinner' || phase === 'fadeOutSpinner')
+    : dataLoading;
+  const imageMounted = displayMode === 'image' && displaySrc && (phase === 'imageReady' || phase === 'fadeInImage' || phase === 'idle' || phase === 'fadeOutImage');
   const imageVisible = phase === 'fadeInImage' || phase === 'idle';
+  const showError = displayMode === 'image' ? (error && phase === 'idle') : dataError;
+  const showTable = displayMode === 'text' && pathData != null && !dataLoading;
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const updateSelfMask = useCallback(() => {
     const el = scrollRef.current;
@@ -396,7 +492,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
     el.style.maskImage = mask;
     el.style.webkitMaskImage = mask;
   }, []);
-  useEffect(() => { updateSelfMask(); }, [updateSelfMask, displaySrc, phase]);
+  useEffect(() => { updateSelfMask(); }, [updateSelfMask, displaySrc, phase, pathData]);
   const handleScroll = useCallback(() => { updateSelfMask(); }, [updateSelfMask]);
 
   const imageAreaStyle: React.CSSProperties = {
@@ -415,7 +511,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
           <ArcSpinner />
         </div>
       )}
-      {error && phase === 'idle' && (
+      {showError && (
         <div className={anim.spinnerWrap}>
           <p style={{ color: Colors.textMuted, fontSize: Font.md }}>{t('paths.notAvailable')}</p>
         </div>
@@ -428,6 +524,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
           visible={imageVisible}
         />
       )}
+      {showTable && <PathDataTable data={pathData} />}
     </div>
   );
 }

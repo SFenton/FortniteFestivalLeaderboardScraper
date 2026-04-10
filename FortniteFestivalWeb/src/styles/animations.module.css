@@ -189,8 +189,44 @@
   inset: 0;
   border-radius: inherit;
   background-color: var(--color-leaving-red, #ef4444);
-  animation: shopBreatheRed 3s ease-in-out infinite;
+  animation: shopPulseRed 2s ease-in-out infinite;
   z-index: -1;
+}
+
+.leavingTomorrowPill {
+  composes: shopBreatheRed;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 20px;
+  color: #fff;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.leavingTomorrowPill::before {
+  animation: shopPulseRed 2s ease-in-out infinite;
+}
+
+/* Row leaving indicator: pill on desktop, circle on mobile */
+.leavingPillDesktop {
+  composes: leavingTomorrowPill;
+}
+
+.leavingCircleMobile {
+  composes: shopCircleBreatheRed;
+  display: none;
+}
+
+@media (max-width: 599px) {
+  .leavingPillDesktop {
+    display: none;
+  }
+
+  .leavingCircleMobile {
+    display: flex;
+  }
 }
 
 /* ── CHOpt invalid-score icon pulse (InvalidScoreIcon) ── */

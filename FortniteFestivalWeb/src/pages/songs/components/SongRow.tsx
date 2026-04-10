@@ -3,9 +3,10 @@
  * Song row components for the songs list, extracted from SongsPage.
  */
 import { memo, useMemo, useRef, useCallback, Fragment, useEffect, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import InvalidScoreIcon from './InvalidScoreIcon';
 import { Link, useLocation } from 'react-router-dom';
-import { IoBagHandle, IoChevronForward } from 'react-icons/io5';
+import { IoBagHandle, IoChevronForward, IoTimerOutline } from 'react-icons/io5';
 import { formatPercentileBucket, maxScoreColor } from '@festival/core';
 import type { ServerSong as Song, PlayerScore, SongDifficulty, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { Colors, Gap, Radius, Font, Weight, InstrumentSize, frostedCard, flexRow, flexColumn, flexCenter, truncate, CssValue, Align, Justify, Display, Position, Layout, BorderStyle, padding } from '@festival/theme';
@@ -182,6 +183,7 @@ export const SongRow = memo(function SongRow({ song,
   containerWidth?: number;
 }) {
   const s = useStyles();
+  const { t } = useTranslation();
   const instrumentChips = useMemo(() => {
     if (!showInstrumentIcons || instrumentFilter != null) return null;
     return enabledInstruments.map(key => {
@@ -288,10 +290,18 @@ export const SongRow = memo(function SongRow({ song,
     ? { href: externalHref, target: '_blank' as const, rel: 'noopener noreferrer' }
     : undefined;
 
+  const leavingIndicator = shopHighlightRed
+    ? <>
+        <span className={anim.leavingPillDesktop}>{t('filter.shopLeavingTomorrow')}</span>
+        <span className={anim.leavingCircleMobile} style={s.leavingCircle}><IoTimerOutline size={14} /></span>
+      </>
+    : null;
+
   const externalIndicator = externalHref ? (
     <div style={s.externalIndicator}>
-      <IoBagHandle size={16} />
-      <IoChevronForward size={14} />
+      {leavingIndicator}
+      <IoBagHandle size={16} style={{ display: 'block', flexShrink: 0 }} />
+      <IoChevronForward size={14} style={{ display: 'block', marginTop: 1, flexShrink: 0 }} />
     </div>
   ) : null;
 
@@ -491,7 +501,8 @@ function useStyles() {
     mobileChipRowWrapper: { position: Position.relative, display: Display.flex, alignItems: Align.center, justifyContent: Justify.center } as CSSProperties,
     mobileChipInvalidIcon: { position: Position.absolute, right: 0, top: '50%', transform: 'translateY(-50%)' } as CSSProperties,
     lastPlayedCenteredRow: { display: Display.flex, justifyContent: Justify.center, alignItems: Align.center } as CSSProperties,
-    externalIndicator: { ...flexRow, gap: Gap.xs, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle } as CSSProperties,
+    externalIndicator: { ...flexRow, gap: Gap.lg, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle, alignItems: Align.center } as CSSProperties,
+    leavingCircle: { width: 24, height: 24, borderRadius: Radius.full, ...flexCenter, color: Colors.textPrimary, flexShrink: 0 } as CSSProperties,
     // Metadata item wrapper styles (kept fixed so resize does not bounce between wrap states)
     metadataItemAlone: { flexShrink: 0 } as CSSProperties,
     metadataItemLeft: { flexShrink: 0 } as CSSProperties,

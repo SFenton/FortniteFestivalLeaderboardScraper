@@ -509,7 +509,15 @@
     "easy": "Easy",
     "medium": "Medium",
     "hard": "Hard",
-    "expert": "Expert"
+    "expert": "Expert",
+    "choptDisplay": "CHOpt Display",
+    "chopt_image": "Image",
+    "chopt_text": "Text",
+    "colNote": "Note",
+    "colBeat": "Beat",
+    "colTime": "Time",
+    "colOd": "Overdrive %",
+    "colScore": "Score"
   },
   "firstRun": {
     "demoSimulated": "Some demo data may be simulated.",
