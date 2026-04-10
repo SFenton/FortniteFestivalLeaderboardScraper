@@ -91,21 +91,22 @@ function buildRows(data: PathDataResponse): TableRow[] {
     let anchor = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >>> 1;
-      if (sortedNotes[mid].beat < beat - EPSILON) lo = mid + 1;
-      else if (sortedNotes[mid].beat > beat + EPSILON) hi = mid - 1;
+      const midNote = sortedNotes[mid]!;
+      if (midNote.beat < beat - EPSILON) lo = mid + 1;
+      else if (midNote.beat > beat + EPSILON) hi = mid - 1;
       else { anchor = mid; break; }
     }
     if (anchor < 0) return merged;
     // Expand left
     let i = anchor;
-    while (i >= 0 && Math.abs(sortedNotes[i].beat - beat) < EPSILON) {
-      Object.assign(merged, sortedNotes[i].frets);
+    while (i >= 0 && Math.abs(sortedNotes[i]!.beat - beat) < EPSILON) {
+      Object.assign(merged, sortedNotes[i]!.frets);
       i--;
     }
     // Expand right (skip anchor, already visited)
     i = anchor + 1;
-    while (i < sortedNotes.length && Math.abs(sortedNotes[i].beat - beat) < EPSILON) {
-      Object.assign(merged, sortedNotes[i].frets);
+    while (i < sortedNotes.length && Math.abs(sortedNotes[i]!.beat - beat) < EPSILON) {
+      Object.assign(merged, sortedNotes[i]!.frets);
       i++;
     }
     return merged;
@@ -154,19 +155,6 @@ function FretPill({ fretKey, active }: { fretKey: FretKey; active: boolean }) {
     height: 22,
     borderRadius: Radius.xs,
     backgroundColor: active ? FRET_COLORS[fretKey] : FRET_INACTIVE,
-    border: border(Border.thick, active ? 'transparent' : Colors.borderSubtle),
-    flexShrink: 0,
-  };
-  return <span style={s} />;
-}
-
-function OpenPill({ active }: { active: boolean }) {
-  const s: CSSProperties = {
-    display: Display.inlineBlock,
-    width: 22,
-    height: 22,
-    borderRadius: Radius.xs,
-    backgroundColor: active ? Colors.textPrimary : FRET_INACTIVE,
     border: border(Border.thick, active ? 'transparent' : Colors.borderSubtle),
     flexShrink: 0,
   };
@@ -231,9 +219,10 @@ interface PathDataTableProps {
   data: PathDataResponse;
 }
 
-export function PathDataHeader() {
+export function PathDataHeader({ isMobile }: { isMobile: boolean }) {
   const { t } = useTranslation();
-  const s = useTableStyles();
+  const s = useTableStyles(isMobile);
+  if (isMobile) return null;
   return (
     <div style={s.header}>
       <span style={s.hNote}>{t('paths.colNote')}</span>
@@ -245,10 +234,10 @@ export function PathDataHeader() {
   );
 }
 
-export default memo(function PathDataTable({ data }: PathDataTableProps) {
+export default memo(function PathDataTable({ data, isMobile }: PathDataTableProps & { isMobile: boolean }) {
   const { t } = useTranslation();
   const rows = useMemo(() => buildRows(data), [data]);
-  const s = useTableStyles();
+  const s = useTableStyles(isMobile);
 
   if (rows.length === 0) {
     return <p style={{ color: Colors.textMuted, fontSize: Font.md, textAlign: TextAlign.center }}>{t('paths.notAvailable')}</p>;
@@ -259,17 +248,39 @@ export default memo(function PathDataTable({ data }: PathDataTableProps) {
       <div style={s.list}>
         {rows.map((row, i) => (
           <div key={i} style={s.row}>
-            <div style={s.cellNote}>
-              <div style={s.fretRow}>
-                {FRET_KEYS.map(fk => (
-                  <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
-                ))}
-              </div>
-            </div>
-            <span style={s.cell}>{row.beat.toFixed(2)}</span>
-            <span style={s.cellMono}>{formatTime(row.seconds)}</span>
-            <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>
-            <span style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>
+            {isMobile ? (
+              <>
+                <div style={s.mobileRow1}>
+                  <div style={s.fretRow}>
+                    {FRET_KEYS.map(fk => (
+                      <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
+                    ))}
+                  </div>
+                  <span style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>
+                </div>
+                <div style={s.mobileRow2}>
+                  <span style={s.mobileLabel}>{t('paths.colBeat')}</span>
+                  <span style={s.cell}>{row.beat.toFixed(2)}</span>
+                  <span style={s.mobileLabel}>{t('paths.colTime')}</span>
+                  <span style={s.cellMono}>{formatTime(row.seconds)}</span>
+                </div>
+                <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>
+              </>
+            ) : (
+              <>
+                <div style={s.cellNote}>
+                  <div style={s.fretRow}>
+                    {FRET_KEYS.map(fk => (
+                      <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
+                    ))}
+                  </div>
+                </div>
+                <span style={s.cell}>{row.beat.toFixed(2)}</span>
+                <span style={s.cellMono}>{formatTime(row.seconds)}</span>
+                <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>
+                <span style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -279,9 +290,9 @@ export default memo(function PathDataTable({ data }: PathDataTableProps) {
 
 // ── Styles ───────────────────────────────────────────────────
 
-function useTableStyles() {
+function useTableStyles(isMobile: boolean) {
   return useMemo(() => {
-    const gridCols = '160px 80px 110px 1fr 100px';
+    const gridCols = isMobile ? '1fr auto' : '160px 80px 110px 1fr 100px';
     const cellBase: CSSProperties = {
       display: Display.flex,
       alignItems: 'center',
@@ -317,7 +328,14 @@ function useTableStyles() {
         flexDirection: 'column' as const,
         gap: Gap.sm,
       } as CSSProperties,
-      row: {
+      row: isMobile ? {
+        ...frostedCard,
+        display: Display.flex,
+        flexDirection: 'column' as const,
+        gap: Gap.sm,
+        padding: padding(Gap.md, Gap.xl),
+        borderRadius: Radius.md,
+      } as CSSProperties : {
         ...frostedCard,
         display: 'grid' as const,
         gridTemplateColumns: gridCols,
@@ -326,6 +344,23 @@ function useTableStyles() {
         borderRadius: Radius.md,
         alignItems: 'center',
       } as CSSProperties,
+      mobileRow1: {
+        display: Display.flex,
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      } as CSSProperties,
+      mobileRow2: {
+        display: Display.flex,
+        gap: Gap.lg,
+        alignItems: 'center',
+      } as CSSProperties,
+      mobileLabel: {
+        fontSize: Font.xs,
+        color: Colors.textMuted,
+        fontWeight: Weight.semibold,
+        textTransform: 'uppercase' as const,
+        letterSpacing: Font.letterSpacingWide,
+      } as CSSProperties,
       cellNote: { ...cellBase, justifyContent: 'center' } as CSSProperties,
       cell: { ...cellBase, justifyContent: 'center' } as CSSProperties,
       cellMono: { ...cellBase, justifyContent: 'center' } as CSSProperties,
@@ -333,5 +368,5 @@ function useTableStyles() {
       cellScore: { ...cellBase, justifyContent: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
       fretRow: { display: Display.flex, gap: Gap.xs, alignItems: 'center', justifyContent: 'center' } as CSSProperties,
     };
-  }, []);
+  }, [isMobile]);
 }

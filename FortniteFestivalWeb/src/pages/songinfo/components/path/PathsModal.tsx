@@ -47,9 +47,9 @@ function usePathsModalStyles() {
     };
     return {
       controls: { flexShrink: 0, padding: padding(Gap.xl, Gap.section) } as CSSProperties,
-      mobileRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: Gap.md, overflow: Overflow.hidden } as CSSProperties,
+      mobileRow: { display: Display.flex, gap: Gap.md, overflow: Overflow.hidden } as CSSProperties,
       mobileSelector: {
-        ...frostedCard, display: Display.flex, alignItems: 'center', gap: Gap.md,
+        ...frostedCard, display: Display.flex, alignItems: 'center', justifyContent: 'space-between', gap: Gap.md,
         padding: selectorPad, borderRadius: Radius.md, color: Colors.textPrimary,
         fontSize: Font.md, fontWeight: Weight.semibold, cursor: Cursor.pointer,
       } as CSSProperties,
@@ -259,14 +259,17 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
         {isMobile ? (
           <div style={st.controls}>
             <div style={st.mobileRow}>
-              <button style={st.mobileSelector} onClick={toggleInst}>
+              <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleInst}>
                 <InstrumentIcon instrument={selected} size={28} />
-                <span style={st.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
-              <button style={st.mobileSelector} onClick={toggleDiff}>
+              <button style={{ ...st.mobileSelector, flex: 1 }} onClick={toggleDiff}>
                 <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
+              </button>
+              <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleChopt}>
+                {choptDisplay === 'image' ? <IoImage size={20} /> : <IoReaderOutline size={20} />}
+                <IoChevronDown size={16} style={{ ...st.chevron, transform: choptOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
             </div>
             <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
@@ -292,6 +295,21 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                     /* v8 ignore stop */
                   >
                     {t(`paths.${d}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}>
+              <div style={{ ...st.choptGrid, paddingTop: Gap.md }}>
+                {CHOPT_DISPLAYS.map(d => (
+                  <button
+                    key={d}
+                    style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                    /* v8 ignore start — mobile accordion click */
+                    onClick={() => { setChoptDisplay(d); setChoptOpen(false); }}
+                    /* v8 ignore stop */
+                  >
+                    {t(`paths.chopt_${d}`)}
                   </button>
                 ))}
               </div>
@@ -355,8 +373,8 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
             </div>
           </div>
         )}
-        {choptDisplay === 'text' && <PathDataHeader />}
-        <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} />
+        {choptDisplay === 'text' && <PathDataHeader isMobile={isMobile} />}
+        <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile={isMobile} />
       </div>
     </>,
     document.body,
@@ -367,7 +385,7 @@ type Phase = 'fadeOutImage' | 'spinner' | 'fadeOutSpinner' | 'imageReady' | 'fad
 const FADE_MS = 300;
 const MIN_SPINNER_MS = 400;
 
-function PathImage({ songId, instrument, difficulty, displayMode }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay }) {
+function PathImage({ songId, instrument, difficulty, displayMode, isMobile }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay; isMobile: boolean }) {
   const { t } = useTranslation();
 
   // ── Image mode state ──
@@ -526,7 +544,7 @@ function PathImage({ songId, instrument, difficulty, displayMode }: { songId: st
           visible={imageVisible}
         />
       )}
-      {showTable && <PathDataTable data={pathData} />}
+      {showTable && <PathDataTable data={pathData} isMobile={isMobile} />}
     </div>
   );
 }
