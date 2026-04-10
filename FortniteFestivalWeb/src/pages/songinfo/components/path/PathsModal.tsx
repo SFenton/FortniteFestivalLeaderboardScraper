@@ -382,9 +382,11 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
   );
 }
 
-type Phase = 'fadeOutImage' | 'spinner' | 'fadeOutSpinner' | 'imageReady' | 'fadeInImage' | 'idle';
+type Phase = 'fadeOutImage' | 'spinner' | 'fadeOutSpinner' | 'imageReady' | 'fadeInImage' | 'idle'
+  | 'textSpinner' | 'fadeOutTextSpinner' | 'textStagger';
 const FADE_MS = 300;
 const MIN_SPINNER_MS = 400;
+const MIN_TEXT_SPINNER_MS = 500;
 
 function PathImage({ songId, instrument, difficulty, displayMode, isMobile, columnOrder }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay; isMobile: boolean; columnOrder?: ColumnKey[] }) {
   const { t } = useTranslation();
@@ -400,27 +402,138 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
 
   // ── Text mode state ──
   const [pathData, setPathData] = useState<PathDataResponse | null>(null);
-  const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState(false);
+  const textDataRef = useRef<PathDataResponse | null>(null);
+  const textSpinnerStart = useRef(0);
+  const prevDisplayMode = useRef(displayMode);
+
+  // ── Display mode switch ──
+  useEffect(() => {
+    const prev = prevDisplayMode.current;
+    prevDisplayMode.current = displayMode;
+
+    if (displayMode === 'text') {
+      // Switching to text — fade out image first if one was showing
+      if (prev === 'image' && displaySrc && (phase === 'idle' || phase === 'fadeInImage')) {
+        setPhase('fadeOutImage');
+        // After image fades, we'll transition to textSpinner in the phase effect
+      } else {
+        // No image to fade — go straight to text spinner
+        setPhase('textSpinner');
+      }
+    }
+    // When switching back to image, the existing image target-change effect handles it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayMode]);
 
   // ── Text mode fetch ──
   useEffect(() => {
     if (displayMode !== 'text') return;
-    setDataLoading(true);
     setDataError(false);
     setPathData(null);
+    textDataRef.current = null;
     let cancelled = false;
     fetch(`/api/paths/${songId}/${instrument}/${difficulty}/data`)
       .then(res => {
         if (!res.ok) throw new Error(`API ${res.status}`);
         return res.json() as Promise<PathDataResponse>;
       })
-      .then(data => { if (!cancelled) { setPathData(data); setDataLoading(false); } })
-      .catch(() => { if (!cancelled) { setDataError(true); setDataLoading(false); } });
+      .then(data => {
+        if (cancelled) return;
+        textDataRef.current = data;
+        resolveTextSpinner(data, false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        resolveTextSpinner(null, true);
+      });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayMode, songId, instrument, difficulty]);
 
-  // ── Image mode: target change ──
+  // ── Text mode: instrument/difficulty change while already in text mode ──
+  const prevTextParams = useRef({ songId, instrument, difficulty });
+  useEffect(() => {
+    if (displayMode !== 'text') {
+      prevTextParams.current = { songId, instrument, difficulty };
+      return;
+    }
+    const prev = prevTextParams.current;
+    prevTextParams.current = { songId, instrument, difficulty };
+    // Only reset to spinner if params changed while already in text mode (not on initial switch)
+    if (prev.songId !== songId || prev.instrument !== instrument || prev.difficulty !== difficulty) {
+      setPhase('textSpinner');
+    }
+  }, [displayMode, songId, instrument, difficulty]);
+
+  const textReadyData = useRef<{ data: PathDataResponse | null; isError: boolean } | null>(null);
+  const textTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+
+  const scheduleTextTransition = useCallback(() => {
+    const ready = textReadyData.current;
+    if (!ready || phaseRef.current !== 'textSpinner') return;
+    const elapsed = Date.now() - textSpinnerStart.current;
+    const remaining = Math.max(0, MIN_TEXT_SPINNER_MS - elapsed);
+    clearTimeout(textTimerRef.current);
+    textTimerRef.current = setTimeout(() => {
+      if (phaseRef.current !== 'textSpinner') return;
+      setPhase('fadeOutTextSpinner');
+      textTimerRef.current = setTimeout(() => {
+        if (phaseRef.current !== 'fadeOutTextSpinner') return;
+        if (ready.isError) {
+          setDataError(true);
+        } else if (ready.data) {
+          setPathData(ready.data);
+        }
+        setPhase('textStagger');
+      }, FADE_MS);
+    }, remaining);
+  }, []);
+
+  const resolveTextSpinner = useCallback((data: PathDataResponse | null, isError: boolean) => {
+    textReadyData.current = { data, isError };
+    scheduleTextTransition();
+  }, [scheduleTextTransition]);
+
+  // ── Phase transitions ──
+  useEffect(() => {
+    if (phase === 'fadeOutImage') {
+      timerRef.current = setTimeout(() => {
+        if (displayMode === 'text') {
+          setPhase('textSpinner');
+        } else {
+          setPhase('spinner');
+          loadImage(pendingRef.current);
+        }
+      }, FADE_MS);
+      return () => clearTimeout(timerRef.current);
+    }
+
+    if (phase === 'textSpinner') {
+      textSpinnerStart.current = Date.now();
+      textReadyData.current = null;
+      clearTimeout(textTimerRef.current);
+      // Check if data already arrived (from ref)
+      const cached = textDataRef.current;
+      if (cached) {
+        textReadyData.current = { data: cached, isError: false };
+        scheduleTextTransition();
+      }
+    }
+
+    if (phase === 'imageReady') {
+      const raf = requestAnimationFrame(() => {
+        setPhase('fadeInImage');
+        timerRef.current = setTimeout(() => setPhase('idle'), FADE_MS);
+      });
+      return () => { cancelAnimationFrame(raf); clearTimeout(timerRef.current); };
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, displayMode]);
+
+  // ── Image mode: target change (only when staying in image mode) ──
   useEffect(() => {
     if (displayMode !== 'image') return;
     pendingRef.current = targetSrc;
@@ -434,26 +547,6 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetSrc, displayMode]);
-
-  // ── Image mode: phase transitions ──
-  useEffect(() => {
-    if (displayMode !== 'image') return;
-    if (phase === 'fadeOutImage') {
-      timerRef.current = setTimeout(() => {
-        setPhase('spinner');
-        loadImage(pendingRef.current);
-      }, FADE_MS);
-      return () => clearTimeout(timerRef.current);
-    }
-    if (phase === 'imageReady') {
-      const raf = requestAnimationFrame(() => {
-        setPhase('fadeInImage');
-        timerRef.current = setTimeout(() => setPhase('idle'), FADE_MS);
-      });
-      return () => { cancelAnimationFrame(raf); clearTimeout(timerRef.current); };
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- loadImage is stable useCallback, defined below
-  }, [phase, displayMode]);
 
   const loadImage = useCallback((src: string) => {
     const spinnerStart = Date.now();
@@ -485,14 +578,16 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
     img.onerror = () => onReady(false);
   }, []);
 
-  const spinnerVisible = displayMode === 'image' ? phase === 'spinner' : dataLoading;
-  const spinnerMounted = displayMode === 'image'
-    ? (phase === 'spinner' || phase === 'fadeOutSpinner')
-    : dataLoading;
+  const isTextSpinnerPhase = phase === 'textSpinner' || phase === 'fadeOutTextSpinner';
+  const isImageSpinnerPhase = phase === 'spinner' || phase === 'fadeOutSpinner';
+  const spinnerMounted = displayMode === 'image' ? isImageSpinnerPhase : isTextSpinnerPhase;
+  const spinnerVisible = displayMode === 'image' ? phase === 'spinner' : phase === 'textSpinner';
   const imageMounted = displayMode === 'image' && displaySrc && (phase === 'imageReady' || phase === 'fadeInImage' || phase === 'idle' || phase === 'fadeOutImage');
   const imageVisible = phase === 'fadeInImage' || phase === 'idle';
-  const showError = displayMode === 'image' ? (error && phase === 'idle') : dataError;
-  const showTable = displayMode === 'text' && pathData != null && !dataLoading;
+  // Also mount image during fadeOutImage when transitioning to text
+  const imageFadingToText = displayMode === 'text' && displaySrc && phase === 'fadeOutImage';
+  const showError = displayMode === 'image' ? (error && phase === 'idle') : (dataError && phase === 'textStagger');
+  const showTable = displayMode === 'text' && pathData != null && phase === 'textStagger';
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const updateSelfMask = useCallback(() => {
@@ -537,7 +632,7 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
           <p style={{ color: Colors.textMuted, fontSize: Font.md }}>{t('paths.notAvailable')}</p>
         </div>
       )}
-      {imageMounted && (
+      {(imageMounted || imageFadingToText) && (
         <ZoomableImage
           ref={imgRef}
           src={displaySrc}
@@ -545,7 +640,7 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile, colu
           visible={imageVisible}
         />
       )}
-      {showTable && <PathDataTable data={pathData} isMobile={isMobile} columnOrder={columnOrder} />}
+      {showTable && <PathDataTable data={pathData} isMobile={isMobile} columnOrder={columnOrder} stagger />}
     </div>
   );
 }

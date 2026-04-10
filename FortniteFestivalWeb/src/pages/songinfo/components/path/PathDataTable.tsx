@@ -22,7 +22,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   Colors, Font, Weight, Gap, Radius, Border,
   Display, TextAlign, Overflow, Cursor, CssValue,
-  border, padding, frostedCard,
+  border, padding, frostedCard, STAGGER_ROW_MS,
 } from '@festival/theme';
 
 // ── Types ────────────────────────────────────────────────────
@@ -353,7 +353,7 @@ export function PathDataHeader({ isMobile, columnOrder = DEFAULT_COLUMN_ORDER, o
   );
 }
 
-export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAULT_COLUMN_ORDER }: PathDataTableProps & { isMobile: boolean; columnOrder?: ColumnKey[] }) {
+export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAULT_COLUMN_ORDER, stagger }: PathDataTableProps & { isMobile: boolean; columnOrder?: ColumnKey[]; stagger?: boolean }) {
   const { t } = useTranslation();
   const rows = useMemo(() => buildRows(data), [data]);
   const s = useTableStyles(isMobile, columnOrder);
@@ -389,7 +389,13 @@ export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAU
     <div style={s.wrapper}>
       <div style={s.list}>
         {rows.map((row, i) => (
-          <div key={i} style={s.row}>
+          <div key={i} style={{
+            ...s.row,
+            ...(stagger ? {
+              opacity: 0,
+              animation: `fadeInUp 400ms ease-out ${i * STAGGER_ROW_MS}ms forwards`,
+            } : {}),
+          }}>
             {isMobile ? (
               <>
                 <div>
