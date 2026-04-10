@@ -81,27 +81,51 @@ function buildRows(data: PathDataResponse): TableRow[] {
   // Build sorted notes array for tolerance-based lookup
   const sortedNotes = [...data.notes].sort((a, b) => a.beat - b.beat);
 
-  function findNote(beat: number): PathDataNote | undefined {
+  /** Find ALL notes at the same beat and merge their frets into one chord. */
+  function findChord(beat: number): PathDataNote['frets'] {
     const EPSILON = 0.02;
-    // Binary search for closest note
+    const merged: PathDataNote['frets'] = {};
+    // Binary-search to any match, then scan left/right for all neighbours
     let lo = 0;
     let hi = sortedNotes.length - 1;
+    let anchor = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >>> 1;
       if (sortedNotes[mid].beat < beat - EPSILON) lo = mid + 1;
       else if (sortedNotes[mid].beat > beat + EPSILON) hi = mid - 1;
-      else return sortedNotes[mid];
+      else { anchor = mid; break; }
     }
-    return undefined;
+    if (anchor < 0) return merged;
+    // Expand left
+    let i = anchor;
+    while (i >= 0 && Math.abs(sortedNotes[i].beat - beat) < EPSILON) {
+      Object.assign(merged, sortedNotes[i].frets);
+      i--;
+    }
+    // Expand right (skip anchor, already visited)
+    i = anchor + 1;
+    while (i < sortedNotes.length && Math.abs(sortedNotes[i].beat - beat) < EPSILON) {
+      Object.assign(merged, sortedNotes[i].frets);
+      i++;
+    }
+    return merged;
   }
 
+  const MERGE_EPSILON = 0.02;
   const rows: TableRow[] = [];
   for (const act of data.activations) {
     if (!act.startNotes) continue;
     for (const sn of act.startNotes) {
-      const note = findNote(sn.beat);
+      // Merge chord members at the same beat into one row
+      const prev = rows.length > 0 ? rows[rows.length - 1] : undefined;
+      if (prev && Math.abs(prev.beat - sn.beat) < MERGE_EPSILON) {
+        // Take the higher cumulative score (it accumulates per sub-note)
+        prev.cumulativeScore = Math.max(prev.cumulativeScore, sn.cumulativeScore);
+        continue;
+      }
+      const frets = findChord(sn.beat);
       rows.push({
-        frets: note?.frets ?? {},
+        frets,
         beat: sn.beat,
         seconds: sn.seconds ?? 0,
         odPercent: sn.odPercent * 100,
@@ -192,9 +216,9 @@ function useOdBarStyles(percent: number) {
     } as CSSProperties,
     label: {
       flexShrink: 0,
-      fontSize: Font.sm,
+      fontSize: Font.md,
       fontWeight: Weight.semibold,
-      color: Colors.textSecondary,
+      color: Colors.textPrimary,
       minWidth: 32,
       textAlign: TextAlign.right,
     } as CSSProperties,
@@ -240,7 +264,6 @@ export default memo(function PathDataTable({ data }: PathDataTableProps) {
                 {FRET_KEYS.map(fk => (
                   <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
                 ))}
-                <OpenPill active={row.frets.open !== undefined} />
               </div>
             </div>
             <span style={s.cell}>{row.beat.toFixed(2)}</span>
@@ -262,8 +285,9 @@ function useTableStyles() {
     const cellBase: CSSProperties = {
       display: Display.flex,
       alignItems: 'center',
-      fontSize: Font.sm,
-      color: Colors.textSecondary,
+      fontSize: Font.md,
+      color: Colors.textPrimary,
+      fontWeight: Weight.semibold,
       whiteSpace: 'nowrap' as const,
     };
     return {
@@ -285,9 +309,9 @@ function useTableStyles() {
         letterSpacing: Font.letterSpacingWide,
       } as CSSProperties,
       hNote: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
-      hCell: { display: Display.flex } as CSSProperties,
-      hOd: { display: Display.flex } as CSSProperties,
-      hScore: { display: Display.flex, justifyContent: 'flex-end' } as CSSProperties,
+      hCell: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
+      hOd: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
+      hScore: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
       list: {
         display: Display.flex,
         flexDirection: 'column' as const,
@@ -303,10 +327,10 @@ function useTableStyles() {
         alignItems: 'center',
       } as CSSProperties,
       cellNote: { ...cellBase, justifyContent: 'center' } as CSSProperties,
-      cell: { ...cellBase } as CSSProperties,
-      cellMono: { ...cellBase } as CSSProperties,
-      cellOd: { ...cellBase, minWidth: 0, width: '100%' } as CSSProperties,
-      cellScore: { ...cellBase, justifyContent: 'flex-end', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
+      cell: { ...cellBase, justifyContent: 'center' } as CSSProperties,
+      cellMono: { ...cellBase, justifyContent: 'center' } as CSSProperties,
+      cellOd: { ...cellBase, justifyContent: 'center', minWidth: 0, width: '100%' } as CSSProperties,
+      cellScore: { ...cellBase, justifyContent: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
       fretRow: { display: Display.flex, gap: Gap.xs, alignItems: 'center', justifyContent: 'center' } as CSSProperties,
     };
   }, []);
