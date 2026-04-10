@@ -135,7 +135,7 @@ public sealed class BandScrapePhase
             TotalEntries = totalEntries,
             TotalRequests = totalRequests,
             TotalBytes = totalBytes,
-            SongsWithData = songsWithData,
+            SongsWithData = songsWithData.Count,
         };
     }
 
