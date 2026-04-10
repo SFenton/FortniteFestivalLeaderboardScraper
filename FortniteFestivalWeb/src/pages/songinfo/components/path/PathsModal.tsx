@@ -13,7 +13,7 @@ import ArcSpinner from '../../../../components/common/ArcSpinner';
 import {
   Colors, Radius, Font, Gap, Weight, Shadow,
   Display, Overflow, TextAlign, Cursor, CssValue, CssProp,
-  frostedCard, border, padding, transition, transitions, btnPrimary,
+  frostedCard, border, padding, transition, transitions,
 } from '@festival/theme';
 import { modalStyles } from '../../../../components/modals/modalStyles';
 import anim from '../../../../styles/animations.module.css';
@@ -56,8 +56,7 @@ function usePathsModalStyles() {
       mobileSelectorLabel: { flex: 1, textAlign: TextAlign.left } as CSSProperties,
       chevron: { flexShrink: 0, color: Colors.textMuted, transition: transition(CssProp.transform, 250) } as CSSProperties,
       accordion: { overflow: Overflow.hidden, transition: `max-height 300ms ${ACCORDION_EASE}` } as CSSProperties,
-      accordionInner: { paddingTop: Gap.md, display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center' } as CSSProperties,
-      closeBtn: { ...btnPrimary, padding: padding(Gap.sm, Gap.md), fontSize: Font.sm, justifySelf: 'end' } as CSSProperties,
+      accordionInner: { paddingTop: Gap.md, display: Display.flex, justifyContent: 'center', alignItems: 'center' } as CSSProperties,
       diffGridMobile: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: Gap.sm, overflow: Overflow.hidden } as CSSProperties,
       diffBtnSmall: { ...frostedCard, ...diffBtnBase, padding: selectorPad, color: Colors.textSecondary } as CSSProperties,
       diffBtnSmallActive: {
@@ -257,64 +256,66 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
           <button style={modalStyles.closeBtn} onClick={onClose} aria-label={t('common.close')}><IoClose size={18} /></button>
         </div>
         {isMobile ? (
-          <div style={st.controls}>
-            <div style={st.mobileRow}>
-              <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleInst}>
-                <InstrumentIcon instrument={selected} size={28} />
-                <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
-              </button>
-              <button style={{ ...st.mobileSelector, flex: 1 }} onClick={toggleDiff}>
-                <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
-                <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
-              </button>
-              <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleChopt}>
-                {choptDisplay === 'image' ? <IoImage size={20} /> : <IoReaderOutline size={20} />}
-                <IoChevronDown size={16} style={{ ...st.chevron, transform: choptOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
-              </button>
-            </div>
-            <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
-              <div style={st.accordionInner}>
-                <div />
-                <InstrumentSelector
-                  instruments={selectorItems}
-                  selected={selected}
-                  onSelect={(key) => { if (key) setSelected(key); }}
-                  required
-                />
-                <button style={st.closeBtn} onClick={() => setInstOpen(false)}>{t('common.close')}</button>
+          <>
+            {choptDisplay === 'text' && <PathDataHeader isMobile />}
+            <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile />
+            <div style={st.controls}>
+              <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
+                <div style={{ ...st.accordionInner, paddingTop: 0, paddingBottom: Gap.md }}>
+                  <InstrumentSelector
+                    instruments={selectorItems}
+                    selected={selected}
+                    onSelect={(key) => { if (key && key === selected) setInstOpen(false); else if (key) setSelected(key); }}
+                    required
+                  />
+                </div>
+              </div>
+              <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
+                <div style={{ ...st.diffGridMobile, paddingBottom: Gap.md }}>
+                  {DIFFICULTIES.map(d => (
+                    <button
+                      key={d}
+                      style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                      /* v8 ignore start — mobile accordion click */
+                      onClick={() => { setDifficulty(d); setDiffOpen(false); }}
+                      /* v8 ignore stop */
+                    >
+                      {t(`paths.${d}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}>
+                <div style={{ ...st.choptGrid, paddingBottom: Gap.md }}>
+                  {CHOPT_DISPLAYS.map(d => (
+                    <button
+                      key={d}
+                      style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
+                      /* v8 ignore start — mobile accordion click */
+                      onClick={() => { setChoptDisplay(d); setChoptOpen(false); }}
+                      /* v8 ignore stop */
+                    >
+                      {t(`paths.chopt_${d}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={st.mobileRow}>
+                <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleInst}>
+                  <InstrumentIcon instrument={selected} size={28} />
+                  <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
+                </button>
+                <button style={{ ...st.mobileSelector, flex: 1 }} onClick={toggleDiff}>
+                  <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
+                  <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
+                </button>
+                <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleChopt}>
+                  {choptDisplay === 'image' ? <IoImage size={20} /> : <IoReaderOutline size={20} />}
+                  <IoChevronDown size={16} style={{ ...st.chevron, transform: choptOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
+                </button>
               </div>
             </div>
-            <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
-              <div style={{ ...st.diffGridMobile, paddingTop: Gap.md }}>
-                {DIFFICULTIES.map(d => (
-                  <button
-                    key={d}
-                    style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
-                    /* v8 ignore start — mobile accordion click */
-                    onClick={() => { setDifficulty(d); setDiffOpen(false); }}
-                    /* v8 ignore stop */
-                  >
-                    {t(`paths.${d}`)}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}>
-              <div style={{ ...st.choptGrid, paddingTop: Gap.md }}>
-                {CHOPT_DISPLAYS.map(d => (
-                  <button
-                    key={d}
-                    style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
-                    /* v8 ignore start — mobile accordion click */
-                    onClick={() => { setChoptDisplay(d); setChoptOpen(false); }}
-                    /* v8 ignore stop */
-                  >
-                    {t(`paths.chopt_${d}`)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+          </>
         ) : (
           <div style={st.controls}>
             <div style={st.desktopRow}>
@@ -335,14 +336,12 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
             </div>
             <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
               <div style={st.accordionInner}>
-                <div />
                 <InstrumentSelector
                   instruments={selectorItems}
                   selected={selected}
-                  onSelect={(key) => { if (key) setSelected(key); }}
+                  onSelect={(key) => { if (key && key === selected) setInstOpen(false); else if (key) setSelected(key); }}
                   required
                 />
-                <button style={st.closeBtn} onClick={() => setInstOpen(false)}>{t('common.close')}</button>
               </div>
             </div>
             <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
@@ -373,8 +372,8 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
             </div>
           </div>
         )}
-        {choptDisplay === 'text' && <PathDataHeader isMobile={isMobile} />}
-        <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile={isMobile} />
+        {!isMobile && choptDisplay === 'text' && <PathDataHeader isMobile={false} />}
+        {!isMobile && <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile={false} />}
       </div>
     </>,
     document.body,
