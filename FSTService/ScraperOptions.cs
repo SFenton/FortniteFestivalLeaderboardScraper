@@ -274,19 +274,19 @@ public sealed class ScraperOptions
 
     /// <summary>
     /// When true, scrape Band_Duets, Band_Trios, and Band_Quad leaderboards
-    /// in a separate phase after solo instrument scraping completes.
-    /// Default false — requires explicit opt-in.
+    /// in a background phase after registered-user refresh completes.
+    /// Default true — band scraping runs alongside post-scrape enrichment.
     /// </summary>
-    public bool EnableBandScraping { get; set; }
+    public bool EnableBandScraping { get; set; } = true;
 
     /// <summary>
-    /// Maximum pages to fetch per band leaderboard (100 entries per page).
+    /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>
     /// valid entries are found or pages are exhausted.
-    /// Default 100 = top 10,000 entries.
+    /// Default 400 = top 10,000 entries (25/page × 400 pages).
     /// </summary>
-    public int BandMaxPagesPerLeaderboard { get; set; } = 100;
+    public int BandMaxPagesPerLeaderboard { get; set; } = 400;
 
     /// <summary>
     /// Target number of valid band entries per (song, band_type).

@@ -176,7 +176,13 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _pool,
             _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, notifications,
-            _tokenManager, _progress, pathDataStore, precomputer, options,
+            _tokenManager, _progress, pathDataStore, precomputer,
+            new PostScrapeBandExtractor(null!, pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                _scraper, new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                pathDataStore, _pool, _progress, options,
+                Substitute.For<ILogger<BandScrapePhase>>()),
+            options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 
         var resultProcessor = new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>());
@@ -211,7 +217,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Substitute.For<ILogger<BandLeaderboardPersistence>>());
 
         var scrapeOrchestrator = new ScrapeOrchestrator(
-            _scraper, _persistence, bandPersistence, pathDataStore, _pool, _progress, options,
+            _scraper, _persistence, pathDataStore, _pool, _progress, options,
             Substitute.For<ILogger<ScrapeOrchestrator>>());
 
         var playerCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(2));
@@ -223,14 +229,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
             playerCache, leaderboardAllCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache,
             Substitute.For<ILogger<ScrapeLifecycleNotifier>>());
 
-        var bandScrapePhase = new BandScrapePhase(
-            _scraper, bandPersistence, pathDataStore, _progress, options,
-            Substitute.For<ILogger<BandScrapePhase>>());
-
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence,
             _festivalService, dbInitializer,
-            scrapeOrchestrator, postScrapeOrchestrator, bandScrapePhase, backfillOrchestrator,
+            scrapeOrchestrator, postScrapeOrchestrator, backfillOrchestrator,
             _cyclicalMachine,
             pathGenerator, pathDataStore,
             new Api.SongsCacheService(),

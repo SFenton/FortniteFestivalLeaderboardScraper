@@ -30,7 +30,6 @@ public sealed class ScraperWorker : BackgroundService
     private readonly StartupInitializer _dbInitializer;
     private readonly ScrapeOrchestrator _scrapeOrchestrator;
     private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
-    private readonly BandScrapePhase _bandScrapePhase;
     private readonly BackfillOrchestrator _backfillOrchestrator;
     private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly PathGenerator _pathGenerator;
@@ -58,7 +57,6 @@ public sealed class ScraperWorker : BackgroundService
         StartupInitializer dbInitializer,
         ScrapeOrchestrator scrapeOrchestrator,
         PostScrapeOrchestrator postScrapeOrchestrator,
-        BandScrapePhase bandScrapePhase,
         BackfillOrchestrator backfillOrchestrator,
         CyclicalSongMachine cyclicalMachine,
         PathGenerator pathGenerator,
@@ -82,7 +80,6 @@ public sealed class ScraperWorker : BackgroundService
         _dbInitializer = dbInitializer;
         _scrapeOrchestrator = scrapeOrchestrator;
         _postScrapeOrchestrator = postScrapeOrchestrator;
-        _bandScrapePhase = bandScrapePhase;
         _backfillOrchestrator = backfillOrchestrator;
         _cyclicalMachine = cyclicalMachine;
         _pathGenerator = pathGenerator;

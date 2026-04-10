@@ -3,14 +3,14 @@
 ═══════════════════════════════════════════════════════
 
 ── Time Breakdown (cumulative wall-clock across all tasks) ─
-  Slot wait (DOP):    69781.3s  (45.3%)
-  Rate token wait:    36465.6s  (23.7%)
-  HTTP wire time:     47651.9s  (31.0%)
+  Slot wait (DOP):    40605.2s  (82.6%)
+  Rate token wait:    2974.7s  (6.1%)
+  HTTP wire time:     5584.6s  (11.4%)
   Persistence:        0.0s  (0.0%)
-  Grand total:        153898.8s
+  Grand total:        49164.5s
 
 ── Primary Bottleneck ──────────────────────────────────
-  DOP slot wait: 69781.3s (45.3% of total)
+  DOP slot wait: 40605.2s (82.6% of total)
 
 ── Recommendations ─────────────────────────────────────
   ⚠ DOP slots are the bottleneck.

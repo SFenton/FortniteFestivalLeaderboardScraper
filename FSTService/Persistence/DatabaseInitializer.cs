@@ -84,6 +84,12 @@ public static class DatabaseInitializer
             difficulty     INTEGER     DEFAULT -1,
             api_rank       INTEGER,
             end_time       TEXT,
+            band_members_json JSONB,
+            band_score     INTEGER,
+            base_score     INTEGER,
+            instrument_bonus INTEGER,
+            overdrive_bonus INTEGER,
+            instrument_combo TEXT,
             first_seen_at  TIMESTAMPTZ NOT NULL,
             last_updated_at TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (song_id, instrument, account_id)
@@ -1094,6 +1100,26 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_be_combo
             ON band_entries (song_id, band_type, instrument_combo);
+
+        -- ── Migration: add band context columns to leaderboard_entries ──
+        DO $$ BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'leaderboard_entries' AND column_name = 'band_members_json'
+            ) THEN
+                ALTER TABLE leaderboard_entries ADD COLUMN band_members_json JSONB;
+                ALTER TABLE leaderboard_entries ADD COLUMN band_score INTEGER;
+                ALTER TABLE leaderboard_entries ADD COLUMN base_score INTEGER;
+                ALTER TABLE leaderboard_entries ADD COLUMN instrument_bonus INTEGER;
+                ALTER TABLE leaderboard_entries ADD COLUMN overdrive_bonus INTEGER;
+                ALTER TABLE leaderboard_entries ADD COLUMN instrument_combo TEXT;
+            END IF;
+        END $$;
+
+        -- Index for post-scrape band extraction: find entries with band data
+        CREATE INDEX IF NOT EXISTS ix_le_band_members
+            ON leaderboard_entries (song_id, instrument)
+            WHERE band_members_json IS NOT NULL;
 
         """;
 }

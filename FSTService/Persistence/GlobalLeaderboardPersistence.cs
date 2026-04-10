@@ -496,8 +496,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// Start per-instrument page-writer tasks. Each instrument gets a bounded
     /// channel and a dedicated writer task that batches page upserts into single
     /// PG transactions to amortize commit overhead and limit open connections.
+    /// Bounded channels cap memory usage — backpressure from full channels
+    /// briefly pauses the scraper but prevents OOM crashes.
     /// </summary>
-    public void StartPageWriters(int channelCapacity = 256, int writeBatchSize = 20, CancellationToken ct = default)
+    public void StartPageWriters(int channelCapacity = 4, int writeBatchSize = 2, CancellationToken ct = default)
     {
         _pageChannels = new Dictionary<string, Channel<PageWorkItem>>(StringComparer.OrdinalIgnoreCase);
         _pageWriterTasks = new List<Task>();

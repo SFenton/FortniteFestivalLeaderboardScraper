@@ -1534,12 +1534,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         var tasks = requests.Select(async req =>
         {
             await songSemaphore.WaitAsync(ct);
+            List<GlobalLeaderboardResult> songResults;
             try
             {
-                var instTasks = req.Instruments.Select(inst =>
+                var instTasks = req.Instruments.Select(async inst =>
                 {
                     int? choptMax = req.MaxScores?.GetByInstrument(inst);
-                    return ScrapeLeaderboardSequentialAsync(
+                    var result = await ScrapeLeaderboardSequentialAsync(
                         req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter,
                         choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
                         overThresholdExtraPages: overThresholdExtraPages,
@@ -1548,27 +1549,50 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         onPageScraped: onPageScraped,
                         onBandPageScraped: onBandPageScraped,
                         maxScores: req.MaxScores);
+
+                    // When entries accumulated in-memory (onPageScraped was null),
+                    // enqueue per-instrument immediately so memory is freed before
+                    // waiting for sibling instruments to finish. This keeps peak
+                    // memory proportional to one instrument's pages (~6 MB) rather
+                    // than an entire song's (~36 MB) or all concurrent songs.
+                    if (result.Entries.Count > 0 && onSongComplete is not null)
+                    {
+                        await onSongComplete(req.SongId, [result]);
+                        result.Entries = [];
+                    }
+
+                    return result;
                 }).ToList();
 
-                var songResults = (await Task.WhenAll(instTasks)).ToList();
-                results[req.SongId] = songResults;
-
-                if (onSongComplete is not null)
-                    await onSongComplete(req.SongId, songResults);
-
-                // Release entry data after persistence callback
-                foreach (var r in songResults)
-                {
-                    r.Entries = [];
-                    r.DeferredDeepScrape = null;
-                }
-
-                _progress.ReportSongComplete();
+                songResults = (await Task.WhenAll(instTasks)).ToList();
             }
             finally
             {
                 songSemaphore.Release();
             }
+
+            results[req.SongId] = songResults;
+
+            // For the onPageScraped path, entries are already persisted per-page
+            // and result.Entries is empty. For the in-memory path, entries were
+            // already enqueued per-instrument above and cleared.
+            // Call onSongComplete only if there are leftover entries (shouldn't
+            // happen, but safety net for non-sequential callers).
+            if (onSongComplete is not null)
+            {
+                var remaining = songResults.Where(r => r.Entries.Count > 0).ToList();
+                if (remaining.Count > 0)
+                    await onSongComplete(req.SongId, remaining);
+            }
+
+            // Release entry data after persistence callback
+            foreach (var r in songResults)
+            {
+                r.Entries = [];
+                r.DeferredDeepScrape = null;
+            }
+
+            _progress.ReportSongComplete();
         }).ToList();
 
         await Task.WhenAll(tasks);
@@ -1796,6 +1820,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 .ToList();
             entriesCount = ordered.Count;
             pagesScraped = allEntries!.Count;
+            allEntries.Clear(); // Release page-level references immediately
         }
 
         _progress.ReportLeaderboardComplete(instrument);
@@ -1834,7 +1859,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             {
                 foreach (var e in entArr.EnumerateArray())
                 {
-                    entries.Add(ParseEntryElement(e));
+                    entries.Add(ParseEntryElement(e, extractBandContext: false));
                 }
             }
 
@@ -1963,7 +1988,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             var entries = new List<LeaderboardEntry>();
             foreach (var e in root.EnumerateArray())
             {
-                var entry = ParseEntryElement(e);
+                var entry = ParseEntryElement(e, extractBandContext: true);
                 entries.Add(entry);
             }
             return entries;
@@ -1977,7 +2002,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     /// <summary>
     /// Parse a single leaderboard entry JSON element (shared between V1 and V2 parsers).
     /// </summary>
-    private static LeaderboardEntry ParseEntryElement(JsonElement e)
+    private static LeaderboardEntry ParseEntryElement(JsonElement e, bool extractBandContext = true)
     {
         var entry = new LeaderboardEntry();
 
@@ -2041,7 +2066,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
             // Extract band context from best session if it was a group play.
             // Presence of M_1_* fields indicates multiple members.
-            if (hasBestStats)
+            // Only extracted for V2 lookups (registered user data) — V1 solo scrape
+            // skips this since band data is collected via BandScrapePhase instead.
+            if (extractBandContext && hasBestStats)
             {
                 ExtractBandContext(entry, bestStats);
             }

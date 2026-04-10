@@ -34,7 +34,7 @@ services:
     environment:
       - DOTNET_ENVIRONMENT=Production
       # ── Database ──
-      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:-fst_dev};Minimum Pool Size=5;Maximum Pool Size=50;Connection Idle Lifetime=300;Command Timeout=30
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:-fst_dev};Minimum Pool Size=2;Maximum Pool Size=15;Connection Idle Lifetime=30;Connection Pruning Interval=10;Command Timeout=30
       # ── Required secrets (override defaults from appsettings.json) ──
       # Generate with: openssl rand -hex 32
       - Api__ApiKey=${API_KEY:?Set API_KEY in .env}
@@ -42,6 +42,7 @@ services:
       - WebApp__Password=${WEBAPP_PASSWORD:-changeme}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
+      - Scraper__SongMachineDop=${SONG_MACHINE_DOP:-10}
       # ── Feature flags (default: all OFF in production) ──
       - Features__Shop=${FEATURE_SHOP:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}

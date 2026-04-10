@@ -20,23 +20,27 @@ services:
       - POSTGRES_DB=fstservice
       - POSTGRES_USER=fst
       - POSTGRES_PASSWORD=${PG_PASSWORD:?Set PG_PASSWORD in .env}
-    shm_size: 512mb
+    shm_size: 256mb
     command:
       - "postgres"
       - "-c" 
-      - "shared_buffers=3GB"
+      - "shared_buffers=1GB"
       - "-c"
-      - "work_mem=128MB"
+      - "work_mem=16MB"
       - "-c"
-      - "maintenance_work_mem=1GB"
+      - "maintenance_work_mem=256MB"
       - "-c"
-      - "effective_cache_size=8GB"
+      - "effective_cache_size=4GB"
       - "-c"
-      - "max_wal_size=16GB"
+      - "max_wal_size=4GB"
       - "-c"
-      - "wal_buffers=64MB"
+      - "wal_buffers=16MB"
       - "-c"
       - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "idle_in_transaction_session_timeout=60000"
+      - "-c"
+      - "jit=off"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fst -d fstservice"]
       interval: 10s
@@ -46,7 +50,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 10G
+          memory: 4G
 
   fstservice:
     image: ghcr.io/sfenton/fstservice:latest
@@ -63,7 +67,7 @@ services:
     environment:
       - DOTNET_ENVIRONMENT=Production
       # ── Database ──
-      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:?Set PG_PASSWORD in .env};Minimum Pool Size=5;Maximum Pool Size=50;Connection Idle Lifetime=300;Command Timeout=30
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:?Set PG_PASSWORD in .env};Minimum Pool Size=2;Maximum Pool Size=15;Connection Idle Lifetime=30;Connection Pruning Interval=10;Command Timeout=30
       # ── Required secrets (override defaults from appsettings.json) ──
       # Generate with: openssl rand -hex 32
       - Api__ApiKey=${API_KEY:?Set API_KEY in .env}

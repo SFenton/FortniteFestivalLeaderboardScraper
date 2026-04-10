@@ -121,7 +121,9 @@ export const api = {
     const headers: Record<string, string> = {};
     if (cached?.etag) headers['If-None-Match'] = cached.etag;
 
-    const res = await fetch(`${BASE}/api/songs`, { headers });
+    // Bypass browser HTTP cache so our ETag check hits the server directly.
+    // Without this, the browser's max-age (30 min) silently returns stale data.
+    const res = await fetch(`${BASE}/api/songs`, { headers, cache: 'no-cache' });
 
     // 304 Not Modified — server confirms our cached data is still current
     if (res.status === 304 && cached) return cached.data;

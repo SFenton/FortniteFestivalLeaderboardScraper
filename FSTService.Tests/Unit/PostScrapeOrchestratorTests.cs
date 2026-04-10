@@ -119,6 +119,12 @@ public class PostScrapeOrchestratorTests : IDisposable
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                scraper,
+                new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
+                Substitute.For<ILogger<BandScrapePhase>>()),
             Options.Create(new ScraperOptions()), _log);
     }
 
@@ -311,6 +317,12 @@ public class PostScrapeOrchestratorTests : IDisposable
             rivalsOrchestrator, rankingsCalculator2, leaderboardRivalsCalculator2, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
+                new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _pathDataStore, _pool, _progress, opts,
+                Substitute.For<ILogger<BandScrapePhase>>()),
             opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -372,6 +384,12 @@ public class PostScrapeOrchestratorTests : IDisposable
             rivalsOrchestrator, rankingsCalculator3, leaderboardRivalsCalculator3, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
+                new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _pathDataStore, _pool, _progress, opts,
+                Substitute.For<ILogger<BandScrapePhase>>()),
             opts, _log);
 
         var ctx = CreateContext();
@@ -479,6 +497,12 @@ public class PostScrapeOrchestratorTests : IDisposable
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
+                new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _pathDataStore, _pool, _progress, opts,
+                Substitute.For<ILogger<BandScrapePhase>>()),
             opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");

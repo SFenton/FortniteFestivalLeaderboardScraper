@@ -32,6 +32,8 @@ public sealed class PostScrapeOrchestrator
     private readonly ScrapeProgressTracker _progress;
     private readonly IPathDataStore _pathDataStore;
     private readonly ScrapeTimePrecomputer _precomputer;
+    private readonly PostScrapeBandExtractor _bandExtractor;
+    private readonly BandScrapePhase _bandScrapePhase;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
@@ -52,6 +54,8 @@ public sealed class PostScrapeOrchestrator
         ScrapeProgressTracker progress,
         IPathDataStore IPathDataStore,
         ScrapeTimePrecomputer precomputer,
+        PostScrapeBandExtractor bandExtractor,
+        BandScrapePhase bandScrapePhase,
         IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log)
     {
@@ -71,6 +75,8 @@ public sealed class PostScrapeOrchestrator
         _progress = progress;
         _pathDataStore = IPathDataStore;
         _precomputer = precomputer;
+        _bandExtractor = bandExtractor;
+        _bandScrapePhase = bandScrapePhase;
         _options = options;
         _log = log;
     }
@@ -90,6 +96,37 @@ public sealed class PostScrapeOrchestrator
         // global-scrape cutoff) are present in the instrument DBs when rankings
         // are computed.  The SharedDopPool handles concurrency.
         await RunPhaseAsync("RefreshRegisteredUsers", () => RefreshRegisteredUsersAsync(ctx, ct));
+
+        // ── Band data collection (fire-and-forget background) ──
+        // Launch bespoke band scrape (V1 Band_Duets/Trios/Quad queries) in the
+        // background. This uses SharedDopPool at low priority and does NOT need
+        // to finish before ComputeRankings — band rankings will be a separate
+        // future phase. We await the task at the very end for exception observation.
+        Task? bandScrapeTask = null;
+        if (_options.Value.EnableBandScraping)
+        {
+            var chartedSongs = service.Songs.Where(s => s.track?.su is not null).ToList();
+            var bandAccessToken = await _tokenManager.GetAccessTokenAsync(ct);
+            if (bandAccessToken is not null)
+            {
+                var bandCallerAccountId = _tokenManager.AccountId!;
+                bandScrapeTask = Task.Run(
+                    () => _bandScrapePhase.ExecuteAsync(chartedSongs, bandAccessToken, bandCallerAccountId, ct),
+                    ct);
+                _log.LogInformation("Band scrape launched in background ({Songs} songs).", chartedSongs.Count);
+            }
+            else
+            {
+                _log.LogWarning("No access token for band scrape. Will retry next pass.");
+            }
+        }
+
+        // Extract band entries from registered user V2 data (SQL-only, fast).
+        // This extracts band context already persisted in leaderboard_entries.band_members_json
+        // from V2 lookups during RefreshRegisteredUsers.
+        if (_options.Value.EnableBandScraping)
+            await RunPhaseAsync("BandExtraction", () => _bandExtractor.RunAsync(ct));
+
         var rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ct));
 
         // Per-song rivals and leaderboard rivals have no shared write targets
@@ -126,6 +163,21 @@ public sealed class PostScrapeOrchestrator
                 _progress.SetSubOperation("pre_warming_cache");
                 _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
             }, ct)));
+
+        // ── Await background band scrape for exception observation ──
+        if (bandScrapeTask is not null)
+        {
+            try
+            {
+                await bandScrapeTask;
+                _log.LogInformation("Background band scrape completed successfully.");
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Background band scrape failed. Band data may be incomplete this cycle.");
+            }
+        }
     }
 
     /// <summary>
