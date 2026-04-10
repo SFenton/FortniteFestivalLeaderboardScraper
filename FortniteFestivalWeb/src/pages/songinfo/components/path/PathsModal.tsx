@@ -279,7 +279,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                       key={d}
                       style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
                       /* v8 ignore start — mobile accordion click */
-                      onClick={() => { setDifficulty(d); setDiffOpen(false); }}
+                      onClick={() => { if (d === difficulty) setDiffOpen(false); else setDifficulty(d); }}
                       /* v8 ignore stop */
                     >
                       {t(`paths.${d}`)}
@@ -294,7 +294,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                       key={d}
                       style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
                       /* v8 ignore start — mobile accordion click */
-                      onClick={() => { setChoptDisplay(d); setChoptOpen(false); }}
+                      onClick={() => { if (d === choptDisplay) setChoptOpen(false); else setChoptDisplay(d); }}
                       /* v8 ignore stop */
                     >
                       {t(`paths.chopt_${d}`)}
@@ -343,6 +343,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                   selected={selected}
                   onSelect={(key) => { if (key && key === selected) setInstOpen(false); else if (key) setSelected(key); }}
                   required
+                  compact={false}
                 />
               </div>
             </div>
@@ -352,7 +353,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                   <button
                     key={d}
                     style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
-                    onClick={() => { setDifficulty(d); setDiffOpen(false); }}
+                    onClick={() => { if (d === difficulty) setDiffOpen(false); else setDifficulty(d); }}
                   >
                     {t(`paths.${d}`)}
                   </button>
@@ -365,7 +366,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                   <button
                     key={d}
                     style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
-                    onClick={() => { setChoptDisplay(d); setChoptOpen(false); }}
+                    onClick={() => { if (d === choptDisplay) setChoptOpen(false); else setChoptDisplay(d); }}
                   >
                     {t(`paths.chopt_${d}`)}
                   </button>
