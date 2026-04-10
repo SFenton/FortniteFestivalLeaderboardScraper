@@ -209,6 +209,7 @@ function useOdBarStyles(percent: number) {
       color: Colors.textPrimary,
       minWidth: 32,
       textAlign: TextAlign.right,
+      paddingBottom: 2,
     } as CSSProperties,
   }), [percent]);
 }
@@ -250,21 +251,32 @@ export default memo(function PathDataTable({ data, isMobile }: PathDataTableProp
           <div key={i} style={s.row}>
             {isMobile ? (
               <>
-                <div style={s.mobileRow1}>
+                <div>
+                  <div style={s.mobileLabelNote}>{t('paths.colNote')}</div>
                   <div style={s.fretRow}>
                     {FRET_KEYS.map(fk => (
                       <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
                     ))}
                   </div>
-                  <span style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>
                 </div>
-                <div style={s.mobileRow2}>
-                  <span style={s.mobileLabel}>{t('paths.colBeat')}</span>
-                  <span style={s.cell}>{row.beat.toFixed(2)}</span>
-                  <span style={s.mobileLabel}>{t('paths.colTime')}</span>
-                  <span style={s.cellMono}>{formatTime(row.seconds)}</span>
+                <div style={s.mobileDataRow}>
+                  <div style={{ flex: 1 }}>
+                    <div style={s.mobileLabel}>{t('paths.colBeat')}</div>
+                    <span style={s.cell}>{row.beat.toFixed(2)}</span>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={s.mobileLabel}>{t('paths.colTime')}</div>
+                    <span style={s.cellMono}>{formatTime(row.seconds)}</span>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={s.mobileLabel}>{t('paths.colScore')}</div>
+                    <span style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>
+                  </div>
                 </div>
-                <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>
+                <div>
+                  <div style={s.mobileLabelOd}>{t('paths.colOd')}</div>
+                  <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>
+                </div>
               </>
             ) : (
               <>
@@ -332,7 +344,7 @@ function useTableStyles(isMobile: boolean) {
         ...frostedCard,
         display: Display.flex,
         flexDirection: 'column' as const,
-        gap: Gap.sm,
+        gap: Gap.xl,
         padding: padding(Gap.md, Gap.xl),
         borderRadius: Radius.md,
       } as CSSProperties : {
@@ -344,15 +356,10 @@ function useTableStyles(isMobile: boolean) {
         borderRadius: Radius.md,
         alignItems: 'center',
       } as CSSProperties,
-      mobileRow1: {
+      mobileDataRow: {
         display: Display.flex,
-        justifyContent: 'space-between',
-        alignItems: 'center',
-      } as CSSProperties,
-      mobileRow2: {
-        display: Display.flex,
-        gap: Gap.lg,
-        alignItems: 'center',
+        gap: Gap.md,
+        alignItems: 'flex-start',
       } as CSSProperties,
       mobileLabel: {
         fontSize: Font.xs,
@@ -360,13 +367,30 @@ function useTableStyles(isMobile: boolean) {
         fontWeight: Weight.semibold,
         textTransform: 'uppercase' as const,
         letterSpacing: Font.letterSpacingWide,
+        marginBottom: Gap.xs,
       } as CSSProperties,
-      cellNote: { ...cellBase, justifyContent: 'center' } as CSSProperties,
-      cell: { ...cellBase, justifyContent: 'center' } as CSSProperties,
-      cellMono: { ...cellBase, justifyContent: 'center' } as CSSProperties,
-      cellOd: { ...cellBase, justifyContent: 'center', minWidth: 0, width: '100%' } as CSSProperties,
-      cellScore: { ...cellBase, justifyContent: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
-      fretRow: { display: Display.flex, gap: Gap.xs, alignItems: 'center', justifyContent: 'center' } as CSSProperties,
+      mobileLabelNote: {
+        fontSize: Font.xs,
+        color: Colors.textMuted,
+        fontWeight: Weight.semibold,
+        textTransform: 'uppercase' as const,
+        letterSpacing: Font.letterSpacingWide,
+        marginBottom: Gap.md,
+      } as CSSProperties,
+      mobileLabelOd: {
+        fontSize: Font.xs,
+        color: Colors.textMuted,
+        fontWeight: Weight.semibold,
+        textTransform: 'uppercase' as const,
+        letterSpacing: Font.letterSpacingWide,
+        marginBottom: Gap.sm,
+      } as CSSProperties,
+      cellNote: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
+      cell: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
+      cellMono: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
+      cellOd: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center', minWidth: 0, width: '100%' } as CSSProperties,
+      cellScore: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
+      fretRow: { display: Display.flex, gap: Gap.xs, alignItems: 'center', justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
     };
   }, [isMobile]);
 }
