@@ -215,7 +215,7 @@ function useOdBarStyles(percent: number) {
     wrapper: {
       display: Display.flex,
       alignItems: 'center',
-      gap: Gap.sm,
+      gap: Gap.md,
       width: '100%',
     } as CSSProperties,
     track: {
