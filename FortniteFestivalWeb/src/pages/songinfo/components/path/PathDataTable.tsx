@@ -1,9 +1,27 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { memo, useMemo, type CSSProperties } from 'react';
+import { memo, useMemo, useCallback, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   Colors, Font, Weight, Gap, Radius, Border,
-  Display, TextAlign, Overflow,
+  Display, TextAlign, Overflow, Cursor, CssValue,
   border, padding, frostedCard,
 } from '@festival/theme';
 
@@ -146,6 +164,23 @@ function formatTime(totalSeconds: number): string {
 
 const scoreFormatter = new Intl.NumberFormat('en-US');
 
+// ── Column ordering ──────────────────────────────────────────
+
+export type ColumnKey = 'note' | 'beat' | 'time' | 'od' | 'score';
+export const DEFAULT_COLUMN_ORDER: ColumnKey[] = ['note', 'beat', 'time', 'od', 'score'];
+
+const COLUMN_WIDTHS: Record<ColumnKey, string> = {
+  note: '160px',
+  beat: '80px',
+  time: '110px',
+  od: '1fr',
+  score: '100px',
+};
+
+function buildGridCols(order: ColumnKey[]): string {
+  return order.map(k => COLUMN_WIDTHS[k]).join(' ');
+}
+
 // ── Fret pill / open pill ─────────────────────────────────────
 
 function FretPill({ fretKey, active }: { fretKey: FretKey; active: boolean }) {
@@ -220,28 +255,134 @@ interface PathDataTableProps {
   data: PathDataResponse;
 }
 
-export function PathDataHeader({ isMobile }: { isMobile: boolean }) {
+const COL_LABEL_KEYS: Record<ColumnKey, string> = {
+  note: 'paths.colNote',
+  beat: 'paths.colBeat',
+  time: 'paths.colTime',
+  od: 'paths.colOd',
+  score: 'paths.colScore',
+};
+
+const DRAG_ICON = (
+  <svg width="8" height="12" viewBox="0 0 12 18" fill="currentColor" aria-hidden="true" style={{ flexShrink: 0 }}>
+    <circle cx="3" cy="3" r="1.5" /><circle cx="9" cy="3" r="1.5" />
+    <circle cx="3" cy="9" r="1.5" /><circle cx="9" cy="9" r="1.5" />
+    <circle cx="3" cy="15" r="1.5" /><circle cx="9" cy="15" r="1.5" />
+  </svg>
+);
+
+function SortableHeaderCell({ colKey }: { colKey: ColumnKey }) {
   const { t } = useTranslation();
-  const s = useTableStyles(isMobile);
-  if (isMobile) return null;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: colKey });
+  const style: CSSProperties = {
+    display: Display.flex,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Gap.xs,
+    cursor: isDragging ? 'grabbing' as CSSProperties['cursor'] : Cursor.grab,
+    transform: CSS.Translate.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.7 : 1,
+    userSelect: CssValue.none as CSSProperties['userSelect'],
+  };
   return (
-    <div style={s.header}>
-      <span style={s.hNote}>{t('paths.colNote')}</span>
-      <span style={s.hCell}>{t('paths.colBeat')}</span>
-      <span style={s.hCell}>{t('paths.colTime')}</span>
-      <span style={s.hOd}>{t('paths.colOd')}</span>
-      <span style={s.hScore}>{t('paths.colScore')}</span>
-    </div>
+    <span ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      {DRAG_ICON}
+      {t(COL_LABEL_KEYS[colKey])}
+    </span>
   );
 }
 
-export default memo(function PathDataTable({ data, isMobile }: PathDataTableProps & { isMobile: boolean }) {
+interface PathDataHeaderProps {
+  isMobile: boolean;
+  columnOrder?: ColumnKey[];
+  onColumnOrderChange?: (order: ColumnKey[]) => void;
+}
+
+export function PathDataHeader({ isMobile, columnOrder = DEFAULT_COLUMN_ORDER, onColumnOrderChange }: PathDataHeaderProps) {
+  const s = useTableStyles(isMobile, columnOrder);
+  const preDragOrder = useRef<ColumnKey[]>(columnOrder);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
+
+  /* v8 ignore start — DnD handlers */
+  const handleDragStart = useCallback((_event: DragStartEvent) => {
+    preDragOrder.current = columnOrder;
+  }, [columnOrder]);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !onColumnOrderChange) return;
+    const oldIndex = columnOrder.indexOf(active.id as ColumnKey);
+    const newIndex = columnOrder.indexOf(over.id as ColumnKey);
+    if (oldIndex === -1 || newIndex === -1) return;
+    onColumnOrderChange(arrayMove(columnOrder, oldIndex, newIndex));
+  }, [columnOrder, onColumnOrderChange]);
+
+  const handleDragEnd = useCallback((_event: DragEndEvent) => {
+    // Order is already updated by onDragOver — nothing to do
+  }, []);
+
+  const handleDragCancel = useCallback(() => {
+    if (onColumnOrderChange) onColumnOrderChange(preDragOrder.current);
+  }, [onColumnOrderChange]);
+  /* v8 ignore stop */
+
+  if (isMobile) return null;
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
+      <SortableContext items={columnOrder} strategy={horizontalListSortingStrategy}>
+        <div style={s.header}>
+          {columnOrder.map(col => (
+            <SortableHeaderCell key={col} colKey={col} />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+export default memo(function PathDataTable({ data, isMobile, columnOrder = DEFAULT_COLUMN_ORDER }: PathDataTableProps & { isMobile: boolean; columnOrder?: ColumnKey[] }) {
   const { t } = useTranslation();
   const rows = useMemo(() => buildRows(data), [data]);
-  const s = useTableStyles(isMobile);
+  const s = useTableStyles(isMobile, columnOrder);
 
   if (rows.length === 0) {
     return <p style={{ color: Colors.textMuted, fontSize: Font.md, textAlign: TextAlign.center }}>{t('paths.notAvailable')}</p>;
+  }
+
+  function renderDesktopCell(row: TableRow, col: ColumnKey) {
+    switch (col) {
+      case 'note':
+        return (
+          <div key={col} style={s.cellNote}>
+            <div style={s.fretRow}>
+              {FRET_KEYS.map(fk => (
+                <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
+              ))}
+            </div>
+          </div>
+        );
+      case 'beat':
+        return <span key={col} style={s.cell}>{row.beat.toFixed(2)}</span>;
+      case 'time':
+        return <span key={col} style={s.cellMono}>{formatTime(row.seconds)}</span>;
+      case 'od':
+        return <div key={col} style={s.cellOd}><OdBar percent={row.odPercent} /></div>;
+      case 'score':
+        return <span key={col} style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>;
+    }
   }
 
   return (
@@ -279,19 +420,7 @@ export default memo(function PathDataTable({ data, isMobile }: PathDataTableProp
                 </div>
               </>
             ) : (
-              <>
-                <div style={s.cellNote}>
-                  <div style={s.fretRow}>
-                    {FRET_KEYS.map(fk => (
-                      <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
-                    ))}
-                  </div>
-                </div>
-                <span style={s.cell}>{row.beat.toFixed(2)}</span>
-                <span style={s.cellMono}>{formatTime(row.seconds)}</span>
-                <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>
-                <span style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>
-              </>
+              <>{columnOrder.map(col => renderDesktopCell(row, col))}</>
             )}
           </div>
         ))}
@@ -302,9 +431,9 @@ export default memo(function PathDataTable({ data, isMobile }: PathDataTableProp
 
 // ── Styles ───────────────────────────────────────────────────
 
-function useTableStyles(isMobile: boolean) {
+function useTableStyles(isMobile: boolean, columnOrder: ColumnKey[] = DEFAULT_COLUMN_ORDER) {
   return useMemo(() => {
-    const gridCols = isMobile ? '1fr auto' : '160px 80px 110px 1fr 100px';
+    const gridCols = isMobile ? '1fr auto' : buildGridCols(columnOrder);
     const cellBase: CSSProperties = {
       display: Display.flex,
       alignItems: 'center',
@@ -331,10 +460,6 @@ function useTableStyles(isMobile: boolean) {
         textTransform: 'uppercase' as const,
         letterSpacing: Font.letterSpacingWide,
       } as CSSProperties,
-      hNote: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
-      hCell: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
-      hOd: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
-      hScore: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
       list: {
         display: Display.flex,
         flexDirection: 'column' as const,
@@ -392,5 +517,5 @@ function useTableStyles(isMobile: boolean) {
       cellScore: { ...cellBase, justifyContent: isMobile ? 'flex-start' : 'center', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
       fretRow: { display: Display.flex, gap: Gap.xs, alignItems: 'center', justifyContent: isMobile ? 'flex-start' : 'center' } as CSSProperties,
     };
-  }, [isMobile]);
+  }, [isMobile, columnOrder]);
 }

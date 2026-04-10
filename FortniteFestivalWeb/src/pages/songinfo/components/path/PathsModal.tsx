@@ -18,7 +18,7 @@ import {
 import { modalStyles } from '../../../../components/modals/modalStyles';
 import anim from '../../../../styles/animations.module.css';
 import { ZoomableImage } from './ZoomableImage';
-import PathDataTable, { type PathDataResponse, PathDataHeader } from './PathDataTable';
+import PathDataTable, { type PathDataResponse, PathDataHeader, DEFAULT_COLUMN_ORDER, type ColumnKey } from './PathDataTable';
 
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
@@ -113,6 +113,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
   const [instOpen, setInstOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [choptOpen, setChoptOpen] = useState(false);
+  const [columnOrder, setColumnOrder] = useState<ColumnKey[]>(DEFAULT_COLUMN_ORDER);
   const accordionTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const st = usePathsModalStyles();
 
@@ -258,7 +259,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
         {isMobile ? (
           <>
             {choptDisplay === 'text' && <PathDataHeader isMobile />}
-            <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile />
+            <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile columnOrder={columnOrder} />
             <div style={st.controls}>
               <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
                 <div style={{ ...st.accordionInner, paddingTop: 0, paddingBottom: Gap.md }}>
@@ -372,8 +373,8 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
             </div>
           </div>
         )}
-        {!isMobile && choptDisplay === 'text' && <PathDataHeader isMobile={false} />}
-        {!isMobile && <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile={false} />}
+        {!isMobile && choptDisplay === 'text' && <PathDataHeader isMobile={false} columnOrder={columnOrder} onColumnOrderChange={setColumnOrder} />}
+        {!isMobile && <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile={false} columnOrder={columnOrder} />}
       </div>
     </>,
     document.body,
@@ -384,7 +385,7 @@ type Phase = 'fadeOutImage' | 'spinner' | 'fadeOutSpinner' | 'imageReady' | 'fad
 const FADE_MS = 300;
 const MIN_SPINNER_MS = 400;
 
-function PathImage({ songId, instrument, difficulty, displayMode, isMobile }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay; isMobile: boolean }) {
+function PathImage({ songId, instrument, difficulty, displayMode, isMobile, columnOrder }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty; displayMode: ChoptDisplay; isMobile: boolean; columnOrder?: ColumnKey[] }) {
   const { t } = useTranslation();
 
   // ── Image mode state ──
@@ -543,7 +544,7 @@ function PathImage({ songId, instrument, difficulty, displayMode, isMobile }: { 
           visible={imageVisible}
         />
       )}
-      {showTable && <PathDataTable data={pathData} isMobile={isMobile} />}
+      {showTable && <PathDataTable data={pathData} isMobile={isMobile} columnOrder={columnOrder} />}
     </div>
   );
 }
