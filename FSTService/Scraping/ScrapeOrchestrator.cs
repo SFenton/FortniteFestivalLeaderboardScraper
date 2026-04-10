@@ -16,7 +16,6 @@ public sealed class ScrapeOrchestrator
 {
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly BandLeaderboardPersistence _bandPersistence;
     private readonly IPathDataStore _pathDataStore;
     private readonly SharedDopPool _pool;
     private readonly ScrapeProgressTracker _progress;
@@ -26,7 +25,6 @@ public sealed class ScrapeOrchestrator
     public ScrapeOrchestrator(
         GlobalLeaderboardScraper globalScraper,
         GlobalLeaderboardPersistence persistence,
-        BandLeaderboardPersistence bandPersistence,
         IPathDataStore IPathDataStore,
         SharedDopPool pool,
         ScrapeProgressTracker progress,
@@ -35,7 +33,6 @@ public sealed class ScrapeOrchestrator
     {
         _globalScraper = globalScraper;
         _persistence = persistence;
-        _bandPersistence = bandPersistence;
         _pathDataStore = IPathDataStore;
         _pool = pool;
         _progress = progress;
@@ -118,7 +115,6 @@ public sealed class ScrapeOrchestrator
         long totalBytes = 0;
 
         _persistence.StartPageWriters(ct: passCt);
-        _bandPersistence.StartWriter(ct: passCt);
 
         // Snapshot registered users' current scores for change detection at end.
         var previousState = registeredIds.Count > 0
@@ -157,9 +153,10 @@ public sealed class ScrapeOrchestrator
                                     .Select(e => (e.AccountId, songId, result.Instrument)));
                         }
 
-                        // Extract band entries from solo entries whose best session was a group play
-                        if (opts.EnableBandScraping)
-                            ExtractBandEntriesFromSoloPage(songId, result.Entries, passCt);
+                        // Band data from V1 solo entries is NOT extracted here.
+                        // Solo V1 entries do not carry band context (extractBandContext=false).
+                        // Band data is collected via bespoke BandScrapePhase (V1 band queries)
+                        // and PostScrapeBandExtractor (from V2 lookup band_members_json).
                     }
 
                     aggregates.AddEntries(result.EntriesCount);
@@ -169,8 +166,6 @@ public sealed class ScrapeOrchestrator
                     aggregates.IncrementSongsWithData();
                     aggregates.AddChangedSongId(songId);
                 }
-
-                await ValueTask.CompletedTask;
             },
             passCt,
             maxPages: opts.MaxPagesPerLeaderboard,
@@ -186,36 +181,15 @@ public sealed class ScrapeOrchestrator
             sharedLimiter: _pool.Limiter,
             deferDeepScrape: true,
             validCutoffMultiplier: opts.ValidCutoffMultiplier,
-            onPageScraped: async (songId, instrument, entries) =>
-            {
-                await _persistence.EnqueuePageAsync(songId, instrument, entries, passCt);
-                aggregates.AddRankChangedSongId(songId);
-
-                aggregates.AddEntries(entries.Count);
-
-                // Track registered user appearances
-                if (registeredIds.Count > 0)
-                {
-                    aggregates.AddSeenRegisteredEntries(
-                        entries
-                            .Where(e => registeredIds.Contains(e.AccountId))
-                            .Select(e => (e.AccountId, songId, instrument)));
-                }
-
-                // Extract band entries from solo entries whose best session was a group play
-                if (opts.EnableBandScraping)
-                    ExtractBandEntriesFromSoloPage(songId, entries, passCt);
-            },
-            onBandPageScraped: async (songId, bandType, entries) =>
-            {
-                if (entries.Count > 0)
-                    await _bandPersistence.EnqueueAsync(songId, bandType, entries, passCt);
-            });
+            // onPageScraped intentionally null — entries accumulate per-instrument
+            // and are enqueued via onSongComplete (called per-instrument in sequential
+            // mode). This avoids per-page channel backpressure blocking network
+            // fetches while keeping memory bounded to one instrument's worth of data.
+            onBandPageScraped: null);
 
         // ── Drain pipelined writers before score change detection ──
         _progress.SetSubOperation("draining_writers");
         await _persistence.DrainPageWritersAsync();
-        await _bandPersistence.DrainWriterAsync();
 
         // ── Detect score changes for registered users ──
         _progress.SetSubOperation("detecting_score_changes");
@@ -298,66 +272,6 @@ public sealed class ScrapeOrchestrator
         };
     }
 
-    /// <summary>
-    /// Scan solo leaderboard entries for band context (best session was a group play)
-    /// and emit <see cref="BandLeaderboardEntry"/> objects to the band persistence pipeline.
-    /// The <c>M_{i}_ID_*</c> fields in trackedStats reveal teammate account IDs,
-    /// eliminating the need for separate Band_Duets/Trios/Quad API calls.
-    /// </summary>
-    private void ExtractBandEntriesFromSoloPage(
-        string songId,
-        IReadOnlyList<LeaderboardEntry> entries,
-        CancellationToken ct)
-    {
-        foreach (var entry in entries)
-        {
-            if (entry.BandMembers is not { Count: >= 2 })
-                continue;
-
-            // Determine band type from member count
-            var bandType = entry.BandMembers.Count switch
-            {
-                2 => "Band_Duets",
-                3 => "Band_Trios",
-                _ => "Band_Quad", // 4+
-            };
-
-            // Build team key from sorted member account IDs (same logic as ParseBandEntryElement)
-            var sortedIds = entry.BandMembers
-                .Select(m => m.AccountId)
-                .Where(id => !string.IsNullOrEmpty(id))
-                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (sortedIds.Count < 2)
-                continue;
-
-            var teamKey = string.Join(':', sortedIds);
-
-            var bandEntry = new BandLeaderboardEntry
-            {
-                TeamKey = teamKey,
-                TeamMembers = sortedIds.ToArray(),
-                Score = entry.BandScore ?? entry.Score,
-                BaseScore = entry.BaseScore,
-                InstrumentBonus = entry.InstrumentBonus,
-                OverdriveBonus = entry.OverdriveBonus,
-                Accuracy = entry.Accuracy,
-                IsFullCombo = entry.IsFullCombo,
-                Stars = entry.Stars,
-                Difficulty = entry.Difficulty,
-                Season = entry.Season,
-                EndTime = entry.EndTime,
-                Source = "solo_extract",
-                InstrumentCombo = entry.InstrumentCombo ?? "",
-                MemberStats = entry.BandMembers,
-            };
-
-            _bandPersistence.EnqueueAsync(songId, bandType, [bandEntry], ct)
-                .AsTask().GetAwaiter().GetResult();
-        }
-    }
-
     // ─── Scrape-specific utility methods ───────────────────────
 
     internal static IReadOnlyList<string> GetEnabledInstruments(ScraperOptions opts)
@@ -369,8 +283,8 @@ public sealed class ScrapeOrchestrator
         if (opts.QueryDrums)   instruments.Add("Solo_Drums");
         if (opts.QueryProLead) instruments.Add("Solo_PeripheralGuitar");
         if (opts.QueryProBass) instruments.Add("Solo_PeripheralBass");
-        // Band data (Duets/Trios/Quad) is extracted from solo entry trackedStats
-        // when EnableBandScraping=true — no separate band API calls needed.
+        // Band leaderboards (Duets/Trios/Quad) are scraped via BandScrapePhase
+        // as a separate post-scrape phase — not part of the solo instrument scrape.
         return instruments;
     }
 

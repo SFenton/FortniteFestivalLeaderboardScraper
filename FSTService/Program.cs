@@ -38,9 +38,12 @@ var builder = WebApplication.CreateBuilder(args);
 // Default min threads = processor count, which on small VPS (2–4 cores)
 // causes starvation when DOP ≫ cores. Sync-over-async persistence
 // callbacks and high-concurrency HTTP work both need thread headroom.
+// Must match or exceed the configured DOP to avoid thread pool growth
+// delays (1 thread per 500ms) causing cascading timeouts.
 {
+    var scraperDop = builder.Configuration.GetValue("Scraper:DegreeOfParallelism", 575);
     ThreadPool.GetMinThreads(out int prevWorker, out int prevIo);
-    int target = Math.Max(200, prevWorker);
+    int target = Math.Max(200, Math.Max(prevWorker, scraperDop));
     ThreadPool.SetMinThreads(target, target);
     ThreadPool.GetMinThreads(out int newWorker, out int newIo);
     Console.WriteLine($"ThreadPool.SetMinThreads({target}, {target}) — was ({prevWorker}, {prevIo})");
@@ -224,6 +227,7 @@ builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
 builder.Services.AddSingleton<BandScrapePhase>();
 builder.Services.AddSingleton<BandLeaderboardPersistence>();
+builder.Services.AddSingleton<PostScrapeBandExtractor>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
 builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
 {

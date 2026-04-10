@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using FortniteFestival.Core;
 using FSTService.Persistence;
 using Microsoft.Extensions.Options;
@@ -8,9 +9,9 @@ namespace FSTService.Scraping;
 /// Scrape phase that fetches Band_Duets, Band_Trios, and Band_Quad leaderboards
 /// from the V1 alltime API for all songs.
 ///
-/// Runs as a separate phase AFTER solo scraping completes (in ScraperWorker).
-/// For each (song, bandType), pages are fetched until <c>BandValidEntryTarget</c>
-/// valid entries are collected or pages are exhausted.
+/// Runs as a background phase in <see cref="PostScrapeOrchestrator"/> after V2
+/// registered-user refresh completes. Uses <see cref="SharedDopPool"/> at low
+/// priority to avoid starving concurrent post-scrape work.
 ///
 /// Per-member CHOpt validation: each member's individual score is checked against
 /// the CHOpt max for their instrument. Over-threshold entries are flagged but still
@@ -21,6 +22,7 @@ public sealed class BandScrapePhase
     private readonly GlobalLeaderboardScraper _scraper;
     private readonly BandLeaderboardPersistence _persistence;
     private readonly IPathDataStore _pathDataStore;
+    private readonly SharedDopPool _pool;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<BandScrapePhase> _log;
@@ -29,6 +31,7 @@ public sealed class BandScrapePhase
         GlobalLeaderboardScraper scraper,
         BandLeaderboardPersistence persistence,
         IPathDataStore pathDataStore,
+        SharedDopPool pool,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         ILogger<BandScrapePhase> log)
@@ -36,6 +39,7 @@ public sealed class BandScrapePhase
         _scraper = scraper;
         _persistence = persistence;
         _pathDataStore = pathDataStore;
+        _pool = pool;
         _progress = progress;
         _options = options;
         _log = log;
@@ -43,13 +47,14 @@ public sealed class BandScrapePhase
 
     /// <summary>
     /// Scrape all band leaderboards for the given songs.
+    /// Runs (song, bandType) pairs in parallel, bounded by the shared DOP pool
+    /// at low priority so concurrent post-scrape work is not starved.
     /// Returns the total number of band entries persisted.
     /// </summary>
     public async Task<BandScrapeResult> ExecuteAsync(
         IReadOnlyList<Song> songs,
         string accessToken,
         string callerAccountId,
-        AdaptiveConcurrencyLimiter? limiter,
         CancellationToken ct)
     {
         var opts = _options.Value;
@@ -64,7 +69,7 @@ public sealed class BandScrapePhase
         var chartedSongs = songs.Where(s => s.track?.su is not null).ToList();
 
         int totalCombos = chartedSongs.Count * bandTypes.Count;
-        _log.LogInformation("Band scrape: {Songs} songs × {Types} band types = {Total} leaderboards.",
+        _log.LogInformation("Band scrape: {Songs} songs × {Types} band types = {Total} leaderboards (parallel via SharedDopPool).",
             chartedSongs.Count, bandTypes.Count, totalCombos);
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
@@ -73,56 +78,57 @@ public sealed class BandScrapePhase
         int totalEntries = 0;
         int totalRequests = 0;
         long totalBytes = 0;
-        int songsWithData = 0;
+        var songsWithData = new ConcurrentDictionary<string, byte>();
 
-        foreach (var song in chartedSongs)
+        // Build work items: all (song, bandType) pairs
+        var workItems = chartedSongs
+            .SelectMany(song => bandTypes.Select(bt => (Song: song, BandType: bt)))
+            .ToList();
+
+        // Process in parallel, bounded by SharedDopPool low-priority lane.
+        // Each work item acquires a low-priority slot for its API calls.
+        await Parallel.ForEachAsync(workItems, new ParallelOptions
         {
-            ct.ThrowIfCancellationRequested();
-            var songId = song.track!.su!;
+            MaxDegreeOfParallelism = Math.Max(1, opts.DegreeOfParallelism),
+            CancellationToken = ct,
+        }, async (item, innerCt) =>
+        {
+            var songId = item.Song.track!.su!;
             var songMaxScores = allMaxScores.TryGetValue(songId, out var ms) ? ms : null;
-            bool songHasData = false;
 
-            foreach (var bandType in bandTypes)
+            try
             {
-                ct.ThrowIfCancellationRequested();
+                var result = await ScrapeBandLeaderboardAsync(
+                    songId, item.BandType, accessToken, callerAccountId,
+                    songMaxScores, _pool.Limiter, opts, innerCt);
 
-                try
+                if (result.Entries.Count > 0)
                 {
-                    var result = await ScrapeBandLeaderboardAsync(
-                        songId, bandType, accessToken, callerAccountId,
-                        songMaxScores, limiter, opts, ct);
-
-                    if (result.Entries.Count > 0)
-                    {
-                        var persisted = _persistence.UpsertBandEntries(songId, bandType, result.Entries);
-                        Interlocked.Add(ref totalEntries, persisted);
-                        _progress.ReportPhaseEntryUpdated(persisted);
-                        songHasData = true;
-                    }
-
-                    Interlocked.Add(ref totalRequests, result.Requests);
-                    Interlocked.Add(ref totalBytes, result.BytesReceived);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Failed to scrape band leaderboard {Song}/{BandType}.", songId, bandType);
+                    var persisted = _persistence.UpsertBandEntries(songId, item.BandType, result.Entries);
+                    Interlocked.Add(ref totalEntries, persisted);
+                    _progress.ReportPhaseEntryUpdated(persisted);
+                    songsWithData.TryAdd(songId, 0);
                 }
 
-                _progress.ReportPhaseItemComplete();
+                Interlocked.Add(ref totalRequests, result.Requests);
+                Interlocked.Add(ref totalBytes, result.BytesReceived);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to scrape band leaderboard {Song}/{BandType}.", songId, item.BandType);
             }
 
-            if (songHasData)
-                Interlocked.Increment(ref songsWithData);
-        }
+            _progress.ReportPhaseItemComplete();
+        });
 
         _log.LogInformation(
             "Band scrape complete: {Entries:N0} entries across {Songs} songs. " +
             "{Requests:N0} requests, {Bytes:N0} bytes.",
-            totalEntries, songsWithData, totalRequests, totalBytes);
+            totalEntries, songsWithData.Count, totalRequests, totalBytes);
 
         return new BandScrapeResult
         {

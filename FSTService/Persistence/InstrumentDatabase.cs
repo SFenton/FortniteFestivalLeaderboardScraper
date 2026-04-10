@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FSTService.Scraping;
 using Npgsql;
 using NpgsqlTypes;
@@ -23,6 +24,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     /// <summary>Below this entry count, use the prepared-statement loop. Above, use COPY + merge.</summary>
     internal const int BulkThreshold = 50;
+
+    /// <summary>Serialize band member stats to compact JSON for storage. Returns null for solo entries.</summary>
+    private static string? SerializeBandMembers(LeaderboardEntry e)
+    {
+        if (e.BandMembers is not { Count: >= 2 }) return null;
+        return JsonSerializer.Serialize(e.BandMembers, BandMembersJsonContext.Default.ListBandMemberStats);
+    }
 
     public InstrumentDatabase(string instrument, NpgsqlDataSource dataSource, ILogger<InstrumentDatabase> log)
     {
@@ -111,7 +119,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 "song_id TEXT, instrument TEXT, account_id TEXT, score INTEGER, accuracy INTEGER, " +
                 "is_full_combo BOOLEAN, stars INTEGER, season INTEGER, difficulty INTEGER, " +
                 "percentile DOUBLE PRECISION, rank INTEGER, end_time TEXT, api_rank INTEGER, " +
-                "source TEXT, ts TIMESTAMPTZ" +
+                "source TEXT, band_members_json JSONB, band_score INTEGER, base_score INTEGER, " +
+                "instrument_bonus INTEGER, overdrive_bonus INTEGER, instrument_combo TEXT, ts TIMESTAMPTZ" +
                 ") ON COMMIT DROP";
             c.ExecuteNonQuery();
         }
@@ -119,7 +128,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         // 2. COPY binary into staging
         using (var writer = conn.BeginBinaryImport(
             "COPY _le_staging (song_id, instrument, account_id, score, accuracy, is_full_combo, " +
-            "stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts) FROM STDIN (FORMAT BINARY)"))
+            "stars, season, difficulty, percentile, rank, end_time, api_rank, source, " +
+            "band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts) FROM STDIN (FORMAT BINARY)"))
         {
             foreach (var e in entries)
             {
@@ -140,6 +150,19 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 if (e.ApiRank > 0) writer.Write(e.ApiRank, NpgsqlDbType.Integer);
                 else writer.WriteNull();
                 writer.Write(e.Source ?? "scrape", NpgsqlDbType.Text);
+                var bandJson = SerializeBandMembers(e);
+                if (bandJson is not null) writer.Write(bandJson, NpgsqlDbType.Jsonb);
+                else writer.WriteNull();
+                if (e.BandScore.HasValue) writer.Write(e.BandScore.Value, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                if (e.BaseScore.HasValue) writer.Write(e.BaseScore.Value, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                if (e.InstrumentBonus.HasValue) writer.Write(e.InstrumentBonus.Value, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                if (e.OverdriveBonus.HasValue) writer.Write(e.OverdriveBonus.Value, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                if (e.InstrumentCombo is not null) writer.Write(e.InstrumentCombo, NpgsqlDbType.Text);
+                else writer.WriteNull();
                 writer.Write(now, NpgsqlDbType.TimestampTz);
             }
             writer.Complete();
@@ -151,8 +174,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             c.Transaction = tx;
             c.CommandText =
-                "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
-                "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts, ts FROM _le_staging " +
+                "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
+                "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts FROM _le_staging " +
                 "ORDER BY song_id, instrument, account_id, score DESC " +
                 "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
                 "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
@@ -166,6 +189,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
                 "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
                 "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+                "band_members_json = COALESCE(EXCLUDED.band_members_json, leaderboard_entries.band_members_json), " +
+                "band_score = COALESCE(EXCLUDED.band_score, leaderboard_entries.band_score), " +
+                "base_score = COALESCE(EXCLUDED.base_score, leaderboard_entries.base_score), " +
+                "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
+                "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
+                "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
                 "last_updated_at = EXCLUDED.last_updated_at";
             affected = c.ExecuteNonQuery();
         }
@@ -197,14 +226,16 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 "song_id TEXT, instrument TEXT, account_id TEXT, score INTEGER, accuracy INTEGER, " +
                 "is_full_combo BOOLEAN, stars INTEGER, season INTEGER, difficulty INTEGER, " +
                 "percentile DOUBLE PRECISION, rank INTEGER, end_time TEXT, api_rank INTEGER, " +
-                "source TEXT, ts TIMESTAMPTZ" +
+                "source TEXT, band_members_json JSONB, band_score INTEGER, base_score INTEGER, " +
+                "instrument_bonus INTEGER, overdrive_bonus INTEGER, instrument_combo TEXT, ts TIMESTAMPTZ" +
                 ")";
             c.ExecuteNonQuery();
         }
 
         using (var writer = conn.BeginBinaryImport(
             "COPY _le_staging (song_id, instrument, account_id, score, accuracy, is_full_combo, " +
-            "stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts) FROM STDIN (FORMAT BINARY)"))
+            "stars, season, difficulty, percentile, rank, end_time, api_rank, source, " +
+            "band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts) FROM STDIN (FORMAT BINARY)"))
         {
             foreach (var e in entries)
             {
@@ -225,6 +256,19 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 if (e.ApiRank > 0) writer.Write(e.ApiRank, NpgsqlDbType.Integer);
                 else writer.WriteNull();
                 writer.Write(e.Source ?? "scrape", NpgsqlDbType.Text);
+                var bandJson = SerializeBandMembers(e);
+                if (bandJson is not null) writer.Write(bandJson, NpgsqlDbType.Jsonb);
+                else writer.WriteNull();
+                if (e.BandScore.HasValue) writer.Write(e.BandScore.Value, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                if (e.BaseScore.HasValue) writer.Write(e.BaseScore.Value, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                if (e.InstrumentBonus.HasValue) writer.Write(e.InstrumentBonus.Value, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                if (e.OverdriveBonus.HasValue) writer.Write(e.OverdriveBonus.Value, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                if (e.InstrumentCombo is not null) writer.Write(e.InstrumentCombo, NpgsqlDbType.Text);
+                else writer.WriteNull();
                 writer.Write(now, NpgsqlDbType.TimestampTz);
             }
             writer.Complete();
@@ -235,8 +279,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             c.Transaction = tx;
             c.CommandText =
-                "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
-                "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts, ts FROM _le_staging " +
+                "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
+                "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts FROM _le_staging " +
                 "ORDER BY song_id, instrument, account_id, score DESC " +
                 "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
                 "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
@@ -250,6 +294,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
                 "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
                 "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+                "band_members_json = COALESCE(EXCLUDED.band_members_json, leaderboard_entries.band_members_json), " +
+                "band_score = COALESCE(EXCLUDED.band_score, leaderboard_entries.band_score), " +
+                "base_score = COALESCE(EXCLUDED.base_score, leaderboard_entries.base_score), " +
+                "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
+                "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
+                "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
                 "last_updated_at = EXCLUDED.last_updated_at";
             affected = c.ExecuteNonQuery();
         }
@@ -268,8 +318,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText =
-            "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
-            "VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars, @season, @difficulty, @pct, @rank, @endTime, @apiRank, @source, @now, @now) " +
+            "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
+            "VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars, @season, @difficulty, @pct, @rank, @endTime, @apiRank, @source, @bandJson, @bandScore, @baseScore, @instrBonus, @odBonus, @instrCombo, @now, @now) " +
             "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
             "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
             "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
@@ -282,8 +332,14 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
             "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
             "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+            "band_members_json = COALESCE(EXCLUDED.band_members_json, leaderboard_entries.band_members_json), " +
+            "band_score = COALESCE(EXCLUDED.band_score, leaderboard_entries.band_score), " +
+            "base_score = COALESCE(EXCLUDED.base_score, leaderboard_entries.base_score), " +
+            "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
+            "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
+            "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
             "last_updated_at = EXCLUDED.last_updated_at " +
-            "WHERE EXCLUDED.score != leaderboard_entries.score OR (EXCLUDED.rank > 0 AND leaderboard_entries.rank IS DISTINCT FROM EXCLUDED.rank) OR (EXCLUDED.api_rank > 0 AND leaderboard_entries.api_rank IS DISTINCT FROM EXCLUDED.api_rank) OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0)";
+            "WHERE EXCLUDED.score != leaderboard_entries.score OR (EXCLUDED.rank > 0 AND leaderboard_entries.rank IS DISTINCT FROM EXCLUDED.rank) OR (EXCLUDED.api_rank > 0 AND leaderboard_entries.api_rank IS DISTINCT FROM EXCLUDED.api_rank) OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_entries.band_members_json IS NULL)";
         var pSongId = cmd.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var pAccountId = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
@@ -298,6 +354,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         var pEndTime = cmd.Parameters.Add("endTime", NpgsqlTypes.NpgsqlDbType.Text);
         var pApiRank = cmd.Parameters.Add("apiRank", NpgsqlTypes.NpgsqlDbType.Integer);
         var pSource = cmd.Parameters.Add("source", NpgsqlTypes.NpgsqlDbType.Text);
+        var pBandJson = cmd.Parameters.Add("bandJson", NpgsqlTypes.NpgsqlDbType.Jsonb);
+        var pBandScore = cmd.Parameters.Add("bandScore", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pBaseScore = cmd.Parameters.Add("baseScore", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pInstrBonus = cmd.Parameters.Add("instrBonus", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pOdBonus = cmd.Parameters.Add("odBonus", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pInstrCombo = cmd.Parameters.Add("instrCombo", NpgsqlTypes.NpgsqlDbType.Text);
         var pNow = cmd.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz);
         cmd.Prepare();
         int affected = 0;
@@ -310,6 +372,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             pEndTime.Value = (object?)entry.EndTime ?? DBNull.Value;
             pApiRank.Value = entry.ApiRank > 0 ? entry.ApiRank : DBNull.Value;
             pSource.Value = entry.Source ?? "scrape"; pNow.Value = now;
+            var bandJson = SerializeBandMembers(entry);
+            pBandJson.Value = (object?)bandJson ?? DBNull.Value;
+            pBandScore.Value = entry.BandScore.HasValue ? entry.BandScore.Value : DBNull.Value;
+            pBaseScore.Value = entry.BaseScore.HasValue ? entry.BaseScore.Value : DBNull.Value;
+            pInstrBonus.Value = entry.InstrumentBonus.HasValue ? entry.InstrumentBonus.Value : DBNull.Value;
+            pOdBonus.Value = entry.OverdriveBonus.HasValue ? entry.OverdriveBonus.Value : DBNull.Value;
+            pInstrCombo.Value = (object?)entry.InstrumentCombo ?? DBNull.Value;
             affected += cmd.ExecuteNonQuery();
         }
         return affected;
@@ -328,8 +397,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText =
-            "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
-            "VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars, @season, @difficulty, @pct, @rank, @endTime, @apiRank, @source, @now, @now) " +
+            "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
+            "VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars, @season, @difficulty, @pct, @rank, @endTime, @apiRank, @source, @bandJson, @bandScore, @baseScore, @instrBonus, @odBonus, @instrCombo, @now, @now) " +
             "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
             "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
             "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
@@ -342,8 +411,14 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
             "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
             "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+            "band_members_json = COALESCE(EXCLUDED.band_members_json, leaderboard_entries.band_members_json), " +
+            "band_score = COALESCE(EXCLUDED.band_score, leaderboard_entries.band_score), " +
+            "base_score = COALESCE(EXCLUDED.base_score, leaderboard_entries.base_score), " +
+            "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
+            "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
+            "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
             "last_updated_at = EXCLUDED.last_updated_at " +
-            "WHERE EXCLUDED.score != leaderboard_entries.score OR (EXCLUDED.rank > 0 AND leaderboard_entries.rank IS DISTINCT FROM EXCLUDED.rank) OR (EXCLUDED.api_rank > 0 AND leaderboard_entries.api_rank IS DISTINCT FROM EXCLUDED.api_rank) OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0)";
+            "WHERE EXCLUDED.score != leaderboard_entries.score OR (EXCLUDED.rank > 0 AND leaderboard_entries.rank IS DISTINCT FROM EXCLUDED.rank) OR (EXCLUDED.api_rank > 0 AND leaderboard_entries.api_rank IS DISTINCT FROM EXCLUDED.api_rank) OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_entries.band_members_json IS NULL)";
         var pSongId = cmd.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var pAccountId = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
@@ -358,6 +433,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         var pEndTime = cmd.Parameters.Add("endTime", NpgsqlTypes.NpgsqlDbType.Text);
         var pApiRank = cmd.Parameters.Add("apiRank", NpgsqlTypes.NpgsqlDbType.Integer);
         var pSource = cmd.Parameters.Add("source", NpgsqlTypes.NpgsqlDbType.Text);
+        var pBandJson = cmd.Parameters.Add("bandJson", NpgsqlTypes.NpgsqlDbType.Jsonb);
+        var pBandScore = cmd.Parameters.Add("bandScore", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pBaseScore = cmd.Parameters.Add("baseScore", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pInstrBonus = cmd.Parameters.Add("instrBonus", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pOdBonus = cmd.Parameters.Add("odBonus", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pInstrCombo = cmd.Parameters.Add("instrCombo", NpgsqlTypes.NpgsqlDbType.Text);
         var pNow = cmd.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz);
         cmd.Prepare();
         int affected = 0;
@@ -370,6 +451,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             pEndTime.Value = (object?)entry.EndTime ?? DBNull.Value;
             pApiRank.Value = entry.ApiRank > 0 ? entry.ApiRank : DBNull.Value;
             pSource.Value = entry.Source ?? "scrape"; pNow.Value = now;
+            var bandJson = SerializeBandMembers(entry);
+            pBandJson.Value = (object?)bandJson ?? DBNull.Value;
+            pBandScore.Value = entry.BandScore.HasValue ? entry.BandScore.Value : DBNull.Value;
+            pBaseScore.Value = entry.BaseScore.HasValue ? entry.BaseScore.Value : DBNull.Value;
+            pInstrBonus.Value = entry.InstrumentBonus.HasValue ? entry.InstrumentBonus.Value : DBNull.Value;
+            pOdBonus.Value = entry.OverdriveBonus.HasValue ? entry.OverdriveBonus.Value : DBNull.Value;
+            pInstrCombo.Value = (object?)entry.InstrumentCombo ?? DBNull.Value;
             affected += cmd.ExecuteNonQuery();
         }
         tx.Commit();

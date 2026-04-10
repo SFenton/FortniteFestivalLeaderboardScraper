@@ -51,8 +51,8 @@ export function FestivalProvider({ children }: { children: ReactNode }) {
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.songs(),
     queryFn: () => api.getSongs(),
-    initialData: getCachedSongs,   // instant render from localStorage while ETag revalidation runs
-    staleTime: 5 * 60 * 1000,     // 5 min — revalidation is cheap (304 via ETag)
+    placeholderData: getCachedSongs,  // instant render from localStorage; always refetches in background
+    staleTime: 5 * 60 * 1000,        // 5 min — revalidation is cheap (304 via ETag)
   });
 
   const refresh = useCallback(async () => {

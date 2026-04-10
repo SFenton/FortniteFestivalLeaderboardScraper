@@ -274,10 +274,10 @@ public sealed class ScraperOptions
 
     /// <summary>
     /// When true, scrape Band_Duets, Band_Trios, and Band_Quad leaderboards
-    /// in a separate phase after solo instrument scraping completes.
-    /// Default false — requires explicit opt-in.
+    /// in a background phase after registered-user refresh completes.
+    /// Default true — band scraping runs alongside post-scrape enrichment.
     /// </summary>
-    public bool EnableBandScraping { get; set; }
+    public bool EnableBandScraping { get; set; } = true;
 
     /// <summary>
     /// Maximum pages to fetch per band leaderboard (100 entries per page).

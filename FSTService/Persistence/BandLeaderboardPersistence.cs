@@ -33,7 +33,7 @@ public sealed class BandLeaderboardPersistence
     /// gets its own bounded channel and dedicated writer task so they don't
     /// block each other. Naturally extends when new band types are added.
     /// </summary>
-    public void StartWriter(IEnumerable<string>? bandTypes = null, int channelCapacity = 128, int writeBatchSize = 10, CancellationToken ct = default)
+    public void StartWriter(IEnumerable<string>? bandTypes = null, int channelCapacity = 64, int writeBatchSize = 10, CancellationToken ct = default)
     {
         var types = bandTypes ?? ["Band_Duets", "Band_Trios", "Band_Quad"];
         _channels = new Dictionary<string, Channel<BandWorkItem>>(StringComparer.OrdinalIgnoreCase);
@@ -349,5 +349,249 @@ public sealed class BandLeaderboardPersistence
     {
         if (value.HasValue) writer.Write(value.Value, NpgsqlDbType.Integer);
         else writer.WriteNull();
+    }
+
+    /// <summary>
+    /// Upsert band entries using an externally managed connection/transaction.
+    /// Used by <see cref="PostScrapeBandExtractor"/> to batch within its own transactions.
+    /// Returns (bandRows, memberStatRows, memberLookupRows).
+    /// </summary>
+    public (int Bands, int Members, int Lookups) UpsertBandEntriesDirect(
+        string songId, string bandType, IReadOnlyList<BandLeaderboardEntry> entries,
+        NpgsqlConnection conn, NpgsqlTransaction tx)
+    {
+        if (entries.Count == 0)
+            return (0, 0, 0);
+
+        var now = DateTimeOffset.UtcNow;
+
+        // ── 1. Band entries staging ──
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DROP TABLE IF EXISTS _be_staging";
+            cmd.ExecuteNonQuery();
+        }
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                CREATE TEMP TABLE _be_staging (
+                    song_id TEXT, band_type TEXT, team_key TEXT, instrument_combo TEXT,
+                    team_members TEXT[],
+                    score INT, base_score INT, instrument_bonus INT, overdrive_bonus INT,
+                    accuracy INT, is_full_combo BOOLEAN, stars INT, difficulty INT,
+                    season INT, rank INT, percentile DOUBLE PRECISION, end_time TEXT,
+                    source TEXT, is_over_threshold BOOLEAN, ts TIMESTAMPTZ
+                )
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var writer = conn.BeginBinaryImport(
+            "COPY _be_staging (song_id, band_type, team_key, instrument_combo, team_members, score, base_score, " +
+            "instrument_bonus, overdrive_bonus, accuracy, is_full_combo, stars, difficulty, " +
+            "season, rank, percentile, end_time, source, is_over_threshold, ts) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var e in entries)
+            {
+                writer.StartRow();
+                writer.Write(songId, NpgsqlDbType.Text);
+                writer.Write(bandType, NpgsqlDbType.Text);
+                writer.Write(e.TeamKey, NpgsqlDbType.Text);
+                writer.Write(e.InstrumentCombo, NpgsqlDbType.Text);
+                writer.Write(e.TeamMembers, NpgsqlDbType.Array | NpgsqlDbType.Text);
+                writer.Write(e.Score, NpgsqlDbType.Integer);
+                WriteNullableInt(writer, e.BaseScore);
+                WriteNullableInt(writer, e.InstrumentBonus);
+                WriteNullableInt(writer, e.OverdriveBonus);
+                writer.Write(e.Accuracy, NpgsqlDbType.Integer);
+                writer.Write(e.IsFullCombo, NpgsqlDbType.Boolean);
+                writer.Write(e.Stars, NpgsqlDbType.Integer);
+                writer.Write(e.Difficulty, NpgsqlDbType.Integer);
+                writer.Write(e.Season, NpgsqlDbType.Integer);
+                writer.Write(e.Rank, NpgsqlDbType.Integer);
+                writer.Write(e.Percentile, NpgsqlDbType.Double);
+                if (e.EndTime is not null) writer.Write(e.EndTime, NpgsqlDbType.Text);
+                else writer.WriteNull();
+                writer.Write(e.Source ?? "solo_extract", NpgsqlDbType.Text);
+                writer.Write(e.IsOverThreshold, NpgsqlDbType.Boolean);
+                writer.Write(now, NpgsqlDbType.TimestampTz);
+            }
+            writer.Complete();
+        }
+
+        int merged;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO band_entries (song_id, band_type, team_key, instrument_combo, team_members, score,
+                    base_score, instrument_bonus, overdrive_bonus, accuracy, is_full_combo,
+                    stars, difficulty, season, rank, percentile, end_time, source,
+                    is_over_threshold, first_seen_at, last_updated_at)
+                SELECT DISTINCT ON (song_id, band_type, team_key, instrument_combo)
+                    song_id, band_type, team_key, instrument_combo, team_members, score,
+                    base_score, instrument_bonus, overdrive_bonus, accuracy, is_full_combo,
+                    stars, difficulty, season, rank, percentile, end_time, source,
+                    is_over_threshold, ts, ts
+                FROM _be_staging
+                ORDER BY song_id, band_type, team_key, instrument_combo, score DESC
+                ON CONFLICT (song_id, band_type, team_key, instrument_combo) DO UPDATE SET
+                    score = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.score ELSE band_entries.score END,
+                    base_score = COALESCE(EXCLUDED.base_score, band_entries.base_score),
+                    instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, band_entries.instrument_bonus),
+                    overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, band_entries.overdrive_bonus),
+                    accuracy = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.accuracy ELSE band_entries.accuracy END,
+                    is_full_combo = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.is_full_combo ELSE band_entries.is_full_combo END,
+                    stars = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.stars ELSE band_entries.stars END,
+                    difficulty = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.difficulty ELSE band_entries.difficulty END,
+                    season = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.season ELSE band_entries.season END,
+                    rank = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.rank ELSE band_entries.rank END,
+                    percentile = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.percentile ELSE band_entries.percentile END,
+                    end_time = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.end_time ELSE band_entries.end_time END,
+                    is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
+                    last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
+                """;
+            merged = cmd.ExecuteNonQuery();
+        }
+
+        // ── 2. Member stats ──
+        int memberStatsCount = 0;
+        var allMemberStats = entries
+            .Where(e => e.MemberStats.Count > 0)
+            .SelectMany(e => e.MemberStats.Select(ms => (e.TeamKey, e.InstrumentCombo, ms)))
+            .ToList();
+
+        if (allMemberStats.Count > 0)
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "DROP TABLE IF EXISTS _bms_staging";
+                cmd.ExecuteNonQuery();
+            }
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    CREATE TEMP TABLE _bms_staging (
+                        song_id TEXT, band_type TEXT, team_key TEXT, instrument_combo TEXT,
+                        member_index INT, account_id TEXT, instrument_id INT,
+                        score INT, accuracy INT, is_full_combo BOOLEAN,
+                        stars INT, difficulty INT
+                    )
+                    """;
+                cmd.ExecuteNonQuery();
+            }
+
+            using (var writer = conn.BeginBinaryImport(
+                "COPY _bms_staging (song_id, band_type, team_key, instrument_combo, member_index, account_id, " +
+                "instrument_id, score, accuracy, is_full_combo, stars, difficulty) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var (teamKey, instrumentCombo, ms) in allMemberStats)
+                {
+                    writer.StartRow();
+                    writer.Write(songId, NpgsqlDbType.Text);
+                    writer.Write(bandType, NpgsqlDbType.Text);
+                    writer.Write(teamKey, NpgsqlDbType.Text);
+                    writer.Write(instrumentCombo, NpgsqlDbType.Text);
+                    writer.Write(ms.MemberIndex, NpgsqlDbType.Integer);
+                    writer.Write(ms.AccountId, NpgsqlDbType.Text);
+                    writer.Write(ms.InstrumentId, NpgsqlDbType.Integer);
+                    writer.Write(ms.Score, NpgsqlDbType.Integer);
+                    writer.Write(ms.Accuracy, NpgsqlDbType.Integer);
+                    writer.Write(ms.IsFullCombo, NpgsqlDbType.Boolean);
+                    writer.Write(ms.Stars, NpgsqlDbType.Integer);
+                    writer.Write(ms.Difficulty, NpgsqlDbType.Integer);
+                }
+                writer.Complete();
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    INSERT INTO band_member_stats (song_id, band_type, team_key, instrument_combo, member_index,
+                        account_id, instrument_id, score, accuracy, is_full_combo, stars, difficulty)
+                    SELECT DISTINCT ON (song_id, band_type, team_key, instrument_combo, member_index)
+                        song_id, band_type, team_key, instrument_combo, member_index,
+                        account_id, instrument_id, score, accuracy, is_full_combo, stars, difficulty
+                    FROM _bms_staging
+                    ORDER BY song_id, band_type, team_key, instrument_combo, member_index
+                    ON CONFLICT (song_id, band_type, team_key, instrument_combo, member_index) DO UPDATE SET
+                        account_id = EXCLUDED.account_id,
+                        instrument_id = EXCLUDED.instrument_id,
+                        score = EXCLUDED.score,
+                        accuracy = EXCLUDED.accuracy,
+                        is_full_combo = EXCLUDED.is_full_combo,
+                        stars = EXCLUDED.stars,
+                        difficulty = EXCLUDED.difficulty
+                    """;
+                memberStatsCount = cmd.ExecuteNonQuery();
+            }
+
+            using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _bms_staging"; cmd.ExecuteNonQuery(); }
+        }
+
+        // ── 3. Member lookups ──
+        int lookupCount = 0;
+        var memberLookups = entries
+            .SelectMany(e => e.TeamMembers.Select(m => (AccountId: m, e.TeamKey, e.InstrumentCombo)))
+            .Where(x => !string.IsNullOrEmpty(x.AccountId))
+            .Distinct()
+            .ToList();
+
+        if (memberLookups.Count > 0)
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "DROP TABLE IF EXISTS _bm_staging";
+                cmd.ExecuteNonQuery();
+            }
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    CREATE TEMP TABLE _bm_staging (
+                        account_id TEXT, song_id TEXT, band_type TEXT, team_key TEXT, instrument_combo TEXT
+                    )
+                    """;
+                cmd.ExecuteNonQuery();
+            }
+
+            using (var writer = conn.BeginBinaryImport(
+                "COPY _bm_staging (account_id, song_id, band_type, team_key, instrument_combo) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var (accountId, teamKey, instrumentCombo) in memberLookups)
+                {
+                    writer.StartRow();
+                    writer.Write(accountId, NpgsqlDbType.Text);
+                    writer.Write(songId, NpgsqlDbType.Text);
+                    writer.Write(bandType, NpgsqlDbType.Text);
+                    writer.Write(teamKey, NpgsqlDbType.Text);
+                    writer.Write(instrumentCombo, NpgsqlDbType.Text);
+                }
+                writer.Complete();
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    INSERT INTO band_members (account_id, song_id, band_type, team_key, instrument_combo)
+                    SELECT DISTINCT account_id, song_id, band_type, team_key, instrument_combo FROM _bm_staging
+                    ON CONFLICT (account_id, song_id, band_type, team_key, instrument_combo) DO NOTHING
+                    """;
+                lookupCount = cmd.ExecuteNonQuery();
+            }
+
+            using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _bm_staging"; cmd.ExecuteNonQuery(); }
+        }
+
+        using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _be_staging"; cmd.ExecuteNonQuery(); }
+
+        return (merged, memberStatsCount, lookupCount);
     }
 }

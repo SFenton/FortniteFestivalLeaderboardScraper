@@ -292,8 +292,35 @@ namespace FortniteFestival.Core.Services
                 {
                     var incomingIds = new HashSet<string>(list.Select(s => s.track.su));
                     var stale = _songs.Keys.Where(k => !incomingIds.Contains(k)).ToList();
-                    foreach (var id in stale)
-                        _songs.Remove(id);
+
+                    // ── Safety: never evict if the API returned zero songs (likely outage) ──
+                    if (list.Count == 0 && _songs.Count > 0)
+                    {
+                        LogLine($"SongSync: API returned 0 songs but we have {_songs.Count} in memory — skipping eviction (probable API outage).");
+                        _songSyncComplete = true;
+                        return;
+                    }
+
+                    // ── Safety: refuse bulk eviction (>10% of catalog) ──
+                    if (stale.Count > 0 && _songs.Count > 0)
+                    {
+                        double evictionPct = (double)stale.Count / _songs.Count * 100;
+                        if (evictionPct > 10)
+                        {
+                            LogLine($"SongSync: BLOCKED eviction of {stale.Count}/{_songs.Count} songs ({evictionPct:F1}% > 10% threshold). API may be returning a partial catalog.");
+                            // Still apply updates for songs that ARE present
+                        }
+                        else
+                        {
+                            foreach (var id in stale)
+                            {
+                                _songs.TryGetValue(id, out var removedSong);
+                                _songs.Remove(id);
+                                LogLine($"SongSync: evicted song '{removedSong?.track?.tt ?? id}' (su={id}) — no longer in spark-tracks API.");
+                            }
+                        }
+                    }
+
                     foreach (var s in list)
                     {
                         if (_songs.TryGetValue(s.track.su, out var existing))
