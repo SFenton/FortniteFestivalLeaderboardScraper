@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Colors, Font, Weight, Gap, Radius, Border,
   Display, TextAlign, Overflow,
-  border, padding,
+  border, padding, frostedCard,
 } from '@festival/theme';
 
 // ── Types ────────────────────────────────────────────────────
@@ -78,17 +78,28 @@ const FRET_COLORS: Record<FretKey, string> = {
 const FRET_INACTIVE = Colors.surfaceMuted;
 
 function buildRows(data: PathDataResponse): TableRow[] {
-  // Build beat → note lookup
-  const noteByBeat = new Map<number, PathDataNote>();
-  for (const n of data.notes) {
-    noteByBeat.set(n.beat, n);
+  // Build sorted notes array for tolerance-based lookup
+  const sortedNotes = [...data.notes].sort((a, b) => a.beat - b.beat);
+
+  function findNote(beat: number): PathDataNote | undefined {
+    const EPSILON = 0.02;
+    // Binary search for closest note
+    let lo = 0;
+    let hi = sortedNotes.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      if (sortedNotes[mid].beat < beat - EPSILON) lo = mid + 1;
+      else if (sortedNotes[mid].beat > beat + EPSILON) hi = mid - 1;
+      else return sortedNotes[mid];
+    }
+    return undefined;
   }
 
   const rows: TableRow[] = [];
   for (const act of data.activations) {
     if (!act.startNotes) continue;
     for (const sn of act.startNotes) {
-      const note = noteByBeat.get(sn.beat);
+      const note = findNote(sn.beat);
       rows.push({
         frets: note?.frets ?? {},
         beat: sn.beat,
@@ -110,35 +121,32 @@ function formatTime(totalSeconds: number): string {
 
 const scoreFormatter = new Intl.NumberFormat('en-US');
 
-// ── Fret pill / open triangle ────────────────────────────────
-
-const PILL_SIZE = 18;
+// ── Fret pill / open pill ─────────────────────────────────────
 
 function FretPill({ fretKey, active }: { fretKey: FretKey; active: boolean }) {
   const s: CSSProperties = {
     display: Display.inlineBlock,
-    width: PILL_SIZE,
-    height: PILL_SIZE,
-    borderRadius: Radius.full,
+    width: 22,
+    height: 22,
+    borderRadius: Radius.xs,
     backgroundColor: active ? FRET_COLORS[fretKey] : FRET_INACTIVE,
-    border: active ? 'none' : border(Border.thin, Colors.borderSubtle),
+    border: border(Border.thick, active ? 'transparent' : Colors.borderSubtle),
     flexShrink: 0,
   };
   return <span style={s} />;
 }
 
-function OpenTriangle({ active }: { active: boolean }) {
-  const color = active ? Colors.textPrimary : FRET_INACTIVE;
-  return (
-    <svg width={PILL_SIZE} height={PILL_SIZE} viewBox="0 0 18 18" style={{ flexShrink: 0, display: 'block' }}>
-      <polygon
-        points="9,2 16,16 2,16"
-        fill={active ? color : 'none'}
-        stroke={color}
-        strokeWidth={active ? 0 : 1.5}
-      />
-    </svg>
-  );
+function OpenPill({ active }: { active: boolean }) {
+  const s: CSSProperties = {
+    display: Display.inlineBlock,
+    width: 22,
+    height: 22,
+    borderRadius: Radius.xs,
+    backgroundColor: active ? Colors.textPrimary : FRET_INACTIVE,
+    border: border(Border.thick, active ? 'transparent' : Colors.borderSubtle),
+    flexShrink: 0,
+  };
+  return <span style={s} />;
 }
 
 // ── OD Progress Bar ──────────────────────────────────────────
@@ -162,6 +170,7 @@ function useOdBarStyles(percent: number) {
       display: Display.flex,
       alignItems: 'center',
       gap: Gap.sm,
+      width: '100%',
     } as CSSProperties,
     track: {
       position: 'relative' as const,
@@ -183,7 +192,7 @@ function useOdBarStyles(percent: number) {
     } as CSSProperties,
     label: {
       flexShrink: 0,
-      fontSize: Font.xs,
+      fontSize: Font.sm,
       fontWeight: Weight.semibold,
       color: Colors.textSecondary,
       minWidth: 32,
@@ -198,6 +207,20 @@ interface PathDataTableProps {
   data: PathDataResponse;
 }
 
+export function PathDataHeader() {
+  const { t } = useTranslation();
+  const s = useTableStyles();
+  return (
+    <div style={s.header}>
+      <span style={s.hNote}>{t('paths.colNote')}</span>
+      <span style={s.hCell}>{t('paths.colBeat')}</span>
+      <span style={s.hCell}>{t('paths.colTime')}</span>
+      <span style={s.hOd}>{t('paths.colOd')}</span>
+      <span style={s.hScore}>{t('paths.colScore')}</span>
+    </div>
+  );
+}
+
 export default memo(function PathDataTable({ data }: PathDataTableProps) {
   const { t } = useTranslation();
   const rows = useMemo(() => buildRows(data), [data]);
@@ -209,35 +232,24 @@ export default memo(function PathDataTable({ data }: PathDataTableProps) {
 
   return (
     <div style={s.wrapper}>
-      <table style={s.table}>
-        <thead>
-          <tr>
-            <th style={s.thNote}>{t('paths.colNote')}</th>
-            <th style={s.th}>{t('paths.colBeat')}</th>
-            <th style={s.th}>{t('paths.colTime')}</th>
-            <th style={s.thOd}>{t('paths.colOd')}</th>
-            <th style={s.thScore}>{t('paths.colScore')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i} style={i % 2 === 0 ? s.rowEven : s.rowOdd}>
-              <td style={s.tdNote}>
-                <div style={s.fretRow}>
-                  {FRET_KEYS.map(fk => (
-                    <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
-                  ))}
-                  <OpenTriangle active={row.frets.open !== undefined} />
-                </div>
-              </td>
-              <td style={s.td}>{row.beat.toFixed(2)}</td>
-              <td style={s.tdMono}>{formatTime(row.seconds)}</td>
-              <td style={s.tdOd}><OdBar percent={row.odPercent} /></td>
-              <td style={s.tdScore}>{scoreFormatter.format(row.cumulativeScore)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div style={s.list}>
+        {rows.map((row, i) => (
+          <div key={i} style={s.row}>
+            <div style={s.cellNote}>
+              <div style={s.fretRow}>
+                {FRET_KEYS.map(fk => (
+                  <FretPill key={fk} fretKey={fk} active={row.frets[fk] !== undefined} />
+                ))}
+                <OpenPill active={row.frets.open !== undefined} />
+              </div>
+            </div>
+            <span style={s.cell}>{row.beat.toFixed(2)}</span>
+            <span style={s.cellMono}>{formatTime(row.seconds)}</span>
+            <div style={s.cellOd}><OdBar percent={row.odPercent} /></div>
+            <span style={s.cellScore}>{scoreFormatter.format(row.cumulativeScore)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 });
@@ -246,46 +258,55 @@ export default memo(function PathDataTable({ data }: PathDataTableProps) {
 
 function useTableStyles() {
   return useMemo(() => {
+    const gridCols = '160px 80px 110px 1fr 100px';
     const cellBase: CSSProperties = {
-      padding: padding(Gap.md, Gap.lg),
+      display: Display.flex,
+      alignItems: 'center',
       fontSize: Font.sm,
       color: Colors.textSecondary,
       whiteSpace: 'nowrap' as const,
     };
-    const headerBase: CSSProperties = {
-      ...cellBase,
-      position: 'sticky' as const,
-      top: 0,
-      zIndex: 2,
-      backgroundColor: Colors.surfaceElevated,
-      color: Colors.textPrimary,
-      fontWeight: Weight.semibold,
-      fontSize: Font.xs,
-      textTransform: 'uppercase' as const,
-      letterSpacing: Font.letterSpacingWide,
-      borderBottom: border(Border.thin, Colors.borderPrimary),
-    };
     return {
       wrapper: {
         width: '100%',
-        overflow: 'auto' as const,
+        display: Display.flex,
+        flexDirection: 'column' as const,
+        gap: Gap.sm,
       } as CSSProperties,
-      table: {
-        width: '100%',
-        borderCollapse: 'collapse' as const,
-        tableLayout: 'auto' as const,
+      header: {
+        display: 'grid' as const,
+        gridTemplateColumns: gridCols,
+        gap: Gap.lg,
+        padding: padding(Gap.sm, Gap.section + Gap.xl),
+        color: Colors.textMuted,
+        fontWeight: Weight.semibold,
+        fontSize: Font.xs,
+        textTransform: 'uppercase' as const,
+        letterSpacing: Font.letterSpacingWide,
       } as CSSProperties,
-      th: { ...headerBase, textAlign: TextAlign.left } as CSSProperties,
-      thNote: { ...headerBase, textAlign: TextAlign.center } as CSSProperties,
-      thOd: { ...headerBase, textAlign: TextAlign.left, minWidth: 120 } as CSSProperties,
-      thScore: { ...headerBase, textAlign: 'right' as const } as CSSProperties,
-      rowEven: { backgroundColor: 'transparent' } as CSSProperties,
-      rowOdd: { backgroundColor: Colors.surfaceSubtle } as CSSProperties,
-      td: { ...cellBase, textAlign: TextAlign.left } as CSSProperties,
-      tdNote: { ...cellBase, textAlign: TextAlign.center } as CSSProperties,
-      tdMono: { ...cellBase, textAlign: TextAlign.left, fontFamily: 'monospace' } as CSSProperties,
-      tdOd: { ...cellBase, textAlign: TextAlign.left, minWidth: 120 } as CSSProperties,
-      tdScore: { ...cellBase, textAlign: 'right' as const, fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
+      hNote: { display: Display.flex, justifyContent: 'center' } as CSSProperties,
+      hCell: { display: Display.flex } as CSSProperties,
+      hOd: { display: Display.flex } as CSSProperties,
+      hScore: { display: Display.flex, justifyContent: 'flex-end' } as CSSProperties,
+      list: {
+        display: Display.flex,
+        flexDirection: 'column' as const,
+        gap: Gap.sm,
+      } as CSSProperties,
+      row: {
+        ...frostedCard,
+        display: 'grid' as const,
+        gridTemplateColumns: gridCols,
+        gap: Gap.lg,
+        padding: padding(Gap.md, Gap.xl),
+        borderRadius: Radius.md,
+        alignItems: 'center',
+      } as CSSProperties,
+      cellNote: { ...cellBase, justifyContent: 'center' } as CSSProperties,
+      cell: { ...cellBase } as CSSProperties,
+      cellMono: { ...cellBase } as CSSProperties,
+      cellOd: { ...cellBase, minWidth: 0, width: '100%' } as CSSProperties,
+      cellScore: { ...cellBase, justifyContent: 'flex-end', fontVariantNumeric: 'tabular-nums', fontWeight: Weight.semibold } as CSSProperties,
       fretRow: { display: Display.flex, gap: Gap.xs, alignItems: 'center', justifyContent: 'center' } as CSSProperties,
     };
   }, []);

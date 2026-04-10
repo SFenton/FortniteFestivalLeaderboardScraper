@@ -18,7 +18,7 @@ import {
 import { modalStyles } from '../../../../components/modals/modalStyles';
 import anim from '../../../../styles/animations.module.css';
 import { ZoomableImage } from './ZoomableImage';
-import PathDataTable, { type PathDataResponse } from './PathDataTable';
+import PathDataTable, { type PathDataResponse, PathDataHeader } from './PathDataTable';
 
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
@@ -355,6 +355,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
             </div>
           </div>
         )}
+        {choptDisplay === 'text' && <PathDataHeader />}
         <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} />
       </div>
     </>,
@@ -499,6 +500,7 @@ function PathImage({ songId, instrument, difficulty, displayMode }: { songId: st
     flex: 1, overflow: 'auto', position: 'relative',
     display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
     padding: Gap.section,
+    ...(displayMode === 'text' ? { paddingTop: Gap.sm } : {}),
   };
 
   return (
