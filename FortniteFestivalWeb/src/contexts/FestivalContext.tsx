@@ -47,6 +47,7 @@ export const FestivalContext = createContext<FestivalContextValue | null>(null);
 
 export function FestivalProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
+  const cachedResponse = useMemo(getCachedSongs, []);
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.songs(),
@@ -61,13 +62,13 @@ export function FestivalProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<FestivalContextValue>(() => ({
     state: {
-      songs: data?.songs ?? [],
-      currentSeason: data?.currentSeason ?? 0,
+      songs: data?.songs ?? cachedResponse?.songs ?? [],
+      currentSeason: data?.currentSeason ?? cachedResponse?.currentSeason ?? 0,
       isLoading,
       error: error ? (error instanceof Error ? error.message : 'Failed to load songs') : null,
     },
     actions: { refresh },
-  }), [data, isLoading, error, refresh]);
+  }), [data, cachedResponse, isLoading, error, refresh]);
 
   return (
     <FestivalContext.Provider value={value}>
