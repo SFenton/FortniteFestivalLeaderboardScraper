@@ -281,7 +281,7 @@ export const SongRow = memo(function SongRow({ song,
   const rowStyle = isMobile ? s.rowMobile : s.row;
   const rowClassName = shopHighlightRed ? anim.shopHighlightRed : shopHighlight ? anim.shopHighlight : undefined;
 
-  const infoMinWidth = isMobile ? 0 : 200;
+  const infoMinWidth = isMobile || externalHref ? 0 : 200;
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={infoMinWidth} />;
 
   // External link: render <a> instead of <Link>
@@ -502,7 +502,7 @@ function useStyles() {
     mobileChipInvalidIcon: { position: Position.absolute, right: 0, top: '50%', transform: 'translateY(-50%)' } as CSSProperties,
     lastPlayedCenteredRow: { display: Display.flex, justifyContent: Justify.center, alignItems: Align.center } as CSSProperties,
     externalIndicator: { ...flexRow, gap: Gap.lg, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle, alignItems: Align.center } as CSSProperties,
-    leavingCircle: { width: 24, height: 24, borderRadius: Radius.full, ...flexCenter, color: Colors.textPrimary, flexShrink: 0 } as CSSProperties,
+    leavingCircle: { width: 24, height: 24, borderRadius: Radius.full, color: Colors.textPrimary, flexShrink: 0 } as CSSProperties,
     // Metadata item wrapper styles (kept fixed so resize does not bounce between wrap states)
     metadataItemAlone: { flexShrink: 0 } as CSSProperties,
     metadataItemLeft: { flexShrink: 0 } as CSSProperties,
