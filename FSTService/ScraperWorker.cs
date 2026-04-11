@@ -244,6 +244,15 @@ public sealed class ScraperWorker : BackgroundService
             await RunScrapePassAsync(_festivalService, opts, stoppingToken);
             lastScrapeEndUtc = DateTime.UtcNow;
 
+            // Phase-selective flags only affect the first (launch) pass.
+            // After it completes, revert to the full pipeline for subsequent cycles.
+            if (opts.EnabledPhases != ScrapePhase.None)
+            {
+                _log.LogInformation("Launch phases complete ({Phases}). Reverting to full pipeline for subsequent cycles.",
+                    ScrapePhaseResolver.Format(opts.ResolvedPhases));
+                opts.EnabledPhases = ScrapePhase.None;
+            }
+
             if (opts.RunOnce)
             {
                 _log.LogInformation("--once: scrape + resolve pass complete. Exiting.");

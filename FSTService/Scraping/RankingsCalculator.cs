@@ -29,8 +29,8 @@ public sealed class RankingsCalculator
     /// <summary>The assumed population median percentile (0.5 = 50th percentile).</summary>
     private const double PopulationMedian = 0.5;
 
-    /// <summary>Base threshold multiplier for CHOpt max score filtering (-5.0% leeway).</summary>
-    private const double BaseThresholdMultiplier = 0.95;
+    /// <summary>Base threshold multiplier for CHOpt max score filtering (+5.0% leeway).</summary>
+    private const double BaseThresholdMultiplier = 1.05;
 
     /// <summary>Maximum threshold multiplier (+5.0% leeway).</summary>
     private const double MaxThresholdMultiplier = 1.05;
