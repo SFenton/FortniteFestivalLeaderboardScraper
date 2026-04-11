@@ -62,10 +62,8 @@ public class ScraperOptionsAndModelsTests
     {
         var opts = new FeatureOptions();
 
-        Assert.False(opts.Shop);
         Assert.False(opts.Rivals);
         Assert.False(opts.Leaderboards);
-        Assert.False(opts.Compete);
         Assert.False(opts.FirstRun);
     }
 

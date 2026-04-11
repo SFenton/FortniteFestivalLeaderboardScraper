@@ -25,6 +25,15 @@ public sealed class SharedDopPool : IDisposable
     private int _highPriorityActive;
 
     /// <summary>
+    /// Counter for registered high-priority phases (e.g. solo scrape).
+    /// While > 0, <see cref="AcquireLowAsync"/> enforces the low-priority gate
+    /// even if no individual high-priority slots are currently held.
+    /// This prevents band from consuming all DOP when solo is between
+    /// slot acquire/release cycles (e.g. between songs).
+    /// </summary>
+    private int _highPriorityPhaseActive;
+
+    /// <summary>
     /// Create a pool with the given DOP configuration and low-priority cap.
     /// </summary>
     /// <param name="initialDop">Initial degree of parallelism.</param>
@@ -85,17 +94,19 @@ public sealed class SharedDopPool : IDisposable
     // ─── Low-priority access ─────────────────────────────────
 
     /// <summary>
-    /// Acquire a slot at low priority. When high-priority work is active, waits
-    /// for the low-priority gate first (capping concurrent low-priority holders).
+    /// Acquire a slot at low priority. When a high-priority phase is registered
+    /// or individual high-priority slots are held, waits for the low-priority gate
+    /// first (capping concurrent low-priority holders).
     /// When no high-priority work is active, bypasses the gate to use the full DOP budget.
     /// </summary>
     public async Task<LowPriorityToken> AcquireLowAsync(CancellationToken ct)
     {
         bool gateAcquired = false;
 
-        // When high-priority callers are present, enforce the low-priority cap.
-        // Otherwise, let low-priority work use the full DOP budget.
-        if (Volatile.Read(ref _highPriorityActive) > 0)
+        // Enforce the low-priority cap when any high-priority work is present:
+        // either a registered phase (solo scrape) or individual slot holders (post-scrape).
+        if (Volatile.Read(ref _highPriorityPhaseActive) > 0 ||
+            Volatile.Read(ref _highPriorityActive) > 0)
         {
             await _lowPriorityGate.WaitAsync(ct);
             gateAcquired = true;
@@ -120,6 +131,22 @@ public sealed class SharedDopPool : IDisposable
         _inner.Release();
         if (token.GateAcquired) _lowPriorityGate.Release();
     }
+
+    // ─── High-priority phase registration ───────────────────
+
+    /// <summary>
+    /// Register that a high-priority phase (e.g. solo scrape) is active.
+    /// While registered, <see cref="AcquireLowAsync"/> enforces the low-priority
+    /// gate regardless of whether individual high-priority slots are held.
+    /// Call <see cref="EndHighPriorityPhase"/> when the phase completes.
+    /// </summary>
+    public void BeginHighPriorityPhase() => Interlocked.Increment(ref _highPriorityPhaseActive);
+
+    /// <summary>
+    /// Unregister a high-priority phase. When no phases or individual slots remain,
+    /// low-priority callers bypass the gate and can use the full DOP budget.
+    /// </summary>
+    public void EndHighPriorityPhase() => Interlocked.Decrement(ref _highPriorityPhaseActive);
 
     // ─── AIMD feedback ───────────────────────────────────────
 

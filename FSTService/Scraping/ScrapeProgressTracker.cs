@@ -181,6 +181,116 @@ public sealed class ScrapeProgressTracker
     /// <summary>Set the current sub-operation within the active phase. Pass null to clear.</summary>
     public void SetSubOperation(string? id) { _subOperation = id; Interlocked.Increment(ref _changeSequence); }
 
+    // ─── Sub-operation detail tracking ──────────────────────
+
+    // Spool flush progress
+    private volatile string? _flushingInstrument;
+    private int _instrumentsFlushCompleted;
+    private int _instrumentsFlushTotal;
+
+    // Index management progress
+    private volatile string? _indexOperation;   // "dropping" | "creating" | null
+    private volatile string? _currentIndex;
+    private int _indexesCompleted;
+    private int _indexesTotal;
+
+    // Band fetch progress
+    private volatile string? _bandPhase;        // "page0_discovery" | "fetching_pages" | "complete" | null
+    private long _bandPagesCompleted;
+    private long _bandPagesTotal;
+    private int _bandSongsDiscovered;
+    private long _bandRetries;
+
+    // Solo vs band completion
+    private volatile bool _soloFetchComplete;
+    private volatile bool _bandFetchComplete;
+
+    /// <summary>Report spool flush progress for one instrument.</summary>
+    public void ReportFlushProgress(string instrument, int completed, int total)
+    {
+        _flushingInstrument = instrument;
+        _instrumentsFlushCompleted = completed;
+        _instrumentsFlushTotal = total;
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Report index drop/create progress.</summary>
+    public void ReportIndexProgress(string operation, string indexName, int completed, int total)
+    {
+        _indexOperation = operation;
+        _currentIndex = indexName;
+        _indexesCompleted = completed;
+        _indexesTotal = total;
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Update band fetch progress counters.</summary>
+    public void SetBandFetchProgress(string bandPhase, long pagesCompleted, long pagesTotal, int songsDiscovered, long retries)
+    {
+        _bandPhase = bandPhase;
+        Interlocked.Exchange(ref _bandPagesCompleted, pagesCompleted);
+        Interlocked.Exchange(ref _bandPagesTotal, pagesTotal);
+        _bandSongsDiscovered = songsDiscovered;
+        Interlocked.Exchange(ref _bandRetries, retries);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Mark the solo fetch as complete.</summary>
+    public void SetSoloFetchComplete() { _soloFetchComplete = true; Interlocked.Increment(ref _changeSequence); }
+
+    /// <summary>Mark the band fetch as complete.</summary>
+    public void SetBandFetchComplete() { _bandFetchComplete = true; Interlocked.Increment(ref _changeSequence); }
+
+    private void ResetSubOperationDetail()
+    {
+        _flushingInstrument = null;
+        _instrumentsFlushCompleted = 0;
+        _instrumentsFlushTotal = 0;
+        _indexOperation = null;
+        _currentIndex = null;
+        _indexesCompleted = 0;
+        _indexesTotal = 0;
+        _bandPhase = null;
+        Interlocked.Exchange(ref _bandPagesCompleted, 0);
+        Interlocked.Exchange(ref _bandPagesTotal, 0);
+        _bandSongsDiscovered = 0;
+        Interlocked.Exchange(ref _bandRetries, 0);
+        _soloFetchComplete = false;
+        _bandFetchComplete = false;
+    }
+
+    /// <summary>Build a snapshot of the sub-operation detail, or null if nothing interesting is set.</summary>
+    private SubOperationDetail? BuildSubOperationDetail()
+    {
+        var flushInst = _flushingInstrument;
+        var indexOp = _indexOperation;
+        var bandPh = _bandPhase;
+        var soloComplete = _soloFetchComplete;
+        var bandComplete = _bandFetchComplete;
+
+        // Only emit detail when there's something to report
+        if (flushInst is null && indexOp is null && bandPh is null && !soloComplete && !bandComplete)
+            return null;
+
+        return new SubOperationDetail
+        {
+            FlushingInstrument = flushInst,
+            InstrumentsFlushCompleted = flushInst is not null ? _instrumentsFlushCompleted : null,
+            InstrumentsFlushTotal = flushInst is not null ? _instrumentsFlushTotal : null,
+            IndexOperation = indexOp,
+            IndexesCompleted = indexOp is not null ? _indexesCompleted : null,
+            IndexesTotal = indexOp is not null ? _indexesTotal : null,
+            CurrentIndex = indexOp is not null ? _currentIndex : null,
+            BandPhase = bandPh,
+            BandPagesCompleted = bandPh is not null ? Interlocked.Read(ref _bandPagesCompleted) : null,
+            BandPagesTotal = bandPh is not null ? Interlocked.Read(ref _bandPagesTotal) : null,
+            BandSongsDiscovered = bandPh is not null ? _bandSongsDiscovered : null,
+            BandRetries = bandPh is not null ? Interlocked.Read(ref _bandRetries) : null,
+            SoloFetchComplete = soloComplete,
+            BandFetchComplete = bandComplete,
+        };
+    }
+
     // ─── Timing ─────────────────────────────────────────────
 
     private readonly Stopwatch _phaseStopwatch = new();
@@ -213,6 +323,7 @@ public sealed class ScrapeProgressTracker
         _nameResResolved = 0;
         _nameResFailed = 0;
         ResetGenericCounters();
+        ResetSubOperationDetail();
         _startedAtUtc = DateTime.UtcNow;
         _phaseStartedAtUtc = _startedAtUtc;
         _passStopwatch.Restart();
@@ -593,6 +704,7 @@ public sealed class ScrapeProgressTracker
         {
             Operation = "Scraping",
             SubOperation = _subOperation,
+            Detail = BuildSubOperationDetail(),
             StartedAtUtc = _phaseStartedAtUtc,
             ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
             EstimatedRemainingSeconds = estimatedRemaining.HasValue
@@ -686,6 +798,7 @@ public sealed class ScrapeProgressTracker
         {
             Operation = operation,
             SubOperation = _subOperation,
+            Detail = BuildSubOperationDetail(),
             StartedAtUtc = _phaseStartedAtUtc,
             ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
             EstimatedRemainingSeconds = estimatedRemaining.HasValue
@@ -859,6 +972,9 @@ public sealed class OperationSnapshot
     public ProgressCounter? WorkItems { get; init; }
     public int? EntriesUpdated { get; init; }
 
+    // ── Sub-operation detail ──
+    public SubOperationDetail? Detail { get; init; }
+
     // ── Attachment progress ──
     public List<AttachmentSummary>? Attachments { get; init; }
 }
@@ -876,6 +992,35 @@ public sealed class PageProgress
     public int DiscoveredTotal { get; init; }
     public bool DiscoveryComplete { get; init; }
     public int LeaderboardsDiscovered { get; init; }
+}
+
+/// <summary>
+/// Structured detail about the current sub-operation: flush progress,
+/// index management, band fetch status, and solo/band completion.
+/// </summary>
+public sealed class SubOperationDetail
+{
+    // Spool flush
+    public string? FlushingInstrument { get; init; }
+    public int? InstrumentsFlushCompleted { get; init; }
+    public int? InstrumentsFlushTotal { get; init; }
+
+    // Index management
+    public string? IndexOperation { get; init; }
+    public int? IndexesCompleted { get; init; }
+    public int? IndexesTotal { get; init; }
+    public string? CurrentIndex { get; init; }
+
+    // Band fetch
+    public string? BandPhase { get; init; }
+    public long? BandPagesCompleted { get; init; }
+    public long? BandPagesTotal { get; init; }
+    public int? BandSongsDiscovered { get; init; }
+    public long? BandRetries { get; init; }
+
+    // Solo vs band completion
+    public bool SoloFetchComplete { get; init; }
+    public bool BandFetchComplete { get; init; }
 }
 
 /// <summary>

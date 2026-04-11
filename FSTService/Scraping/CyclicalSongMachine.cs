@@ -262,6 +262,8 @@ public class CyclicalSongMachine
             // Complete any stragglers with what we have
             CompleteFinishedAttachments();
 
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Idle);
+
             _log.LogInformation("CyclicalSongMachine going idle. {Remaining} attachments remain.",
                 _attachments.Count);
         }

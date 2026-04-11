@@ -728,7 +728,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     private const int ForbiddenThreshold = 3;
 
     /// <summary>Outcome of a single page fetch.</summary>
-    internal enum FetchStatus { Success, Forbidden, OtherFailure }
+    public enum FetchStatus { Success, Forbidden, OtherFailure }
 
     /// <summary>
     /// Fetch and parse a single leaderboard page with automatic retry on
@@ -757,8 +757,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             return req;
         }
 
-        // Outer loop: allows one retry on JSON 403 (Epic access boundary can be transient)
-        for (int fetchAttempt = 0; fetchAttempt <= 1; fetchAttempt++)
+        // Outer loop: retries on transient 403 and 500 with escalating backoff.
+        // Caps at 2 outer attempts (× 4 executor retries = 8 total HTTP attempts).
+        // Some Epic pages are permanently broken (server-side data corruption);
+        // a tight cap prevents one bad page from stalling the entire scrape.
+        for (int fetchAttempt = 0; fetchAttempt < 2; fetchAttempt++)
         {
             if (fetchAttempt > 0)
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
@@ -794,17 +797,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                 var statusCode = (int)res.StatusCode;
 
-                if (statusCode == 403)
+                if (statusCode == 403 || statusCode == 500)
                 {
-                    // JSON 403 from executor (CDN 403s are already retried infinitely).
-                    // Give it one more try with 5 s backoff before returning Forbidden.
-                    if (fetchAttempt == 0)
-                    {
-                        _progress.ReportRetry();
-                        continue;
-                    }
-
-                    return (null, 0, FetchStatus.Forbidden);
+                    _progress.ReportRetry();
+                    continue;
                 }
 
                 // Non-retryable / exhausted retries
@@ -822,7 +818,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             }
         }
 
-        return (null, 0, FetchStatus.Forbidden);
+        // All outer retry attempts exhausted
+        _log.LogWarning("Exhausted all retry attempts for {Song}/{Instrument} page {Page}.", songId, instrument, page);
+        return (null, 0, FetchStatus.OtherFailure);
     }
 
     // ─── Single instrument (parallel pages) ─────────
@@ -1641,14 +1639,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         if (isBand)
         {
-            bandPage0 = await _executor.WithCdnResilienceAsync(
+            var bandFetched = await _executor.WithCdnResilienceAsync(
                 work: () => FetchBandPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct),
                 ct,
                 acquireSlot: limiter is not null ? () => limiter.WaitAsync(ct) : null,
                 releaseSlot: limiter is not null ? limiter.Release : null);
+            bandPage0 = bandFetched.Page;
+            page0BodyLen = bandFetched.BodyLength;
             if (bandPage0 is not null)
             {
-                _progress.ReportPageFetched(0);
+                _progress.ReportPageFetched(page0BodyLen);
                 page0EntryCount = bandPage0.Entries.Count;
                 page0TotalPages = bandPage0.TotalPages;
             }
@@ -1735,14 +1735,15 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 {
                     if (isBand)
                     {
-                        var bandParsed = await _executor.WithCdnResilienceAsync(
+                        var (bandParsed, bandBodyLen, bandStatus) = await _executor.WithCdnResilienceAsync(
                             work: () => FetchBandPageAsync(
                                 songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token),
                             pageCts.Token,
                             acquireSlot: limiter is not null ? () => limiter.WaitAsync(pageCts.Token) : null,
                             releaseSlot: limiter is not null ? limiter.Release : null);
                         Interlocked.Increment(ref requestCount);
-                        _progress.ReportPageFetched(0);
+                        Interlocked.Add(ref totalBytes, bandBodyLen);
+                        _progress.ReportPageFetched(bandBodyLen);
 
                         if (bandParsed is not null && bandParsed.Entries.Count > 0)
                         {
@@ -1841,7 +1842,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
     // ─── Parsing ────────────────────────────────────
 
-    private static async Task<ParsedPage?> ParsePageAsync(Stream stream, CancellationToken ct)
+    internal static async Task<ParsedPage?> ParsePageAsync(Stream stream, CancellationToken ct)
     {
         try
         {
@@ -1872,22 +1873,25 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }
     }
 
-    internal sealed class ParsedPage
+    internal sealed class ParsedPage : IParsedPage<LeaderboardEntry>
     {
         public int Page { get; init; }
         public int TotalPages { get; init; }
         public List<LeaderboardEntry> Entries { get; init; } = [];
+        IReadOnlyList<LeaderboardEntry> IParsedPage<LeaderboardEntry>.Entries => Entries;
         public int EstimatedBytes { get; init; }
     }
 
     /// <summary>
     /// Parsed result of a band leaderboard page.
     /// </summary>
-    internal sealed class ParsedBandPage
+    internal sealed class ParsedBandPage : IParsedPage<BandLeaderboardEntry>
     {
         public int Page { get; init; }
         public int TotalPages { get; init; }
         public List<BandLeaderboardEntry> Entries { get; init; } = [];
+        IReadOnlyList<BandLeaderboardEntry> IParsedPage<BandLeaderboardEntry>.Entries => Entries;
+        public int EstimatedBytes => Entries.Count * 500;
     }
 
     /// <summary>
@@ -1928,9 +1932,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
     /// <summary>
     /// Fetch a single page of a band leaderboard (V1 GET).
-    /// Returns the parsed band page or null on failure.
+    /// Returns the parsed band page, content length, and status — matching
+    /// the solo <see cref="FetchPageAsync"/> contract including 403 retry.
     /// </summary>
-    internal async Task<ParsedBandPage?> FetchBandPageAsync(
+    internal async Task<(ParsedBandPage? Page, int BodyLength, FetchStatus Status)> FetchBandPageAsync(
         string songId,
         string bandType,
         int page,
@@ -1951,24 +1956,65 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             return req;
         }
 
-        HttpResponseMessage res;
-        try
+        // Outer loop: retries on transient 403 and 500 with escalating backoff.
+        for (int fetchAttempt = 0; fetchAttempt < 2; fetchAttempt++)
         {
-            res = await _executor.SendAsync(CreateRequest, limiter, label, MaxRetries, ct);
-        }
-        catch (HttpRequestException)
-        {
-            return null;
+            if (fetchAttempt > 0)
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+
+            HttpResponseMessage res;
+            try
+            {
+                res = await _executor.SendAsync(CreateRequest, limiter, label, MaxRetries, ct);
+            }
+            catch (HttpRequestException ex)
+            {
+                _log.LogWarning("HTTP error for {Song}/{BandType} page {Page}: {Error}",
+                    songId, bandType, page, ex.Message);
+                _progress.ReportRetry();
+                return (null, 0, FetchStatus.OtherFailure);
+            }
+
+            using (res)
+            {
+                if (res.IsSuccessStatusCode)
+                {
+                    await using var stream = await res.Content.ReadAsStreamAsync(ct);
+                    var contentLength = (int)(res.Content.Headers.ContentLength ?? 0);
+                    var parsed = await ParseBandPageAsync(stream, ct);
+
+                    if (parsed is not null)
+                        return (parsed, contentLength > 0 ? contentLength : parsed.Entries.Count * 500, FetchStatus.Success);
+
+                    _log.LogWarning("Failed to parse {Song}/{BandType} page {Page}: ContentLength={CL}",
+                        songId, bandType, page, contentLength);
+                    return (null, 0, FetchStatus.OtherFailure);
+                }
+
+                var statusCode = (int)res.StatusCode;
+
+                if (statusCode == 403 || statusCode == 500)
+                {
+                    _progress.ReportRetry();
+                    continue;
+                }
+
+                string errorBody = "";
+                try
+                {
+                    var body = await res.Content.ReadAsStringAsync(ct);
+                    errorBody = body.Length > 200 ? body[..200] : body;
+                }
+                catch { }
+
+                _log.LogWarning("Band leaderboard request failed for {Song}/{BandType} page {Page}: {StatusCode} {Body}",
+                    songId, bandType, page, statusCode, errorBody);
+                return (null, 0, FetchStatus.OtherFailure);
+            }
         }
 
-        using (res)
-        {
-            if (!res.IsSuccessStatusCode)
-                return null;
-
-            await using var stream = await res.Content.ReadAsStreamAsync(ct);
-            return await ParseBandPageAsync(stream, ct);
-        }
+        _log.LogWarning("Exhausted all retry attempts for {Song}/{BandType} page {Page}.", songId, bandType, page);
+        return (null, 0, FetchStatus.OtherFailure);
     }
 
     /// <summary>
