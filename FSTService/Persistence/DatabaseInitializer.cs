@@ -12,6 +12,7 @@ public static class DatabaseInitializer
     {
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0; // No timeout — schema init must complete before the service can start
         cmd.CommandText = Schema;
         await cmd.ExecuteNonQueryAsync(ct);
 

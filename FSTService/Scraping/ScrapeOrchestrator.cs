@@ -16,6 +16,7 @@ public sealed class ScrapeOrchestrator
 {
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
+    private readonly BandLeaderboardPersistence _bandPersistence;
     private readonly IPathDataStore _pathDataStore;
     private readonly SharedDopPool _pool;
     private readonly ScrapeProgressTracker _progress;
@@ -25,6 +26,7 @@ public sealed class ScrapeOrchestrator
     public ScrapeOrchestrator(
         GlobalLeaderboardScraper globalScraper,
         GlobalLeaderboardPersistence persistence,
+        BandLeaderboardPersistence bandPersistence,
         IPathDataStore IPathDataStore,
         SharedDopPool pool,
         ScrapeProgressTracker progress,
@@ -33,6 +35,7 @@ public sealed class ScrapeOrchestrator
     {
         _globalScraper = globalScraper;
         _persistence = persistence;
+        _bandPersistence = bandPersistence;
         _pathDataStore = IPathDataStore;
         _pool = pool;
         _progress = progress;
@@ -51,6 +54,9 @@ public sealed class ScrapeOrchestrator
         CancellationToken ct)
     {
         var opts = _options.Value;
+        var resolvedPhases = opts.ResolvedPhases;
+        bool doSoloScrape = resolvedPhases.HasFlag(ScrapePhase.SoloScrape);
+        bool doBandScrape = resolvedPhases.HasFlag(ScrapePhase.BandScrape);
 
         // Reset CDN cooldown state from any previous pass to avoid stale backoff
         _globalScraper.ResetCdnState();
@@ -105,16 +111,24 @@ public sealed class ScrapeOrchestrator
             .ToDictionary(i => i, _ => scrapeRequests.Count);
         _progress.SetInstrumentTotals(instrumentTotals);
 
-        // ── Pipelined persistence via bounded channels ──
-        // Per-page entries are enqueued into per-instrument bounded channels.
-        // Dedicated writer tasks drain them in batches with a single PG connection
-        // per instrument, providing backpressure, transaction batching, and
-        // isolation from transient DB connection failures.
+        // ── Disk-spool persistence (post-fetch flush) ──
+        // Fetched pages are appended to per-instrument files on real disk.
+        // No consumers run during fetch — zero PG write load, flat memory.
+        // After fetch completes: drop indexes → bulk flush → recreate indexes.
+        var spoolDir = Path.Combine(Path.GetFullPath(opts.DataDirectory), "spool");
         var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
         int totalRequests = 0;
         long totalBytes = 0;
 
-        _persistence.StartPageWriters(ct: passCt);
+        _persistence.StartSpoolWriter(spoolDir);
+
+        // Band spool — separate files for band_entries tables
+        SpoolWriter<BandLeaderboardEntry>? bandSpool = null;
+        bool hasBandTypes = doBandScrape;
+        if (hasBandTypes)
+        {
+            bandSpool = BandSpoolWriterFactory.Create(_log, _bandPersistence, spoolDir);
+        }
 
         // Snapshot registered users' current scores for change detection at end.
         var previousState = registeredIds.Count > 0
@@ -123,93 +137,137 @@ public sealed class ScrapeOrchestrator
 
         _progress.SetSubOperation("fetching_leaderboards");
 
-        var allResults = await _globalScraper.ScrapeManySongsAsync(
-            scrapeRequests, accessToken, callerAccountId, opts.DegreeOfParallelism,
-            onSongComplete: async (songId, results) =>
-            {
-                bool hasData = false;
-                foreach (var result in results)
-                {
-                    Interlocked.Add(ref totalRequests, result.Requests);
-                    Interlocked.Add(ref totalBytes, result.BytesReceived);
+        // Split instruments into solo and band groups so they run as independent
+        // ScrapeManySongsAsync calls sharing the same DOP pool.  Band 500 retries
+        // no longer stall solo song completion.
+        var soloInstruments = enabledInstruments.Where(i => !IsBandInstrument(i)).ToList();
+        var bandInstruments = doBandScrape
+            ? BandInstrumentMapping.AllBandTypes.ToList()
+            : new List<string>();
 
-                    if (result.EntriesCount == 0) continue;
-                    hasData = true;
-
-                    // If entries are present (fan-out path), persist them now.
-                    // In sequential mode with onPageScraped, entries are already
-                    // persisted per-page and result.Entries is empty.
-                    if (result.Entries.Count > 0)
-                    {
-                        await _persistence.EnqueuePageAsync(songId, result.Instrument, result.Entries, passCt);
-                        aggregates.AddRankChangedSongId(songId);
-
-                        // Track registered user appearances
-                        if (registeredIds.Count > 0)
-                        {
-                            aggregates.AddSeenRegisteredEntries(
-                                result.Entries
-                                    .Where(e => registeredIds.Contains(e.AccountId))
-                                    .Select(e => (e.AccountId, songId, result.Instrument)));
-                        }
-
-                        // Band data from V1 solo entries is NOT extracted here.
-                        // Solo V1 entries do not carry band context (extractBandContext=false).
-                        // Band data is collected via bespoke BandScrapePhase (V1 band queries)
-                        // and PostScrapeBandExtractor (from V2 lookup band_members_json).
-                    }
-
-                    aggregates.AddEntries(result.EntriesCount);
-                }
-                if (hasData)
-                {
-                    aggregates.IncrementSongsWithData();
-                    aggregates.AddChangedSongId(songId);
-                }
-            },
-            passCt,
-            maxPages: opts.MaxPagesPerLeaderboard,
-            sequential: opts.SequentialScrape,
-            pageConcurrency: opts.PageConcurrency,
-            songConcurrency: opts.SongConcurrency,
-            maxRequestsPerSecond: opts.MaxRequestsPerSecond,
-            overThresholdMultiplier: opts.OverThresholdMultiplier,
-            overThresholdExtraPages: opts.OverThresholdExtraPages,
-            validEntryTarget: opts.ValidEntryTarget,
-            // Sequential mode derives its own bounded limiter from song/page
-            // concurrency settings; sharing the global pool can overrun the cap.
-            sharedLimiter: _pool.Limiter,
-            deferDeepScrape: true,
-            validCutoffMultiplier: opts.ValidCutoffMultiplier,
-            // onPageScraped intentionally null — entries accumulate per-instrument
-            // and are enqueued via onSongComplete (called per-instrument in sequential
-            // mode). This avoids per-page channel backpressure blocking network
-            // fetches while keeping memory bounded to one instrument's worth of data.
-            onBandPageScraped: null);
-
-        // ── Drain pipelined writers before score change detection ──
-        _progress.SetSubOperation("draining_writers");
-        await _persistence.DrainPageWritersAsync();
-
-        // ── Detect score changes for registered users ──
-        _progress.SetSubOperation("detecting_score_changes");
-        int totalScoreChanges = 0;
-        if (registeredIds.Count > 0)
+        // Build per-group scrape requests (same songs, different instrument lists)
+        var soloRequests = scrapeRequests.Select(r => new GlobalLeaderboardScraper.SongScrapeRequest
         {
-            var changes = _persistence.DetectScoreChanges(previousState, registeredIds);
-            if (changes.Count > 0)
+            SongId = r.SongId, Instruments = soloInstruments, Label = r.Label, MaxScores = r.MaxScores,
+        }).ToList();
+
+        // Shared callback for solo results
+        ValueTask OnSoloSongComplete(string songId, List<GlobalLeaderboardResult> results)
+        {
+            bool hasData = false;
+            foreach (var result in results)
             {
-                _persistence.Meta.InsertScoreChanges(changes);
-                totalScoreChanges = changes.Count;
-                aggregates.AddChanges(totalScoreChanges);
+                Interlocked.Add(ref totalRequests, result.Requests);
+                Interlocked.Add(ref totalBytes, result.BytesReceived);
+
+                if (result.EntriesCount == 0) continue;
+                hasData = true;
+
+                if (result.Entries.Count > 0)
+                {
+                    _persistence.EnqueueSpoolPage(songId, result.Instrument, result.Entries);
+                    aggregates.AddRankChangedSongId(songId);
+
+                    if (registeredIds.Count > 0)
+                    {
+                        aggregates.AddSeenRegisteredEntries(
+                            result.Entries
+                                .Where(e => registeredIds.Contains(e.AccountId))
+                                .Select(e => (e.AccountId, songId, result.Instrument)));
+                    }
+                }
+
+                aggregates.AddEntries(result.EntriesCount);
             }
-            _log.LogInformation("{Changes:N0} score changes detected for registered users.", totalScoreChanges);
+            if (hasData)
+            {
+                aggregates.IncrementSongsWithData();
+                aggregates.AddChangedSongId(songId);
+            }
+            return ValueTask.CompletedTask;
         }
 
-        // Checkpoint all WAL files after the heavy write phase to keep them small
-        // and prevent auto-checkpoints from firing during API reads.
-        _progress.SetSubOperation("checkpointing");
-        _persistence.CheckpointAll();
+        // Band scrape: flat parallel page fetcher using SharedDopPool for
+        // low-priority DOP gating.  Band requests share the same AIMD limiter
+        // as solo but are capped to LowPriorityPercent when solo is active.
+        Task? bandTask = null;
+        BandPageFetcher? bandFetcher = null;
+        if (bandInstruments.Count > 0 && bandSpool is not null)
+        {
+            var bandSongIds = scrapeRequests.Select(r => r.SongId).ToList();
+            bandFetcher = new BandPageFetcher(
+                _globalScraper.Executor, _pool, bandSpool, _progress, _log);
+            bandTask = bandFetcher.FetchAllAsync(
+                bandSongIds, bandInstruments, accessToken, callerAccountId,
+                opts.MaxPagesPerLeaderboard, passCt);
+        }
+
+        // Solo scrape task — only if SoloScrape phase is enabled
+        Dictionary<string, List<GlobalLeaderboardResult>> allResults;
+        if (doSoloScrape)
+        {
+            // Register solo as a high-priority phase so the SharedDopPool enforces
+            // the low-priority gate on band for the duration of solo fetching.
+            // Band is capped to LowPriorityPercent of DOP while solo is active;
+            // when solo finishes, band naturally gravitates to 100%.
+            _pool.BeginHighPriorityPhase();
+            var soloTask = _globalScraper.ScrapeManySongsAsync(
+                soloRequests, accessToken, callerAccountId, opts.DegreeOfParallelism,
+                onSongComplete: OnSoloSongComplete,
+                passCt,
+                maxPages: opts.MaxPagesPerLeaderboard,
+                sequential: opts.SequentialScrape,
+                pageConcurrency: opts.PageConcurrency,
+                songConcurrency: opts.SongConcurrency,
+                maxRequestsPerSecond: opts.MaxRequestsPerSecond,
+                overThresholdMultiplier: opts.OverThresholdMultiplier,
+                overThresholdExtraPages: opts.OverThresholdExtraPages,
+                validEntryTarget: opts.ValidEntryTarget,
+                sharedLimiter: _pool.Limiter,
+                deferDeepScrape: true,
+                validCutoffMultiplier: opts.ValidCutoffMultiplier,
+                onBandPageScraped: null);
+
+        // Wait for solo only — band runs independently in the background.
+        // Solo post-processing (flush, score changes, rankings) proceeds immediately.
+            allResults = await soloTask;
+            _pool.EndHighPriorityPhase();
+
+            // ── Post-fetch bulk flush for solo: drop solo indexes → flush → recreate ──
+            _progress.SetSubOperation("dropping_solo_indexes");
+            _persistence.DropSoloIndexes();
+
+            _progress.SetSubOperation("flushing_solo");
+            await _persistence.FlushSpoolAsync();
+
+            _progress.SetSubOperation("creating_solo_indexes");
+            _persistence.CreateSoloIndexes();
+
+            // ── Detect score changes for registered users (solo data only) ──
+            _progress.SetSubOperation("detecting_score_changes");
+            int totalScoreChanges = 0;
+            if (registeredIds.Count > 0)
+            {
+                var changes = _persistence.DetectScoreChanges(previousState, registeredIds);
+                if (changes.Count > 0)
+                {
+                    _persistence.Meta.InsertScoreChanges(changes);
+                    totalScoreChanges = changes.Count;
+                    aggregates.AddChanges(totalScoreChanges);
+                }
+                _log.LogInformation("{Changes:N0} score changes detected for registered users.", totalScoreChanges);
+            }
+
+            // Checkpoint all WAL files after the heavy write phase to keep them small
+            // and prevent auto-checkpoints from firing during API reads.
+            _progress.SetSubOperation("checkpointing");
+            _persistence.CheckpointAll();
+        }
+        else
+        {
+            _log.LogInformation("Solo scrape skipped (not in enabled phases).");
+            allResults = new();
+        }
 
         sw.Stop();
 
@@ -250,6 +308,31 @@ public sealed class ScrapeOrchestrator
                 populationItems.Count);
         }
 
+        // ── Band: await completion and flush (runs in background during solo post-processing) ──
+        if (bandTask is not null && bandSpool is not null)
+        {
+            _progress.SetSubOperation("awaiting_band");
+            await bandTask;
+
+            Interlocked.Add(ref totalRequests, (int)Interlocked.Read(ref bandFetcher!.TotalRequests));
+            Interlocked.Add(ref totalBytes, Interlocked.Read(ref bandFetcher.TotalBytes));
+
+            _progress.SetSubOperation("dropping_band_indexes");
+            _persistence.DropBandIndexes();
+
+            _progress.SetSubOperation("flushing_band");
+            bandSpool.Complete();
+            _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
+                bandSpool.RecordCount, bandSpool.EntryCount);
+            await Task.Run(() => bandSpool.FlushAll());
+            await bandSpool.DisposeAsync();
+
+            _progress.SetSubOperation("creating_band_indexes");
+            _persistence.CreateBandIndexes();
+
+            _log.LogInformation("Band flush complete.");
+        }
+
         // Build the explicit output contract
         var ctx = new ScrapePassContext
         {
@@ -283,8 +366,8 @@ public sealed class ScrapeOrchestrator
         if (opts.QueryDrums)   instruments.Add("Solo_Drums");
         if (opts.QueryProLead) instruments.Add("Solo_PeripheralGuitar");
         if (opts.QueryProBass) instruments.Add("Solo_PeripheralBass");
-        // Band leaderboards (Duets/Trios/Quad) are scraped via BandScrapePhase
-        // as a separate post-scrape phase — not part of the solo instrument scrape.
+        // Band types are scraped via BandPageFetcher (flat parallel) — not
+        // included here to avoid double-scraping through ScrapeManySongsAsync.
         return instruments;
     }
 

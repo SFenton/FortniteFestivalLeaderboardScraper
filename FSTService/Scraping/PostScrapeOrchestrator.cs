@@ -82,28 +82,26 @@ public sealed class PostScrapeOrchestrator
     }
 
     /// <summary>
-    /// Run all post-scrape phases in sequence: enrichment (parallel),
-    /// registered user refresh, and session cleanup.
+    /// Run post-scrape phases gated by <paramref name="resolvedPhases"/>.
+    /// When all phases are enabled this behaves identically to the original pipeline.
     /// </summary>
-    public async Task RunAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
+    public async Task RunAsync(ScrapePassContext ctx, FestivalService service, ScrapePhase resolvedPhases, CancellationToken ct)
     {
-        // Enrichment runs ranks, firstSeen, nameRes, and pruning with maximum
-        // parallelism — pruning starts as soon as ranks finish, overlapping
-        // with the remaining enrichment tasks.
-        await RunPhaseAsync("Enrichment", () => RunEnrichmentAsync(ctx, service, ct));
+        // ── Solo enrichment ──
+        if (resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment))
+            await RunPhaseAsync("Enrichment", () => RunEnrichmentAsync(ctx, service, ct));
 
-        // Refresh registered users BEFORE rankings so that low scores (below the
-        // global-scrape cutoff) are present in the instrument DBs when rankings
-        // are computed.  The SharedDopPool handles concurrency.
-        await RunPhaseAsync("RefreshRegisteredUsers", () => RefreshRegisteredUsersAsync(ctx, ct));
+        // ── Solo refresh registered users ──
+        if (resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
+            await RunPhaseAsync("RefreshRegisteredUsers", () => RefreshRegisteredUsersAsync(ctx, ct));
 
         // ── Band data collection (fire-and-forget background) ──
-        // Launch bespoke band scrape (V1 Band_Duets/Trios/Quad queries) in the
-        // background. This uses SharedDopPool at low priority and does NOT need
-        // to finish before ComputeRankings — band rankings will be a separate
-        // future phase. We await the task at the very end for exception observation.
+        // Skip if band data was already fetched via BandPageFetcher during the scrape pass.
+        // BandScrape (new) uses the shared DOP pool inside ScrapeOrchestrator;
+        // BandScrapePhase (legacy) is the old per-song sequential fetcher.
         Task? bandScrapeTask = null;
-        if (_options.Value.EnableBandScraping)
+        bool bandAlreadyFetched = resolvedPhases.HasFlag(ScrapePhase.BandScrape);
+        if (resolvedPhases.HasFlag(ScrapePhase.BandScrapePhase) && !bandAlreadyFetched)
         {
             var chartedSongs = service.Songs.Where(s => s.track?.su is not null).ToList();
             var bandAccessToken = await _tokenManager.GetAccessTokenAsync(ct);
@@ -121,48 +119,51 @@ public sealed class PostScrapeOrchestrator
             }
         }
 
-        // Extract band entries from registered user V2 data (SQL-only, fast).
-        // This extracts band context already persisted in leaderboard_entries.band_members_json
-        // from V2 lookups during RefreshRegisteredUsers.
-        if (_options.Value.EnableBandScraping)
+        // ── Band extraction (SQL-only) ──
+        if (resolvedPhases.HasFlag(ScrapePhase.BandExtraction))
             await RunPhaseAsync("BandExtraction", () => _bandExtractor.RunAsync(ct));
 
-        var rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ct));
+        // ── Solo rankings ──
+        var rankingsSucceeded = false;
+        if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
+            rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ct));
 
-        // Per-song rivals and leaderboard rivals have no shared write targets
-        // and both depend only on rankings, so they can run in parallel.
-        // Leaderboard rivals are skipped when rankings failed — running against
-        // stale/empty AccountRankings would wipe previously-computed rivals.
-        await RunPhaseAsync("Rivals+LeaderboardRivals", () => Task.WhenAll(
-            ComputeRivalsAsync(ctx, ct),
-            rankingsSucceeded
-                ? ComputeLeaderboardRivalsAsync(ctx, ct)
-                : Task.CompletedTask));
+        // ── Solo rivals ──
+        if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
+        {
+            await RunPhaseAsync("Rivals+LeaderboardRivals", () => Task.WhenAll(
+                ComputeRivalsAsync(ctx, ct),
+                rankingsSucceeded
+                    ? ComputeLeaderboardRivalsAsync(ctx, ct)
+                    : Task.CompletedTask));
+        }
 
-        // ── Compute player stats tiers first, then precompute API responses ──
-        // ComputePlayerStatsTiersAsync writes to the player_stats_tiers table;
-        // PrecomputeAllAsync reads those rows (plus composite_rankings) to build
-        // in-memory cached responses.  Sequential ordering ensures fresh data.
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
-        await RunPhaseAsync("PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
-        await RunPhaseAsync("PrecomputeAll", () => _precomputer.PrecomputeAllAsync(ct));
+        // ── Solo player stats + precompute ──
+        if (resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats))
+        {
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
+            await RunPhaseAsync("PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
+        }
 
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
+        if (resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute))
+            await RunPhaseAsync("PrecomputeAll", () => _precomputer.PrecomputeAllAsync(ct));
 
-        // Checkpoint WAL files and pre-warm the rankings cache in parallel.
-        // CheckpointAll is I/O-bound (WAL flush); PreWarmRankingsCache is
-        // CPU/IO-bound (CTE queries). No shared write targets.
-        await RunPhaseAsync("Checkpoint+CacheWarm", () => Task.WhenAll(
-            Task.Run(() =>
-            {
-                _progress.SetSubOperation("final_checkpoint");
-                _persistence.CheckpointAll();
-            }, ct),
-            Task.Run(() =>
-            {
-                _progress.SetSubOperation("pre_warming_cache");
-                _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
-            }, ct)));
+        // ── Solo finalize ──
+        if (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
+        {
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
+            await RunPhaseAsync("Checkpoint+CacheWarm", () => Task.WhenAll(
+                Task.Run(() =>
+                {
+                    _progress.SetSubOperation("final_checkpoint");
+                    _persistence.CheckpointAll();
+                }, ct),
+                Task.Run(() =>
+                {
+                    _progress.SetSubOperation("pre_warming_cache");
+                    _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
+                }, ct)));
+        }
 
         // ── Await background band scrape for exception observation ──
         if (bandScrapeTask is not null)

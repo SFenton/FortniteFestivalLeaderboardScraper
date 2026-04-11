@@ -272,6 +272,10 @@ public sealed class ResilientHttpExecutor
             }
 
             bool retryable = statusCode == 429 || statusCode >= 500;
+            // 500s are server-side errors (e.g. Epic's backend timeout on specific pages).
+            // They should NOT count toward the adaptive limiter's error rate because they
+            // don't indicate we're overloading the server — only 429 (rate limit) should.
+            bool countsAsLimiterFailure = statusCode == 429;
 
             if (retryable && statusAttempt < maxRetries)
             {
@@ -292,7 +296,7 @@ public sealed class ResilientHttpExecutor
                 _log.LogWarning(
                     "{StatusCode} for {Operation} (attempt {Attempt}/{MaxAttempts}, DOP {Dop})",
                     statusCode, label ?? "request", statusAttempt, maxRetries + 1, limiter?.CurrentDop ?? -1);
-                limiter?.ReportFailure();
+                if (countsAsLimiterFailure) limiter?.ReportFailure();
                 res.Dispose();
                 continue;
             }
@@ -301,7 +305,7 @@ public sealed class ResilientHttpExecutor
             // Report failure only for retryable codes that exhausted retries;
             // non-retryable codes (400, 403, 404, …) are not "failures" for
             // the adaptive limiter (the server handled the request properly).
-            if (retryable)
+            if (countsAsLimiterFailure)
                 limiter?.ReportFailure();
 
             return res;

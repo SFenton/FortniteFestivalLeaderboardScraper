@@ -112,6 +112,50 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         {
             opts.PrecomputeOnly = true;
         }
+        else if (args[i].Equals("--solo-scrape", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.SoloScrape;
+        }
+        else if (args[i].Equals("--solo-enrichment", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.SoloEnrichment;
+        }
+        else if (args[i].Equals("--solo-refresh-users", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.SoloRefreshUsers;
+        }
+        else if (args[i].Equals("--solo-leaderboards", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.SoloRankings;
+        }
+        else if (args[i].Equals("--solo-rivals", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.SoloRivals;
+        }
+        else if (args[i].Equals("--solo-player-stats", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.SoloPlayerStats;
+        }
+        else if (args[i].Equals("--solo-precompute", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.SoloPrecompute;
+        }
+        else if (args[i].Equals("--solo-finalize", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.SoloFinalize;
+        }
+        else if (args[i].Equals("--band-scrape", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.BandScrape;
+        }
+        else if (args[i].Equals("--band-post-scrape", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.BandScrapePhase;
+        }
+        else if (args[i].Equals("--band-extraction", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.EnabledPhases |= ScrapePhase.BandExtraction;
+        }
     }
 });
 

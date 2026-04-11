@@ -52,6 +52,9 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         {
             _log.LogInformation("Initializing databases and song catalog...");
 
+            // Clean up any leftover spool files from previous runs
+            SpoolWriter<LeaderboardEntry>.CleanupStaleFiles(_log);
+
             var dbTask = Task.Run(() => _persistence.Initialize(), ct);
             var songTask = _festivalService.InitializeAsync();
 

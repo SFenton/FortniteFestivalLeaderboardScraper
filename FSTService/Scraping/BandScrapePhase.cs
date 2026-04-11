@@ -159,12 +159,13 @@ public sealed class BandScrapePhase
         int validTarget = opts.BandValidEntryTarget;
 
         // Fetch page 0 to discover totalPages
-        var page0 = await _scraper.FetchBandPageAsync(songId, bandType, 0, accessToken, callerAccountId, limiter, ct);
+        var (page0, page0Len, page0Status) = await _scraper.FetchBandPageAsync(songId, bandType, 0, accessToken, callerAccountId, limiter, ct);
         requests++;
+        bytesReceived += page0Len;
         _progress.ReportPhaseRequest();
 
         if (page0 is null || page0.Entries.Count == 0)
-            return new BandLeaderboardScrapeResult { Requests = requests };
+            return new BandLeaderboardScrapeResult { Requests = requests, BytesReceived = bytesReceived };
 
         int totalPages = page0.TotalPages;
         int pagesToFetch = maxPages > 0 ? Math.Min(totalPages, maxPages) : totalPages;
@@ -183,8 +184,9 @@ public sealed class BandScrapePhase
         {
             ct.ThrowIfCancellationRequested();
 
-            var parsed = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct);
+            var (parsed, parsedLen, parsedStatus) = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct);
             requests++;
+            bytesReceived += parsedLen;
             _progress.ReportPhaseRequest();
 
             if (parsed is null || parsed.Entries.Count == 0)
@@ -211,8 +213,9 @@ public sealed class BandScrapePhase
             {
                 ct.ThrowIfCancellationRequested();
 
-                var parsed = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct);
+                var (parsed, parsedLen, parsedStatus) = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct);
                 requests++;
+                bytesReceived += parsedLen;
                 _progress.ReportPhaseRequest();
 
                 if (parsed is null || parsed.Entries.Count == 0)

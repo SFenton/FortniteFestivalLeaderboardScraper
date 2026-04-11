@@ -26,7 +26,7 @@ services:
       - "-c" 
       - "shared_buffers=1GB"
       - "-c"
-      - "work_mem=16MB"
+      - "work_mem=64MB"
       - "-c"
       - "maintenance_work_mem=256MB"
       - "-c"
@@ -37,6 +37,8 @@ services:
       - "wal_buffers=16MB"
       - "-c"
       - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "effective_io_concurrency=200"
       - "-c"
       - "idle_in_transaction_session_timeout=60000"
       - "-c"
@@ -63,7 +65,7 @@ services:
       - ./fst-data:/app/data
     # API-only service — the web frontend is served by the festivalweb container.
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8080"
     environment:
       - DOTNET_ENVIRONMENT=Production
       # ── Database ──
@@ -111,7 +113,7 @@ services:
     container_name: festivalweb
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:80"
+      - "127.0.0.1:3001:80"
     environment:
       - API_BACKEND_URL=http://fstservice:8080
     depends_on:

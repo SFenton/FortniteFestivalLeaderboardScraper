@@ -217,7 +217,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Substitute.For<ILogger<BandLeaderboardPersistence>>());
 
         var scrapeOrchestrator = new ScrapeOrchestrator(
-            _scraper, _persistence, pathDataStore, _pool, _progress, options,
+            _scraper, _persistence, bandPersistence, pathDataStore, _pool, _progress, options,
             Substitute.For<ILogger<ScrapeOrchestrator>>());
 
         var playerCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(2));

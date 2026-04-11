@@ -15,6 +15,9 @@ public sealed class BandLeaderboardPersistence
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<BandLeaderboardPersistence> _log;
 
+    /// <summary>Exposes the data source for batched spool consumer transactions.</summary>
+    internal NpgsqlDataSource DataSource => _dataSource;
+
     public BandLeaderboardPersistence(NpgsqlDataSource dataSource, ILogger<BandLeaderboardPersistence> log)
     {
         _dataSource = dataSource;

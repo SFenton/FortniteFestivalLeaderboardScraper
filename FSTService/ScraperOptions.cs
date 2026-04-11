@@ -100,6 +100,22 @@ public sealed class ScraperOptions
     /// </summary>
     public bool PrecomputeOnly { get; set; }
 
+    // ─── Phase Selection ───────────────────────────────────────
+
+    /// <summary>
+    /// Raw phase flags set by CLI arguments (<c>--solo-scrape</c>, <c>--band-scrape</c>,
+    /// <c>--solo-leaderboards</c>). <see cref="ScrapePhase.None"/> means "no filter"
+    /// (run all phases). Use <see cref="ResolvedPhases"/> for the expanded set.
+    /// </summary>
+    public ScrapePhase EnabledPhases { get; set; } = ScrapePhase.None;
+
+    /// <summary>
+    /// Fully resolved phase set after group expansion and intermediary filling.
+    /// When <see cref="EnabledPhases"/> is <see cref="ScrapePhase.None"/>, returns
+    /// <see cref="ScrapePhase.All"/> (full pipeline).
+    /// </summary>
+    public ScrapePhase ResolvedPhases => ScrapePhaseResolver.Resolve(EnabledPhases);
+
     // ─── Path Generation ───────────────────────────────────────
 
     /// <summary>
@@ -224,11 +240,12 @@ public sealed class ScraperOptions
 
     /// <summary>
     /// Percentage of <see cref="DegreeOfParallelism"/> available to low-priority
-    /// callers (API-triggered backfill, registration backfill).
-    /// High-priority callers (main scrape, post-scrape refresh) get the full DOP.
-    /// Default 20 = low-priority callers can use up to 20% of the pool.
+    /// callers (band scrape, API-triggered backfill, registration backfill).
+    /// High-priority callers (solo scrape, post-scrape refresh) get the full DOP.
+    /// Default 30 = low-priority callers can use up to 30% of the pool while
+    /// high-priority work is active; 100% when no high-priority phase is running.
     /// </summary>
-    public int LowPriorityPercent { get; set; } = 20;
+    public int LowPriorityPercent { get; set; } = 30;
 
     /// <summary>
     /// Initial DOP when the pool is created or reset between passes.

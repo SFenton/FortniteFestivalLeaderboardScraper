@@ -388,6 +388,10 @@ public sealed class ScraperWorker : BackgroundService
         var processMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
         _log.LogInformation("Starting scrape pass... (Process memory: {MemoryMB} MB)", processMemMb);
 
+        var resolvedPhases = opts.ResolvedPhases;
+        if (resolvedPhases != ScrapePhase.All)
+            _log.LogInformation("Phase-selective mode: {Phases}", ScrapePhaseResolver.Format(resolvedPhases));
+
         // Stale precomputed data (from last scrape) is served during the scrape pass.
         // PrecomputeAllAsync at post-scrape overwrites entries atomically, so we don't
         // need to invalidate here. This avoids an 8+ second cold-start penalty for the
@@ -416,45 +420,69 @@ public sealed class ScraperWorker : BackgroundService
         // Freeze all response caches so API consumers see consistent (stale) data
         // throughout the scrape + post-scrape enrichment + precomputation cycle.
         _lifecycle.ScrapeStarting();
-        ScrapePassResult result;
-        try
+
+        bool anyScrapePhase = resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
+                           || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
+
+        ScrapePassResult? result = null;
+        if (anyScrapePhase)
         {
-            result = await _scrapeOrchestrator.RunAsync(
-                accessToken, _tokenManager.AccountId!, service, ct);
+            try
+            {
+                result = await _scrapeOrchestrator.RunAsync(
+                    accessToken, _tokenManager.AccountId!, service, ct);
+            }
+            catch (CdnBlockedException ex)
+            {
+                _log.LogError(ex,
+                    "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
+                    "Partial data from this pass was already persisted via pipelined writers.",
+                    _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
+                _lifecycle.ScrapeCompleted();
+                return;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _log.LogWarning(
+                    "Scrape pass timed out after {TimeoutMinutes} minutes. " +
+                    "Partial data from this pass was already persisted. Will retry next pass.",
+                    opts.ScrapePassTimeoutMinutes);
+                _lifecycle.ScrapeCompleted();
+                return;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex,
+                    "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
+                    "Will retry next pass.");
+                _lifecycle.ScrapeCompleted();
+                return;
+            }
         }
-        catch (CdnBlockedException ex)
+        else
         {
-            // Safety net: CDN block escaped page-level handling.
-            // Log and let the main loop retry next pass rather than crashing.
-            _log.LogError(ex,
-                "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
-                "Partial data from this pass was already persisted via pipelined writers.",
-                _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
-            _lifecycle.ScrapeCompleted();
-            return;
+            _log.LogInformation("Scrape phases not requested. Skipping ScrapeOrchestrator.");
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+
+        // Build a minimal context when scrape was skipped (post-scrape phases
+        // still need registered IDs, scrape requests, etc.)
+        var ctx = result?.Context ?? new ScrapePassContext
         {
-            // Per-pass timeout fired (ScrapePassTimeoutMinutes) but the host is NOT
-            // shutting down. Treat as a recoverable event — partial data was already
-            // persisted via pipelined writers. The main loop will retry next pass.
-            _log.LogWarning(
-                "Scrape pass timed out after {TimeoutMinutes} minutes. " +
-                "Partial data from this pass was already persisted. Will retry next pass.",
-                opts.ScrapePassTimeoutMinutes);
-            _lifecycle.ScrapeCompleted();
-            return;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Non-CDN persistence or data errors should not kill the host.
-            // Log and let the main loop retry next pass.
-            _log.LogError(ex,
-                "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
-                "Will retry next pass.");
-            _lifecycle.ScrapeCompleted();
-            return;
-        }
+            AccessToken = accessToken,
+            CallerAccountId = _tokenManager.AccountId!,
+            RegisteredIds = _persistence.Meta.GetRegisteredAccountIds(),
+            Aggregates = new Persistence.GlobalLeaderboardPersistence.PipelineAggregates(),
+            ScrapeRequests = service.Songs
+                .Where(s => s.track?.su is not null)
+                .Select(s => new Scraping.GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = s.track.su,
+                    Instruments = Scraping.ScrapeOrchestrator.GetEnabledInstruments(opts),
+                    Label = s.track.tt,
+                })
+                .ToList(),
+            DegreeOfParallelism = opts.DegreeOfParallelism,
+        };
 
         // Observe the path generation task that ran in parallel with the scrape
         try { await pathGenTask; }
@@ -462,22 +490,15 @@ public sealed class ScraperWorker : BackgroundService
         catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
 
         // ── Post-pass: enrichment, refresh, backfill, history recon, cleanup ──
-        // The SongProcessingMachine inside PostScrapeOrchestrator now handles
-        // backfill and history reconstruction alongside post-scrape refresh,
-        // so explicit RunBackfillAsync/RunHistoryReconAsync are no longer needed
-        // in the normal scrape pass.
         try
         {
-            await _postScrapeOrchestrator.RunAsync(result.Context, service, ct);
+            await _postScrapeOrchestrator.RunAsync(ctx, service, resolvedPhases, ct);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
         }
-
-        // Precomputed responses are flushed to PostgreSQL inside PrecomputeAllAsync().
-        // No disk persistence needed.
 
         PrimeSongsCache();
 

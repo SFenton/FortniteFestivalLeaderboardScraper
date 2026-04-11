@@ -597,6 +597,213 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         }
     }
 
+    // ─── Disk-spool persistence ───────────────────────────────────
+
+    private SpoolWriter<LeaderboardEntry>? _spoolWriter;
+
+    /// <summary>
+    /// Start a disk-spool writer that appends fetched pages to per-instrument
+    /// files on disk.  No consumers run during fetch — data is flushed in bulk
+    /// after the network phase completes via <see cref="FlushSpoolAsync"/>.
+    /// </summary>
+    public SpoolWriter<LeaderboardEntry> StartSpoolWriter(string? spoolDirectory = null)
+    {
+        _spoolWriter = LeaderboardSpoolWriterFactory.Create(_log, this, spoolDirectory);
+        _log.LogInformation("Started disk-spool writer (post-fetch flush mode).");
+        return _spoolWriter;
+    }
+
+    /// <summary>
+    /// Append a page of entries to the spool file.  Non-blocking — never
+    /// applies back-pressure to the scraper.
+    /// </summary>
+    public void EnqueueSpoolPage(string songId, string instrument, IReadOnlyList<LeaderboardEntry> entries)
+    {
+        if (_spoolWriter is null)
+            throw new InvalidOperationException("Spool writer not started. Call StartSpoolWriter() first.");
+        _spoolWriter.Enqueue(songId, instrument, entries);
+    }
+
+    /// <summary>
+    /// Signal the spool writer that no more data will arrive, then flush
+    /// all spool data to PG in bulk. Index management is handled externally
+    /// by the orchestrator to coordinate with the band spool.
+    /// </summary>
+    public async Task FlushSpoolAsync()
+    {
+        if (_spoolWriter is null) return;
+
+        _spoolWriter.Complete();
+
+        _log.LogInformation("Flushing solo spool: {Records:N0} pages, {Entries:N0} entries...",
+            _spoolWriter.RecordCount, _spoolWriter.EntryCount);
+        await Task.Run(() => _spoolWriter.FlushAll());
+
+        await _spoolWriter.DisposeAsync();
+        _spoolWriter = null;
+    }
+
+    // ─── Scrape-time index management ──────────────────────────────
+
+    /// <summary>Solo secondary indexes (leaderboard_entries table).</summary>
+    private static readonly string[] SoloDroppableIndexes =
+    [
+        "ix_le_song_score",
+        "ix_le_song_rank",
+        "ix_le_account",
+        "ix_le_account_song",
+        "ix_le_song_source",
+        "ix_le_band_members",
+    ];
+
+    private static readonly string[] SoloIndexDefinitions =
+    [
+        "CREATE INDEX ix_le_song_score ON leaderboard_entries (song_id, instrument, score DESC)",
+        "CREATE INDEX ix_le_song_rank ON leaderboard_entries (song_id, instrument, rank)",
+        "CREATE INDEX ix_le_account ON leaderboard_entries (account_id, instrument)",
+        "CREATE INDEX ix_le_account_song ON leaderboard_entries (account_id, song_id, instrument)",
+        "CREATE INDEX ix_le_song_source ON leaderboard_entries (song_id, instrument, source)",
+        "CREATE INDEX ix_le_band_members ON leaderboard_entries (song_id, instrument) WHERE (band_members_json IS NOT NULL)",
+    ];
+
+    /// <summary>Band secondary indexes (band_entries, band_member_stats, band_members tables).</summary>
+    private static readonly string[] BandDroppableIndexes =
+    [
+        "ix_be_combo",
+        "ix_be_song_rank",
+        "ix_be_song_score",
+        "ix_bms_account",
+        "ix_bm_song_type",
+    ];
+
+    private static readonly string[] BandIndexDefinitions =
+    [
+        "CREATE INDEX ix_be_combo ON band_entries (song_id, band_type, instrument_combo)",
+        "CREATE INDEX ix_be_song_rank ON band_entries (song_id, band_type, rank)",
+        "CREATE INDEX ix_be_song_score ON band_entries (song_id, band_type, score DESC)",
+        "CREATE INDEX ix_bms_account ON band_member_stats (account_id)",
+        "CREATE INDEX ix_bm_song_type ON band_members (song_id, band_type)",
+    ];
+
+    /// <summary>All secondary indexes combined (for backward compat).</summary>
+    private static readonly string[] ScrapeDroppableIndexes = [.. SoloDroppableIndexes, .. BandDroppableIndexes];
+    private static readonly string[] ScrapeIndexDefinitions = [.. SoloIndexDefinitions, .. BandIndexDefinitions];
+
+    /// <summary>
+    /// Drop secondary indexes on scrape-target tables to speed up bulk writes.
+    /// Call before the scrape loop begins (after cache freeze).
+    /// </summary>
+    public void DropScrapeIndexes(ScrapeProgressTracker? progress = null)
+    {
+        using var conn = _pgDataSource.OpenConnection();
+        int dropped = 0;
+        int total = ScrapeDroppableIndexes.Length;
+        foreach (var idx in ScrapeDroppableIndexes)
+        {
+            progress?.ReportIndexProgress("dropping", idx, dropped, total);
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"DROP INDEX IF EXISTS {idx}";
+                cmd.ExecuteNonQuery();
+                dropped++;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to drop index {Index}.", idx);
+            }
+        }
+        _log.LogInformation("Dropped {Count}/{Total} secondary indexes for scrape.", dropped, total);
+    }
+
+    /// <summary>
+    /// Recreate secondary indexes after scrape + drain completes.
+    /// Uses non-concurrent CREATE INDEX (faster, but blocks writes —
+    /// acceptable since scrape writes are finished).
+    /// </summary>
+    public void CreateScrapeIndexes(ScrapeProgressTracker? progress = null)
+    {
+        using var conn = _pgDataSource.OpenConnection();
+        int created = 0;
+        int total = ScrapeIndexDefinitions.Length;
+        foreach (var def in ScrapeIndexDefinitions)
+        {
+            // Extract index name from "CREATE INDEX ix_name ON ..."
+            var indexName = def.Split(' ') is { Length: >= 3 } parts ? parts[2] : def;
+            progress?.ReportIndexProgress("creating", indexName, created, total);
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = def;
+                cmd.CommandTimeout = 300; // 5 min per index
+                cmd.ExecuteNonQuery();
+                created++;
+                _log.LogDebug("Created index: {Def}", def);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Failed to create index: {Def}", def);
+            }
+        }
+        _log.LogInformation("Recreated {Count}/{Total} secondary indexes after scrape.", created, total);
+    }
+
+    /// <summary>Drop only solo (leaderboard_entries) secondary indexes.</summary>
+    public void DropSoloIndexes() => DropIndexes(SoloDroppableIndexes, "solo");
+
+    /// <summary>Recreate only solo (leaderboard_entries) secondary indexes.</summary>
+    public void CreateSoloIndexes() => CreateIndexes(SoloIndexDefinitions, "solo");
+
+    /// <summary>Drop only band (band_entries, band_member_stats, band_members) secondary indexes.</summary>
+    public void DropBandIndexes() => DropIndexes(BandDroppableIndexes, "band");
+
+    /// <summary>Recreate only band secondary indexes.</summary>
+    public void CreateBandIndexes() => CreateIndexes(BandIndexDefinitions, "band");
+
+    private void DropIndexes(string[] indexes, string label)
+    {
+        using var conn = _pgDataSource.OpenConnection();
+        int dropped = 0;
+        foreach (var idx in indexes)
+        {
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = $"DROP INDEX IF EXISTS {idx}";
+                cmd.ExecuteNonQuery();
+                dropped++;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to drop index {Index}.", idx);
+            }
+        }
+        _log.LogInformation("Dropped {Count}/{Total} {Label} secondary indexes.", dropped, indexes.Length, label);
+    }
+
+    private void CreateIndexes(string[] definitions, string label)
+    {
+        using var conn = _pgDataSource.OpenConnection();
+        int created = 0;
+        foreach (var def in definitions)
+        {
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = def;
+                cmd.CommandTimeout = 300;
+                cmd.ExecuteNonQuery();
+                created++;
+                _log.LogDebug("Created index: {Def}", def);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Failed to create index: {Def}", def);
+            }
+        }
+        _log.LogInformation("Recreated {Count}/{Total} {Label} secondary indexes.", created, definitions.Length, label);
+    }
+
     /// <summary>
     /// Run WAL checkpoints on all instrument databases and the meta database.
 
