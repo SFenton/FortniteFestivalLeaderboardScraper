@@ -8,9 +8,11 @@ export interface PercentilePillProps {
   color?: string;
   /** Override auto-detected tier. */
   tier?: 'top1' | 'top5' | 'default';
+  /** Override the default minWidth. */
+  minWidth?: string | number;
 }
 
-const PercentilePill = memo(function PercentilePill({ display, color, tier }: PercentilePillProps) {
+const PercentilePill = memo(function PercentilePill({ display, color, tier, minWidth }: PercentilePillProps) {
   const s = useStyles();
   if (!display) return null;
 
@@ -22,6 +24,8 @@ const PercentilePill = memo(function PercentilePill({ display, color, tier }: Pe
     const pct = match ? parseFloat(match[1]) : NaN;
     style = !isNaN(pct) && pct <= 1 ? s.top1 : !isNaN(pct) && pct <= 5 ? s.top5 : color ? { ...s.default, backgroundColor: color, color: Colors.textPrimary } : s.default;
   }
+
+  if (minWidth != null) style = { ...style, minWidth };
 
   return <span style={style}>{display}</span>;
 });

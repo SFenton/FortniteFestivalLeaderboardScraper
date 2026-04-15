@@ -140,6 +140,7 @@ export const AlbumArtSize = {
 export const MetadataSize = {
   pillMinWidth: 80,
   percentilePillMinWidth: '5.5em',
+  valuePillMinWidth: '5em',
   accuracyPillMinWidth: '3.75em',
   dotSize: 8,
   dotActiveScale: 1.25,

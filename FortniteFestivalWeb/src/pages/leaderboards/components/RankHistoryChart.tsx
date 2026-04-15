@@ -14,13 +14,13 @@ import {
 } from 'recharts';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
 import { serverInstrumentLabel as instrumentLabel } from '@festival/core/api/serverTypes';
-import { formatLeaderboardPercentile, rankColor } from '@festival/core';
+import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@festival/core';
 import GraphCard from '../../../components/common/GraphCard';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
 import { computeRankWidth } from '../helpers/rankingHelpers';
 import {
-  Colors, Font, FontVariant, Gap, Size, Layout, Radius, Weight,
+  Colors, Font, FontVariant, Gap, Size, Layout, MetadataSize, Radius, Weight,
   frostedCard, padding, border, transition,
   CHART_ANIM_DURATION,
 } from '@festival/theme';
@@ -259,7 +259,7 @@ export default memo(function RankHistoryChart({
         <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
         <span style={{ fontWeight: Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
         {percentileStr
-          ? <PercentilePill display={percentileStr} />
+          ? <PercentilePill display={formatRatingValue(point.value)} color={rankColor(point.rank, totalAccounts)} minWidth={MetadataSize.valuePillMinWidth} />
           : isPctMetric
             ? <PercentilePill display={formatDetailValue(point.value, metric)} tier={pct >= 99 ? 'top1' : pct >= 95 ? 'top5' : 'default'} />
             : <span style={{ color: Colors.textPrimary, ...(valueWidth ? { width: valueWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>{formatDetailValue(point.value, metric)}</span>}
@@ -292,7 +292,7 @@ export default memo(function RankHistoryChart({
         <span style={{ flex: 1, color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{dateStr}</span>
         <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
         {percentileStr
-          ? <PercentilePill display={percentileStr} />
+          ? <PercentilePill display={formatRatingValue(point.value)} color={rankColor(point.rank, totalAccounts)} minWidth={MetadataSize.valuePillMinWidth} />
           : isPctMetric
             ? <PercentilePill display={formatDetailValue(point.value, metric)} tier={pct >= 99 ? 'top1' : pct >= 95 ? 'top5' : 'default'} />
             : <span style={{ color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined), ...(valueWidth ? { width: valueWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>{formatDetailValue(point.value, metric)}</span>}

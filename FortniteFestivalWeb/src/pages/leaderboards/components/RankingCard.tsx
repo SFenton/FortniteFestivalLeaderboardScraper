@@ -9,7 +9,7 @@ import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, Account
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
 import { getRankForMetric, formatRating, getRatingForMetric, computeRankWidth, getSongsLabel } from '../helpers/rankingHelpers';
-import { formatLeaderboardPercentile } from '@festival/core';
+import { formatRatingValue, rankColor } from '@festival/core';
 import { staggerDelay } from '@festival/ui-utils';
 import {
   Colors, Font, Weight, Gap, Radius, Layout,
@@ -119,7 +119,8 @@ export default memo(function RankingCard({
                 displayName={e.displayName ?? e.accountId.slice(0, 8)}
                 ratingLabel={formatRating(getRatingForMetric(e, metric), metric)}
                 songsLabel={getSongsLabel(e, metric)}
-                percentileDisplay={usePercentile ? formatLeaderboardPercentile(rank, totalAccounts) : undefined}
+                valueDisplay={usePercentile ? formatRatingValue(getRatingForMetric(e, metric)) : undefined}
+                valueColor={usePercentile ? rankColor(rank, totalAccounts) : undefined}
                 ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
                 songsLabelPrimary={isFcRate}
                 isPlayer={isPlayer}
@@ -148,7 +149,8 @@ export default memo(function RankingCard({
                 displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}
                 ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
                 songsLabel={getSongsLabel(playerRanking, metric)}
-                percentileDisplay={usePercentile ? formatLeaderboardPercentile(rank, totalAccounts) : undefined}
+                valueDisplay={usePercentile ? formatRatingValue(getRatingForMetric(playerRanking, metric)) : undefined}
+                valueColor={usePercentile ? rankColor(rank, totalAccounts) : undefined}
                 ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
                 songsLabelPrimary={isFcRate}
                 isPlayer

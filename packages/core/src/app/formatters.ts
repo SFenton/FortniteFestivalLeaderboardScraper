@@ -182,6 +182,24 @@ export function maxScoreColor(pct: number): string {
 }
 
 /**
+ * Format a raw rating value (adjusted skill or weighted) for pill display.
+ * < 0.1  → up to 4 decimal places, trailing zeros stripped (0.01, 0.0012)
+ * < 1    → 2 decimal places (0.52, 0.10)
+ * >= 1   → 1 decimal place (42.3, 1.0)
+ */
+export function formatRatingValue(value: number): string {
+  if (!Number.isFinite(value)) return 'N/A';
+  const abs = Math.abs(value);
+  if (abs < 0.1) {
+    const s = value.toFixed(4);
+    // Strip trailing zeros but keep at least one digit after decimal
+    return s.replace(/(\.[0-9]*?)0+$/, '$1').replace(/\.$/, '.0');
+  }
+  if (abs < 1) return value.toFixed(2);
+  return value.toFixed(1);
+}
+
+/**
  * Calculate the CSS `ch` width needed to display the largest score in a list.
  */
 export function calculateScoreWidth(scores: { score: number }[]): string {

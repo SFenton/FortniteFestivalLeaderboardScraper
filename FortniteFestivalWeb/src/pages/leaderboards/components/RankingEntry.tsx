@@ -4,7 +4,7 @@
  * Displays rank, player name, rating value, and songs played.
  */
 import { memo, useMemo } from 'react';
-import { Colors, Font, FontVariant, Layout, TextAlign, Weight, truncate } from '@festival/theme';
+import { Colors, Font, FontVariant, Layout, MetadataSize, TextAlign, Weight, truncate } from '@festival/theme';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 
 export interface RankingEntryProps {
@@ -16,6 +16,10 @@ export interface RankingEntryProps {
   songsLabel?: string;
   /** Percentile display string (e.g. "Top 0.05%"). When present, renders a PercentilePill instead of songsLabel. */
   percentileDisplay?: string;
+  /** Formatted rating value for a value pill (e.g. "0.012"). Shown to the left of the percentile pill. */
+  valueDisplay?: string;
+  /** Background color for the value pill (e.g. from rankColor()). */
+  valueColor?: string;
   /** When set, renders ratingLabel as a PercentilePill with the given tier instead of plain text. */
   ratingPillTier?: 'top1' | 'top5' | 'default';
   /** When true, songs label uses primary (white) text at standard font size. */
@@ -31,6 +35,8 @@ export const RankingEntry = memo(function RankingEntry({
   ratingLabel,
   songsLabel,
   percentileDisplay,
+  valueDisplay,
+  valueColor,
   ratingPillTier,
   songsLabelPrimary,
   isPlayer,
@@ -42,7 +48,8 @@ export const RankingEntry = memo(function RankingEntry({
     <>
       <span style={s.colRank}>#{rank.toLocaleString()}</span>
       <span style={s.colName}>{displayName}</span>
-      {percentileDisplay ? <PercentilePill display={percentileDisplay} /> : songsLabel && <span style={songsLabelPrimary ? s.colSongsPrimary : s.colSongs}>{songsLabel}</span>}
+      {valueDisplay && <PercentilePill display={valueDisplay} color={valueColor} minWidth={MetadataSize.valuePillMinWidth} />}
+      {!valueDisplay && percentileDisplay ? <PercentilePill display={percentileDisplay} /> : !valueDisplay && songsLabel && <span style={songsLabelPrimary ? s.colSongsPrimary : s.colSongs}>{songsLabel}</span>}
       {ratingPillTier ? <PercentilePill display={ratingLabel} tier={ratingPillTier} /> : ratingLabel && <span style={s.colRating}>{ratingLabel}</span>}
     </>
   );
