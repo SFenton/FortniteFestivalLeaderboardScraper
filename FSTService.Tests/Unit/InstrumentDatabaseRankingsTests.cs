@@ -477,6 +477,84 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
+    // Same-day idempotency (no duplicate rows per date)
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void SnapshotRankHistory_SameDayRerun_KeepsLatest()
+    {
+        // First run: seed scores and snapshot
+        Db.UpsertEntries("song1", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+        Db.SnapshotRankHistory();
+
+        // Second run: higher score, recompute, snapshot again on same day
+        Db.UpsertEntries("song1", [MakeEntry("p1", 2000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+        Db.SnapshotRankHistory();
+
+        var history = Db.GetRankHistory("p1", days: 1);
+        Assert.Single(history);
+        Assert.Equal(2000, history[0].TotalScore); // latest value wins
+    }
+
+    [Fact]
+    public void SnapshotRankHistory_SameDayRerun_NoChange_StillSingleRow()
+    {
+        Db.UpsertEntries("song1", [MakeEntry("p1", 1000, rank: 1)]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+
+        Db.SnapshotRankHistory();
+        Db.SnapshotRankHistory(); // identical re-run
+
+        var history = Db.GetRankHistory("p1", days: 1);
+        Assert.Single(history);
+    }
+
+    [Fact]
+    public void GetRankHistory_NoDuplicateDates()
+    {
+        Db.UpsertEntries("song1", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+        Db.SnapshotRankHistory();
+
+        var history = Db.GetRankHistory("p1", days: 30);
+        var dates = history.Select(h => h.SnapshotDate).ToList();
+        Assert.Equal(dates.Distinct().Count(), dates.Count);
+    }
+
+    [Fact]
+    public void GetRankHistoryAtLeeway_NoDuplicateDates()
+    {
+        Db.UpsertEntries("song1", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+        Db.SnapshotRankHistory();
+        Db.TruncateRankingDeltas();
+        Db.WriteRankingDeltas([
+            ("p1", -3.0, 10, 0.01, 0.06, 0.8, 50000, 0.95, 8, 95.5, 1, 0.5),
+        ]);
+        Db.SnapshotRankHistoryDeltas();
+
+        // Re-run both snapshots
+        Db.SnapshotRankHistory();
+        Db.SnapshotRankHistoryDeltas();
+
+        var history = Db.GetRankHistoryAtLeeway("p1", -3.0, days: 30);
+        var dates = history.Select(h => h.SnapshotDate).ToList();
+        Assert.Equal(dates.Distinct().Count(), dates.Count);
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // GetAllRankingSummaries (for composite computation)
     // ═══════════════════════════════════════════════════════════
 
