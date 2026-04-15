@@ -15,19 +15,29 @@ interface RivalSongRowProps {
   onClick: () => void;
   /** Render as a standalone frosted card row (like SongsPage) instead of a borderless row inside a card. */
   standalone?: boolean;
-  /** Pre-computed width for the score diff pill so all rows align. */
-  scoreDeltaWidth?: string;
   style?: React.CSSProperties;
   onAnimationEnd?: (e: React.AnimationEvent<HTMLElement>) => void;
 }
 
-const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerName, rivalName, onClick, standalone, scoreDeltaWidth, style, onAnimationEnd }: RivalSongRowProps) {
+export function formatRankDelta(delta: number): string {
+  const abs = Math.abs(delta);
+  const sign = delta > 0 ? '+' : delta < 0 ? '\u2212' : '';
+  if (abs < 10_000) return `${sign}${abs.toLocaleString()}`;
+  if (abs >= 1_000_000) {
+    const millions = abs / 1_000_000;
+    const formatted = millions >= 10 ? millions.toFixed(0) : millions.toFixed(1).replace(/\.0$/, '');
+    return `${sign}${formatted}M`;
+  }
+  return `${sign}${Math.round(abs / 1_000)}K`;
+}
+
+const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerName, rivalName, onClick, standalone, style, onAnimationEnd }: RivalSongRowProps) {
   const { t } = useTranslation();
   const st = useRivalSongRowStyles();
   /* v8 ignore start -- ternary chains and nullish coalescing */
   const delta = song.rankDelta;
   const deltaStyle = delta > 0 ? st.deltaPositive : delta < 0 ? st.deltaNegative : st.deltaNeutral;
-  const deltaSign = delta > 0 ? '+' : '';
+  const rankDeltaText = formatRankDelta(delta);
   const userWins = delta > 0;
   const rivalWins = delta < 0;
   const scoreDiff = (song.userScore ?? 0) - (song.rivalScore ?? 0);
@@ -68,13 +78,13 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
           </div>
           <div style={st.deltaCenter}>
             <div style={{ ...st.deltaPillGroup, ...st.deltaPillGroupRank }}>
-              <span style={{ ...deltaStyle, ...(scoreDeltaWidth ? { minWidth: scoreDeltaWidth } : {}) }}>
-                {deltaSign}{delta}
+              <span style={deltaStyle}>
+                {rankDeltaText}
               </span>
               <span style={st.deltaLabel}>Rank</span>
             </div>
             <div style={st.deltaPillGroup}>
-              <span style={{ ...scoreDiffStyle, ...(scoreDeltaWidth ? { minWidth: scoreDeltaWidth } : {}) }}>
+              <span style={scoreDiffStyle}>
                 {scoreDiffText}
               </span>
               <span style={st.deltaLabel}>Score</span>
@@ -126,7 +136,7 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
           )}
         </div>
         <span style={deltaStyle}>
-          {deltaSign}{delta}
+          {rankDeltaText}
         </span>
       </div>
       <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} size={36} />
@@ -148,6 +158,8 @@ function useRivalSongRowStyles() {
       border: border(Border.thick, Colors.borderSubtle),
       flexShrink: 0,
       textAlign: TextAlign.center,
+      minWidth: '9ch',
+      fontVariantNumeric: FontVariant.tabularNums,
     };
     return {
       row: {

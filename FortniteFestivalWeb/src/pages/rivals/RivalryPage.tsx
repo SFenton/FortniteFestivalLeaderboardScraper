@@ -110,21 +110,6 @@ export default function RivalryPage() {
     const cats = categorizeRivalSongs(allSongs);
     return cats.find(c => c.key === mode) ?? null;
   }, [allSongs, mode]);
-
-  const scoreDeltaWidth = useMemo(() => {
-    if (!category || category.songs.length === 0) return undefined;
-    let maxLen = 1;
-    for (const song of category.songs) {
-      // Score diff text length
-      const diff = Math.abs((song.userScore ?? 0) - (song.rivalScore ?? 0));
-      const scoreText = `+${diff.toLocaleString()}`;
-      maxLen = Math.max(maxLen, scoreText.length);
-      // Rank delta text length
-      const rankText = `${song.rankDelta > 0 ? '+' : ''}${song.rankDelta}`;
-      maxLen = Math.max(maxLen, rankText.length);
-    }
-    return `${maxLen + 2}ch`;
-  }, [category]);
   /* v8 ignore stop */
 
   const { phase, shouldStagger } = usePageTransition(`rivalry:${cacheKey}:${mode}`, !loading, hasCachedData);
@@ -177,7 +162,6 @@ export default function RivalryPage() {
                       rivalName={rivalName ?? undefined}
                       onClick={() => navigate(Routes.songDetail(song.songId))}
                       standalone
-                      scoreDeltaWidth={scoreDeltaWidth}
                       style={stagger((++staggerIdx) * staggerInterval)}
                       onAnimationEnd={clearAnim}
                     />

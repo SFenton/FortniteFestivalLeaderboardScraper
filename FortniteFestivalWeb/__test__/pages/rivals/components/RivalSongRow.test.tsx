@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import RivalSongRow from '../../../../src/pages/rivals/components/RivalSongRow';
+import RivalSongRow, { formatRankDelta } from '../../../../src/pages/rivals/components/RivalSongRow';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
 
 vi.mock('react-i18next', () => ({
@@ -62,7 +62,7 @@ describe('RivalSongRow', () => {
 
     it('renders negative rank delta', () => {
       render(<RivalSongRow song={makeSong({ rankDelta: -3 })} onClick={vi.fn()} standalone />);
-      expect(screen.getByText('-3')).toBeDefined();
+      expect(screen.getByText('\u22123')).toBeDefined();
     });
 
     it('renders zero rank delta', () => {
@@ -121,10 +121,10 @@ describe('RivalSongRow', () => {
       expect(onClick).toHaveBeenCalledOnce();
     });
 
-    it('applies scoreDeltaWidth to delta pills', () => {
-      const { container } = render(<RivalSongRow song={makeSong()} onClick={vi.fn()} standalone scoreDeltaWidth="6ch" />);
+    it('applies fixed minWidth to delta pills', () => {
+      const { container } = render(<RivalSongRow song={makeSong()} onClick={vi.fn()} standalone />);
       const allSpans = container.querySelectorAll('span');
-      const withWidth = Array.from(allSpans).filter(p => (p as HTMLElement).style.minWidth === '6ch');
+      const withWidth = Array.from(allSpans).filter(p => (p as HTMLElement).style.minWidth === '9ch');
       expect(withWidth.length).toBeGreaterThanOrEqual(2);
     });
 
@@ -219,6 +219,43 @@ describe('RivalSongRow', () => {
       render(<RivalSongRow song={makeSong({ userRank: 29921, rivalRank: 15000 })} onClick={vi.fn()} />);
       expect(screen.getByText('#29,921')).toBeDefined();
       expect(screen.getByText('#15,000')).toBeDefined();
+    });
+  });
+
+  describe('formatRankDelta', () => {
+    it('formats small positive values with +', () => {
+      expect(formatRankDelta(5)).toBe('+5');
+    });
+
+    it('formats small negative values with unicode minus', () => {
+      expect(formatRankDelta(-3)).toBe('\u22123');
+    });
+
+    it('formats zero without sign', () => {
+      expect(formatRankDelta(0)).toBe('0');
+    });
+
+    it('locale-formats values under 10K', () => {
+      expect(formatRankDelta(9999)).toBe('+9,999');
+      expect(formatRankDelta(-9999)).toBe('\u22129,999');
+    });
+
+    it('abbreviates 10K+ as K', () => {
+      expect(formatRankDelta(10000)).toBe('+10K');
+      expect(formatRankDelta(50000)).toBe('+50K');
+      expect(formatRankDelta(-25000)).toBe('\u221225K');
+    });
+
+    it('abbreviates 1M+ as M', () => {
+      expect(formatRankDelta(1000000)).toBe('+1M');
+      expect(formatRankDelta(1500000)).toBe('+1.5M');
+      expect(formatRankDelta(99000000)).toBe('+99M');
+      expect(formatRankDelta(-2000000)).toBe('\u22122M');
+    });
+
+    it('rounds K values', () => {
+      expect(formatRankDelta(12500)).toBe('+13K');
+      expect(formatRankDelta(999999)).toBe('+1000K');
     });
   });
 });
