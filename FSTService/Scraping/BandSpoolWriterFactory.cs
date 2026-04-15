@@ -132,6 +132,10 @@ public static class BandSpoolWriterFactory
                         end_time = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.end_time ELSE band_entries.end_time END,
                         is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
                         last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
+                    WHERE EXCLUDED.score > band_entries.score
+                       OR COALESCE(EXCLUDED.base_score, -1) != COALESCE(band_entries.base_score, -1)
+                       OR COALESCE(EXCLUDED.instrument_bonus, -1) != COALESCE(band_entries.instrument_bonus, -1)
+                       OR COALESCE(EXCLUDED.overdrive_bonus, -1) != COALESCE(band_entries.overdrive_bonus, -1)
                     """;
                 cmd.ExecuteNonQuery();
             }
@@ -198,6 +202,9 @@ public static class BandSpoolWriterFactory
                             score = EXCLUDED.score, accuracy = EXCLUDED.accuracy,
                             is_full_combo = EXCLUDED.is_full_combo, stars = EXCLUDED.stars,
                             difficulty = EXCLUDED.difficulty
+                        WHERE EXCLUDED.score != band_member_stats.score
+                           OR EXCLUDED.accuracy != band_member_stats.accuracy
+                           OR EXCLUDED.account_id != band_member_stats.account_id
                         """;
                     cmd.ExecuteNonQuery();
                 }

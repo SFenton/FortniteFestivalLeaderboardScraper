@@ -254,4 +254,241 @@ public class SpoolWriterFlushAllTests
                 Directory.Delete(tempDir, true);
         }
     }
+
+    // ── Chunked FlushAll tests ──────────────────────────────────
+
+    [Fact]
+    public async Task FlushAll_WithMaxBatchPages_ChunksCorrectly()
+    {
+        var flushCalls = new List<int>(); // page count per flush call
+        await using var spool = new SpoolWriter<TestEntry>(
+            _log, "test-chunk",
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var e in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, e.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, e.Value);
+                }
+            },
+            deserialize: (stream, header) =>
+            {
+                var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                int count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                var entries = new TestEntry[count];
+                for (int i = 0; i < count; i++)
+                    entries[i] = new TestEntry
+                    {
+                        Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                        Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                    };
+                return (songId, entries);
+            },
+            flush: (instrument, batch) => flushCalls.Add(batch.Count));
+
+        // Write 10 pages to one instrument
+        for (int i = 0; i < 10; i++)
+            spool.Enqueue($"song{i}", "Guitar", new[] { new TestEntry { Id = $"e{i}", Value = i } });
+
+        spool.Complete();
+        spool.FlushAll(maxBatchPages: 3);
+
+        // Expect 4 flush calls: 3, 3, 3, 1
+        Assert.Equal(4, flushCalls.Count);
+        Assert.Equal(3, flushCalls[0]);
+        Assert.Equal(3, flushCalls[1]);
+        Assert.Equal(3, flushCalls[2]);
+        Assert.Equal(1, flushCalls[3]);
+    }
+
+    [Fact]
+    public async Task FlushAll_WithMaxBatchPages_AllDataPreserved()
+    {
+        var received = new List<(string SongId, string Id, int Value)>();
+        await using var spool = new SpoolWriter<TestEntry>(
+            _log, "test-chunk-data",
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var e in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, e.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, e.Value);
+                }
+            },
+            deserialize: (stream, header) =>
+            {
+                var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                int count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                var entries = new TestEntry[count];
+                for (int i = 0; i < count; i++)
+                    entries[i] = new TestEntry
+                    {
+                        Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                        Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                    };
+                return (songId, entries);
+            },
+            flush: (instrument, batch) =>
+            {
+                foreach (var (songId, entries) in batch)
+                    foreach (var e in entries)
+                        received.Add((songId, e.Id, e.Value));
+            });
+
+        for (int i = 0; i < 7; i++)
+            spool.Enqueue($"song{i}", "Bass", new[]
+            {
+                new TestEntry { Id = $"a{i}", Value = i * 10 },
+                new TestEntry { Id = $"b{i}", Value = i * 10 + 1 },
+            });
+
+        spool.Complete();
+        spool.FlushAll(maxBatchPages: 2);
+
+        // All 14 entries (7 pages × 2 entries) should be received
+        Assert.Equal(14, received.Count);
+        for (int i = 0; i < 7; i++)
+        {
+            Assert.Contains(received, r => r.SongId == $"song{i}" && r.Id == $"a{i}" && r.Value == i * 10);
+            Assert.Contains(received, r => r.SongId == $"song{i}" && r.Id == $"b{i}" && r.Value == i * 10 + 1);
+        }
+    }
+
+    [Fact]
+    public async Task FlushAll_MaxBatchPages_Zero_FlushesAll()
+    {
+        var flushCalls = new List<int>();
+        await using var spool = new SpoolWriter<TestEntry>(
+            _log, "test-chunk-zero",
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var e in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, e.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, e.Value);
+                }
+            },
+            deserialize: (stream, header) =>
+            {
+                var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                int count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                var entries = new TestEntry[count];
+                for (int i = 0; i < count; i++)
+                    entries[i] = new TestEntry
+                    {
+                        Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                        Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                    };
+                return (songId, entries);
+            },
+            flush: (instrument, batch) => flushCalls.Add(batch.Count));
+
+        for (int i = 0; i < 5; i++)
+            spool.Enqueue($"song{i}", "Drums", new[] { new TestEntry { Id = $"e{i}", Value = i } });
+
+        spool.Complete();
+        spool.FlushAll(maxBatchPages: 0); // 0 = unlimited = single flush
+
+        Assert.Single(flushCalls);
+        Assert.Equal(5, flushCalls[0]);
+    }
+
+    [Fact]
+    public async Task FlushAll_MaxBatchPages_LargerThanTotal_SingleFlush()
+    {
+        var flushCalls = new List<int>();
+        await using var spool = new SpoolWriter<TestEntry>(
+            _log, "test-chunk-large",
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var e in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, e.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, e.Value);
+                }
+            },
+            deserialize: (stream, header) =>
+            {
+                var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                int count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                var entries = new TestEntry[count];
+                for (int i = 0; i < count; i++)
+                    entries[i] = new TestEntry
+                    {
+                        Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                        Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                    };
+                return (songId, entries);
+            },
+            flush: (instrument, batch) => flushCalls.Add(batch.Count));
+
+        for (int i = 0; i < 3; i++)
+            spool.Enqueue($"song{i}", "Vocals", new[] { new TestEntry { Id = $"e{i}", Value = i } });
+
+        spool.Complete();
+        spool.FlushAll(maxBatchPages: 1000);
+
+        Assert.Single(flushCalls);
+        Assert.Equal(3, flushCalls[0]);
+    }
+
+    [Fact]
+    public async Task FlushAll_MultipleInstruments_ChunksEachIndependently()
+    {
+        var flushCalls = new List<(string Instrument, int Pages)>();
+        await using var spool = new SpoolWriter<TestEntry>(
+            _log, "test-chunk-multi",
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var e in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, e.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, e.Value);
+                }
+            },
+            deserialize: (stream, header) =>
+            {
+                var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                int count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                var entries = new TestEntry[count];
+                for (int i = 0; i < count; i++)
+                    entries[i] = new TestEntry
+                    {
+                        Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                        Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                    };
+                return (songId, entries);
+            },
+            flush: (instrument, batch) => flushCalls.Add((instrument, batch.Count)));
+
+        // Guitar: 5 pages, Drums: 2 pages
+        for (int i = 0; i < 5; i++)
+            spool.Enqueue($"s{i}", "Guitar", new[] { new TestEntry { Id = $"g{i}", Value = i } });
+        for (int i = 0; i < 2; i++)
+            spool.Enqueue($"s{i}", "Drums", new[] { new TestEntry { Id = $"d{i}", Value = i } });
+
+        spool.Complete();
+        spool.FlushAll(maxBatchPages: 3);
+
+        // Guitar: 2 chunks (3 + 2), Drums: 1 chunk (2)
+        var guitarCalls = flushCalls.Where(f => f.Instrument == "Guitar").ToList();
+        var drumsCalls = flushCalls.Where(f => f.Instrument == "Drums").ToList();
+
+        Assert.Equal(2, guitarCalls.Count);
+        Assert.Equal(3, guitarCalls[0].Pages);
+        Assert.Equal(2, guitarCalls[1].Pages);
+
+        Assert.Single(drumsCalls);
+        Assert.Equal(2, drumsCalls[0].Pages);
+    }
 }

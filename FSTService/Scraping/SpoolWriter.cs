@@ -162,8 +162,11 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     /// Call after <see cref="Complete"/>. This is the post-fetch flush path —
     /// no live consumers, no memory accumulation during fetch.
     /// </summary>
+    /// <param name="maxBatchPages">Maximum pages per flush call. 0 = unlimited (flush all pages in one call).
+    /// When &gt; 0, pages are accumulated up to the limit, flushed, then the next chunk begins.
+    /// Each chunk results in an independent flush delegate call (and therefore its own DB transaction).</param>
     /// <param name="onInstrumentFlush">Optional callback invoked before each instrument flush with (instrument, completedSoFar, totalInstruments).</param>
-    public void FlushAll(Action<string, int, int>? onInstrumentFlush = null)
+    public void FlushAll(int maxBatchPages = 0, Action<string, int, int>? onInstrumentFlush = null)
     {
         if (!_completed)
             throw new InvalidOperationException("Call Complete() before FlushAll().");
@@ -194,20 +197,49 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
 
                 var header = new byte[8];
                 var batch = new List<(string SongId, IReadOnlyList<T> Entries)>();
+                long instrumentPages = 0;
+                long instrumentEntries = 0;
+                int chunkIndex = 0;
 
                 while (readStream.Position < readStream.Length)
                 {
                     var (songId, entries) = _deserialize(readStream, header);
                     batch.Add((songId, entries));
                     totalEntries += entries.Count;
+                    instrumentEntries += entries.Count;
                     totalPages++;
+                    instrumentPages++;
+
+                    // Flush chunk when we hit the page limit
+                    if (maxBatchPages > 0 && batch.Count >= maxBatchPages)
+                    {
+                        chunkIndex++;
+                        long chunkEntries = batch.Sum(b => b.Entries.Count);
+                        _log.LogInformation(
+                            "Spool [{Label}/{Instrument}] chunk {Chunk}: {Pages:N0} pages, {Entries:N0} entries...",
+                            _label, instrument, chunkIndex, batch.Count, chunkEntries);
+                        _flush(instrument, batch);
+                        batch = new List<(string SongId, IReadOnlyList<T> Entries)>();
+                    }
                 }
 
+                // Flush remaining pages
                 if (batch.Count > 0)
+                {
+                    if (chunkIndex > 0)
+                    {
+                        chunkIndex++;
+                        long chunkEntries = batch.Sum(b => b.Entries.Count);
+                        _log.LogInformation(
+                            "Spool [{Label}/{Instrument}] chunk {Chunk} (final): {Pages:N0} pages, {Entries:N0} entries...",
+                            _label, instrument, chunkIndex, batch.Count, chunkEntries);
+                    }
                     _flush(instrument, batch);
+                }
 
-                _log.LogInformation("Spool [{Label}/{Instrument}] flushed: {Pages:N0} pages, {Entries:N0} entries.",
-                    _label, instrument, batch.Count, batch.Sum(b => b.Entries.Count));
+                _log.LogInformation("Spool [{Label}/{Instrument}] flushed: {Pages:N0} pages, {Entries:N0} entries{Chunks}.",
+                    _label, instrument, instrumentPages, instrumentEntries,
+                    chunkIndex > 0 ? $" in {chunkIndex} chunks" : "");
 
                 instrumentIndex++;
             }

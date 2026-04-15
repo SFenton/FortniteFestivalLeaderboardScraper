@@ -105,10 +105,14 @@ public static class LeaderboardSpoolWriterFactory
                 writer.Complete();
             }
 
+            // ── Statement 1: Score-gated ON CONFLICT ──
+            // Inserts new entries and updates existing ones ONLY when score changed
+            // or one-time fill-in fields need populating. Skips the full 20-column
+            // tuple rewrite for the ~95% of rows where only api_rank shifted.
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandTimeout = 0; // Unlimited — bulk merge of millions of rows can exceed 10 min
+                cmd.CommandTimeout = 0; // Unlimited — bulk merge of millions of rows
                 cmd.CommandText =
                     "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
                     "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts FROM _le_staging " +
@@ -131,7 +135,33 @@ public static class LeaderboardSpoolWriterFactory
                     "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
                     "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
                     "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
-                    "last_updated_at = EXCLUDED.last_updated_at";
+                    "last_updated_at = EXCLUDED.last_updated_at " +
+                    "WHERE EXCLUDED.score != leaderboard_entries.score " +
+                    "OR (EXCLUDED.source = 'scrape' AND leaderboard_entries.source != 'scrape') " +
+                    "OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) " +
+                    "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
+                    "OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_entries.band_members_json IS NULL) " +
+                    "OR COALESCE(EXCLUDED.base_score, -1) != COALESCE(leaderboard_entries.base_score, -1) " +
+                    "OR COALESCE(EXCLUDED.overdrive_bonus, -1) != COALESCE(leaderboard_entries.overdrive_bonus, -1)";
+                cmd.ExecuteNonQuery();
+            }
+
+            // ── Statement 2: Lightweight api_rank + rank UPDATE ──
+            // For existing entries where only the rank shifted (no score change),
+            // update just the rank columns. This writes a much smaller tuple + WAL
+            // than the full 20-column ON CONFLICT rewrite above.
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandTimeout = 0;
+                cmd.CommandText =
+                    "UPDATE leaderboard_entries le " +
+                    "SET api_rank = s.api_rank, rank = s.rank, last_updated_at = s.ts " +
+                    "FROM (SELECT DISTINCT ON (song_id, instrument, account_id) " +
+                    "song_id, instrument, account_id, api_rank, rank, ts " +
+                    "FROM _le_staging ORDER BY song_id, instrument, account_id, score DESC) s " +
+                    "WHERE le.song_id = s.song_id AND le.instrument = s.instrument AND le.account_id = s.account_id " +
+                    "AND (le.api_rank IS DISTINCT FROM s.api_rank OR (s.rank > 0 AND le.rank IS DISTINCT FROM s.rank))";
                 cmd.ExecuteNonQuery();
             }
 
