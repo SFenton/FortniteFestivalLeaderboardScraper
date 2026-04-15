@@ -5,6 +5,7 @@ import { useParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSyncStatus } from '../../hooks/data/useSyncStatus';
+import { useSettings, isInstrumentVisible } from '../../contexts/SettingsContext';
 import { api } from '../../api/client';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import EmptyState from '../../components/common/EmptyState';
@@ -12,10 +13,12 @@ import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { LoadPhase } from '@festival/core';
+import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS, CONTENT_OUT_MS } from '@festival/theme';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
+import { useRankHistoryAll } from '../../hooks/chart/useRankHistory';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
@@ -115,6 +118,40 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const probeStatusKey = isTrackedPlayer ? ctx.probeStatusKey : localProbeStatusKey;
   const nextRetrySeconds = isTrackedPlayer ? ctx.nextRetrySeconds : localNextRetrySeconds;
 
+  // Compute visible instruments for ranking queries
+  const { settings } = useSettings();
+  const visibleKeys = useMemo(() =>
+    INSTRUMENT_KEYS.filter(k => isInstrumentVisible(settings, k)),
+    [settings],
+  );
+
+  // Fetch pre-computed tiered stats (hoisted from PlayerContent so stagger waits for data)
+  const statsQuery = useQuery({
+    queryKey: queryKeys.playerStats(accountId ?? ''),
+    queryFn: () => api.getPlayerStats(accountId!),
+    staleTime: 5 * 60_000,
+    enabled: !!accountId,
+  });
+  const statsData = statsQuery.data ?? null;
+  const hasRankTiers = !!statsData?.instrumentRanks?.length;
+
+  // Fetch per-instrument rankings (only when stats don't already provide rank tiers)
+  const instrumentRankingQueries = useQueries({
+    queries: accountId
+      ? visibleKeys.map((inst) => ({
+          queryKey: queryKeys.playerRanking(inst, accountId),
+          queryFn: () => api.getPlayerRanking(inst, accountId),
+          staleTime: 5 * 60_000,
+          enabled: !hasRankTiers,
+        }))
+      : [],
+  });
+
+  // Hoist rank-history loading so stagger waits for chart data (same pattern as LeaderboardsOverviewPage)
+  const allHistory = useRankHistoryAll(visibleKeys, accountId, 'totalscore');
+  const historyLoading = accountId ? visibleKeys.some(inst => allHistory[inst]?.loading) : false;
+  const historyAllCached = !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
+
   // Skip stagger if we've rendered this account before.
   const hasRendered = isTrackedPlayer
     ? _renderedTrackedAccount === accountId
@@ -132,8 +169,13 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   }
   /* v8 ignore stop */
   const skipAnim = skipAnimRef.current;
-  const dataReady = !loading && !error && !!data;
-  const { phase: loadPhase, triggerContentOut } = useLoadPhase(dataReady, { skipAnimation: skipAnim });
+  const statsReady = !statsQuery.isLoading;
+  const rankingsReady = hasRankTiers || instrumentRankingQueries.every(q => !q.isLoading);
+  const dataReady = !loading && !error && !!data && statsReady && rankingsReady && !historyLoading;
+  const allCached = !!data && statsQuery.data != null
+    && (hasRankTiers || instrumentRankingQueries.every(q => q.data != null))
+    && historyAllCached;
+  const { phase: loadPhase, triggerContentOut } = useLoadPhase(dataReady, { skipAnimation: skipAnim || allCached });
   triggerContentOutRef.current = triggerContentOut;
 
   // When content-out finishes and phase reaches Loading, invalidate queries so fresh data arrives
@@ -141,12 +183,14 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   useEffect(() => {
     if (prevLoadPhase.current === LoadPhase.ContentOut && loadPhase === LoadPhase.Loading && accountId) {
       void qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
-      if (isTrackedPlayer) {
-        void qc.invalidateQueries({ queryKey: queryKeys.playerStats(accountId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.playerStats(accountId) });
+      for (const inst of visibleKeys) {
+        void qc.invalidateQueries({ queryKey: queryKeys.playerRanking(inst, accountId) });
+        void qc.invalidateQueries({ queryKey: queryKeys.rankHistory(inst, accountId, 30) });
       }
     }
     prevLoadPhase.current = loadPhase;
-  }, [loadPhase, accountId, isTrackedPlayer, qc]);
+  }, [loadPhase, accountId, isTrackedPlayer, qc, visibleKeys]);
 
   if (data) {
     if (isTrackedPlayer) _renderedTrackedAccount = accountId!;
@@ -172,11 +216,11 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
       )}
       {loadPhase === LoadPhase.ContentOut && data && (
         <div style={styles.contentOut}>
-          <PlayerContent key={`${accountId}-out`} data={data} songs={songs} isSyncing={false} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isThrottled={isThrottled} throttleStatusKey={throttleStatusKey} probeStatusKey={probeStatusKey} nextRetrySeconds={nextRetrySeconds} pendingRankUpdate={pendingRankUpdate} estimatedRankUpdateMinutes={estimatedRankUpdateMinutes} isTrackedPlayer={isTrackedPlayer} skipAnim={true} />
+          <PlayerContent key={`${accountId}-out`} data={data} songs={songs} isSyncing={false} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isThrottled={isThrottled} throttleStatusKey={throttleStatusKey} probeStatusKey={probeStatusKey} nextRetrySeconds={nextRetrySeconds} pendingRankUpdate={pendingRankUpdate} estimatedRankUpdateMinutes={estimatedRankUpdateMinutes} isTrackedPlayer={isTrackedPlayer} skipAnim={true} statsData={statsData} rankingQueryResults={instrumentRankingQueries.map(q => q.data ?? null)} />
         </div>
       )}
       {loadPhase === LoadPhase.ContentIn && data && (
-        <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isThrottled={isThrottled} throttleStatusKey={throttleStatusKey} probeStatusKey={probeStatusKey} nextRetrySeconds={nextRetrySeconds} pendingRankUpdate={pendingRankUpdate} estimatedRankUpdateMinutes={estimatedRankUpdateMinutes} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} showCompleteBanner={showCompleteBanner} onCompleteBannerDismissed={() => { setShowCompleteBanner(false); if (isTrackedPlayer) ctx.dismissSyncBanner(); }} />
+        <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isThrottled={isThrottled} throttleStatusKey={throttleStatusKey} probeStatusKey={probeStatusKey} nextRetrySeconds={nextRetrySeconds} pendingRankUpdate={pendingRankUpdate} estimatedRankUpdateMinutes={estimatedRankUpdateMinutes} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} showCompleteBanner={showCompleteBanner} onCompleteBannerDismissed={() => { setShowCompleteBanner(false); if (isTrackedPlayer) ctx.dismissSyncBanner(); }} statsData={statsData} rankingQueryResults={instrumentRankingQueries.map(q => q.data ?? null)} />
       )}
       {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </>

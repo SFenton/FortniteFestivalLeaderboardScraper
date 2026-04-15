@@ -30,9 +30,6 @@ import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
 import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../../../contexts/SearchQueryContext';
-import { useQuery, useQueries } from '@tanstack/react-query';
-import { api } from '../../../../api/client';
-import { queryKeys } from '../../../../api/queryKeys';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
@@ -42,7 +39,7 @@ import { buildTopSongsItems } from '../../../player/components/TopSongsSection';
 import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
 import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
-import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry } from '@festival/core/api/serverTypes';
+import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRankingDto, PlayerStatsResponse } from '@festival/core/api/serverTypes';
 import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 
 export interface PlayerContentProps {
@@ -69,6 +66,8 @@ export interface PlayerContentProps {
   skipAnim: boolean;
   showCompleteBanner?: boolean;
   onCompleteBannerDismissed?: () => void;
+  statsData: PlayerStatsResponse | null;
+  rankingQueryResults: (AccountRankingDto | null)[];
 }
 
 export default function PlayerContent({
@@ -95,6 +94,8 @@ export default function PlayerContent({
   skipAnim,
   showCompleteBanner,
   onCompleteBannerDismissed,
+  statsData,
+  rankingQueryResults,
 }: PlayerContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
@@ -108,13 +109,6 @@ export default function PlayerContent({
   useEffect(() => { if (bannerVisible) setBannerCollapsed(false); }, [bannerVisible]);
   const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
-
-  // Fetch pre-computed tiered stats from backend
-  const { data: statsData } = useQuery({
-    queryKey: queryKeys.playerStats(data.accountId),
-    queryFn: () => api.getPlayerStats(data.accountId),
-    staleTime: 5 * 60_000,
-  });
 
   // Register FAB "Select as Profile" action
   useEffect(() => {
@@ -167,17 +161,8 @@ export default function PlayerContent({
   // Effective leeway for tier selection: when filtering disabled, pick the last (all-inclusive) tier
   const effectiveLeeway = filterInvalidScores ? leeway : Infinity;
 
-  // Use rank tiers from stats response when available; fall back to per-instrument API calls
+  // Use rank tiers from stats response when available; fall back to per-instrument ranking results
   const hasRankTiers = !!statsData?.instrumentRanks?.length;
-
-  const instrumentRankingQueries = useQueries({
-    queries: visibleKeys.map((inst) => ({
-      queryKey: queryKeys.playerRanking(inst, data.accountId),
-      queryFn: () => api.getPlayerRanking(inst, data.accountId),
-      staleTime: 5 * 60_000,
-      enabled: !hasRankTiers,
-    })),
-  });
 
   // Build map of instrument → AccountRankingEntry for passing to sections
   const instrumentRankings = useMemo(() => {
@@ -209,13 +194,13 @@ export default function PlayerContent({
       return map;
     }
 
-    // Fallback to API query results
+    // Fallback to ranking query results passed from parent
     for (let i = 0; i < visibleKeys.length; i++) {
-      const entry = instrumentRankingQueries[i]?.data;
+      const entry = rankingQueryResults[i];
       if (entry) map.set(visibleKeys[i]!, entry);
     }
     return map;
-  }, [visibleKeys, instrumentRankingQueries, statsData, effectiveLeeway, hasRankTiers, data.accountId]);
+  }, [visibleKeys, rankingQueryResults, statsData, effectiveLeeway, hasRankTiers, data.accountId]);
 
   const songMap = useMemo(() => new Map(songs.map((s) => [s.songId, s])), [songs]);
   const byInstrument = useMemo(() => groupByInstrument(effectiveScores), [effectiveScores]);
@@ -333,7 +318,7 @@ export default function PlayerContent({
         ? (rawByInstrument.get(inst) ?? scores).filter(s => s.score > 0 && !isScoreValid(s.songId, inst, s.score)).length
         : undefined);
 
-    const rankingDto = instrumentRankingQueries[visibleKeys.indexOf(inst)]?.data;
+    const rankingDto = rankingQueryResults[visibleKeys.indexOf(inst)];
     const totalRanked = hasRankTiers
       ? (statsData!.instrumentRanks as InstrumentRankEntry[])?.find(e => e.ins === comboIdFromInstruments([inst]))?.totalRanked
       : rankingDto?.totalRankedAccounts;
