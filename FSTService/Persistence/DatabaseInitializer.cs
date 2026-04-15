@@ -745,6 +745,34 @@ public static class DatabaseInitializer
         ALTER TABLE rank_history DROP COLUMN IF EXISTS raw_fc_rate;
 
         -- =====================================================================
+        -- MIGRATION: deduplicate rank_history + enforce PRIMARY KEY
+        -- The original CREATE TABLE IF NOT EXISTS is a no-op on tables that
+        -- predate the PK definition, so ON CONFLICT could silently INSERT
+        -- duplicates.  Clean up and retrofit the constraint.
+        -- =====================================================================
+
+        DELETE FROM rank_history rh
+        WHERE EXISTS (
+            SELECT 1 FROM rank_history rh2
+            WHERE rh2.account_id = rh.account_id
+              AND rh2.instrument = rh.instrument
+              AND rh2.snapshot_date = rh.snapshot_date
+              AND rh2.ctid > rh.ctid
+        );
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'rank_history'::regclass
+                  AND contype = 'p'
+            ) THEN
+                ALTER TABLE rank_history
+                    ADD PRIMARY KEY (account_id, instrument, snapshot_date);
+            END IF;
+        END $$;
+
+        -- =====================================================================
         -- RANKING DELTAS (leeway-responsive rankings)
         -- Stores per-account metric overrides at each leeway bucket where
         -- their metrics differ from the base ranking (leeway = -5.0%).
