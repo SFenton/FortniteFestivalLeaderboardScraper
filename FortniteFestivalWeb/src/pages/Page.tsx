@@ -16,7 +16,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode, type RefObject, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigationType } from 'react-router-dom';
-import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding, Gap, SPINNER_FADE_MS } from '@festival/theme';
+import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, BoxSizing, PointerEvents, padding, Gap, SPINNER_FADE_MS } from '@festival/theme';
 import { useIsMobile } from '../hooks/ui/useIsMobile';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
@@ -37,8 +37,8 @@ export const pageCss = {
   scrollArea: { flex: 1 } as CSSProperties,
   scrollAreaRelative: { flex: 1, position: Position.relative } as CSSProperties,
   scrollAreaRelativeZ: { flex: 1, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
-  container: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal) } as CSSProperties,
-  containerZ: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal), position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
+  container: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal), boxSizing: BoxSizing.borderBox } as CSSProperties,
+  containerZ: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal), boxSizing: BoxSizing.borderBox, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
   bgImage: { ...fixedFill, backgroundSize: 'cover', backgroundPosition: 'center', opacity: Opacity.backgroundImage, pointerEvents: PointerEvents.none } as CSSProperties,
   bgDim: { ...fixedFill, backgroundColor: Colors.overlayDark, pointerEvents: PointerEvents.none } as CSSProperties,
   spinnerOverlay: { ...fixedFill, zIndex: ZIndex.dropdown, ...flexCenter } as CSSProperties,

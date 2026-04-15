@@ -46,9 +46,9 @@ const fixedFooterBase: CSSProperties = {
   pointerEvents: PointerEvents.auto,
 };
 
-/** Wide-desktop total width: 2×sidebar + content + 2×pinned-padding. */
-const wideMaxWidth = Layout.sidebarWidth * 2 + MaxWidth.card + Layout.paddingHorizontalPinned * 2;
-const wideGutterMin = Layout.sidebarWidth + Layout.paddingHorizontalPinned;
+/** Wide-desktop total width: 2×sidebar + content. */
+const wideMaxWidth = Layout.sidebarWidth * 2 + MaxWidth.card;
+const wideGutterMin = Layout.sidebarWidth;
 const wideGutter = `max(${wideGutterMin}px, calc((100vw - ${wideMaxWidth}px) / 2 + ${wideGutterMin}px))`;
 
 /**
