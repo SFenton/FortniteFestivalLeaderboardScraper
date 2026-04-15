@@ -5,9 +5,10 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { ListPhase } from '@festival/core';
+import { Size, Gap } from '@festival/theme';
 
-const CARD_HEIGHT = 48;
-const CARD_GAP = 4;
+const CARD_HEIGHT = Size.iconXl;
+const CARD_GAP = Gap.sm;
 const OUT_BASE_MS = 200;
 const OUT_STEP_MS = 40;
 const IN_BASE_MS = 300;

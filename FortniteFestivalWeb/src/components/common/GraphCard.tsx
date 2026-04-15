@@ -8,7 +8,7 @@
  */
 import { memo, useMemo, useRef, useState, useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CardPhase } from '@festival/core';
+import { CardPhase, ListPhase } from '@festival/core';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentSelector, type InstrumentSelectorItem } from './InstrumentSelector';
 import { useChartDimensions } from '../../hooks/chart/useChartDimensions';
@@ -280,8 +280,7 @@ function GraphCardInner<T>({
       {/* Animated card list */}
       {renderListItem && (displayedCards.length > 0 || listHeight > 0) && (
         <div style={{
-          overflow: 'clip',
-          overflowClipMargin: 24,
+          overflow: listPhase === ListPhase.Idle ? 'visible' : 'clip',
           transition: 'height 0.3s ease',
           height: listHeight,
           marginTop: Gap.xl,
