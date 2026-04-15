@@ -252,9 +252,9 @@ public sealed class ScraperOptions
     /// The AIMD limiter starts at this value and ramps up toward
     /// <see cref="DegreeOfParallelism"/> via slow-start (multiplicative ×1.333
     /// per evaluation window). Avoids an immediate burst that triggers CDN blocks.
-    /// Default 4. Set via <c>Scraper__InitialDop</c> env var.
+    /// Default 32. Set via <c>Scraper__InitialDop</c> env var.
     /// </summary>
-    public int InitialDop { get; set; } = 4;
+    public int InitialDop { get; set; } = 32;
 
     /// <summary>
     /// Capacity of each per-instrument bounded channel in the persistence pipeline.
@@ -288,6 +288,44 @@ public sealed class ScraperOptions
     public int ScrapePassTimeoutMinutes { get; set; }
 
     // ─── Band Scraping ─────────────────────────────────
+
+    /// <summary>
+    /// HTTP proxy URLs for round-robin rotation during leaderboard scraping.
+    /// Each URL should be a full proxy address (e.g. "http://127.0.0.1:8888").
+    /// When empty, requests go direct (no proxy). When populated, each request
+    /// is dispatched through the next proxy in round-robin order.
+    /// Set via <c>Scraper__ProxyUrls__0</c>, <c>Scraper__ProxyUrls__1</c>, etc.
+    /// </summary>
+    public List<string> ProxyUrls { get; set; } = [];
+
+    /// <summary>
+    /// Gluetun control API URLs for VPN city cycling on CDN blocks.
+    /// Each URL maps 1:1 to the corresponding <see cref="ProxyUrls"/> entry.
+    /// When a proxy gets CDN-blocked, the handler cycles its VPN to a new city
+    /// for a fresh egress IP, then verifies connectivity before resuming.
+    /// Set via <c>Scraper__ControlUrls__0</c>, <c>Scraper__ControlUrls__1</c>, etc.
+    /// Example: "http://172.17.0.2:8000"
+    /// </summary>
+    public List<string> ControlUrls { get; set; } = [];
+
+    /// <summary>
+    /// Docker container names for each gluetun proxy, mapped 1:1 to <see cref="ProxyUrls"/>.
+    /// When populated, the handler recreates the container (stop/rm/run) instead of using
+    /// the gluetun control API to cycle VPN servers. This is more reliable when gluetun is
+    /// crash-looping or the control API is wedged.
+    /// Requires the Docker socket to be mounted into the FSTService container.
+    /// Set via <c>Scraper__ContainerNames__0</c>, <c>Scraper__ContainerNames__1</c>, etc.
+    /// Example: "gluetun-1"
+    /// </summary>
+    public List<string> ContainerNames { get; set; } = [];
+
+    /// <summary>
+    /// When true, use active/standby proxy mode: all traffic goes through one proxy
+    /// at a time, failing over to the next on CDN block. Other proxies stay idle with
+    /// fresh IPs. When false (default), round-robin distributes across all proxies.
+    /// Set via <c>Scraper__ProxyActiveStandby</c> env var.
+    /// </summary>
+    public bool ProxyActiveStandby { get; set; } = true;
 
     /// <summary>
     /// When true, scrape Band_Duets, Band_Trios, and Band_Quad leaderboards

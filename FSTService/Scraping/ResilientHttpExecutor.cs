@@ -62,7 +62,7 @@ public readonly record struct CdnProbeEvent(CdnProbeState State, int Attempt, in
 public sealed class ResilientHttpExecutor
 {
     /// <summary>Default maximum retry attempts after the initial try.</summary>
-    public const int DefaultMaxRetries = 3;
+    public const int DefaultMaxRetries = 10;
 
     /// <summary>Maximum CDN probe retries before giving up. Covers the full 9-step
     /// delay schedule + 6 more at 60 s ≈ 7 minutes total.</summary>
@@ -180,6 +180,7 @@ public sealed class ResilientHttpExecutor
         CancellationToken ct = default)
     {
         int statusAttempt = 0; // counts only HTTP status-code retries (429, 5xx)
+        int networkErrors = 0; // counts transient network errors (not counted toward retries)
 
         for (int attempt = 0; ; attempt++)
         {
@@ -189,13 +190,19 @@ public sealed class ResilientHttpExecutor
                 throw new CdnBlockedException(
                     $"CDN block active on {label ?? "request"} (pre-send check, attempt {attempt + 1})");
 
-            if (attempt > 0)
+            if (statusAttempt > 0)
             {
                 // Exponential backoff capped at MaxBackoff, with ±30% jitter
-                var baseMs = BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
+                // Only back off based on status-code retries, not transient network errors
+                var baseMs = BaseDelay.TotalMilliseconds * Math.Pow(2, statusAttempt - 1);
                 if (baseMs > MaxBackoff.TotalMilliseconds) baseMs = MaxBackoff.TotalMilliseconds;
                 var jitter = baseMs * (0.7 + Random.Shared.NextDouble() * 0.6); // [0.7, 1.3]
                 await Task.Delay(TimeSpan.FromMilliseconds(jitter), ct);
+            }
+            else if (networkErrors > 0)
+            {
+                // Short fixed delay for network errors (proxy reconnecting)
+                await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
             }
 
             // ── Consume a rate token for retries ──
@@ -211,28 +218,27 @@ public sealed class ResilientHttpExecutor
             }
             catch (HttpRequestException ex)
             {
-                // If CDN is actively blocked, don't retry — throw so the caller
-                // can release its DOP slot and wait for the probe.
                 if (IsCdnBlocked)
                     throw new CdnBlockedException(
                         $"CDN block on {label ?? "request"} (network error during CDN block: {ex.Message})");
 
+                networkErrors++;
                 _log.LogWarning(
-                    "HTTP error for {Operation} (attempt {Attempt}, DOP {Dop}): {Error}",
-                    label ?? "request", attempt + 1, limiter?.CurrentDop ?? -1, ex.Message);
+                    "HTTP error for {Operation} (networkError {NetErr}, DOP {Dop}): {Error}",
+                    label ?? "request", networkErrors, limiter?.CurrentDop ?? -1, ex.Message);
                 limiter?.ReportFailure();
                 continue; // transient — retry indefinitely
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
-                // Same check for timeouts during CDN block
                 if (IsCdnBlocked)
                     throw new CdnBlockedException(
                         $"CDN block on {label ?? "request"} (timeout during CDN block)");
 
+                networkErrors++;
                 _log.LogWarning(
-                    "Timeout for {Operation} (attempt {Attempt}, DOP {Dop})",
-                    label ?? "request", attempt + 1, limiter?.CurrentDop ?? -1);
+                    "Timeout for {Operation} (networkError {NetErr}, DOP {Dop})",
+                    label ?? "request", networkErrors, limiter?.CurrentDop ?? -1);
                 limiter?.ReportFailure();
                 continue; // transient timeout — retry indefinitely
             }

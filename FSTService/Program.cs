@@ -167,15 +167,46 @@ var apiSettings = builder.Configuration
 
 builder.Services.AddHttpClient<EpicAuthService>();
 
+Func<SocketsHttpHandler> leaderboardHandlerFactory = () => new SocketsHttpHandler
+{
+    MaxConnectionsPerServer = 2048,
+    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+    EnableMultipleHttp2Connections = true,
+    AutomaticDecompression = System.Net.DecompressionMethods.All,
+};
+
+// Register the container recycler when Docker-based VPN cycling is configured.
+// Must be singleton — holds the Docker.DotNet client connection to the Unix socket.
+{
+    var scraperOpts = builder.Configuration.GetSection(ScraperOptions.Section).Get<ScraperOptions>() ?? new ScraperOptions();
+    if (scraperOpts.ContainerNames.Count > 0)
+        builder.Services.AddSingleton<GluetunContainerRecycler>();
+}
+
 builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
     .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    .ConfigurePrimaryHttpMessageHandler(sp =>
     {
-        MaxConnectionsPerServer = 2048,
-        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
-        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-        EnableMultipleHttp2Connections = true,
-        AutomaticDecompression = System.Net.DecompressionMethods.All,
+        var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+        if (opts.ProxyUrls.Count > 0)
+        {
+            var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("ProxyRotation");
+            log.LogInformation("Proxy rotation enabled: {Count} proxies configured", opts.ProxyUrls.Count);
+            var recycler = opts.ContainerNames.Count > 0
+                ? sp.GetService<GluetunContainerRecycler>()
+                : null;
+            return new RoundRobinProxyHandler(
+                opts.ProxyUrls,
+                accounts: null,
+                leaderboardHandlerFactory,
+                log,
+                opts.ControlUrls.Count > 0 ? opts.ControlUrls : null,
+                opts.ContainerNames.Count > 0 ? opts.ContainerNames : null,
+                recycler,
+                activeStandby: opts.ProxyActiveStandby);
+        }
+        return leaderboardHandlerFactory();
     });
 
 builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
@@ -244,7 +275,7 @@ builder.Services.AddSingleton<SharedDopPool>(sp =>
     var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("SharedDopPool");
     int dop = opts.DegreeOfParallelism;
     int initialDop = Math.Clamp(opts.InitialDop, 4, dop);
-    return new SharedDopPool(initialDop, minDop: 4, maxDop: dop,
+    return new SharedDopPool(initialDop, minDop: Math.Min(initialDop, dop), maxDop: dop,
         opts.LowPriorityPercent, log, opts.MaxRequestsPerSecond);
 });
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();

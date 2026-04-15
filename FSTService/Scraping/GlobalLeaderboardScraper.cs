@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json;
 using FortniteFestival.Core;
 using FSTService.Persistence;
@@ -21,8 +22,33 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 {
     private const string EventsBase = "https://events-public-service-live.ol.epicgames.com";
 
+    /// <summary>User-Agent string matching the real Fortnite game client.</summary>
+    private const string FortniteUserAgent = "Fortnite/++Fortnite+Release-40.10-CL-52157884 Windows/10.0.26220.1.256.64bit";
+
     /// <summary>Default max concurrent HTTP requests across ALL instruments for one song.</summary>
     private const int DefaultMaxConcurrency = 16;
+
+    /// <summary>
+    /// Generates an X-Epic-Correlation-ID matching the real client format: FN-{22 URL-safe base64 chars}.
+    /// </summary>
+    private static string GenerateCorrelationId()
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        RandomNumberGenerator.Fill(bytes);
+        return "FN-" + Convert.ToBase64String(bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+    }
+
+    /// <summary>
+    /// Applies standard Fortnite client headers to an outbound request.
+    /// </summary>
+    private static void ApplyFortniteHeaders(HttpRequestMessage req, string accessToken)
+    {
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        req.Headers.TryAddWithoutValidation("User-Agent", FortniteUserAgent);
+        req.Headers.TryAddWithoutValidation("X-Epic-Correlation-ID", GenerateCorrelationId());
+        req.Headers.TryAddWithoutValidation("Accept", "*/*");
+        req.Headers.TryAddWithoutValidation("Accept-Encoding", "deflate, gzip");
+    }
 
     /// <summary>
     /// The 6 instrument API keys used in the leaderboard URL.
@@ -156,7 +182,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         HttpRequestMessage CreateRequest()
         {
             var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            ApplyFortniteHeaders(req, accessToken);
             return req;
         }
 
@@ -243,7 +269,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         var eventId = $"alltime_{songId}_{instrument}";
         var baseUrl = $"{EventsBase}/api/v2/games/FNFestival/leaderboards/{eventId}/alltime/scores" +
-                      $"?accountId={callerAccountId}";
+                      $"?accountId={callerAccountId}&findTeams=false";
 
         // Build teams body: [["callerAccountId"], ["target1"], ["target2"], ...]
         var sb = new System.Text.StringBuilder();
@@ -274,7 +300,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             HttpRequestMessage CreateRequest()
             {
                 var req = new HttpRequestMessage(HttpMethod.Post, url);
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                ApplyFortniteHeaders(req, accessToken);
+                req.Headers.TryAddWithoutValidation("Accept", "application/json");
                 req.Content = new StringContent(teamsJson, System.Text.Encoding.UTF8, "application/json");
                 return req;
             }
@@ -386,7 +413,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             HttpRequestMessage CreateRequest()
             {
                 var req = new HttpRequestMessage(HttpMethod.Post, url);
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                ApplyFortniteHeaders(req, accessToken);
+                req.Headers.TryAddWithoutValidation("Accept", "application/json");
                 req.Content = new StringContent(teamsJson, System.Text.Encoding.UTF8, "application/json");
                 return req;
             }
@@ -585,7 +613,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             : $"{songId}_{instrument}";                // seasonal: "{su}_{type}"
 
         var url = $"{EventsBase}/api/v2/games/FNFestival/leaderboards/{eventId}/{v2WindowId}/scores" +
-                  $"?accountId={callerAccountId}&fromIndex=0";
+                  $"?accountId={callerAccountId}&fromIndex=0&findTeams=false";
 
         var teamsJson = $"{{\"teams\":[[\"{callerAccountId}\"],[\"{targetAccountId}\"]]}}";
         var label = $"{songId}/{instrument}/{windowId}";
@@ -593,7 +621,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         HttpRequestMessage CreateRequest()
         {
             var req = new HttpRequestMessage(HttpMethod.Post, url);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            ApplyFortniteHeaders(req, accessToken);
+            req.Headers.TryAddWithoutValidation("Accept", "application/json");
             req.Content = new StringContent(teamsJson, System.Text.Encoding.UTF8, "application/json");
             return req;
         }
@@ -753,7 +782,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         HttpRequestMessage CreateRequest()
         {
             var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            ApplyFortniteHeaders(req, accessToken);
             return req;
         }
 
@@ -1390,7 +1419,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         var ownsLimiter = sharedLimiter is null;
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
-            maxConcurrency, minDop: 4, maxDop: maxConcurrency,
+            maxConcurrency, minDop: Math.Min(32, maxConcurrency), maxDop: maxConcurrency,
             _log, maxRequestsPerSecond);
         try
         {
@@ -1518,7 +1547,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         var ownsLimiter = sharedLimiter is null;
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
-            maxConcurrency, minDop: 4, maxDop: maxConcurrency, _log, maxRequestsPerSecond);
+            maxConcurrency, minDop: Math.Min(32, maxConcurrency), maxDop: maxConcurrency, _log, maxRequestsPerSecond);
 
         _log.LogInformation(
             "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, DOP={MaxDop}, adaptive)",

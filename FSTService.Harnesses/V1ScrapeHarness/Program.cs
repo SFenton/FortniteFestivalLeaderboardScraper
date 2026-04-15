@@ -30,6 +30,9 @@ bool sequential = false;
 int pageConcurrency = 10;
 bool noPersist = false;
 bool verbose = false;
+var proxyUrls = new List<string>();
+var extraAccounts = new List<(string Token, string Caller)>();
+var controlUrls = new List<string>();
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -49,6 +52,9 @@ for (int i = 0; i < args.Length; i++)
         case "--page-concurrency": pageConcurrency = int.Parse(args[++i]); break;
         case "--no-persist":       noPersist = true; break;
         case "--verbose":          verbose = true; break;
+        case "--proxy":            proxyUrls.Add(args[++i]); break;
+        case "--account":          var parts = args[++i].Split(':', 2); extraAccounts.Add((parts[0], parts[1])); break;
+        case "--control-url":      controlUrls.Add(args[++i]); break;
     }
 }
 
@@ -77,6 +83,8 @@ if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(caller) || songsFile is 
           --pg <conn-string>       PostgreSQL connection string (default: Testcontainers)
           --no-persist             Skip persistence (measure fetch-only)
           --verbose                Debug-level logging
+          --proxy <url>            HTTP proxy URL (repeatable for round-robin rotation)
+          --account <token:id>     Extra account for token rotation (repeatable)
         {(songsFile is null ? "\n        ERROR: Could not find songs.txt" : "")}
         """);
     return 1;
@@ -96,6 +104,8 @@ Console.WriteLine($"Mode:             {(sequential ? "Sequential" : "Parallel")}
 Console.WriteLine($"Song concurrency: {(songConcurrency == 0 ? "all" : songConcurrency)}");
 Console.WriteLine($"Max pages:        {(maxPages == 0 ? "unlimited" : maxPages)}");
 Console.WriteLine($"Persistence:      {(noPersist ? "OFF" : "ON")}");
+Console.WriteLine($"Proxies:          {(proxyUrls.Count == 0 ? "NONE (direct)" : $"{proxyUrls.Count} (round-robin)")}");
+Console.WriteLine($"Accounts:         {1 + extraAccounts.Count}");
 Console.WriteLine($"Output:           {Path.GetFullPath(outputDir)}");
 Console.WriteLine();
 
@@ -162,8 +172,8 @@ if (!noPersist)
 var harnessStopwatch = Stopwatch.StartNew();
 var collector = new TimingCollector();
 
-// HttpClient with instrumented handler wrapping SocketsHttpHandler
-var socketHandler = new SocketsHttpHandler
+// HttpClient with instrumented handler wrapping SocketsHttpHandler (or proxy rotator)
+Func<SocketsHttpHandler> handlerFactory = () => new SocketsHttpHandler
 {
     MaxConnectionsPerServer = 2048,
     PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
@@ -171,7 +181,34 @@ var socketHandler = new SocketsHttpHandler
     EnableMultipleHttp2Connections = true,
     AutomaticDecompression = System.Net.DecompressionMethods.All,
 };
-var instrumentedHandler = new InstrumentedHttpHandler(collector, harnessStopwatch, socketHandler);
+HttpMessageHandler innerHandler;
+if (proxyUrls.Count > 0)
+{
+    Console.WriteLine($"Proxy rotation enabled: {proxyUrls.Count} proxies");
+    foreach (var p in proxyUrls) Console.WriteLine($"  → {p}");
+
+    // Build account list for pinning: primary account + extra accounts
+    List<(string Token, string AccountId)>? pinAccounts = null;
+    if (extraAccounts.Count > 0)
+    {
+        pinAccounts = [(token, caller), .. extraAccounts];
+        Console.WriteLine($"Token pinning: {pinAccounts.Count} accounts interleaved across {proxyUrls.Count} slots");
+        for (int si = 0; si < proxyUrls.Count; si++)
+        {
+            var acct = pinAccounts[si % pinAccounts.Count];
+            Console.WriteLine($"  Slot {si}: {proxyUrls[si]} → {acct.AccountId[..8]}...");
+        }
+    }
+
+    innerHandler = new RoundRobinProxyHandler(proxyUrls, pinAccounts, handlerFactory,
+        loggerFactory.CreateLogger("ProxyRotation"),
+        controlUrls.Count > 0 ? controlUrls : null);
+}
+else
+{
+    innerHandler = handlerFactory();
+}
+var instrumentedHandler = new InstrumentedHttpHandler(collector, harnessStopwatch, innerHandler);
 var httpClient = new HttpClient(instrumentedHandler) { Timeout = TimeSpan.FromSeconds(30) };
 
 // Progress tracker
@@ -271,21 +308,68 @@ pool.ResetDop();
 Dictionary<string, List<GlobalLeaderboardResult>> allResults;
 try
 {
-    allResults = await scraper.ScrapeManySongsAsync(
-        scrapeRequests,
-        token,
-        caller,
-        maxConcurrency: dop,
-        onSongComplete: null,
-        ct: cts.Token,
-        maxPages: maxPages,
-        sequential: sequential,
-        pageConcurrency: pageConcurrency,
-        songConcurrency: songConcurrency == 0 ? 1 : songConcurrency,
-        maxRequestsPerSecond: rps,
-        sharedLimiter: pool.Limiter,
-        deferDeepScrape: false,
-        onPageScraped: onPageScraped);
+    if (extraAccounts.Count == 0)
+    {
+        // Single account — original behavior
+        allResults = await scraper.ScrapeManySongsAsync(
+            scrapeRequests,
+            token,
+            caller,
+            maxConcurrency: dop,
+            onSongComplete: null,
+            ct: cts.Token,
+            maxPages: maxPages,
+            sequential: sequential,
+            pageConcurrency: pageConcurrency,
+            songConcurrency: songConcurrency == 0 ? 1 : songConcurrency,
+            maxRequestsPerSecond: rps,
+            sharedLimiter: pool.Limiter,
+            deferDeepScrape: false,
+            onPageScraped: onPageScraped);
+    }
+    else
+    {
+        // Multi-account: split songs across N accounts, run concurrently sharing the DOP pool
+        var allAccounts = new List<(string Token, string Caller)> { (token, caller) };
+        allAccounts.AddRange(extraAccounts);
+        int n = allAccounts.Count;
+        Console.WriteLine($"Multi-account mode: splitting {scrapeRequests.Count} songs across {n} accounts");
+
+        var chunks = new List<List<GlobalLeaderboardScraper.SongScrapeRequest>>();
+        for (int ci = 0; ci < n; ci++)
+            chunks.Add([]);
+        for (int si = 0; si < scrapeRequests.Count; si++)
+            chunks[si % n].Add(scrapeRequests[si]);
+
+        var tasks = new List<Task<Dictionary<string, List<GlobalLeaderboardResult>>>>();
+        for (int ai = 0; ai < n; ai++)
+        {
+            var (acctToken, acctCaller) = allAccounts[ai];
+            var chunk = chunks[ai];
+            Console.WriteLine($"  Account {ai + 1}: {acctCaller[..8]}... → {chunk.Count} songs");
+            tasks.Add(scraper.ScrapeManySongsAsync(
+                chunk,
+                acctToken,
+                acctCaller,
+                maxConcurrency: dop,
+                onSongComplete: null,
+                ct: cts.Token,
+                maxPages: maxPages,
+                sequential: sequential,
+                pageConcurrency: pageConcurrency,
+                songConcurrency: songConcurrency == 0 ? 1 : songConcurrency,
+                maxRequestsPerSecond: rps,
+                sharedLimiter: pool.Limiter,
+                deferDeepScrape: false,
+                onPageScraped: onPageScraped));
+        }
+
+        var results = await Task.WhenAll(tasks);
+        allResults = new();
+        foreach (var r in results)
+            foreach (var kv in r)
+                allResults[kv.Key] = kv.Value;
+    }
 }
 catch (OperationCanceledException)
 {
@@ -351,7 +435,7 @@ report.WriteAll(outputDir);
 
 httpClient.Dispose();
 instrumentedHandler.Dispose();
-socketHandler.Dispose();
+innerHandler.Dispose();
 persistence?.Dispose();
 
 if (container is not null)

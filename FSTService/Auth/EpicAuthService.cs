@@ -256,6 +256,10 @@ public class EpicAuthService
         Dictionary<string, string> formData,
         CancellationToken ct)
     {
+        // Request eg1 (JWT) token format — required for leaderboard API access.
+        // See: https://github.com/FNLookup/data/blob/main/festival/docs/README.md
+        formData.TryAdd("token_type", "eg1");
+
         var req = new HttpRequestMessage(HttpMethod.Post, $"{AccountBase}/account/api/oauth/token");
         req.Headers.Authorization = new AuthenticationHeaderValue("Basic", _basicAuth);
         req.Content = new FormUrlEncodedContent(formData);

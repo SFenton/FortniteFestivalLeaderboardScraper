@@ -53,6 +53,12 @@ services:
       # - Scraper__SongSyncInterval=00:15:00
       # - Scraper__DegreeOfParallelism=16
       # - Scraper__MaxRequestsPerSecond=600
+      # ── Proxy rotation (round-robin across multiple HTTP proxies) ──
+      # - Scraper__ProxyUrls__0=http://gluetun-1:8888
+      # - Scraper__ProxyUrls__1=http://gluetun-2:8888
+      # ── VPN city cycling (Gluetun control API for IP rotation on CDN blocks) ──
+      # - Scraper__ControlUrls__0=http://gluetun-1:8000
+      # - Scraper__ControlUrls__1=http://gluetun-2:8000
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
       interval: 30s

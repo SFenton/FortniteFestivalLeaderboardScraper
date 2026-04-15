@@ -63,6 +63,13 @@ services:
         condition: service_healthy
     volumes:
       - ./fst-data:/app/data
+      # Docker socket for container recycling — allows FSTService to recreate
+      # gluetun containers on CDN blocks instead of using the gluetun control API.
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Grant the non-root 'ubuntu' user access to the Docker socket.
+    # Set DOCKER_GID to your host's docker group ID (run: getent group docker | cut -d: -f3).
+    group_add:
+      - "${DOCKER_GID:-999}"
     # API-only service — the web frontend is served by the festivalweb container.
     ports:
       - "127.0.0.1:8081:8080"
@@ -101,6 +108,25 @@ services:
       # - Scraper__SongSyncInterval=00:15:00
       # - Scraper__DegreeOfParallelism=16
       # - Scraper__ScrapePassTimeoutMinutes=45
+      # ── Proxy rotation + VPN city cycling ──
+      # Active when using gluetun proxy containers (docker compose --profile vpn up -d).
+      # Each proxy needs a unique WireGuard identity (separate AirVPN device key).
+      - Scraper__ProxyUrls__0=http://gluetun-1:8888
+      - Scraper__ProxyUrls__1=http://gluetun-2:8888
+      - Scraper__ProxyUrls__2=http://gluetun-3:8888
+      - Scraper__ProxyUrls__3=http://gluetun-4:8888
+      - Scraper__ControlUrls__0=http://gluetun-1:8000
+      - Scraper__ControlUrls__1=http://gluetun-2:8000
+      - Scraper__ControlUrls__2=http://gluetun-3:8000
+      - Scraper__ControlUrls__3=http://gluetun-4:8000
+      # ── Container names for Docker-based VPN recycling ──
+      # When set, FSTService recreates gluetun containers (stop/rm/run) via the
+      # Docker Engine API instead of using the gluetun control API. More reliable
+      # when gluetun is crash-looping or WireGuard is wedged.
+      - Scraper__ContainerNames__0=gluetun-1
+      - Scraper__ContainerNames__1=gluetun-2
+      - Scraper__ContainerNames__2=gluetun-3
+      - Scraper__ContainerNames__3=gluetun-4
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
       interval: 30s
@@ -125,6 +151,128 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ── VPN Proxy Containers ─────────────────────────────────
+  # Activate with: docker compose --profile vpn up -d
+  # Each container needs a unique WireGuard device key from your VPN provider.
+  # The scraper rotates requests across proxies and cycles VPN cities on CDN blocks.
+  #
+  # Required .env variables per instance:
+  #   GLUETUN_{N}_WG_PRIVATE_KEY, GLUETUN_{N}_WG_PRESHARED_KEY, GLUETUN_{N}_WG_ADDRESS
+  # Shared:
+  #   AIRVPN_WG_PUBLIC_KEY (default provided below)
+
+  gluetun-1:
+    image: qmcgaw/gluetun
+    container_name: gluetun-1
+    profiles: [vpn]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    environment:
+      - HTTPPROXY=on
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${GLUETUN_1_WG_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${GLUETUN_1_WG_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${GLUETUN_1_WG_ADDRESS}
+      - WIREGUARD_PUBLIC_KEY=${AIRVPN_WG_PUBLIC_KEY:-PyLCXAQT8KkM4T+dUsOQfn+Ub3pGxfGlxkIApuig+hk=}
+      - SERVER_CITIES=${GLUETUN_1_CITY:-Los Angeles}
+      - WIREGUARD_MTU=1320
+      - UPDATER_PERIOD=24h
+      - FIREWALL_OUTBOUND_SUBNETS=172.16.0.0/12
+      - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"none"}
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/v1/vpn/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  gluetun-2:
+    image: qmcgaw/gluetun
+    container_name: gluetun-2
+    profiles: [vpn]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    environment:
+      - HTTPPROXY=on
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${GLUETUN_2_WG_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${GLUETUN_2_WG_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${GLUETUN_2_WG_ADDRESS}
+      - WIREGUARD_PUBLIC_KEY=${AIRVPN_WG_PUBLIC_KEY:-PyLCXAQT8KkM4T+dUsOQfn+Ub3pGxfGlxkIApuig+hk=}
+      - SERVER_CITIES=${GLUETUN_2_CITY:-New York City}
+      - WIREGUARD_MTU=1320
+      - UPDATER_PERIOD=24h
+      - FIREWALL_OUTBOUND_SUBNETS=172.16.0.0/12
+      - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"none"}
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/v1/vpn/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  gluetun-3:
+    image: qmcgaw/gluetun
+    container_name: gluetun-3
+    profiles: [vpn]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    environment:
+      - HTTPPROXY=on
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${GLUETUN_3_WG_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${GLUETUN_3_WG_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${GLUETUN_3_WG_ADDRESS}
+      - WIREGUARD_PUBLIC_KEY=${AIRVPN_WG_PUBLIC_KEY:-PyLCXAQT8KkM4T+dUsOQfn+Ub3pGxfGlxkIApuig+hk=}
+      - SERVER_CITIES=${GLUETUN_3_CITY:-London}
+      - WIREGUARD_MTU=1320
+      - UPDATER_PERIOD=24h
+      - FIREWALL_OUTBOUND_SUBNETS=172.16.0.0/12
+      - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"none"}
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/v1/vpn/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  gluetun-4:
+    image: qmcgaw/gluetun
+    container_name: gluetun-4
+    profiles: [vpn]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    environment:
+      - HTTPPROXY=on
+      - VPN_SERVICE_PROVIDER=airvpn
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${GLUETUN_4_WG_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${GLUETUN_4_WG_PRESHARED_KEY}
+      - WIREGUARD_ADDRESSES=${GLUETUN_4_WG_ADDRESS}
+      - WIREGUARD_PUBLIC_KEY=${AIRVPN_WG_PUBLIC_KEY:-PyLCXAQT8KkM4T+dUsOQfn+Ub3pGxfGlxkIApuig+hk=}
+      - SERVER_CITIES=${GLUETUN_4_CITY:-Tokyo}
+      - WIREGUARD_MTU=1320
+      - UPDATER_PERIOD=24h
+      - FIREWALL_OUTBOUND_SUBNETS=172.16.0.0/12
+      - HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE={"auth":"none"}
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/v1/vpn/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
   pg-data:

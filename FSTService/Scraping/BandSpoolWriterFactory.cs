@@ -16,11 +16,11 @@ public static class BandSpoolWriterFactory
             log, "band",
             serialize: SerializeBandPage,
             deserialize: DeserializeBandPage,
-            flush: (bandType, batch) => FlushBandBatch(persistence, bandType, batch),
+            flush: (bandType, batch) => FlushBandBatch(log, persistence, bandType, batch),
             baseDirectory: baseDirectory);
     }
 
-    private static void FlushBandBatch(BandLeaderboardPersistence persistence, string bandType,
+    private static void FlushBandBatch(ILogger log, BandLeaderboardPersistence persistence, string bandType,
                                         List<(string SongId, IReadOnlyList<BandLeaderboardEntry> Entries)> batch)
     {
         // Flatten all entries across all songs into one list for bulk COPY.
@@ -104,6 +104,7 @@ public static class BandSpoolWriterFactory
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
+                cmd.CommandTimeout = 0; // Unlimited — bulk merge of millions of rows can exceed 10 min
                 cmd.CommandText = """
                     INSERT INTO band_entries (song_id, band_type, team_key, instrument_combo, team_members, score,
                         base_score, instrument_bonus, overdrive_bonus, accuracy, is_full_combo,
@@ -183,6 +184,7 @@ public static class BandSpoolWriterFactory
                 using (var cmd = conn.CreateCommand())
                 {
                     cmd.Transaction = tx;
+                    cmd.CommandTimeout = 0; // Unlimited — bulk merge can exceed 10 min
                     cmd.CommandText = """
                         INSERT INTO band_member_stats (song_id, band_type, team_key, instrument_combo, member_index,
                             account_id, instrument_id, score, accuracy, is_full_combo, stars, difficulty)
@@ -239,6 +241,7 @@ public static class BandSpoolWriterFactory
                 using (var cmd = conn.CreateCommand())
                 {
                     cmd.Transaction = tx;
+                    cmd.CommandTimeout = 0; // Unlimited — bulk merge can exceed 10 min
                     cmd.CommandText = """
                         INSERT INTO band_members (account_id, song_id, band_type, team_key, instrument_combo)
                         SELECT account_id, song_id, band_type, team_key, instrument_combo FROM _bm_staging
@@ -253,7 +256,8 @@ public static class BandSpoolWriterFactory
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Swallow — data will be re-scraped next pass
+            log.LogError(ex, "Spool [band] flush failed for {BandType} ({Songs} songs, {Entries:N0} entries). Data will be re-scraped next pass.",
+                bandType, batch.Count, allEntries.Count);
         }
     }
 

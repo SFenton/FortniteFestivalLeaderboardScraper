@@ -16,11 +16,11 @@ public static class LeaderboardSpoolWriterFactory
             log, "solo",
             serialize: SerializeSoloPage,
             deserialize: DeserializeSoloPage,
-            flush: (instrument, batch) => FlushSoloBatch(persistence, instrument, batch),
+            flush: (instrument, batch) => FlushSoloBatch(log, persistence, instrument, batch),
             baseDirectory: baseDirectory);
     }
 
-    private static void FlushSoloBatch(GlobalLeaderboardPersistence persistence, string instrument,
+    private static void FlushSoloBatch(ILogger log, GlobalLeaderboardPersistence persistence, string instrument,
                                         List<(string SongId, IReadOnlyList<LeaderboardEntry> Entries)> batch)
     {
         var db = (InstrumentDatabase)persistence.GetOrCreateInstrumentDb(instrument);
@@ -108,6 +108,7 @@ public static class LeaderboardSpoolWriterFactory
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
+                cmd.CommandTimeout = 0; // Unlimited — bulk merge of millions of rows can exceed 10 min
                 cmd.CommandText =
                     "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
                     "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts FROM _le_staging " +
@@ -140,7 +141,8 @@ public static class LeaderboardSpoolWriterFactory
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // Swallow — data will be re-scraped next pass
+            log.LogError(ex, "Spool [solo] flush failed for {Instrument} ({Songs} songs, {Entries:N0} entries). Data will be re-scraped next pass.",
+                instrument, batch.Count, batch.Sum(b => b.Entries.Count));
         }
     }
 
