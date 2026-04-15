@@ -762,45 +762,47 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     private void DropIndexes(string[] indexes, string label)
     {
-        using var conn = _pgDataSource.OpenConnection();
         int dropped = 0;
-        foreach (var idx in indexes)
+        Parallel.ForEach(indexes, new ParallelOptions { MaxDegreeOfParallelism = 4 }, idx =>
         {
             try
             {
+                using var conn = _pgDataSource.OpenConnection();
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = $"DROP INDEX IF EXISTS {idx}";
                 cmd.ExecuteNonQuery();
-                dropped++;
+                Interlocked.Increment(ref dropped);
             }
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Failed to drop index {Index}.", idx);
             }
-        }
+        });
         _log.LogInformation("Dropped {Count}/{Total} {Label} secondary indexes.", dropped, indexes.Length, label);
     }
 
     private void CreateIndexes(string[] definitions, string label)
     {
-        using var conn = _pgDataSource.OpenConnection();
         int created = 0;
-        foreach (var def in definitions)
+        Parallel.ForEach(definitions, new ParallelOptions { MaxDegreeOfParallelism = 4 }, def =>
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
+                using var conn = _pgDataSource.OpenConnection();
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = def;
-                cmd.CommandTimeout = 300;
+                cmd.CommandTimeout = 600;
                 cmd.ExecuteNonQuery();
-                created++;
-                _log.LogDebug("Created index: {Def}", def);
+                Interlocked.Increment(ref created);
+                sw.Stop();
+                _log.LogDebug("Created index in {Elapsed:F1}s: {Def}", sw.Elapsed.TotalSeconds, def);
             }
             catch (Exception ex)
             {
                 _log.LogError(ex, "Failed to create index: {Def}", def);
             }
-        }
+        });
         _log.LogInformation("Recreated {Count}/{Total} {Label} secondary indexes.", created, definitions.Length, label);
     }
 
