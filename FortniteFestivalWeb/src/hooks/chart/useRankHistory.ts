@@ -28,8 +28,8 @@ function getRankField(entry: RankHistoryEntry, metric: RankingMetric): number {
 
 function getValueField(entry: RankHistoryEntry, metric: RankingMetric): number {
   switch (metric) {
-    case 'adjusted': return entry.adjustedSkillRating ?? 0;
-    case 'weighted': return entry.weightedRating ?? 0;
+    case 'adjusted': return entry.rawSkillRating ?? entry.adjustedSkillRating ?? 0;
+    case 'weighted': return entry.rawWeightedRating ?? entry.weightedRating ?? 0;
     case 'fcrate': return entry.fcRate ?? 0;
     case 'totalscore': return entry.totalScore ?? 0;
     case 'maxscore': return entry.rawMaxScorePercent ?? entry.maxScorePercent ?? 0;

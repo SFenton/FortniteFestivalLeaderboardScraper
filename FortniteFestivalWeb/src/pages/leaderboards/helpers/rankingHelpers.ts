@@ -15,8 +15,8 @@ export function getRankForMetric(entry: AccountRankingEntry, metric: RankingMetr
 /** Get the rating value for a given metric from an AccountRankingEntry. */
 export function getRatingForMetric(entry: AccountRankingEntry, metric: RankingMetric): number {
   switch (metric) {
-    case 'adjusted': return entry.adjustedSkillRating;
-    case 'weighted': return entry.weightedRating;
+    case 'adjusted': return entry.rawSkillRating;
+    case 'weighted': return entry.rawWeightedRating ?? entry.weightedRating;
     case 'fcrate': return entry.totalChartedSongs > 0 ? entry.fullComboCount / entry.totalChartedSongs : 0;
     case 'totalscore': return entry.totalScore;
     case 'maxscore': return entry.rawMaxScorePercent ?? entry.maxScorePercent;

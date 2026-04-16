@@ -397,6 +397,7 @@ public sealed class AccountRankingDto
     public double AvgRank { get; init; }
 
     public double? RawMaxScorePercent { get; init; }
+    public double? RawWeightedRating { get; init; }
 
     public string ComputedAt { get; init; } = "";
     public int TotalRankedAccounts { get; init; }
@@ -461,6 +462,8 @@ public sealed class RankHistoryDto
     public double? Coverage { get; init; }
     public int? FullComboCount { get; init; }
     public double? RawMaxScorePercent { get; init; }
+    public double? RawWeightedRating { get; init; }
+    public double? RawSkillRating { get; init; }
 }
 
 /// <summary>

@@ -17,6 +17,7 @@ interface InstrumentCardProps {
   instrument: InstrumentKey;
   baseDelay: number;
   windowWidth: number;
+  singleColumn?: boolean;
   playerScore?: PlayerScore;
   playerName?: string;
   playerAccountId?: string;
@@ -30,7 +31,9 @@ export default memo(function InstrumentCard({
   songId,
   instrument,
   baseDelay,
-  windowWidth, playerScore,
+  windowWidth,
+  singleColumn,
+  playerScore,
   playerName,
   playerAccountId,
   prefetchedEntries,
@@ -41,7 +44,7 @@ export default memo(function InstrumentCard({
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  const isTwoCol = windowWidth >= 840;
+  const isTwoCol = windowWidth >= 840 && !singleColumn;
   const cardWidth = isTwoCol ? windowWidth / 2 : windowWidth;
   const showAccuracy = useMediaQuery(QUERY_SHOW_ACCURACY);
   const showSeason = useMediaQuery(QUERY_SHOW_SEASON);

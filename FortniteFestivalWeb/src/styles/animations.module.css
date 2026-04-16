@@ -108,6 +108,24 @@
   z-index: -1;
 }
 
+/* ── Purple breathe (SelectProfilePill circle on mobile) ── */
+
+.profileCircleBreathe {
+  position: relative;
+  background-color: transparent;
+  isolation: isolate;
+}
+
+.profileCircleBreathe::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-accent-purple);
+  animation: shopBreathe 3s ease-in-out infinite;
+  z-index: -1;
+}
+
 /* ── Blue border pulse (DrillDownDemo / TopScoresDemo / ViewAllDemo) ── */
 
 @keyframes pulse {

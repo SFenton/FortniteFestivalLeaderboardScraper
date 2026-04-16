@@ -56,13 +56,30 @@ describe('formatRating', () => {
   });
 });
 
-describe('getRatingForMetric – fcrate uses raw ratio', () => {
+describe('getRatingForMetric – adjusted/weighted use raw values', () => {
   const entry = {
+    rawSkillRating: 0.005,
+    adjustedSkillRating: 0.042,
+    weightedRating: 0.041,
+    rawWeightedRating: 0.004,
     fullComboCount: 631,
     songsPlayed: 632,
     totalChartedSongs: 633,
     fcRate: 0.962,
   } as AccountRankingEntry;
+
+  it('returns rawSkillRating for adjusted metric', () => {
+    expect(getRatingForMetric(entry, 'adjusted')).toBe(0.005);
+  });
+
+  it('returns rawWeightedRating for weighted metric', () => {
+    expect(getRatingForMetric(entry, 'weighted')).toBe(0.004);
+  });
+
+  it('falls back to weightedRating when rawWeightedRating is null', () => {
+    const noRaw = { ...entry, rawWeightedRating: null } as unknown as AccountRankingEntry;
+    expect(getRatingForMetric(noRaw, 'weighted')).toBe(0.041);
+  });
 
   it('returns raw fullComboCount/totalChartedSongs, not Bayesian fcRate', () => {
     expect(getRatingForMetric(entry, 'fcrate')).toBeCloseTo(631 / 633);

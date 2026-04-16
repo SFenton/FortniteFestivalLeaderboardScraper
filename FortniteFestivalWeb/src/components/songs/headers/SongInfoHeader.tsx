@@ -113,11 +113,16 @@ export default function SongInfoHeader({
                 <InstrumentIcon instrument={instrument} size={48} />
               </div>
             )}
-            {/* v8 ignore start — desktop-only action buttons */}
+            {/* v8 ignore start — action buttons */}
             {!isMobile && onOpenPaths && (
               <button onClick={onOpenPaths} style={s.viewPathsButton}>
                 <IoFlash size={IconSize.action} style={{ marginRight: Gap.md }} />
                 {t('common.viewPaths')}
+              </button>
+            )}
+            {isMobile && onOpenPaths && (
+              <button onClick={onOpenPaths} style={s.viewPathsCircle} aria-label={t('common.viewPaths')}>
+                <IoFlash size={IconSize.sm} />
               </button>
             )}
             {!isMobile && showShop && (
@@ -179,6 +184,18 @@ function useStyles(collapsed: boolean, animate?: boolean) {
       artistClassName: animate ? cls.artistFont : undefined,
       instIconWrap: { ...flexCenter, width: Size.iconXl, height: Size.iconXl } as CSSProperties,
       viewPathsButton: { ...purpleGlass, ...buttonBase } as CSSProperties,
+      viewPathsCircle: {
+        width: InstrumentSize.lg,
+        height: InstrumentSize.lg,
+        borderRadius: Radius.full,
+        ...flexCenter,
+        ...purpleGlass,
+        color: Colors.textPrimary,
+        border: 'none',
+        cursor: Cursor.pointer,
+        flexShrink: 0,
+        alignSelf: Align.center,
+      } as CSSProperties,
       shopButton,
       shopButtonPulse: { ...shopButton, ...pulseBase } as CSSProperties,
       shopCircle: {

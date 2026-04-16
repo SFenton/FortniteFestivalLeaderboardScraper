@@ -15,7 +15,7 @@ import PageHeader from '../../components/common/PageHeader';
 import { ActionPill } from '../../components/common/ActionPill';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
-import { InstrumentHeaderSize } from '@festival/core';
+import { InstrumentHeaderSize, formatRatingValue, rankColor } from '@festival/core';
 import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth } from './helpers/rankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
@@ -216,16 +216,26 @@ export default function FullRankingsPage() {
         onGoToPage={goToPage}
         entryKey={(e) => e.accountId}
         isPlayerEntry={(e) => e.accountId === player?.accountId}
-        renderRow={(e) => (
-          <RankingEntry
-            rank={getRankForMetric(e, metric)}
-            displayName={e.displayName ?? e.accountId.slice(0, 8)}
-            ratingLabel={formatRating(getRatingForMetric(e, metric), metric)}
-            songsLabel={getSongsLabel(e, metric)}
-            isPlayer={e.accountId === player?.accountId}
-            rankWidth={rankWidth}
-          />
-        )}
+        renderRow={(e) => {
+          const rank = getRankForMetric(e, metric);
+          const usePercentile = metric === 'adjusted' || metric === 'weighted';
+          const isFcRate = metric === 'fcrate';
+          const fcPct = isFcRate ? getRatingForMetric(e, metric) * 100 : 0;
+          return (
+            <RankingEntry
+              rank={rank}
+              displayName={e.displayName ?? e.accountId.slice(0, 8)}
+              ratingLabel={formatRating(getRatingForMetric(e, metric), metric)}
+              songsLabel={getSongsLabel(e, metric)}
+              valueDisplay={usePercentile ? formatRatingValue(getRatingForMetric(e, metric)) : undefined}
+              valueColor={usePercentile ? rankColor(rank, data?.totalAccounts ?? 0) : undefined}
+              ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
+              songsLabelPrimary={isFcRate}
+              isPlayer={e.accountId === player?.accountId}
+              rankWidth={rankWidth}
+            />
+          );
+        }}
         entryLinkTo={(e) => `/player/${e.accountId}`}
         hasPlayerFooter={hasPlayerFooter}
         renderPlayerFooter={playerRanking ? ({ className, style }) => (
@@ -239,6 +249,10 @@ export default function FullRankingsPage() {
               displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}
               ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
               songsLabel={getSongsLabel(playerRanking, metric)}
+              valueDisplay={(metric === 'adjusted' || metric === 'weighted') ? formatRatingValue(getRatingForMetric(playerRanking, metric)) : undefined}
+              valueColor={(metric === 'adjusted' || metric === 'weighted') ? rankColor(getRankForMetric(playerRanking, metric), data?.totalAccounts ?? 0) : undefined}
+              ratingPillTier={metric === 'fcrate' ? ((getRatingForMetric(playerRanking, metric) * 100) >= 99 ? 'top1' : (getRatingForMetric(playerRanking, metric) * 100) >= 95 ? 'top5' : 'default') : undefined}
+              songsLabelPrimary={metric === 'fcrate'}
               isPlayer
               rankWidth={playerRankWidth}
             />
