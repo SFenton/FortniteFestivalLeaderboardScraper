@@ -70,7 +70,7 @@ export default memo(function RankHistoryChart({
 }: RankHistoryChartProps) {
   const { t } = useTranslation();
   const st = useRankHistoryChartStyles();
-  const [selected, setSelected] = useState<InstrumentKey>(() => defaultInstrument ?? instruments[0] ?? 'Lead' as InstrumentKey);
+  const [selected, setSelected] = useState<InstrumentKey>(() => defaultInstrument ?? instruments[0] ?? 'Solo_Guitar' as InstrumentKey);
 
   const allHistory = useRankHistoryAll(instruments, accountId, metric, days);
   const { chartData, loading } = allHistory[selected] ?? { chartData: [], loading: true };

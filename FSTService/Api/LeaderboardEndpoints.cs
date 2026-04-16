@@ -21,6 +21,8 @@ public static partial class ApiEndpoints
             IPathDataStore pathStore) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
             int? maxScore = null;
             if (leeway.HasValue)
             {

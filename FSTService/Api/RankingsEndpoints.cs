@@ -29,6 +29,9 @@ public static partial class ApiEndpoints
             var metric = rankBy ?? "adjusted";
             var bucket = InstrumentDatabase.QuantizeBucket(leeway);
 
+            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+
             // ── Check precomputed store for page 1 with default size (base leeway only) ──
             if (effectivePage == 1 && effectivePageSize == 50 && leeway is null)
             {
@@ -97,6 +100,8 @@ public static partial class ApiEndpoints
             IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
             var metric = rankBy ?? "adjusted";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var bucket = InstrumentDatabase.QuantizeBucket(leeway);
@@ -150,6 +155,8 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             if (leeway is not null)
             {
@@ -379,6 +386,9 @@ public static partial class ApiEndpoints
                     if (result is not null) return result;
                 }
             }
+
+            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
             var cacheKey = $"neighborhood:{instrument}:{accountId}:{effectiveRadius}";
 

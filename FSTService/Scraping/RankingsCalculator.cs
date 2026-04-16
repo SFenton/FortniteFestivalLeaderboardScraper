@@ -65,7 +65,7 @@ public sealed class RankingsCalculator
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
-        var instruments = _persistence.GetInstrumentKeys();
+        var instruments = GlobalLeaderboardScraper.AllInstruments;
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──

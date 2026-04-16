@@ -45,6 +45,9 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+
             var rivals = metaDb.GetLeaderboardRivals(accountId, instrument, effectiveRankBy);
             var names = metaDb.GetDisplayNames(rivals.Select(r => r.RivalAccountId));
 
@@ -100,6 +103,9 @@ public static partial class ApiEndpoints
             var effectiveSort = sort ?? "closest";
 
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
             var cacheKey = $"lb-rival-detail:{accountId}:{instrument}:{rivalId}:{effectiveRankBy}:{effectiveSort}";
             {

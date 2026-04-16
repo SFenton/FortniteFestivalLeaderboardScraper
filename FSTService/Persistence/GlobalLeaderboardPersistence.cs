@@ -60,6 +60,17 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             _log.LogDebug("Opened PG instrument DB: {Instrument}", instrument);
         }
 
+        // Purge any phantom instrument entries created by previous runs
+        // (e.g. from unvalidated API requests before the guard was added).
+        var phantoms = _instrumentDbs.Keys
+            .Where(k => !ValidInstrumentKeys.Contains(k))
+            .ToList();
+        foreach (var key in phantoms)
+        {
+            _instrumentDbs.Remove(key);
+            _log.LogWarning("Removed phantom instrument DB: {Instrument}", key);
+        }
+
         _log.LogInformation("GlobalLeaderboardPersistence initialized. " +
                             "{InstrumentCount} instruments.",
                             _instrumentDbs.Count);
@@ -85,15 +96,24 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         }
     }
 
+    /// <summary>Valid instrument keys accepted by <see cref="GetOrCreateInstrumentDb"/>.</summary>
+    private static readonly HashSet<string> ValidInstrumentKeys = new(ComboIds.CanonicalOrder, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Returns true when <paramref name="instrument"/> is a recognised instrument key.</summary>
+    public static bool IsValidInstrument(string instrument) => ValidInstrumentKeys.Contains(instrument);
+
     /// <summary>
     /// Get (or create on first access) the <see cref="IInstrumentDatabase"/>
     /// for a given instrument key (e.g. "Solo_Guitar").
-    /// New instruments added in the future are automatically handled.
+    /// Rejects unknown instrument names to prevent rogue DB instances.
     /// </summary>
     public IInstrumentDatabase GetOrCreateInstrumentDb(string instrument)
     {
         if (_instrumentDbs.TryGetValue(instrument, out var db))
             return db;
+
+        if (!ValidInstrumentKeys.Contains(instrument))
+            throw new ArgumentException($"Unknown instrument key: '{instrument}'. Valid keys: {string.Join(", ", ComboIds.CanonicalOrder)}");
 
         db = new InstrumentDatabase(
             instrument, _pgDataSource,
@@ -1410,12 +1430,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
+        var knownDbs = _instrumentDbs.Where(kvp => ValidInstrumentKeys.Contains(kvp.Key)).ToList();
+
         if (_pgDataSource is not null)
         {
             // PostgreSQL mode: limited parallelism — each instrument partition is
             // independent, but too many concurrent massive UPDATEs contend for WAL
             // writer. DOP=2 balances throughput vs contention.
-            Parallel.ForEach(_instrumentDbs, new ParallelOptions { MaxDegreeOfParallelism = 2 }, kvp =>
+            Parallel.ForEach(knownDbs, new ParallelOptions { MaxDegreeOfParallelism = 2 }, kvp =>
             {
                 var updated = kvp.Value.RecomputeAllRanks();
                 results[kvp.Key] = updated;
@@ -1424,7 +1446,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         else
         {
             // SQLite mode: each instrument has its own DB file — run in parallel.
-            Parallel.ForEach(_instrumentDbs, kvp =>
+            Parallel.ForEach(knownDbs, kvp =>
             {
                 var updated = kvp.Value.RecomputeAllRanks();
                 results[kvp.Key] = updated;
@@ -1452,11 +1474,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
+        var knownDbs = _instrumentDbs.Where(kvp => ValidInstrumentKeys.Contains(kvp.Key)).ToList();
+
         if (_pgDataSource is not null)
         {
             // PostgreSQL mode: limited parallelism — bulk query per instrument is
             // a single UPDATE, so WAL contention is manageable at DOP=2.
-            Parallel.ForEach(_instrumentDbs, new ParallelOptions { MaxDegreeOfParallelism = 2 }, kvp =>
+            Parallel.ForEach(knownDbs, new ParallelOptions { MaxDegreeOfParallelism = 2 }, kvp =>
             {
                 var updated = kvp.Value.RecomputeRanksForSongs(songIds);
                 results[kvp.Key] = updated;
@@ -1464,7 +1488,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         }
         else
         {
-            Parallel.ForEach(_instrumentDbs, kvp =>
+            Parallel.ForEach(knownDbs, kvp =>
             {
                 var updated = kvp.Value.RecomputeRanksForSongs(songIds);
                 results[kvp.Key] = updated;
