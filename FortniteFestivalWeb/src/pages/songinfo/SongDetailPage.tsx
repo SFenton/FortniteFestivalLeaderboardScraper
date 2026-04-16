@@ -386,6 +386,7 @@ export default function SongDetailPage() {
                       instrument={inst}
                       baseDelay={baseDelay}
                       windowWidth={windowWidth}
+                      singleColumn={activeInstruments.length <= 1}
                       playerScore={filteredPlayerScores.find((s) => s.instrument === inst)}
                       playerName={player?.displayName}
                       playerAccountId={player?.accountId}

@@ -159,6 +159,6 @@ export const GridTemplate = {
   single: '1fr',
   twoEqual: '1fr 1fr',
   threeEqual: '1fr 1fr 1fr',
-  /** repeat(auto-fill, minmax(min(420px, 100%), calc(50% - 4px))) — responsive 420px min cards, max 2 columns. */
-  autoFillInstrument: 'repeat(auto-fill, minmax(min(420px, 100%), calc(50% - 4px)))',
+  /** repeat(auto-fit, …) — responsive 420 px min cards, max 2 columns, single card stretches to fill. */
+  autoFillInstrument: 'repeat(auto-fit, minmax(min(max(420px, calc(50% - 4px)), 100%), 1fr))',
 } as const;
