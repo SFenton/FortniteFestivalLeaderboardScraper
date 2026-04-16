@@ -25,7 +25,6 @@ import Page from '../../../Page';
 import PageHeader from '../../../../components/common/PageHeader';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
-import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
 import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
@@ -352,9 +351,9 @@ export default function PlayerContent({
 
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
 
-  // Only render the button container on desktop non-PWA; animate visibility
-  const canShowSelectBtn = !hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA;
-  const selectBtnVisible = canShowSelectBtn && !isTrackedPlayer && trackedPlayer?.accountId !== data.accountId;
+  // Show the select-profile pill on all platforms (header actions slot handles layout)
+  const canShowSelectBtn = true;
+  const selectBtnVisible = !isTrackedPlayer && trackedPlayer?.accountId !== data.accountId;
 
   return (
     <Page
@@ -367,6 +366,7 @@ export default function PlayerContent({
           actions={canShowSelectBtn ? (
             <SelectProfilePill
               visible={selectBtnVisible}
+              isMobile={hasFab}
               onClick={() => {
                 /* v8 ignore start */
                 if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
