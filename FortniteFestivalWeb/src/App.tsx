@@ -478,7 +478,7 @@ function AppShell() {
               label: t('common.viewPaths'), icon: <IoFlash size={Size.iconFab} />, onPress: () => fabSearch.openPaths(),
             },
             ...(isShopVisible && currentShopUrl ? [{
-              label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />,
+              label: t('common.viewInItemShop', 'View in Item Shop'), icon: <IoBagHandle size={Size.iconFab} />,
               /* v8 ignore next */
               onPress: () => window.open(currentShopUrl, '_blank', 'noopener,noreferrer'),
             }] : []),
