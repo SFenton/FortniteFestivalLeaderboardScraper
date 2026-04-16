@@ -125,6 +125,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
                 Substitute.For<ILogger<BandScrapePhase>>()),
+            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             Options.Create(new ScraperOptions()), _log);
     }
 
@@ -323,6 +324,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
                 Substitute.For<ILogger<BandScrapePhase>>()),
+            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -389,8 +391,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
-                Substitute.For<ILogger<BandScrapePhase>>()),
-            opts, _log);
+                Substitute.For<ILogger<BandScrapePhase>>()),            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),            opts, _log);
 
         var ctx = CreateContext();
         sut.PruneExcessEntries(ctx); // maxPages=0 â†’ no-op
@@ -503,6 +504,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
                 Substitute.For<ILogger<BandScrapePhase>>()),
+            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");

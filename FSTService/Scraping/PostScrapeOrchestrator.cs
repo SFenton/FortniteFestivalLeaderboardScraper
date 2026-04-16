@@ -34,6 +34,7 @@ public sealed class PostScrapeOrchestrator
     private readonly ScrapeTimePrecomputer _precomputer;
     private readonly PostScrapeBandExtractor _bandExtractor;
     private readonly BandScrapePhase _bandScrapePhase;
+    private readonly BandLeaderboardPersistence _bandPersistence;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
@@ -56,6 +57,7 @@ public sealed class PostScrapeOrchestrator
         ScrapeTimePrecomputer precomputer,
         PostScrapeBandExtractor bandExtractor,
         BandScrapePhase bandScrapePhase,
+        BandLeaderboardPersistence bandPersistence,
         IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log)
     {
@@ -77,6 +79,7 @@ public sealed class PostScrapeOrchestrator
         _precomputer = precomputer;
         _bandExtractor = bandExtractor;
         _bandScrapePhase = bandScrapePhase;
+        _bandPersistence = bandPersistence;
         _options = options;
         _log = log;
     }
@@ -308,6 +311,7 @@ public sealed class PostScrapeOrchestrator
         {
             _progress.SetSubOperation("pruning_excess_entries");
             PruneExcessEntries(ctx);
+            PruneBandEntries(ctx);
         }, ct);
 
         await Task.WhenAll(firstSeenTask, nameResTask, pruneTask);
@@ -609,6 +613,25 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Entry pruning failed. Will retry next pass.");
+        }
+    }
+
+    /// <summary>
+    /// Prune excess band entries. For each song × band type, keep all over-threshold
+    /// entries at the top plus the next 10K valid entries plus any team containing a
+    /// registered user. Cascades to band_member_stats and band_members.
+    /// </summary>
+    internal void PruneBandEntries(ScrapePassContext ctx)
+    {
+        try
+        {
+            var deleted = _bandPersistence.PruneBandEntries(ctx.RegisteredIds);
+            if (deleted > 0)
+                _log.LogInformation("Band pruning complete: {Deleted:N0} entries removed.", deleted);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Band entry pruning failed. Will retry next pass.");
         }
     }
 

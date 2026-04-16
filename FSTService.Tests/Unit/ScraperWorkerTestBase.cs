@@ -182,6 +182,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
                 _scraper, new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 pathDataStore, _pool, _progress, options,
                 Substitute.For<ILogger<BandScrapePhase>>()),
+            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 
