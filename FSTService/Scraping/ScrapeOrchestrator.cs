@@ -324,7 +324,7 @@ public sealed class ScrapeOrchestrator
             bandSpool.Complete();
             _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
                 bandSpool.RecordCount, bandSpool.EntryCount);
-            await Task.Run(() => bandSpool.FlushAll(maxBatchPages: 5000));
+            await Task.Run(() => bandSpool.FlushAll());
             await bandSpool.DisposeAsync();
 
             _progress.SetSubOperation("creating_band_indexes");
