@@ -1028,4 +1028,85 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
 
         Assert.NotEmpty(results);
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // Raw weighted rating storage
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void ComputeAccountRankings_StoresRawWeightedRating()
+    {
+        // Need 2+ entries per song so log_weight > 0 (log2(1) = 0 → weighted = NULL)
+        var fillers = Enumerable.Range(0, 99).Select(i => MakeEntry($"f{i}", 100 - i, rank: i + 2)).ToList();
+        Db.UpsertEntries("song1", [MakeEntry("p1", 10000, rank: 1), ..fillers]);
+        Db.UpsertEntries("song2", [MakeEntry("p1", 10000, rank: 1), ..fillers]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 20, credibilityThreshold: 50);
+
+        var r1 = Db.GetAccountRanking("p1");
+        Assert.NotNull(r1);
+
+        // RawWeightedRating should be populated
+        Assert.NotNull(r1.RawWeightedRating);
+
+        // Raw should be close to 0.01 (rank 1 out of 100), adjusted should be pulled toward 0.5
+        // With only 2 songs played and m=50: adjusted ≈ (2*raw + 50*0.5) / 52 ≈ 0.48
+        Assert.True(r1.RawWeightedRating < 0.05,
+            $"Raw weighted ({r1.RawWeightedRating:F6}) should be near 0 (rank ~1/100)");
+        Assert.True(r1.WeightedRating > r1.RawWeightedRating * 5,
+            $"Adjusted ({r1.WeightedRating:F6}) should be much larger than raw ({r1.RawWeightedRating:F6}) due to Bayesian pull");
+    }
+
+    [Fact]
+    public void ComputeAccountRankings_RawWeightedRating_NotBayesianAdjusted()
+    {
+        // Two players: one with good coverage, one with minimal.
+        // Both rank 1 per song. The Bayesian penalty should affect their adjusted
+        // values differently, but raw values should be close.
+        var fillers = Enumerable.Range(0, 99).Select(i => MakeEntry($"f{i}", 100 - i, rank: i + 2)).ToList();
+
+        // Full-coverage player: plays 20 songs
+        for (int i = 0; i < 20; i++)
+            Db.UpsertEntries($"song_{i}", [MakeEntry("full", 10000, rank: 1), ..fillers]);
+
+        // Partial player: plays only 2 songs (top score to guarantee rank 1)
+        Db.UpsertEntries("song_0", [MakeEntry("partial", 10001, rank: 1), ..fillers]);
+        Db.UpsertEntries("song_1", [MakeEntry("partial", 10001, rank: 1), ..fillers]);
+
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 20, credibilityThreshold: 50);
+
+        var full = Db.GetAccountRanking("full");
+        var partial = Db.GetAccountRanking("partial");
+        Assert.NotNull(full);
+        Assert.NotNull(partial);
+        Assert.NotNull(full.RawWeightedRating);
+        Assert.NotNull(partial.RawWeightedRating);
+
+        // Adjusted weighted should diverge: partial gets pulled harder toward 0.5
+        // Full: (20*raw + 50*0.5) / 70, Partial: (2*raw + 50*0.5) / 52
+        // The partial-to-full ratio of adjusted should be larger than raw ratio
+        double adjustedRatio = partial.WeightedRating / full.WeightedRating;
+        double rawRatio = partial.RawWeightedRating!.Value / full.RawWeightedRating!.Value;
+        Assert.True(adjustedRatio > rawRatio,
+            $"Adjusted ratio ({adjustedRatio:F3}) should exceed raw ratio ({rawRatio:F3}) due to coverage penalty");
+    }
+
+    [Fact]
+    public void SnapshotRankHistory_IncludesRawWeightedAndRawSkill()
+    {
+        // Need 2+ entries per song so log_weight > 0 for weighted_rating to be non-null
+        Db.UpsertEntries("song1", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 800, rank: 2)]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1, credibilityThreshold: 50);
+        Db.SnapshotRankHistory();
+
+        var history = Db.GetRankHistory("p1");
+        Assert.NotEmpty(history);
+        Assert.NotNull(history[0].RawWeightedRating);
+        Assert.NotNull(history[0].RawSkillRating);
+    }
 }

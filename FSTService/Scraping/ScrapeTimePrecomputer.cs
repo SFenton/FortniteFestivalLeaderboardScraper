@@ -1049,6 +1049,7 @@ public sealed class ScrapeTimePrecomputer
                     e.AvgStars,
                     e.BestRank,
                     e.AvgRank,
+                    e.RawWeightedRating,
                     e.ComputedAt,
                 }).ToList();
 

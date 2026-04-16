@@ -514,6 +514,8 @@ export type RankHistoryEntry = {
   coverage: number | null;
   fullComboCount: number | null;
   rawMaxScorePercent: number | null;
+  rawWeightedRating: number | null;
+  rawSkillRating: number | null;
 };
 
 /** Response from /api/rankings/{instrument}/{accountId}/history. */
@@ -559,6 +561,7 @@ export type AccountRankingEntry = {
   bestRank: number;
   avgRank: number;
   rawMaxScorePercent: number | null;
+  rawWeightedRating: number | null;
   computedAt: string;
 };
 

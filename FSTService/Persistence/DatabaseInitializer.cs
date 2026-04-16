@@ -744,6 +744,10 @@ public static class DatabaseInitializer
         ALTER TABLE account_rankings DROP COLUMN IF EXISTS raw_fc_rate;
         ALTER TABLE rank_history DROP COLUMN IF EXISTS raw_fc_rate;
 
+        ALTER TABLE account_rankings ADD COLUMN IF NOT EXISTS raw_weighted_rating REAL;
+        ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS raw_weighted_rating REAL;
+        ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS raw_skill_rating REAL;
+
         -- =====================================================================
         -- MIGRATION: deduplicate rank_history + enforce PRIMARY KEY
         -- The original CREATE TABLE IF NOT EXISTS is a no-op on tables that

@@ -68,6 +68,7 @@ public static partial class ApiEndpoints
                 e.BestRank,
                 e.AvgRank,
                 e.RawMaxScorePercent,
+                e.RawWeightedRating,
                 e.ComputedAt,
             }).ToList();
 
@@ -131,6 +132,7 @@ public static partial class ApiEndpoints
                 ranking.BestRank,
                 ranking.AvgRank,
                 ranking.RawMaxScorePercent,
+                ranking.RawWeightedRating,
                 ranking.ComputedAt,
                 totalRankedAccounts = totalRanked,
                 leeway = leeway,
@@ -154,9 +156,8 @@ public static partial class ApiEndpoints
             if (leeway is not null)
             {
                 var bucket = InstrumentDatabase.QuantizeBucket(leeway);
-                var history = db.GetRankHistory(accountId, days ?? 30);
-                var deltas = db.GetRankHistoryDeltas(accountId, bucket, days ?? 30);
-                return Results.Ok(new { instrument, accountId, history, deltas });
+                var history = db.GetRankHistoryAtLeeway(accountId, bucket, days ?? 30);
+                return Results.Ok(new { instrument, accountId, history });
             }
             var baseHistory = db.GetRankHistory(accountId, days ?? 30);
             return Results.Ok(new { instrument, accountId, history = baseHistory });
@@ -555,10 +556,12 @@ public static partial class ApiEndpoints
                     {
                         e.AccountId,
                         displayName = names.GetValueOrDefault(e.AccountId),
+                        e.RawSkillRating,
                         e.AdjustedSkillRating,
                         e.AdjustedSkillRank,
                         e.WeightedRating,
                         e.WeightedRank,
+                        e.RawWeightedRating,
                         e.FcRate,
                         e.FcRateRank,
                         e.TotalScore,
