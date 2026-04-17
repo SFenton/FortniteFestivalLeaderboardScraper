@@ -58,24 +58,19 @@ public class HistoryReconstructor
 
     /// <summary>
     /// Discover season windows from the Epic events API and cache them in the DB.
-    /// If already cached, returns the cached list. If the API is unavailable,
-    /// falls back to probing by convention (season_1, season_2, …).
+    /// Always consults the events API so new seasons (e.g. a S13→S14 rollover) are picked
+    /// up without requiring a manual cache wipe. Falls back to the cached list when the
+    /// API call fails, and to convention-based probing only when no cache exists.
     /// </summary>
     public virtual async Task<IReadOnlyList<SeasonWindowInfo>> DiscoverSeasonWindowsAsync(
         string accessToken,
         string callerAccountId,
         CancellationToken ct = default)
     {
-        // Check cache first
         var cached = _metaDb.GetSeasonWindows();
-        if (cached.Count > 0)
-        {
-            _log.LogDebug("Using {Count} cached season windows.", cached.Count);
-            return cached;
-        }
 
-        // Try the events API
-        _log.LogInformation("Discovering season windows from events API...");
+        // Always refresh from the events API so season rollovers are picked up.
+        _log.LogDebug("Refreshing season windows from events API (cached count: {Count})...", cached.Count);
 
         try
         {
@@ -85,16 +80,32 @@ public class HistoryReconstructor
                 foreach (var w in windows)
                     _metaDb.UpsertSeasonWindow(w.SeasonNumber, w.EventId, w.WindowId);
 
-                _log.LogInformation("Discovered and cached {Count} season windows from events API.", windows.Count);
-                return windows;
+                // Merge API results with any cached windows the API didn't return, preferring
+                // API values for overlapping season numbers.
+                var merged = new Dictionary<int, SeasonWindowInfo>();
+                foreach (var w in cached) merged[w.SeasonNumber] = w;
+                foreach (var w in windows) merged[w.SeasonNumber] = w;
+                var result = merged.Values.OrderBy(w => w.SeasonNumber).ToList();
+
+                _log.LogInformation(
+                    "Refreshed season windows: {ApiCount} from events API, {TotalCount} total after merge.",
+                    windows.Count, result.Count);
+                return result;
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogWarning(ex, "Events API call failed. Falling back to convention-based probing.");
+            _log.LogWarning(ex, "Events API call failed.");
         }
 
-        // Fallback: probe by convention
+        // API failed or returned empty: prefer the cached list if we have one.
+        if (cached.Count > 0)
+        {
+            _log.LogInformation("Using {Count} cached season windows (events API unavailable).", cached.Count);
+            return cached;
+        }
+
+        // No cache and API unavailable: fall back to probing.
         var probed = await ProbeSeasonWindowsAsync(accessToken, callerAccountId, ct);
         foreach (var w in probed)
             _metaDb.UpsertSeasonWindow(w.SeasonNumber, w.EventId, w.WindowId);

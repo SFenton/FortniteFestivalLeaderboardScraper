@@ -72,10 +72,65 @@ public class HistoryReconstructorInstanceTests : IDisposable
         _metaDb.Db.UpsertSeasonWindow(1, "event1", "season_1");
         _metaDb.Db.UpsertSeasonWindow(2, "event2", "season_2");
 
+        // No events API response queued → API call throws → falls back to cached list.
         var result = await recon.DiscoverSeasonWindowsAsync("token", "caller");
 
         Assert.Equal(2, result.Count);
     }
+
+    [Fact]
+    public async Task DiscoverSeasonWindowsAsync_CachedPlusApiNewSeason_MergesAndUpserts()
+    {
+        // Regression: S13→S14 rollover. Cache holds S1..S13; events API now advertises S14.
+        // Previous behavior short-circuited on a non-empty cache and never saw S14.
+        var (recon, _, eventsHandler) = CreateReconstructor();
+
+        for (int s = 1; s <= 13; s++)
+            _metaDb.Db.UpsertSeasonWindow(s, $"evt_{s}", $"season_{s:D3}");
+
+        // Events API returns S1..S14 (Epic always returns past + current seasons).
+        var windows = string.Join(",", Enumerable.Range(1, 14)
+            .Select(s => $"{{ \"eventWindowId\": \"season_{s:D3}\" }}"));
+        var eventsJson = $$"""
+        {
+            "events": [{
+                "eventId": "FNFestival",
+                "eventWindows": [ {{windows}} ]
+            }]
+        }
+        """;
+        eventsHandler.EnqueueJsonOk(eventsJson);
+
+        var result = await recon.DiscoverSeasonWindowsAsync("token", "caller");
+
+        Assert.Equal(14, result.Count);
+        Assert.Equal(14, result[^1].SeasonNumber);
+
+        // S14 persisted → GetCurrentSeason now reflects the rollover.
+        var cached = _metaDb.Db.GetSeasonWindows();
+        Assert.Contains(cached, w => w.SeasonNumber == 14);
+        Assert.Equal(14, _metaDb.Db.GetCurrentSeason());
+    }
+
+    [Fact]
+    public async Task DiscoverSeasonWindowsAsync_ApiFailsWithCache_ReturnsCacheWithoutProbing()
+    {
+        var (recon, scraperHandler, eventsHandler) = CreateReconstructor();
+
+        _metaDb.Db.UpsertSeasonWindow(1, "evt_1", "season_001");
+        _metaDb.Db.UpsertSeasonWindow(2, "evt_2", "season_002");
+
+        eventsHandler.EnqueueError(HttpStatusCode.InternalServerError);
+
+        // No probe responses queued. If the code incorrectly fell through to probing, the
+        // scraper handler would throw InvalidOperationException.
+        var result = await recon.DiscoverSeasonWindowsAsync("token", "caller");
+
+        Assert.Equal(2, result.Count);
+        Assert.Empty(scraperHandler.Requests);
+    }
+
+
 
     [Fact]
     public async Task DiscoverSeasonWindowsAsync_ApiReturnsEvents_ParsesAndCaches()
