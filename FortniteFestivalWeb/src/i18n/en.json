@@ -111,7 +111,8 @@
     "viewPlain": "View leaderboard",
     "viewFullShort": "View full leaderboard",
     "trackedCount": "{{count}} tracked",
-    "totalCount": "{{count}} total"
+    "totalCount": "{{count}} total",
+    "instrumentEntryCount": "{{count}} {{instrument}} entries"
   },
   "player": {
     "title": "Statistics",

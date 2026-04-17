@@ -53,6 +53,8 @@ export interface SongInfoHeaderProps {
   style?: CSSProperties;
   /** When set, the title area (album art + song/artist) becomes clickable. */
   onTitleClick?: () => void;
+  /** Optional third line rendered below the artist row (e.g. leaderboard entry count). */
+  subtitle2?: string;
 }
 
 export default function SongInfoHeader({
@@ -69,12 +71,14 @@ export default function SongInfoHeader({
   hideBackground,
   style: extraStyle,
   onTitleClick,
+  subtitle2,
 }: SongInfoHeaderProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const s = useStyles(collapsed, animate);
   const showShop = !!shopUrl;
-  const { reporters, syncDistance } = useMarqueeSync(2);
+  const showSubtitle2 = !!subtitle2 && !collapsed;
+  const { reporters, syncDistance } = useMarqueeSync(showSubtitle2 ? 3 : 2);
 
   return (
     <>
@@ -103,6 +107,9 @@ export default function SongInfoHeader({
             <div style={s.textWrap}>
               <MarqueeText as="h1" className={s.titleClassName} style={s.songTitle} text={song?.title ?? songId} onMeasure={reporters[0]} syncDistance={syncDistance} />
               <MarqueeText as="p" className={s.artistClassName} style={s.songArtist} text={`${song?.artist ?? t('common.unknownArtist')}${song?.year ? ` \u00b7 ${song.year}` : ''}`} onMeasure={reporters[1]} syncDistance={syncDistance} />
+              {showSubtitle2 && (
+                <MarqueeText as="p" className={s.artistClassName} style={s.songSubtitle2} text={subtitle2!} onMeasure={reporters[2]} syncDistance={syncDistance} />
+              )}
             </div>
           </div>
         }
@@ -181,6 +188,7 @@ function useStyles(collapsed: boolean, animate?: boolean) {
       songTitle: { fontSize: Font.title, fontWeight: Weight.bold, margin: 0, marginBottom: animate ? undefined : (collapsed ? Gap.xs : Gap.sm) } as CSSProperties,
       titleClassName: animate ? cls.titleMargin : undefined,
       songArtist: { fontSize: animate ? undefined : (collapsed ? Font.md : Font.lg), color: Colors.textSubtle, margin: 0 } as CSSProperties,
+      songSubtitle2: { fontSize: animate ? undefined : (collapsed ? Font.sm : Font.md), color: Colors.textMuted, margin: 0, marginTop: Gap.xs } as CSSProperties,
       artistClassName: animate ? cls.artistFont : undefined,
       instIconWrap: { ...flexCenter, width: Size.iconXl, height: Size.iconXl } as CSSProperties,
       viewPathsButton: { ...purpleGlass, ...buttonBase } as CSSProperties,

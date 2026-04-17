@@ -8,6 +8,7 @@ import { api } from '../../../api/client';
 import {
   type ServerInstrumentKey as InstrumentKey,
   type LeaderboardEntry as LeaderboardEntryType,
+  serverInstrumentLabel,
 } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
@@ -357,6 +358,10 @@ export default function LeaderboardPage() {
             animate={!isNarrow}
             hideBackground
             onTitleClick={goToSongDetail}
+            subtitle2={totalEntries > 0 ? t('leaderboard.instrumentEntryCount', {
+              count: totalEntries.toLocaleString() as unknown as number,
+              instrument: serverInstrumentLabel(instKey),
+            }) : undefined}
           />
         </div>
       }
