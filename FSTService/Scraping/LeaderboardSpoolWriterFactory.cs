@@ -169,6 +169,14 @@ public static class LeaderboardSpoolWriterFactory
 
             tx.Commit();
         }
+        catch (Npgsql.PostgresException pex) when (pex.SqlState == "23514" || (pex.MessageText?.Contains("no partition", StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            log.LogCritical(pex,
+                "*** SCHEMA MISMATCH *** Spool [solo] flush FAILED for instrument {Instrument}: no Postgres partition exists for this value. " +
+                "Dropped {Songs} songs / {Entries:N0} entries. This will recur every scrape until DatabaseInitializer partitions are added. " +
+                "SqlState={SqlState} Message={Message}",
+                instrument, batch.Count, batch.Sum(b => b.Entries.Count), pex.SqlState, pex.MessageText);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             log.LogError(ex, "Spool [solo] flush failed for {Instrument} ({Songs} songs, {Entries:N0} entries). Data will be re-scraped next pass.",

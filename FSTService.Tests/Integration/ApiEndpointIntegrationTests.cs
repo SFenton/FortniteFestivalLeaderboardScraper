@@ -113,6 +113,42 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.True(first.TryGetProperty("title", out _));
     }
 
+    [Fact]
+    public async Task ApiSongs_Difficulty_ExposesAllInstrumentFields()
+    {
+        var response = await _client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var songs = json.GetProperty("songs");
+        JsonElement? testSong = null;
+        for (var i = 0; i < songs.GetArrayLength(); i++)
+        {
+            if (songs[i].GetProperty("songId").GetString() == "testSong1")
+            {
+                testSong = songs[i];
+                break;
+            }
+        }
+        Assert.NotNull(testSong);
+        var diff = testSong!.Value.GetProperty("difficulty");
+
+        // Existing fields
+        Assert.Equal(5, diff.GetProperty("guitar").GetInt32());
+        Assert.Equal(3, diff.GetProperty("bass").GetInt32());
+        Assert.Equal(4, diff.GetProperty("vocals").GetInt32());
+        Assert.Equal(2, diff.GetProperty("drums").GetInt32());
+        Assert.Equal(6, diff.GetProperty("proGuitar").GetInt32());
+        Assert.Equal(5, diff.GetProperty("proBass").GetInt32());
+
+        // New fields: proDrums and proCymbals share @in.pd; proVocals is mic mode (@in.bd).
+        Assert.Equal(7, diff.GetProperty("proDrums").GetInt32());
+        Assert.Equal(7, diff.GetProperty("proCymbals").GetInt32());
+        Assert.Equal(
+            diff.GetProperty("proDrums").GetInt32(),
+            diff.GetProperty("proCymbals").GetInt32());
+        Assert.Equal(4, diff.GetProperty("proVocals").GetInt32());
+    }
+
     // ─── Path Images ────────────────────────────────────────────
 
     [Fact]
@@ -3039,7 +3075,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     su = "testSong1",
                     tt = "Integration Test Song",
                     an = "Test Artist",
-                    @in = new In { gr = 5, ba = 3, vl = 4, ds = 2 },
+                    @in = new In { gr = 5, ba = 3, vl = 4, ds = 2, pg = 6, pb = 5, pd = 7, bd = 4 },
                 }
             };
             dirtyField.SetValue(service, true);

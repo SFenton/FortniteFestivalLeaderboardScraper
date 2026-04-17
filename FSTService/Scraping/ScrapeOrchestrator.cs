@@ -360,12 +360,15 @@ public sealed class ScrapeOrchestrator
     internal static IReadOnlyList<string> GetEnabledInstruments(ScraperOptions opts)
     {
         var instruments = new List<string>();
-        if (opts.QueryLead)    instruments.Add("Solo_Guitar");
-        if (opts.QueryBass)    instruments.Add("Solo_Bass");
-        if (opts.QueryVocals)  instruments.Add("Solo_Vocals");
-        if (opts.QueryDrums)   instruments.Add("Solo_Drums");
-        if (opts.QueryProLead) instruments.Add("Solo_PeripheralGuitar");
-        if (opts.QueryProBass) instruments.Add("Solo_PeripheralBass");
+        if (opts.QueryLead)       instruments.Add("Solo_Guitar");
+        if (opts.QueryBass)       instruments.Add("Solo_Bass");
+        if (opts.QueryVocals)     instruments.Add("Solo_Vocals");
+        if (opts.QueryDrums)      instruments.Add("Solo_Drums");
+        if (opts.QueryProLead)    instruments.Add("Solo_PeripheralGuitar");
+        if (opts.QueryProBass)    instruments.Add("Solo_PeripheralBass");
+        if (opts.QueryProVocals)  instruments.Add("Solo_PeripheralVocals");
+        if (opts.QueryProCymbals) instruments.Add("Solo_PeripheralCymbals");
+        if (opts.QueryProDrums)   instruments.Add("Solo_PeripheralDrums");
         // Band types are scraped via BandPageFetcher (flat parallel) — not
         // included here to avoid double-scraping through ScrapeManySongsAsync.
         return instruments;

@@ -1020,6 +1020,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         "Solo_Vocals" => $"{parentTable}_solo_vocals",
         "Solo_PeripheralGuitar" => $"{parentTable}_pro_guitar",
         "Solo_PeripheralBass" => $"{parentTable}_pro_bass",
+        "Solo_PeripheralVocals" => $"{parentTable}_pro_vocals",
+        "Solo_PeripheralCymbals" => $"{parentTable}_pro_cymbals",
+        "Solo_PeripheralDrums" => $"{parentTable}_pro_drums",
         _ => throw new ArgumentException($"Unknown instrument: {Instrument}"),
     };
 

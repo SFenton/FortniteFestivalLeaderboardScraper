@@ -66,6 +66,18 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         "Solo_PeripheralDrums",
     };
 
+    /// <summary>
+    /// Earliest Fortnite Festival season in which a given instrument existed.
+    /// Used to skip seasonal API calls that cannot possibly return data
+    /// (e.g. Pro Lead/Bass before S3, Pro Vocals/Cymbals/Drums before S14).
+    /// </summary>
+    public static int GetInstrumentLaunchSeason(string instrument) => instrument switch
+    {
+        "Solo_PeripheralGuitar" or "Solo_PeripheralBass" => 3,
+        "Solo_PeripheralVocals" or "Solo_PeripheralCymbals" or "Solo_PeripheralDrums" => 14,
+        _ => 1,
+    };
+
     private readonly HttpClient _http;
     private readonly ILogger<GlobalLeaderboardScraper> _log;
     private readonly ScrapeProgressTracker _progress;

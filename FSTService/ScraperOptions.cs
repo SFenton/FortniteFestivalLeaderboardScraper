@@ -39,6 +39,9 @@ public sealed class ScraperOptions
     public bool QueryBass { get; set; } = true;
     public bool QueryProLead { get; set; } = true;
     public bool QueryProBass { get; set; } = true;
+    public bool QueryProVocals { get; set; } = true;
+    public bool QueryProCymbals { get; set; } = true;
+    public bool QueryProDrums { get; set; } = true;
 
     /// <summary>
     /// Root directory for all data files (device auth, MIDI cache, path images, precomputed responses).

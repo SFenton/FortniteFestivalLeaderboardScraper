@@ -105,7 +105,7 @@ public sealed class SongsCacheService
                 if (popTiers is not null)
                 {
                     songPopTiers = new Dictionary<string, PopulationTierData>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var inst in new[] { "Solo_Guitar", "Solo_Bass", "Solo_Drums", "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass" })
+                    foreach (var inst in FSTService.Scraping.GlobalLeaderboardScraper.AllInstruments)
                     {
                         if (popTiers.TryGetValue((s.track.su, inst), out var pt))
                             songPopTiers[inst] = pt;
@@ -123,14 +123,20 @@ public sealed class SongsCacheService
                     tempo      = s.track.mt,
                     albumArt   = TrimAlbumArt(s.track.au),
                     genres     = s.track.ge,
+                    // Difficulty per instrument. proDrums and proCymbals share the same
+                    // spark-track value (@in.pd) — Epic stores a single plastic-drums difficulty.
+                    // proVocals is mic-mode difficulty (@in.bd); 0 is treated as missing (null).
                     difficulty = s.track.@in is null ? null : new
                     {
-                        guitar     = s.track.@in.gr,
-                        bass       = s.track.@in.ba,
-                        vocals     = s.track.@in.vl,
-                        drums      = s.track.@in.ds,
-                        proGuitar  = s.track.@in.pg,
-                        proBass    = s.track.@in.pb,
+                        guitar     = (int?)s.track.@in.gr,
+                        bass       = (int?)s.track.@in.ba,
+                        vocals     = (int?)s.track.@in.vl,
+                        drums      = (int?)s.track.@in.ds,
+                        proGuitar  = (int?)s.track.@in.pg,
+                        proBass    = (int?)s.track.@in.pb,
+                        proDrums   = (int?)s.track.@in.pd,
+                        proCymbals = (int?)s.track.@in.pd,
+                        proVocals  = s.track.@in.bd == 0 ? (int?)null : s.track.@in.bd,
                     },
                     maxScores = ms is null ? null : new Dictionary<string, int?>
                     {

@@ -102,6 +102,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_vocals    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_guitar     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_bass       PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_vocals     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_cymbals    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_drums      PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralDrums');
 
         CREATE INDEX IF NOT EXISTS ix_le_song_score
             ON leaderboard_entries (song_id, instrument, score DESC);
@@ -135,6 +138,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS song_stats_solo_vocals    PARTITION OF song_stats FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS song_stats_pro_guitar     PARTITION OF song_stats FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS song_stats_pro_bass       PARTITION OF song_stats FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS song_stats_pro_vocals     PARTITION OF song_stats FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS song_stats_pro_cymbals    PARTITION OF song_stats FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS song_stats_pro_drums      PARTITION OF song_stats FOR VALUES IN ('Solo_PeripheralDrums');
 
         -- =====================================================================
         -- ACCOUNT RANKINGS (partitioned by instrument)
@@ -172,6 +178,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS account_rankings_solo_vocals    PARTITION OF account_rankings FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS account_rankings_pro_guitar     PARTITION OF account_rankings FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS account_rankings_pro_bass       PARTITION OF account_rankings FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS account_rankings_pro_vocals     PARTITION OF account_rankings FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS account_rankings_pro_cymbals    PARTITION OF account_rankings FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS account_rankings_pro_drums      PARTITION OF account_rankings FOR VALUES IN ('Solo_PeripheralDrums');
 
         CREATE UNIQUE INDEX IF NOT EXISTS ix_ar_skill
             ON account_rankings (instrument, adjusted_skill_rank);
@@ -214,6 +223,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS rank_history_solo_vocals    PARTITION OF rank_history FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS rank_history_pro_guitar     PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS rank_history_pro_bass       PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS rank_history_pro_vocals     PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS rank_history_pro_cymbals    PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS rank_history_pro_drums      PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralDrums');
 
         -- Efficient change-detection: latest snapshot per (instrument, account)
         CREATE INDEX IF NOT EXISTS ix_rh_latest
@@ -240,6 +252,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS valid_score_overrides_solo_vocals    PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS valid_score_overrides_pro_guitar     PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS valid_score_overrides_pro_bass       PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_pro_vocals     PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_pro_cymbals    PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_pro_drums      PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_PeripheralDrums');
 
         -- =====================================================================
         -- SCRAPE LOG (from fst-meta.db)
@@ -805,6 +820,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS ranking_deltas_solo_vocals    PARTITION OF ranking_deltas FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS ranking_deltas_pro_guitar     PARTITION OF ranking_deltas FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS ranking_deltas_pro_bass       PARTITION OF ranking_deltas FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS ranking_deltas_pro_vocals     PARTITION OF ranking_deltas FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS ranking_deltas_pro_cymbals    PARTITION OF ranking_deltas FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS ranking_deltas_pro_drums      PARTITION OF ranking_deltas FOR VALUES IN ('Solo_PeripheralDrums');
 
         CREATE INDEX IF NOT EXISTS ix_rd_bucket_adj
             ON ranking_deltas (instrument, leeway_bucket, adjusted_skill ASC);
@@ -844,6 +862,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS ranking_delta_tiers_solo_vocals    PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS ranking_delta_tiers_pro_guitar     PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS ranking_delta_tiers_pro_bass       PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_pro_vocals     PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_pro_cymbals    PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_pro_drums      PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_PeripheralDrums');
 
         CREATE INDEX IF NOT EXISTS ix_rdt_account_range
             ON ranking_delta_tiers (instrument, account_id, start_bucket_idx, end_bucket_idx);
@@ -873,6 +894,9 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS rank_history_deltas_solo_vocals    PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_Vocals');
         CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_guitar     PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralGuitar');
         CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_bass       PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_vocals     PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_cymbals    PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_drums      PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralDrums');
 
         -- Efficient change-detection: latest delta per (instrument, bucket, account)
         CREATE INDEX IF NOT EXISTS ix_rhd_latest

@@ -485,7 +485,11 @@ public class HistoryReconstructor
 
         // Start from the song's FirstSeenSeason instead of season 1.
         // This avoids querying seasons that predate the song's existence.
-        int startSeason = Math.Max(1, Math.Min(firstSeenSeason, maxSeason));
+        // Also honor the instrument's launch season (Pro Lead/Bass — S3,
+        // Pro Vocals/Cymbals/Drums — S14) since those can't have earlier data.
+        int instrumentFloor = GlobalLeaderboardScraper.GetInstrumentLaunchSeason(instrument);
+        int effectiveFloor = Math.Max(firstSeenSeason, instrumentFloor);
+        int startSeason = Math.Max(1, Math.Min(effectiveFloor, maxSeason));
 
         // Build the list of seasons to query
         var seasonsToQuery = new List<(int Season, SeasonWindowInfo Window)>();

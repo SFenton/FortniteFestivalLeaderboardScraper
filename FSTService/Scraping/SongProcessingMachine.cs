@@ -266,10 +266,10 @@ public class SongProcessingMachine
             pool, isHighPriority, batchSize, ct);
 
         // ─── Seasonal session lookups (async task) ────────────
-        // Pro Lead/Bass didn't exist before Season 3
-        int songFirstSeason = 1;
-        if (instrument is "Solo_PeripheralGuitar" or "Solo_PeripheralBass")
-            songFirstSeason = 3;
+        // Skip seasons that predate the instrument's launch:
+        //   Pro Lead/Bass — Season 3
+        //   Pro Vocals/Cymbals/Drums — Season 14
+        int songFirstSeason = GlobalLeaderboardScraper.GetInstrumentLaunchSeason(instrument);
 
         var seasonalTask = RunSeasonalLookups(
             songId, instrument, users, seasonPrefixMap, accessToken, callerAccountId,
