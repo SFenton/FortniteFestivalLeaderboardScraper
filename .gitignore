@@ -317,5 +317,6 @@ FortniteFestivalWeb/coverage
 # Harness output
 FSTService.Harnesses/*/harness-output/
 FSTService.Harnesses/harness-output/
+harness-output/
 FSTService.Harnesses/SongMachineHarness/accounts.txt
 FSTService.Harnesses/SongMachineHarness/songs.txt

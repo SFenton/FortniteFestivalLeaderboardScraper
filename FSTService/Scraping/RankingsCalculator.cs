@@ -59,6 +59,21 @@ public sealed class RankingsCalculator
     }
 
     /// <summary>
+    /// Emit a structured phase-timing marker. Stable prefix <c>[Rankings.Phase]</c> plus
+    /// named fields for greppable aggregation. <paramref name="phase"/> keys are stable
+    /// (snake-case, dot-separated) and safe to parse offline.
+    /// </summary>
+    private void LogPhase(string phase, string? instrument, TimeSpan duration, long? rowCount = null)
+    {
+        _log.LogInformation(
+            "[Rankings.Phase] phase={Phase} instrument={Instrument} duration_ms={DurationMs} row_count={RowCount}",
+            phase,
+            instrument ?? "-",
+            (long)duration.TotalMilliseconds,
+            rowCount?.ToString() ?? "-");
+    }
+
+    /// <summary>
     /// Compute all rankings: per-instrument (parallel) → composite → history snapshots → combo rankings.
     /// </summary>
     public async Task ComputeAllAsync(FestivalService festivalService, CancellationToken ct = default)
@@ -83,6 +98,7 @@ public sealed class RankingsCalculator
         {
             innerCt.ThrowIfCancellationRequested();
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            var instrumentSw = System.Diagnostics.Stopwatch.StartNew();
 
             // Build per-song max scores for this instrument
             var maxScoresForInstrument = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
@@ -102,12 +118,17 @@ public sealed class RankingsCalculator
             }
 
             // Phase 1: SongStats (uses MAX of local count, previous, real population)
+            var songStatsSw = System.Diagnostics.Stopwatch.StartNew();
             db.ComputeSongStats(maxScoresForInstrument, populationForInstrument);
+            songStatsSw.Stop();
+            LogPhase("per_instrument.song_stats", instrument, songStatsSw.Elapsed, maxScoresForInstrument.Count);
 
             // Phase 1.5: Populate valid score overrides for over-threshold entries
             // Finds entries whose current score exceeds 1.05× CHOpt max, then looks up
             // the best valid historical score from ScoreHistory to use in rankings.
+            var overridesSw = System.Diagnostics.Stopwatch.StartNew();
             var overThreshold = db.GetOverThresholdEntries();
+            long overrideRows = 0;
             if (overThreshold.Count > 0)
             {
                 var thresholds = new Dictionary<(string AccountId, string SongId), int>();
@@ -129,6 +150,7 @@ public sealed class RankingsCalculator
                         Stars: kvp.Value.Stars
                     )).ToList();
                     db.PopulateValidScoreOverrides(overrides);
+                    overrideRows = overrides.Count;
                     if (overrides.Count > 0)
                         _log.LogInformation("{Instrument}: {OverCount} over-threshold entries, {FallbackCount} valid fallbacks found.",
                             instrument, overThreshold.Count, overrides.Count);
@@ -142,6 +164,8 @@ public sealed class RankingsCalculator
             {
                 db.PopulateValidScoreOverrides([]);
             }
+            overridesSw.Stop();
+            LogPhase("per_instrument.populate_valid_overrides", instrument, overridesSw.Elapsed, overrideRows);
 
             // Phase 2: AccountRankings + Phase 2.5: Ranking deltas
             // Materialized pipeline: one join into a temp table, reused for
@@ -168,30 +192,45 @@ public sealed class RankingsCalculator
             // Materialize leaderboard_entries × song_stats once
             var matSw = System.Diagnostics.Stopwatch.StartNew();
             db.MaterializeValidEntries(conn, BaseThresholdMultiplier);
+            matSw.Stop();
             _log.LogDebug("{Instrument}: materialized valid entries in {Elapsed}.", instrument, matSw.Elapsed);
+            LogPhase("per_instrument.materialize_valid_entries", instrument, matSw.Elapsed);
 
             // Compute base rankings from the materialized temp table
+            var arSw = System.Diagnostics.Stopwatch.StartNew();
             db.ComputeAccountRankingsFromMaterialized(conn, totalCharted, CredibilityThreshold, PopulationMedian, BaseThresholdMultiplier);
+            arSw.Stop();
+            LogPhase("per_instrument.compute_account_rankings", instrument, arSw.Elapsed);
             _progress.ReportPhaseItemComplete();
 
             // Phase 2.5: Ranking deltas — uses the same materialized temp table
             if (_features.ComputeRankingDeltas)
             {
-                ComputeRankingDeltasFromMaterialized(instrument, conn, db, totalCharted);
+                var deltaSw = System.Diagnostics.Stopwatch.StartNew();
+                var deltaCount = ComputeRankingDeltasFromMaterialized(instrument, conn, db, totalCharted);
+                deltaSw.Stop();
+                LogPhase("per_instrument.compute_ranking_deltas", instrument, deltaSw.Elapsed, deltaCount);
             }
             else
             {
                 _log.LogDebug("{Instrument}: skipping ranking delta computation (ComputeRankingDeltas=false).", instrument);
             }
 
+            instrumentSw.Stop();
+            LogPhase("per_instrument.total", instrument, instrumentSw.Elapsed);
+
             return ValueTask.CompletedTask;
         });
 
         _log.LogInformation("Per-instrument rankings + deltas complete in {Elapsed}.", sw.Elapsed);
+        LogPhase("per_instrument.all", instrument: null, sw.Elapsed);
+        var perInstrumentEndMs = sw.ElapsedMilliseconds;
 
         // ── Load per-instrument ranking data ONCE (shared across phases 3–5) ──
+        var loadSw = System.Diagnostics.Stopwatch.StartNew();
         var rankingDataFull = new Dictionary<string, Dictionary<string, AccountMetrics>>(StringComparer.OrdinalIgnoreCase);
         var rankingDataRanks = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        long totalLoadedRows = 0;
         foreach (var instrument in instruments)
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
@@ -205,16 +244,21 @@ public sealed class RankingsCalculator
             foreach (var (accountId, _, _, rank) in db.GetAllRankingSummaries())
                 ranks[accountId] = rank;
             rankingDataRanks[instrument] = ranks;
+            totalLoadedRows += full.Count;
         }
+        loadSw.Stop();
         _log.LogInformation("Loaded ranking data: {InstrumentCount} instruments, {TotalAccounts:N0} account-instrument entries.",
             instruments.Count, rankingDataFull.Values.Sum(d => d.Count));
+        LogPhase("load_ranking_data", instrument: null, loadSw.Elapsed, totalLoadedRows);
 
         // ── Phase 3: Composite rankings ──
         _progress.SetSubOperation("composite_rankings");
         var compositeSw = System.Diagnostics.Stopwatch.StartNew();
         ComputeCompositeRankings(instruments, rankingDataFull, rankingDataRanks);
+        compositeSw.Stop();
         _progress.ReportPhaseItemComplete();
         _log.LogInformation("Composite rankings complete in {Elapsed}.", compositeSw.Elapsed);
+        LogPhase("composite_rankings", instrument: null, compositeSw.Elapsed);
 
         // ── Phase 3.5: Composite + combo deltas ──
         _progress.SetSubOperation("composite_combo_deltas");
@@ -222,37 +266,65 @@ public sealed class RankingsCalculator
         var heapBeforeDeltas = GC.GetTotalMemory(false);
 
         // Load per-instrument deltas ONCE, shared by composite and combo delta passes
+        var deltaLoadSw = System.Diagnostics.Stopwatch.StartNew();
         var sharedDeltas = LoadPerInstrumentDeltas(instruments);
+        deltaLoadSw.Stop();
+        LogPhase("cross_deltas.load_deltas", instrument: null, deltaLoadSw.Elapsed,
+            sharedDeltas.DeltasPerInstrument.Values.Sum(d => (long)d.Values.Sum(b => b.Count)));
 
-        ComputeCompositeDeltas(instruments, rankingDataFull, preloadedDeltas: sharedDeltas);
-        ComputeComboDeltas(instruments, rankingDataFull, preloadedDeltas: sharedDeltas);
+        var compositeDeltaSw = System.Diagnostics.Stopwatch.StartNew();
+        var compositeDeltaCount = ComputeCompositeDeltas(instruments, rankingDataFull, preloadedDeltas: sharedDeltas);
+        compositeDeltaSw.Stop();
+        LogPhase("cross_deltas.composite", instrument: null, compositeDeltaSw.Elapsed, compositeDeltaCount);
+
+        var comboDeltaSw = System.Diagnostics.Stopwatch.StartNew();
+        var comboDeltaCount = ComputeComboDeltas(instruments, rankingDataFull, preloadedDeltas: sharedDeltas);
+        comboDeltaSw.Stop();
+        LogPhase("cross_deltas.combo", instrument: null, comboDeltaSw.Elapsed, comboDeltaCount);
+
+        crossDeltaSw.Stop();
         var heapAfterDeltas = GC.GetTotalMemory(false);
         _log.LogInformation("Composite + combo deltas complete in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
             crossDeltaSw.Elapsed, heapBeforeDeltas, heapAfterDeltas, heapAfterDeltas - heapBeforeDeltas);
+        LogPhase("cross_deltas.total", instrument: null, crossDeltaSw.Elapsed);
 
         // ── Phase 4: History snapshots (parallel per instrument + composite) ──
         _progress.SetSubOperation("rank_history_snapshots");
+        var snapshotsSw = System.Diagnostics.Stopwatch.StartNew();
         var snapshotTasks = instruments.Select(instrument => Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
+            var instSw = System.Diagnostics.Stopwatch.StartNew();
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             db.SnapshotRankHistory();
             db.SnapshotRankHistoryDeltas();
+            instSw.Stop();
+            LogPhase("snapshots.per_instrument", instrument, instSw.Elapsed);
             _progress.ReportPhaseItemComplete();
         }, ct)).ToList();
 
         await Task.WhenAll(snapshotTasks);
+
+        var compositeSnapSw = System.Diagnostics.Stopwatch.StartNew();
         _metaDb.SnapshotCompositeRankHistory();
+        compositeSnapSw.Stop();
+        LogPhase("snapshots.composite", instrument: null, compositeSnapSw.Elapsed);
         _progress.ReportPhaseItemComplete();
+        snapshotsSw.Stop();
+        LogPhase("snapshots.total", instrument: null, snapshotsSw.Elapsed);
 
         // ── Phase 5: All-combo rankings ──
         _progress.SetSubOperation("combo_rankings");
         var comboSw = System.Diagnostics.Stopwatch.StartNew();
         ComputeAllCombos(instruments, rankingDataFull);
+        comboSw.Stop();
         _progress.ReportPhaseItemComplete();
         _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
+        LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
 
         _log.LogInformation("Full rankings computation complete in {Total}.", sw.Elapsed);
+        LogPhase("total", instrument: null, sw.Elapsed);
+        _ = perInstrumentEndMs; // retained for future delta arithmetic if needed
     }
 
     /// <summary>
