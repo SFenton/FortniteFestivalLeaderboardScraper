@@ -38,6 +38,9 @@ export type AppSettings = {
   showVocals: boolean;
   showProLead: boolean;
   showProBass: boolean;
+  showPeripheralVocals: boolean;
+  showPeripheralCymbals: boolean;
+  showPeripheralDrums: boolean;
 
   /* Show instrument metadata */
   metadataShowScore: boolean;
@@ -70,6 +73,9 @@ export const defaultAppSettings = (): AppSettings => ({
   showVocals: true,
   showProLead: true,
   showProBass: true,
+  showPeripheralVocals: true,
+  showPeripheralCymbals: true,
+  showPeripheralDrums: true,
 
   metadataShowScore: true,
   metadataShowPercentage: true,
@@ -89,7 +95,10 @@ type ShowKey =
   | 'showDrums'
   | 'showVocals'
   | 'showProLead'
-  | 'showProBass';
+  | 'showProBass'
+  | 'showPeripheralVocals'
+  | 'showPeripheralCymbals'
+  | 'showPeripheralDrums';
 
 const SHOW_KEY_FOR_INSTRUMENT: Record<InstrumentKey, ShowKey> = {
   Solo_Guitar: 'showLead',
@@ -98,6 +107,9 @@ const SHOW_KEY_FOR_INSTRUMENT: Record<InstrumentKey, ShowKey> = {
   Solo_Vocals: 'showVocals',
   Solo_PeripheralGuitar: 'showProLead',
   Solo_PeripheralBass: 'showProBass',
+  Solo_PeripheralVocals: 'showPeripheralVocals',
+  Solo_PeripheralCymbals: 'showPeripheralCymbals',
+  Solo_PeripheralDrums: 'showPeripheralDrums',
 };
 
 export function isInstrumentVisible(settings: AppSettings, key: InstrumentKey): boolean {

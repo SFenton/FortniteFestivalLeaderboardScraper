@@ -36,7 +36,7 @@ export type InstrumentDetailedStats = {
   below50PercentCount: number;
 };
 
-export const instrumentKeysForStats: InstrumentKey[] = ['guitar', 'drums', 'vocals', 'bass', 'pro_guitar', 'pro_bass'];
+export const instrumentKeysForStats: InstrumentKey[] = ['guitar', 'drums', 'vocals', 'bass', 'pro_guitar', 'pro_bass', 'peripheral_vocals', 'peripheral_cymbals', 'peripheral_drums'];
 
 const keyToLabel = (key: InstrumentKey): string => {
   switch (key) {
@@ -47,11 +47,17 @@ const keyToLabel = (key: InstrumentKey): string => {
     case 'drums':
       return 'Drums';
     case 'vocals':
-      return 'Vocals';
+      return 'Tap Vocals';
     case 'pro_guitar':
       return 'Pro Lead';
     case 'pro_bass':
       return 'Pro Bass';
+    case 'peripheral_vocals':
+      return 'Mic Mode';
+    case 'peripheral_cymbals':
+      return 'Pro Drums + Cymbals';
+    case 'peripheral_drums':
+      return 'Pro Drums';
     default:
       return key;
   }

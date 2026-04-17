@@ -118,15 +118,18 @@ public class GlobalLeaderboardScraperTests
     // ─── AllInstruments ─────────────────────────────────
 
     [Fact]
-    public void AllInstruments_Contains6Instruments()
+    public void AllInstruments_Contains9Instruments()
     {
-        Assert.Equal(6, GlobalLeaderboardScraper.AllInstruments.Count);
+        Assert.Equal(9, GlobalLeaderboardScraper.AllInstruments.Count);
         Assert.Contains("Solo_Guitar", GlobalLeaderboardScraper.AllInstruments);
         Assert.Contains("Solo_Bass", GlobalLeaderboardScraper.AllInstruments);
         Assert.Contains("Solo_Vocals", GlobalLeaderboardScraper.AllInstruments);
         Assert.Contains("Solo_Drums", GlobalLeaderboardScraper.AllInstruments);
         Assert.Contains("Solo_PeripheralGuitar", GlobalLeaderboardScraper.AllInstruments);
         Assert.Contains("Solo_PeripheralBass", GlobalLeaderboardScraper.AllInstruments);
+        Assert.Contains("Solo_PeripheralVocals", GlobalLeaderboardScraper.AllInstruments);
+        Assert.Contains("Solo_PeripheralCymbals", GlobalLeaderboardScraper.AllInstruments);
+        Assert.Contains("Solo_PeripheralDrums", GlobalLeaderboardScraper.AllInstruments);
     }
 
     // ─── LookupAccountAsync ────────────────────────────

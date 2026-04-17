@@ -5,12 +5,18 @@ namespace FSTService.Scraping;
 /// (<c>M_{i}_INSTRUMENT</c>, <c>INSTRUMENT_{i}</c>) and the leaderboard type
 /// strings used for CHOpt lookups and solo leaderboards.
 ///
-/// Verified empirically via V1 API <c>M_0_INSTRUMENT</c> extraction (2026-04-08):
+/// Verified empirically via V1 API <c>M_0_INSTRUMENT</c> extraction:
 ///   0 = Solo_Guitar, 1 = Solo_Bass, 2 = Solo_Vocals, 3 = Solo_Drums,
-///   4 = Solo_PeripheralGuitar, 5 = Solo_PeripheralBass.
+///   4 = Solo_PeripheralGuitar, 5 = Solo_PeripheralBass,
+///   6 = Solo_PeripheralDrums (Pro Drums),
+///   7 = Solo_PeripheralVocals (Mic Mode),
+///   8 = Solo_PeripheralCymbals (Pro Drums + Cymbals).
 ///
 /// WARNING: This does NOT match the C# InstrumentType enum ordering
-/// (Lead=0, Drums=1, Vocals=2, Bass=3, ProLead=4, ProBass=5).
+/// (Lead=0, Drums=1, Vocals=2, Bass=3, ProLead=4, ProBass=5, ...).
+/// It also does NOT match ComboIds.CanonicalOrder — the canonical-order
+/// 6/7/8 slots are Vocals/Cymbals/Drums while Epic's IDs 6/7/8 are
+/// Drums/Vocals/Cymbals. This mapping is the indirection that reconciles them.
 /// </summary>
 public static class BandInstrumentMapping
 {
@@ -22,6 +28,9 @@ public static class BandInstrumentMapping
         "Solo_Drums",             // 3
         "Solo_PeripheralGuitar",  // 4
         "Solo_PeripheralBass",    // 5
+        "Solo_PeripheralDrums",   // 6 - Pro Drums
+        "Solo_PeripheralVocals",  // 7 - Mic Mode
+        "Solo_PeripheralCymbals", // 8 - Pro Drums + Cymbals
     ];
 
     /// <summary>

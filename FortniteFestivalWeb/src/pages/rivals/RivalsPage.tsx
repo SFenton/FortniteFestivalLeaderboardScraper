@@ -170,7 +170,7 @@ export default function RivalsPage() {
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- activeInstruments derived from settings
-  }, [accountId, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass]);
+  }, [accountId, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass, settings.showPeripheralVocals, settings.showPeripheralCymbals, settings.showPeripheralDrums]);
   /* v8 ignore stop */
 
   // Fetch combo rivals

@@ -41,7 +41,7 @@ export function isWithinGroupComboId(comboId: string): boolean {
   return !Number.isNaN(mask) && isWithinGroupCombo(mask);
 }
 
-/** Compute the combo ID (2-digit hex) for a set of instruments. */
+/** Compute the combo ID (hex, min 2 digits) for a set of instruments. Widens to 3 digits when mask ≥ 0x100. */
 export function comboIdFromInstruments(instruments: readonly ServerInstrumentKey[]): string {
   let mask = 0;
   for (const key of instruments) {
@@ -55,7 +55,8 @@ export function comboIdFromInstruments(instruments: readonly ServerInstrumentKey
 /** Recover the instrument list from a combo ID. Returns instruments in canonical order. */
 export function instrumentsFromComboId(comboId: string): ServerInstrumentKey[] {
   const mask = parseInt(comboId, 16);
-  if (Number.isNaN(mask) || mask < 0 || mask > 0x3f)
+  const maxMask = (1 << COMBO_INSTRUMENTS.length) - 1;
+  if (Number.isNaN(mask) || mask < 0 || mask > maxMask)
     throw new Error(`Invalid combo ID: ${comboId}`);
   const result: ServerInstrumentKey[] = [];
   for (let bit = 0; bit < COMBO_INSTRUMENTS.length; bit++) {

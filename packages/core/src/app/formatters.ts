@@ -104,11 +104,17 @@ export const instrumentKeyToLabel = (key: InstrumentKey): string => {
     case 'drums':
       return 'Drums';
     case 'vocals':
-      return 'Vocals';
+      return 'Tap Vocals';
     case 'pro_guitar':
       return 'Pro Lead';
     case 'pro_bass':
       return 'Pro Bass';
+    case 'peripheral_vocals':
+      return 'Mic Mode';
+    case 'peripheral_cymbals':
+      return 'Pro Drums + Cymbals';
+    case 'peripheral_drums':
+      return 'Pro Drums';
     default:
       return key;
   }
@@ -128,6 +134,12 @@ export const instrumentKeyToColorHex = (key: InstrumentKey): string => {
       return '#9b59b6';
     case 'pro_bass':
       return '#2980b9';
+    case 'peripheral_vocals':
+      return '#16a085';
+    case 'peripheral_cymbals':
+      return '#c0392b';
+    case 'peripheral_drums':
+      return '#d35400';
     default:
       return '#7f8c8d';
   }

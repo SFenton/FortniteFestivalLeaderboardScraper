@@ -23,6 +23,9 @@ export const INSTRUMENT_SETTING_LABELS = {
   vocals: 'Vocals',
   pro_guitar: 'ProLead',
   pro_bass: 'ProBass',
+  peripheral_vocals: 'PeripheralVocals',
+  peripheral_cymbals: 'PeripheralCymbals',
+  peripheral_drums: 'PeripheralDrums',
 } as const satisfies Record<InstrumentKey, string>;
 
 export type InstrumentSettingLabel = (typeof INSTRUMENT_SETTING_LABELS)[InstrumentKey];

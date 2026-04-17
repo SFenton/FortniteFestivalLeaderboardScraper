@@ -37,6 +37,9 @@ export type InstrumentShowSettings = {
   showVocals: boolean;
   showProLead: boolean;
   showProBass: boolean;
+  showPeripheralVocals: boolean;
+  showPeripheralCymbals: boolean;
+  showPeripheralDrums: boolean;
 };
 
 export function buildEffectiveInstrumentSettings(
@@ -50,6 +53,9 @@ export function buildEffectiveInstrumentSettings(
     showVocals: appSettings.showVocals && filter.suggestionsVocalsFilter,
     showProLead: appSettings.showProLead && filter.suggestionsProLeadFilter,
     showProBass: appSettings.showProBass && filter.suggestionsProBassFilter,
+    showPeripheralVocals: appSettings.showPeripheralVocals && filter.suggestionsPeripheralVocalsFilter,
+    showPeripheralCymbals: appSettings.showPeripheralCymbals && filter.suggestionsPeripheralCymbalsFilter,
+    showPeripheralDrums: appSettings.showPeripheralDrums && filter.suggestionsPeripheralDrumsFilter,
   };
 }
 

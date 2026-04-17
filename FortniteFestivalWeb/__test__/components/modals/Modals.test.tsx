@@ -373,8 +373,9 @@ describe('SuggestionsFilterModal', () => {
   const draft = {
     suggestionsLeadFilter: true, suggestionsBassFilter: true, suggestionsDrumsFilter: true,
     suggestionsVocalsFilter: true, suggestionsProLeadFilter: true, suggestionsProBassFilter: true,
+    suggestionsPeripheralVocalsFilter: true, suggestionsPeripheralCymbalsFilter: true, suggestionsPeripheralDrumsFilter: true,
   };
-  const instrumentVisibility = { showLead: true, showBass: true, showDrums: true, showVocals: true, showProLead: true, showProBass: true };
+  const instrumentVisibility = { showLead: true, showBass: true, showDrums: true, showVocals: true, showProLead: true, showProBass: true, showPeripheralVocals: true, showPeripheralCymbals: true, showPeripheralDrums: true };
   const defaults = {
     visible: true, draft, savedDraft: draft, instrumentVisibility,
     onChange: vi.fn(), onCancel: vi.fn(), onReset: vi.fn(), onApply: vi.fn(),

@@ -22,6 +22,9 @@ const allVisible = () => ({
   showVocals: true,
   showProLead: true,
   showProBass: true,
+  showPeripheralVocals: true,
+  showPeripheralCymbals: true,
+  showPeripheralDrums: true,
 });
 
 const baseDraft = (): SuggestionsFilterDraft => defaultSuggestionsFilterDraft();

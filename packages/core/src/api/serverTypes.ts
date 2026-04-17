@@ -10,7 +10,10 @@ export type ServerInstrumentKey =
   | 'Solo_Drums'
   | 'Solo_Vocals'
   | 'Solo_PeripheralGuitar'
-  | 'Solo_PeripheralBass';
+  | 'Solo_PeripheralBass'
+  | 'Solo_PeripheralVocals'
+  | 'Solo_PeripheralCymbals'
+  | 'Solo_PeripheralDrums';
 
 export const SERVER_INSTRUMENT_KEYS: ServerInstrumentKey[] = [
   'Solo_Guitar',
@@ -19,15 +22,21 @@ export const SERVER_INSTRUMENT_KEYS: ServerInstrumentKey[] = [
   'Solo_Vocals',
   'Solo_PeripheralGuitar',
   'Solo_PeripheralBass',
+  'Solo_PeripheralVocals',
+  'Solo_PeripheralCymbals',
+  'Solo_PeripheralDrums',
 ];
 
 export const SERVER_INSTRUMENT_LABELS: Record<ServerInstrumentKey, string> = {
   Solo_Guitar: 'Lead',
   Solo_Bass: 'Bass',
   Solo_Drums: 'Drums',
-  Solo_Vocals: 'Vocals',
+  Solo_Vocals: 'Tap Vocals',
   Solo_PeripheralGuitar: 'Pro Lead',
   Solo_PeripheralBass: 'Pro Bass',
+  Solo_PeripheralVocals: 'Mic Mode',
+  Solo_PeripheralCymbals: 'Pro Drums + Cymbals',
+  Solo_PeripheralDrums: 'Pro Drums',
 };
 
 /** Look up the display label for a server instrument key. */

@@ -8,5 +8,8 @@ namespace FortniteFestival.Core.Config
         Bass,
         ProLead,
         ProBass,
+        PeripheralVocals,
+        PeripheralCymbals,
+        PeripheralDrums,
     }
 }

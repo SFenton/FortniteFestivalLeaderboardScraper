@@ -126,6 +126,9 @@ export type LeaderboardData = {
   vocals?: ScoreTracker;
   pro_guitar?: ScoreTracker;
   pro_bass?: ScoreTracker;
+  peripheral_vocals?: ScoreTracker;
+  peripheral_cymbals?: ScoreTracker;
+  peripheral_drums?: ScoreTracker;
   dirty?: boolean;
   correlatedV1Pages?: Partial<Record<InstrumentKey, V1LeaderboardPage>>;
 };

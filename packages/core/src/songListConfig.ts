@@ -120,10 +120,13 @@ export type InstrumentOrderItem = {key: InstrumentKey; displayName: string};
 export const defaultPrimaryInstrumentOrder = (): InstrumentOrderItem[] => [
   {key: 'guitar', displayName: 'Lead'},
   {key: 'drums', displayName: 'Drums'},
-  {key: 'vocals', displayName: 'Vocals'},
+  {key: 'vocals', displayName: 'Tap Vocals'},
   {key: 'bass', displayName: 'Bass'},
   {key: 'pro_guitar', displayName: 'Pro Lead'},
   {key: 'pro_bass', displayName: 'Pro Bass'},
+  {key: 'peripheral_vocals', displayName: 'Mic Mode'},
+  {key: 'peripheral_cymbals', displayName: 'Pro Drums + Cymbals'},
+  {key: 'peripheral_drums', displayName: 'Pro Drums'},
 ];
 
 export const normalizeInstrumentOrder = (keys: ReadonlyArray<InstrumentKey> | undefined): InstrumentOrderItem[] => {
@@ -156,6 +159,9 @@ export type InstrumentShowSettings = {
   showVocals: boolean;
   showProLead: boolean;
   showProBass: boolean;
+  showPeripheralVocals: boolean;
+  showPeripheralCymbals: boolean;
+  showPeripheralDrums: boolean;
 };
 
 type ShowSettingKey = keyof InstrumentShowSettings;
@@ -169,6 +175,9 @@ export const showSettingKeyForInstrument = (key: InstrumentKey): ShowSettingKey 
     case 'vocals': return 'showVocals';
     case 'pro_guitar': return 'showProLead';
     case 'pro_bass': return 'showProBass';
+    case 'peripheral_vocals': return 'showPeripheralVocals';
+    case 'peripheral_cymbals': return 'showPeripheralCymbals';
+    case 'peripheral_drums': return 'showPeripheralDrums';
   }
 };
 

@@ -1,7 +1,16 @@
 import type {InstrumentKey} from '../instruments';
 import type {LeaderboardData, ScoreTracker} from '../models';
 
-export type ScoreInstrument = 'Lead' | 'Drums' | 'Vocals' | 'Bass' | 'ProLead' | 'ProBass';
+export type ScoreInstrument =
+  | 'Lead'
+  | 'Drums'
+  | 'Vocals'
+  | 'Bass'
+  | 'ProLead'
+  | 'ProBass'
+  | 'PeripheralVocals'
+  | 'PeripheralCymbals'
+  | 'PeripheralDrums';
 export type ScoreSortColumn = 'Title' | 'Artist' | 'Score' | 'Percent' | 'Stars' | 'FC' | 'Season';
 
 export type ScoreRow = {
@@ -37,6 +46,12 @@ const instrumentToKey = (instrument: ScoreInstrument): InstrumentKey => {
       return 'pro_guitar';
     case 'ProBass':
       return 'pro_bass';
+    case 'PeripheralVocals':
+      return 'peripheral_vocals';
+    case 'PeripheralCymbals':
+      return 'peripheral_cymbals';
+    case 'PeripheralDrums':
+      return 'peripheral_drums';
     case 'Lead':
     default:
       return 'guitar';

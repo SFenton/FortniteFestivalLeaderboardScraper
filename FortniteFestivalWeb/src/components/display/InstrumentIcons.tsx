@@ -12,6 +12,7 @@ type AnyInstrumentKey = InstrumentKey | ServerInstrumentKey;
 
 const BASE = import.meta.env.BASE_URL;
 
+// TODO(art): replace peripheral_*.png placeholder copies with proper Mic Mode / Pro Drums / Pro Drums+Cymbals artwork.
 const ICON_PATHS: Record<AnyInstrumentKey, string> = {
   guitar: `${BASE}instruments/guitar.png`,
   bass: `${BASE}instruments/bass.png`,
@@ -19,12 +20,18 @@ const ICON_PATHS: Record<AnyInstrumentKey, string> = {
   vocals: `${BASE}instruments/vocals.png`,
   pro_guitar: `${BASE}instruments/pro_guitar.png`,
   pro_bass: `${BASE}instruments/pro_bass.png`,
+  peripheral_vocals: `${BASE}instruments/peripheral_vocals.png`,
+  peripheral_cymbals: `${BASE}instruments/peripheral_cymbals.png`,
+  peripheral_drums: `${BASE}instruments/peripheral_drums.png`,
   Solo_Guitar: `${BASE}instruments/guitar.png`,
   Solo_Bass: `${BASE}instruments/bass.png`,
   Solo_Drums: `${BASE}instruments/drums.png`,
   Solo_Vocals: `${BASE}instruments/vocals.png`,
   Solo_PeripheralGuitar: `${BASE}instruments/pro_guitar.png`,
   Solo_PeripheralBass: `${BASE}instruments/pro_bass.png`,
+  Solo_PeripheralVocals: `${BASE}instruments/peripheral_vocals.png`,
+  Solo_PeripheralCymbals: `${BASE}instruments/peripheral_cymbals.png`,
+  Solo_PeripheralDrums: `${BASE}instruments/peripheral_drums.png`,
 };
 
 type IconProps = { size?: number; style?: React.CSSProperties };

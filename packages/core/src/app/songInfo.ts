@@ -28,13 +28,19 @@ const keyToDisplayName = (key: InstrumentKey): string => {
     case 'drums':
       return 'Drums';
     case 'vocals':
-      return 'Vocals';
+      return 'Tap Vocals';
     case 'bass':
       return 'Bass';
     case 'pro_guitar':
       return 'Pro Lead';
     case 'pro_bass':
       return 'Pro Bass';
+    case 'peripheral_vocals':
+      return 'Mic Mode';
+    case 'peripheral_cymbals':
+      return 'Pro Drums + Cymbals';
+    case 'peripheral_drums':
+      return 'Pro Drums';
     default:
       return key;
   }
@@ -90,6 +96,12 @@ const fallbackDifficulty = (song: Song, key: InstrumentKey): number => {
       return i.pg ?? i.gr ?? 0;
     case 'pro_bass':
       return i.pb ?? i.ba ?? 0;
+    case 'peripheral_vocals':
+      return i.vl ?? 0;
+    case 'peripheral_cymbals':
+      return i.ds ?? 0;
+    case 'peripheral_drums':
+      return i.ds ?? 0;
     default:
       return 0;
   }

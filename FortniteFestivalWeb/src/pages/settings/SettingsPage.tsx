@@ -61,7 +61,7 @@ function FadeInDiv({ delay, children, style }: { delay?: number; children: React
 
 /* -- Instrument toggle helpers -- */
 
-type ShowKey = 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass';
+type ShowKey = 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass' | 'showPeripheralVocals' | 'showPeripheralCymbals' | 'showPeripheralDrums';
 
 const INSTRUMENT_SHOW_MAP: { key: InstrumentKey; showKey: ShowKey; i18nKey: string }[] = [
   { key: 'Solo_Guitar', showKey: 'showLead', i18nKey: 'instruments.lead' },
@@ -70,6 +70,9 @@ const INSTRUMENT_SHOW_MAP: { key: InstrumentKey; showKey: ShowKey; i18nKey: stri
   { key: 'Solo_Vocals', showKey: 'showVocals', i18nKey: 'instruments.vocals' },
   { key: 'Solo_PeripheralGuitar', showKey: 'showProLead', i18nKey: 'instruments.proLead' },
   { key: 'Solo_PeripheralBass', showKey: 'showProBass', i18nKey: 'instruments.proBass' },
+  { key: 'Solo_PeripheralVocals', showKey: 'showPeripheralVocals', i18nKey: 'instruments.peripheralVocals' },
+  { key: 'Solo_PeripheralCymbals', showKey: 'showPeripheralCymbals', i18nKey: 'instruments.peripheralCymbals' },
+  { key: 'Solo_PeripheralDrums', showKey: 'showPeripheralDrums', i18nKey: 'instruments.peripheralDrums' },
 ];
 
 type MetadataKey =
@@ -183,10 +186,11 @@ export default function SettingsPage() {
   const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
   const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobileChrome), [isMobileChrome]);
   const playerHistorySlidesMemo = useMemo(() => playerHistorySlides(isMobileChrome), [isMobileChrome]);
+  const statisticsSlidesMemo = useMemo(() => statisticsSlides(isMobileChrome), [isMobileChrome]);
   useRegisterFirstRun('songs', t('nav.songs'), songsSlidesMemo);
   useRegisterFirstRun('songinfo', t('nav.songInfo', 'Song Info'), songInfoSlidesMemo);
   useRegisterFirstRun('playerhistory', t('history.title'), playerHistorySlidesMemo);
-  useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlides);
+  useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlidesMemo);
   useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
   useRegisterFirstRun('leaderboards', t('nav.leaderboards'), leaderboardsSlides);
   useRegisterFirstRun('compete', t('nav.compete'), competeSlides);

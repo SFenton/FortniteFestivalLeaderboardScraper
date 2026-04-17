@@ -3,12 +3,15 @@ namespace FSTService;
 /// <summary>
 /// Deterministic bitmask-based combo IDs for instrument combinations.
 ///
-/// Each of the 6 instruments occupies a fixed bit position (0–5) in the canonical order
-/// defined by <see cref="CanonicalOrder"/>. A combo ID is the zero-padded 2-digit lowercase
-/// hex representation of the bitmask. For example:
-///   Lead + Bass         → bits 0+1 → 0x03 → "03"
-///   All Pad (G+B+D+V)  → bits 0-3 → 0x0f → "0f"
-///   All 6               → all bits → 0x3f → "3f"
+/// Each of the 9 instruments occupies a fixed bit position (0–8) in the canonical order
+/// defined by <see cref="CanonicalOrder"/>. A combo ID is the lowercase hex representation
+/// of the bitmask, padded to a minimum of 2 digits for backwards compatibility with stored
+/// 6-instrument rows. Masks ≥ 0x100 naturally widen to 3 digits. For example:
+///   Lead + Bass         → bits 0+1   → 0x03  → "03"
+///   All Pad (G+B+D+V)  → bits 0-3   → 0x0f  → "0f"
+///   OG Band + Pro       → all low 6  → 0x3f  → "3f"
+///   Peripheral Vocals   → bit 6      → 0x40  → "40"
+///   Peripheral Drums    → bit 8      → 0x100 → "100"
 ///
 /// This MUST stay in sync with packages/core/src/combos.ts.
 /// </summary>
@@ -26,6 +29,9 @@ public static class ComboIds
         "Solo_Vocals",
         "Solo_PeripheralGuitar",
         "Solo_PeripheralBass",
+        "Solo_PeripheralVocals",
+        "Solo_PeripheralCymbals",
+        "Solo_PeripheralDrums",
     };
 
     /// <summary>
@@ -71,7 +77,7 @@ public static class ComboIds
         foreach (var group in InstrumentGroups)
         {
             // Enumerate all subsets of this group with 2+ bits
-            int n = 6; // total bit positions
+            int n = CanonicalOrder.Count; // total bit positions
             for (int mask = 3; mask < (1 << n); mask++)
             {
                 if (BitCount(mask) < 2) continue;
@@ -83,7 +89,7 @@ public static class ComboIds
         return result.ToArray();
     }
 
-    /// <summary>Compute the combo ID (2-digit hex) for a set of instrument keys.</summary>
+    /// <summary>Compute the combo ID (2-digit hex, wider when mask ≥ 0x100) for a set of instrument keys.</summary>
     public static string FromInstruments(IEnumerable<string> instruments)
     {
         int mask = 0;
@@ -93,17 +99,25 @@ public static class ComboIds
             if (bit < 0) throw new ArgumentException($"Unknown instrument: {key}");
             mask |= 1 << bit;
         }
-        return mask.ToString("x2");
+        return FormatMask(mask);
     }
 
     /// <summary>Compute the combo ID directly from a bitmask (used by ComputeAllCombos).</summary>
-    public static string FromMask(int mask) => mask.ToString("x2");
+    public static string FromMask(int mask) => FormatMask(mask);
+
+    /// <summary>
+    /// Format a bitmask as a hex combo ID. Minimum 2-digit padding preserves
+    /// backwards compatibility with stored 6-instrument rows; masks ≥ 0x100
+    /// naturally widen to 3 digits when the 7th–9th instruments are involved.
+    /// </summary>
+    private static string FormatMask(int mask) => mask.ToString("x").PadLeft(2, '0');
 
     /// <summary>Recover the instrument list from a combo ID. Returns instruments in canonical order.</summary>
     public static List<string> ToInstruments(string comboId)
     {
         int mask = Convert.ToInt32(comboId, 16);
-        if (mask < 0 || mask > 0x3F) throw new ArgumentException($"Invalid combo ID: {comboId}");
+        int maxMask = (1 << CanonicalOrder.Count) - 1;
+        if (mask < 0 || mask > maxMask) throw new ArgumentException($"Invalid combo ID: {comboId}");
         var result = new List<string>();
         for (int bit = 0; bit < CanonicalOrder.Count; bit++)
         {
@@ -115,18 +129,20 @@ public static class ComboIds
 
     /// <summary>
     /// Normalize a combo parameter — accepts EITHER an old-style "Solo_Bass+Solo_Guitar"
-    /// key string OR a hex combo ID like "03". Returns the combo ID.
+    /// key string OR a hex combo ID like "03" or "1c0". Returns the combo ID.
     /// Returns null if fewer than 2 instruments.
     /// </summary>
     public static string? NormalizeComboParam(string? param)
     {
         if (string.IsNullOrWhiteSpace(param)) return null;
 
-        // If it looks like a hex combo ID (1-2 hex chars), validate and return
-        if (param.Length <= 2 && int.TryParse(param, System.Globalization.NumberStyles.HexNumber, null, out int mask))
+        int maxMask = (1 << CanonicalOrder.Count) - 1;
+
+        // If it looks like a hex combo ID (1-3 hex chars), validate and return
+        if (param.Length <= 3 && int.TryParse(param, System.Globalization.NumberStyles.HexNumber, null, out int mask))
         {
-            if (mask >= 0 && mask <= 0x3F && BitCount(mask) >= 2)
-                return mask.ToString("x2");
+            if (mask >= 0 && mask <= maxMask && BitCount(mask) >= 2)
+                return FormatMask(mask);
         }
 
         // Otherwise treat as "Instrument+Instrument+..." legacy format
@@ -155,11 +171,13 @@ public static class ComboIds
     {
         if (string.IsNullOrWhiteSpace(param)) return null;
 
-        // If it looks like a hex combo ID (1-2 hex chars), validate and return
-        if (param.Length <= 2 && int.TryParse(param, System.Globalization.NumberStyles.HexNumber, null, out int mask))
+        int maxMask = (1 << CanonicalOrder.Count) - 1;
+
+        // If it looks like a hex combo ID (1-3 hex chars), validate and return
+        if (param.Length <= 3 && int.TryParse(param, System.Globalization.NumberStyles.HexNumber, null, out int mask))
         {
-            if (mask > 0 && mask <= 0x3F)
-                return mask.ToString("x2");
+            if (mask > 0 && mask <= maxMask)
+                return FormatMask(mask);
         }
 
         // Otherwise treat as "Instrument+Instrument+..." format (including single)

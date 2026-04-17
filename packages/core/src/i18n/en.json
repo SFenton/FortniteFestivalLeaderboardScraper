@@ -3,9 +3,12 @@
     "lead": "Lead",
     "bass": "Bass",
     "drums": "Drums",
-    "vocals": "Vocals",
+    "vocals": "Tap Vocals",
     "proLead": "Pro Lead",
-    "proBass": "Pro Bass"
+    "proBass": "Pro Bass",
+    "peripheralVocals": "Mic Mode",
+    "peripheralCymbals": "Pro Drums + Cymbals",
+    "peripheralDrums": "Pro Drums"
   },
   "difficulty": {
     "easy": "Easy",

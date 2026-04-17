@@ -9,5 +9,8 @@ namespace FortniteFestival.Core.Config
         public bool QueryBass { get; set; } = true;
         public bool QueryProLead { get; set; } = true;
         public bool QueryProBass { get; set; } = true;
+        public bool QueryPeripheralVocals { get; set; } = true;
+        public bool QueryPeripheralCymbals { get; set; } = true;
+        public bool QueryPeripheralDrums { get; set; } = true;
     }
 }

@@ -51,7 +51,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     }
 
     /// <summary>
-    /// The 6 instrument API keys used in the leaderboard URL.
+    /// The 9 instrument API keys used in the leaderboard URL.
     /// </summary>
     public static readonly IReadOnlyList<string> AllInstruments = new[]
     {
@@ -61,6 +61,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         "Solo_Drums",
         "Solo_PeripheralGuitar",
         "Solo_PeripheralBass",
+        "Solo_PeripheralVocals",
+        "Solo_PeripheralCymbals",
+        "Solo_PeripheralDrums",
     };
 
     private readonly HttpClient _http;

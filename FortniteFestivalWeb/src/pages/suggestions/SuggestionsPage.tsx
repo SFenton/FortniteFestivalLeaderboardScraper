@@ -122,7 +122,10 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     showVocals: appSettings.showVocals,
     showProLead: appSettings.showProLead,
     showProBass: appSettings.showProBass,
-  }), [appSettings.showLead, appSettings.showBass, appSettings.showDrums, appSettings.showVocals, appSettings.showProLead, appSettings.showProBass]);
+    showPeripheralVocals: appSettings.showPeripheralVocals,
+    showPeripheralCymbals: appSettings.showPeripheralCymbals,
+    showPeripheralDrums: appSettings.showPeripheralDrums,
+  }), [appSettings.showLead, appSettings.showBass, appSettings.showDrums, appSettings.showVocals, appSettings.showProLead, appSettings.showProBass, appSettings.showPeripheralVocals, appSettings.showPeripheralCymbals, appSettings.showPeripheralDrums]);
   
   const visibleCategories = useMemo(() => {
     const instSettings = buildEffectiveInstrumentSettings(filterSettings, appSettings);

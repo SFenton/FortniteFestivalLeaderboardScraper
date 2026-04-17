@@ -15,6 +15,9 @@ const INSTRUMENT_I18N_KEY: Record<string, string> = {
   Solo_Vocals: 'instruments.vocals',
   Solo_PeripheralGuitar: 'instruments.proLead',
   Solo_PeripheralBass: 'instruments.proBass',
+  Solo_PeripheralVocals: 'instruments.peripheralVocals',
+  Solo_PeripheralCymbals: 'instruments.peripheralCymbals',
+  Solo_PeripheralDrums: 'instruments.peripheralDrums',
 };
 
 export default function InvalidScoreIcon({

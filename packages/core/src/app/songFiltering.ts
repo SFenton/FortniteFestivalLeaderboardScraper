@@ -31,6 +31,12 @@ const fallbackDifficulty = (song: Song, key: InstrumentKey): number => {
       return i.pg ?? i.gr ?? 0;
     case 'pro_bass':
       return i.pb ?? i.ba ?? 0;
+    case 'peripheral_vocals':
+      return i.vl ?? 0;
+    case 'peripheral_cymbals':
+      return i.ds ?? 0;
+    case 'peripheral_drums':
+      return i.ds ?? 0;
     default:
       return 0;
   }
@@ -412,12 +418,15 @@ export const buildSongDisplayRow = (params: {
     {instrumentKey: 'bass', icon: 'bass.png', hasScore: false, isFullCombo: false, isEnabled: true},
     {instrumentKey: 'pro_guitar', icon: 'pro_guitar.png', hasScore: false, isFullCombo: false, isEnabled: true},
     {instrumentKey: 'pro_bass', icon: 'pro_bass.png', hasScore: false, isFullCombo: false, isEnabled: true},
+    {instrumentKey: 'peripheral_vocals', icon: 'peripheral_vocals.png', hasScore: false, isFullCombo: false, isEnabled: true},
+    {instrumentKey: 'peripheral_cymbals', icon: 'peripheral_cymbals.png', hasScore: false, isFullCombo: false, isEnabled: true},
+    {instrumentKey: 'peripheral_drums', icon: 'peripheral_drums.png', hasScore: false, isFullCombo: false, isEnabled: true},
   ];
 
   const ld = 'scoresIndex' in params ? params.scoresIndex[id] : params.leaderboardData;
 
   let preferred: ScoreTracker | undefined;
-  if (ld) preferred = ld.guitar ?? ld.drums ?? ld.vocals ?? ld.bass ?? ld.pro_guitar ?? ld.pro_bass;
+  if (ld) preferred = ld.guitar ?? ld.drums ?? ld.vocals ?? ld.bass ?? ld.pro_guitar ?? ld.pro_bass ?? ld.peripheral_vocals ?? ld.peripheral_cymbals ?? ld.peripheral_drums;
 
   const base = {
     songId: id,
@@ -456,20 +465,18 @@ export const buildSongDisplayRow = (params: {
   // Apply settings enable flags
   if (settings) {
     for (const s of statuses) {
-      s.isEnabled =
-        s.instrumentKey === 'guitar'
-          ? (settings.showLead ?? true)
-          : s.instrumentKey === 'bass'
-            ? (settings.showBass ?? true)
-            : s.instrumentKey === 'drums'
-              ? (settings.showDrums ?? true)
-              : s.instrumentKey === 'vocals'
-                ? (settings.showVocals ?? true)
-                : s.instrumentKey === 'pro_guitar'
-                  ? (settings.showProLead ?? true)
-                  : s.instrumentKey === 'pro_bass'
-                    ? (settings.showProBass ?? true)
-                    : true;
+      switch (s.instrumentKey) {
+        case 'guitar': s.isEnabled = settings.showLead ?? true; break;
+        case 'bass': s.isEnabled = settings.showBass ?? true; break;
+        case 'drums': s.isEnabled = settings.showDrums ?? true; break;
+        case 'vocals': s.isEnabled = settings.showVocals ?? true; break;
+        case 'pro_guitar': s.isEnabled = settings.showProLead ?? true; break;
+        case 'pro_bass': s.isEnabled = settings.showProBass ?? true; break;
+        case 'peripheral_vocals': s.isEnabled = settings.showPeripheralVocals ?? true; break;
+        case 'peripheral_cymbals': s.isEnabled = settings.showPeripheralCymbals ?? true; break;
+        case 'peripheral_drums': s.isEnabled = settings.showPeripheralDrums ?? true; break;
+        default: s.isEnabled = true;
+      }
     }
   }
 

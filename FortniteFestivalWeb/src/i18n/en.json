@@ -322,9 +322,12 @@
     "lead": "Lead",
     "bass": "Bass",
     "drums": "Drums",
-    "vocals": "Vocals",
+    "vocals": "Tap Vocals",
     "proLead": "Pro Lead",
-    "proBass": "Pro Bass"
+    "proBass": "Pro Bass",
+    "peripheralVocals": "Mic Mode",
+    "peripheralCymbals": "Pro Drums + Cymbals",
+    "peripheralDrums": "Pro Drums"
   },
   "metadata": {
     "score": "Score",
@@ -584,6 +587,11 @@
       "topSongs": {
         "title": "Highest and Lowest Rank Breakdown",
         "description": "Each instrument shows your highest and lowest five songs by percentile rank. Tap any song to see its leaderboard and score history."
+      },
+      "selectProfile": {
+        "title": "Select Player Profile",
+        "descriptionMobile": "Press the pulsing player profile button at the top of the screen, or the dedicated button inside the FAB menu, to select this player profile and see all of their tracked data.",
+        "descriptionDesktop": "Press the Select Player Profile button at the top of the screen to select this player profile and see all of their tracked data."
       }
     },
     "suggestions": {
@@ -612,8 +620,8 @@
         "unfcDesc": "Play these songs again on Lead and grab an FC!",
         "pctPushTitle": "Percentile Push: Bass",
         "pctPushDesc": "Replay these Bass songs to jump to the next percentile bracket.",
-        "staleTitle": "Play Vocals This Season",
-        "staleDesc": "Songs you haven't played on Vocals this season.",
+        "staleTitle": "Play Tap Vocals This Season",
+        "staleDesc": "Songs you haven't played on Tap Vocals this season.",
         "nearFcTitle": "FC These Next!",
         "nearFcDesc": "If you can get gold stars, you can FC it!",
         "unplayedTitle": "New on Drums",

@@ -10,6 +10,9 @@ const SETTING_TO_KEY: [keyof AppSettings, ServerInstrumentKey][] = [
   ['showVocals', 'Solo_Vocals'],
   ['showProLead', 'Solo_PeripheralGuitar'],
   ['showProBass', 'Solo_PeripheralBass'],
+  ['showPeripheralVocals', 'Solo_PeripheralVocals'],
+  ['showPeripheralCymbals', 'Solo_PeripheralCymbals'],
+  ['showPeripheralDrums', 'Solo_PeripheralDrums'],
 ];
 
 /** Returns the list of enabled server instrument keys based on app settings. */

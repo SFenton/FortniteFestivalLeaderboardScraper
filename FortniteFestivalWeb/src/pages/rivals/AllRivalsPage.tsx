@@ -29,6 +29,7 @@ let _cachedLeaderboardData: LeaderboardRivalsListResponse | null = null;
 const VALID_INSTRUMENTS = new Set<string>([
   'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
   'Solo_PeripheralGuitar', 'Solo_PeripheralBass',
+  'Solo_PeripheralVocals', 'Solo_PeripheralCymbals', 'Solo_PeripheralDrums',
 ]);
 
 /* v8 ignore start -- page component with multiple context/hook dependencies */
@@ -97,7 +98,7 @@ export default function AllRivalsPage() {
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- activeInstruments derived from settings
-  }, [isCommon, accountId, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass]);
+  }, [isCommon, accountId, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass, settings.showPeripheralVocals, settings.showPeripheralCymbals, settings.showPeripheralDrums]);
 
   // ─── Fetch: single instrument ────────────────────────────────
 

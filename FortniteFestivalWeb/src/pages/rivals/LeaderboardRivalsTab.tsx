@@ -83,7 +83,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- activeInstruments derived from settings
-  }, [accountId, rankBy, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass]);
+  }, [accountId, rankBy, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass, settings.showPeripheralVocals, settings.showPeripheralCymbals, settings.showPeripheralDrums]);
   /* v8 ignore stop */
 
   const allReady = instrumentRivals.length > 0 && instrumentRivals.every(r => !r.loading);

@@ -20,6 +20,10 @@ export const shouldShowCategory = (
   settings: InstrumentShowSettings,
 ): boolean => {
   const key = categoryKey.toLowerCase();
+  // Peripheral variants checked first to avoid false positives with 'drums'/'vocals'
+  if (key.includes('peripheral_vocals') || key.includes('peripheralvocals') || key.includes('mic_mode')) return settings.showPeripheralVocals;
+  if (key.includes('peripheral_cymbals') || key.includes('peripheralcymbals')) return settings.showPeripheralCymbals;
+  if (key.includes('peripheral_drums') || key.includes('peripheraldrums')) return settings.showPeripheralDrums;
   if (key.includes('pro_guitar') || key.includes('prolead') || key.includes('pro_lead')) return settings.showProLead;
   if (key.includes('pro_bass') || key.includes('probass')) return settings.showProBass;
   if (key.includes('guitar') || key.includes('lead')) return settings.showLead;

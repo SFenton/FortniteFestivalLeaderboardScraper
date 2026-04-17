@@ -31,6 +31,9 @@ export type SuggestionsFilterDraft = {
   suggestionsVocalsFilter: boolean;
   suggestionsProLeadFilter: boolean;
   suggestionsProBassFilter: boolean;
+  suggestionsPeripheralVocalsFilter: boolean;
+  suggestionsPeripheralCymbalsFilter: boolean;
+  suggestionsPeripheralDrumsFilter: boolean;
   [key: string]: boolean;
 };
 
@@ -42,6 +45,9 @@ export function defaultSuggestionsFilterDraft(): SuggestionsFilterDraft {
     suggestionsVocalsFilter: true,
     suggestionsProLeadFilter: true,
     suggestionsProBassFilter: true,
+    suggestionsPeripheralVocalsFilter: true,
+    suggestionsPeripheralCymbalsFilter: true,
+    suggestionsPeripheralDrumsFilter: true,
   };
   for (const { id } of SUGGESTION_TYPES) {
     d[globalKeyFor(id)] = true;
@@ -62,12 +68,15 @@ export function isSuggestionsFilterActive(draft: SuggestionsFilterDraft): boolea
 // ---------------------------------------------------------------------------
 
 const INSTRUMENTS: { key: InstrumentKey; label: string; filterKey: keyof SuggestionsFilterDraft; showKey: string }[] = [
-  { key: 'guitar',     label: 'Lead',     filterKey: 'suggestionsLeadFilter',    showKey: 'showLead' },
-  { key: 'bass',       label: 'Bass',     filterKey: 'suggestionsBassFilter',    showKey: 'showBass' },
-  { key: 'drums',      label: 'Drums',    filterKey: 'suggestionsDrumsFilter',   showKey: 'showDrums' },
-  { key: 'vocals',     label: 'Vocals',   filterKey: 'suggestionsVocalsFilter',  showKey: 'showVocals' },
-  { key: 'pro_guitar', label: 'Pro Lead', filterKey: 'suggestionsProLeadFilter', showKey: 'showProLead' },
-  { key: 'pro_bass',   label: 'Pro Bass', filterKey: 'suggestionsProBassFilter', showKey: 'showProBass' },
+  { key: 'guitar',             label: 'Lead',                filterKey: 'suggestionsLeadFilter',              showKey: 'showLead' },
+  { key: 'bass',               label: 'Bass',                filterKey: 'suggestionsBassFilter',              showKey: 'showBass' },
+  { key: 'drums',              label: 'Drums',               filterKey: 'suggestionsDrumsFilter',             showKey: 'showDrums' },
+  { key: 'vocals',             label: 'Tap Vocals',          filterKey: 'suggestionsVocalsFilter',            showKey: 'showVocals' },
+  { key: 'pro_guitar',         label: 'Pro Lead',            filterKey: 'suggestionsProLeadFilter',           showKey: 'showProLead' },
+  { key: 'pro_bass',           label: 'Pro Bass',            filterKey: 'suggestionsProBassFilter',           showKey: 'showProBass' },
+  { key: 'peripheral_vocals',  label: 'Mic Mode',            filterKey: 'suggestionsPeripheralVocalsFilter',  showKey: 'showPeripheralVocals' },
+  { key: 'peripheral_cymbals', label: 'Pro Drums + Cymbals', filterKey: 'suggestionsPeripheralCymbalsFilter', showKey: 'showPeripheralCymbals' },
+  { key: 'peripheral_drums',   label: 'Pro Drums',           filterKey: 'suggestionsPeripheralDrumsFilter',   showKey: 'showPeripheralDrums' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -81,6 +90,9 @@ type InstrumentVisibility = {
   showVocals: boolean;
   showProLead: boolean;
   showProBass: boolean;
+  showPeripheralVocals: boolean;
+  showPeripheralCymbals: boolean;
+  showPeripheralDrums: boolean;
 };
 
 type SuggestionsFilterModalProps = {
