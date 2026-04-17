@@ -186,11 +186,10 @@ export default function SettingsPage() {
   const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
   const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobileChrome), [isMobileChrome]);
   const playerHistorySlidesMemo = useMemo(() => playerHistorySlides(isMobileChrome), [isMobileChrome]);
-  const statisticsSlidesMemo = useMemo(() => statisticsSlides(isMobileChrome), [isMobileChrome]);
   useRegisterFirstRun('songs', t('nav.songs'), songsSlidesMemo);
   useRegisterFirstRun('songinfo', t('nav.songInfo', 'Song Info'), songInfoSlidesMemo);
   useRegisterFirstRun('playerhistory', t('history.title'), playerHistorySlidesMemo);
-  useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlidesMemo);
+  useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlides);
   useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
   useRegisterFirstRun('leaderboards', t('nav.leaderboards'), leaderboardsSlides);
   useRegisterFirstRun('compete', t('nav.compete'), competeSlides);
