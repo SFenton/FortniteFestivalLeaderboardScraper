@@ -340,8 +340,7 @@ export default function PlayerContent({
   for (let i = 0; i < visibleKeys.length; i++) {
     const inst = visibleKeys[i]!;
     const scores = byInstrument.get(inst) ?? [];
-    items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === visibleKey
-    items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === instrumentsWithScores.length - 1));
+    items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === visibleKeys.length - 1));
   }
 
   // Wire up container-level scroll fade
