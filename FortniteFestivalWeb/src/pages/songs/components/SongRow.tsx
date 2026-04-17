@@ -35,6 +35,9 @@ const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
 /** Below this container width (px), mobile rows use unified wrapping instead of top-row primary element. */
 const MOBILE_PILL_THRESHOLD = 310;
 
+/** Fixed width (px) for the last-played date span so icons/edges align column-wise across rows. */
+const LAST_PLAYED_DATE_WIDTH = 90;
+
 /** Render a single metadata element for the given key. */
 function renderMetadataElement(
   key: string,
@@ -110,7 +113,7 @@ function renderMetadataElement(
       if (!lp) return null;
       const d = new Date(lp);
       const formatted = isNaN(d.getTime()) ? lp : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-      return <span style={{ color: Colors.textSecondary, fontSize: Font.md, whiteSpace: 'nowrap' }}>{formatted}</span>;
+      return <span style={{ color: Colors.textSecondary, fontSize: Font.md, whiteSpace: 'nowrap', display: 'inline-block', width: LAST_PLAYED_DATE_WIDTH, textAlign: 'right' }}>{formatted}</span>;
     }
     default:
       return null;
@@ -250,7 +253,7 @@ export const SongRow = memo(function SongRow({ song,
           result.push({ key, el: (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: Gap.sm }}>
               <InstrumentIcon instrument={bestInst} size={28} />
-              <span style={{ color: Colors.textSecondary, fontSize: Font.md, whiteSpace: 'nowrap' }}>{formatted}</span>
+              <span style={{ color: Colors.textSecondary, fontSize: Font.md, whiteSpace: 'nowrap', display: 'inline-block', width: LAST_PLAYED_DATE_WIDTH, textAlign: 'right' }}>{formatted}</span>
             </span>
           ) });
           continue;
