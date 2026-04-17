@@ -15,6 +15,7 @@ import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { LoadPhase } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS, CONTENT_OUT_MS } from '@festival/theme';
+import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
@@ -48,7 +49,9 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const isTrackedPlayer = !!propAccountId;
 
   // First-run carousel
-  useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlides);
+  const isMobileChrome = useIsMobileChrome();
+  const slidesMemo = useMemo(() => statisticsSlides(isMobileChrome), [isMobileChrome]);
+  useRegisterFirstRun('statistics', t('nav.statistics'), slidesMemo);
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
   const firstRun = useFirstRun('statistics', firstRunGateCtx);
 

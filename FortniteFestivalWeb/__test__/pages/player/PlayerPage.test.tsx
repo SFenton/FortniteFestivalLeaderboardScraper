@@ -406,7 +406,7 @@ describe('PlayerPage — extra coverage', () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'other-player', displayName: 'Other' }));
     renderPlayerPage('/player/test-player-1');
     await waitFor(() => {
-      expect(screen.getByText('Select Player Profile')).toBeTruthy();
+      expect(screen.getAllByText('Select Player Profile').length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -416,10 +416,20 @@ describe('PlayerPage — extra coverage', () => {
     await waitFor(() => {
       expect(screen.getAllByText('TestPlayer').length).toBeGreaterThan(0);
     });
-    const btn = screen.queryByText('Select Player Profile');
-    if (btn) {
-      const style = btn.closest('button')?.style;
-      expect(style?.opacity === '0' || style?.pointerEvents === 'none').toBeTruthy();
+    const btns = screen.queryAllByText('Select Player Profile');
+    for (const btn of btns) {
+      const button = btn.closest('button');
+      if (!button) continue; // text node not inside a button (e.g. FRE title)
+      const style = button.style;
+      const isHidden = style.opacity === '0' || style.pointerEvents === 'none';
+      // FRE demo buttons are wrapped in a non-interactive container
+      let ancestor: HTMLElement | null = button.parentElement;
+      let parentNonInteractive = false;
+      while (ancestor) {
+        if (ancestor.style.pointerEvents === 'none') { parentNonInteractive = true; break; }
+        ancestor = ancestor.parentElement;
+      }
+      expect(isHidden || parentNonInteractive).toBeTruthy();
     }
   });
 

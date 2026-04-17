@@ -33,27 +33,39 @@ import { overviewSlide } from '../../../../src/pages/player/firstRun/pages/Overv
 import { instrumentBreakdownSlide } from '../../../../src/pages/player/firstRun/pages/InstrumentBreakdown';
 import { percentilesSlide } from '../../../../src/pages/player/firstRun/pages/Percentiles';
 import { topSongsSlide } from '../../../../src/pages/player/firstRun/pages/TopSongs';
+import { selectProfileDesktopSlide, selectProfileMobileSlide } from '../../../../src/pages/player/firstRun/pages/SelectProfile';
 
 beforeAll(() => {
   stubResizeObserver();
 });
 
 describe('statisticsSlides', () => {
-  it('returns 5 slides', () => {
-    expect(statisticsSlides).toHaveLength(5);
+  it('returns 6 slides for desktop', () => {
+    expect(statisticsSlides(false)).toHaveLength(6);
   });
 
-  it('includes slides in the correct order', () => {
-    expect(statisticsSlides[0]).toBe(drillDownSlide);
-    expect(statisticsSlides[1]).toBe(overviewSlide);
-    expect(statisticsSlides[2]).toBe(instrumentBreakdownSlide);
-    expect(statisticsSlides[3]).toBe(percentilesSlide);
-    expect(statisticsSlides[4]).toBe(topSongsSlide);
+  it('returns 6 slides for mobile', () => {
+    expect(statisticsSlides(true)).toHaveLength(6);
+  });
+
+  it('includes slides in the correct order (desktop)', () => {
+    const slides = statisticsSlides(false);
+    expect(slides[0]).toBe(selectProfileDesktopSlide);
+    expect(slides[1]).toBe(drillDownSlide);
+    expect(slides[2]).toBe(overviewSlide);
+    expect(slides[3]).toBe(instrumentBreakdownSlide);
+    expect(slides[4]).toBe(percentilesSlide);
+    expect(slides[5]).toBe(topSongsSlide);
+  });
+
+  it('includes mobile select-profile slide on mobile', () => {
+    const slides = statisticsSlides(true);
+    expect(slides[0]).toBe(selectProfileMobileSlide);
   });
 });
 
 describe('slide definitions', () => {
-  const slides = [drillDownSlide, overviewSlide, instrumentBreakdownSlide, percentilesSlide, topSongsSlide];
+  const slides = [selectProfileDesktopSlide, drillDownSlide, overviewSlide, instrumentBreakdownSlide, percentilesSlide, topSongsSlide];
 
   it.each(slides.map(s => [s.id, s]))('%s has required fields', (_id, slide) => {
     expect(slide.id).toBeTruthy();
