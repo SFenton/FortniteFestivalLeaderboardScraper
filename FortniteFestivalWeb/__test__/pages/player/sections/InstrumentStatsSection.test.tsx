@@ -62,9 +62,11 @@ function buildItems(scores: PlayerScore[], totalSongs: number, ...rest: Paramete
 }
 
 describe('buildInstrumentStatsItems', () => {
-  it('returns empty array for empty scores', () => {
+  it('renders instrument header and empty state when no scores', () => {
     const items = buildItems([], 100, 'Player', navigateToSongs, navigateToSongDetail, {});
-    expect(items.length).toBe(0);
+    expect(items).toHaveLength(2);
+    expect(items[0]!.key).toBe(`inst-hdr-${inst}`);
+    expect(items[1]!.key).toBe(`inst-empty-${inst}`);
   });
 
   it('returns items for scores with ranked entries', () => {

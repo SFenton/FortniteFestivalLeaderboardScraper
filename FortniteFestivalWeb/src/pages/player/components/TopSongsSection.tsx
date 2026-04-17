@@ -8,6 +8,7 @@ import type { CSSProperties } from 'react';
 import PlayerSectionHeading from '../sections/PlayerSectionHeading';
 import PlayerSongRow from './PlayerSongRow';
 import type { PlayerItem, NavigateToSongDetail } from '../helpers/playerPageTypes';
+import InstrumentEmptyState from '../sections/InstrumentEmptyState';
 
 export function buildTopSongsItems(
   t: (key: string, opts?: Record<string, unknown>) => string,
@@ -19,9 +20,34 @@ export function buildTopSongsItems(
   isLast?: boolean,
 ): PlayerItem[] {
   const withPct = scores.filter((s) => s.rank > 0 && (s.totalEntries ?? 0) > 0);
-  if (withPct.length === 0) return [];
 
   const items: PlayerItem[] = [];
+
+  // Top songs header (always rendered so every visible instrument is represented)
+  items.push({
+    key: `top-hdr-${inst}`,
+    span: true,
+    heightEstimate: Layout.sectionHeadingHeight,
+    node: (
+      <PlayerSectionHeading
+        title={t('player.topFiveSongs')}
+        description={t('player.topSongsDesc', { name: displayName, instrument: instrumentLabel(inst) })}
+        instrument={inst}
+      />
+    ),
+  });
+
+  // Empty state — no ranked scores for this instrument
+  if (withPct.length === 0) {
+    items.push({
+      key: `top-empty-${inst}`,
+      span: true,
+      heightEstimate: 120,
+      node: <InstrumentEmptyState instrument={inst} t={t} />,
+    });
+    return items;
+  }
+
   const sorted = withPct.slice().sort((a, b) => a.rank / a.totalEntries! - b.rank / b.totalEntries!);
   const topScores = sorted.slice(0, 5);
   const bottomScores = sorted.length > 5 ? sorted.slice(-5).reverse() : [];
@@ -50,20 +76,6 @@ export function buildTopSongsItems(
     );
   };
   /* v8 ignore stop */
-
-  // Top songs header
-  items.push({
-    key: `top-hdr-${inst}`,
-    span: true,
-    heightEstimate: Layout.sectionHeadingHeight,
-    node: (
-      <PlayerSectionHeading
-        title={t('player.topFiveSongs')}
-        description={t('player.topSongsDesc', { name: displayName, instrument: instrumentLabel(inst) })}
-        instrument={inst}
-      />
-    ),
-  });
 
   const noBottom = bottomScores.length === 0;
 

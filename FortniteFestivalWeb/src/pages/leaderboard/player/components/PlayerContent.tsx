@@ -303,9 +303,10 @@ export default function PlayerContent({
   });
 
   // --- Per-instrument: header + stat boxes + percentile rows ---
+  // Render a section for every visible instrument, even if the player has no
+  // scores on it yet — the section will show a "No scores yet" empty state.
   for (const inst of visibleKeys) {
-    const scores = byInstrument.get(inst);
-    if (!scores || scores.length === 0) continue;
+    const scores = byInstrument.get(inst) ?? [];
 
     // Prefer pre-computed tiered stats from backend; fall back to client-side computation
     const instTiers = statsData ? getInstrumentTiers(statsData.instruments, inst) : undefined;
@@ -334,14 +335,12 @@ export default function PlayerContent({
     ),
   });
 
-  // --- Top/Bottom song rows ---
-  const instrumentsWithScores = visibleKeys.filter(inst => {
-    const scores = byInstrument.get(inst);
-    return scores && scores.length > 0;
-  });
-  for (let i = 0; i < instrumentsWithScores.length; i++) {
-    const inst = instrumentsWithScores[i]!;
-    const scores = byInstrument.get(inst)!;
+  // Render a Top Songs block for every visible instrument; those without ranked
+  // scores will show the same empty state used in the Instrument Stats block.
+  for (let i = 0; i < visibleKeys.length; i++) {
+    const inst = visibleKeys[i]!;
+    const scores = byInstrument.get(inst) ?? [];
+    items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === visibleKey
     items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === instrumentsWithScores.length - 1));
   }
 

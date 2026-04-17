@@ -23,11 +23,13 @@ function makeScore(songId: string, rank: number, totalEntries: number): PlayerSc
 }
 
 describe('buildTopSongsItems', () => {
-  it('returns empty array if no ranked scores', () => {
+  it('returns top-songs header + empty state when no ranked scores', () => {
     const scores = [makeScore('s1', 0, 0)];
     const songMap = new Map([['s1', makeSong('s1')]]);
     const items = buildTopSongsItems(t, inst, scores, songMap, 'Player', navigateToSongDetail);
-    expect(items.length).toBe(0);
+    expect(items).toHaveLength(2);
+    expect(items[0]!.key).toBe(`top-hdr-${inst}`);
+    expect(items[1]!.key).toBe(`top-empty-${inst}`);
   });
 
   it('returns top 5 header + songs for <= 5 ranked scores', () => {

@@ -166,6 +166,8 @@
     "failedToLoad": "Failed to load player",
     "percentileHeader": "Percentile",
     "songsHeader": "Songs",
+    "noScoresYet": "No scores yet",
+    "noScoresYetSubtitle": "Play some songs on {{instrument}} to see your stats appear here.",
     "topSongsPerInstrument": "Top Songs Per Instrument",
     "topSongsPerInstrumentDesc": "{{name}}'s highest and lowest-ranked competitive songs per instrument, sorted by percentile.",
     "topFiveSongs": "Top Five Songs",

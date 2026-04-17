@@ -15,6 +15,7 @@ import type { AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@f
 import { getRankForMetric, DEFAULT_METRICS, EXPERIMENTAL_METRICS } from '../../leaderboards/helpers/rankingHelpers';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import RankHistoryChart from '../../leaderboards/components/RankHistoryChart';
+import InstrumentEmptyState from './InstrumentEmptyState';
 
 const METRIC_I18N_KEY: Record<RankingMetric, string> = {
   totalscore: 'player.totalScoreRank',
@@ -77,11 +78,9 @@ export function buildInstrumentStatsItems(
   totalRankedAccounts?: number,
   enableLeaderboards?: boolean,
 ): PlayerItem[] {
-  if (stats.songsPlayed === 0) return [];
-
   const items: PlayerItem[] = [];
 
-  // Instrument header
+  // Instrument header (always rendered so users see every visible instrument)
   items.push({
     key: `inst-hdr-${inst}`,
     span: true,
@@ -92,6 +91,17 @@ export function buildInstrumentStatsItems(
       </div>
     ),
   });
+
+  // Empty state — no scores recorded for this instrument yet
+  if (stats.songsPlayed === 0) {
+    items.push({
+      key: `inst-empty-${inst}`,
+      span: true,
+      heightEstimate: 120,
+      node: <InstrumentEmptyState instrument={inst} t={t} />,
+    });
+    return items;
+  }
 
   // Rank history chart (only when ranking data exists for this instrument)
   if (accountId && rankingEntry && enableLeaderboards) {
