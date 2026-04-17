@@ -513,15 +513,31 @@ public sealed partial class RoundRobinProxyHandler : DelegatingHandler
         public HttpMessageInvoker Invoker => _invoker;
 
         /// <summary>Token that in-flight requests should observe. Cancelled on CDN block to fast-fail.</summary>
-        public CancellationToken InflightToken => _inflightCts.Token;
+        public CancellationToken InflightToken
+        {
+            get
+            {
+                // Snapshot to a local so a concurrent CancelInflight() swap doesn't
+                // hand us a disposed CTS. If the current CTS is already disposed,
+                // fall back to CancellationToken.None — the request will still run
+                // and will be observed by the outer ct.
+                var cts = _inflightCts;
+                try { return cts.Token; }
+                catch (ObjectDisposedException) { return CancellationToken.None; }
+            }
+        }
 
         /// <summary>Cancel all in-flight requests on this proxy (fast-fail instead of 30s timeout).</summary>
         public void CancelInflight()
         {
-            var old = _inflightCts;
-            _inflightCts = new CancellationTokenSource();
-            old.Cancel();
-            old.Dispose();
+            // Atomically swap in a fresh CTS so concurrent callers never double-dispose.
+            var fresh = new CancellationTokenSource();
+            var old = Interlocked.Exchange(ref _inflightCts, fresh);
+            if (old is null) return;
+            try { old.Cancel(); }
+            catch (ObjectDisposedException) { /* already disposed by a racing caller */ }
+            try { old.Dispose(); }
+            catch (ObjectDisposedException) { /* idempotent */ }
         }
 
         /// <summary>Reset connection pool by replacing the SocketsHttpHandler + Invoker.</summary>

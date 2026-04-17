@@ -445,27 +445,26 @@ public sealed class ScraperWorker : BackgroundService
             {
                 _log.LogError(ex,
                     "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
-                    "Partial data from this pass was already persisted via pipelined writers.",
+                    "Partial data from this pass was already persisted via pipelined writers. " +
+                    "Continuing to post-scrape phases on whatever data was captured.",
                     _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
-                _lifecycle.ScrapeCompleted();
-                return;
+                // Do NOT return — fall through so post-scrape (rankings/rivals/precompute) still runs.
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 _log.LogWarning(
                     "Scrape pass timed out after {TimeoutMinutes} minutes. " +
-                    "Partial data from this pass was already persisted. Will retry next pass.",
+                    "Partial data from this pass was already persisted. " +
+                    "Continuing to post-scrape phases on whatever data was captured.",
                     opts.ScrapePassTimeoutMinutes);
-                _lifecycle.ScrapeCompleted();
-                return;
+                // Do NOT return — fall through so post-scrape still runs.
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _log.LogError(ex,
                     "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
-                    "Will retry next pass.");
-                _lifecycle.ScrapeCompleted();
-                return;
+                    "Continuing to post-scrape phases on whatever data was captured.");
+                // Do NOT return — fall through so post-scrape still runs.
             }
         }
         else
