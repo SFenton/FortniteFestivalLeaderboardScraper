@@ -152,7 +152,7 @@ export default function LeaderboardPage() {
     return () => scrollEl.removeEventListener('scroll', onScroll);
   }, [cacheKey, scrollContainerRef]);
 
-  // Header collapse callback â€” respects pinning (pinned pages keep their state until unpinned)
+  // Header collapse callback � respects pinning (pinned pages keep their state until unpinned)
   const handleHeaderCollapse = useCallback((collapsed: boolean) => {
     if (headerPinned.current) return;
     setHeaderCollapsed(collapsed);
@@ -207,7 +207,7 @@ export default function LeaderboardPage() {
   );
 
   // Restore scroll position when returning from cache
-  /* v8 ignore start â€” scroll restoration: scrollTop DOM API */
+  /* v8 ignore start � scroll restoration: scrollTop DOM API */
   useEffect(() => {
     if (!skipAllAnim || !cached) return;
     if (cached.scrollTop > 0) {
@@ -265,7 +265,7 @@ export default function LeaderboardPage() {
       setLoadPhase(LoadPhase.ContentIn);
       hasShownContentRef.current = true;
       // On initial load, let header be expanded and unpin immediately.
-      // On pagination, keep pinned Ã¢â‚¬â€ scroll handler will unpin once past threshold.
+      // On pagination, keep pinned — scroll handler will unpin once past threshold.
       /* v8 ignore start -- animation timing: initial load vs pagination */
       if (!hasLoadedOnce.current) {
         hasLoadedOnce.current = true;
@@ -281,7 +281,7 @@ export default function LeaderboardPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- animation sequence, intentionally omits isNarrow
   }, [loading, error]);
 
-  /* v8 ignore start â€” navToPlayer auto-scroll */
+  /* v8 ignore start � navToPlayer auto-scroll */
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !searchParams.get('navToPlayer')) return;
     const playerIndex = playerData ? entries.findIndex(e => e.accountId === playerData.accountId) : -1;
@@ -370,7 +370,7 @@ export default function LeaderboardPage() {
 
         {!error && (
           <>
-            {/* v8 ignore start — entry rendering via shared component */}
+            {/* v8 ignore start ? entry rendering via shared component */}
               <PaginatedLeaderboard<LeaderboardEntryType>
                 entries={entries}
                 page={page + 1}

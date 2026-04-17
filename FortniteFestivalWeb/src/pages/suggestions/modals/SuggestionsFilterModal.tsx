@@ -21,7 +21,7 @@ import { filterStyles } from '../../songs/modals/filterStyles';
 import { useTranslation } from 'react-i18next';
 
 // ---------------------------------------------------------------------------
-// Filter draft type â€“ mirrors the RN SuggestionsInstrumentFilters
+// Filter draft type – mirrors the RN SuggestionsInstrumentFilters
 // ---------------------------------------------------------------------------
 
 export type SuggestionsFilterDraft = {

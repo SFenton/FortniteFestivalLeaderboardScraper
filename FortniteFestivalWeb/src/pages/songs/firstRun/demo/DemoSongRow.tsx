@@ -2,7 +2,7 @@
 /**
  * Shared wrapper for demo song rows in the first-run carousel.
  * Handles the frostedCard container, fade-in animation, and fade-out/in
- * transition during the swap cycle â€” so individual demos only supply content.
+ * transition during the swap cycle — so individual demos only supply content.
  */
 import type { ReactNode } from 'react';
 import { FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
