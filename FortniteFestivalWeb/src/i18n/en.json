@@ -1,4 +1,4 @@
-{
+﻿{
   "common": {
     "back": "Back",
     "cancel": "Cancel",
@@ -6,7 +6,7 @@
     "reset": "Reset",
     "search": "Search...",
     "dismiss": "Dismiss",
-    "loading": "Loading…",
+    "loading": "Loadingâ€¦",
     "error": "Something went wrong",
     "notFound": "Not found",
     "unknownUser": "Unknown User",
@@ -15,7 +15,7 @@
     "no": "No",
     "ok": "OK",
     "failedToLoad": "Failed to load data",
-    "searchPlayer": "Search player…",
+    "searchPlayer": "Search playerâ€¦",
     "selectPlayerProfile": "Select Player Profile",
     "selectAsProfile": "Select {{name}} as Player Profile",
     "findPlayer": "Find Player",
@@ -65,7 +65,7 @@
   },
   "songs": {
     "title": "Songs",
-    "searchPlaceholder": "Search songs or artists…",
+    "searchPlaceholder": "Search songs or artistsâ€¦",
     "noResults": "No songs match your filters.",
     "noResultsSubtitle": "Try adjusting your search or filters.",
     "count": "{{filtered}} of {{total}} songs",
@@ -100,19 +100,24 @@
     "localEntries": "{{count}} tracked",
     "noEntries": "No leaderboard entries found.",
     "noEntriesOnPage": "No entries on this page",
-    "first": "« First",
-    "prev": "‹ Prev",
-    "next": "Next ›",
-    "last": "Last »",
+    "first": "Â« First",
+    "prev": "â€¹ Prev",
+    "next": "Next â€º",
+    "last": "Last Â»",
     "notFound": "Not found",
     "failedToLoad": "Failed to load leaderboard",
-    "viewFull": "View full leaderboard"
+    "viewFull": "View full leaderboard",
+    "viewFullWithCounts": "View full leaderboard ({{local}} tracked / {{total}} total)",
+    "viewPlain": "View leaderboard",
+    "viewFullShort": "View full leaderboard",
+    "trackedCount": "{{count}} tracked",
+    "totalCount": "{{count}} total"
   },
   "player": {
     "title": "Statistics",
     "syncingScores": "Syncing scores",
     "buildingHistory": "Building history",
-    "syncInProgress": "Syncing scores…",
+    "syncInProgress": "Syncing scoresâ€¦",
     "backfillProgress": "Checking scores: {{checked}} / {{total}}",
     "historyProgress": "Building history: {{processed}} / {{total}}",
     "syncComplete": "Sync complete",
@@ -182,7 +187,7 @@
     "noSuggestions": "No suggestions available.",
     "noSuggestionsSubtitle": "Select a player profile to get personalized suggestions.",
     "filterButton": "Filter Suggestions",
-    "loadingMore": "Loading more suggestions…",
+    "loadingMore": "Loading more suggestionsâ€¦",
     "noSuggestionsFiltered": "Try changing your filters to see more suggestions.",
     "playSongsFirst": "Play some songs first!",
     "serviceDown": "The service may be down unexpectedly. Please refresh to try again."
@@ -211,12 +216,12 @@
     "artist_unplayed": { "title": "Discover {{artist}}", "desc": "Unplayed songs from {{artist}}." },
     "samename": { "title": "Songs Named '{{name}}'", "desc": "Different tracks sharing the same title." },
     "samename_nearfc": { "title": "Close to FC: '{{name}}' Variants", "desc": "FC these same-name songs for a unique achievement!" },
-    "almost_elite": { "title": "Almost Elite", "desc": "You're in the top 5% on these — one good run could crack the top 1%." },
-    "almost_elite_decade": { "title": "Almost Elite ({{decade}})", "desc": "You're in the top 5% on these {{decade}} songs — one good run could crack the top 1%." },
-    "almost_elite_instrument": { "title": "Almost Elite on {{instrument}}", "desc": "Your {{instrument}} scores are in the top 5% — push them into the top 1%." },
-    "almost_elite_instrument_decade": { "title": "Almost Elite on {{instrument}} ({{decade}})", "desc": "Your {{instrument}} scores on these {{decade}} songs are in the top 5% — push them into the top 1%." },
-    "pct_push": { "title": "Percentile Push", "desc": "These scores are close to the next percentile bracket — replay them to climb." },
-    "pct_push_decade": { "title": "Percentile Push ({{decade}})", "desc": "These {{decade}} scores are close to the next percentile bracket — replay them to climb." },
+    "almost_elite": { "title": "Almost Elite", "desc": "You're in the top 5% on these â€” one good run could crack the top 1%." },
+    "almost_elite_decade": { "title": "Almost Elite ({{decade}})", "desc": "You're in the top 5% on these {{decade}} songs â€” one good run could crack the top 1%." },
+    "almost_elite_instrument": { "title": "Almost Elite on {{instrument}}", "desc": "Your {{instrument}} scores are in the top 5% â€” push them into the top 1%." },
+    "almost_elite_instrument_decade": { "title": "Almost Elite on {{instrument}} ({{decade}})", "desc": "Your {{instrument}} scores on these {{decade}} songs are in the top 5% â€” push them into the top 1%." },
+    "pct_push": { "title": "Percentile Push", "desc": "These scores are close to the next percentile bracket â€” replay them to climb." },
+    "pct_push_decade": { "title": "Percentile Push ({{decade}})", "desc": "These {{decade}} scores are close to the next percentile bracket â€” replay them to climb." },
     "pct_push_instrument": { "title": "Percentile Push: {{instrument}}", "desc": "Replay these {{instrument}} songs to jump to the next percentile bracket." },
     "pct_push_instrument_decade": { "title": "Percentile Push: {{instrument}} ({{decade}})", "desc": "Replay these {{decade}} {{instrument}} songs to jump to the next percentile bracket." },
     "stale_global": { "title": "Untouched for {{seasons}} Season(s)", "desc": "Songs you haven't played since {{seasons}} season(s) ago." },
@@ -225,11 +230,11 @@
     "same_pct_bucket": { "title": "Break Into {{target}}", "desc": "Songs where all your instruments are ranked Top {{bucket}}%. Improve any instrument to break the tie and climb to {{target}}." },
     "pct_improve_bucket": { "title": "Top {{bucket}}% Push", "desc": "Songs with at least one instrument ranked Top {{bucket}}%. A small score bump could push you higher." },
     "pct_improve_instrument_bucket": { "title": "Top {{bucket}}% Push", "desc": "Songs with {{instrument}} scores ranked Top {{bucket}}%. A small score bump could push you higher." },
-    "improve_rankings_instrument": { "title": "Improve {{instrument}} Rankings", "desc": "A varied mix of {{instrument}} songs across different percentile brackets — all with room to grow." },
+    "improve_rankings_instrument": { "title": "Improve {{instrument}} Rankings", "desc": "A varied mix of {{instrument}} songs across different percentile brackets â€” all with room to grow." },
     "song_rival_gap": { "title": "Close the Gap vs {{rival}}", "desc": "Songs where {{rival}} barely leads you. One good run could overtake them." },
     "song_rival_protect": { "title": "Protect Your Lead vs {{rival}}", "desc": "You're barely ahead of {{rival}} on these. Don't let them pass you." },
     "song_rival_battleground": { "title": "Battleground Songs", "desc": "Multiple rivals are clustered around your rank on these songs. Every position matters." },
-    "song_rival_spotlight": { "title": "Rival Spotlight: {{rival}}", "desc": "A curated mix of your rivalry with {{rival}} — catches, defenses, and closest battles." },
+    "song_rival_spotlight": { "title": "Rival Spotlight: {{rival}}", "desc": "A curated mix of your rivalry with {{rival}} â€” catches, defenses, and closest battles." },
     "song_rival_slipping": { "title": "{{rival}} is Pulling Ahead", "desc": "{{rival}} has a big lead on these songs. Time to close the gap." },
     "song_rival_dominate": { "title": "Dominate {{rival}}", "desc": "You're crushing {{rival}} on these. Keep up the dominance." },
     "song_rival_near_fc": { "title": "FC These to Beat {{rival}}!", "desc": "Almost FC songs where your rival also competes. Nail the combo to pull ahead." },
@@ -259,7 +264,7 @@
     "SameName": "Same Name",
     "SameNameDesc": "Different tracks that share the same title.",
     "AlmostElite": "Almost Elite",
-    "AlmostEliteDesc": "Top 5% — one good run could crack the top 1%.",
+    "AlmostEliteDesc": "Top 5% â€” one good run could crack the top 1%.",
     "PercentilePush": "Percentile Push",
     "PercentilePushDesc": "Close to the next percentile bracket.",
     "Stale": "Stale Songs",
@@ -380,7 +385,7 @@
   "chart": {
     "scoreHistory": "Score History",
     "selectBarHint": "Select a bar to see more score details.",
-    "loadingHistory": "Loading score history…",
+    "loadingHistory": "Loading score historyâ€¦",
     "noHistory": "No score history for {{instrument}}",
     "accuracy": "Accuracy",
     "accuracyFC": "Accuracy (FC)",
@@ -388,7 +393,7 @@
     "viewAllScores": "View all scores",
     "rankHistory": "Rank History",
     "rankHistoryHint": "Your ranking progression over the past {{days}} days.",
-    "loadingRankHistory": "Loading rank history…",
+    "loadingRankHistory": "Loading rank historyâ€¦",
     "noRankHistory": "No rank history for {{instrument}}",
     "rank": "Rank",
     "value": "Value"
@@ -407,8 +412,8 @@
   },
   "sort": {
     "direction": "Sort Direction",
-    "ascending": "A→Z",
-    "descending": "Z→A",
+    "ascending": "Aâ†’Z",
+    "descending": "Zâ†’A",
     "mode": "Mode",
     "modeHint": "Choose which property to sort the song list by.",
     "resetLabel": "Reset Sort Settings",
@@ -416,10 +421,10 @@
     "applyLabel": "Apply Sort Changes",
     "cancelTitle": "Discard Sort Changes",
     "cancelMessage": "Are you sure you want to discard your sort changes?",
-    "ascendingHintSongs": "Ascending (A–Z, low–high)",
-    "descendingHintSongs": "Descending (Z–A, high–low)",
-    "ascendingHintScores": "Ascending (oldest first, low–high)",
-    "descendingHintScores": "Descending (newest first, high–low)",
+    "ascendingHintSongs": "Ascending (Aâ€“Z, lowâ€“high)",
+    "descendingHintSongs": "Descending (Zâ€“A, highâ€“low)",
+    "ascendingHintScores": "Ascending (oldest first, lowâ€“high)",
+    "descendingHintScores": "Descending (newest first, highâ€“low)",
     "metadataPriority": "Metadata Sort Priority",
     "metadataPriorityHint": "When two songs have the same value for the selected sort mode, songs are sorted by comparing these properties in order from top to bottom.",
     "metadataPriorityHintVisualOrder": "When Enable Independent Song Row Visual Order is disabled in Settings, this also controls the order in which metadata is displayed in the song row (except for the primary sort field). To manually control visual order regardless of sort, go to App Settings and enable Enable Independent Song Row Visual Order, then order the song row metadata as you'd like to see it.",
@@ -447,7 +452,7 @@
     "lastPlayed": "Last Played"
   },
   "format": {
-    "noScore": "—",
+    "noScore": "â€”",
     "seasonShort": "S{{season}}",
     "songCount": "{{count}} song",
     "songCount_other": "{{count}} songs"
@@ -576,7 +581,7 @@
       },
       "overview": {
         "title": "Global Statistics",
-        "description": "See a player's overall performance at a glance — songs played, full combos, gold stars, accuracy, and best rank. Tap any stat with an indicator to jump to the relevant songs."
+        "description": "See a player's overall performance at a glance â€” songs played, full combos, gold stars, accuracy, and best rank. Tap any stat with an indicator to jump to the relevant songs."
       },
       "instrumentBreakdown": {
         "title": "Per-Instrument Stats",
@@ -584,7 +589,7 @@
       },
       "percentiles": {
         "title": "Percentile Rankings",
-        "description": "See where a player ranks relative to all players. The percentile table breaks down how many scores land in each bracket — from Top 1% to Top 100%."
+        "description": "See where a player ranks relative to all players. The percentile table breaks down how many scores land in each bracket â€” from Top 1% to Top 100%."
       },
       "topSongs": {
         "title": "Highest and Lowest Rank Breakdown",
@@ -599,11 +604,11 @@
     "suggestions": {
       "overview": {
         "title": "Personalized Suggestions",
-        "description": "Get tailored song suggestions based on your scores — find your best improvement opportunities, achievement gaps, and next milestones."
+        "description": "Get tailored song suggestions based on your scores â€” find your best improvement opportunities, achievement gaps, and next milestones."
       },
       "categoryCard": {
         "title": "Suggestion Cards",
-        "description": "Each suggestion is a themed card with songs tailored to what you have and haven't played — near FCs, unplayed tracks, percentile pushes, and more."
+        "description": "Each suggestion is a themed card with songs tailored to what you have and haven't played â€” near FCs, unplayed tracks, percentile pushes, and more."
       },
       "globalFilter": {
         "title": "Filter Suggestions",
@@ -641,11 +646,11 @@
     "songInfo": {
       "chart": {
         "title": "Score History Chart",
-        "description": "When you have a player selected, their score history for this song appears at the top — charting accuracy and score over time. Change instruments to see more data!"
+        "description": "When you have a player selected, their score history for this song appears at the top â€” charting accuracy and score over time. Change instruments to see more data!"
       },
       "barSelect": {
         "title": "Select a Bar for Details",
-        "description": "Tap any bar on the chart to see the details for that score — date, season, score, and accuracy."
+        "description": "Tap any bar on the chart to see the details for that score â€” date, season, score, and accuracy."
       },
       "viewAll": {
         "title": "View Player Scores",
@@ -678,8 +683,8 @@
       },
       "sort": {
         "title": "Sort Scores",
-        "descriptionMobile": "Tap the sort button in the action menu to reorder by date, score, accuracy, or season — ascending or descending.",
-        "descriptionDesktop": "Tap the sort button in the header to reorder by date, score, accuracy, or season — ascending or descending."
+        "descriptionMobile": "Tap the sort button in the action menu to reorder by date, score, accuracy, or season â€” ascending or descending.",
+        "descriptionDesktop": "Tap the sort button in the header to reorder by date, score, accuracy, or season â€” ascending or descending."
       }
     },
     "leaderboards": {
@@ -689,7 +694,7 @@
       },
       "experimentalMetrics": {
         "title": "Experimental Ranking Metrics",
-        "description": "Sort by Adjusted Skill, Weighted Rating, FC Rate, or Max Score %. These metrics use statistical formulas and may not perfectly reflect skill — tap the ? icon on any metric for details."
+        "description": "Sort by Adjusted Skill, Weighted Rating, FC Rate, or Max Score %. These metrics use statistical formulas and may not perfectly reflect skill â€” tap the ? icon on any metric for details."
       },
       "yourRank": {
         "title": "Your Rank",
@@ -699,7 +704,7 @@
         "adjusted": {
           "how": {
             "title": "How Adjusted Skill Works",
-            "description": "Your rank on each song becomes a percentile. Your rating is the average across all songs — lower is better."
+            "description": "Your rank on each song becomes a percentile. Your rating is the average across all songs â€” lower is better."
           },
           "experience": {
             "title": "Why Playing More Songs Helps",
@@ -721,7 +726,7 @@
           },
           "experience": {
             "title": "Why Playing More Songs Helps",
-            "description": "Same experience boost — new players start near 50% and converge toward their true rating."
+            "description": "Same experience boost â€” new players start near 50% and converge toward their true rating."
           },
           "hood": {
             "title": "Under the Hood",
@@ -735,7 +740,7 @@
         "fcrate": {
           "how": {
             "title": "How FC Rate Works",
-            "description": "The percentage of songs you Full Combo'd — hitting every note without breaking your streak."
+            "description": "The percentage of songs you Full Combo'd â€” hitting every note without breaking your streak."
           },
           "experience": {
             "title": "Why Playing More Songs Helps",
@@ -743,7 +748,7 @@
           },
           "hood": {
             "title": "Under the Hood",
-            "description": "Same experience formula — your real FC rate blended with the 50% starting point."
+            "description": "Same experience formula â€” your real FC rate blended with the 50% starting point."
           },
           "experimental": {
             "title": "Why It's Experimental",
@@ -773,7 +778,7 @@
     "compete": {
       "hub": {
         "title": "Compete Hub",
-        "description": "Your competitive snapshot — see your leaderboard rankings and closest rivals at a glance."
+        "description": "Your competitive snapshot â€” see your leaderboard rankings and closest rivals at a glance."
       },
       "leaderboards": {
         "title": "Leaderboards",
@@ -791,7 +796,7 @@
       },
       "instruments": {
         "title": "Per-Instrument Rivals",
-        "description": "Each instrument has its own rival list — plus a common rivals section for players who appear across multiple instruments."
+        "description": "Each instrument has its own rival list â€” plus a common rivals section for players who appear across multiple instruments."
       },
       "detail": {
         "title": "Head-to-Head",
@@ -805,7 +810,7 @@
       },
       "views": {
         "title": "Grid & List View",
-        "description": "Switch between a visual grid of album art and a compact list — tap the toggle in the header."
+        "description": "Switch between a visual grid of album art and a compact list â€” tap the toggle in the header."
       },
       "highlighting": {
         "title": "Shop Highlighting",
@@ -813,7 +818,7 @@
       },
       "leaving": {
         "title": "Leaving Tomorrow",
-        "description": "Songs about to leave the Item Shop pulse red — in the grid, list, and on the Songs page — so you never miss a last-chance purchase."
+        "description": "Songs about to leave the Item Shop pulse red â€” in the grid, list, and on the Songs page â€” so you never miss a last-chance purchase."
       }
     }
   },

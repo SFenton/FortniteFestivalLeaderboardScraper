@@ -13,6 +13,10 @@ export type InstrumentData = {
   entries: LeaderboardEntry[];
   loading: boolean;
   error: string | null;
+  /** Total entries reported by Epic for this instrument's leaderboard. */
+  totalEntries?: number;
+  /** Number of entries tracked locally by FST for this instrument's leaderboard. */
+  localEntries?: number;
 };
 
 export type SongDetailCache = {

@@ -152,7 +152,13 @@ export default function SongDetailPage() {
       for (const inst of res.instruments) {
         const key = inst.instrument as InstrumentKey;
         if (key in newData) {
-          newData[key] = { entries: inst.entries, loading: false, error: null };
+          newData[key] = {
+            entries: inst.entries,
+            loading: false,
+            error: null,
+            totalEntries: inst.totalEntries,
+            localEntries: inst.localEntries,
+          };
         }
       }
       setInstrumentData(newData);
@@ -398,6 +404,8 @@ export default function SongDetailPage() {
                       playerAccountId={player?.accountId}
                       prefetchedEntries={instrumentData[inst].entries}
                       prefetchedError={instrumentData[inst].error}
+                      totalEntries={instrumentData[inst].totalEntries}
+                      localEntries={instrumentData[inst].localEntries}
                       skipAnimation={skipAnim}
                       scoreWidth={globalScoreWidth}
                     />

@@ -23,6 +23,10 @@ interface InstrumentCardProps {
   playerAccountId?: string;
   prefetchedEntries: LeaderboardEntryType[];
   prefetchedError: string | null;
+  /** Total entries reported by Epic for this instrument's leaderboard (if known). */
+  totalEntries?: number;
+  /** Entries tracked locally by FST for this instrument's leaderboard (if known). */
+  localEntries?: number;
   skipAnimation?: boolean;
   scoreWidth: string;
 }
@@ -38,6 +42,8 @@ export default memo(function InstrumentCard({
   playerAccountId,
   prefetchedEntries,
   prefetchedError,
+  totalEntries,
+  localEntries,
   skipAnimation,
   scoreWidth,
 }: InstrumentCardProps) {
@@ -159,12 +165,31 @@ export default memo(function InstrumentCard({
         {!prefetchedError && prefetchedEntries.length > 0 && (() => {
           const viewAllDelay = baseDelay + STAGGER_ENTRY_OFFSET + (prefetchedEntries.length + (playerScore && !playerInTop ? 1 : 0)) * STAGGER_ROW_MS;
           const viewAllStagger = anim(viewAllDelay);
+          const hasCounts = totalEntries != null && localEntries != null && totalEntries > 0;
+          if (hasCounts && isMobile) {
+            return (
+              <div
+                style={{ ...st.viewAllButtonStacked, ...viewAllStagger }}
+                onAnimationEnd={clearAnim}
+              >
+                <span>{t('leaderboard.viewFullShort')}</span>
+                <span>{t('leaderboard.trackedCount', { count: localEntries!.toLocaleString() as unknown as number })}</span>
+                <span>{t('leaderboard.totalCount', { count: totalEntries!.toLocaleString() as unknown as number })}</span>
+              </div>
+            );
+          }
+          const label = hasCounts
+            ? t('leaderboard.viewFullWithCounts', {
+                local: localEntries!.toLocaleString(),
+                total: totalEntries!.toLocaleString(),
+              })
+            : t('leaderboard.viewPlain');
           return (
             <div
               style={{ ...st.viewAllButton, ...viewAllStagger }}
               onAnimationEnd={clearAnim}
             >
-              {t('leaderboard.viewFull')}
+              {label}
             </div>
           );
         })()}
@@ -221,11 +246,13 @@ function useInstrumentCardStyles(_isMobile: boolean) {
         display: Display.flex,
         alignItems: Align.center,
         justifyContent: Justify.center,
-        height: Layout.entryRowHeight,
+        minHeight: Layout.entryRowHeight,
+        padding: padding(Gap.sm, Gap.md),
         borderRadius: Radius.md,
         color: Colors.textMuted,
         fontSize: Font.md,
         fontWeight: Weight.semibold,
+        textAlign: 'center' as const,
       } as CSSProperties,
       cardError: {
         fontSize: Font.sm,
@@ -252,6 +279,22 @@ function useInstrumentCardStyles(_isMobile: boolean) {
         fontSize: Font.md,
         fontWeight: Weight.semibold,
         cursor: Cursor.pointer,
+        transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+      } as CSSProperties,
+      viewAllButtonStacked: {
+        ...frostedCard,
+        display: Display.flex,
+        flexDirection: 'column',
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        gap: Gap.xs,
+        padding: padding(Gap.sm, Gap.md),
+        borderRadius: Radius.md,
+        color: Colors.textPrimary,
+        fontSize: Font.md,
+        fontWeight: Weight.semibold,
+        cursor: Cursor.pointer,
+        textAlign: 'center' as const,
         transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
       } as CSSProperties,
     };
