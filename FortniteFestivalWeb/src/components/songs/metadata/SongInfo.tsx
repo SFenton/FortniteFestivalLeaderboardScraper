@@ -8,18 +8,21 @@ import { Colors, Font, Gap, Size, Weight, flexColumn } from '@festival/theme';
 import AlbumArt from './AlbumArt';
 import MarqueeText from '../../common/MarqueeText';
 import { useMarqueeSync } from '../../../hooks/ui/useMarqueeSync';
+import { formatDuration } from '../../../utils/formatters';
 
 export interface SongInfoProps {
   albumArt?: string;
   title: string;
   artist: string;
   year?: number;
+  durationSeconds?: number;
   minWidth?: number;
 }
 
-const SongInfo = memo(function SongInfo({ albumArt, title, artist, year, minWidth }: SongInfoProps) {
+const SongInfo = memo(function SongInfo({ albumArt, title, artist, year, durationSeconds, minWidth }: SongInfoProps) {
   const s = useStyles(minWidth);
-  const artistText = `${artist}${year ? ` \u00b7 ${year}` : ''}`;
+  const duration = formatDuration(durationSeconds);
+  const artistText = `${artist}${year ? ` \u00b7 ${year}` : ''}${duration ? ` \u00b7 ${duration}` : ''}`;
   const { reporters, syncDistance } = useMarqueeSync(2);
   return (
     <>

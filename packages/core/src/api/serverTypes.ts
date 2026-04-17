@@ -68,6 +68,8 @@ export type ServerSong = {
   album?: string;
   year?: number;
   tempo?: number;
+  /** Song duration in seconds, from Epic's spark-tracks `dn` field. Null when missing or 0. */
+  durationSeconds?: number;
   albumArt?: string;
   genres?: string[];
   difficulty?: SongDifficulty;

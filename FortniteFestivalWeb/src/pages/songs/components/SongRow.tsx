@@ -216,7 +216,7 @@ export const SongRow = memo(function SongRow({ song,
 
   const displayOrder = useMemo(() => {
     const order = [...metadataOrder];
-    const generalModes = ['title', 'artist', 'year', 'hasfc'];
+    const generalModes = ['title', 'artist', 'year', 'duration', 'hasfc'];
     if (!generalModes.includes(sortMode)) {
       if (sortMode === 'maxdistance' || sortMode === 'maxscorediff') {
         // Max-distance/diff sort: score (dual) is primary, metric goes to bottom row
@@ -285,7 +285,7 @@ export const SongRow = memo(function SongRow({ song,
   const rowClassName = shopHighlightRed ? anim.shopHighlightRed : shopHighlight ? anim.shopHighlight : undefined;
 
   const infoMinWidth = isMobile || externalHref ? 0 : 200;
-  const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={infoMinWidth} />;
+  const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} durationSeconds={song.durationSeconds} minWidth={infoMinWidth} />;
 
   // External link: render <a> instead of <Link>
   const defaultTo = `/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`;

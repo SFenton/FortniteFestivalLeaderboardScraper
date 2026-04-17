@@ -21,6 +21,7 @@ import PageHeader from '../../common/PageHeader';
 import MarqueeText from '../../common/MarqueeText';
 import { useMarqueeSync } from '../../../hooks/ui/useMarqueeSync';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { formatDuration } from '../../../utils/formatters';
 import anim from '../../../styles/animations.module.css';
 import cls from './SongInfoHeader.module.css';
 
@@ -106,7 +107,7 @@ export default function SongInfoHeader({
             )}
             <div style={s.textWrap}>
               <MarqueeText as="h1" className={s.titleClassName} style={s.songTitle} text={song?.title ?? songId} onMeasure={reporters[0]} syncDistance={syncDistance} />
-              <MarqueeText as="p" className={s.artistClassName} style={s.songArtist} text={`${song?.artist ?? t('common.unknownArtist')}${song?.year ? ` \u00b7 ${song.year}` : ''}`} onMeasure={reporters[1]} syncDistance={syncDistance} />
+              <MarqueeText as="p" className={s.artistClassName} style={s.songArtist} text={`${song?.artist ?? t('common.unknownArtist')}${song?.year ? ` \u00b7 ${song.year}` : ''}${formatDuration(song?.durationSeconds) ? ` \u00b7 ${formatDuration(song?.durationSeconds)}` : ''}`} onMeasure={reporters[1]} syncDistance={syncDistance} />
               {showSubtitle2 && (
                 <MarqueeText as="p" className={s.artistClassName} style={s.songArtist} text={subtitle2!} onMeasure={reporters[2]} syncDistance={syncDistance} />
               )}

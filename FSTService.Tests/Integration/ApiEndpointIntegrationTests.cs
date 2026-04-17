@@ -149,6 +149,27 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(4, diff.GetProperty("proVocals").GetInt32());
     }
 
+    [Fact]
+    public async Task ApiSongs_ExposesDurationSeconds()
+    {
+        var response = await _client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var songs = json.GetProperty("songs");
+        JsonElement? testSong = null;
+        for (var i = 0; i < songs.GetArrayLength(); i++)
+        {
+            if (songs[i].GetProperty("songId").GetString() == "testSong1")
+            {
+                testSong = songs[i];
+                break;
+            }
+        }
+        Assert.NotNull(testSong);
+        Assert.True(testSong!.Value.TryGetProperty("durationSeconds", out var dur));
+        Assert.Equal(235, dur.GetInt32());
+    }
+
     // ─── Path Images ────────────────────────────────────────────
 
     [Fact]
@@ -3075,6 +3096,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     su = "testSong1",
                     tt = "Integration Test Song",
                     an = "Test Artist",
+                    dn = 235,
                     @in = new In { gr = 5, ba = 3, vl = 4, ds = 2, pg = 6, pb = 5, pd = 7, bd = 4 },
                 }
             };

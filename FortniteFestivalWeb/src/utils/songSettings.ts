@@ -12,6 +12,7 @@ export type SongSortMode =
   | 'title'
   | 'artist'
   | 'year'
+  | 'duration'
   | 'shop'
   | 'hasfc'
   | 'lastplayed'

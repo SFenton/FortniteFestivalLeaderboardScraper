@@ -89,6 +89,42 @@ describe('useFilteredSongs', () => {
     expect(result.current.map(s => s.year)).toEqual([2020, 2021, 2022]);
   });
 
+  it('sorts by duration', () => {
+    const songsWithDur = [
+      { ...songs[0], durationSeconds: 300 } as Song,
+      { ...songs[1], durationSeconds: 180 } as Song,
+      { ...songs[2], durationSeconds: 240 } as Song,
+    ];
+    const { result: asc } = renderHook(() => useFilteredSongs({
+      songs: songsWithDur, search: '', sortMode: 'duration' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap: new Map(), allScoreMap: new Map(),
+    }));
+    expect(asc.current.map(s => s.songId)).toEqual(['s2', 's3', 's1']);
+
+    const { result: desc } = renderHook(() => useFilteredSongs({
+      songs: songsWithDur, search: '', sortMode: 'duration' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap: new Map(), allScoreMap: new Map(),
+    }));
+    expect(desc.current.map(s => s.songId)).toEqual(['s1', 's3', 's2']);
+  });
+
+  it('treats missing durationSeconds as 0 when sorting', () => {
+    const songsMixed = [
+      { ...songs[0], durationSeconds: 200 } as Song,
+      { ...songs[1] } as Song, // no durationSeconds
+      { ...songs[2], durationSeconds: 100 } as Song,
+    ];
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsMixed, search: '', sortMode: 'duration' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap: new Map(), allScoreMap: new Map(),
+    }));
+    // s2 (undef → 0), then s3 (100), then s1 (200)
+    expect(result.current.map(s => s.songId)).toEqual(['s2', 's3', 's1']);
+  });
+
   it('applies season filter', () => {
     const scoreMap = new Map([['s1', score('s1', { season: 1 })], ['s2', score('s2', { season: 2 })], ['s3', score('s3', { season: 1 })]]);
     const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])]));
