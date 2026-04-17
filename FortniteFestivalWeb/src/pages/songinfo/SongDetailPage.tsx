@@ -30,6 +30,7 @@ import PathsModal from './components/path/PathsModal';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import InstrumentCard from './components/InstrumentCard';
+import IntensityCard from './components/IntensityCard';
 import { songInfoSlides } from './firstRun';
 
 import { songDetailCache } from '../../api/pageCache';
@@ -361,6 +362,11 @@ export default function SongDetailPage() {
       })()}
       {phase === LoadPhase.ContentIn && !allErrored && (
         <div style={styles.container}>
+          <IntensityCard
+            song={song}
+            style={{ ...stagger(100), marginBottom: Gap.section }}
+            onAnimationEnd={clearAnim}
+          />
           {player && scoreHistoryReady && filteredScoreHistory.length > 0 && (
             <div style={{ ...stagger(150), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
