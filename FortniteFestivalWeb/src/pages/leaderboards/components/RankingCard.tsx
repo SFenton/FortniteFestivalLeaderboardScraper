@@ -6,6 +6,7 @@ import { InstrumentHeaderSize } from '@festival/core';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { RankingEntry } from './RankingEntry';
 import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, AccountRankingDto, RankingMetric } from '@festival/core/api/serverTypes';
+import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
 import { getRankForMetric, formatRating, getRatingForMetric, computeRankWidth, getSongsLabel } from '../helpers/rankingHelpers';
@@ -90,7 +91,7 @@ export default memo(function RankingCard({
       <div style={st.cardBody}>
         {error && <span style={st.cardError}>{parseApiError(error).title}</span>}
         {!error && entries.length === 0 && (
-          <span style={st.cardMuted}>{t('rankings.noRankings')}</span>
+          <InstrumentEmptyState instrument={instrument} t={t} noMargin titleKey="rankings.noRankings" subtitleKey="rankings.noRankingsSubtitle" />
         )}
         {!error && entries.map((e, i) => {
           const rank = getRankForMetric(e, metric);

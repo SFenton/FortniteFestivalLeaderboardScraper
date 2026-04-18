@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -193,7 +193,7 @@ describe('PlayerContent', () => {
     React.act(() => { setQueryFn('hello'); });
     expect(getByTestId('search-query').textContent).toBe('hello');
 
-    // Click "Songs Played" stat card â€” triggers navigateToSongs
+    // Click "Songs Played" stat card — triggers navigateToSongs
     const songsPlayed = screen.getAllByText('Songs Played')[0]!;
     fireEvent.click(songsPlayed);
 

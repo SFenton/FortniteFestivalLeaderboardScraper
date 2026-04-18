@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import { ACCURACY_SCALE } from '@festival/core';
 import type { ServerInstrumentKey as InstrumentKey, PlayerScore } from '@festival/core/api/serverTypes';
@@ -32,7 +32,7 @@ vi.mock('../../../../src/components/display/InstrumentHeader', () => ({
   default: ({ instrument }: any) => <div data-testid="inst-header">{instrument}</div>,
 }));
 vi.mock('../../../../src/components/songs/metadata/GoldStars', () => ({
-  default: () => <span data-testid="gold-stars">â˜…â˜…â˜…â˜…â˜…â˜…</span>,
+  default: () => <span data-testid="gold-stars">★★★★★★</span>,
 }));
 
 const t = (key: string) => key;
@@ -232,7 +232,7 @@ describe('buildInstrumentStatsItems', () => {
     for (const item of items) {
       if (!item.key.includes('card')) continue;
       const { container } = render(<>{item.node}</>);
-      // The avgPercentile card also uses "player.songsPlayed" labelâ€”find the second one
+      // The avgPercentile card also uses "player.songsPlayed" label—find the second one
       const els = container.querySelectorAll('[data-testid*="player.songsPlayed"]');
       if (els.length > 0) {
         fireEvent.click(els[els.length - 1]!);

@@ -118,6 +118,7 @@ public interface IMetaDatabase : IDisposable
     void FailRivals(string accountId, string errorMessage);
     RivalsStatusInfo? GetRivalsStatus(string accountId);
     List<string> GetPendingRivalsAccounts();
+    int ResetStaleRivals();
     void ReplaceRivalsData(string userId, IReadOnlyList<UserRivalRow> rivals, IReadOnlyList<RivalSongSampleRow> samples);
     List<UserRivalRow> GetUserRivals(string userId, string? instrumentCombo = null, string? direction = null);
     List<RivalComboSummary> GetRivalCombos(string userId);

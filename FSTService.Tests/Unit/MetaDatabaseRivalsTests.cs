@@ -206,4 +206,52 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         Assert.Empty(Db.GetRivalSongSamples("acct_1", "r1"));
         Assert.Null(Db.GetRivalsStatus("acct_1"));
     }
+
+    // ═══ ResetStaleRivals ═══════════════════════════════════════
+
+    [Fact]
+    public void ResetStaleRivals_resets_complete_with_zero_rivals()
+    {
+        Db.EnsureRivalsStatus("stale");
+        Db.StartRivals("stale");
+        Db.CompleteRivals("stale", 0, 0);
+
+        var count = Db.ResetStaleRivals();
+        Assert.Equal(1, count);
+
+        var status = Db.GetRivalsStatus("stale");
+        Assert.Equal("pending", status!.Status);
+        Assert.Equal(0, status.CombosComputed);
+        Assert.Equal(0, status.RivalsFound);
+    }
+
+    [Fact]
+    public void ResetStaleRivals_does_not_touch_users_with_rivals()
+    {
+        Db.EnsureRivalsStatus("rich");
+        Db.StartRivals("rich");
+        Db.CompleteRivals("rich", 5, 20);
+
+        var count = Db.ResetStaleRivals();
+        Assert.Equal(0, count);
+
+        var status = Db.GetRivalsStatus("rich");
+        Assert.Equal("complete", status!.Status);
+        Assert.Equal(20, status.RivalsFound);
+    }
+
+    [Fact]
+    public void ResetStaleRivals_does_not_touch_pending_or_error()
+    {
+        Db.EnsureRivalsStatus("pending_user");
+        Db.EnsureRivalsStatus("error_user");
+        Db.StartRivals("error_user");
+        Db.FailRivals("error_user", "test error");
+
+        var count = Db.ResetStaleRivals();
+        Assert.Equal(0, count);
+
+        Assert.Equal("pending", Db.GetRivalsStatus("pending_user")!.Status);
+        Assert.Equal("error", Db.GetRivalsStatus("error_user")!.Status);
+    }
 }

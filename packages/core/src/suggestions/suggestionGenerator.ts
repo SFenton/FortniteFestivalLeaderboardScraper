@@ -20,7 +20,7 @@ export const createSeededRng = (seed: number): Rng => {
   };
 };
 
-const Instruments: InstrumentKey[] = ['guitar', 'bass', 'drums', 'vocals', 'pro_guitar', 'pro_bass'];
+const Instruments: InstrumentKey[] = ['guitar', 'bass', 'drums', 'vocals', 'pro_guitar', 'pro_bass', 'peripheral_vocals', 'peripheral_cymbals', 'peripheral_drums'];
 const canon = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
 
 const pct = (t: ScoreTracker | null | undefined): number | undefined => {
@@ -457,6 +457,12 @@ export class SuggestionGenerator {
       () => this.unFcInstrumentDecade('pro_guitar'),
       () => this.unFcInstrument('pro_bass'),
       () => this.unFcInstrumentDecade('pro_bass'),
+      () => this.unFcInstrument('peripheral_vocals'),
+      () => this.unFcInstrumentDecade('peripheral_vocals'),
+      () => this.unFcInstrument('peripheral_cymbals'),
+      () => this.unFcInstrumentDecade('peripheral_cymbals'),
+      () => this.unFcInstrument('peripheral_drums'),
+      () => this.unFcInstrumentDecade('peripheral_drums'),
       () => this.firstPlaysMixed(),
       () => this.firstPlaysMixedDecade(),
       () => this.unplayedAll(),
@@ -477,6 +483,12 @@ export class SuggestionGenerator {
       () => this.unplayedInstrumentDecade('pro_guitar'),
       () => this.unplayedInstrument('pro_bass'),
       () => this.unplayedInstrumentDecade('pro_bass'),
+      () => this.unplayedInstrument('peripheral_vocals'),
+      () => this.unplayedInstrumentDecade('peripheral_vocals'),
+      () => this.unplayedInstrument('peripheral_cymbals'),
+      () => this.unplayedInstrumentDecade('peripheral_cymbals'),
+      () => this.unplayedInstrument('peripheral_drums'),
+      () => this.unplayedInstrumentDecade('peripheral_drums'),
       () => this.almostElite(),
       () => this.almostEliteDecade(),
       () => this.almostEliteInstrument('guitar'),
@@ -491,6 +503,12 @@ export class SuggestionGenerator {
       () => this.almostEliteInstrumentDecade('pro_guitar'),
       () => this.almostEliteInstrument('pro_bass'),
       () => this.almostEliteInstrumentDecade('pro_bass'),
+      () => this.almostEliteInstrument('peripheral_vocals'),
+      () => this.almostEliteInstrumentDecade('peripheral_vocals'),
+      () => this.almostEliteInstrument('peripheral_cymbals'),
+      () => this.almostEliteInstrumentDecade('peripheral_cymbals'),
+      () => this.almostEliteInstrument('peripheral_drums'),
+      () => this.almostEliteInstrumentDecade('peripheral_drums'),
       () => this.percentilePush(),
       () => this.percentilePushDecade(),
       () => this.percentilePushInstrument('guitar'),
@@ -505,6 +523,12 @@ export class SuggestionGenerator {
       () => this.percentilePushInstrumentDecade('pro_guitar'),
       () => this.percentilePushInstrument('pro_bass'),
       () => this.percentilePushInstrumentDecade('pro_bass'),
+      () => this.percentilePushInstrument('peripheral_vocals'),
+      () => this.percentilePushInstrumentDecade('peripheral_vocals'),
+      () => this.percentilePushInstrument('peripheral_cymbals'),
+      () => this.percentilePushInstrumentDecade('peripheral_cymbals'),
+      () => this.percentilePushInstrument('peripheral_drums'),
+      () => this.percentilePushInstrumentDecade('peripheral_drums'),
       () => this.artistFocusUnplayed(),
       () => this.sameNameSets(),
       () => this.sameNameNearFc(),

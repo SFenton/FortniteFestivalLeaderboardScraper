@@ -90,10 +90,11 @@ function usePathsModalStyles() {
 type PathsModalProps = {
   visible: boolean;
   songId: string;
+  sig?: string;
   onClose: () => void;
 };
 
-export default function PathsModal({ visible, songId, onClose }: PathsModalProps) {
+export default function PathsModal({ visible, songId, sig, onClose }: PathsModalProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const vvHeight = useVisualViewportHeight();
@@ -269,6 +270,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                     selected={selected}
                     onSelect={(key) => { if (key && key === selected) setInstOpen(false); else if (key) setSelected(key); }}
                     required
+                    sig={sig}
                   />
                 </div>
               </div>
@@ -304,7 +306,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
               </div>
               <div style={st.mobileRow}>
                 <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleInst}>
-                  <InstrumentIcon instrument={selected} size={28} />
+                  <InstrumentIcon instrument={selected} sig={sig} size={28} />
                   <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
                 </button>
                 <button style={{ ...st.mobileSelector, flex: 1 }} onClick={toggleDiff}>
@@ -322,7 +324,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
           <div style={st.controls}>
             <div style={st.desktopRow}>
               <button style={st.desktopSelector} onClick={toggleInst}>
-                <InstrumentIcon instrument={selected} size={28} />
+                <InstrumentIcon instrument={selected} sig={sig} size={28} />
                 <span style={st.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
@@ -344,6 +346,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                   onSelect={(key) => { if (key && key === selected) setInstOpen(false); else if (key) setSelected(key); }}
                   required
                   compact={false}
+                  sig={sig}
                 />
               </div>
             </div>

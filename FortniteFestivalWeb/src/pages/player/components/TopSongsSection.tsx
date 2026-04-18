@@ -42,7 +42,7 @@ export function buildTopSongsItems(
     items.push({
       key: `top-empty-${inst}`,
       span: true,
-      heightEstimate: 120,
+      heightEstimate: 150,
       node: <InstrumentEmptyState instrument={inst} t={t} />,
     });
     return items;

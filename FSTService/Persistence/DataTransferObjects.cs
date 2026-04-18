@@ -427,6 +427,12 @@ public sealed class CompositeRankingDto
     public int? ProGuitarSkillRank { get; init; }
     public double? ProBassAdjustedSkill { get; init; }
     public int? ProBassSkillRank { get; init; }
+    public double? ProVocalsAdjustedSkill { get; init; }
+    public int? ProVocalsSkillRank { get; init; }
+    public double? ProCymbalsAdjustedSkill { get; init; }
+    public int? ProCymbalsSkillRank { get; init; }
+    public double? ProDrumsAdjustedSkill { get; init; }
+    public int? ProDrumsSkillRank { get; init; }
 
     // Per-metric composite ratings and ranks
     public double? CompositeRatingWeighted { get; init; }

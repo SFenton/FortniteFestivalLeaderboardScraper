@@ -41,15 +41,17 @@ public static class ComboIds
     /// </summary>
     public static readonly IReadOnlyList<int> InstrumentGroups = new[]
     {
-        0x0F, // OG Band: Lead(0) + Bass(1) + Drums(2) + Vocals(3) = bits 0-3
-        0x30, // Pro Strings: Pro Lead(4) + Pro Bass(5) = bits 4-5
+        0x0F,  // OG Band: Lead(0) + Bass(1) + Drums(2) + Vocals(3) = bits 0-3
+        0x30,  // Pro Strings: Pro Lead(4) + Pro Bass(5) = bits 4-5
+        0x1C0, // Peripherals: Pro Vocals(6) + Pro Cymbals(7) + Pro Drums(8) = bits 6-8
     };
 
     /// <summary>
     /// All valid within-group combo bitmasks (2+ instruments, all from same group).
     /// OG Band: C(4,2)+C(4,3)+C(4,4) = 6+4+1 = 11 combos.
     /// Pro Strings: C(2,2) = 1 combo.
-    /// Total: 12 combos.
+    /// Peripherals: C(3,2)+C(3,3) = 3+1 = 4 combos.
+    /// Total: 16 combos.
     /// </summary>
     public static readonly IReadOnlyList<int> WithinGroupComboMasks = BuildWithinGroupMasks();
 

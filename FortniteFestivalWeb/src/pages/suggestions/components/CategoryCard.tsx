@@ -42,7 +42,7 @@ function getCatInstrument(key: string): InstrumentKey | null {
     if (key.startsWith(p)) { remainder = key.substring(p.length); break; }
   }
   if (!remainder) return null;
-  const known: InstrumentKey[] = ['pro_guitar', 'pro_bass', 'guitar', 'bass', 'drums', 'vocals'];
+  const known: InstrumentKey[] = ['pro_guitar', 'pro_bass', 'peripheral_vocals', 'peripheral_cymbals', 'peripheral_drums', 'guitar', 'bass', 'drums', 'vocals'];
   for (const k of known) {
     if (remainder === k || remainder.startsWith(`${k}_`)) return k;
   }

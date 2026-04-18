@@ -1,0 +1,27 @@
+name: Encoding Check
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "FortniteFestivalWeb/**"
+      - "tools/check-encoding.mjs"
+      - ".github/workflows/encoding-check.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "FortniteFestivalWeb/**"
+      - "tools/check-encoding.mjs"
+      - ".github/workflows/encoding-check.yml"
+  workflow_dispatch:
+
+jobs:
+  encoding-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Scan for mojibake
+        run: node tools/check-encoding.mjs

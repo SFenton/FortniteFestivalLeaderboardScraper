@@ -613,6 +613,12 @@ public static class DatabaseInitializer
             pro_guitar_skill_rank    INTEGER,
             pro_bass_adjusted_skill  REAL,
             pro_bass_skill_rank      INTEGER,
+            pro_vocals_adjusted_skill REAL,
+            pro_vocals_skill_rank    INTEGER,
+            pro_cymbals_adjusted_skill REAL,
+            pro_cymbals_skill_rank   INTEGER,
+            pro_drums_adjusted_skill REAL,
+            pro_drums_skill_rank     INTEGER,
             composite_rating_weighted  REAL,
             composite_rank_weighted    INTEGER,
             composite_rating_fcrate    REAL,
@@ -636,6 +642,14 @@ public static class DatabaseInitializer
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rank_totalscore INTEGER;
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rating_maxscore REAL;
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rank_maxscore INTEGER;
+
+        -- Peripheral instrument columns (Mic Mode, Pro Drums + Cymbals, Pro Drums)
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_vocals_adjusted_skill REAL;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_vocals_skill_rank INTEGER;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_cymbals_adjusted_skill REAL;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_cymbals_skill_rank INTEGER;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_drums_adjusted_skill REAL;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_drums_skill_rank INTEGER;
 
         CREATE INDEX IF NOT EXISTS ix_cr_rank_weighted
             ON composite_rankings (composite_rank_weighted);

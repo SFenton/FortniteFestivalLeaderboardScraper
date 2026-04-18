@@ -12,7 +12,6 @@ type AnyInstrumentKey = InstrumentKey | ServerInstrumentKey;
 
 const BASE = import.meta.env.BASE_URL;
 
-// TODO(art): replace peripheral_*.png placeholder copies with proper Mic Mode / Pro Drums / Pro Drums+Cymbals artwork.
 const ICON_PATHS: Record<AnyInstrumentKey, string> = {
   guitar: `${BASE}instruments/guitar.png`,
   bass: `${BASE}instruments/bass.png`,
@@ -34,13 +33,29 @@ const ICON_PATHS: Record<AnyInstrumentKey, string> = {
   Solo_PeripheralDrums: `${BASE}instruments/peripheral_drums.png`,
 };
 
+/** Keyboard-variant icon overrides for instruments affected by the song `sig` field. */
+const KEYBOARD_ICON_OVERRIDES: Partial<Record<AnyInstrumentKey, string>> = {
+  guitar: `${BASE}instruments/keys.png`,
+  pro_guitar: `${BASE}instruments/pro_keys.png`,
+  Solo_Guitar: `${BASE}instruments/keys.png`,
+  Solo_PeripheralGuitar: `${BASE}instruments/pro_keys.png`,
+};
+
+function resolveIconPath(instrument: AnyInstrumentKey, sig?: string): string {
+  if (sig === 'Keyboard') {
+    const override = KEYBOARD_ICON_OVERRIDES[instrument];
+    if (override) return override;
+  }
+  return ICON_PATHS[instrument];
+}
+
 type IconProps = { size?: number; style?: React.CSSProperties };
 
-export const InstrumentIcon = memo(function InstrumentIcon({ instrument, size = 20, style }: IconProps & { instrument: AnyInstrumentKey }) {
+export const InstrumentIcon = memo(function InstrumentIcon({ instrument, sig, size = 20, style }: IconProps & { instrument: AnyInstrumentKey; sig?: string }) {
   const iconStyle = useMemo(() => ({ objectFit: ObjectFit.contain, ...style }), [style]);
   return (
     <img
-      src={ICON_PATHS[instrument]}
+      src={resolveIconPath(instrument, sig)}
       alt={instrument}
       width={size}
       height={size}

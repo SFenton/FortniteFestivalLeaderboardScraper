@@ -165,14 +165,14 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
         onTouchEnd={handleTouchEnd}
         data-testid="fre-card"
       >
-        {/* Close button â€” own flex row so content never overlaps */}
+        {/* Close button — own flex row so content never overlaps */}
         <div style={S.closeRow}>
           <button style={S.closeBtn} onClick={handleDismiss} aria-label={t('common.close')} data-testid="fre-close">
             <IoClose size={Size.iconFab} />
           </button>
         </div>
 
-        {/* Slide content â€” ResizeObserver measures height, context provides it to children */}
+        {/* Slide content — ResizeObserver measures height, context provides it to children */}
         <div ref={slideAreaRef} style={S.slideArea} data-testid="fre-slide-area">
           <SlideHeightContext.Provider value={slideHeight}>
             <div key={slideKey} style={fading ? { ...S.slideContent, ...S.fadeOut } : S.slideContent}>

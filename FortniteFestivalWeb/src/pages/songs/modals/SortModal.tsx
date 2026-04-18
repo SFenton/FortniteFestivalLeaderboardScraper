@@ -101,6 +101,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
             <RadioRow label={t('sort.title')} selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
             <RadioRow label={t('sort.artist')} selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
             <RadioRow label={t('sort.year')} selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+            <RadioRow label={t('sort.duration')} selected={draft.sortMode === 'duration'} onSelect={() => setMode('duration')} />
             {/* v8 ignore next -- hideItemShop branch */}
             {!hideItemShop && <RadioRow label={t('sort.itemShop')} selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
             <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
@@ -113,6 +114,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
           <RadioRow label={t('sort.title')} selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
           <RadioRow label={t('sort.artist')} selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
           <RadioRow label={t('sort.year')} selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+          <RadioRow label={t('sort.duration')} selected={draft.sortMode === 'duration'} onSelect={() => setMode('duration')} />
           {!hideItemShop && <RadioRow label={t('sort.itemShop')} selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
           <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
         </ModalSection>

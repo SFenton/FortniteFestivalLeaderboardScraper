@@ -172,7 +172,32 @@ describe('InstrumentCard', () => {
   it('shows view-all button when entries exist', () => {
     const entries = [makeEntry(1), makeEntry(2)];
     renderCard({ prefetchedEntries: entries });
+    expect(screen.getByText('View leaderboard')).toBeTruthy();
+  });
+
+  it('shows tracked/total counts on view-all button when provided', () => {
+    const entries = [makeEntry(1), makeEntry(2)];
+    renderCard({ prefetchedEntries: entries, localEntries: 10030, totalEntries: 700000 });
+    expect(screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)')).toBeTruthy();
+  });
+
+  it('falls back to plain label when totalEntries is zero', () => {
+    const entries = [makeEntry(1)];
+    renderCard({ prefetchedEntries: entries, localEntries: 0, totalEntries: 0 });
+    expect(screen.getByText('View leaderboard')).toBeTruthy();
+  });
+
+  it('stacks view-all counts into three rows at hyper-compact width', () => {
+    const entries = [makeEntry(1)];
+    renderCard({
+      prefetchedEntries: entries,
+      localEntries: 10002,
+      totalEntries: 364400,
+      windowWidth: 320,
+    });
     expect(screen.getByText('View full leaderboard')).toBeTruthy();
+    expect(screen.getByText('10,002 tracked')).toBeTruthy();
+    expect(screen.getByText('364,400 total')).toBeTruthy();
   });
 
   it('rank falls back to index+1 when rank is undefined', () => {

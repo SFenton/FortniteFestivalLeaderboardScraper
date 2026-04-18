@@ -21,6 +21,7 @@ import PageHeader from '../../common/PageHeader';
 import MarqueeText from '../../common/MarqueeText';
 import { useMarqueeSync } from '../../../hooks/ui/useMarqueeSync';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { formatDuration } from '../../../utils/formatters';
 import anim from '../../../styles/animations.module.css';
 import cls from './SongInfoHeader.module.css';
 
@@ -35,6 +36,8 @@ export interface SongInfoHeaderProps {
   collapsed: boolean;
   /** Instrument to show on the right side. Omit to hide the instrument section. */
   instrument?: ServerInstrumentKey;
+  /** Lead instrument signature ("Guitar" or "Keyboard") for icon variant. */
+  sig?: string;
   /** Extra controls rendered in the right section (e.g. sort button). */
   actions?: ReactNode;
   /** Enable smooth CSS transitions for collapse animation. */
@@ -53,6 +56,8 @@ export interface SongInfoHeaderProps {
   style?: CSSProperties;
   /** When set, the title area (album art + song/artist) becomes clickable. */
   onTitleClick?: () => void;
+  /** Optional third line rendered below the artist row (e.g. leaderboard entry count). */
+  subtitle2?: string;
 }
 
 export default function SongInfoHeader({
@@ -60,6 +65,7 @@ export default function SongInfoHeader({
   songId,
   collapsed,
   instrument,
+  sig,
   actions,
   animate,
   onOpenPaths,
@@ -69,12 +75,14 @@ export default function SongInfoHeader({
   hideBackground,
   style: extraStyle,
   onTitleClick,
+  subtitle2,
 }: SongInfoHeaderProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const s = useStyles(collapsed, animate);
   const showShop = !!shopUrl;
-  const { reporters, syncDistance } = useMarqueeSync(2);
+  const showSubtitle2 = !!subtitle2;
+  const { reporters, syncDistance } = useMarqueeSync(showSubtitle2 ? 3 : 2);
 
   return (
     <>
@@ -102,7 +110,10 @@ export default function SongInfoHeader({
             )}
             <div style={s.textWrap}>
               <MarqueeText as="h1" className={s.titleClassName} style={s.songTitle} text={song?.title ?? songId} onMeasure={reporters[0]} syncDistance={syncDistance} />
-              <MarqueeText as="p" className={s.artistClassName} style={s.songArtist} text={`${song?.artist ?? t('common.unknownArtist')}${song?.year ? ` \u00b7 ${song.year}` : ''}`} onMeasure={reporters[1]} syncDistance={syncDistance} />
+              <MarqueeText as="p" className={s.artistClassName} style={s.songArtist} text={`${song?.artist ?? t('common.unknownArtist')}${song?.year ? ` \u00b7 ${song.year}` : ''}${formatDuration(song?.durationSeconds) ? ` \u00b7 ${formatDuration(song?.durationSeconds)}` : ''}`} onMeasure={reporters[1]} syncDistance={syncDistance} />
+              {showSubtitle2 && (
+                <MarqueeText as="p" className={s.artistClassName} style={s.songArtist} text={subtitle2!} onMeasure={reporters[2]} syncDistance={syncDistance} />
+              )}
             </div>
           </div>
         }
@@ -110,7 +121,7 @@ export default function SongInfoHeader({
           <>
             {instrument && (
               <div style={s.instIconWrap}>
-                <InstrumentIcon instrument={instrument} size={48} />
+                <InstrumentIcon instrument={instrument} sig={sig} size={48} />
               </div>
             )}
             {/* v8 ignore start — action buttons */}

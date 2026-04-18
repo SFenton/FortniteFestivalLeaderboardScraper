@@ -13,6 +13,7 @@ export interface InstrumentHeaderProps {
   className?: string;
   style?: React.CSSProperties;
   iconOnly?: boolean;
+  sig?: string;
 }
 
 const InstrumentHeader = memo(function InstrumentHeader({
@@ -23,11 +24,12 @@ const InstrumentHeader = memo(function InstrumentHeader({
   className,
   style,
   iconOnly,
+  sig,
 }: InstrumentHeaderProps) {
   const s = useStyles(size);
   return (
     <div className={className} style={{ ...s.header, ...style }}>
-      <InstrumentIcon instrument={instrument} size={s.iconSize} />
+      <InstrumentIcon instrument={instrument} sig={sig} size={s.iconSize} />
       {!iconOnly && (
         subtitle ? (
           <div style={s.titleCol}>

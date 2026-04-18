@@ -90,6 +90,7 @@
     "leaderboard": "Leaderboard",
     "scoreHistory": "Score History",
     "noScores": "No scores recorded yet.",
+    "noScoresSubtitle": "When scores are submitted for {{instrument}}, they will show up here on the next leaderboard update.",
     "songNotFound": "Song not found",
     "noEntries": "No {{instrument}} entries"
   },
@@ -106,7 +107,13 @@
     "last": "Last »",
     "notFound": "Not found",
     "failedToLoad": "Failed to load leaderboard",
-    "viewFull": "View full leaderboard"
+    "viewFull": "View full leaderboard",
+    "viewFullWithCounts": "View full leaderboard ({{local}} tracked / {{total}} total)",
+    "viewPlain": "View leaderboard",
+    "viewFullShort": "View full leaderboard",
+    "trackedCount": "{{count}} tracked",
+    "totalCount": "{{count}} total",
+    "instrumentEntryCount": "{{count}} {{instrument}} entries"
   },
   "player": {
     "title": "Statistics",
@@ -875,6 +882,7 @@
     "viewAllRankings": "View all rankings",
     "page": "Page {{current}} of {{total}}",
     "noRankings": "No rankings available yet.",
+    "noRankingsSubtitle": "When leaderboard ranks are recomputed for {{instrument}}, they will show up here on the next update.",
     "noRankingsHint": "Rankings are computed after each scrape pass.",
     "totalRanked": "{{formattedCount}} ranked players",
     "rankBy": "Rank By",

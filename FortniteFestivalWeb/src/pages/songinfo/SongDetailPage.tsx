@@ -30,6 +30,7 @@ import PathsModal from './components/path/PathsModal';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import InstrumentCard from './components/InstrumentCard';
+import IntensityCard from './components/IntensityCard';
 import { songInfoSlides } from './firstRun';
 
 import { songDetailCache } from '../../api/pageCache';
@@ -151,7 +152,13 @@ export default function SongDetailPage() {
       for (const inst of res.instruments) {
         const key = inst.instrument as InstrumentKey;
         if (key in newData) {
-          newData[key] = { entries: inst.entries, loading: false, error: null };
+          newData[key] = {
+            entries: inst.entries,
+            loading: false,
+            error: null,
+            totalEntries: inst.totalEntries,
+            localEntries: inst.localEntries,
+          };
         }
       }
       setInstrumentData(newData);
@@ -342,7 +349,7 @@ export default function SongDetailPage() {
       }
       after={<>
         {/* v8 ignore start -- songId always truthy from route params */}
-        {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
+        {songId && <PathsModal visible={pathsOpen} songId={songId} sig={song?.sig} onClose={() => setPathsOpen(false)} />}
         {/* v8 ignore stop */}
       </>}
     >
@@ -361,6 +368,11 @@ export default function SongDetailPage() {
       })()}
       {phase === LoadPhase.ContentIn && !allErrored && (
         <div style={styles.container}>
+          <IntensityCard
+            song={song}
+            style={{ ...stagger(100), marginBottom: Gap.section }}
+            onAnimationEnd={clearAnim}
+          />
           {player && scoreHistoryReady && filteredScoreHistory.length > 0 && (
             <div style={{ ...stagger(150), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
@@ -392,8 +404,11 @@ export default function SongDetailPage() {
                       playerAccountId={player?.accountId}
                       prefetchedEntries={instrumentData[inst].entries}
                       prefetchedError={instrumentData[inst].error}
+                      totalEntries={instrumentData[inst].totalEntries}
+                      localEntries={instrumentData[inst].localEntries}
                       skipAnimation={skipAnim}
                       scoreWidth={globalScoreWidth}
+                      sig={song?.sig}
                     />
                   </div>
               );

@@ -130,6 +130,8 @@ public sealed class SongsCacheService
                     album      = s.track.ab,
                     year       = s.track.ry,
                     tempo      = s.track.mt,
+                    sig        = s.track.sig,
+                    durationSeconds = s.track.dn == 0 ? (int?)null : s.track.dn,
                     albumArt   = TrimAlbumArt(s.track.au),
                     genres     = s.track.ge,
                     // Difficulty per instrument. proDrums and proCymbals share the same

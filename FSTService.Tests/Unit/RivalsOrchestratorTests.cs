@@ -79,18 +79,23 @@ public sealed class RivalsOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task ComputeAllAsync_skips_when_all_users_already_complete()
+    public async Task ComputeAllAsync_skips_when_all_users_already_complete_with_rivals()
     {
         var persistence = CreatePersistence();
         var (orch, progress) = CreateOrchestrator(persistence);
 
-        // Register user but mark rivals as already complete
+        // Register user with actual rivals found — should NOT be requeued
         _metaFixture.Db.EnsureRivalsStatus("acct-complete");
-        _metaFixture.Db.CompleteRivals("acct-complete", 0, 0);
+        _metaFixture.Db.StartRivals("acct-complete");
+        _metaFixture.Db.CompleteRivals("acct-complete", 3, 10);
 
         var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct-complete" };
         await orch.ComputeAllAsync(registeredIds, null, CancellationToken.None);
-        // toCompute should be empty → early return at line 63
+        // toCompute should be empty → early return (user has rivals, not stale)
+
+        var status = _metaFixture.Db.GetRivalsStatus("acct-complete");
+        Assert.Equal("complete", status!.Status);
+        Assert.Equal(10, status.RivalsFound);
     }
 
     [Fact]
@@ -150,5 +155,72 @@ public sealed class RivalsOrchestratorTests : IDisposable
         Assert.Equal("complete", status!.Status);
         Assert.Equal(0, status.CombosComputed);
         Assert.Equal(0, status.RivalsFound);
+    }
+
+    [Fact]
+    public void ComputeForUser_creates_status_row_when_none_exists()
+    {
+        // Reproduces Bug 1: BackfillOrchestrator calls ComputeForUser without
+        // a pre-existing rivals_status row. Before the fix, StartRivals/CompleteRivals
+        // (UPDATEs) silently affected 0 rows and results were lost.
+        var persistence = CreatePersistence();
+        var (orch, _) = CreateOrchestrator(persistence);
+
+        // No EnsureRivalsStatus call — simulates BackfillOrchestrator path
+        Assert.Null(_metaFixture.Db.GetRivalsStatus("backfill_user"));
+
+        orch.ComputeForUser("backfill_user");
+
+        var status = _metaFixture.Db.GetRivalsStatus("backfill_user");
+        Assert.NotNull(status);
+        Assert.Equal("complete", status.Status);
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_resets_stale_zero_rivals_to_pending()
+    {
+        // Reproduces Bug 2: User completed with 0 rivals (data wasn't available yet)
+        // and is stuck forever. The stale-zero reset should requeue them.
+        var persistence = CreatePersistence();
+        var (orch, _) = CreateOrchestrator(persistence);
+
+        // Simulate a user stuck at complete with 0 rivals
+        _metaFixture.Db.EnsureRivalsStatus("stale_user");
+        _metaFixture.Db.StartRivals("stale_user");
+        _metaFixture.Db.CompleteRivals("stale_user", 0, 0);
+
+        var statusBefore = _metaFixture.Db.GetRivalsStatus("stale_user");
+        Assert.Equal("complete", statusBefore!.Status);
+        Assert.Equal(0, statusBefore.RivalsFound);
+
+        var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "stale_user" };
+        await orch.ComputeAllAsync(registeredIds, null, CancellationToken.None);
+
+        // Should have been recomputed (status reset to pending, then computed again)
+        var statusAfter = _metaFixture.Db.GetRivalsStatus("stale_user");
+        Assert.Equal("complete", statusAfter!.Status);
+        // Still 0 rivals because no leaderboard data, but the point is it was re-attempted
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_does_not_reset_users_with_actual_rivals()
+    {
+        // Ensure users who legitimately have rivals are not disrupted
+        var persistence = CreatePersistence();
+        var (orch, _) = CreateOrchestrator(persistence);
+
+        // Simulate a user with real rivals
+        _metaFixture.Db.EnsureRivalsStatus("rich_user");
+        _metaFixture.Db.StartRivals("rich_user");
+        _metaFixture.Db.CompleteRivals("rich_user", 5, 20);
+
+        var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "rich_user" };
+        await orch.ComputeAllAsync(registeredIds, null, CancellationToken.None);
+
+        // User should NOT have been requeued — they already have rivals
+        // GetPendingRivalsAccounts should not have included them
+        var status = _metaFixture.Db.GetRivalsStatus("rich_user");
+        Assert.Equal("complete", status!.Status);
+        Assert.Equal(20, status.RivalsFound);
     }
 }

@@ -6,7 +6,8 @@ import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { leaderboardCache } from '../../../api/pageCache';
-import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, serverInstrumentLabel } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
+import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { parseApiError } from '../../../utils/apiError';
@@ -23,8 +24,13 @@ interface InstrumentCardProps {
   playerAccountId?: string;
   prefetchedEntries: LeaderboardEntryType[];
   prefetchedError: string | null;
+  /** Total entries reported by Epic for this instrument's leaderboard (if known). */
+  totalEntries?: number;
+  /** Entries tracked locally by FST for this instrument's leaderboard (if known). */
+  localEntries?: number;
   skipAnimation?: boolean;
   scoreWidth: string;
+  sig?: string;
 }
 
 export default memo(function InstrumentCard({
@@ -38,8 +44,11 @@ export default memo(function InstrumentCard({
   playerAccountId,
   prefetchedEntries,
   prefetchedError,
+  totalEntries,
+  localEntries,
   skipAnimation,
   scoreWidth,
+  sig,
 }: InstrumentCardProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -77,7 +86,7 @@ export default memo(function InstrumentCard({
   return (
     <div style={st.cardWrapper}>
       <div style={{ ...st.cardLabel, ...anim(baseDelay) }} onAnimationEnd={clearAnim}>
-        <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} />
+        <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} sig={sig} />
       </div>
       <div
         style={hasEntries ? st.card : st.cardNoClick}
@@ -88,7 +97,9 @@ export default memo(function InstrumentCard({
         <div style={st.cardBody}>
         {prefetchedError && <span style={st.cardError}>{parseApiError(prefetchedError).title}</span>}
         {!prefetchedError && prefetchedEntries.length === 0 && !playerScore && (
-          <div style={{ ...st.emptyCard, ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>{t('songDetail.noEntries', { instrument: serverInstrumentLabel(instrument) })}</div>
+          <div style={{ ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>
+            <InstrumentEmptyState instrument={instrument} t={t} noMargin subtitleKey="songDetail.noScoresSubtitle" />
+          </div>
         )}
         {!prefetchedError &&
           prefetchedEntries.map((e, i) => {
@@ -159,12 +170,31 @@ export default memo(function InstrumentCard({
         {!prefetchedError && prefetchedEntries.length > 0 && (() => {
           const viewAllDelay = baseDelay + STAGGER_ENTRY_OFFSET + (prefetchedEntries.length + (playerScore && !playerInTop ? 1 : 0)) * STAGGER_ROW_MS;
           const viewAllStagger = anim(viewAllDelay);
+          const hasCounts = totalEntries != null && localEntries != null && totalEntries > 0;
+          if (hasCounts && isMobile) {
+            return (
+              <div
+                style={{ ...st.viewAllButtonStacked, ...viewAllStagger }}
+                onAnimationEnd={clearAnim}
+              >
+                <span>{t('leaderboard.viewFullShort')}</span>
+                <span>{t('leaderboard.trackedCount', { count: localEntries!.toLocaleString() as unknown as number })}</span>
+                <span>{t('leaderboard.totalCount', { count: totalEntries!.toLocaleString() as unknown as number })}</span>
+              </div>
+            );
+          }
+          const label = hasCounts
+            ? t('leaderboard.viewFullWithCounts', {
+                local: localEntries!.toLocaleString(),
+                total: totalEntries!.toLocaleString(),
+              })
+            : t('leaderboard.viewPlain');
           return (
             <div
               style={{ ...st.viewAllButton, ...viewAllStagger }}
               onAnimationEnd={clearAnim}
             >
-              {t('leaderboard.viewFull')}
+              {label}
             </div>
           );
         })()}
@@ -216,17 +246,7 @@ function useInstrumentCardStyles(_isMobile: boolean) {
         fontSize: Font.sm,
         color: Colors.textMuted,
       } as CSSProperties,
-      emptyCard: {
-        ...frostedCard,
-        display: Display.flex,
-        alignItems: Align.center,
-        justifyContent: Justify.center,
-        height: Layout.entryRowHeight,
-        borderRadius: Radius.md,
-        color: Colors.textMuted,
-        fontSize: Font.md,
-        fontWeight: Weight.semibold,
-      } as CSSProperties,
+
       cardError: {
         fontSize: Font.sm,
         color: Colors.statusRed,
@@ -252,6 +272,22 @@ function useInstrumentCardStyles(_isMobile: boolean) {
         fontSize: Font.md,
         fontWeight: Weight.semibold,
         cursor: Cursor.pointer,
+        transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+      } as CSSProperties,
+      viewAllButtonStacked: {
+        ...frostedCard,
+        display: Display.flex,
+        flexDirection: 'column',
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        gap: Gap.xs,
+        padding: padding(Gap.sm, Gap.md),
+        borderRadius: Radius.md,
+        color: Colors.textPrimary,
+        fontSize: Font.md,
+        fontWeight: Weight.semibold,
+        cursor: Cursor.pointer,
+        textAlign: 'center' as const,
         transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
       } as CSSProperties,
     };
