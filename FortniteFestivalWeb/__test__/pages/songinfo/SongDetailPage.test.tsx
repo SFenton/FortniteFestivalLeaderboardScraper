@@ -134,6 +134,33 @@ describe('SongDetailPage', () => {
     expect(document.body.textContent).toContain('Artist A');
   });
 
+  it('shows View Paths when a supported path instrument is enabled', async () => {
+    renderSongDetail();
+    await waitFor(() => {
+      expect(screen.getByText('View Paths')).toBeDefined();
+    });
+  });
+
+  it('hides View Paths when only unsupported path instruments are enabled', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: false,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: true,
+      showPeripheralCymbals: true,
+      showPeripheralDrums: true,
+    }));
+
+    renderSongDetail();
+    await waitFor(() => {
+      expect(screen.getByText('Test Song')).toBeDefined();
+    });
+    expect(screen.queryByText('View Paths')).toBeNull();
+  });
+
   it('renders instrument cards after loading', async () => {
     renderSongDetail();
     await waitFor(() => {

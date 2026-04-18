@@ -135,6 +135,20 @@ describe('InstrumentSelector', () => {
     expect(onSelect).toHaveBeenCalledWith('Solo_Guitar');
   });
 
+  it('hides instruments listed in hiddenInstruments', () => {
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: null,
+        onSelect: () => {},
+        hiddenInstruments: ['Solo_Bass'],
+      }),
+    );
+    const buttons = container.querySelectorAll('button');
+    expect(buttons).toHaveLength(2);
+    expect(Array.from(buttons).some(button => button.getAttribute('title') === 'Bass')).toBe(false);
+  });
+
   it('renders compact mode with arrow buttons', () => {
     const onSelect = vi.fn();
     const { container } = render(
@@ -198,6 +212,22 @@ describe('InstrumentSelector', () => {
     const buttons = container.querySelectorAll('button');
     // Click previous arrow from first → wraps to last
     fireEvent.click(buttons[0]!);
+    expect(onSelect).toHaveBeenCalledWith('Solo_Drums');
+  });
+
+  it('cycles only through visible instruments in compact mode', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: 'Solo_Guitar',
+        onSelect,
+        compact: true,
+        hiddenInstruments: ['Solo_Bass'],
+      }),
+    );
+    const buttons = container.querySelectorAll('button');
+    fireEvent.click(buttons[2]!);
     expect(onSelect).toHaveBeenCalledWith('Solo_Drums');
   });
 

@@ -19,12 +19,28 @@ vi.mock('../../../../../src/hooks/ui/useVisualViewport', () => ({
   useVisualViewportOffsetTop: () => 0,
 }));
 
-const mockInstruments = vi.fn(() => [
+const mockSettings = vi.hoisted(() => ({
+  current: {
+    pathDefaultView: 'image',
+    pathColumnOrder: ['note', 'beat', 'time', 'od', 'score'],
+    pathUnavailableWarningDismissed: false,
+  },
+}));
+const mockUpdateSettings = vi.hoisted(() => vi.fn());
+const mockInstruments = vi.hoisted(() => vi.fn(() => [
   'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
-]);
+  'Solo_PeripheralVocals', 'Solo_PeripheralDrums', 'Solo_PeripheralCymbals',
+]));
+const mockPathInstruments = vi.hoisted(() => vi.fn(() => [
+  'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
+]));
+const mockHasUnavailablePathInstrumentsEnabled = vi.hoisted(() => vi.fn(() => false));
 vi.mock('../../../../../src/contexts/SettingsContext', () => ({
-  useSettings: () => ({ settings: {} }),
+  useSettings: () => ({ settings: mockSettings.current, updateSettings: mockUpdateSettings }),
   visibleInstruments: (...args: unknown[]) => mockInstruments(...(args as [])),
+  visiblePathInstruments: (...args: unknown[]) => mockPathInstruments(...(args as [])),
+  hasUnavailablePathInstrumentsEnabled: (...args: unknown[]) => mockHasUnavailablePathInstrumentsEnabled(...(args as [])),
+  PATH_UNAVAILABLE_INSTRUMENTS: ['Solo_PeripheralVocals', 'Solo_PeripheralDrums', 'Solo_PeripheralCymbals'],
 }));
 
 vi.mock('../../models', () => ({
@@ -35,6 +51,9 @@ vi.mock('../../models', () => ({
     Solo_Vocals: 'Vocals',
     Solo_PeripheralGuitar: 'Pro Lead',
     Solo_PeripheralBass: 'Pro Bass',
+    Solo_PeripheralVocals: 'Mic Mode',
+    Solo_PeripheralDrums: 'Pro Drums',
+    Solo_PeripheralCymbals: 'Pro Drums + Cymbals',
   } as Record<string, string>,
 }));
 
@@ -61,6 +80,18 @@ beforeEach(() => {
   vi.useFakeTimers();
   mockImageInstances = [];
   OrigImage = globalThis.Image;
+  mockSettings.current = {
+    pathDefaultView: 'image',
+    pathColumnOrder: ['note', 'beat', 'time', 'od', 'score'],
+    pathUnavailableWarningDismissed: false,
+  };
+  mockUpdateSettings.mockReset();
+  mockInstruments.mockReturnValue([
+    'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
+    'Solo_PeripheralVocals', 'Solo_PeripheralDrums', 'Solo_PeripheralCymbals',
+  ]);
+  mockPathInstruments.mockReturnValue(['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals']);
+  mockHasUnavailablePathInstrumentsEnabled.mockReturnValue(false);
 
   // @ts-expect-error - overriding Image constructor
   globalThis.Image = class {
@@ -89,6 +120,20 @@ afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
 });
+
+function findMobileInstrumentToggle(selectedInstrument = 'Solo_Guitar'): HTMLButtonElement {
+  const toggle = Array.from(document.querySelectorAll('button')).find((button): button is HTMLButtonElement => (
+    button instanceof HTMLButtonElement
+    && !button.title
+    && button.querySelector(`[data-testid="icon-${selectedInstrument}"]`) != null
+  ));
+
+  if (!toggle) {
+    throw new Error(`Could not find mobile instrument toggle for ${selectedInstrument}`);
+  }
+
+  return toggle;
+}
 
 describe('PathsModal', () => {
   describe('visibility', () => {
@@ -171,10 +216,18 @@ describe('PathsModal', () => {
     it('shows instrument buttons', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
-      expect(screen.getByTestId('icon-Solo_Guitar')).toBeDefined();
+      expect(screen.getAllByTestId('icon-Solo_Guitar').length).toBeGreaterThan(0);
       expect(screen.getByTestId('icon-Solo_Bass')).toBeDefined();
       expect(screen.getByTestId('icon-Solo_Drums')).toBeDefined();
       expect(screen.getByTestId('icon-Solo_Vocals')).toBeDefined();
+    });
+
+    it('does not show unsupported path instruments in the selector', () => {
+      render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
+
+      expect(screen.queryByTestId('icon-Solo_PeripheralVocals')).toBeNull();
+      expect(screen.queryByTestId('icon-Solo_PeripheralDrums')).toBeNull();
+      expect(screen.queryByTestId('icon-Solo_PeripheralCymbals')).toBeNull();
     });
 
     it('shows difficulty buttons', () => {
@@ -183,7 +236,7 @@ describe('PathsModal', () => {
       expect(screen.getByText('Easy')).toBeDefined();
       expect(screen.getByText('Medium')).toBeDefined();
       expect(screen.getByText('Hard')).toBeDefined();
-      expect(screen.getByText('Expert')).toBeDefined();
+      expect(screen.getAllByText('Expert').length).toBeGreaterThan(0);
     });
 
     it('changes instrument on click', () => {
@@ -213,15 +266,14 @@ describe('PathsModal', () => {
     it('shows mobile instrument selector button', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
-      // The default selected instrument label should be shown
-      expect(screen.getByText('Lead')).toBeDefined();
+      expect(findMobileInstrumentToggle()).toBeDefined();
     });
 
     it('opens instrument accordion on click and selects instrument', async () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
       // Click the instrument selector to open accordion
-      fireEvent.click(screen.getByText('Lead'));
+      fireEvent.click(findMobileInstrumentToggle());
 
       // Instrument icons should now be visible in accordion
       expect(screen.getByTitle('Bass')).toBeDefined();
@@ -229,8 +281,7 @@ describe('PathsModal', () => {
       // Select Bass
       fireEvent.click(screen.getByTitle('Bass'));
 
-      // Label should update
-      expect(screen.getByText('Bass')).toBeDefined();
+      expect(findMobileInstrumentToggle('Solo_Bass')).toBeDefined();
     });
 
     it('opens difficulty accordion on click', () => {
@@ -251,7 +302,7 @@ describe('PathsModal', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
       // Open instrument accordion
-      fireEvent.click(screen.getByText('Lead'));
+      fireEvent.click(findMobileInstrumentToggle());
 
       // Click difficulty selector (should close instrument first, then open difficulty after 300ms)
       const selectorBtns = screen.getAllByText('Expert');
@@ -267,9 +318,9 @@ describe('PathsModal', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
       // Open
-      fireEvent.click(screen.getByText('Lead'));
+      fireEvent.click(findMobileInstrumentToggle());
       // Close
-      fireEvent.click(screen.getByText('Lead'));
+      fireEvent.click(findMobileInstrumentToggle());
     });
 
     it('toggles difficulty accordion closed on second click', () => {
@@ -287,7 +338,7 @@ describe('PathsModal', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
       // Open instrument accordion first
-      fireEvent.click(screen.getByText('Lead'));
+      fireEvent.click(findMobileInstrumentToggle());
 
       // Click difficulty (should close instrument, delay 300ms, then open difficulty)
       const selectorBtns = screen.getAllByText('Expert');
@@ -305,9 +356,53 @@ describe('PathsModal', () => {
       fireEvent.click(selectorBtns[0]!);
 
       // Click instrument (should close difficulty, delay 300ms, then open instrument)
-      fireEvent.click(screen.getByText('Lead'));
+      fireEvent.click(findMobileInstrumentToggle());
 
       await act(async () => { vi.advanceTimersByTime(310); });
+    });
+  });
+
+  describe('unsupported instrument warning', () => {
+    beforeEach(() => {
+      mockHasUnavailablePathInstrumentsEnabled.mockReturnValue(true);
+    });
+
+    it('shows a warning when unavailable path instruments are enabled', () => {
+      render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
+
+      expect(screen.getByText('Some Instruments Unavailable')).toBeDefined();
+      expect(screen.getByText('Mic Mode, Pro Drums, and Pro Drums + Cymbals are not available for path visualization yet.')).toBeDefined();
+      expect(screen.getByText('OK')).toBeDefined();
+      expect(screen.getByText('Permanently Dismiss')).toBeDefined();
+    });
+
+    it('does not close the modal on Escape while the warning is open', () => {
+      const onClose = vi.fn();
+      render(<PathsModal visible={true} songId="song-1" onClose={onClose} />);
+
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('shows the warning again on the next open after pressing OK', async () => {
+      const onClose = vi.fn();
+      const { rerender } = render(<PathsModal visible={true} songId="song-1" onClose={onClose} />);
+
+      fireEvent.click(screen.getByText('OK'));
+      await act(async () => { vi.advanceTimersByTime(310); });
+      expect(screen.queryByText('Some Instruments Unavailable')).toBeNull();
+
+      rerender(<PathsModal visible={false} songId="song-1" onClose={onClose} />);
+      rerender(<PathsModal visible={true} songId="song-1" onClose={onClose} />);
+
+      expect(screen.getByText('Some Instruments Unavailable')).toBeDefined();
+    });
+
+    it('persists the permanent dismiss choice', () => {
+      render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
+
+      fireEvent.click(screen.getByText('Permanently Dismiss'));
+      expect(mockUpdateSettings).toHaveBeenCalledWith({ pathUnavailableWarningDismissed: true });
     });
   });
 

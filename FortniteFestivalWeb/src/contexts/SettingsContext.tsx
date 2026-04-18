@@ -22,6 +22,7 @@ export type AppSettings = {
   songRowVisualOrder: string[];
   pathColumnOrder: ColumnKey[];
   pathDefaultView: 'image' | 'text';
+  pathUnavailableWarningDismissed: boolean;
   filterInvalidScores: boolean;
   filterInvalidScoresLeeway: number;
   enableExperimentalRanks: boolean;
@@ -59,6 +60,7 @@ export const defaultAppSettings = (): AppSettings => ({
   songRowVisualOrder: [...DEFAULT_METADATA_ORDER],
   pathColumnOrder: [...DEFAULT_COLUMN_ORDER],
   pathDefaultView: 'image',
+  pathUnavailableWarningDismissed: false,
   filterInvalidScores: false,
   filterInvalidScoresLeeway: 1,
   enableExperimentalRanks: false,
@@ -112,12 +114,32 @@ const SHOW_KEY_FOR_INSTRUMENT: Record<InstrumentKey, ShowKey> = {
   Solo_PeripheralDrums: 'showPeripheralDrums',
 };
 
+export const PATH_UNAVAILABLE_INSTRUMENTS: readonly InstrumentKey[] = [
+  'Solo_PeripheralVocals',
+  'Solo_PeripheralDrums',
+  'Solo_PeripheralCymbals',
+];
+
+const PATH_UNAVAILABLE_INSTRUMENT_SET = new Set<InstrumentKey>(PATH_UNAVAILABLE_INSTRUMENTS);
+
 export function isInstrumentVisible(settings: AppSettings, key: InstrumentKey): boolean {
   return settings[SHOW_KEY_FOR_INSTRUMENT[key]];
 }
 
 export function visibleInstruments(settings: AppSettings): InstrumentKey[] {
   return INSTRUMENT_KEYS.filter(k => isInstrumentVisible(settings, k));
+}
+
+export function visiblePathInstruments(settings: AppSettings): InstrumentKey[] {
+  return visibleInstruments(settings).filter(key => !PATH_UNAVAILABLE_INSTRUMENT_SET.has(key));
+}
+
+export function enabledUnavailablePathInstruments(settings: AppSettings): InstrumentKey[] {
+  return PATH_UNAVAILABLE_INSTRUMENTS.filter(key => isInstrumentVisible(settings, key));
+}
+
+export function hasUnavailablePathInstrumentsEnabled(settings: AppSettings): boolean {
+  return enabledUnavailablePathInstruments(settings).length > 0;
 }
 
 /* ── Persistence ── */

@@ -87,7 +87,11 @@ export default function ConfirmAlert({
 }
 
 function useStyles(animIn: boolean, animOut: boolean) {
-  return useMemo(() => ({
+  return useMemo(() => {
+    const viewportGutter = Gap.section * 2;
+    const maxViewportWidth = `calc(100vw - ${viewportGutter}px)`;
+
+    return ({
     overlay: {
       ...modalOverlay,
       zIndex: ZIndex.confirmOverlay,
@@ -99,8 +103,9 @@ function useStyles(animIn: boolean, animOut: boolean) {
       ...modalCard,
       borderRadius: Radius.md,
       padding: padding(Gap.section),
-      maxWidth: Layout.confirmMaxWidth,
-      width: '90%',
+      minWidth: `min(${Layout.confirmMinWidth}px, ${maxViewportWidth})`,
+      width: 'fit-content',
+      maxWidth: maxViewportWidth,
       opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
       transform: animOut ? scale(MODAL_SCALE_ENTER) : animIn ? scale(1) : scale(MODAL_SCALE_ENTER),
       transition: transitions(
@@ -127,20 +132,26 @@ function useStyles(animIn: boolean, animOut: boolean) {
     buttons: {
       ...flexRow,
       gap: Gap.md,
+      flexWrap: 'nowrap' as const,
       opacity: Opacity.none,
       animation: animIn ? `fadeInUp ${TRANSITION_MS}ms ease-out ${TRANSITION_MS}ms forwards` : CssValue.none,
     } as CSSProperties,
     btnNo: {
       ...btnPrimary,
       flex: 1,
+      minWidth: 'max-content',
       padding: padding(Gap.xl),
       fontSize: Font.md,
+      whiteSpace: 'nowrap' as const,
     } as CSSProperties,
     btnYes: {
       ...btnDanger,
       flex: 1,
+      minWidth: 'max-content',
       padding: padding(Gap.xl),
       fontSize: Font.md,
+      whiteSpace: 'nowrap' as const,
     } as CSSProperties,
-  }), [animIn, animOut]);
+  });
+  }, [animIn, animOut]);
 }

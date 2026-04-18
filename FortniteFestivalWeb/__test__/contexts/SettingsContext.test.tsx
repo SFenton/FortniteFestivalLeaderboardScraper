@@ -5,8 +5,10 @@ import {
   SettingsProvider,
   useSettings,
   defaultAppSettings,
+  hasUnavailablePathInstrumentsEnabled,
   isInstrumentVisible,
   visibleInstruments,
+  visiblePathInstruments,
 } from '../../src/contexts/SettingsContext';
 import type { AppSettings } from '../../src/contexts/SettingsContext';
 
@@ -68,15 +70,51 @@ describe('SettingsContext', () => {
 
   describe('visibleInstruments', () => {
     it('returns all instruments when all visible', () => {
-      expect(visibleInstruments(defaultAppSettings())).toHaveLength(6);
+      expect(visibleInstruments(defaultAppSettings())).toHaveLength(9);
     });
 
     it('excludes hidden instruments', () => {
       const s = { ...defaultAppSettings(), showDrums: false, showProBass: false };
       const visible = visibleInstruments(s);
+      expect(visible).toHaveLength(7);
+      expect(visible).not.toContain('Solo_Drums');
+      expect(visible).not.toContain('Solo_PeripheralBass');
+    });
+  });
+
+  describe('visiblePathInstruments', () => {
+    it('filters out unsupported path instruments even when they are visible in settings', () => {
+      const visible = visiblePathInstruments(defaultAppSettings());
+      expect(visible).toHaveLength(6);
+      expect(visible).not.toContain('Solo_PeripheralVocals');
+      expect(visible).not.toContain('Solo_PeripheralDrums');
+      expect(visible).not.toContain('Solo_PeripheralCymbals');
+    });
+
+    it('still respects normal instrument visibility settings', () => {
+      const visible = visiblePathInstruments({
+        ...defaultAppSettings(),
+        showDrums: false,
+        showProBass: false,
+      });
       expect(visible).toHaveLength(4);
       expect(visible).not.toContain('Solo_Drums');
       expect(visible).not.toContain('Solo_PeripheralBass');
+    });
+  });
+
+  describe('hasUnavailablePathInstrumentsEnabled', () => {
+    it('returns true when any unsupported path instrument is enabled', () => {
+      expect(hasUnavailablePathInstrumentsEnabled(defaultAppSettings())).toBe(true);
+    });
+
+    it('returns false when all unsupported path instruments are hidden', () => {
+      expect(hasUnavailablePathInstrumentsEnabled({
+        ...defaultAppSettings(),
+        showPeripheralVocals: false,
+        showPeripheralDrums: false,
+        showPeripheralCymbals: false,
+      })).toBe(false);
     });
   });
 
