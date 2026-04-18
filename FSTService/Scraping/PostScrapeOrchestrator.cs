@@ -349,15 +349,10 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     internal async Task RefreshRegisteredUsersAsync(ScrapePassContext ctx, CancellationToken ct)
     {
-        if (ctx.RegisteredIds.Count == 0)
-            return;
-
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
 
         try
         {
-            var chartedSongIds = ctx.ScrapeRequests.Select(r => r.SongId).ToList();
-
             var refreshToken = await _tokenManager.GetAccessTokenAsync(ct);
             if (refreshToken is null)
             {
@@ -367,7 +362,9 @@ public sealed class PostScrapeOrchestrator
 
             var callerAccountId = _tokenManager.AccountId!;
 
-            // Discover season windows for history recon
+            // Discover season windows. Runs every pass regardless of registered-user
+            // count so the current-season signal (consumed by /api/songs via
+            // MetaDatabase.GetCurrentSeason) stays fresh across season rollovers.
             _progress.SetSubOperation("discovering_season_windows");
             IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
             try
@@ -381,7 +378,35 @@ public sealed class PostScrapeOrchestrator
                 seasonWindows = [];
             }
 
-            var currentSeason = _persistence.GetMaxSeasonAcrossInstruments() ?? 1;
+            // Backstop: if the scraper has observed higher-numbered seasons in the
+            // instrument DBs than the events API advertised (e.g. Epic renamed a
+            // window and our regex missed the current season), persist a window
+            // row for that season so GetCurrentSeason() reflects reality. event_id
+            // and window_id are left blank; real values will be filled in when the
+            // next events-API response matches.
+            var instrumentMaxSeason = _persistence.GetMaxSeasonAcrossInstruments();
+            if (instrumentMaxSeason is int floor)
+            {
+                var known = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
+                for (int s = 1; s <= floor; s++)
+                {
+                    if (known.Contains(s)) continue;
+                    _persistence.Meta.UpsertSeasonWindow(s, eventId: "", windowId: "");
+                }
+                if (floor > (seasonWindows.Count == 0 ? 0 : seasonWindows.Max(w => w.SeasonNumber)))
+                {
+                    _log.LogInformation(
+                        "Season window floor raised from events-API max to instrument-DB max (season {Season}).",
+                        floor);
+                    seasonWindows = _persistence.Meta.GetSeasonWindows();
+                }
+            }
+
+            if (ctx.RegisteredIds.Count == 0)
+                return;
+
+            var chartedSongIds = ctx.ScrapeRequests.Select(r => r.SongId).ToList();
+            var currentSeason = instrumentMaxSeason ?? 1;
             var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
 
             // ── Build user list ──────────────────────────────────
