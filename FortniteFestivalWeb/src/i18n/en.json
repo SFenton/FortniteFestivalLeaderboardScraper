@@ -882,6 +882,7 @@
     "viewAllRankings": "View all rankings",
     "page": "Page {{current}} of {{total}}",
     "noRankings": "No rankings available yet.",
+    "noRankingsSubtitle": "When leaderboard ranks are recomputed for {{instrument}}, they will show up here on the next update.",
     "noRankingsHint": "Rankings are computed after each scrape pass.",
     "totalRanked": "{{formattedCount}} ranked players",
     "rankBy": "Rank By",
