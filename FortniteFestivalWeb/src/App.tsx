@@ -89,7 +89,7 @@ import BackLink from './components/shell/mobile/BackLink';
 import MobileHeader from './components/shell/mobile/MobileHeader';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
-import { useSettings } from './contexts/SettingsContext';
+import { useSettings, visiblePathInstruments } from './contexts/SettingsContext';
 import { useProximityGlow } from './hooks/ui/useProximityGlow';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
@@ -216,6 +216,7 @@ function AppShell() {
   const isNarrow = useIsMobile();
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
   const isWideDesktop = useIsWideDesktop();
+  const hasVisiblePathInstruments = visiblePathInstruments(settings).length > 0;
   const fabSearch = useFabSearch();
   const { isShopVisible, getShopUrl } = useShopState();
   const { scrollRef: shellScrollRef, portalRefCallback: shellPortalRefCallback } = useShellRefs();
@@ -474,7 +475,7 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={[
-            ...(isNarrow ? [[{
+            ...(isNarrow && hasVisiblePathInstruments ? [[{
               label: t('common.viewPaths'), icon: <IoFlash size={Size.iconFab} />, onPress: () => fabSearch.openPaths(),
             },
             ...(isShopVisible && currentShopUrl ? [{

@@ -80,11 +80,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         // Default config has all features OFF (no Features section in test config)
-        Assert.False(json.GetProperty("shop").GetBoolean());
         Assert.False(json.GetProperty("rivals").GetBoolean());
         Assert.False(json.GetProperty("compete").GetBoolean());
         Assert.False(json.GetProperty("leaderboards").GetBoolean());
         Assert.False(json.GetProperty("firstRun").GetBoolean());
+        Assert.False(json.GetProperty("difficulty").GetBoolean());
+        Assert.False(json.GetProperty("playerBands").GetBoolean());
     }
 
     // ─── Progress ───────────────────────────────────────────────
@@ -1414,6 +1415,71 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal("Top 5%", stat.GetProperty("avgPercentile").GetString());
     }
 
+    [Fact]
+    public async Task ApiPlayerStats_ReturnsBands_WhenFeatureEnabled()
+    {
+        var featureOptions = _factory.Services.GetRequiredService<IOptions<FeatureOptions>>().Value;
+        var originalPlayerBands = featureOptions.PlayerBands;
+        featureOptions.PlayerBands = true;
+
+        try
+        {
+            using var scope = _factory.Services.CreateScope();
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            metaDb.InsertAccountIds(["bandsAcct1", "bandsMate1", "bandsMate2"]);
+            metaDb.InsertAccountNames([
+                ("bandsAcct1", (string?)"Bands Player"),
+                ("bandsMate1", (string?)"Bands Mate One"),
+                ("bandsMate2", (string?)"Bands Mate Two"),
+            ]);
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries("bands_song_seed", [
+                new LeaderboardEntry { AccountId = "bandsAcct1", Score = 95_000, Rank = 1, Accuracy = 99, Stars = 6, Season = 5 },
+                new LeaderboardEntry { AccountId = "bandsOther", Score = 90_000, Rank = 2, Accuracy = 98, Stars = 6, Season = 5 },
+            ]);
+
+            metaDb.UpsertPlayerStatsTiers("bandsAcct1", "Solo_Guitar", JsonSerializer.Serialize(new[]
+            {
+                new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
+            }));
+
+            SeedBandRows(dataSource, "bands_song_1", "Band_Duets", "bandsAcct1:bandsMate1", (0, "bandsAcct1", 0), (1, "bandsMate1", 1));
+            SeedBandRows(dataSource, "bands_song_2", "Band_Duets", "bandsAcct1:bandsMate1", (0, "bandsAcct1", 2), (1, "bandsMate1", 1));
+            SeedBandRows(dataSource, "bands_song_3", "Band_Trios", "bandsAcct1:bandsMate1:bandsMate2", (0, "bandsAcct1", 0), (1, "bandsMate1", 1), (2, "bandsMate2", 3));
+
+            var response = await _client.GetAsync("/api/player/bandsAcct1/stats");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var bands = json.GetProperty("bands");
+
+            Assert.Equal(2, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
+            Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
+            Assert.Equal(1, bands.GetProperty("trios").GetProperty("totalCount").GetInt32());
+            Assert.Equal(0, bands.GetProperty("quads").GetProperty("totalCount").GetInt32());
+
+            var duoEntry = bands.GetProperty("duos").GetProperty("entries")[0];
+            var playerMember = duoEntry.GetProperty("members")
+                .EnumerateArray()
+                .Single(member => string.Equals(member.GetProperty("accountId").GetString(), "bandsAcct1", StringComparison.Ordinal));
+            var instruments = playerMember.GetProperty("instruments")
+                .EnumerateArray()
+                .Select(value => value.GetString())
+                .ToArray();
+
+            Assert.Contains("Solo_Guitar", instruments);
+                Assert.Contains("Solo_Vocals", instruments);
+        }
+        finally
+        {
+            featureOptions.PlayerBands = originalPlayerBands;
+        }
+    }
+
     // ═══ Leaderboard Combined Count ═════════════════════════════
 
     [Fact]
@@ -1456,6 +1522,45 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         cmd.CommandText = "INSERT INTO songs (song_id, title) VALUES (@songId, 'Test Song') ON CONFLICT DO NOTHING";
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.ExecuteNonQuery();
+    }
+
+    private static void SeedBandRows(
+        NpgsqlDataSource dataSource,
+        string songId,
+        string bandType,
+        string teamKey,
+        params (int MemberIndex, string AccountId, int InstrumentId)[] members)
+    {
+        using var conn = dataSource.OpenConnection();
+
+        foreach (var member in members)
+        {
+            using var memberCmd = conn.CreateCommand();
+            memberCmd.CommandText = """
+                INSERT INTO band_member_stats (song_id, band_type, team_key, instrument_combo, member_index, account_id, instrument_id)
+                VALUES (@songId, @bandType, @teamKey, '', @memberIndex, @accountId, @instrumentId)
+                ON CONFLICT DO NOTHING
+                """;
+            memberCmd.Parameters.AddWithValue("songId", songId);
+            memberCmd.Parameters.AddWithValue("bandType", bandType);
+            memberCmd.Parameters.AddWithValue("teamKey", teamKey);
+            memberCmd.Parameters.AddWithValue("memberIndex", member.MemberIndex);
+            memberCmd.Parameters.AddWithValue("accountId", member.AccountId);
+            memberCmd.Parameters.AddWithValue("instrumentId", member.InstrumentId);
+            memberCmd.ExecuteNonQuery();
+
+            using var lookupCmd = conn.CreateCommand();
+            lookupCmd.CommandText = """
+                INSERT INTO band_members (account_id, song_id, band_type, team_key, instrument_combo)
+                VALUES (@accountId, @songId, @bandType, @teamKey, '')
+                ON CONFLICT DO NOTHING
+                """;
+            lookupCmd.Parameters.AddWithValue("accountId", member.AccountId);
+            lookupCmd.Parameters.AddWithValue("songId", songId);
+            lookupCmd.Parameters.AddWithValue("bandType", bandType);
+            lookupCmd.Parameters.AddWithValue("teamKey", teamKey);
+            lookupCmd.ExecuteNonQuery();
+        }
     }
 
     // ─── Sync Status ──────────────────────────────────────────

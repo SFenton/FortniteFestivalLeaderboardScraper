@@ -5,11 +5,18 @@ import { IoClose, IoChevronDown, IoImage, IoReaderOutline } from 'react-icons/io
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../../hooks/ui/useVisualViewport';
-import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
+import {
+  PATH_UNAVAILABLE_INSTRUMENTS,
+  hasUnavailablePathInstrumentsEnabled,
+  useSettings,
+  visibleInstruments,
+  visiblePathInstruments,
+} from '../../../../contexts/SettingsContext';
 import { INSTRUMENT_LABELS, DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';
 import ArcSpinner from '../../../../components/common/ArcSpinner';
+import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import {
   Colors, Radius, Font, Gap, Weight, Shadow,
   Display, Overflow, TextAlign, Cursor, CssValue, CssProp,
@@ -102,18 +109,23 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const wasVisibleRef = useRef(false);
   const { settings, updateSettings } = useSettings();
   const instruments = visibleInstruments(settings);
+  const pathInstruments = visiblePathInstruments(settings);
+  const initialInstrument = pathInstruments[0] ?? DEFAULT_INSTRUMENT;
+  const shouldWarnOnOpen = hasUnavailablePathInstrumentsEnabled(settings) && !settings.pathUnavailableWarningDismissed;
   const selectorItems = useMemo<InstrumentSelectorItem[]>(
     () => instruments.map(key => ({ key, label: INSTRUMENT_LABELS[key] })),
     [instruments],
   );
-  const [selected, setSelected] = useState<InstrumentKey>(DEFAULT_INSTRUMENT);
+  const [selected, setSelected] = useState<InstrumentKey>(initialInstrument);
   const [difficulty, setDifficulty] = useState<Difficulty>('expert');
   const [choptDisplay, setChoptDisplay] = useState<ChoptDisplay>(settings.pathDefaultView);
   const [instOpen, setInstOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [choptOpen, setChoptOpen] = useState(false);
+  const [showUnavailableAlert, setShowUnavailableAlert] = useState(false);
   const columnOrder = settings.pathColumnOrder;
   const setColumnOrder = useCallback((order: ColumnKey[]) => updateSettings({ pathColumnOrder: order }), [updateSettings]);
   const accordionTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -162,19 +174,36 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
   }, [instOpen, diffOpen, choptOpen, closeAllAccordions]);
 
   useEffect(() => {
-    if (visible) {
+    if (visible && !wasVisibleRef.current) {
       setMounted(true);
-    } else {
-      setAnimIn(false);
-      setSelected(DEFAULT_INSTRUMENT);
+      setSelected(initialInstrument);
       setDifficulty('expert');
       setChoptDisplay(settings.pathDefaultView);
       setInstOpen(false);
       setDiffOpen(false);
       setChoptOpen(false);
+      setShowUnavailableAlert(shouldWarnOnOpen);
+      clearTimeout(accordionTimer.current);
+    } else if (!visible && wasVisibleRef.current) {
+      setAnimIn(false);
+      setSelected(initialInstrument);
+      setDifficulty('expert');
+      setChoptDisplay(settings.pathDefaultView);
+      setInstOpen(false);
+      setDiffOpen(false);
+      setChoptOpen(false);
+      setShowUnavailableAlert(false);
       clearTimeout(accordionTimer.current);
     }
-  }, [visible]);
+    wasVisibleRef.current = visible;
+  }, [visible, initialInstrument, settings.pathDefaultView, shouldWarnOnOpen]);
+
+  useEffect(() => {
+    if (!visible || pathInstruments.length === 0) return;
+    if (!pathInstruments.includes(selected)) {
+      setSelected(initialInstrument);
+    }
+  }, [visible, pathInstruments, selected, initialInstrument]);
 
   useLayoutEffect(() => {
     if (mounted && visible) {
@@ -191,11 +220,11 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
   useEffect(() => {
     if (!mounted) return;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !showUnavailableAlert) onClose();
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [mounted, onClose]);
+  }, [mounted, onClose, showUnavailableAlert]);
 
   if (!mounted) return null;
 
@@ -269,6 +298,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
                     instruments={selectorItems}
                     selected={selected}
                     onSelect={(key) => { if (key && key === selected) setInstOpen(false); else if (key) setSelected(key); }}
+                    hiddenInstruments={PATH_UNAVAILABLE_INSTRUMENTS}
                     required
                     sig={sig}
                   />
@@ -344,6 +374,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
                   instruments={selectorItems}
                   selected={selected}
                   onSelect={(key) => { if (key && key === selected) setInstOpen(false); else if (key) setSelected(key); }}
+                  hiddenInstruments={PATH_UNAVAILABLE_INSTRUMENTS}
                   required
                   compact={false}
                   sig={sig}
@@ -381,6 +412,17 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
         {!isMobile && choptDisplay === 'text' && <PathDataHeader isMobile={false} columnOrder={columnOrder} onColumnOrderChange={setColumnOrder} />}
         {!isMobile && <PathImage songId={songId} instrument={selected} difficulty={difficulty} displayMode={choptDisplay} isMobile={false} columnOrder={columnOrder} />}
       </div>
+        {showUnavailableAlert && (
+          <ConfirmAlert
+            title={t('paths.unavailableTitle')}
+            message={t('paths.unavailableMessage')}
+            onNo={() => {}}
+            onYes={() => updateSettings({ pathUnavailableWarningDismissed: true })}
+            onExitComplete={() => setShowUnavailableAlert(false)}
+            noLabel={t('common.ok')}
+            yesLabel={t('paths.permanentlyDismiss')}
+          />
+        )}
     </>,
     document.body,
   );

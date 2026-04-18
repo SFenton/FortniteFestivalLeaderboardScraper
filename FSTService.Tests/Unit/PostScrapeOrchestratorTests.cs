@@ -118,7 +118,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
                 scraper,
@@ -317,7 +317,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator2, leaderboardRivalsCalculator2, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
                 Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
@@ -385,7 +385,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator3, leaderboardRivalsCalculator3, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
                 Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
@@ -497,7 +497,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
                 Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),

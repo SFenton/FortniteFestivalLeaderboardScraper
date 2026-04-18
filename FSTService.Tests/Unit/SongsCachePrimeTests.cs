@@ -144,7 +144,8 @@ public sealed class SongsCachePrimeTests
                 new ScrapeProgressTracker(),
                 NullLogger<ScrapeTimePrecomputer>.Instance,
                 NullLoggerFactory.Instance,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web),
+                    new FeatureOptions());
             FestivalSvc = new FestivalService((IFestivalPersistence?)null);
         }
 

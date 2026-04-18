@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Channels;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
@@ -1223,6 +1225,120 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Get grouped unique band summaries for one player, deduped by team members.
+    /// </summary>
+    public PlayerBandsDto GetPlayerBands(string accountId, int previewCount = 5)
+    {
+        using var conn = _pgDataSource.OpenConnection();
+
+        var teams = new List<(string BandType, string TeamKey)>();
+        using (var teamCmd = conn.CreateCommand())
+        {
+            teamCmd.CommandText = """
+                SELECT DISTINCT band_type, team_key
+                FROM band_members
+                WHERE account_id = @accountId
+                ORDER BY band_type, team_key
+                """;
+            teamCmd.Parameters.AddWithValue("accountId", accountId);
+
+            using var reader = teamCmd.ExecuteReader();
+            while (reader.Read())
+            {
+                teams.Add((reader.GetString(0), reader.GetString(1)));
+            }
+        }
+
+        if (teams.Count == 0)
+        {
+            return CreateEmptyPlayerBands();
+        }
+
+        var instrumentsByMember = new Dictionary<(string BandType, string TeamKey, string AccountId), List<string>>();
+        using (var memberCmd = conn.CreateCommand())
+        {
+            memberCmd.CommandText = """
+                WITH player_teams AS (
+                    SELECT DISTINCT band_type, team_key
+                    FROM band_members
+                    WHERE account_id = @accountId
+                )
+                SELECT pt.band_type,
+                       pt.team_key,
+                       bms.account_id,
+                       ARRAY_AGG(DISTINCT bms.instrument_id ORDER BY bms.instrument_id)
+                FROM player_teams pt
+                JOIN band_member_stats bms
+                  ON pt.band_type = bms.band_type
+                 AND pt.team_key = bms.team_key
+                GROUP BY pt.band_type, pt.team_key, bms.account_id
+                ORDER BY pt.band_type, pt.team_key, bms.account_id
+                """;
+            memberCmd.Parameters.AddWithValue("accountId", accountId);
+
+            using var reader = memberCmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var bandType = reader.GetString(0);
+                var teamKey = reader.GetString(1);
+                var memberAccountId = reader.GetString(2);
+                var instrumentIds = reader.IsDBNull(3) ? [] : reader.GetFieldValue<int[]>(3);
+
+                var instruments = instrumentIds
+                    .Select(BandInstrumentMapping.ToLeaderboardType)
+                    .Where(instrument => !string.IsNullOrWhiteSpace(instrument))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()!;
+
+                instrumentsByMember[(bandType, teamKey, memberAccountId)] = instruments;
+            }
+        }
+
+        var allMemberAccountIds = teams
+            .SelectMany(team => SplitTeamKey(team.TeamKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var displayNames = _metaDb.GetDisplayNames(allMemberAccountIds);
+
+        var allEntries = teams
+            .Select(team => new PlayerBandEntryDto
+            {
+                TeamKey = team.TeamKey,
+                BandType = team.BandType,
+                Members = SplitTeamKey(team.TeamKey)
+                    .Select(memberAccountId => new PlayerBandMemberDto
+                    {
+                        AccountId = memberAccountId,
+                        DisplayName = displayNames.GetValueOrDefault(memberAccountId),
+                        Instruments = instrumentsByMember.GetValueOrDefault((team.BandType, team.TeamKey, memberAccountId), []),
+                    })
+                    .ToList(),
+            })
+            .ToList();
+
+        var duos = allEntries
+            .Where(entry => string.Equals(entry.BandType, "Band_Duets", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var trios = allEntries
+            .Where(entry => string.Equals(entry.BandType, "Band_Trios", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var quads = allEntries
+            .Where(entry => string.Equals(entry.BandType, "Band_Quad", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new PlayerBandsDto
+        {
+            All = BuildAllBandGroup(accountId, allEntries, previewCount),
+            Duos = BuildBandGroup(duos, previewCount),
+            Trios = BuildBandGroup(trios, previewCount),
+            Quads = BuildBandGroup(quads, previewCount),
+        };
+    }
+
+    /// <summary>
     /// Get song entry counts for all instruments relevant to a player's scores.
     /// Returns a dictionary keyed by "SongId:Instrument" with total entry counts.
     /// </summary>
@@ -1510,6 +1626,43 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public IReadOnlyList<string> GetInstrumentKeys()
         => _instrumentDbs.Keys.ToList();
+
+    private static PlayerBandsDto CreateEmptyPlayerBands() => new();
+
+    private static PlayerBandGroupDto BuildBandGroup(List<PlayerBandEntryDto> entries, int previewCount)
+    {
+        return new PlayerBandGroupDto
+        {
+            TotalCount = entries.Count,
+            Entries = entries.Take(previewCount).ToList(),
+        };
+    }
+
+    private static PlayerBandGroupDto BuildAllBandGroup(string accountId, List<PlayerBandEntryDto> entries, int previewCount)
+    {
+        var shuffled = entries
+            .OrderBy(entry => StableShuffleKey(accountId, entry))
+            .ToList();
+
+        return new PlayerBandGroupDto
+        {
+            TotalCount = entries.Count,
+            Entries = shuffled.Take(previewCount).ToList(),
+        };
+    }
+
+    private static string StableShuffleKey(string accountId, PlayerBandEntryDto entry)
+    {
+        var seed = Encoding.UTF8.GetBytes($"{accountId}:{entry.BandType}:{entry.TeamKey}");
+        return Convert.ToHexString(SHA256.HashData(seed));
+    }
+
+    private static List<string> SplitTeamKey(string teamKey)
+    {
+        return teamKey
+            .Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+    }
 
     private int? _cachedTotalSongCount;
 

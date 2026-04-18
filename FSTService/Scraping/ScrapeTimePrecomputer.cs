@@ -21,6 +21,7 @@ public sealed class ScrapeTimePrecomputer
     private readonly ILogger<ScrapeTimePrecomputer> _log;
     private readonly ILoggerFactory _loggerFactory;
     private readonly JsonSerializerOptions _jsonOpts;
+    private readonly FeatureOptions _features;
 
     /// <summary>
     /// Disk staging writer for bulk precomputation. Created per PrecomputeAllAsync call,
@@ -41,7 +42,8 @@ public sealed class ScrapeTimePrecomputer
         ScrapeProgressTracker progress,
         ILogger<ScrapeTimePrecomputer> log,
         ILoggerFactory loggerFactory,
-        JsonSerializerOptions jsonOpts)
+        JsonSerializerOptions jsonOpts,
+        FeatureOptions features)
     {
         _persistence = persistence;
         _metaDb = metaDb;
@@ -50,6 +52,7 @@ public sealed class ScrapeTimePrecomputer
         _log = log;
         _loggerFactory = loggerFactory;
         _jsonOpts = jsonOpts;
+        _features = features;
     }
 
     /// <summary>Returns a precomputed response if available, else null.</summary>
@@ -688,6 +691,9 @@ public sealed class ScrapeTimePrecomputer
 
         // Build per-instrument rank tiers from rank_history_deltas
         var instrumentRanks = BuildInstrumentRankTiers(accountId);
+        var bands = _features.PlayerBands
+            ? _persistence.GetPlayerBands(accountId)
+            : null;
 
         var payload = new
         {
@@ -695,6 +701,7 @@ public sealed class ScrapeTimePrecomputer
             totalSongs,
             compositeRanks,
             instrumentRanks,
+            bands,
             instruments = tierRows.Select(r => new
             {
                 ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),

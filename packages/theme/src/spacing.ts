@@ -352,6 +352,8 @@ export const Layout = {
   toggleThumbLargeOnOffset: 22,
   /** Desktop modal panel z-index (overlay + 1). */
   modalPanelZ: 1001,
+  /** Minimum width for the confirm alert dialog. */
+  confirmMinWidth: 340,
   /** Max-width for the confirm alert dialog. */
   confirmMaxWidth: 340,
   /** Max-width for the changelog modal. */

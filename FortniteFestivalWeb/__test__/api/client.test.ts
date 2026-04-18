@@ -31,7 +31,7 @@ describe('api/client', () => {
       mockFetchOk(data);
       const result = await api.getSongs();
       expect(result).toEqual(data);
-      expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: {} });
+        expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: {}, cache: 'no-cache' });
     });
 
     it('sends If-None-Match when cached ETag exists', async () => {
@@ -46,7 +46,7 @@ describe('api/client', () => {
       });
 
       const result = await api.getSongs();
-      expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: { 'If-None-Match': '"abc123"' } });
+        expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: { 'If-None-Match': '"abc123"' }, cache: 'no-cache' });
       expect(result).toEqual(cached);
     });
 
@@ -158,10 +158,32 @@ describe('api/client', () => {
   });
 
   describe('getPlayerStats', () => {
-    it('fetches player stats', async () => {
-      mockFetchOk({ accountId: 'p1', stats: [] });
-      await api.getPlayerStats('p1');
+    it('fetches player stats and preserves band payloads', async () => {
+      mockFetchOk({
+        accountId: 'p1',
+        totalSongs: 10,
+        instruments: [],
+        bands: {
+          all: {
+            totalCount: 1,
+            entries: [{
+              teamKey: 'p1:p2',
+              bandType: 'Band_Duets',
+              members: [
+                { accountId: 'p1', displayName: 'Player One', instruments: ['Solo_Guitar'] },
+                { accountId: 'p2', displayName: 'Player Two', instruments: ['Solo_Bass'] },
+              ],
+            }],
+          },
+          duos: { totalCount: 1, entries: [] },
+          trios: { totalCount: 0, entries: [] },
+          quads: { totalCount: 0, entries: [] },
+        },
+      });
+      const result = await api.getPlayerStats('p1');
       expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/stats');
+      expect(result.bands?.all.totalCount).toBe(1);
+      expect(result.bands?.all.entries[0]?.members[0]?.displayName).toBe('Player One');
     });
   });
 

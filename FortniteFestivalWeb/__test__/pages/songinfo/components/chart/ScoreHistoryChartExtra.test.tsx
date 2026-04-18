@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { TestProviders } from '../../../../helpers/TestProviders';
 import { stubResizeObserver } from '../../../../helpers/browserStubs';
 
@@ -133,6 +133,43 @@ describe('ScoreHistoryChart — extra coverage', () => {
     });
     renderChart();
     expect(screen.getByTestId('responsive-container')).toBeTruthy();
+  });
+
+  it('renders a single-instrument selector when only one instrument has history', async () => {
+    mockChartData.useChartData.mockReturnValue({
+      songHistory: [{}, {}],
+      chartData: makeChartData(2),
+      loading: false,
+      instrumentCounts: { Solo_Bass: 2 },
+    });
+
+    renderChart({ defaultInstrument: 'Solo_Guitar' as any });
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Bass')).toBeTruthy();
+    });
+
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(screen.queryByTitle('Lead')).toBeNull();
+  });
+
+  it('keeps the only available instrument selected when clicked', async () => {
+    mockChartData.useChartData.mockReturnValue({
+      songHistory: [{}, {}],
+      chartData: makeChartData(2),
+      loading: false,
+      instrumentCounts: { Solo_Drums: 2 },
+    });
+
+    renderChart();
+
+    const drumsButton = await screen.findByTitle('Drums');
+    expect(screen.queryByText(/No score history/)).toBeNull();
+
+    fireEvent.click(drumsButton);
+
+    expect(screen.getByTitle('Drums')).toBe(drumsButton);
+    expect(screen.queryByText(/No score history/)).toBeNull();
   });
 
   /* ── Score card display ── */

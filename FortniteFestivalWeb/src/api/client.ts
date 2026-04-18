@@ -21,6 +21,11 @@ import type {
   CompositeRankingDto,
   ComboPageResponse,
   ComboRankingEntry,
+  BandComboCatalogResponse,
+  BandRankingDto,
+  BandRankingsPageResponse,
+  BandRankingMetric,
+  BandType,
   RankingMetric,
   LeaderboardNeighborhoodResponse,
   CompositeNeighborhoodResponse,
@@ -236,6 +241,32 @@ export const api = {
     get<{ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry>(
       `/api/rankings/combo/${encodeURIComponent(accountId)}?combo=${encodeURIComponent(comboId)}&rankBy=${encodeURIComponent(rankBy)}`,
     ),
+
+  getBandRankingCombos: (bandType: BandType) =>
+    get<BandComboCatalogResponse>(
+      `/api/rankings/bands/${encodeURIComponent(bandType)}/combos`,
+    ),
+
+  getBandRankings: (bandType: BandType, comboId?: string, rankBy: BandRankingMetric = 'adjusted', page = 1, pageSize = 10) => {
+    const params = new URLSearchParams();
+    params.set('rankBy', rankBy);
+    params.set('page', String(page));
+    params.set('pageSize', String(pageSize));
+    if (comboId) params.set('combo', comboId);
+    return get<BandRankingsPageResponse>(
+      `/api/rankings/bands/${encodeURIComponent(bandType)}?${params.toString()}`,
+    );
+  },
+
+  getBandRanking: (bandType: BandType, teamKey: string, comboId?: string, rankBy: BandRankingMetric = 'adjusted') => {
+    const params = new URLSearchParams();
+    params.set('rankBy', rankBy);
+    if (comboId) params.set('combo', comboId);
+    const qs = params.toString();
+    return get<BandRankingDto>(
+      `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}${qs ? `?${qs}` : ''}`,
+    );
+  },
 
   getLeaderboardNeighborhood: (instrument: InstrumentKey, accountId: string, radius = 5) =>
     getWithETag<LeaderboardNeighborhoodResponse>(

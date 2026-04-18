@@ -41,7 +41,8 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
             NullLoggerFactory.Instance,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            new JsonSerializerOptions(JsonSerializerDefaults.Web),
+            new FeatureOptions());
     }
 
     public void Dispose()

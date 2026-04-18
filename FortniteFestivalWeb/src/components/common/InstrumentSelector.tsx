@@ -40,6 +40,8 @@ export interface InstrumentSelectorProps<K extends AnyInstrumentKey = ServerInst
   instruments: InstrumentSelectorItem<K>[];
   selected: K | null;
   onSelect: (key: K | null) => void;
+  /** Optional instruments to hide from the rendered selector without changing the source list. */
+  hiddenInstruments?: readonly K[];
   /** When true, clicking the selected instrument does not deselect it. */
   required?: boolean;
   /**
@@ -69,21 +71,28 @@ export interface InstrumentSelectorProps<K extends AnyInstrumentKey = ServerInst
 }
 
 export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrumentKey>({
-  instruments, selected, onSelect, required, compact,
+  instruments, selected, onSelect, hiddenInstruments, required, compact,
   compactLabels, deferSelection, classNames, styles: sty, sig, children,
 }: InstrumentSelectorProps<K>) {
-  const hasSelection = selected != null;
+  const hiddenInstrumentSet = hiddenInstruments ? new Set(hiddenInstruments) : null;
+  const availableItems = hiddenInstrumentSet
+    ? instruments.filter(inst => !hiddenInstrumentSet.has(inst.key))
+    : instruments;
+  const effectiveSelected = selected != null && availableItems.some(inst => inst.key === selected)
+    ? selected
+    : null;
+  const hasSelection = effectiveSelected != null;
 
   // Local preview index for compact mode when deferSelection is on and nothing is selected.
   const [previewIdx, setPreviewIdx] = useState(0);
   // Reset preview when instruments list changes (e.g. settings toggle)
-  useEffect(() => { setPreviewIdx(0); }, [instruments.length]);
-  const previewKey = instruments[previewIdx]?.key ?? instruments[0]?.key;
+  useEffect(() => { setPreviewIdx(0); }, [availableItems.length]);
+  const previewKey = availableItems[previewIdx]?.key ?? availableItems[0]?.key;
 
   // Auto-compact: when `compact` is undefined, measure the row to decide.
   const rowRef = useRef<HTMLDivElement>(null);
   const [autoCompact, setAutoCompact] = useState(false);
-  const isCompact = compact ?? autoCompact;
+  const isCompact = (compact ?? autoCompact) && availableItems.length > 0;
 
   useEffect(() => {
     // Skip measurement when compact is explicitly controlled by the caller.
@@ -95,12 +104,14 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
       // Derive button width and gap from the effective styles.
       const btnWidth = (sty?.button?.width as number | undefined) ?? Layout.demoInstrumentBtn;
       const gap = (sty?.row?.gap as number | undefined) ?? ((classNames?.row || sty?.row) ? 0 : Gap.md);
-      const needed = instruments.length * btnWidth + (instruments.length - 1) * gap;
-      setAutoCompact(width > 0 && width < needed);
+      const needed = availableItems.length > 0
+        ? availableItems.length * btnWidth + (availableItems.length - 1) * gap
+        : 0;
+      setAutoCompact(width > 0 && availableItems.length > 0 && width < needed);
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [compact, instruments.length, sty?.button?.width, sty?.row?.gap, sty?.row, classNames?.row]);
+  }, [compact, availableItems.length, sty?.button?.width, sty?.row?.gap, sty?.row, classNames?.row]);
 
   // Style overrides (sty) take precedence over classNames, which take precedence over defaults.
   const rowClass = sty ? undefined : classNames?.row;
@@ -113,20 +124,24 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
   const btnActiveStyle = sty?.buttonActive ?? sty?.button;
   const arrowStyle = sty?.arrowButton;
   const useStyOverride = !!sty;
+  const compactPreviewKey = effectiveSelected ?? previewKey;
 
   const cycle = useCallback((dir: 1 | -1) => {
-    if (!selected) {
+    if (availableItems.length === 0) {
+      return;
+    }
+    if (!effectiveSelected) {
       if (deferSelection) {
-        setPreviewIdx(prev => (prev + dir + instruments.length) % instruments.length);
+        setPreviewIdx(prev => (prev + dir + availableItems.length) % availableItems.length);
       } else {
-        onSelect(instruments[dir === 1 ? 0 : instruments.length - 1]!.key);
+        onSelect(availableItems[dir === 1 ? 0 : availableItems.length - 1]!.key);
       }
       return;
     }
-    const idx = instruments.findIndex(i => i.key === selected);
-    const next = (idx + dir + instruments.length) % instruments.length;
-    onSelect(instruments[next]!.key);
-  }, [instruments, selected, onSelect, deferSelection]);
+    const idx = availableItems.findIndex(i => i.key === effectiveSelected);
+    const next = (idx + dir + availableItems.length) % availableItems.length;
+    onSelect(availableItems[next]!.key);
+  }, [availableItems, effectiveSelected, onSelect, deferSelection]);
 
   return (
     <>
@@ -139,15 +154,23 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
             <button
               className={btnActiveClass || undefined}
               style={btnActiveStyle ?? (btnActiveClass ? undefined : filterStyles.instrumentBtn)}
-              onClick={() => onSelect(selected ? (required ? selected : null) : (previewKey ?? instruments[0]!.key))}
+              onClick={() => {
+                if (effectiveSelected) {
+                  onSelect(required ? effectiveSelected : null);
+                  return;
+                }
+                if (compactPreviewKey) {
+                  onSelect(compactPreviewKey);
+                }
+              }}
             >
               {useStyOverride ? (
-                <InstrumentIcon instrument={selected ?? previewKey ?? instruments[0]!.key} sig={sig} size={Size.iconInstrument} />
+                compactPreviewKey ? <InstrumentIcon instrument={compactPreviewKey} sig={sig} size={Size.iconInstrument} /> : null
               ) : (
                 <>
-                  <div style={selected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
+                  <div style={effectiveSelected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
                   <div style={filterStyles.instrumentIconWrap}>
-                    <InstrumentIcon instrument={selected ?? previewKey ?? instruments[0]!.key} sig={sig} size={Size.iconInstrument} />
+                    {compactPreviewKey ? <InstrumentIcon instrument={compactPreviewKey} sig={sig} size={Size.iconInstrument} /> : null}
                   </div>
                 </>
               )}
@@ -157,8 +180,8 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
             </button>
           </>
         ) : (
-          instruments.map(inst => {
-            const isSelected = selected === inst.key;
+          availableItems.map(inst => {
+            const isSelected = effectiveSelected === inst.key;
             return (
               <button
                 key={inst.key}

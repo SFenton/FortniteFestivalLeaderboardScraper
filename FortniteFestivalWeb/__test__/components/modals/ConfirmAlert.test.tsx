@@ -1,9 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import ConfirmAlert from '../../../src/components/modals/ConfirmAlert';
-import { TRANSITION_MS } from '@festival/theme';
+import { Gap, Layout, TRANSITION_MS } from '@festival/theme';
 
-type ConfirmAlertProps = { title: string; message: string; onNo: () => void; onYes: () => void; onExitComplete?: () => void };
+type ConfirmAlertProps = {
+  title: string;
+  message: string;
+  onNo: () => void;
+  onYes: () => void;
+  onExitComplete?: () => void;
+  noLabel?: string;
+  yesLabel?: string;
+};
 
 describe('ConfirmAlert', () => {
   const defaultProps: ConfirmAlertProps = {
@@ -23,6 +31,27 @@ describe('ConfirmAlert', () => {
     render(<ConfirmAlert {...defaultProps} />);
     expect(screen.getByText('Yes')).toBeDefined();
     expect(screen.getByText('No')).toBeDefined();
+  });
+
+  it('sizes to content and keeps long button labels on one line', () => {
+    render(
+      <ConfirmAlert
+        {...defaultProps}
+        noLabel="Okay, Keep It Open"
+        yesLabel="Permanently Dismiss"
+      />,
+    );
+
+    const overlay = document.body.lastElementChild as HTMLElement;
+    const card = overlay.firstElementChild as HTMLElement;
+    const noButton = screen.getByText('Okay, Keep It Open');
+    const yesButton = screen.getByText('Permanently Dismiss');
+
+    expect(card.style.minWidth).toBe(`min(${Layout.confirmMinWidth}px, calc(100vw - ${Gap.section * 2}px))`);
+    expect(card.style.width).toBe('fit-content');
+    expect(card.style.maxWidth).toBe(`calc(100vw - ${Gap.section * 2}px)`);
+    expect(noButton.style.whiteSpace).toBe('nowrap');
+    expect(yesButton.style.whiteSpace).toBe('nowrap');
   });
 
   it('calls onNo when No is clicked', () => {

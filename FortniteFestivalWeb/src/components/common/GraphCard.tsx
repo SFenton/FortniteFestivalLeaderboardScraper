@@ -33,6 +33,8 @@ export type GraphCardProps<T> = {
   loading: boolean;
   /** Instrument selector config. */
   instruments: InstrumentSelectorItem<InstrumentKey>[];
+  /** When true, renders the selector even if only one instrument is available. */
+  showSingleInstrumentSelector?: boolean;
   /** Currently selected instrument key. */
   selected: InstrumentKey;
   /** Called when the user picks a different instrument. */
@@ -85,6 +87,7 @@ function GraphCardInner<T>({
   data,
   loading,
   instruments,
+  showSingleInstrumentSelector,
   selected,
   onInstrumentSelect,
   sig,
@@ -151,7 +154,7 @@ function GraphCardInner<T>({
     <div>
       <div style={st.chartContainer} ref={chartContainerRef}>
         {/* Instrument selector */}
-        {instruments.length > 1 && (
+        {(instruments.length > 1 || (showSingleInstrumentSelector && instruments.length === 1)) && (
           <div style={st.iconRowWrap}>
             <InstrumentSelector
               instruments={instruments}

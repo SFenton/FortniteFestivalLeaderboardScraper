@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 // Mock feature flags
 const mockFlags = vi.hoisted(() => ({
-  rivals: true, compete: true, leaderboards: true, firstRun: true,
+  rivals: true, compete: true, leaderboards: true, firstRun: true, playerBands: true,
 }));
 
 vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
@@ -13,7 +13,7 @@ vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
 
 import FeatureGate from '../../../src/components/routing/FeatureGate';
 
-function renderWithRoute(flag: 'rivals' | 'compete' | 'leaderboards', initialPath = '/test') {
+function renderWithRoute(flag: 'rivals' | 'compete' | 'leaderboards' | 'playerBands', initialPath = '/test') {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
@@ -49,6 +49,12 @@ describe('FeatureGate', () => {
   it('works with leaderboards flag', () => {
     mockFlags.leaderboards = false;
     renderWithRoute('leaderboards');
+    expect(screen.getByTestId('redirected')).toBeTruthy();
+  });
+
+  it('works with playerBands flag', () => {
+    mockFlags.playerBands = false;
+    renderWithRoute('playerBands');
     expect(screen.getByTestId('redirected')).toBeTruthy();
   });
 });

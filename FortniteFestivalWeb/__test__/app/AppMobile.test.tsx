@@ -4,7 +4,7 @@
  * bottom nav, and route-specific floating action buttons.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor, fireEvent } from '@testing-library/react';
+import { render, waitFor, fireEvent, screen } from '@testing-library/react';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -179,6 +179,51 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       expect(container.innerHTML.length).toBeGreaterThan(200);
     });
+    window.location.hash = '';
+  });
+
+  it('shows the View Paths FAB action on mobile song detail when a supported path instrument is enabled', async () => {
+    setMobile();
+    window.location.hash = '#/songs/s1';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Song')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByLabelText('Actions'));
+    await waitFor(() => {
+      expect(screen.getByText('Find Player')).toBeDefined();
+    });
+    expect(screen.getByText('View Paths')).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('hides the View Paths FAB action on mobile song detail when only unsupported path instruments are enabled', async () => {
+    setMobile();
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: false,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: true,
+      showPeripheralCymbals: true,
+      showPeripheralDrums: true,
+    }));
+    window.location.hash = '#/songs/s1';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Song')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByLabelText('Actions'));
+    await waitFor(() => {
+      expect(screen.getByText('Find Player')).toBeDefined();
+    });
+    expect(screen.queryByText('View Paths')).toBeNull();
     window.location.hash = '';
   });
 
