@@ -68,6 +68,8 @@ export type ServerSong = {
   album?: string;
   year?: number;
   tempo?: number;
+  /** Lead instrument signature: "Guitar" or "Keyboard". Controls lead/pro-lead icon variant. */
+  sig?: string;
   /** Song duration in seconds, from Epic's spark-tracks `dn` field. Null when missing or 0. */
   durationSeconds?: number;
   albumArt?: string;

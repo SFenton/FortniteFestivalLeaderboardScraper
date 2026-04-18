@@ -152,7 +152,7 @@ export default function LeaderboardPage() {
     return () => scrollEl.removeEventListener('scroll', onScroll);
   }, [cacheKey, scrollContainerRef]);
 
-  // Header collapse callback — respects pinning (pinned pages keep their state until unpinned)
+  // Header collapse callback ï¿½ respects pinning (pinned pages keep their state until unpinned)
   const handleHeaderCollapse = useCallback((collapsed: boolean) => {
     if (headerPinned.current) return;
     setHeaderCollapsed(collapsed);
@@ -207,7 +207,7 @@ export default function LeaderboardPage() {
   );
 
   // Restore scroll position when returning from cache
-  /* v8 ignore start — scroll restoration: scrollTop DOM API */
+  /* v8 ignore start ï¿½ scroll restoration: scrollTop DOM API */
   useEffect(() => {
     if (!skipAllAnim || !cached) return;
     if (cached.scrollTop > 0) {
@@ -281,7 +281,7 @@ export default function LeaderboardPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- animation sequence, intentionally omits isNarrow
   }, [loading, error]);
 
-  /* v8 ignore start — navToPlayer auto-scroll */
+  /* v8 ignore start ï¿½ navToPlayer auto-scroll */
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !searchParams.get('navToPlayer')) return;
     const playerIndex = playerData ? entries.findIndex(e => e.accountId === playerData.accountId) : -1;
@@ -355,6 +355,7 @@ export default function LeaderboardPage() {
             songId={songId!}
             collapsed={!!(isNarrow || headerCollapsed)}
             instrument={instKey}
+            sig={song?.sig}
             animate={!isNarrow}
             hideBackground
             onTitleClick={goToSongDetail}

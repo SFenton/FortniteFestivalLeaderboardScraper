@@ -36,6 +36,8 @@ export interface SongInfoHeaderProps {
   collapsed: boolean;
   /** Instrument to show on the right side. Omit to hide the instrument section. */
   instrument?: ServerInstrumentKey;
+  /** Lead instrument signature ("Guitar" or "Keyboard") for icon variant. */
+  sig?: string;
   /** Extra controls rendered in the right section (e.g. sort button). */
   actions?: ReactNode;
   /** Enable smooth CSS transitions for collapse animation. */
@@ -63,6 +65,7 @@ export default function SongInfoHeader({
   songId,
   collapsed,
   instrument,
+  sig,
   actions,
   animate,
   onOpenPaths,
@@ -118,7 +121,7 @@ export default function SongInfoHeader({
           <>
             {instrument && (
               <div style={s.instIconWrap}>
-                <InstrumentIcon instrument={instrument} size={48} />
+                <InstrumentIcon instrument={instrument} sig={sig} size={48} />
               </div>
             )}
             {/* v8 ignore start — action buttons */}

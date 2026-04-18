@@ -349,7 +349,7 @@ export default function SongDetailPage() {
       }
       after={<>
         {/* v8 ignore start -- songId always truthy from route params */}
-        {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
+        {songId && <PathsModal visible={pathsOpen} songId={songId} sig={song?.sig} onClose={() => setPathsOpen(false)} />}
         {/* v8 ignore stop */}
       </>}
     >
@@ -408,6 +408,7 @@ export default function SongDetailPage() {
                       localEntries={instrumentData[inst].localEntries}
                       skipAnimation={skipAnim}
                       scoreWidth={globalScoreWidth}
+                      sig={song?.sig}
                     />
                   </div>
               );

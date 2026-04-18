@@ -206,6 +206,7 @@ export default function PlayerHistoryPage() {
             songId={songId!}
             collapsed={!!(hasFab || headerCollapsed)}
             instrument={instKey}
+            sig={song?.sig}
             animate={!hasFab}
             hideBackground
             onTitleClick={goToSongDetail}

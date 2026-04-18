@@ -63,12 +63,14 @@ export interface InstrumentSelectorProps<K extends AnyInstrumentKey = ServerInst
   classNames?: InstrumentSelectorClassNames;
   /** Inline style overrides. Takes precedence over classNames. */
   styles?: InstrumentSelectorStyleOverrides;
+  /** Lead instrument signature ("Guitar" or "Keyboard") for icon variant. */
+  sig?: string;
   children?: React.ReactNode;
 }
 
 export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrumentKey>({
   instruments, selected, onSelect, required, compact,
-  compactLabels, deferSelection, classNames, styles: sty, children,
+  compactLabels, deferSelection, classNames, styles: sty, sig, children,
 }: InstrumentSelectorProps<K>) {
   const hasSelection = selected != null;
 
@@ -140,12 +142,12 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
               onClick={() => onSelect(selected ? (required ? selected : null) : (previewKey ?? instruments[0]!.key))}
             >
               {useStyOverride ? (
-                <InstrumentIcon instrument={selected ?? previewKey ?? instruments[0]!.key} size={Size.iconInstrument} />
+                <InstrumentIcon instrument={selected ?? previewKey ?? instruments[0]!.key} sig={sig} size={Size.iconInstrument} />
               ) : (
                 <>
                   <div style={selected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
                   <div style={filterStyles.instrumentIconWrap}>
-                    <InstrumentIcon instrument={selected ?? previewKey ?? instruments[0]!.key} size={Size.iconInstrument} />
+                    <InstrumentIcon instrument={selected ?? previewKey ?? instruments[0]!.key} sig={sig} size={Size.iconInstrument} />
                   </div>
                 </>
               )}
@@ -170,12 +172,12 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
                 title={inst.label ?? (SERVER_INSTRUMENT_LABELS as Record<string, string>)[inst.key] ?? inst.key}
               >
                 {useStyOverride ? (
-                  <InstrumentIcon instrument={inst.key} size={Size.iconInstrument} />
+                  <InstrumentIcon instrument={inst.key} sig={sig} size={Size.iconInstrument} />
                 ) : (
                   <>
                     <div style={isSelected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
                     <div style={filterStyles.instrumentIconWrap}>
-                      <InstrumentIcon instrument={inst.key} size={Size.iconInstrument} />
+                      <InstrumentIcon instrument={inst.key} sig={sig} size={Size.iconInstrument} />
                     </div>
                   </>
                 )}

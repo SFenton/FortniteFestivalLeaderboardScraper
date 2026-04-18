@@ -30,6 +30,7 @@ interface InstrumentCardProps {
   localEntries?: number;
   skipAnimation?: boolean;
   scoreWidth: string;
+  sig?: string;
 }
 
 export default memo(function InstrumentCard({
@@ -47,6 +48,7 @@ export default memo(function InstrumentCard({
   localEntries,
   skipAnimation,
   scoreWidth,
+  sig,
 }: InstrumentCardProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -84,7 +86,7 @@ export default memo(function InstrumentCard({
   return (
     <div style={st.cardWrapper}>
       <div style={{ ...st.cardLabel, ...anim(baseDelay) }} onAnimationEnd={clearAnim}>
-        <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} />
+        <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} sig={sig} />
       </div>
       <div
         style={hasEntries ? st.card : st.cardNoClick}
