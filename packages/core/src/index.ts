@@ -22,10 +22,10 @@ export * from './app/formatters';
 export const APP_VERSION = '0.0.3';
 
 /** Current @festival/core package version. Keep in sync with packages/core/package.json. */
-export const CORE_VERSION = '0.0.9';
+export const CORE_VERSION = '0.0.10';
 
 /** Current @festival/theme package version. Keep in sync with packages/theme/package.json. */
-export const THEME_VERSION = '0.0.3';
+export const THEME_VERSION = '0.0.4';
 export * from './app/scoreRows';
 export * from './app/songInfo';
 export * from './app/songFiltering';
