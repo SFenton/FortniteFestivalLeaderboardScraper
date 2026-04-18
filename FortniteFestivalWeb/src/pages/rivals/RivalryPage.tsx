@@ -74,7 +74,7 @@ export default function RivalryPage() {
   const [loading, setLoading] = useState(!hasCachedData);
   /* v8 ignore stop */
 
-  const { albumArtMap, yearMap } = useSongLookups();
+  const { albumArtMap, yearMap, sigMap } = useSongLookups();
 
   /* v8 ignore start — async data fetch */
   useEffect(() => {
@@ -158,6 +158,7 @@ export default function RivalryPage() {
                       song={song}
                       albumArt={albumArtMap.get(song.songId)}
                       year={yearMap.get(song.songId)}
+                      sig={sigMap.get(song.songId)}
                       playerName={player?.displayName}
                       rivalName={rivalName ?? undefined}
                       onClick={() => navigate(Routes.songDetail(song.songId))}

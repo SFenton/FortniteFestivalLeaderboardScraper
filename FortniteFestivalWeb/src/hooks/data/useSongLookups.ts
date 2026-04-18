@@ -24,5 +24,13 @@ export function useSongLookups() {
     return map;
   }, [songs]);
 
-  return { albumArtMap, yearMap };
+  const sigMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const song of songs) {
+      if (song.sig) map.set(song.songId, song.sig);
+    }
+    return map;
+  }, [songs]);
+
+  return { albumArtMap, yearMap, sigMap };
 }

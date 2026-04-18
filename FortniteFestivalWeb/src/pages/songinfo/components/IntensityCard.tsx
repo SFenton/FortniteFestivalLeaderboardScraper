@@ -33,6 +33,7 @@ const ROWS: readonly Row[] = [
 
 interface IntensityCardProps {
   song: ServerSong | undefined;
+  sig?: string;
   style?: CSSProperties;
   onAnimationEnd?: (ev: React.AnimationEvent<HTMLElement>) => void;
 }
@@ -42,7 +43,7 @@ interface IntensityCardProps {
  * slots regardless of the user's enabled-instruments setting, showing the
  * instrument icon, label, and the 7-bar difficulty display used in song rows.
  */
-const IntensityCard = memo(function IntensityCard({ song, style, onAnimationEnd }: IntensityCardProps) {
+const IntensityCard = memo(function IntensityCard({ song, sig, style, onAnimationEnd }: IntensityCardProps) {
   const { t } = useTranslation();
   const st = useIntensityCardStyles();
 
@@ -57,7 +58,7 @@ const IntensityCard = memo(function IntensityCard({ song, style, onAnimationEnd 
             const raw = row.diffField != null ? diff?.[row.diffField] : undefined;
             return (
               <div key={row.key} style={st.row}>
-                <InstrumentHeader instrument={row.key} size={InstrumentHeaderSize.SM} iconOnly />
+                <InstrumentHeader instrument={row.key} size={InstrumentHeaderSize.SM} iconOnly sig={sig} />
                 <DifficultyBars level={raw ?? 0} raw />
               </div>
             );

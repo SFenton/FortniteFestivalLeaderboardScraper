@@ -10,6 +10,7 @@ interface RivalSongRowProps {
   song: RivalSongComparison;
   albumArt?: string;
   year?: number;
+  sig?: string;
   playerName?: string;
   rivalName?: string;
   onClick: () => void;
@@ -31,7 +32,7 @@ export function formatRankDelta(delta: number): string {
   return `${sign}${Math.round(abs / 1_000)}K`;
 }
 
-const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerName, rivalName, onClick, standalone, style, onAnimationEnd }: RivalSongRowProps) {
+const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, sig, playerName, rivalName, onClick, standalone, style, onAnimationEnd }: RivalSongRowProps) {
   const { t } = useTranslation();
   const st = useRivalSongRowStyles();
   /* v8 ignore start -- ternary chains and nullish coalescing */
@@ -68,7 +69,7 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
             <div style={st.songTitle}>{song.title ?? song.songId}</div>
             <div style={st.songArtist}>{song.artist ?? ''}{year ? ` \u00b7 ${year}` : ''}</div>
           </div>
-          <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} size={36} />
+          <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} sig={sig} size={36} />
         </div>
         <div style={st.compareRow}>
           <div style={{ ...st.entry, ...(userWins ? st.entryWin : {}) }}>
@@ -139,7 +140,7 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
           {rankDeltaText}
         </span>
       </div>
-      <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} size={36} />
+      <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} sig={sig} size={36} />
     </div>
   );
   /* v8 ignore stop */

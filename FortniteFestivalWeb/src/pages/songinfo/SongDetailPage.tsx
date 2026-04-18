@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useLayoutEffect, useState, useRef, useMemo, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
@@ -9,7 +9,6 @@ import { api } from '../../api/client';
 import {
   INSTRUMENT_KEYS,
   type ServerInstrumentKey as InstrumentKey,
-  type PlayerScore,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
 import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, CssValue, flexCenter, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
@@ -18,7 +17,7 @@ import Page, { PageBackground } from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import SongInfoHeader from '../../components/songs/headers/SongInfoHeader';
 import ScoreHistoryChart from './components/chart/ScoreHistoryChart';
-import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
+import { useSettings, visibleInstruments, visiblePathInstruments } from '../../contexts/SettingsContext';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useStagger } from '../../hooks/ui/useStagger';
@@ -66,6 +65,8 @@ export default function SongDetailPage() {
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
   const activeInstruments = visibleInstruments(settings);
+  const activePathInstruments = visiblePathInstruments(settings);
+  const canViewPaths = activePathInstruments.length > 0;
   const fabSearch = useFabSearch();
   const { filterPlayerScores, filterHistory: filterScoreHistory, leewayParam } = useScoreFilter();
   const [pathsOpen, setPathsOpen] = useState(false);
@@ -98,13 +99,24 @@ export default function SongDetailPage() {
   // This must be declared AFTER the fetch effects so it runs last in the effect order.
   // The cache is only fully valid when player-specific score history also matches (or no player is selected).
   const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedScoreHistory));
+  const openPaths = useCallback(() => {
+    if (canViewPaths) {
+      setPathsOpen(true);
+    }
+  }, [canViewPaths]);
 
   /* v8 ignore start — FAB registration callback */
   // Register openPaths for the FAB
   useEffect(() => {
-    fabSearch.registerSongDetailActions({ openPaths: () => setPathsOpen(true) });
-  }, [fabSearch]);
+    fabSearch.registerSongDetailActions({ openPaths });
+  }, [fabSearch, openPaths]);
   /* v8 ignore stop */
+
+  useEffect(() => {
+    if (!canViewPaths && pathsOpen) {
+      setPathsOpen(false);
+    }
+  }, [canViewPaths, pathsOpen]);
 
   const song = songs.find((s) => s.songId === songId);
   const shopUrl = song ? getShopUrl(song.songId) : undefined;
@@ -339,7 +351,7 @@ export default function SongDetailPage() {
             songId={songId!}
             collapsed={!!(hasFab || headerCollapsed)}
             animate={!hasFab}
-            onOpenPaths={() => setPathsOpen(true)}
+            onOpenPaths={canViewPaths ? openPaths : undefined}
             shopUrl={showShop ? shopUrl : undefined}
             shopPulse={showShop && song ? isShopHighlighted(song.songId) : false}
             shopLeavingTomorrow={showShop && song ? isLeavingTomorrow(song.songId) : false}
@@ -349,7 +361,7 @@ export default function SongDetailPage() {
       }
       after={<>
         {/* v8 ignore start -- songId always truthy from route params */}
-        {songId && <PathsModal visible={pathsOpen} songId={songId} sig={song?.sig} onClose={() => setPathsOpen(false)} />}
+        {songId && canViewPaths && <PathsModal visible={pathsOpen} songId={songId} sig={song?.sig} onClose={() => setPathsOpen(false)} />}
         {/* v8 ignore stop */}
       </>}
     >
@@ -370,6 +382,7 @@ export default function SongDetailPage() {
         <div style={styles.container}>
           <IntensityCard
             song={song}
+            sig={song?.sig}
             style={{ ...stagger(100), marginBottom: Gap.section }}
             onAnimationEnd={clearAnim}
           />
@@ -384,6 +397,7 @@ export default function SongDetailPage() {
                 visibleInstruments={activeInstruments}
                 skipAnimation={skipAnim}
                 scoreWidth={globalScoreWidth}
+                sig={song?.sig}
               />
             </div>
           )}

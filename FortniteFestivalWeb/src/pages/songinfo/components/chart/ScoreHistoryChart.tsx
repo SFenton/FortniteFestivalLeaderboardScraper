@@ -58,6 +58,7 @@ type ScoreHistoryChartProps = {
   visibleInstruments?: InstrumentKey[];
   skipAnimation?: boolean;
   scoreWidth?: string;
+  sig?: string;
 };
 
 export default memo(function ScoreHistoryChart({
@@ -69,6 +70,7 @@ export default memo(function ScoreHistoryChart({
   visibleInstruments: visibleInstrumentsProp,
   skipAnimation,
   scoreWidth: scoreWidthProp,
+  sig,
 }: ScoreHistoryChartProps) {
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -332,6 +334,7 @@ export default memo(function ScoreHistoryChart({
       instruments={selectorItems}
       selected={selected}
       onInstrumentSelect={handleInstrumentSelect}
+      sig={sig}
       title={t('chart.scoreHistory')}
       subtitle={t('chart.selectBarHint')}
       loadingMessage={t('chart.loadingHistory')}

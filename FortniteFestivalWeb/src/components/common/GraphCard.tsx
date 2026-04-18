@@ -37,6 +37,8 @@ export type GraphCardProps<T> = {
   selected: InstrumentKey;
   /** Called when the user picks a different instrument. */
   onInstrumentSelect: (key: InstrumentKey) => void;
+  /** Lead instrument signature ("Guitar" or "Keyboard") for icon variant. */
+  sig?: string;
   /** Header title text. */
   title: string;
   /** Header subtitle text. */
@@ -85,6 +87,7 @@ function GraphCardInner<T>({
   instruments,
   selected,
   onInstrumentSelect,
+  sig,
   title,
   subtitle,
   loadingMessage,
@@ -157,6 +160,7 @@ function GraphCardInner<T>({
               required
               compactLabels={compactLabels}
               styles={st.selectorStyles}
+              sig={sig}
             />
           </div>
         )}
