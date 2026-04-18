@@ -137,9 +137,9 @@ public sealed class ComboIdsTests
     // ── Instrument groups & within-group combos ──
 
     [Fact]
-    public void WithinGroupComboMasks_contains_12_combos()
+    public void WithinGroupComboMasks_contains_16_combos()
     {
-        Assert.Equal(12, ComboIds.WithinGroupComboMasks.Count);
+        Assert.Equal(16, ComboIds.WithinGroupComboMasks.Count);
     }
 
     [Fact]
@@ -154,6 +154,8 @@ public sealed class ComboIdsTests
     [InlineData(0x05, true)]  // Lead + Drums (OG Band)
     [InlineData(0x0F, true)]  // All OG Band
     [InlineData(0x30, true)]  // Pro Lead + Pro Bass
+    [InlineData(0xC0, true)]  // Pro Cymbals + Pro Drums (Peripheral)
+    [InlineData(0x1C0, true)] // All Peripherals
     [InlineData(0x11, false)] // Lead + Pro Lead (cross-group)
     [InlineData(0x3F, false)] // All 6 (cross-group)
     [InlineData(0x31, false)] // Lead + Pro Strings (cross-group)
@@ -167,6 +169,8 @@ public sealed class ComboIdsTests
     [InlineData("03", true)]
     [InlineData("0f", true)]
     [InlineData("30", true)]
+    [InlineData("c0", true)]   // Pro Cymbals + Pro Drums (Peripheral)
+    [InlineData("1c0", true)]  // All Peripherals
     [InlineData("11", false)]
     [InlineData("3f", false)]
     public void IsWithinGroupCombo_string_validates_correctly(string comboId, bool expected)
@@ -175,9 +179,9 @@ public sealed class ComboIdsTests
     }
 
     [Fact]
-    public void InstrumentGroups_has_2_groups()
+    public void InstrumentGroups_has_3_groups()
     {
-        Assert.Equal(2, ComboIds.InstrumentGroups.Count);
+        Assert.Equal(3, ComboIds.InstrumentGroups.Count);
     }
 
     [Fact]
@@ -190,6 +194,12 @@ public sealed class ComboIdsTests
     public void InstrumentGroups_pro_strings_covers_bits_4_to_5()
     {
         Assert.Equal(0x30, ComboIds.InstrumentGroups[1]);
+    }
+
+    [Fact]
+    public void InstrumentGroups_peripherals_covers_bits_6_to_8()
+    {
+        Assert.Equal(0x1C0, ComboIds.InstrumentGroups[2]);
     }
 
     private static int BitCount(int value)

@@ -216,6 +216,9 @@ public static partial class ApiEndpoints
                     vocals = e.VocalsAdjustedSkill.HasValue ? new { skill = e.VocalsAdjustedSkill, rank = e.VocalsSkillRank } : null,
                     proGuitar = e.ProGuitarAdjustedSkill.HasValue ? new { skill = e.ProGuitarAdjustedSkill, rank = e.ProGuitarSkillRank } : null,
                     proBass = e.ProBassAdjustedSkill.HasValue ? new { skill = e.ProBassAdjustedSkill, rank = e.ProBassSkillRank } : null,
+                    proVocals = e.ProVocalsAdjustedSkill.HasValue ? new { skill = e.ProVocalsAdjustedSkill, rank = e.ProVocalsSkillRank } : null,
+                    proCymbals = e.ProCymbalsAdjustedSkill.HasValue ? new { skill = e.ProCymbalsAdjustedSkill, rank = e.ProCymbalsSkillRank } : null,
+                    proDrums = e.ProDrumsAdjustedSkill.HasValue ? new { skill = e.ProDrumsAdjustedSkill, rank = e.ProDrumsSkillRank } : null,
                 },
                 e.ComputedAt,
             }).ToList();
@@ -259,6 +262,9 @@ public static partial class ApiEndpoints
                     vocals = ranking.VocalsAdjustedSkill.HasValue ? new { skill = ranking.VocalsAdjustedSkill, rank = ranking.VocalsSkillRank } : null,
                     proGuitar = ranking.ProGuitarAdjustedSkill.HasValue ? new { skill = ranking.ProGuitarAdjustedSkill, rank = ranking.ProGuitarSkillRank } : null,
                     proBass = ranking.ProBassAdjustedSkill.HasValue ? new { skill = ranking.ProBassAdjustedSkill, rank = ranking.ProBassSkillRank } : null,
+                    proVocals = ranking.ProVocalsAdjustedSkill.HasValue ? new { skill = ranking.ProVocalsAdjustedSkill, rank = ranking.ProVocalsSkillRank } : null,
+                    proCymbals = ranking.ProCymbalsAdjustedSkill.HasValue ? new { skill = ranking.ProCymbalsAdjustedSkill, rank = ranking.ProCymbalsSkillRank } : null,
+                    proDrums = ranking.ProDrumsAdjustedSkill.HasValue ? new { skill = ranking.ProDrumsAdjustedSkill, rank = ranking.ProDrumsSkillRank } : null,
                 },
                 ranking.ComputedAt,
             });

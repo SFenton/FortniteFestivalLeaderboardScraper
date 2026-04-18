@@ -59,6 +59,7 @@ export const Gap = {
   lg: 10,
   xl: 12,
   section: 24,
+  container: 64,
 } as const;
 
 export const Opacity = {

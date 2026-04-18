@@ -27,6 +27,7 @@ export const COMBO_INSTRUMENTS: readonly ServerInstrumentKey[] = SERVER_INSTRUME
 export const INSTRUMENT_GROUPS: readonly number[] = [
   0x0f, // OG Band: Lead(0) + Bass(1) + Drums(2) + Vocals(3)
   0x30, // Pro Strings: Pro Lead(4) + Pro Bass(5)
+  0x1c0, // Peripherals: Pro Vocals(6) + Pro Cymbals(7) + Pro Drums(8)
 ];
 
 /** Returns true if the bitmask represents a within-group combo (2+ instruments, all from same group). */

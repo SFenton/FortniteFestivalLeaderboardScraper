@@ -84,7 +84,7 @@ public sealed class RankingsCalculator
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
-        // Total steps: instruments(6) + composite(1) + snapshots(instruments+1) + combos(1) = 15
+        // Total steps: instruments(9) + composite(1) + snapshots(instruments+1) + combos(1) = 21
         _progress.BeginPhaseProgress(instruments.Count + 1 + instruments.Count + 1 + 1);
         _progress.SetSubOperation("per_instrument_rankings");
 
@@ -433,6 +433,12 @@ public sealed class RankingsCalculator
                 ProGuitarSkillRank = adjRankDict?.GetValueOrDefault("Solo_PeripheralGuitar"),
                 ProBassAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_PeripheralBass"),
                 ProBassSkillRank = adjRankDict?.GetValueOrDefault("Solo_PeripheralBass"),
+                ProVocalsAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_PeripheralVocals"),
+                ProVocalsSkillRank = adjRankDict?.GetValueOrDefault("Solo_PeripheralVocals"),
+                ProCymbalsAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_PeripheralCymbals"),
+                ProCymbalsSkillRank = adjRankDict?.GetValueOrDefault("Solo_PeripheralCymbals"),
+                ProDrumsAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_PeripheralDrums"),
+                ProDrumsSkillRank = adjRankDict?.GetValueOrDefault("Solo_PeripheralDrums"),
                 CompositeRatingWeighted = c.WeightedRating,
                 CompositeRankWeighted = weightedRanks[c.AccountId],
                 CompositeRatingFcRate = c.FcRateRating,
@@ -623,6 +629,9 @@ public sealed class RankingsCalculator
                 "Solo_Drums" => song.track.@in.ds,
                 "Solo_PeripheralGuitar" => song.track.@in.pg,
                 "Solo_PeripheralBass" => song.track.@in.pb,
+                "Solo_PeripheralVocals" => song.track.@in.bd == 0 ? -1 : song.track.@in.bd,
+                "Solo_PeripheralCymbals" => song.track.@in.pd,
+                "Solo_PeripheralDrums" => song.track.@in.pd,
                 _ => -1,
             };
             if (diff >= 0 && diff <= 6) count++;
