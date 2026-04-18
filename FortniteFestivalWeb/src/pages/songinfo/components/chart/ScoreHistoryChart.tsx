@@ -332,6 +332,7 @@ export default memo(function ScoreHistoryChart({
       data={chartData}
       loading={loading}
       instruments={selectorItems}
+      showSingleInstrumentSelector
       selected={selected}
       onInstrumentSelect={handleInstrumentSelect}
       sig={sig}
