@@ -211,7 +211,7 @@ export const Layout = {
   demoRowHeight: 64,
   demoCardHeight: 100,
   demoRowMobileHeight: 72,
-  demoRowMobileIconsHeight: 130,
+  demoRowMobileIconsHeight: 160,
   demoRowMobileMetaHeight: 160,
   demoRowGap: 4,
   pinnedSidebarItemHeight: 52,

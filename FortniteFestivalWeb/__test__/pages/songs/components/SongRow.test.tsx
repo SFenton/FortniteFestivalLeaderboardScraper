@@ -84,6 +84,18 @@ const baseScore: PlayerScore = {
   season: 4,
 };
 
+const allEnabledInstruments = [
+  'Solo_Guitar',
+  'Solo_Bass',
+  'Solo_Drums',
+  'Solo_Vocals',
+  'Solo_PeripheralGuitar',
+  'Solo_PeripheralBass',
+  'Solo_PeripheralVocals',
+  'Solo_PeripheralCymbals',
+  'Solo_PeripheralDrums',
+] as InstrumentKey[];
+
 const defaultProps = {
   song: baseSong,
   score: baseScore,
@@ -204,6 +216,58 @@ describe('SongRow', () => {
       score: undefined,
     });
     expect(screen.getByTestId('instrument-Solo_Guitar')).toBeTruthy();
+  });
+
+  it('splits odd instrument counts into 5 and 4 mobile rows when the row is narrow', () => {
+    const { container } = renderSongRow({
+      isMobile: true,
+      showInstrumentIcons: true,
+      score: undefined,
+      enabledInstruments: allEnabledInstruments,
+      containerWidth: 335,
+    });
+
+    const topRow = container.querySelector('[data-instrument-row="top"]');
+    const bottomRow = container.querySelector('[data-instrument-row="bottom"]');
+
+    expect(topRow?.querySelectorAll('img')).toHaveLength(5);
+    expect(bottomRow?.querySelectorAll('img')).toHaveLength(4);
+    expect(container.querySelector('[data-instrument-row="single"]')).toBeNull();
+    expect(Array.from(topRow?.querySelectorAll('img') ?? []).map(img => img.getAttribute('alt'))).toEqual(allEnabledInstruments.slice(0, 5));
+    expect(Array.from(bottomRow?.querySelectorAll('img') ?? []).map(img => img.getAttribute('alt'))).toEqual(allEnabledInstruments.slice(5));
+  });
+
+  it('splits even instrument counts evenly across two mobile rows when the row is narrow', () => {
+    const enabledInstruments = allEnabledInstruments.slice(0, 8);
+    const { container } = renderSongRow({
+      isMobile: true,
+      showInstrumentIcons: true,
+      score: undefined,
+      enabledInstruments,
+      containerWidth: 320,
+    });
+
+    const topRow = container.querySelector('[data-instrument-row="top"]');
+    const bottomRow = container.querySelector('[data-instrument-row="bottom"]');
+
+    expect(topRow?.querySelectorAll('img')).toHaveLength(4);
+    expect(bottomRow?.querySelectorAll('img')).toHaveLength(4);
+  });
+
+  it('keeps instrument chips on a single mobile row when the row is wide enough', () => {
+    const { container } = renderSongRow({
+      isMobile: true,
+      showInstrumentIcons: true,
+      score: undefined,
+      enabledInstruments: allEnabledInstruments,
+      containerWidth: 362,
+    });
+
+    const singleRow = container.querySelector('[data-instrument-row="single"]');
+
+    expect(singleRow?.querySelectorAll('img')).toHaveLength(9);
+    expect(container.querySelector('[data-instrument-row="top"]')).toBeNull();
+    expect(container.querySelector('[data-instrument-row="bottom"]')).toBeNull();
   });
 
   it('keeps the score in the wrapped metadata row until the upper threshold is cleared', () => {

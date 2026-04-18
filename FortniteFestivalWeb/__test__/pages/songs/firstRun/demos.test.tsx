@@ -14,11 +14,16 @@ vi.mock('../../../../src/firstRun/SlideHeightContext', () => ({
 let mockIsMobile = false;
 let mockIsMobileChrome = false;
 let mockIsWideDesktop = true;
+let mockContainerWidth = 1024;
 vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsMobile: () => mockIsMobile,
   useIsMobileChrome: () => mockIsMobileChrome,
   useIsWideDesktop: () => mockIsWideDesktop,
   useIsNarrow: () => false,
+}));
+
+vi.mock('../../../../src/hooks/ui/useContainerWidth', () => ({
+  useContainerWidth: () => mockContainerWidth,
 }));
 
 // Controllable player data mock
@@ -68,6 +73,7 @@ beforeEach(() => {
   mockIsMobile = false;
   mockIsMobileChrome = false;
   mockIsWideDesktop = true;
+  mockContainerWidth = 1024;
   mockPlayerData = null;
   mockDemoSongsResult = {
     rows: DEMO_SONGS.slice(0, 3),
@@ -324,6 +330,31 @@ describe('SongIconsDemo', () => {
     const mobileRows = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
     );
     expect(mobileRows.length).toBe(0);
+  });
+
+  it('splits odd instrument counts into 5 and 4 rows on narrow mobile widths', () => {
+    mockIsMobileChrome = true;
+    mockContainerWidth = 335;
+    const { container } = wrap(<SongIconsDemo />);
+
+    const topRow = container.querySelector('[data-instrument-row="top"]');
+    const bottomRow = container.querySelector('[data-instrument-row="bottom"]');
+
+    expect(topRow?.querySelectorAll('img')).toHaveLength(5);
+    expect(bottomRow?.querySelectorAll('img')).toHaveLength(4);
+    expect(container.querySelector('[data-instrument-row="single"]')).toBeNull();
+  });
+
+  it('keeps instrument icons on one row on wide mobile widths', () => {
+    mockIsMobileChrome = true;
+    mockContainerWidth = 362;
+    const { container } = wrap(<SongIconsDemo />);
+
+    const singleRow = container.querySelector('[data-instrument-row="single"]');
+
+    expect(singleRow?.querySelectorAll('img')).toHaveLength(9);
+    expect(container.querySelector('[data-instrument-row="top"]')).toBeNull();
+    expect(container.querySelector('[data-instrument-row="bottom"]')).toBeNull();
   });
 });
 

@@ -3,14 +3,16 @@
  * First-run demo: song rows with real instrument status chips.
  * Auto-fits rows, rotates one every 5 s with fade-out/in.
  */
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentChip } from '../../../../components/display/InstrumentChip';
 import SongInfo from '../../../../components/songs/metadata/SongInfo';
 import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';
+import { useContainerWidth } from '../../../../hooks/ui/useContainerWidth';
 import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
-import { Layout } from '@festival/theme';
+import { Align, CssValue, Display, Gap, Layout, flexColumn } from '@festival/theme';
 import { useDemoSongs } from '../../../../hooks/data/useDemoSongs';
+import { resolveInstrumentChipRows, splitInstrumentRows } from '../../layoutMode';
 import { DemoSongRow } from './DemoSongRow';
 import { instrumentStatusRow, mobileTopRow as mobileTopRowStyle } from '../../../../styles/songRowStyles';
 
@@ -18,6 +20,7 @@ type DemoScore = { hasScore: boolean; isFC: boolean };
 
 const ROW_HEIGHT_DESKTOP = Layout.demoRowHeight;
 const ROW_HEIGHT_MOBILE = Layout.demoRowMobileIconsHeight;
+const containerStyle = { width: CssValue.full, ...flexColumn, gap: Gap.sm };
 
 /* v8 ignore start -- Deterministic hash whose branches depend on input bit patterns */
 /** Generate a random score pattern per instrument (stable via title seed). */
@@ -35,9 +38,17 @@ function buildScores(title: string, keys: InstrumentKey[]): Record<string, DemoS
 }
 /* v8 ignore stop */
 
-function ChipRow({ scores, instruments }: { scores: Record<string, DemoScore>; instruments: InstrumentKey[] }) {
+function ChipRow({
+  scores,
+  instruments,
+  rowName,
+}: {
+  scores: Record<string, DemoScore>;
+  instruments: InstrumentKey[];
+  rowName?: 'desktop' | 'single' | 'top' | 'bottom';
+}) {
   return (
-    <div style={instrumentStatusRow}>
+    <div data-instrument-row={rowName} style={instrumentStatusRow}>
       {instruments.map(key => {
         /* v8 ignore start -- scores[key] always exists; fallback is defensive */
         const sc = scores[key] ?? { hasScore: false, isFC: false };
@@ -52,6 +63,8 @@ function ChipRow({ scores, instruments }: { scores: Record<string, DemoScore>; i
 export default function SongIconsDemo() {
   const isMobile = useIsMobileChrome();
   const { settings } = useSettings();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerWidth = useContainerWidth(containerRef);
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
   const { rows, fadingIdx, initialDone } = useDemoSongs({
     rowHeight: ROW_HEIGHT_DESKTOP,
@@ -70,8 +83,20 @@ export default function SongIconsDemo() {
     return map;
   }, [rows, instruments]);
 
+  const instrumentRowWidth = containerWidth > 0
+    ? containerWidth
+    : (typeof window !== 'undefined' ? window.innerWidth : undefined);
+
+  const mobileInstrumentRowCount = isMobile
+    ? resolveInstrumentChipRows(instrumentRowWidth, instruments.length)
+    : 1;
+  const [topRowInstruments, bottomRowInstruments] = useMemo(() => {
+    if (!isMobile || mobileInstrumentRowCount === 1) return [instruments, []] as const;
+    return splitInstrumentRows(instruments);
+  }, [instruments, isMobile, mobileInstrumentRowCount]);
+
   return (
-    <div>
+    <div ref={containerRef} style={containerStyle}>
       {rows.map((song, i) => {
         /* v8 ignore start -- scoresMap is built from the same rows; fallback is defensive */
         const scores = scoresMap.get(song.title) ?? buildScores(song.title, instruments);
@@ -81,16 +106,23 @@ export default function SongIconsDemo() {
             {isMobile ? (
               <>
                 <div style={mobileTopRowStyle}>
-                  <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
+                  <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={0} />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'center' }}>
-                  <ChipRow scores={scores} instruments={instruments} />
+                <div style={{ display: Display.flex, justifyContent: 'center' }}>
+                  {mobileInstrumentRowCount === 1 ? (
+                    <ChipRow scores={scores} instruments={topRowInstruments} rowName="single" />
+                  ) : (
+                    <div style={{ display: Display.flex, flexDirection: 'column', gap: Gap.sm, alignItems: Align.center }}>
+                      <ChipRow scores={scores} instruments={topRowInstruments} rowName="top" />
+                      <ChipRow scores={scores} instruments={bottomRowInstruments} rowName="bottom" />
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
               <>
                 <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
-                <ChipRow scores={scores} instruments={instruments} />
+                <ChipRow scores={scores} instruments={instruments} rowName="desktop" />
               </>
             )}
           </DemoSongRow>

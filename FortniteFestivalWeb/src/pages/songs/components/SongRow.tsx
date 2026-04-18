@@ -20,7 +20,7 @@ import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import DifficultyPill from '../../../components/songs/metadata/DifficultyPill';
 import ScorePill from '../../../components/songs/metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
-import { resolvePillFitsTopRow } from '../layoutMode';
+import { resolveInstrumentChipRows, resolvePillFitsTopRow, splitInstrumentRows } from '../layoutMode';
 import anim from '../../../styles/animations.module.css';
 
 const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
@@ -121,6 +121,7 @@ function renderMetadataElement(
 }
 
 type MetadataEntry = { key: string; el: React.ReactNode };
+type InstrumentChipStatus = { key: InstrumentKey; fill: string; stroke: string };
 
 /* v8 ignore start — internal presentation component */
 function MetadataBottomRow({ entries }: { entries: MetadataEntry[] }) {
@@ -187,7 +188,7 @@ export const SongRow = memo(function SongRow({ song,
 }) {
   const s = useStyles();
   const { t } = useTranslation();
-  const instrumentChips = useMemo(() => {
+  const instrumentChips = useMemo<InstrumentChipStatus[] | null>(() => {
     if (!showInstrumentIcons || instrumentFilter != null) return null;
     return enabledInstruments.map(key => {
       const ps = allScoreMap?.get(key);
@@ -280,6 +281,46 @@ export const SongRow = memo(function SongRow({ song,
     pillLayoutRef.current = pillFitsTopRow;
   }, [pillFitsTopRow]);
 
+  const instrumentRowWidth = containerWidth && containerWidth > 0
+    ? containerWidth
+    : (typeof window !== 'undefined' ? window.innerWidth : undefined);
+  const mobileInstrumentRowCount = resolveInstrumentChipRows(instrumentRowWidth, instrumentChips?.length ?? 0);
+  const [topInstrumentChips, bottomInstrumentChips] = useMemo(() => {
+    if (!instrumentChips || instrumentChips.length === 0) return [[], []] as const;
+    if (!isMobile || mobileInstrumentRowCount === 1) return [instrumentChips, []] as const;
+    return splitInstrumentRows(instrumentChips);
+  }, [instrumentChips, isMobile, mobileInstrumentRowCount]);
+
+  const renderInstrumentChip = (chip: InstrumentChipStatus) => (
+    <div key={chip.key} style={{ ...s.instrumentStatusChip, backgroundColor: chip.fill, borderColor: chip.stroke }}>
+      <InstrumentIcon instrument={chip.key} sig={song.sig} size={24} />
+    </div>
+  );
+
+  const renderInstrumentChipRow = (
+    chips: readonly InstrumentChipStatus[],
+    rowName: 'desktop' | 'single' | 'top' | 'bottom',
+    justifyContent?: CSSProperties['justifyContent'],
+  ) => (
+    <div
+      data-instrument-row={rowName}
+      style={justifyContent == null ? s.instrumentStatusRow : { ...s.instrumentStatusRow, justifyContent }}
+    >
+      {chips.map(renderInstrumentChip)}
+    </div>
+  );
+
+  const mobileChipRow = instrumentChips && instrumentChips.length > 0
+    ? mobileInstrumentRowCount === 1
+      ? renderInstrumentChipRow(topInstrumentChips, 'single', Justify.center)
+      : (
+        <div style={s.mobileInstrumentRows}>
+          {renderInstrumentChipRow(topInstrumentChips, 'top', Justify.center)}
+          {renderInstrumentChipRow(bottomInstrumentChips, 'bottom', Justify.center)}
+        </div>
+      )
+    : null;
+
   /* v8 ignore start -- computed rendering variables with ternaries */
   const rowStyle = isMobile ? s.rowMobile : s.row;
   const rowClassName = shopHighlightRed ? anim.shopHighlightRed : shopHighlight ? anim.shopHighlight : undefined;
@@ -318,13 +359,7 @@ export const SongRow = memo(function SongRow({ song,
   ) : null;
 
   const chipRow = instrumentChips && instrumentChips.length > 0 ? (
-    <div style={s.instrumentStatusRow}>
-      {instrumentChips.map(c => (
-        <div key={c.key} style={{ ...s.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
-          <InstrumentIcon instrument={c.key} sig={song.sig} size={24} />
-        </div>
-      ))}
-    </div>
+    renderInstrumentChipRow(instrumentChips, 'desktop')
   ) : null;
   /* v8 ignore stop */
 
@@ -333,7 +368,7 @@ export const SongRow = memo(function SongRow({ song,
 
     if (pillFitsTopRow) {
       // Primary/secondary split: primary entry in detailStrip at top right, rest in bottom row
-      const primaryEntry = entries[0];
+      const primaryEntry = entries[0]!;
       // Primary is alone in detailStrip — render compact (no fixed-width pills) for tight right-alignment
       const primaryEl = score && primaryEntry.key === 'score'
         ? renderMetadataElement('score', score, displayOrder, songIntensityRaw, maxScore, sortMode, true) ?? primaryEntry.el
@@ -404,13 +439,7 @@ export const SongRow = memo(function SongRow({ song,
             {songInfo}
             {stripEntries.length > 0 && <div style={s.detailStrip}>{stripEntries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}</div>}
           </div>
-          <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
-            {instrumentChips!.map(c => (
-              <div key={c.key} style={{ ...s.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
-                <InstrumentIcon instrument={c.key} sig={song.sig} size={24} />
-              </div>
-            ))}
-          </div>
+          <div style={s.mobileChipRowWrapper}>{mobileChipRow}</div>
           {lastPlayedEntry && <div style={s.lastPlayedCenteredRow}>{lastPlayedEntry.el}</div>}
           {externalIndicator}
         </a>
@@ -421,13 +450,7 @@ export const SongRow = memo(function SongRow({ song,
           {stripEntries.length > 0 && <div style={s.detailStrip}>{stripEntries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}{invalidIcon}</div>}
         </div>
         <div style={s.mobileChipRowWrapper}>
-          <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
-            {instrumentChips!.map(c => (
-              <div key={c.key} style={{ ...s.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
-                <InstrumentIcon instrument={c.key} sig={song.sig} size={24} />
-              </div>
-            ))}
-          </div>
+          {mobileChipRow}
           {invalidIcon && !stripEntries.length && <div style={s.mobileChipInvalidIcon}>{invalidIcon}</div>}
         </div>
         {lastPlayedEntry && <div style={s.lastPlayedCenteredRow}>{lastPlayedEntry.el}</div>}
@@ -502,6 +525,7 @@ function useStyles() {
     rowArtist: { fontSize: Font.sm, color: Colors.textSubtle, ...truncate } as CSSProperties,
     scoreMeta: { ...flexRow, gap: Gap.xl, flexShrink: 1, minWidth: 0, overflow: 'hidden' } as CSSProperties,
     mobileChipRowWrapper: { position: Position.relative, display: Display.flex, alignItems: Align.center, justifyContent: Justify.center } as CSSProperties,
+    mobileInstrumentRows: { ...flexColumn, gap: Gap.sm, alignItems: Align.center } as CSSProperties,
     mobileChipInvalidIcon: { position: Position.absolute, right: 0, top: '50%', transform: 'translateY(-50%)' } as CSSProperties,
     lastPlayedCenteredRow: { display: Display.flex, justifyContent: Justify.center, alignItems: Align.center } as CSSProperties,
     externalIndicator: { ...flexRow, gap: Gap.lg, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle, alignItems: Align.center } as CSSProperties,

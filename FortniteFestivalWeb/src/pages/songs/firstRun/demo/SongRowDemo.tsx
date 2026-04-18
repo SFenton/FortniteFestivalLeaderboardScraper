@@ -25,7 +25,7 @@ export default function SongRowDemo() {
         <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile={isMobile}>
           {isMobile ? (
             <div style={mobileTopRow}>
-              <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
+              <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={0} />
             </div>
           ) : (
             <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
