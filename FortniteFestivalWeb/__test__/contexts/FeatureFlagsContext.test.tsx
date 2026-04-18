@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 
 // Dynamic flag values that individual tests can override
 const flagValues = vi.hoisted(() => ({
-  rivals: true, compete: true, leaderboards: true, firstRun: true,
+  rivals: true, compete: true, leaderboards: true, firstRun: true, playerBands: true,
 }));
 
 // Track whether fetch should fail
@@ -16,6 +16,7 @@ beforeEach(() => {
   flagValues.compete = true;
   flagValues.leaderboards = true;
   flagValues.firstRun = true;
+  flagValues.playerBands = true;
   fetchShouldFail.value = false;
 
   vi.stubGlobal('fetch', vi.fn(() => {
@@ -56,6 +57,7 @@ describe('FeatureFlagsContext', () => {
       expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(true);
       expect(result.current.firstRun).toBe(true);
+      expect(result.current.playerBands).toBe(true);
       expect(fetch).not.toHaveBeenCalled();
     });
   });
@@ -79,6 +81,7 @@ describe('FeatureFlagsContext', () => {
       expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(true);
       expect(result.current.firstRun).toBe(true);
+      expect(result.current.playerBands).toBe(true);
       expect(fetch).toHaveBeenCalledWith('/api/features');
     });
 
@@ -94,6 +97,7 @@ describe('FeatureFlagsContext', () => {
 
       expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(false);
+      expect(result.current.playerBands).toBe(true);
     });
 
     it('returns all flags OFF when fetch fails', async () => {
@@ -110,6 +114,7 @@ describe('FeatureFlagsContext', () => {
       expect(result.current.compete).toBe(false);
       expect(result.current.leaderboards).toBe(false);
       expect(result.current.firstRun).toBe(false);
+      expect(result.current.playerBands).toBe(false);
     });
   });
 

@@ -170,6 +170,109 @@ describe('PlayerContent', () => {
     await waitFor(() => { expect(screen.getByText('FCPlayer')).toBeDefined(); });
   });
 
+  it('renders the player bands section when the flag is enabled', async () => {
+    render(
+      <Providers accountId="p1">
+        <PlayerContent
+          data={playerData as any}
+          songs={songs as any}
+          isSyncing={false}
+          phase={SyncPhase.Idle}
+          backfillProgress={0}
+          historyProgress={0}
+          rivalsProgress={0}
+          itemsCompleted={0}
+          totalItems={0}
+          entriesFound={0}
+          currentSongName={null}
+          seasonsQueried={0}
+          rivalsFound={0}
+          isTrackedPlayer={true}
+          skipAnim
+          statsData={{
+            accountId: 'p1',
+            totalSongs: 1,
+            instruments: [],
+            bands: {
+              all: {
+                totalCount: 6,
+                entries: [{
+                  teamKey: 'p1:p2',
+                  bandType: 'Band_Duets',
+                  members: [
+                    { accountId: 'p1', displayName: 'TestPlayer', instruments: ['Solo_Guitar'] },
+                    { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+                  ],
+                }],
+              },
+              duos: {
+                totalCount: 6,
+                entries: [{
+                  teamKey: 'p1:p2',
+                  bandType: 'Band_Duets',
+                  members: [
+                    { accountId: 'p1', displayName: 'TestPlayer', instruments: ['Solo_Guitar'] },
+                    { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+                  ],
+                }],
+              },
+              trios: { totalCount: 0, entries: [] },
+              quads: { totalCount: 0, entries: [] },
+            },
+          } as any}
+          rankingQueryResults={[]}
+        />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("TestPlayer's Bands")).toBeDefined();
+    });
+      expect(screen.getAllByText('BandMate')).toHaveLength(2);
+      expect(screen.getAllByText('View all bands (6)')).toHaveLength(2);
+  });
+
+  it('hides the player bands section when the flag is disabled', async () => {
+    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ playerBands: false }));
+
+    render(
+      <Providers accountId="p1">
+        <PlayerContent
+          data={playerData as any}
+          songs={songs as any}
+          isSyncing={false}
+          phase={SyncPhase.Idle}
+          backfillProgress={0}
+          historyProgress={0}
+          rivalsProgress={0}
+          itemsCompleted={0}
+          totalItems={0}
+          entriesFound={0}
+          currentSongName={null}
+          seasonsQueried={0}
+          rivalsFound={0}
+          isTrackedPlayer={true}
+          skipAnim
+          statsData={{
+            accountId: 'p1',
+            totalSongs: 1,
+            instruments: [],
+            bands: {
+              all: { totalCount: 1, entries: [] },
+              duos: { totalCount: 1, entries: [] },
+              trios: { totalCount: 0, entries: [] },
+              quads: { totalCount: 0, entries: [] },
+            },
+          } as any}
+          rankingQueryResults={[]}
+        />
+      </Providers>,
+    );
+
+    await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
+    expect(screen.queryByText("TestPlayer's Bands")).toBeNull();
+  });
+
   it('clears search query when navigating to songs via category card', async () => {
     // Helper that seeds & reads the search query from context
     function SearchSpy({ onMount }: { onMount: (setQuery: (q: string) => void) => void }) {

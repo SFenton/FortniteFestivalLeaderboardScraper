@@ -452,6 +452,7 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             IPathDataStore pathStore,
             ScrapeTimePrecomputer precomputer,
+            IOptions<FeatureOptions> featureOptions,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
@@ -540,12 +541,17 @@ public static partial class ApiEndpoints
                     });
                 }
 
+                var bands = featureOptions.Value.PlayerBands
+                    ? persistence.GetPlayerBands(accountId)
+                    : null;
+
                 var payload = new
                 {
                     accountId,
                     totalSongs,
                     compositeRanks,
                     instrumentRanks = instrumentRanks.Count > 0 ? instrumentRanks : null,
+                    bands,
                     instruments = tierRows.Select(r => new
                     {
                         ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),

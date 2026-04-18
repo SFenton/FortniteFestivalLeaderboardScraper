@@ -166,7 +166,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var serviceProvider = Substitute.For<IServiceProvider>();
         serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
 
-        var precomputer = new ScrapeTimePrecomputer(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions());
+        var precomputer = new ScrapeTimePrecomputer(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions());
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
@@ -268,7 +268,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _tokenManager, _progress, options,
             _cyclicalMachine, _pool,
             new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
-            new ScrapeTimePrecomputer(_persistence, _persistence.Meta, new PathDataStore(SharedPostgresContainer.CreateDatabase()), _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _persistence.Meta, new PathDataStore(SharedPostgresContainer.CreateDatabase()), _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             Substitute.For<ILogger<BackfillOrchestrator>>());
     }
 

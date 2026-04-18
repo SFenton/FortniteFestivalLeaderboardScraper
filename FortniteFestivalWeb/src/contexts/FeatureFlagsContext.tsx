@@ -9,10 +9,11 @@ export type FeatureFlags = {
   leaderboards: boolean;
   firstRun: boolean;
   difficulty: boolean;
+  playerBands: boolean;
 };
 
-const ALL_ON: FeatureFlags = { rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true };
-const ALL_OFF: FeatureFlags = { rivals: false, compete: false, leaderboards: false, firstRun: false, difficulty: false };
+const ALL_ON: FeatureFlags = { rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true, playerBands: true };
+const ALL_OFF: FeatureFlags = { rivals: false, compete: false, leaderboards: false, firstRun: false, difficulty: false, playerBands: false };
 
 /* ── Context ── */
 
@@ -23,7 +24,8 @@ const FeatureFlagsContext = createContext<FeatureFlags | null>(null);
 async function fetchFeatureFlags(): Promise<FeatureFlags> {
   const res = await fetch('/api/features');
   if (!res.ok) throw new Error(`features ${res.status}`);
-  return res.json() as Promise<FeatureFlags>;
+  const data = await res.json() as Partial<FeatureFlags>;
+  return { ...ALL_OFF, ...data };
 }
 
 /* ── Provider ── */

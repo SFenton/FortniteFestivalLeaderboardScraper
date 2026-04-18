@@ -35,6 +35,7 @@ import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading'
 import { buildOverallSummaryItems } from '../../../player/sections/OverallSummarySection';
 import { buildInstrumentStatsItems } from '../../../player/sections/InstrumentStatsSection';
 import { buildTopSongsItems } from '../../../player/components/TopSongsSection';
+import { buildPlayerBandsItems, EMPTY_PLAYER_BANDS } from '../../../player/components/PlayerBandsSection';
 import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
 import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
@@ -98,7 +99,7 @@ export default function PlayerContent({
 }: PlayerContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const { leaderboards: leaderboardsEnabled } = useFeatureFlags();
+  const { leaderboards: leaderboardsEnabled, playerBands: playerBandsEnabled } = useFeatureFlags();
   const location = useLocation();
   const navigate = useNavigate();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
@@ -341,6 +342,10 @@ export default function PlayerContent({
     const inst = visibleKeys[i]!;
     const scores = byInstrument.get(inst) ?? [];
     items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === visibleKeys.length - 1));
+  }
+
+  if (playerBandsEnabled && statsData) {
+    items.push(...buildPlayerBandsItems(t, data.displayName, statsData.bands ?? EMPTY_PLAYER_BANDS));
   }
 
   // Wire up container-level scroll fade

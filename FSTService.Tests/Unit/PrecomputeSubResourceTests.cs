@@ -46,7 +46,8 @@ public sealed class PrecomputeSubResourceTests : IDisposable
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
             NullLoggerFactory.Instance,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            new JsonSerializerOptions(JsonSerializerDefaults.Web),
+            new FeatureOptions());
     }
 
     public void Dispose()
@@ -115,6 +116,44 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    private void SeedBandRows(
+        string songId,
+        string bandType,
+        string teamKey,
+        params (int MemberIndex, string AccountId, int InstrumentId)[] members)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+
+        foreach (var member in members)
+        {
+            using var memberCmd = conn.CreateCommand();
+            memberCmd.CommandText = """
+                INSERT INTO band_member_stats (song_id, band_type, team_key, instrument_combo, member_index, account_id, instrument_id)
+                VALUES (@songId, @bandType, @teamKey, '', @memberIndex, @accountId, @instrumentId)
+                ON CONFLICT DO NOTHING
+                """;
+            memberCmd.Parameters.AddWithValue("songId", songId);
+            memberCmd.Parameters.AddWithValue("bandType", bandType);
+            memberCmd.Parameters.AddWithValue("teamKey", teamKey);
+            memberCmd.Parameters.AddWithValue("memberIndex", member.MemberIndex);
+            memberCmd.Parameters.AddWithValue("accountId", member.AccountId);
+            memberCmd.Parameters.AddWithValue("instrumentId", member.InstrumentId);
+            memberCmd.ExecuteNonQuery();
+
+            using var lookupCmd = conn.CreateCommand();
+            lookupCmd.CommandText = """
+                INSERT INTO band_members (account_id, song_id, band_type, team_key, instrument_combo)
+                VALUES (@accountId, @songId, @bandType, @teamKey, '')
+                ON CONFLICT DO NOTHING
+                """;
+            lookupCmd.Parameters.AddWithValue("accountId", member.AccountId);
+            lookupCmd.Parameters.AddWithValue("songId", songId);
+            lookupCmd.Parameters.AddWithValue("bandType", bandType);
+            lookupCmd.Parameters.AddWithValue("teamKey", teamKey);
+            lookupCmd.ExecuteNonQuery();
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Player Stats
     // ═══════════════════════════════════════════════════════════════
@@ -136,6 +175,50 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         var json = JsonDocument.Parse(result.Value.Json);
         Assert.Equal("u1", json.RootElement.GetProperty("accountId").GetString());
         Assert.True(json.RootElement.GetProperty("totalSongs").GetInt32() > 0);
+    }
+
+    [Fact]
+    public async Task PrecomputeAllAsync_ProducesPlayerBands_WhenFeatureEnabled()
+    {
+        RegisterUser("u1", "Bands User");
+        RegisterUser("u2", "Band Mate");
+        SeedSong("bands_stats_song", "Solo_Guitar", 100000, ("u1", 95000), ("u2", 90000));
+
+        _metaDb.UpsertPlayerStatsTiers("u1", "Solo_Guitar", JsonSerializer.Serialize(new[]
+        {
+            new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
+        }));
+
+        SeedBandRows("bands_song_a", "Band_Duets", "u1:u2", (0, "u1", 0), (1, "u2", 1));
+        SeedBandRows("bands_song_b", "Band_Duets", "u1:u2", (0, "u1", 2), (1, "u2", 1));
+
+        var sut = new ScrapeTimePrecomputer(
+            _persistence, _metaDb, _pathDataStore,
+            new ScrapeProgressTracker(),
+            Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
+            NullLoggerFactory.Instance,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web),
+            new FeatureOptions { PlayerBands = true });
+
+        await sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var result = sut.TryGet("playerstats:u1");
+        Assert.NotNull(result);
+
+        var json = JsonDocument.Parse(result.Value.Json);
+        var bands = json.RootElement.GetProperty("bands");
+        Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
+
+        var playerMember = bands.GetProperty("duos").GetProperty("entries")[0].GetProperty("members")
+            .EnumerateArray()
+            .Single(member => string.Equals(member.GetProperty("accountId").GetString(), "u1", StringComparison.Ordinal));
+        var instruments = playerMember.GetProperty("instruments")
+            .EnumerateArray()
+            .Select(value => value.GetString())
+            .ToArray();
+
+        Assert.Contains("Solo_Guitar", instruments);
+            Assert.Contains("Solo_Vocals", instruments);
     }
 
     // ═══════════════════════════════════════════════════════════════

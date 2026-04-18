@@ -20,6 +20,9 @@ public sealed class FeatureOptions
     /// <summary>Difficulty pill on leaderboard and score history rows.</summary>
     public bool Difficulty { get; set; }
 
+    /// <summary>Player details page bands section.</summary>
+    public bool PlayerBands { get; set; }
+
     /// <summary>
     /// When true, the scrape pipeline computes per-bucket ranking deltas for
     /// leeway-aware global rankings. When false, global rankings always use
