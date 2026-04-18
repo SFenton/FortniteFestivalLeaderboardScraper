@@ -597,7 +597,7 @@ public sealed class ScraperWorker : BackgroundService
     {
         try
         {
-            _songsCache.Prime(_festivalService, _pathDataStore, _persistence.Meta, _precomputer, _jsonOpts);
+            _songsCache.Prime(_festivalService, _pathDataStore, _persistence.Meta, _persistence, _precomputer, _jsonOpts);
         }
         catch (Exception ex)
         {

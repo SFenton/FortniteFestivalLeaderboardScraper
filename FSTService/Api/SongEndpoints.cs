@@ -17,7 +17,7 @@ public static partial class ApiEndpoints
 
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer) =>
+        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, GlobalLeaderboardPersistence persistence, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
@@ -35,7 +35,7 @@ public static partial class ApiEndpoints
             var jsonOpts = httpContext.RequestServices
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
                 .Value.SerializerOptions;
-            var jsonBytes = SongsCacheService.BuildSongsJson(service, pathStore, metaDb, precomputer, jsonOpts);
+            var jsonBytes = SongsCacheService.BuildSongsJson(service, pathStore, metaDb, persistence, precomputer, jsonOpts);
             var etag = songsCache.Set(jsonBytes);
 
             httpContext.Response.Headers.ETag = etag;

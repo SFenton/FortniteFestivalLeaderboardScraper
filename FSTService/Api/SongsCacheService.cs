@@ -66,10 +66,11 @@ public sealed class SongsCacheService
         FestivalService service,
         IPathDataStore pathStore,
         IMetaDatabase metaDb,
+        GlobalLeaderboardPersistence persistence,
         ScrapeTimePrecomputer precomputer,
         JsonSerializerOptions jsonOpts)
     {
-        var jsonBytes = BuildSongsJson(service, pathStore, metaDb, precomputer, jsonOpts);
+        var jsonBytes = BuildSongsJson(service, pathStore, metaDb, persistence, precomputer, jsonOpts);
         Set(jsonBytes);
     }
 
@@ -80,11 +81,19 @@ public sealed class SongsCacheService
         FestivalService service,
         IPathDataStore pathStore,
         IMetaDatabase metaDb,
+        GlobalLeaderboardPersistence persistence,
         ScrapeTimePrecomputer precomputer,
         JsonSerializerOptions jsonOpts)
     {
         var maxScoresMap = pathStore.GetAllMaxScores();
-        var currentSeason = metaDb.GetCurrentSeason();
+        // Prefer the season_windows table (authoritative, set by events-API discovery)
+        // but floor by the max season observed across instrument DBs. This defends
+        // against Epic renaming a window in a way our regex doesn't match: if S14
+        // data has already been persisted, the UI reflects it even before the next
+        // events-API refresh upserts a matching season_windows row.
+        var metaSeason = metaDb.GetCurrentSeason();
+        var instrumentMax = persistence.GetMaxSeasonAcrossInstruments() ?? 0;
+        var currentSeason = Math.Max(metaSeason, instrumentMax);
         var popTiers = precomputer.GetPopulationTiers();
         var allSongs = service.Songs;
         var droppedSongs = allSongs.Where(s => s.track?.su is null).ToList();
