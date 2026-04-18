@@ -6,7 +6,8 @@ import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { leaderboardCache } from '../../../api/pageCache';
-import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, serverInstrumentLabel } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
+import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { parseApiError } from '../../../utils/apiError';
@@ -94,7 +95,9 @@ export default memo(function InstrumentCard({
         <div style={st.cardBody}>
         {prefetchedError && <span style={st.cardError}>{parseApiError(prefetchedError).title}</span>}
         {!prefetchedError && prefetchedEntries.length === 0 && !playerScore && (
-          <div style={{ ...st.emptyCard, ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>{t('songDetail.noEntries', { instrument: serverInstrumentLabel(instrument) })}</div>
+          <div style={{ ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>
+            <InstrumentEmptyState instrument={instrument} t={t} noMargin subtitleKey="songDetail.noScoresSubtitle" />
+          </div>
         )}
         {!prefetchedError &&
           prefetchedEntries.map((e, i) => {
@@ -241,19 +244,7 @@ function useInstrumentCardStyles(_isMobile: boolean) {
         fontSize: Font.sm,
         color: Colors.textMuted,
       } as CSSProperties,
-      emptyCard: {
-        ...frostedCard,
-        display: Display.flex,
-        alignItems: Align.center,
-        justifyContent: Justify.center,
-        minHeight: Layout.entryRowHeight,
-        padding: padding(Gap.sm, Gap.md),
-        borderRadius: Radius.md,
-        color: Colors.textMuted,
-        fontSize: Font.md,
-        fontWeight: Weight.semibold,
-        textAlign: 'center' as const,
-      } as CSSProperties,
+
       cardError: {
         fontSize: Font.sm,
         color: Colors.statusRed,

@@ -10,14 +10,22 @@ import { Colors, Font, Gap, Weight, TextAlign, flexColumn } from '@festival/them
 export interface InstrumentEmptyStateProps {
   instrument: InstrumentKey;
   t: (key: string, opts?: Record<string, unknown>) => string;
+  /** When true, omits the bottom margin (e.g. when rendered inside a card). */
+  noMargin?: boolean;
+  /** Override the default subtitle i18n key. */
+  subtitleKey?: string;
 }
 
-export default function InstrumentEmptyState({ instrument, t }: InstrumentEmptyStateProps) {
+export default function InstrumentEmptyState({ instrument, t, noMargin, subtitleKey }: InstrumentEmptyStateProps) {
+  const containerStyle = noMargin
+    ? { ...emptyStateStyles.container, marginBottom: 0 }
+    : emptyStateStyles.container;
+
   return (
-    <div data-testid={`inst-empty-${instrument}`} style={emptyStateStyles.container}>
+    <div data-testid={`inst-empty-${instrument}`} style={containerStyle}>
       <span style={emptyStateStyles.title}>{t('player.noScoresYet')}</span>
       <span style={emptyStateStyles.subtitle}>
-        {t('player.noScoresYetSubtitle', { instrument: serverInstrumentLabel(instrument) })}
+        {t(subtitleKey ?? 'player.noScoresYetSubtitle', { instrument: serverInstrumentLabel(instrument) })}
       </span>
     </div>
   );

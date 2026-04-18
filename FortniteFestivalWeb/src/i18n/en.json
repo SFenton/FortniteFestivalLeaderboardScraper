@@ -90,6 +90,7 @@
     "leaderboard": "Leaderboard",
     "scoreHistory": "Score History",
     "noScores": "No scores recorded yet.",
+    "noScoresSubtitle": "When scores are submitted for {{instrument}}, they will show up here on the next leaderboard update.",
     "songNotFound": "Song not found",
     "noEntries": "No {{instrument}} entries"
   },
