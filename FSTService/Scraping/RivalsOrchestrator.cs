@@ -51,6 +51,12 @@ public sealed class RivalsOrchestrator
         foreach (var id in registeredIds)
             _persistence.Meta.EnsureRivalsStatus(id);
 
+        // Reset stale completions: users marked 'complete' with 0 rivals found
+        // are likely victims of a computation that ran before data was available.
+        var resetCount = _persistence.Meta.ResetStaleRivals();
+        if (resetCount > 0)
+            _log.LogInformation("Reset {Count} stale rivals status (complete with 0 rivals) to pending.", resetCount);
+
         // Determine who needs computation
         var pending = _persistence.Meta.GetPendingRivalsAccounts();
 
@@ -92,6 +98,10 @@ public sealed class RivalsOrchestrator
     {
         try
         {
+            // Ensure a rivals_status row exists — without this, StartRivals/CompleteRivals
+            // (which are UPDATEs) silently affect 0 rows when called from BackfillOrchestrator.
+            _persistence.Meta.EnsureRivalsStatus(accountId);
+
             IReadOnlySet<string>? dirtyInstruments = null;
             if (dirtyInstrumentsByUser is not null &&
                 dirtyInstrumentsByUser.TryGetValue(accountId, out var dirty))
