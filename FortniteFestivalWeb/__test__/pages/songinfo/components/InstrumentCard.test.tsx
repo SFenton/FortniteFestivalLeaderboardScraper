@@ -2,11 +2,16 @@
  * InstrumentCard tests — exercises rendering with entries, player scores,
  * error states, and responsive column widths.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
 import InstrumentCard from '../../../../src/pages/songinfo/components/InstrumentCard';
 import type { LeaderboardEntry, PlayerScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+
+const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+let measuredCountedLabelWidth = 320;
+let measuredPlainLabelWidth = 140;
+let canvasGetContextSpy: ReturnType<typeof vi.spyOn>;
 
 /** Set window.innerWidth and override matchMedia to evaluate min-width queries. */
 function setViewportWidth(width: number) {
@@ -59,6 +64,7 @@ const baseProps = {
 };
 
 function renderCard(overrides: Partial<typeof baseProps> = {}) {
+  if (typeof overrides.windowWidth === 'number') setViewportWidth(overrides.windowWidth);
   return render(
     <TestProviders>
       <InstrumentCard {...baseProps} {...overrides} />
@@ -67,7 +73,49 @@ function renderCard(overrides: Partial<typeof baseProps> = {}) {
 }
 
 describe('InstrumentCard', () => {
+  beforeAll(() => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        const text = this.textContent || '';
+        if (text.includes('View full leaderboard') || text.includes('View leaderboard')) {
+          return Math.max(window.innerWidth - 80, 0);
+        }
+        return originalClientWidth?.get ? originalClientWidth.get.call(this) : 0;
+      },
+    });
+
+    canvasGetContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => {
+      let font = '';
+      return {
+        get font() {
+          return font;
+        },
+        set font(value: string) {
+          font = value;
+        },
+        measureText(text: string) {
+          return { width: text.includes('View full leaderboard (') ? measuredCountedLabelWidth : measuredPlainLabelWidth } as TextMetrics;
+        },
+      } as unknown as CanvasRenderingContext2D;
+    });
+  });
+
   beforeEach(() => setViewportWidth(900));
+
+  beforeEach(() => {
+    measuredCountedLabelWidth = 320;
+    measuredPlainLabelWidth = 140;
+  });
+
+  afterAll(() => {
+    canvasGetContextSpy.mockRestore();
+    if (originalClientWidth) {
+      Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalClientWidth);
+      return;
+    }
+    delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+  });
 
   it('renders instrument label', () => {
     renderCard();
@@ -81,12 +129,12 @@ describe('InstrumentCard', () => {
 
   it('shows no entries message with instrument name when entries are empty', () => {
     renderCard({ prefetchedEntries: [] });
-    expect(screen.getByText('No Lead entries')).toBeTruthy();
+    expect(screen.getByText('No scores yet')).toBeTruthy();
   });
 
   it('empty card is not clickable', () => {
     renderCard({ prefetchedEntries: [] });
-    const card = screen.getByText('No Lead entries').parentElement!;
+    const card = screen.getByTestId('inst-empty-Solo_Guitar').closest('div[style*="height: 100%"]') as HTMLElement;
     expect(card.style.cursor).not.toBe('pointer');
   });
 
@@ -177,7 +225,7 @@ describe('InstrumentCard', () => {
 
   it('shows tracked/total counts on view-all button when provided', () => {
     const entries = [makeEntry(1), makeEntry(2)];
-    renderCard({ prefetchedEntries: entries, localEntries: 10030, totalEntries: 700000 });
+    renderCard({ prefetchedEntries: entries, localEntries: 10030, totalEntries: 700000, windowWidth: 1200 });
     expect(screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)')).toBeTruthy();
   });
 
@@ -198,6 +246,73 @@ describe('InstrumentCard', () => {
     expect(screen.getByText('View full leaderboard')).toBeTruthy();
     expect(screen.getByText('10,002 tracked')).toBeTruthy();
     expect(screen.getByText('364,400 total')).toBeTruthy();
+  });
+
+  it('switches counted CTA into compact mode on common phone widths', () => {
+    const entries = [makeEntry(1)];
+    renderCard({
+      prefetchedEntries: entries,
+      localEntries: 10002,
+      totalEntries: 212592,
+      windowWidth: 390,
+    });
+    expect(screen.getByText('View full leaderboard')).toBeTruthy();
+    expect(screen.getByText('10,002 tracked')).toBeTruthy();
+    expect(screen.getByText('212,592 total')).toBeTruthy();
+    expect(screen.queryByText('View full leaderboard (10,002 tracked / 212,592 total)')).toBeNull();
+  });
+
+  it('keeps plain labels single-line on common phone widths', () => {
+    const entries = [makeEntry(1)];
+    renderCard({
+      prefetchedEntries: entries,
+      windowWidth: 390,
+    });
+    const button = screen.getByText('View leaderboard');
+    expect(button.style.flexDirection).not.toBe('column');
+    expect(button.style.whiteSpace).toBe('nowrap');
+  });
+
+  it('keeps the wider counted CTA single-line when compact mode is not used', () => {
+    const entries = [makeEntry(1), makeEntry(2)];
+    renderCard({
+      prefetchedEntries: entries,
+      localEntries: 10030,
+      totalEntries: 700000,
+      windowWidth: 430,
+    });
+    const button = screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)');
+    expect(button.style.whiteSpace).toBe('nowrap');
+    expect(button.style.wordBreak).toBe('normal');
+    expect(button.style.minHeight).toBe('48px');
+  });
+
+  it('switches to compact mode when the counted label would overflow even above the narrow breakpoint', () => {
+    measuredCountedLabelWidth = 420;
+    const entries = [makeEntry(1), makeEntry(2)];
+    renderCard({
+      prefetchedEntries: entries,
+      localEntries: 10030,
+      totalEntries: 700000,
+      windowWidth: 430,
+    });
+    expect(screen.getByText('View full leaderboard')).toBeTruthy();
+    expect(screen.getByText('10,030 tracked')).toBeTruthy();
+    expect(screen.getByText('700,000 total')).toBeTruthy();
+    expect(screen.queryByText('View full leaderboard (10,030 tracked / 700,000 total)')).toBeNull();
+  });
+
+  it('exits compact counted mode once the card regrows past the narrow breakpoint', () => {
+    const entries = [makeEntry(1), makeEntry(2)];
+    renderCard({
+      prefetchedEntries: entries,
+      localEntries: 10030,
+      totalEntries: 700000,
+      windowWidth: 430,
+    });
+    expect(screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)')).toBeTruthy();
+    expect(screen.queryByText('10,030 tracked')).toBeNull();
+    expect(screen.queryByText('700,000 total')).toBeNull();
   });
 
   it('rank falls back to index+1 when rank is undefined', () => {

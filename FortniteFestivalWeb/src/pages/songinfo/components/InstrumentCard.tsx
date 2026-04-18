@@ -1,4 +1,4 @@
-import { memo, useMemo, type CSSProperties } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
@@ -8,7 +8,7 @@ import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { leaderboardCache } from '../../../api/pageCache';
 import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
-import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
+import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, NARROW_BREAKPOINT, TextAlign, WhiteSpace, WordBreak, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { parseApiError } from '../../../utils/apiError';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
@@ -57,7 +57,9 @@ export default memo(function InstrumentCard({
   const cardWidth = isTwoCol ? windowWidth / 2 : windowWidth;
   const showAccuracy = useMediaQuery(QUERY_SHOW_ACCURACY);
   const showSeason = useMediaQuery(QUERY_SHOW_SEASON);
-  const isMobile = cardWidth < 360;
+  const isCompactCard = cardWidth < NARROW_BREAKPOINT;
+  const viewAllButtonRef = useRef<HTMLDivElement | null>(null);
+  const [viewAllNeedsCompact, setViewAllNeedsCompact] = useState(false);
 
   const playerInTop = !!(playerAccountId && prefetchedEntries.some(
     (e) => e.accountId === playerAccountId,
@@ -70,6 +72,49 @@ export default memo(function InstrumentCard({
     return computeRankWidth(ranks);
   }, [prefetchedEntries, playerScore, playerInTop]);
 
+  const hasViewAllCounts = totalEntries != null && localEntries != null && totalEntries > 0;
+  const fullViewAllLabel = hasViewAllCounts
+    ? t('leaderboard.viewFullWithCounts', {
+        local: localEntries!.toLocaleString(),
+        total: totalEntries!.toLocaleString(),
+      })
+    : t('leaderboard.viewPlain');
+
+  useLayoutEffect(() => {
+    if (!hasViewAllCounts) {
+      setViewAllNeedsCompact(false);
+      return;
+    }
+
+    const button = viewAllButtonRef.current;
+    if (!button) return;
+
+    const measure = () => {
+      const computed = getComputedStyle(button);
+      const paddingLeft = Number.parseFloat(computed.paddingLeft) || 0;
+      const paddingRight = Number.parseFloat(computed.paddingRight) || 0;
+      const availableWidth = button.clientWidth - paddingLeft - paddingRight;
+      if (availableWidth <= 0) return;
+
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) return;
+
+      context.font = [computed.fontStyle, computed.fontVariant, computed.fontWeight, computed.fontSize, computed.fontFamily]
+        .filter((part) => !!part && part !== 'normal')
+        .join(' ');
+      const next = context.measureText(fullViewAllLabel).width > availableWidth;
+      setViewAllNeedsCompact((current) => current === next ? current : next);
+    };
+
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(button);
+    return () => resizeObserver.disconnect();
+  }, [cardWidth, fullViewAllLabel, hasViewAllCounts]);
+
   const anim = (delayMs: number): CSSProperties => skipAnimation ? {} : ({
     opacity: Opacity.none,
     animation: `fadeInUp ${TRANSITION_MS}ms ease-out ${delayMs}ms forwards`,
@@ -81,7 +126,7 @@ export default memo(function InstrumentCard({
   };
   /* v8 ignore stop */
 
-  const st = useInstrumentCardStyles(isMobile);
+  const st = useInstrumentCardStyles();
 
   return (
     <div style={st.cardWrapper}>
@@ -105,7 +150,7 @@ export default memo(function InstrumentCard({
           prefetchedEntries.map((e, i) => {
             const rowStagger = anim(baseDelay + STAGGER_ENTRY_OFFSET + i * STAGGER_ROW_MS);
             const isPlayer = playerInTop && e.accountId === playerAccountId;
-            const rowStyle = { ...(isPlayer ? st.playerEntryRow : st.entryRow), ...(isMobile ? st.entryRowMobile : {}) };
+            const rowStyle = { ...(isPlayer ? st.playerEntryRow : st.entryRow), ...(isCompactCard ? st.entryRowMobile : {}) };
             return (
             <Link
               key={e.accountId}
@@ -138,7 +183,7 @@ export default memo(function InstrumentCard({
         {playerName && playerScore && !playerInTop && (() => {
           const playerDelay = baseDelay + STAGGER_ENTRY_OFFSET + prefetchedEntries.length * STAGGER_ROW_MS;
           const playerStagger = anim(playerDelay);
-          const playerRowStyle = { ...st.playerEntryRow, ...(isMobile ? st.entryRowMobile : {}) };
+          const playerRowStyle = { ...st.playerEntryRow, ...(isCompactCard ? st.entryRowMobile : {}) };
           return (
           <Link
             id={`player-score-${instrument}`}
@@ -170,11 +215,12 @@ export default memo(function InstrumentCard({
         {!prefetchedError && prefetchedEntries.length > 0 && (() => {
           const viewAllDelay = baseDelay + STAGGER_ENTRY_OFFSET + (prefetchedEntries.length + (playerScore && !playerInTop ? 1 : 0)) * STAGGER_ROW_MS;
           const viewAllStagger = anim(viewAllDelay);
-          const hasCounts = totalEntries != null && localEntries != null && totalEntries > 0;
-          if (hasCounts && isMobile) {
+          const shouldUseCompactViewAll = hasViewAllCounts && (isCompactCard || viewAllNeedsCompact);
+          if (shouldUseCompactViewAll) {
             return (
               <div
-                style={{ ...st.viewAllButtonStacked, ...viewAllStagger }}
+                ref={viewAllButtonRef}
+                style={{ ...st.viewAllButtonCompact, ...viewAllStagger }}
                 onAnimationEnd={clearAnim}
               >
                 <span>{t('leaderboard.viewFullShort')}</span>
@@ -183,18 +229,13 @@ export default memo(function InstrumentCard({
               </div>
             );
           }
-          const label = hasCounts
-            ? t('leaderboard.viewFullWithCounts', {
-                local: localEntries!.toLocaleString(),
-                total: totalEntries!.toLocaleString(),
-              })
-            : t('leaderboard.viewPlain');
           return (
             <div
+              ref={viewAllButtonRef}
               style={{ ...st.viewAllButton, ...viewAllStagger }}
               onAnimationEnd={clearAnim}
             >
-              {label}
+              {fullViewAllLabel}
             </div>
           );
         })()}
@@ -205,7 +246,7 @@ export default memo(function InstrumentCard({
   );
 });
 
-function useInstrumentCardStyles(_isMobile: boolean) {
+function useInstrumentCardStyles() {
   return useMemo(() => {
     const entryBase: CSSProperties = {
       ...frostedCard,
@@ -264,22 +305,29 @@ function useInstrumentCardStyles(_isMobile: boolean) {
       viewAllButton: {
         ...frostedCard,
         display: Display.flex,
+        position: 'relative',
         alignItems: Align.center,
         justifyContent: Justify.center,
-        height: Layout.entryRowHeight,
+        minHeight: Layout.entryRowHeight,
+        padding: padding(Gap.sm, Gap.md),
         borderRadius: Radius.md,
         color: Colors.textPrimary,
         fontSize: Font.md,
         fontWeight: Weight.semibold,
         cursor: Cursor.pointer,
+        textAlign: TextAlign.center,
+        whiteSpace: WhiteSpace.nowrap,
+        wordBreak: WordBreak.normal,
         transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
       } as CSSProperties,
-      viewAllButtonStacked: {
+      viewAllButtonCompact: {
         ...frostedCard,
         display: Display.flex,
+        position: 'relative',
         flexDirection: 'column',
         alignItems: Align.center,
         justifyContent: Justify.center,
+        minHeight: Layout.entryRowHeight,
         gap: Gap.xs,
         padding: padding(Gap.sm, Gap.md),
         borderRadius: Radius.md,
@@ -287,7 +335,9 @@ function useInstrumentCardStyles(_isMobile: boolean) {
         fontSize: Font.md,
         fontWeight: Weight.semibold,
         cursor: Cursor.pointer,
-        textAlign: 'center' as const,
+        textAlign: TextAlign.center,
+        whiteSpace: WhiteSpace.nowrap,
+        wordBreak: WordBreak.normal,
         transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
       } as CSSProperties,
     };
