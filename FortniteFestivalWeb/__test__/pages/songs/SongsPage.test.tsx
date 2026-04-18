@@ -489,6 +489,34 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     expect(container.textContent!.length).toBeGreaterThan(0);
   });
 
+  it('resets instrument-only sort mode when the selected instrument is cleared', async () => {
+    setDesktopViewport();
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'score',
+      sortAscending: false,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'difficulty', 'lastplayed'],
+      instrumentOrder: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals', 'Solo_PeripheralGuitar', 'Solo_PeripheralBass'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, overThreshold: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {}, shopInShop: false, shopLeavingTomorrow: false },
+    }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1,
+      scores: [{ songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 1, percentile: 99 }],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+
+    await act(async () => { fireEvent.click(screen.getByLabelText('Filter')); await vi.advanceTimersByTimeAsync(400); });
+    await act(async () => { fireEvent.click(screen.getByTitle('Lead')); await vi.advanceTimersByTimeAsync(100); });
+    await act(async () => { fireEvent.click(screen.getByText('Apply Filter Changes')); await vi.advanceTimersByTimeAsync(400); });
+
+    const saved = JSON.parse(localStorage.getItem('fst:songSettings')!);
+    expect(saved.instrument).toBeNull();
+    expect(saved.sortMode).toBe('title');
+    expect(saved.sortAscending).toBe(true);
+  });
+
   it('exercises openFilter → resetFilter with desktop viewport', async () => {
     setDesktopViewport();
     mockApi.getPlayer.mockResolvedValue({
@@ -516,6 +544,17 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     if (artistRow) await act(async () => { fireEvent.click(artistRow); });
     const applyBtn = screen.queryByText('Apply Sort Changes');
     if (applyBtn) await act(async () => { fireEvent.click(applyBtn); await vi.advanceTimersByTimeAsync(400); });
+    expect(container.textContent!.length).toBeGreaterThan(0);
+  });
+
+  it('hides filtered instrument sort mode when no instrument filter is selected', async () => {
+    setDesktopViewport();
+    const { container } = renderSongsPage('/songs', 'test-player-1');
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    const sortBtn = screen.getByLabelText('Sort');
+    await act(async () => { fireEvent.click(sortBtn); await vi.advanceTimersByTimeAsync(400); });
+
+    expect(screen.queryByText('Filtered Instrument Sort Mode')).toBeNull();
     expect(container.textContent!.length).toBeGreaterThan(0);
   });
 

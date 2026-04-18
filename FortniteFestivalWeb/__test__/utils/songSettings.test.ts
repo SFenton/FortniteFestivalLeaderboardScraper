@@ -8,6 +8,7 @@ import {
   isFilterActive,
   defaultSongSettings,
   loadSongSettings,
+  normalizeSongSettings,
   saveSongSettings,
   resetSongSettingsForDeselect,
   SONG_SETTINGS_CHANGED_EVENT,
@@ -21,12 +22,14 @@ beforeEach(() => {
 
 describe('songSettings', () => {
   describe('getInstrumentSortModes', () => {
-    it('returns 8 instrument sort modes', () => {
+    it('returns 9 instrument sort modes', () => {
       const modes = INSTRUMENT_SORT_MODES;
-      expect(modes).toHaveLength(8);
+      expect(modes).toHaveLength(9);
       expect(modes.map(m => m.mode)).toContain('score');
+      expect(modes.map(m => m.mode)).toContain('difficulty');
       expect(modes.map(m => m.mode)).toContain('intensity');
       expect(modes.map(m => m.mode)).toContain('maxdistance');
+      expect(modes.map(m => m.mode)).toContain('maxscorediff');
     });
 
     it('each mode has a label', () => {
@@ -64,8 +67,10 @@ describe('songSettings', () => {
   });
 
   describe('DEFAULT_METADATA_ORDER', () => {
-    it('contains 7 keys', () => {
-      expect(DEFAULT_METADATA_ORDER).toHaveLength(7);
+    it('contains 8 keys', () => {
+      expect(DEFAULT_METADATA_ORDER).toHaveLength(8);
+      expect(DEFAULT_METADATA_ORDER).toContain('difficulty');
+      expect(DEFAULT_METADATA_ORDER).toContain('lastplayed');
     });
   });
 
@@ -131,11 +136,11 @@ describe('songSettings', () => {
       const oldOrder = ['score', 'percentage', 'percentile', 'stars', 'seasonachieved'];
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: oldOrder }));
       const loaded = loadSongSettings();
-      expect(loaded.metadataOrder).toEqual([...oldOrder, 'intensity', 'lastplayed']);
+      expect(loaded.metadataOrder).toEqual([...oldOrder, 'intensity', 'difficulty', 'lastplayed']);
     });
 
     it('preserves existing metadataOrder when it already has all keys', () => {
-      const fullOrder = ['percentage', 'score', 'percentile', 'stars', 'seasonachieved', 'intensity', 'lastplayed'];
+      const fullOrder = ['percentage', 'score', 'percentile', 'stars', 'seasonachieved', 'intensity', 'difficulty', 'lastplayed'];
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: fullOrder }));
       const loaded = loadSongSettings();
       expect(loaded.metadataOrder).toEqual(fullOrder);
@@ -146,7 +151,56 @@ describe('songSettings', () => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: oldOrder }));
       const loaded = loadSongSettings();
       expect(loaded.metadataOrder).not.toContain('maxdistance');
-      expect(loaded.metadataOrder).toEqual(['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'lastplayed']);
+      expect(loaded.metadataOrder).toEqual(['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'difficulty', 'lastplayed']);
+    });
+
+    it('normalizes persisted instrument-only sort modes when no instrument is selected', () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        sortMode: 'score',
+        sortAscending: false,
+        instrument: null,
+      }));
+
+      const loaded = loadSongSettings();
+      expect(loaded.sortMode).toBe('title');
+      expect(loaded.sortAscending).toBe(true);
+      expect(loaded.instrument).toBeNull();
+    });
+  });
+
+  describe('normalizeSongSettings', () => {
+    it('resets instrument sort mode when instrument is null', () => {
+      const normalized = normalizeSongSettings({
+        ...defaultSongSettings(),
+        sortMode: 'score',
+        sortAscending: false,
+      });
+
+      expect(normalized.sortMode).toBe('title');
+      expect(normalized.sortAscending).toBe(true);
+    });
+
+    it('preserves non-instrument sort mode when instrument is null', () => {
+      const normalized = normalizeSongSettings({
+        ...defaultSongSettings(),
+        sortMode: 'artist',
+        sortAscending: false,
+      });
+
+      expect(normalized.sortMode).toBe('artist');
+      expect(normalized.sortAscending).toBe(false);
+    });
+
+    it('preserves instrument sort mode when an instrument is selected', () => {
+      const normalized = normalizeSongSettings({
+        ...defaultSongSettings(),
+        sortMode: 'score',
+        sortAscending: false,
+        instrument: 'Solo_Guitar' as any,
+      });
+
+      expect(normalized.sortMode).toBe('score');
+      expect(normalized.sortAscending).toBe(false);
     });
   });
 
