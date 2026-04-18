@@ -880,6 +880,7 @@
     "title": "Leaderboards",
     "combined": "Combined Rankings",
     "viewAllRankings": "View all rankings",
+    "viewAllRankingsWithCount": "View all rankings ({{count}})",
     "page": "Page {{current}} of {{total}}",
     "noRankings": "No rankings available yet.",
     "noRankingsSubtitle": "When leaderboard ranks are recomputed for {{instrument}}, they will show up here on the next update.",

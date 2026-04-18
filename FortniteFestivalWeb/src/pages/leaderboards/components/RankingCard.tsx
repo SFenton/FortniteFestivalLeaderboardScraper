@@ -75,6 +75,9 @@ export default memo(function RankingCard({
   const buttonStaggerStyle: CSSProperties | undefined = buttonDelay != null
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${buttonDelay}ms forwards` }
     : undefined;
+  const viewAllLabel = totalAccounts > 0
+    ? t('rankings.viewAllRankingsWithCount', { count: totalAccounts.toLocaleString() })
+    : t('rankings.viewAllRankings');
 
   return (
     <div style={st.cardWrapper}>
@@ -170,7 +173,7 @@ export default memo(function RankingCard({
               el.style.animation = '';
             }}
           >
-            {t('rankings.viewAllRankings')}
+            {viewAllLabel}
           </div>
         )}
       </div>
