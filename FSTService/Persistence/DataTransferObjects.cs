@@ -221,6 +221,46 @@ public sealed class PlayerStatsTiersRow
     public string UpdatedAt { get; init; } = "";
 }
 
+/// <summary>
+/// Grouped player band summaries embedded in the player stats response.
+/// </summary>
+public sealed class PlayerBandsDto
+{
+    public PlayerBandGroupDto All { get; init; } = new();
+    public PlayerBandGroupDto Duos { get; init; } = new();
+    public PlayerBandGroupDto Trios { get; init; } = new();
+    public PlayerBandGroupDto Quads { get; init; } = new();
+}
+
+/// <summary>
+/// One grouped band section (all/duos/trios/quads) with total count and preview entries.
+/// </summary>
+public sealed class PlayerBandGroupDto
+{
+    public int TotalCount { get; init; }
+    public List<PlayerBandEntryDto> Entries { get; init; } = [];
+}
+
+/// <summary>
+/// A unique player band, deduped by team members.
+/// </summary>
+public sealed class PlayerBandEntryDto
+{
+    public string TeamKey { get; init; } = "";
+    public string BandType { get; init; } = "";
+    public List<PlayerBandMemberDto> Members { get; init; } = [];
+}
+
+/// <summary>
+/// One member within a player band, including all instruments they have played with that band.
+/// </summary>
+public sealed class PlayerBandMemberDto
+{
+    public string AccountId { get; init; } = "";
+    public string? DisplayName { get; init; }
+    public List<string> Instruments { get; init; } = [];
+}
+
 /// <summary>Song reference in top/bottom song lists within a stats tier.</summary>
 public sealed class StatsSongRef
 {
@@ -501,6 +541,46 @@ public sealed class ComboLeaderboardEntry
     public int SongsPlayed { get; init; }
     public int FullComboCount { get; init; }
     public string ComputedAt { get; init; } = "";
+}
+
+/// <summary>
+/// A single aggregate band-team ranking entry.
+/// </summary>
+public sealed class BandTeamRankingDto
+{
+    public string BandType { get; init; } = "";
+    public string? ComboId { get; init; }
+    public string TeamKey { get; init; } = "";
+    public string[] TeamMembers { get; init; } = [];
+    public int SongsPlayed { get; init; }
+    public int TotalChartedSongs { get; init; }
+    public double Coverage { get; init; }
+    public double RawSkillRating { get; init; }
+    public double AdjustedSkillRating { get; init; }
+    public int AdjustedSkillRank { get; init; }
+    public double WeightedRating { get; init; }
+    public int WeightedRank { get; init; }
+    public double FcRate { get; init; }
+    public int FcRateRank { get; init; }
+    public long TotalScore { get; init; }
+    public int TotalScoreRank { get; init; }
+    public double AvgAccuracy { get; init; }
+    public int FullComboCount { get; init; }
+    public double AvgStars { get; init; }
+    public int BestRank { get; init; }
+    public double AvgRank { get; init; }
+    public double? RawWeightedRating { get; init; }
+    public string ComputedAt { get; init; } = "";
+    public int TotalRankedTeams { get; init; }
+}
+
+/// <summary>
+/// Summary row for an observed band combo ranking scope.
+/// </summary>
+public sealed class BandComboCatalogEntry
+{
+    public string ComboId { get; init; } = "";
+    public int TeamCount { get; init; }
 }
 
 /// <summary>

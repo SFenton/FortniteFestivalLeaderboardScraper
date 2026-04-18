@@ -156,6 +156,12 @@ public interface IMetaDatabase : IDisposable
     ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted");
     int GetComboTotalAccounts(string comboId);
 
+    // ── Band team rankings ──────────────────────────────────────────
+    void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5);
+    (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50);
+    BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null);
+    List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);
+
     // ── Combo ranking deltas ─────────────────────────────────────────
     void TruncateComboRankingDeltas();
     void WriteComboRankingDeltas(IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,

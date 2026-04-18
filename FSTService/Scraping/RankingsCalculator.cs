@@ -81,11 +81,12 @@ public sealed class RankingsCalculator
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
         var instruments = GlobalLeaderboardScraper.AllInstruments;
+        var bandTypes = BandInstrumentMapping.AllBandTypes;
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
-        // Total steps: instruments(9) + composite(1) + snapshots(instruments+1) + combos(1) = 21
-        _progress.BeginPhaseProgress(instruments.Count + 1 + instruments.Count + 1 + 1);
+        // Total steps: instruments(9) + composite(1) + snapshots(instruments+1) + combos(1) + bandTypes(3) = 24
+        _progress.BeginPhaseProgress(instruments.Count + 1 + instruments.Count + 1 + 1 + bandTypes.Count);
         _progress.SetSubOperation("per_instrument_rankings");
 
         // Cap at 2 concurrent instruments to avoid OOM-killing PostgreSQL.
@@ -321,6 +322,31 @@ public sealed class RankingsCalculator
         _progress.ReportPhaseItemComplete();
         _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
         LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
+
+        // ── Phase 6: Band team rankings ──
+        _progress.SetSubOperation("band_rankings");
+        var bandSw = System.Diagnostics.Stopwatch.StartNew();
+        var totalBandSongs = festivalService.Songs.Count;
+        if (totalBandSongs > 0)
+        {
+            foreach (var bandType in bandTypes)
+            {
+                ct.ThrowIfCancellationRequested();
+                var perBandSw = System.Diagnostics.Stopwatch.StartNew();
+                _metaDb.RebuildBandTeamRankings(bandType, totalBandSongs, CredibilityThreshold, PopulationMedian);
+                perBandSw.Stop();
+                LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
+                _progress.ReportPhaseItemComplete();
+            }
+        }
+        else
+        {
+            _log.LogWarning("No songs are loaded, skipping band rankings.");
+            foreach (var _ in bandTypes)
+                _progress.ReportPhaseItemComplete();
+        }
+        bandSw.Stop();
+        LogPhase("band_rankings.total", instrument: null, bandSw.Elapsed);
 
         _log.LogInformation("Full rankings computation complete in {Total}.", sw.Elapsed);
         LogPhase("total", instrument: null, sw.Elapsed);
@@ -591,6 +617,20 @@ public sealed class RankingsCalculator
         }
 
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
+    }
+
+    internal void ComputeBandRankings(IReadOnlyList<string> bandTypes, int totalChartedSongs)
+    {
+        if (totalChartedSongs <= 0)
+        {
+            _log.LogWarning("No charted songs available, skipping band rankings.");
+            return;
+        }
+
+        foreach (var bandType in bandTypes)
+            _metaDb.RebuildBandTeamRankings(bandType, totalChartedSongs, CredibilityThreshold, PopulationMedian);
+
+        _log.LogInformation("Computed band rankings for {BandTypeCount} band types.", bandTypes.Count);
     }
 
     /// <summary>Per-instrument metric values for a single account.</summary>

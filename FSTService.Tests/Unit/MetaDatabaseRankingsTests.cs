@@ -1,5 +1,7 @@
 using FSTService.Persistence;
+using FSTService.Scraping;
 using FSTService.Tests.Helpers;
+using NSubstitute;
 
 namespace FSTService.Tests.Unit;
 
@@ -9,6 +11,43 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     private MetaDatabase Db => _fixture.Db;
 
     public void Dispose() => _fixture.Dispose();
+
+    private static BandLeaderboardEntry MakeBandEntry(string[] teamMembers, string instrumentCombo, int score, bool isFullCombo = false)
+    {
+        var sortedMembers = teamMembers.OrderBy(static member => member, StringComparer.OrdinalIgnoreCase).ToArray();
+        return new BandLeaderboardEntry
+        {
+            TeamKey = string.Join(':', sortedMembers),
+            TeamMembers = teamMembers,
+            InstrumentCombo = instrumentCombo,
+            Score = score,
+            Accuracy = 950000,
+            IsFullCombo = isFullCombo,
+            Stars = 5,
+            Difficulty = 3,
+            Season = 1,
+            Rank = 1,
+            Percentile = 0.5,
+            Source = "scrape",
+        };
+    }
+
+    private void SeedBandRankingsSource()
+    {
+        var persistence = new BandLeaderboardPersistence(_fixture.DataSource, Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+        persistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000, isFullCombo: true),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+            MakeBandEntry(["p1", "p2"], "0:0", 1100),
+        ]);
+        persistence.UpsertBandEntries("song_1", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1200),
+            MakeBandEntry(["p3", "p4"], "0:3", 1300, isFullCombo: true),
+            MakeBandEntry(["p5", "p6"], "0:1", 800),
+        ]);
+    }
 
     // ═══════════════════════════════════════════════════════════
     // CompositeRankings
@@ -224,6 +263,38 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         var (entries, total) = Db.GetComboLeaderboard("nonexistent");
         Assert.Empty(entries);
         Assert.Equal(0, total);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // BandTeamRankings
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void RebuildBandTeamRankings_StoresOverallAndComboScopes()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+
+        var (overall, totalTeams) = Db.GetBandTeamRankings("Band_Duets");
+        Assert.Equal(3, totalTeams);
+        Assert.Equal(3, overall.Count);
+        Assert.Equal("p1:p2", overall[0].TeamKey);
+        Assert.Equal(1, overall[0].AdjustedSkillRank);
+
+        var comboId = BandComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass"]);
+        var (comboEntries, comboTotal) = Db.GetBandTeamRankings("Band_Duets", comboId);
+        Assert.Equal(2, comboTotal);
+        Assert.Equal(2, comboEntries.Count);
+        Assert.Equal("p1:p2", comboEntries[0].TeamKey);
+
+        var team = Db.GetBandTeamRanking("Band_Duets", "p1:p2");
+        Assert.NotNull(team);
+        Assert.Equal(3, team.TotalRankedTeams);
+
+        var combos = Db.GetBandRankingCombos("Band_Duets");
+        Assert.Contains(combos, entry => entry.ComboId == comboId && entry.TeamCount == 2);
+        Assert.Contains(combos, entry => entry.ComboId == BandComboIds.FromInstruments(["Solo_Guitar", "Solo_Guitar"]) && entry.TeamCount == 1);
     }
 
     // ═══════════════════════════════════════════════════════════

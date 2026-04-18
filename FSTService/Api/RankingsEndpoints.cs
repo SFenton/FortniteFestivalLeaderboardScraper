@@ -369,6 +369,134 @@ public static partial class ApiEndpoints
         .WithTags("Rankings")
         .RequireRateLimiting("public");
 
+        // ─── Band combo catalog ───────────────────────────────
+
+        app.MapGet("/api/rankings/bands/{bandType}/combos", (
+            HttpContext httpContext,
+            string bandType,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
+
+            if (!BandComboIds.IsValidBandType(bandType))
+                return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
+
+            var combos = metaDb.GetBandRankingCombos(bandType)
+                .Select(combo => new
+                {
+                    comboId = combo.ComboId,
+                    instruments = BandComboIds.ToInstruments(combo.ComboId),
+                    teamCount = combo.TeamCount,
+                })
+                .ToList();
+
+            return Results.Ok(new { bandType, combos });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
+        // ─── Band team rankings (paginated) ───────────────────
+
+        app.MapGet("/api/rankings/bands/{bandType}", (
+            HttpContext httpContext,
+            string bandType,
+            string? combo,
+            string? rankBy,
+            int? page,
+            int? pageSize,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
+
+            if (!BandComboIds.IsValidBandType(bandType))
+                return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
+
+            var comboValidation = TryNormalizeBandCombo(bandType, combo);
+            if (comboValidation.Error is not null)
+                return Results.BadRequest(new { error = comboValidation.Error });
+
+            var effectivePage = page ?? 1;
+            var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
+            var metric = rankBy ?? "adjusted";
+            var (entries, totalTeams) = metaDb.GetBandTeamRankings(bandType, comboValidation.ComboId, metric, effectivePage, effectivePageSize);
+            var names = metaDb.GetDisplayNames(entries.SelectMany(entry => entry.TeamMembers));
+
+            return Results.Ok(new
+            {
+                bandType,
+                comboId = comboValidation.ComboId,
+                rankBy = metric,
+                page = effectivePage,
+                pageSize = effectivePageSize,
+                totalTeams,
+                entries = entries.Select(entry => MapBandRanking(entry, names)).ToList(),
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
+        // ─── Single band team ranking ─────────────────────────
+
+        app.MapGet("/api/rankings/bands/{bandType}/{teamKey}", (
+            HttpContext httpContext,
+            string bandType,
+            string teamKey,
+            string? combo,
+            string? rankBy,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            if (!BandComboIds.IsValidBandType(bandType))
+                return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
+
+            var comboValidation = TryNormalizeBandCombo(bandType, combo);
+            if (comboValidation.Error is not null)
+                return Results.BadRequest(new { error = comboValidation.Error });
+
+            var metric = rankBy ?? "adjusted";
+            var ranking = metaDb.GetBandTeamRanking(bandType, teamKey, comboValidation.ComboId);
+            if (ranking is null)
+                return Results.NotFound(new { error = "Team not found in this band ranking." });
+
+            var names = metaDb.GetDisplayNames(ranking.TeamMembers);
+
+            return Results.Ok(new
+            {
+                bandType,
+                comboId = comboValidation.ComboId,
+                rankBy = metric,
+                ranking.TeamKey,
+                teamMembers = ranking.TeamMembers.Select(accountId => new
+                {
+                    accountId,
+                    displayName = names.GetValueOrDefault(accountId),
+                }).ToList(),
+                ranking.SongsPlayed,
+                ranking.TotalChartedSongs,
+                ranking.Coverage,
+                ranking.RawSkillRating,
+                ranking.AdjustedSkillRating,
+                ranking.AdjustedSkillRank,
+                ranking.WeightedRating,
+                ranking.WeightedRank,
+                ranking.FcRate,
+                ranking.FcRateRank,
+                ranking.TotalScore,
+                ranking.TotalScoreRank,
+                ranking.AvgAccuracy,
+                ranking.FullComboCount,
+                ranking.AvgStars,
+                ranking.BestRank,
+                ranking.AvgRank,
+                ranking.RawWeightedRating,
+                totalRankedTeams = ranking.TotalRankedTeams,
+                ranking.ComputedAt,
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
         // ─── Per-instrument ranking neighborhood ───────────────
 
         app.MapGet("/api/rankings/{instrument}/{accountId}/neighborhood", (
@@ -599,5 +727,48 @@ public static partial class ApiEndpoints
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");
+    }
+
+    private static object MapBandRanking(BandTeamRankingDto ranking, IReadOnlyDictionary<string, string> names) => new
+    {
+        ranking.TeamKey,
+        teamMembers = ranking.TeamMembers.Select(accountId => new
+        {
+            accountId,
+            displayName = names.GetValueOrDefault(accountId),
+        }).ToList(),
+        ranking.SongsPlayed,
+        ranking.TotalChartedSongs,
+        ranking.Coverage,
+        ranking.RawSkillRating,
+        ranking.AdjustedSkillRating,
+        ranking.AdjustedSkillRank,
+        ranking.WeightedRating,
+        ranking.WeightedRank,
+        ranking.FcRate,
+        ranking.FcRateRank,
+        ranking.TotalScore,
+        ranking.TotalScoreRank,
+        ranking.AvgAccuracy,
+        ranking.FullComboCount,
+        ranking.AvgStars,
+        ranking.BestRank,
+        ranking.AvgRank,
+        ranking.RawWeightedRating,
+        ranking.ComputedAt,
+    };
+
+    private static (string? ComboId, string? Error) TryNormalizeBandCombo(string bandType, string? combo)
+    {
+        if (string.IsNullOrWhiteSpace(combo))
+            return (null, null);
+
+        if (!BandComboIds.TryNormalizeComboParam(combo, out var comboId))
+            return (null, "Invalid band combo. Use a normalized server-instrument list such as Solo_Guitar+Solo_Bass.");
+
+        if (BandComboIds.ToInstruments(comboId).Count != BandInstrumentMapping.ExpectedMemberCount(bandType))
+            return (null, $"Combo size does not match band type {bandType}.");
+
+        return (comboId, null);
     }
 }

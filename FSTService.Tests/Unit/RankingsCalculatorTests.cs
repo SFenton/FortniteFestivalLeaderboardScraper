@@ -56,6 +56,23 @@ public sealed class RankingsCalculatorTests : IDisposable
             ApiRank = apiRank,
         };
 
+    private static BandLeaderboardEntry MakeBandEntry(string[] teamMembers, string instrumentCombo, int score, bool isFullCombo = false) =>
+        new()
+        {
+            TeamKey = string.Join(':', teamMembers.OrderBy(static member => member, StringComparer.OrdinalIgnoreCase)),
+            TeamMembers = teamMembers,
+            InstrumentCombo = instrumentCombo,
+            Score = score,
+            Accuracy = 950000,
+            IsFullCombo = isFullCombo,
+            Stars = 5,
+            Difficulty = 3,
+            Season = 1,
+            Rank = 1,
+            Percentile = 0.5,
+            Source = "scrape",
+        };
+
     private static FestivalService CreateFestivalServiceWithSongs(int songCount)
     {
         var svc = new FestivalService((IFestivalPersistence?)null);
@@ -252,6 +269,35 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.True(_metaFixture.Db.GetComboTotalAccounts(ComboIds.FromInstruments(["Solo_Guitar", "Solo_Drums"])) > 0);
         Assert.True(_metaFixture.Db.GetComboTotalAccounts(ComboIds.FromInstruments(["Solo_Bass", "Solo_Drums"])) > 0);
         Assert.True(_metaFixture.Db.GetComboTotalAccounts(ComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass", "Solo_Drums"])) > 0);
+    }
+
+    [Fact]
+    public void ComputeBandRankings_RebuildsAggregateBandScopes()
+    {
+        var bandPersistence = new BandLeaderboardPersistence(_metaFixture.DataSource, Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000, isFullCombo: true),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+            MakeBandEntry(["p1", "p2"], "0:0", 1100),
+        ]);
+        bandPersistence.UpsertBandEntries("song_1", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1200),
+            MakeBandEntry(["p3", "p4"], "0:3", 1300),
+            MakeBandEntry(["p5", "p6"], "0:1", 800),
+        ]);
+
+        _sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 2);
+
+        var (overall, totalTeams) = _metaFixture.Db.GetBandTeamRankings("Band_Duets");
+        Assert.Equal(3, totalTeams);
+        Assert.Equal("p1:p2", overall[0].TeamKey);
+
+        var comboId = BandComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass"]);
+        var comboRank = _metaFixture.Db.GetBandTeamRanking("Band_Duets", "p1:p2", comboId);
+        Assert.NotNull(comboRank);
+        Assert.Equal(1, comboRank.AdjustedSkillRank);
     }
 
     // ═══════════════════════════════════════════════════════════
