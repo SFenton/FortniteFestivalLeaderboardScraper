@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
+import { IoCompass, IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
@@ -352,6 +352,7 @@ function AppShell() {
   /* v8 ignore stop */
 
   const wideDesktop = !isMobile && isWideDesktop;
+  const onPlayerDetailsPage = location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname);
 
   /** Shared FAB action group for player navigation (Find Player + Profile/Select + optionally Item Shop). */
   const playerActions = (includeShop = true) => [
@@ -570,6 +571,9 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={[
+            ...(onPlayerDetailsPage && fabSearch.hasPlayerQuickLinks ? [[
+              { label: t('player.quickLinks'), icon: <IoCompass size={Size.iconFab} />, onPress: () => fabSearch.openPlayerQuickLinks() },
+            ]] : []),
             ...(fabSearch.playerPageSelect ? [[
               { label: t('common.selectAsProfile', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect },
             ]] : []),

@@ -1,7 +1,8 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { IoCompass, IoMusicalNotes, IoPeople, IoStatsChart } from 'react-icons/io5';
 import {
   computeOverallStats,
   groupByInstrument,
@@ -13,9 +14,10 @@ import {
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Gap, Layout, Radius, frostedCard, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
+import { Gap, InstrumentSize, Layout, Radius, flexCenter, frostedCard, purpleGlass, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
+import { ActionPill } from '../../../../components/common/ActionPill';
 import SyncBanner from '../../../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../../../components/page/SyncCompleteBanner';
 import CollapseOnExit from '../../../../components/page/CollapseOnExit';
@@ -27,10 +29,12 @@ import { useIsMobile, useIsWideDesktop } from '../../../../hooks/ui/useIsMobile'
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
 import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
-import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
+import { useFabSearch, usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../../../contexts/SearchQueryContext';
 import { useScrollContainer } from '../../../../contexts/ScrollContainerContext';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
+import ModalShell from '../../../../components/modals/components/ModalShell';
+import { modalStyles } from '../../../../components/modals/modalStyles';
 import FadeIn from '../../../../components/page/FadeIn';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
 import { buildOverallSummaryItems } from '../../../player/sections/OverallSummarySection';
@@ -42,6 +46,8 @@ import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
 import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRankingDto, PlayerStatsResponse } from '@festival/core/api/serverTypes';
 import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
+import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
+import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
 
 type PlayerQuickLinkId = 'global' | 'top-songs' | 'bands' | `instrument:${InstrumentKey}`;
 
@@ -50,14 +56,47 @@ interface PlayerQuickLink {
   label: string;
   landmarkLabel: string;
   itemKey: string;
+  icon: ReactNode;
 }
 
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
+const QUICK_LINK_INSTRUMENT_ICON_SCALE = 1.15;
 const QUICK_LINK_SCROLL_OFFSET = Gap.md;
+const QUICK_LINK_SCROLL_COMPLETE_THRESHOLD = 2;
+const QUICK_LINK_SCROLL_SETTLE_DELAY_MS = 80;
+const QUICK_LINK_ACTION_ICON_SIZE = 18;
+
+const QUICK_LINKS_TRIGGER_CIRCLE_STYLE: CSSProperties = {
+  ...purpleGlass,
+  ...flexCenter,
+  width: InstrumentSize.lg,
+  height: InstrumentSize.lg,
+  borderRadius: Radius.full,
+  flexShrink: 0,
+  alignSelf: 'center',
+};
+
+const QUICK_LINKS_MODAL_DESKTOP_STYLE: CSSProperties = {
+  width: 420,
+  maxWidth: '90vw',
+  height: 520,
+  maxHeight: '70vh',
+};
+
+const QUICK_LINKS_MODAL_LIST_STYLE: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: Gap.xs,
+};
 
 function getSectionScrollTop(scrollEl: HTMLElement, sectionEl: HTMLElement): number {
   const scrollRect = scrollEl.getBoundingClientRect();
   const sectionRect = sectionEl.getBoundingClientRect();
   return scrollEl.scrollTop + sectionRect.top - scrollRect.top;
+}
+
+function getQuickLinkTargetTop(scrollEl: HTMLElement, sectionEl: HTMLElement): number {
+  return Math.max(0, getSectionScrollTop(scrollEl, sectionEl) - QUICK_LINK_SCROLL_OFFSET);
 }
 
 function resolveActiveQuickLink(
@@ -85,6 +124,65 @@ function resolveActiveQuickLink(
 
 function getQuickLinkTestId(id: PlayerQuickLinkId): string {
   return id.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+}
+
+type PlayerQuickLinksButtonsProps = {
+  quickLinks: readonly PlayerQuickLink[];
+  activeQuickLink: PlayerQuickLinkId | null;
+  onSelect: (link: PlayerQuickLink) => void;
+};
+
+function PlayerQuickLinksButtons({ quickLinks, activeQuickLink, onSelect }: PlayerQuickLinksButtonsProps) {
+  return (
+    <>
+      {quickLinks.map((link) => {
+        const isActive = link.id === activeQuickLink;
+        return (
+          <button
+            key={link.id}
+            type="button"
+            data-testid={`player-quick-link-${getQuickLinkTestId(link.id)}`}
+            aria-current={isActive ? 'location' : undefined}
+            style={isActive ? pps.quickLinkButtonActive : pps.quickLinkButton}
+            onClick={() => onSelect(link)}
+          >
+            <span style={pps.quickLinkIcon} aria-hidden="true">{link.icon}</span>
+            <span style={pps.quickLinkLabel}>{link.label}</span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+type PlayerQuickLinksModalProps = {
+  visible: boolean;
+  title: string;
+  quickLinks: readonly PlayerQuickLink[];
+  activeQuickLink: PlayerQuickLinkId | null;
+  onClose: () => void;
+  onSelect: (link: PlayerQuickLink) => void;
+};
+
+function PlayerQuickLinksModal({ visible, title, quickLinks, activeQuickLink, onClose, onSelect }: PlayerQuickLinksModalProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const updateScrollMask = useScrollMask(scrollRef, [visible, quickLinks.length, activeQuickLink], { selfScroll: true });
+  const handleContentScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
+
+  return (
+    <ModalShell
+      visible={visible}
+      title={title}
+      onClose={onClose}
+      desktopStyle={QUICK_LINKS_MODAL_DESKTOP_STYLE}
+    >
+      <div ref={scrollRef} onScroll={handleContentScroll} style={modalStyles.contentScroll}>
+        <nav aria-label={title} style={QUICK_LINKS_MODAL_LIST_STYLE} data-testid="player-quick-links-modal-list">
+          <PlayerQuickLinksButtons quickLinks={quickLinks} activeQuickLink={activeQuickLink} onSelect={onSelect} />
+        </nav>
+      </div>
+    </ModalShell>
+  );
 }
 
 export interface PlayerContentProps {
@@ -148,15 +246,30 @@ export default function PlayerContent({
   const scrollContainerRef = useScrollContainer();
   const location = useLocation();
   const navigate = useNavigate();
+  const { registerPlayerQuickLinks } = useFabSearch();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [activeQuickLink, setActiveQuickLink] = useState<PlayerQuickLinkId | null>(null);
+  const [quickLinksOpen, setQuickLinksOpen] = useState(false);
   const bannerVisible = isSyncing || !!(showCompleteBanner && onCompleteBannerDismissed);
   const [bannerCollapsed, setBannerCollapsed] = useState(!bannerVisible);
   useEffect(() => { if (bannerVisible) setBannerCollapsed(false); }, [bannerVisible]);
   const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
   const sectionRefs = useRef(new Map<PlayerQuickLinkId, HTMLElement>());
+  const pendingQuickLinkScrollRef = useRef<PlayerQuickLinkId | null>(null);
+  const pendingQuickLinkSettleTimerRef = useRef<number | null>(null);
+  const [quickLinksMaxHeight, setQuickLinksMaxHeight] = useState<number | null>(null);
+
+  const clearPendingQuickLinkSettleTimer = useCallback(() => {
+    if (pendingQuickLinkSettleTimerRef.current === null) return;
+    window.clearTimeout(pendingQuickLinkSettleTimerRef.current);
+    pendingQuickLinkSettleTimerRef.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    clearPendingQuickLinkSettleTimer();
+  }, [clearPendingQuickLinkSettleTimer]);
 
   // Register FAB "Select as Profile" action
   useEffect(() => {
@@ -425,6 +538,7 @@ export default function PlayerContent({
         label: t('player.globalStatistics'),
         landmarkLabel: t('player.globalStatistics'),
         itemKey: firstOverallKey,
+        icon: <IoStatsChart size={QUICK_LINK_GLYPH_ICON_SIZE} />,
       });
     }
 
@@ -437,14 +551,25 @@ export default function PlayerContent({
         label,
         landmarkLabel: label,
         itemKey,
+        icon: (
+          <InstrumentIcon
+            instrument={inst}
+            size={QUICK_LINK_GLYPH_ICON_SIZE}
+            style={{
+              transform: `scale(${QUICK_LINK_INSTRUMENT_ICON_SCALE})`,
+              transformOrigin: 'center',
+            }}
+          />
+        ),
       });
     }
 
     links.push({
       id: 'top-songs',
-      label: t('player.topSongsPerInstrument'),
+      label: t('player.topSongsShort'),
       landmarkLabel: t('player.topSongsPerInstrument'),
       itemKey: 'top-heading',
+        icon: <IoMusicalNotes size={QUICK_LINK_GLYPH_ICON_SIZE} />,
     });
 
     if (hasBandsSection) {
@@ -453,6 +578,7 @@ export default function PlayerContent({
         label: t('player.bandsShort'),
         landmarkLabel: t('player.bands', { name: data.displayName }),
         itemKey: 'bands-heading',
+        icon: <IoPeople size={QUICK_LINK_GLYPH_ICON_SIZE} />,
       });
     }
 
@@ -461,14 +587,105 @@ export default function PlayerContent({
 
   const quickLinkByItemKey = useMemo(() => new Map(quickLinks.map((link) => [link.itemKey, link])), [quickLinks]);
 
+  const openQuickLinks = useCallback(() => {
+    if (quickLinks.length > 0) {
+      setQuickLinksOpen(true);
+    }
+  }, [quickLinks.length]);
+
+  useEffect(() => {
+    if (isWideDesktop || quickLinks.length === 0) {
+      setQuickLinksOpen(false);
+    }
+  }, [isWideDesktop, quickLinks.length]);
+
+  useEffect(() => {
+    if (!hasFab || isWideDesktop || quickLinks.length === 0) {
+      registerPlayerQuickLinks(null);
+      return;
+    }
+
+    registerPlayerQuickLinks({ openQuickLinks });
+    return () => registerPlayerQuickLinks(null);
+  }, [hasFab, isWideDesktop, quickLinks.length, openQuickLinks, registerPlayerQuickLinks]);
+
   useEffect(() => {
     const scrollEl = scrollContainerRef.current;
     if (!isWideDesktop || !scrollEl || quickLinks.length === 0) {
+      setQuickLinksMaxHeight(null);
+      return;
+    }
+
+    const updateQuickLinksMaxHeight = () => {
+      const nextHeight = scrollEl.clientHeight > 0 ? scrollEl.clientHeight : window.innerHeight;
+      setQuickLinksMaxHeight(nextHeight);
+    };
+
+    updateQuickLinksMaxHeight();
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(updateQuickLinksMaxHeight)
+      : null;
+    resizeObserver?.observe(scrollEl);
+    window.addEventListener('resize', updateQuickLinksMaxHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateQuickLinksMaxHeight);
+    };
+  }, [isWideDesktop, quickLinks.length, scrollContainerRef]);
+
+  useEffect(() => {
+    const scrollEl = scrollContainerRef.current;
+    if (!isWideDesktop || !scrollEl || quickLinks.length === 0) {
+      clearPendingQuickLinkSettleTimer();
+      pendingQuickLinkScrollRef.current = null;
       setActiveQuickLink(null);
       return;
     }
 
     const syncActive = () => {
+      const pendingQuickLink = pendingQuickLinkScrollRef.current;
+      if (pendingQuickLink) {
+        const pendingSection = sectionRefs.current.get(pendingQuickLink);
+        if (!pendingSection) {
+          clearPendingQuickLinkSettleTimer();
+          pendingQuickLinkScrollRef.current = null;
+          setActiveQuickLink(resolveActiveQuickLink(quickLinks, sectionRefs.current, scrollEl));
+          return;
+        }
+
+        const targetTop = getQuickLinkTargetTop(scrollEl, pendingSection);
+        if (Math.abs(scrollEl.scrollTop - targetTop) <= QUICK_LINK_SCROLL_COMPLETE_THRESHOLD) {
+          clearPendingQuickLinkSettleTimer();
+          pendingQuickLinkSettleTimerRef.current = window.setTimeout(() => {
+            pendingQuickLinkSettleTimerRef.current = null;
+
+            if (pendingQuickLinkScrollRef.current !== pendingQuickLink) {
+              return;
+            }
+
+            const settledSection = sectionRefs.current.get(pendingQuickLink);
+            if (!settledSection) {
+              pendingQuickLinkScrollRef.current = null;
+              setActiveQuickLink(resolveActiveQuickLink(quickLinks, sectionRefs.current, scrollEl));
+              return;
+            }
+
+            const settledTargetTop = getQuickLinkTargetTop(scrollEl, settledSection);
+            if (Math.abs(scrollEl.scrollTop - settledTargetTop) > QUICK_LINK_SCROLL_COMPLETE_THRESHOLD) {
+              return;
+            }
+
+            pendingQuickLinkScrollRef.current = null;
+            setActiveQuickLink(pendingQuickLink);
+          }, QUICK_LINK_SCROLL_SETTLE_DELAY_MS);
+          return;
+        }
+
+        clearPendingQuickLinkSettleTimer();
+        return;
+      }
+
       setActiveQuickLink(resolveActiveQuickLink(quickLinks, sectionRefs.current, scrollEl));
     };
 
@@ -476,20 +693,34 @@ export default function PlayerContent({
     scrollEl.addEventListener('scroll', syncActive, { passive: true });
     window.addEventListener('resize', syncActive);
     return () => {
+      clearPendingQuickLinkSettleTimer();
       scrollEl.removeEventListener('scroll', syncActive);
       window.removeEventListener('resize', syncActive);
     };
-  }, [isWideDesktop, quickLinks, scrollContainerRef]);
+  }, [clearPendingQuickLinkSettleTimer, isWideDesktop, quickLinks, scrollContainerRef]);
 
   const handleQuickLinkClick = useCallback((link: PlayerQuickLink) => {
     const scrollEl = scrollContainerRef.current;
     const sectionEl = sectionRefs.current.get(link.id);
     if (!scrollEl || !sectionEl) return;
 
-    const nextTop = Math.max(0, getSectionScrollTop(scrollEl, sectionEl) - QUICK_LINK_SCROLL_OFFSET);
+    const nextTop = getQuickLinkTargetTop(scrollEl, sectionEl);
+    if (Math.abs(scrollEl.scrollTop - nextTop) <= QUICK_LINK_SCROLL_COMPLETE_THRESHOLD) {
+      clearPendingQuickLinkSettleTimer();
+      pendingQuickLinkScrollRef.current = null;
+      setActiveQuickLink(link.id);
+      return;
+    }
+
+    clearPendingQuickLinkSettleTimer();
+    pendingQuickLinkScrollRef.current = link.id;
     scrollEl.scrollTo({ top: nextTop, behavior: 'smooth' });
-    setActiveQuickLink(link.id);
-  }, [scrollContainerRef]);
+  }, [clearPendingQuickLinkSettleTimer, scrollContainerRef]);
+
+  const handleModalQuickLinkSelect = useCallback((link: PlayerQuickLink) => {
+    setQuickLinksOpen(false);
+    handleQuickLinkClick(link);
+  }, [handleQuickLinkClick]);
 
   // Wire up container-level scroll fade
   const fadeDeps = useMemo(() => [items.length], [items.length]);
@@ -497,6 +728,28 @@ export default function PlayerContent({
   // Show the select-profile pill on all platforms (header actions slot handles layout)
   const canShowSelectBtn = true;
   const selectBtnVisible = !isTrackedPlayer && trackedPlayer?.accountId !== data.accountId;
+  const quickLinksTitle = t('player.quickLinks');
+  const quickLinksAction = !isWideDesktop && quickLinks.length > 0
+    ? (hasFab
+      ? (
+        <button
+          type="button"
+          data-testid="player-quick-links-trigger"
+          style={QUICK_LINKS_TRIGGER_CIRCLE_STYLE}
+          onClick={openQuickLinks}
+          aria-label={quickLinksTitle}
+        >
+          <IoCompass size={QUICK_LINK_ACTION_ICON_SIZE} />
+        </button>
+      )
+      : (
+        <ActionPill
+          icon={<IoCompass size={QUICK_LINK_ACTION_ICON_SIZE} />}
+          label={quickLinksTitle}
+          onClick={openQuickLinks}
+        />
+      ))
+    : null;
 
   return (
     <Page
@@ -507,55 +760,62 @@ export default function PlayerContent({
       before={
         <PageHeader
           title={data.displayName}
-          actions={canShowSelectBtn ? (
-            <SelectProfilePill
-              visible={selectBtnVisible}
-              isMobile={hasFab}
-              onClick={() => {
-                /* v8 ignore start */
-                if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
-                  setPendingSwitch(() => () => setPlayer({ accountId: data.accountId, displayName: data.displayName }));
-                } else {
-                  setPlayer({ accountId: data.accountId, displayName: data.displayName });
-                /* v8 ignore stop */
-                }
-              }}
-            />
+          actions={(quickLinksAction || canShowSelectBtn) ? (
+            <>
+              {quickLinksAction}
+              {canShowSelectBtn ? (
+                <SelectProfilePill
+                  visible={selectBtnVisible}
+                  isMobile={hasFab}
+                  onClick={() => {
+                    /* v8 ignore start */
+                    if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+                      setPendingSwitch(() => () => setPlayer({ accountId: data.accountId, displayName: data.displayName }));
+                    } else {
+                      setPlayer({ accountId: data.accountId, displayName: data.displayName });
+                    /* v8 ignore stop */
+                    }
+                  }}
+                />
+              ) : null}
+            </>
           ) : undefined}
         />
       }
-      after={pendingSwitch ? (
-        <ConfirmAlert
-          title={t('player.switchTo', {name: data.displayName})}
-          message={t('player.switchConfirmMessage', {name: data.displayName})}
-          /* v8 ignore start */
-          onNo={() => setPendingSwitch(null)}
-          onYes={() => pendingSwitch()}
-          onExitComplete={() => setPendingSwitch(null)}
-          /* v8 ignore stop */
+      after={<>
+        {pendingSwitch ? (
+          <ConfirmAlert
+            title={t('player.switchTo', {name: data.displayName})}
+            message={t('player.switchConfirmMessage', {name: data.displayName})}
+            /* v8 ignore start */
+            onNo={() => setPendingSwitch(null)}
+            onYes={() => pendingSwitch()}
+            onExitComplete={() => setPendingSwitch(null)}
+            /* v8 ignore stop */
+          />
+        ) : null}
+        <PlayerQuickLinksModal
+          visible={quickLinksOpen}
+          title={quickLinksTitle}
+          quickLinks={quickLinks}
+          activeQuickLink={activeQuickLink}
+          onClose={() => setQuickLinksOpen(false)}
+          onSelect={handleModalQuickLinkSelect}
         />
-      ) : undefined}
+      </>}
     >
         <div style={{ ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}) }}>
           <div style={pps.overlayFrame}>
             {isWideDesktop && quickLinks.length > 0 && (
               <div style={pps.quickLinksOverlay}>
-                <nav style={pps.quickLinksSticky} aria-label={t('player.quickLinks')}>
-                  {quickLinks.map((link) => {
-                    const isActive = link.id === activeQuickLink;
-                    return (
-                      <button
-                        key={link.id}
-                        type="button"
-                        data-testid={`player-quick-link-${getQuickLinkTestId(link.id)}`}
-                        aria-current={isActive ? 'location' : undefined}
-                        style={isActive ? pps.quickLinkButtonActive : pps.quickLinkButton}
-                        onClick={() => handleQuickLinkClick(link)}
-                      >
-                        {link.label}
-                      </button>
-                    );
-                  })}
+                <nav
+                  style={{
+                    ...pps.quickLinksSticky,
+                    ...(quickLinksMaxHeight ? { maxHeight: `${quickLinksMaxHeight}px` } : {}),
+                  }}
+                  aria-label={t('player.quickLinks')}
+                >
+                  <PlayerQuickLinksButtons quickLinks={quickLinks} activeQuickLink={activeQuickLink} onSelect={handleQuickLinkClick} />
                 </nav>
               </div>
             )}
