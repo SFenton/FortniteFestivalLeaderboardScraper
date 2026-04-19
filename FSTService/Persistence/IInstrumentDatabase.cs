@@ -66,7 +66,8 @@ public interface IInstrumentDatabase : IDisposable
 
     // ── Account rankings ─────────────────────────────────────────────
     int ComputeAccountRankings(int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, double thresholdMultiplier = 1.05);
-    int SnapshotRankHistory(int retentionDays = 365);
+    int SnapshotRankHistory(int retentionDays = 365, bool cleanupRetention = true);
+    int CleanupRankHistoryRetention(int retentionDays = 365, int batchSize = 5000, int maxBatches = 1);
     (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(string rankBy = "adjusted", int page = 1, int pageSize = 50);
     AccountRankingDto? GetAccountRanking(string accountId);
     (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore");

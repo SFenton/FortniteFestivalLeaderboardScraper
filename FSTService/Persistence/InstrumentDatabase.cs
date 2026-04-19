@@ -25,6 +25,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// <summary>Below this entry count, use the prepared-statement loop. Above, use COPY + merge.</summary>
     internal const int BulkThreshold = 50;
 
+    internal const int RankHistoryCleanupBatchSize = 5000;
+    internal const int RankHistoryCleanupMaxBatches = 1;
+
     /// <summary>Serialize band member stats to compact JSON for storage. Returns null for solo entries.</summary>
     private static string? SerializeBandMembers(LeaderboardEntry e)
     {
@@ -798,10 +801,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return rows;
     }
 
-    public int SnapshotRankHistory(int retentionDays = 365)
+    public int SnapshotRankHistory(int retentionDays = 365, bool cleanupRetention = true)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var cutoff = today.AddDays(-retentionDays);
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
 
@@ -896,26 +898,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             c.ExecuteNonQuery();
         }
 
-        // Step D: Look-back trim retention — delete only when a successor exists at or before cutoff
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = @"
-                DELETE FROM rank_history rh
-                WHERE rh.instrument = @instrument
-                  AND rh.snapshot_date < @cutoff
-                  AND EXISTS (
-                    SELECT 1 FROM rank_history rh2
-                    WHERE rh2.account_id = rh.account_id
-                      AND rh2.instrument = rh.instrument
-                      AND rh2.snapshot_date > rh.snapshot_date
-                      AND rh2.snapshot_date <= @cutoff
-                  )";
-            c.Parameters.AddWithValue("instrument", Instrument);
-            c.Parameters.AddWithValue("cutoff", cutoff);
-            c.ExecuteNonQuery();
-        }
-
         int rows;
         using (var c = conn.CreateCommand())
         {
@@ -926,7 +908,68 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             rows = Convert.ToInt32(c.ExecuteScalar());
         }
         tx.Commit();
+
+        if (cleanupRetention)
+            CleanupRankHistoryRetention(retentionDays);
+
         return rows;
+    }
+
+    public int CleanupRankHistoryRetention(int retentionDays = 365, int batchSize = RankHistoryCleanupBatchSize, int maxBatches = RankHistoryCleanupMaxBatches)
+    {
+        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
+        if (maxBatches <= 0) throw new ArgumentOutOfRangeException(nameof(maxBatches));
+
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
+        int totalDeleted = 0;
+
+        using var conn = _ds.OpenConnection();
+        for (int batch = 0; batch < maxBatches; batch++)
+        {
+            using var tx = conn.BeginTransaction();
+            using var c = conn.CreateCommand();
+            c.Transaction = tx;
+            c.CommandTimeout = 120;
+            c.CommandText = @"
+                WITH doomed AS (
+                    SELECT account_id, snapshot_date
+                    FROM (
+                        SELECT
+                            account_id,
+                            snapshot_date,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY account_id
+                                ORDER BY snapshot_date DESC
+                            ) AS recency
+                        FROM rank_history
+                        WHERE instrument = @instrument
+                          AND snapshot_date <= @cutoff
+                    ) ranked
+                    WHERE recency > 1
+                    ORDER BY snapshot_date ASC, account_id ASC
+                    LIMIT @batchSize
+                )
+                DELETE FROM rank_history rh
+                USING doomed d
+                WHERE rh.instrument = @instrument
+                  AND rh.account_id = d.account_id
+                  AND rh.snapshot_date = d.snapshot_date";
+            c.Parameters.AddWithValue("instrument", Instrument);
+            c.Parameters.AddWithValue("cutoff", cutoff);
+            c.Parameters.AddWithValue("batchSize", batchSize);
+
+            int deleted = c.ExecuteNonQuery();
+            tx.Commit();
+            totalDeleted += deleted;
+
+            if (deleted == 0)
+                break;
+        }
+
+        if (totalDeleted > 0)
+            _log.LogDebug("Trimmed {DeletedCount} retained rank_history rows for {Instrument}.", totalDeleted, Instrument);
+
+        return totalDeleted;
     }
 
     public (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(string rankBy = "adjusted", int page = 1, int pageSize = 50) { var (col, dir) = RankByColumn(rankBy); using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT COUNT(*) FROM account_rankings WHERE instrument = @instrument"; c.Parameters.AddWithValue("instrument", Instrument); total = Convert.ToInt32(c.ExecuteScalar()); } using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT account_id, songs_played, total_charted_songs, coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score, total_score_rank, max_score_percent, max_score_percent_rank, avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank, computed_at, raw_max_score_percent, raw_weighted_rating FROM account_rankings WHERE instrument = @instrument ORDER BY {col} {dir} LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<AccountRankingDto>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadAccountRanking(r)); return (list, total); }
