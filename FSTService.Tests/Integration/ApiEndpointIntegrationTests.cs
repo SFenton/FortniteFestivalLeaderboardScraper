@@ -79,13 +79,13 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var response = await _client.GetAsync("/api/features");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        // Default config has all features OFF (no Features section in test config)
-        Assert.False(json.GetProperty("rivals").GetBoolean());
+        // Default config keeps the remaining optional features OFF.
         Assert.False(json.GetProperty("compete").GetBoolean());
         Assert.False(json.GetProperty("leaderboards").GetBoolean());
-        Assert.False(json.GetProperty("firstRun").GetBoolean());
         Assert.False(json.GetProperty("difficulty").GetBoolean());
         Assert.False(json.GetProperty("playerBands").GetBoolean());
+        Assert.False(json.TryGetProperty("rivals", out _));
+        Assert.False(json.TryGetProperty("firstRun", out _));
     }
 
     // ─── Progress ───────────────────────────────────────────────

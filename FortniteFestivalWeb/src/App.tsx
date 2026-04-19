@@ -41,22 +41,22 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
       <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
       <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
       {player ? (
-        <Route path="/rivals" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary></FeatureGate>} />
+        <Route path="/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
       ) : (
         <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
       {player ? (
-        <Route path="/rivals/all" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary></FeatureGate>} />
+        <Route path="/rivals/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary>} />
       ) : (
         <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
       {player ? (
-        <Route path="/rivals/:rivalId" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary></FeatureGate>} />
+        <Route path="/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
       ) : (
         <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
       {player ? (
-        <Route path="/rivals/:rivalId/rivalry" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary></FeatureGate>} />
+        <Route path="/rivals/:rivalId/rivalry" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
       ) : (
         <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
       )}

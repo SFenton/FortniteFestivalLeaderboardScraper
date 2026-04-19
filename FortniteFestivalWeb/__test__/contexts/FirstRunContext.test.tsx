@@ -1,14 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
-
-const mockFlags = vi.hoisted(() => ({
-  rivals: true, compete: true, leaderboards: true, firstRun: true,
-}));
-
-vi.mock('../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => mockFlags,
-}));
 
 import { FirstRunProvider, useFirstRunContext } from '../../src/contexts/FirstRunContext';
 import { contentHash, loadSeenSlides } from '../../src/firstRun/types';
@@ -32,7 +24,6 @@ function makeSlide(id: string, overrides: Partial<FirstRunSlideDef> = {}): First
 describe('FirstRunContext', () => {
   beforeEach(() => {
     localStorage.clear();
-    mockFlags.firstRun = true;
   });
 
   it('throws when used outside provider', () => {
@@ -191,14 +182,8 @@ describe('FirstRunContext', () => {
     expect(result.current.activeCarouselKey).toBeNull();
   });
 
-  it('enabled reflects the firstRun feature flag', () => {
+  it('enabled is always true', () => {
     const { result } = renderHook(() => useFirstRunContext(), { wrapper });
     expect(result.current.enabled).toBe(true);
-  });
-
-  it('enabled is false when firstRun flag is off', () => {
-    mockFlags.firstRun = false;
-    const { result } = renderHook(() => useFirstRunContext(), { wrapper });
-    expect(result.current.enabled).toBe(false);
   });
 });

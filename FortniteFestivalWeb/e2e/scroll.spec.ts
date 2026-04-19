@@ -1,13 +1,28 @@
 import { test, expect } from '@playwright/test';
 
+const SONGS_FRE_SLIDE_IDS = [
+  'songs-song-list',
+  'songs-sort',
+  'songs-navigation',
+  'songs-filter',
+  'songs-icons',
+  'songs-metadata',
+  'songs-shop-highlight',
+  'songs-leaving-tomorrow',
+] as const;
+
 // Scroll tests are designed for desktop viewports only
 test.beforeEach(async ({ page }, testInfo) => {
   if (testInfo.project.name !== 'desktop') {
     test.skip();
   }
-  // Disable FRE so the carousel doesn't interfere with scroll tests
+  // Mark Songs FRE slides as seen so the carousel doesn't interfere with scroll tests.
   await page.goto('/');
-  await page.evaluate(() => localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ firstRun: false })));
+  await page.evaluate((slideIds) => {
+    const seenAt = new Date().toISOString();
+    const state = Object.fromEntries(slideIds.map(id => [id, { version: 999, hash: 'scroll-test', seenAt }]));
+    localStorage.setItem('fst:firstRun', JSON.stringify(state));
+  }, SONGS_FRE_SLIDE_IDS);
 });
 
 async function dismissOverlays(page: any) {

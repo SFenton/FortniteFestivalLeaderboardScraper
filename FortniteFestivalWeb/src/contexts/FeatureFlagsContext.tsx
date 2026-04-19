@@ -4,16 +4,18 @@ import { useQuery } from '@tanstack/react-query';
 /* ── Types ── */
 
 export type FeatureFlags = {
-  rivals: boolean;
   compete: boolean;
   leaderboards: boolean;
-  firstRun: boolean;
   difficulty: boolean;
   playerBands: boolean;
 };
 
-const ALL_ON: FeatureFlags = { rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true, playerBands: true };
-const ALL_OFF: FeatureFlags = { rivals: false, compete: false, leaderboards: false, firstRun: false, difficulty: false, playerBands: false };
+const ALL_ON: FeatureFlags = { compete: true, leaderboards: true, difficulty: true, playerBands: true };
+const ALL_OFF: FeatureFlags = { compete: false, leaderboards: false, difficulty: false, playerBands: false };
+
+function normalizeFeatureFlags(flags: FeatureFlags): FeatureFlags {
+  return { ...flags, compete: flags.leaderboards };
+}
 
 /* ── Context ── */
 
@@ -25,7 +27,7 @@ async function fetchFeatureFlags(): Promise<FeatureFlags> {
   const res = await fetch('/api/features');
   if (!res.ok) throw new Error(`features ${res.status}`);
   const data = await res.json() as Partial<FeatureFlags>;
-  return { ...ALL_OFF, ...data };
+  return normalizeFeatureFlags({ ...ALL_OFF, ...data });
 }
 
 /* ── Provider ── */
@@ -47,11 +49,11 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
     if (isDev) {
       try {
         const raw = localStorage.getItem('fst:featureFlagOverrides');
-        if (raw) return { ...ALL_ON, ...JSON.parse(raw) as Partial<FeatureFlags> };
+        if (raw) return normalizeFeatureFlags({ ...ALL_ON, ...JSON.parse(raw) as Partial<FeatureFlags> });
       } catch { /* ignore malformed JSON */ }
       return ALL_ON;
     }
-    return data ?? ALL_OFF;
+    return normalizeFeatureFlags(data ?? ALL_OFF);
   }, [isDev, data]);
 
   return (

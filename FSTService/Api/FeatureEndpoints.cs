@@ -11,10 +11,8 @@ public static partial class ApiEndpoints
             var f = opts.Value;
             return Results.Ok(new
             {
-                rivals = f.Rivals,
                 compete = f.Compete,
                 leaderboards = f.Leaderboards,
-                firstRun = f.FirstRun,
                 difficulty = f.Difficulty,
                 playerBands = f.PlayerBands,
             });
