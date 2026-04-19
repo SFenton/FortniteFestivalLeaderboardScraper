@@ -11,34 +11,39 @@ import { Colors, ObjectFit } from '@festival/theme';
 type AnyInstrumentKey = InstrumentKey | ServerInstrumentKey;
 
 const BASE = import.meta.env.BASE_URL;
+const ICON_REVISION = '2026-04-18a';
+
+function buildIconPath(fileName: string): string {
+  return `${BASE}instruments/${fileName}?v=${ICON_REVISION}`;
+}
 
 const ICON_PATHS: Record<AnyInstrumentKey, string> = {
-  guitar: `${BASE}instruments/guitar.png`,
-  bass: `${BASE}instruments/bass.png`,
-  drums: `${BASE}instruments/drums.png`,
-  vocals: `${BASE}instruments/vocals.png`,
-  pro_guitar: `${BASE}instruments/pro_guitar.png`,
-  pro_bass: `${BASE}instruments/pro_bass.png`,
-  peripheral_vocals: `${BASE}instruments/peripheral_vocals.png`,
-  peripheral_cymbals: `${BASE}instruments/peripheral_cymbals.png`,
-  peripheral_drums: `${BASE}instruments/peripheral_drums.png`,
-  Solo_Guitar: `${BASE}instruments/guitar.png`,
-  Solo_Bass: `${BASE}instruments/bass.png`,
-  Solo_Drums: `${BASE}instruments/drums.png`,
-  Solo_Vocals: `${BASE}instruments/vocals.png`,
-  Solo_PeripheralGuitar: `${BASE}instruments/pro_guitar.png`,
-  Solo_PeripheralBass: `${BASE}instruments/pro_bass.png`,
-  Solo_PeripheralVocals: `${BASE}instruments/peripheral_vocals.png`,
-  Solo_PeripheralCymbals: `${BASE}instruments/peripheral_cymbals.png`,
-  Solo_PeripheralDrums: `${BASE}instruments/peripheral_drums.png`,
+  guitar: buildIconPath('guitar.png'),
+  bass: buildIconPath('bass.png'),
+  drums: buildIconPath('drums.png'),
+  vocals: buildIconPath('vocals.png'),
+  pro_guitar: buildIconPath('pro_guitar.png'),
+  pro_bass: buildIconPath('pro_bass.png'),
+  peripheral_vocals: buildIconPath('peripheral_vocals.png'),
+  peripheral_cymbals: buildIconPath('peripheral_cymbals.png'),
+  peripheral_drums: buildIconPath('peripheral_drums.png'),
+  Solo_Guitar: buildIconPath('guitar.png'),
+  Solo_Bass: buildIconPath('bass.png'),
+  Solo_Drums: buildIconPath('drums.png'),
+  Solo_Vocals: buildIconPath('vocals.png'),
+  Solo_PeripheralGuitar: buildIconPath('pro_guitar.png'),
+  Solo_PeripheralBass: buildIconPath('pro_bass.png'),
+  Solo_PeripheralVocals: buildIconPath('peripheral_vocals.png'),
+  Solo_PeripheralCymbals: buildIconPath('peripheral_cymbals.png'),
+  Solo_PeripheralDrums: buildIconPath('peripheral_drums.png'),
 };
 
 /** Keyboard-variant icon overrides for instruments affected by the song `sig` field. */
 const KEYBOARD_ICON_OVERRIDES: Partial<Record<AnyInstrumentKey, string>> = {
-  guitar: `${BASE}instruments/keys.png`,
-  pro_guitar: `${BASE}instruments/pro_keys.png`,
-  Solo_Guitar: `${BASE}instruments/keys.png`,
-  Solo_PeripheralGuitar: `${BASE}instruments/pro_keys.png`,
+  guitar: buildIconPath('keys.png'),
+  pro_guitar: buildIconPath('pro_keys.png'),
+  Solo_Guitar: buildIconPath('keys.png'),
+  Solo_PeripheralGuitar: buildIconPath('pro_keys.png'),
 };
 
 function resolveIconPath(instrument: AnyInstrumentKey, sig?: string): string {
