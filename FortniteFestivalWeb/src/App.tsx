@@ -571,11 +571,13 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={[
-            ...(onPlayerDetailsPage && fabSearch.hasPlayerQuickLinks ? [[
-              { label: t('player.quickLinks'), icon: <IoCompass size={Size.iconFab} />, onPress: () => fabSearch.openPlayerQuickLinks() },
-            ]] : []),
-            ...(fabSearch.playerPageSelect ? [[
-              { label: t('common.selectAsProfile', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect },
+            ...((onPlayerDetailsPage && fabSearch.hasPlayerQuickLinks) || fabSearch.playerPageSelect ? [[
+              ...(onPlayerDetailsPage && fabSearch.hasPlayerQuickLinks
+                ? [{ label: t('player.quickLinks'), icon: <IoCompass size={Size.iconFab} />, onPress: () => fabSearch.openPlayerQuickLinks() }]
+                : []),
+              ...(fabSearch.playerPageSelect
+                ? [{ label: t('common.selectAsProfile', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect }]
+                : []),
             ]] : []),
             playerActions(),
           ]}

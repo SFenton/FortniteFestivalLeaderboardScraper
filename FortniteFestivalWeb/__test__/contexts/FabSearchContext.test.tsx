@@ -15,6 +15,8 @@ describe('FabSearchContext', () => {
     expect(result.current.openSuggestionsFilter).toBeInstanceOf(Function);
     expect(result.current.openPlayerHistorySort).toBeInstanceOf(Function);
     expect(result.current.openPaths).toBeInstanceOf(Function);
+    expect(result.current.openPlayerQuickLinks).toBeInstanceOf(Function);
+    expect(result.current.hasPlayerQuickLinks).toBe(false);
   });
 
   it('provides default playerPageSelect as null', () => {
@@ -62,6 +64,15 @@ describe('FabSearchContext', () => {
     expect(called).toBe(true);
   });
 
+  it('registerPlayerQuickLinks → openPlayerQuickLinks dispatches', () => {
+    let called = false;
+    const { result } = renderHook(() => useFabSearch(), { wrapper });
+    act(() => { result.current.registerPlayerQuickLinks({ openQuickLinks: () => { called = true; } }); });
+    expect(result.current.hasPlayerQuickLinks).toBe(true);
+    act(() => { result.current.openPlayerQuickLinks(); });
+    expect(called).toBe(true);
+  });
+
   it('registerPlayerPageSelect stores action', () => {
     const { result } = renderHook(() => usePlayerPageSelect(), { wrapper });
     act(() => { result.current.registerPlayerPageSelect({ displayName: 'TestPlayer', onSelect: () => {} }); });
@@ -90,6 +101,9 @@ describe('FabSearchContext — default context (no provider)', () => {
     expect(() => result.current.openPlayerHistorySort()).not.toThrow();
     expect(() => result.current.registerSongDetailActions({ openPaths: () => {} })).not.toThrow();
     expect(() => result.current.openPaths()).not.toThrow();
+    expect(() => result.current.registerPlayerQuickLinks(null)).not.toThrow();
+    expect(() => result.current.openPlayerQuickLinks()).not.toThrow();
+    expect(result.current.hasPlayerQuickLinks).toBe(false);
     expect(() => result.current.registerShopActions({ toggleView: () => {} })).not.toThrow();
     expect(() => result.current.shopToggleView()).not.toThrow();
     expect(result.current.shopViewMode).toBe('grid');

@@ -405,7 +405,15 @@ describe('PlayerContent', () => {
 
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined(); });
     expect(screen.queryByRole('navigation', { name: 'Quick Links' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Quick Links' })).toHaveTextContent('Quick Links');
+    const trigger = screen.getByRole('button', { name: 'Quick Links' });
+    expect(trigger).toHaveTextContent('Quick Links');
+    expect(trigger).toHaveStyle({
+      backgroundColor: 'rgb(124, 58, 237)',
+      fontSize: '16px',
+      fontWeight: '600',
+      height: '48px',
+    });
+    expect(screen.queryByText('Select Player Profile')).toBeNull();
   });
 
   it('renders an icon-only quick links trigger on mobile', async () => {

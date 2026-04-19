@@ -14,10 +14,9 @@ import {
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Gap, InstrumentSize, Layout, Radius, flexCenter, frostedCard, purpleGlass, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
+import { Align, Cursor, CssValue, Display, Font, Gap, InstrumentSize, Justify, Layout, Radius, Weight, flexCenter, frostedCard, padding, purpleGlass, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
-import { ActionPill } from '../../../../components/common/ActionPill';
 import SyncBanner from '../../../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../../../components/page/SyncCompleteBanner';
 import CollapseOnExit from '../../../../components/page/CollapseOnExit';
@@ -66,14 +65,35 @@ const QUICK_LINK_SCROLL_COMPLETE_THRESHOLD = 2;
 const QUICK_LINK_SCROLL_SETTLE_DELAY_MS = 80;
 const QUICK_LINK_ACTION_ICON_SIZE = 18;
 
+const QUICK_LINKS_TRIGGER_BUTTON_STYLE: CSSProperties = {
+  ...purpleGlass,
+  display: Display.inlineFlex,
+  alignItems: Align.center,
+  justifyContent: Justify.center,
+  padding: padding(0, Layout.buttonPaddingH, 0, Gap.section),
+  borderRadius: Radius.full,
+  color: CssValue.inherit,
+  fontSize: Font.lg,
+  fontWeight: Weight.semibold,
+  textDecoration: CssValue.none,
+  cursor: Cursor.pointer,
+  flexShrink: 0,
+  alignSelf: Align.center,
+  height: Layout.pillButtonHeight,
+  gap: Gap.md,
+};
+
 const QUICK_LINKS_TRIGGER_CIRCLE_STYLE: CSSProperties = {
   ...purpleGlass,
   ...flexCenter,
   width: InstrumentSize.lg,
   height: InstrumentSize.lg,
   borderRadius: Radius.full,
+  color: CssValue.inherit,
+  border: 'none',
+  cursor: Cursor.pointer,
   flexShrink: 0,
-  alignSelf: 'center',
+  alignSelf: Align.center,
 };
 
 const QUICK_LINKS_MODAL_DESKTOP_STYLE: CSSProperties = {
@@ -743,11 +763,15 @@ export default function PlayerContent({
         </button>
       )
       : (
-        <ActionPill
-          icon={<IoCompass size={QUICK_LINK_ACTION_ICON_SIZE} />}
-          label={quickLinksTitle}
+        <button
+          type="button"
+          data-testid="player-quick-links-trigger"
+          style={QUICK_LINKS_TRIGGER_BUTTON_STYLE}
           onClick={openQuickLinks}
-        />
+        >
+          <IoCompass size={QUICK_LINK_ACTION_ICON_SIZE} />
+          {quickLinksTitle}
+        </button>
       ))
     : null;
 
@@ -763,9 +787,9 @@ export default function PlayerContent({
           actions={(quickLinksAction || canShowSelectBtn) ? (
             <>
               {quickLinksAction}
-              {canShowSelectBtn ? (
+              {canShowSelectBtn && selectBtnVisible ? (
                 <SelectProfilePill
-                  visible={selectBtnVisible}
+                  visible
                   isMobile={hasFab}
                   onClick={() => {
                     /* v8 ignore start */
