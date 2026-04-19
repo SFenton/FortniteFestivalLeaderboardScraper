@@ -416,6 +416,48 @@ describe('PlayerContent', () => {
     expect(screen.queryByText('Select Player Profile')).toBeNull();
   });
 
+  it('animates the select profile slot out so quick links can settle smoothly', async () => {
+    mockIsWideDesktop = false;
+    mockHasFab = false;
+
+    const initialRender = render(
+      <Providers>
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+    });
+
+    expect(screen.getByTestId('player-header-actions')).toHaveStyle({ gap: '8px' });
+    expect(screen.getByTestId('player-select-profile-slot')).toHaveStyle({ maxWidth: '360px', overflow: 'hidden' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Player Profile' }));
+
+    const exitingSlot = screen.getByTestId('player-select-profile-slot');
+    expect(screen.getByTestId('player-header-actions')).toHaveStyle({ gap: '0px' });
+    expect(exitingSlot).toHaveStyle({ maxWidth: '0px', opacity: '0' });
+    expect(exitingSlot.querySelector('button')).not.toBeNull();
+    expect(JSON.parse(localStorage.getItem('fst:trackedPlayer') ?? 'null')).toMatchObject({ accountId: 'p1', displayName: 'TestPlayer' });
+
+    initialRender.unmount();
+    render(
+      <Providers>
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    const remountedExitSlot = await screen.findByTestId('player-select-profile-slot');
+    expect(screen.getByTestId('player-header-actions')).toHaveStyle({ gap: '0px' });
+    expect(remountedExitSlot).toHaveStyle({ maxWidth: '0px', opacity: '0' });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('player-select-profile-slot')).toBeNull();
+    });
+  });
+
   it('renders an icon-only quick links trigger on mobile', async () => {
     mockIsWideDesktop = false;
     mockHasFab = true;

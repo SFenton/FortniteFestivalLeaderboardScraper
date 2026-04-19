@@ -29,10 +29,12 @@ export function SelectProfilePill({ visible, onClick, isMobile }: SelectProfileP
   if (isMobile) {
     return (
       <button
+        type="button"
         style={s.circle}
         className={visible ? anim.profileCircleBreathe : undefined}
         onClick={onClick}
         aria-label={t('common.selectPlayerProfile')}
+        tabIndex={visible ? 0 : -1}
       >
         <IoPersonAdd size={IconSize.sm} />
       </button>
@@ -40,7 +42,7 @@ export function SelectProfilePill({ visible, onClick, isMobile }: SelectProfileP
   }
 
   return (
-    <button style={s.pill} onClick={onClick}>
+    <button type="button" style={s.pill} onClick={onClick} tabIndex={visible ? 0 : -1}>
       <IoPersonAdd size={IconSize.xs} />
       {t('common.selectPlayerProfile')}
     </button>

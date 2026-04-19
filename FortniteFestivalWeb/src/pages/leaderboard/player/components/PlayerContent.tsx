@@ -14,7 +14,7 @@ import {
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Align, Cursor, CssValue, Display, Font, Gap, InstrumentSize, Justify, Layout, Radius, Weight, flexCenter, frostedCard, padding, purpleGlass, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
+import { Align, Cursor, CssValue, Display, Font, Gap, InstrumentSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, Weight, flexCenter, frostedCard, padding, purpleGlass, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
@@ -64,6 +64,56 @@ const QUICK_LINK_SCROLL_OFFSET = Gap.md;
 const QUICK_LINK_SCROLL_COMPLETE_THRESHOLD = 2;
 const QUICK_LINK_SCROLL_SETTLE_DELAY_MS = 80;
 const QUICK_LINK_ACTION_ICON_SIZE = 18;
+const SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH = 360;
+let pendingSelectProfileExit: { accountId: string; until: number } | null = null;
+
+const PLAYER_HEADER_ACTIONS_STYLE: CSSProperties = {
+  display: Display.flex,
+  alignItems: Align.center,
+  justifyContent: Justify.end,
+  minWidth: 0,
+  transition: transition('gap', TRANSITION_MS),
+};
+
+const SELECT_PROFILE_ACTION_SLOT_STYLE: CSSProperties = {
+  display: Display.flex,
+  alignItems: Align.center,
+  justifyContent: Justify.end,
+  overflow: Overflow.hidden,
+  flexShrink: 0,
+  minWidth: 0,
+  transition: transitions(
+    transition('max-width', TRANSITION_MS),
+    transition('opacity', TRANSITION_MS),
+  ),
+};
+
+function primeSelectProfileExit(accountId: string) {
+  pendingSelectProfileExit = {
+    accountId,
+    until: Date.now() + TRANSITION_MS,
+  };
+}
+
+function getPendingSelectProfileExitDelay(accountId: string): number {
+  if (!pendingSelectProfileExit || pendingSelectProfileExit.accountId !== accountId) {
+    return 0;
+  }
+
+  const remaining = pendingSelectProfileExit.until - Date.now();
+  if (remaining <= 0) {
+    pendingSelectProfileExit = null;
+    return 0;
+  }
+
+  return remaining;
+}
+
+function clearPendingSelectProfileExit(accountId: string) {
+  if (pendingSelectProfileExit?.accountId === accountId) {
+    pendingSelectProfileExit = null;
+  }
+}
 
 const QUICK_LINKS_TRIGGER_BUTTON_STYLE: CSSProperties = {
   ...purpleGlass,
@@ -268,6 +318,10 @@ export default function PlayerContent({
   const navigate = useNavigate();
   const { registerPlayerQuickLinks } = useFabSearch();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
+  const primeTrackedPlayerSelection = useCallback(() => {
+    primeSelectProfileExit(data.accountId);
+    setPlayer({ accountId: data.accountId, displayName: data.displayName });
+  }, [data.accountId, data.displayName, setPlayer]);
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const [activeQuickLink, setActiveQuickLink] = useState<PlayerQuickLinkId | null>(null);
   const [quickLinksOpen, setQuickLinksOpen] = useState(false);
@@ -279,6 +333,7 @@ export default function PlayerContent({
   const sectionRefs = useRef(new Map<PlayerQuickLinkId, HTMLElement>());
   const pendingQuickLinkScrollRef = useRef<PlayerQuickLinkId | null>(null);
   const pendingQuickLinkSettleTimerRef = useRef<number | null>(null);
+  const pendingSelectProfileExitTimerRef = useRef<number | null>(null);
   const [quickLinksMaxHeight, setQuickLinksMaxHeight] = useState<number | null>(null);
 
   const clearPendingQuickLinkSettleTimer = useCallback(() => {
@@ -287,9 +342,16 @@ export default function PlayerContent({
     pendingQuickLinkSettleTimerRef.current = null;
   }, []);
 
+  const clearPendingSelectProfileExitTimer = useCallback(() => {
+    if (pendingSelectProfileExitTimerRef.current === null) return;
+    window.clearTimeout(pendingSelectProfileExitTimerRef.current);
+    pendingSelectProfileExitTimerRef.current = null;
+  }, []);
+
   useEffect(() => () => {
     clearPendingQuickLinkSettleTimer();
-  }, [clearPendingQuickLinkSettleTimer]);
+    clearPendingSelectProfileExitTimer();
+  }, [clearPendingQuickLinkSettleTimer, clearPendingSelectProfileExitTimer]);
 
   // Register FAB "Select as Profile" action
   useEffect(() => {
@@ -304,15 +366,15 @@ export default function PlayerContent({
       /* v8 ignore start — profile switch callbacks */
       onSelect: () => {
         if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
-          setPendingSwitch(() => () => setPlayer({ accountId: data.accountId, displayName: data.displayName }));
+          setPendingSwitch(() => primeTrackedPlayerSelection);
         } else {
-          setPlayer({ accountId: data.accountId, displayName: data.displayName });
+          primeTrackedPlayerSelection();
         /* v8 ignore stop */
         }
       },
     });
     return () => registerPlayerPageSelect(null);
-  }, [data.accountId, data.displayName, trackedPlayer, setPlayer, registerPlayerPageSelect]);
+  }, [data.accountId, data.displayName, trackedPlayer, primeTrackedPlayerSelection, registerPlayerPageSelect]);
 
   // Helper: wrap a navigation action with profile-switch logic when viewing another player
   /* v8 ignore start — navigation + profile switch */
@@ -746,8 +808,30 @@ export default function PlayerContent({
   const fadeDeps = useMemo(() => [items.length], [items.length]);
 
   // Show the select-profile pill on all platforms (header actions slot handles layout)
-  const canShowSelectBtn = true;
   const selectBtnVisible = !isTrackedPlayer && trackedPlayer?.accountId !== data.accountId;
+  const [selectBtnMounted, setSelectBtnMounted] = useState(() => selectBtnVisible || getPendingSelectProfileExitDelay(data.accountId) > 0);
+
+  useEffect(() => {
+    if (selectBtnVisible) {
+      clearPendingSelectProfileExitTimer();
+      clearPendingSelectProfileExit(data.accountId);
+      setSelectBtnMounted(true);
+      return;
+    }
+
+    if (!selectBtnMounted) {
+      return;
+    }
+
+    clearPendingSelectProfileExitTimer();
+    const exitDelay = getPendingSelectProfileExitDelay(data.accountId) || TRANSITION_MS;
+    pendingSelectProfileExitTimerRef.current = window.setTimeout(() => {
+      pendingSelectProfileExitTimerRef.current = null;
+      clearPendingSelectProfileExit(data.accountId);
+      setSelectBtnMounted(false);
+    }, exitDelay);
+  }, [clearPendingSelectProfileExitTimer, data.accountId, selectBtnMounted, selectBtnVisible]);
+
   const quickLinksTitle = t('player.quickLinks');
   const quickLinksAction = !isWideDesktop && quickLinks.length > 0
     ? (hasFab
@@ -784,25 +868,43 @@ export default function PlayerContent({
       before={
         <PageHeader
           title={data.displayName}
-          actions={(quickLinksAction || canShowSelectBtn) ? (
-            <>
+          actions={(quickLinksAction || selectBtnMounted) ? (
+            <div
+              data-testid="player-header-actions"
+              style={{
+                ...PLAYER_HEADER_ACTIONS_STYLE,
+                gap: quickLinksAction && selectBtnVisible ? Gap.md : Gap.none,
+              }}
+            >
               {quickLinksAction}
-              {canShowSelectBtn && selectBtnVisible ? (
-                <SelectProfilePill
-                  visible
-                  isMobile={hasFab}
-                  onClick={() => {
-                    /* v8 ignore start */
-                    if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
-                      setPendingSwitch(() => () => setPlayer({ accountId: data.accountId, displayName: data.displayName }));
-                    } else {
-                      setPlayer({ accountId: data.accountId, displayName: data.displayName });
-                    /* v8 ignore stop */
-                    }
+              {selectBtnMounted ? (
+                <div
+                  data-testid="player-select-profile-slot"
+                  aria-hidden={!selectBtnVisible}
+                  style={{
+                    ...SELECT_PROFILE_ACTION_SLOT_STYLE,
+                    maxWidth: selectBtnVisible
+                      ? (hasFab ? InstrumentSize.lg : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
+                      : 0,
+                    opacity: selectBtnVisible ? 1 : 0,
                   }}
-                />
+                >
+                  <SelectProfilePill
+                    visible={selectBtnVisible}
+                    isMobile={hasFab}
+                    onClick={() => {
+                      /* v8 ignore start */
+                      if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+                          setPendingSwitch(() => primeTrackedPlayerSelection);
+                      } else {
+                          primeTrackedPlayerSelection();
+                      /* v8 ignore stop */
+                      }
+                    }}
+                  />
+                </div>
               ) : null}
-            </>
+            </div>
           ) : undefined}
         />
       }
