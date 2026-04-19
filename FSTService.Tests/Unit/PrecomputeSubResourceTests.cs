@@ -221,6 +221,39 @@ public sealed class PrecomputeSubResourceTests : IDisposable
             Assert.Contains("Solo_Vocals", instruments);
     }
 
+    [Fact]
+    public async Task PrecomputeAllAsync_ProducesPlayerBands_WhenFeatureDisabled()
+    {
+        RegisterUser("u1", "Bands User");
+        RegisterUser("u2", "Band Mate");
+        SeedSong("bands_stats_song_disabled", "Solo_Guitar", 100000, ("u1", 95000), ("u2", 90000));
+
+        _metaDb.UpsertPlayerStatsTiers("u1", "Solo_Guitar", JsonSerializer.Serialize(new[]
+        {
+            new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
+        }));
+
+        SeedBandRows("bands_song_disabled_a", "Band_Duets", "u1:u2", (0, "u1", 0), (1, "u2", 1));
+
+        var sut = new ScrapeTimePrecomputer(
+            _persistence, _metaDb, _pathDataStore,
+            new ScrapeProgressTracker(),
+            Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
+            NullLoggerFactory.Instance,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web),
+            new FeatureOptions { PlayerBands = false });
+
+        await sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var result = sut.TryGet("playerstats:u1");
+        Assert.NotNull(result);
+
+        var json = JsonDocument.Parse(result.Value.Json);
+        var bands = json.RootElement.GetProperty("bands");
+        Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
+        Assert.Equal(1, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Player History
     // ═══════════════════════════════════════════════════════════════

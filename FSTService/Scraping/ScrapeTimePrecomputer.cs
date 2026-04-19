@@ -691,9 +691,7 @@ public sealed class ScrapeTimePrecomputer
 
         // Build per-instrument rank tiers from rank_history_deltas
         var instrumentRanks = BuildInstrumentRankTiers(accountId);
-        var bands = _features.PlayerBands
-            ? _persistence.GetPlayerBands(accountId)
-            : null;
+        var bands = _persistence.GetPlayerBands(accountId);
 
         var payload = new
         {

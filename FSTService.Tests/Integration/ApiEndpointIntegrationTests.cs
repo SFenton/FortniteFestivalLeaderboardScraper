@@ -1481,6 +1481,56 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiPlayerStats_ReturnsBands_WhenFeatureDisabled()
+    {
+        var featureOptions = _factory.Services.GetRequiredService<IOptions<FeatureOptions>>().Value;
+        var originalPlayerBands = featureOptions.PlayerBands;
+        featureOptions.PlayerBands = false;
+
+        try
+        {
+            using var scope = _factory.Services.CreateScope();
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            metaDb.InsertAccountIds(["bandsDisabledAcct1", "bandsDisabledMate1"]);
+            metaDb.InsertAccountNames([
+                ("bandsDisabledAcct1", (string?)"Bands Disabled Player"),
+                ("bandsDisabledMate1", (string?)"Bands Disabled Mate"),
+            ]);
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries("bands_disabled_song_seed", [
+                new LeaderboardEntry { AccountId = "bandsDisabledAcct1", Score = 95_000, Rank = 1, Accuracy = 99, Stars = 6, Season = 5 },
+                new LeaderboardEntry { AccountId = "bandsDisabledOther", Score = 90_000, Rank = 2, Accuracy = 98, Stars = 6, Season = 5 },
+            ]);
+
+            metaDb.UpsertPlayerStatsTiers("bandsDisabledAcct1", "Solo_Guitar", JsonSerializer.Serialize(new[]
+            {
+                new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
+            }));
+
+            SeedBandRows(dataSource, "bands_disabled_song_1", "Band_Duets", "bandsDisabledAcct1:bandsDisabledMate1", (0, "bandsDisabledAcct1", 0), (1, "bandsDisabledMate1", 1));
+
+            var response = await _client.GetAsync("/api/player/bandsDisabledAcct1/stats");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var bands = json.GetProperty("bands");
+
+            Assert.Equal(1, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
+            Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
+            Assert.Equal(0, bands.GetProperty("trios").GetProperty("totalCount").GetInt32());
+            Assert.Equal(0, bands.GetProperty("quads").GetProperty("totalCount").GetInt32());
+        }
+        finally
+        {
+            featureOptions.PlayerBands = originalPlayerBands;
+        }
+    }
+
+    [Fact]
     public async Task ApiPlayerBandsByType_ReturnsBandsForRequestedType()
     {
         using var scope = _factory.Services.CreateScope();
