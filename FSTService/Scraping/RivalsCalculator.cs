@@ -25,6 +25,13 @@ public sealed class RivalsCalculator
     /// <summary>Number of rivals to store per direction (above/below) per combo.</summary>
     internal const int RivalsPerDirection = 10;
 
+    /// <summary>
+    /// Progressive thresholds for single-instrument rivals. We prefer repeated overlap,
+    /// but degrade gracefully until sparse users still get a roster.
+    /// </summary>
+    internal static readonly int[] PerInstrumentFallbackThresholds =
+        [MinSharedSongsPerInstrument, 4, 3, 2, 1];
+
     /// <summary>Maximum song samples to store per rival per instrument.</summary>
     internal const int MaxSamplesPerRivalPerInstrument = 200;
 
@@ -87,74 +94,30 @@ public sealed class RivalsCalculator
 
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             var userScores = db.GetPlayerScores(userId);
-            if (userScores.Count < MinUserSongsPerInstrument)
+            var scan = ScanInstrumentCandidates(db, userId, userScores);
+            if (scan.UserSongCount < MinUserSongsPerInstrument)
             {
                 _log.LogDebug("Rivals [{User}] {Instrument}: skipped — only {Count} songs (min {Min}).",
-                    userId, instrument, userScores.Count, MinUserSongsPerInstrument);
+                    userId, instrument, scan.UserSongCount, MinUserSongsPerInstrument);
                 continue;
             }
 
-            var songCounts = db.GetAllSongCounts();
-            var candidates = new Dictionary<string, RivalCandidate>(StringComparer.OrdinalIgnoreCase);
-            int songsSkippedUnranked = 0;
-            int songsSkippedSingle = 0;
-            int totalNeighborsFound = 0;
-            int songsScanned = 0;
-
-            foreach (var entry in userScores)
-            {
-                // Prefer dense Rank (set by RecomputeAllRanks for scrape entries) because
-                // GetNeighborhood queries the Rank column. ApiRank is the global Epic rank
-                // which can be 100K+ and won't match any dense-ranked entries in the DB.
-                var effectiveRank = entry.Rank > 0 ? entry.Rank : entry.ApiRank;
-                if (effectiveRank <= 0) { songsSkippedUnranked++; continue; } // skip unranked
-                if (!songCounts.TryGetValue(entry.SongId, out var entryCount) || entryCount <= 1)
-                { songsSkippedSingle++; continue; }
-
-                songsScanned++;
-                var neighbors = db.GetNeighborhood(entry.SongId, effectiveRank, NeighborhoodRadius, userId);
-                totalNeighborsFound += neighbors.Count;
-                var logWeight = Math.Log2(entryCount);
-
-                foreach (var (neighborId, neighborRank, neighborScore) in neighbors)
-                {
-                    if (!candidates.TryGetValue(neighborId, out var candidate))
-                    {
-                        candidate = new RivalCandidate { AccountId = neighborId };
-                        candidates[neighborId] = candidate;
-                    }
-
-                    var rankDelta = neighborRank - effectiveRank; // positive = behind user, negative = ahead
-                    var absDelta = Math.Abs(rankDelta);
-
-                    candidate.Appearances++;
-                    candidate.WeightedScore += logWeight / (1.0 + absDelta);
-                    candidate.SignedDeltaSum += rankDelta;
-                    if (rankDelta < 0) candidate.AheadCount++;
-                    else if (rankDelta > 0) candidate.BehindCount++;
-
-                    // Track which songs contributed to this candidate (lightweight).
-                    // Full SongDetail samples are fetched later only for selected rivals.
-                    candidate.SongIds.Add(entry.SongId);
-                }
-            }
-
-            int qualifiedCandidates = candidates.Values.Count(c => c.Appearances >= MinSharedSongsPerInstrument);
+            int qualifiedCandidates = scan.Candidates.Values.Count(c => c.Appearances >= MinSharedSongsPerInstrument);
             _log.LogInformation(
                 "Rivals [{User}] {Instrument}: {Total} songs, {Scanned} scanned, " +
                 "{Unranked} skipped (unranked), {Single} skipped (single-entry), " +
                 "{Neighbors} neighbors found, {Candidates} unique candidates, {Qualified} qualified (>= {Min} appearances).",
-                userId, instrument, userScores.Count, songsScanned,
-                songsSkippedUnranked, songsSkippedSingle,
-                totalNeighborsFound, candidates.Count, qualifiedCandidates, MinSharedSongsPerInstrument);
+                userId, instrument, scan.UserSongCount, scan.SongsScanned,
+                scan.SongsSkippedUnranked, scan.SongsSkippedSingle,
+                scan.TotalNeighborsFound, scan.Candidates.Count, qualifiedCandidates, MinSharedSongsPerInstrument);
 
             perInstrument[instrument] = new InstrumentRivalsData
             {
                 Instrument = instrument,
-                UserSongCount = userScores.Count,
-                Candidates = candidates,
+                UserSongCount = scan.UserSongCount,
+                Candidates = scan.Candidates,
             };
-            allCandidates[instrument] = candidates;
+            allCandidates[instrument] = scan.Candidates;
             progressCount++;
             onProgress?.Invoke(progressCount);
         }
@@ -175,8 +138,9 @@ public sealed class RivalsCalculator
         {
             var data = perInstrument[instrument];
             var combo = ComboIds.FromInstruments([instrument]); // single-instrument combo ID
-            SelectRivals(userId, combo, data.Candidates.Values, MinSharedSongsPerInstrument,
-                RivalsPerDirection, now, rivalRows);
+            var selection = SelectRivalsWithFallback(data.Candidates.Values, RivalsPerDirection);
+            AppendSelectedRivals(userId, combo, "above", selection.Above.Selected, now, rivalRows);
+            AppendSelectedRivals(userId, combo, "below", selection.Below.Selected, now, rivalRows);
         }
 
         // Step 5: Combination rival computation
@@ -259,6 +223,195 @@ public sealed class RivalsCalculator
             Rivals = rivalRows,
             Samples = sampleRows,
             CombosComputed = comboCount,
+        };
+    }
+
+    private static InstrumentScanResult ScanInstrumentCandidates(
+        IInstrumentDatabase db,
+        string userId,
+        IReadOnlyList<PlayerScoreDto> userScores)
+    {
+        var candidates = new Dictionary<string, RivalCandidate>(StringComparer.OrdinalIgnoreCase);
+        int songsSkippedUnranked = 0;
+        int songsSkippedSingle = 0;
+        int totalNeighborsFound = 0;
+        int songsScanned = 0;
+
+        if (userScores.Count < MinUserSongsPerInstrument)
+        {
+            return new InstrumentScanResult
+            {
+                UserSongCount = userScores.Count,
+                Candidates = candidates,
+            };
+        }
+
+        var songCounts = db.GetAllSongCounts();
+        foreach (var entry in userScores)
+        {
+            // Prefer dense Rank (set by RecomputeAllRanks for scrape entries) because
+            // GetNeighborhood queries the Rank column. ApiRank is the global Epic rank
+            // which can be 100K+ and won't match any dense-ranked entries in the DB.
+            var effectiveRank = entry.Rank > 0 ? entry.Rank : entry.ApiRank;
+            if (effectiveRank <= 0)
+            {
+                songsSkippedUnranked++;
+                continue;
+            }
+
+            if (!songCounts.TryGetValue(entry.SongId, out var entryCount) || entryCount <= 1)
+            {
+                songsSkippedSingle++;
+                continue;
+            }
+
+            songsScanned++;
+            var neighbors = db.GetNeighborhood(entry.SongId, effectiveRank, NeighborhoodRadius, userId);
+            totalNeighborsFound += neighbors.Count;
+            var logWeight = Math.Log2(entryCount);
+
+            foreach (var (neighborId, neighborRank, _) in neighbors)
+            {
+                if (!candidates.TryGetValue(neighborId, out var candidate))
+                {
+                    candidate = new RivalCandidate { AccountId = neighborId };
+                    candidates[neighborId] = candidate;
+                }
+
+                var rankDelta = neighborRank - effectiveRank; // positive = behind user, negative = ahead
+                var absDelta = Math.Abs(rankDelta);
+
+                candidate.Appearances++;
+                candidate.WeightedScore += logWeight / (1.0 + absDelta);
+                candidate.SignedDeltaSum += rankDelta;
+                if (rankDelta < 0) candidate.AheadCount++;
+                else if (rankDelta > 0) candidate.BehindCount++;
+                candidate.SongIds.Add(entry.SongId);
+            }
+        }
+
+        return new InstrumentScanResult
+        {
+            UserSongCount = userScores.Count,
+            SongsSkippedUnranked = songsSkippedUnranked,
+            SongsSkippedSingle = songsSkippedSingle,
+            TotalNeighborsFound = totalNeighborsFound,
+            SongsScanned = songsScanned,
+            Candidates = candidates,
+        };
+    }
+
+    internal static RivalFallbackSelection SelectRivalsWithFallback(
+        IEnumerable<RivalCandidate> candidates,
+        int rivalsPerDirection)
+    {
+        var candidateList = candidates.ToList();
+        return new RivalFallbackSelection
+        {
+            Above = SelectDirectionWithFallback(
+                candidateList.Where(c => c.AvgSignedDelta < 0).ToList(),
+                rivalsPerDirection),
+            Below = SelectDirectionWithFallback(
+                candidateList.Where(c => c.AvgSignedDelta >= 0).ToList(),
+                rivalsPerDirection),
+        };
+    }
+
+    private static DirectionSelectionResult SelectDirectionWithFallback(
+        List<RivalCandidate> candidates,
+        int rivalsPerDirection)
+    {
+        var selected = new List<SelectedRival>();
+        var selectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var threshold in PerInstrumentFallbackThresholds)
+        {
+            if (selected.Count >= rivalsPerDirection)
+                break;
+
+            var stageCandidates = OrderCandidatesForThreshold(
+                candidates.Where(c => c.Appearances >= threshold && !selectedIds.Contains(c.AccountId)),
+                threshold);
+
+            foreach (var candidate in stageCandidates)
+            {
+                if (!selectedIds.Add(candidate.AccountId))
+                    continue;
+
+                selected.Add(new SelectedRival
+                {
+                    Candidate = candidate,
+                    ThresholdUsed = threshold,
+                });
+
+                if (selected.Count >= rivalsPerDirection)
+                    break;
+            }
+        }
+
+        return new DirectionSelectionResult
+        {
+            Selected = selected,
+        };
+    }
+
+    private static IOrderedEnumerable<RivalCandidate> OrderCandidatesForThreshold(
+        IEnumerable<RivalCandidate> candidates,
+        int threshold)
+    {
+        if (threshold == 1)
+        {
+            return candidates
+                .OrderBy(c => Math.Abs(c.AvgSignedDelta))
+                .ThenByDescending(c => c.Appearances)
+                .ThenByDescending(c => c.WeightedScore)
+                .ThenBy(c => c.AccountId, StringComparer.OrdinalIgnoreCase);
+        }
+
+        return candidates
+            .OrderByDescending(c => c.WeightedScore)
+            .ThenByDescending(c => c.Appearances)
+            .ThenBy(c => Math.Abs(c.AvgSignedDelta))
+            .ThenBy(c => c.AccountId, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void AppendSelectedRivals(
+        string userId,
+        string comboKey,
+        string direction,
+        IEnumerable<SelectedRival> selected,
+        string computedAt,
+        List<UserRivalRow> output)
+    {
+        foreach (var selectedRival in selected)
+        {
+            var candidate = selectedRival.Candidate;
+            output.Add(new UserRivalRow
+            {
+                UserId = userId,
+                RivalAccountId = candidate.AccountId,
+                InstrumentCombo = comboKey,
+                Direction = direction,
+                RivalScore = candidate.WeightedScore,
+                AvgSignedDelta = candidate.AvgSignedDelta,
+                SharedSongCount = candidate.Appearances,
+                AheadCount = candidate.AheadCount,
+                BehindCount = candidate.BehindCount,
+                ComputedAt = computedAt,
+            });
+        }
+    }
+
+    private static RivalThresholdCounts BuildThresholdCounts(IEnumerable<RivalCandidate> candidates)
+    {
+        var candidateList = candidates.ToList();
+        return new RivalThresholdCounts
+        {
+            AtLeastFive = candidateList.Count(c => c.Appearances >= 5),
+            AtLeastFour = candidateList.Count(c => c.Appearances >= 4),
+            AtLeastThree = candidateList.Count(c => c.Appearances >= 3),
+            AtLeastTwo = candidateList.Count(c => c.Appearances >= 2),
+            AtLeastOne = candidateList.Count(c => c.Appearances >= 1),
         };
     }
 
@@ -583,6 +736,24 @@ public sealed class RivalsCalculator
                     rankedEntries.Add((entry, effectiveRank));
             }
 
+            var scan = ScanInstrumentCandidates(db, userId, userScores);
+            var aboveThresholdCounts = BuildThresholdCounts(
+                scan.Candidates.Values.Where(c => c.AvgSignedDelta < 0));
+            var belowThresholdCounts = BuildThresholdCounts(
+                scan.Candidates.Values.Where(c => c.AvgSignedDelta >= 0));
+            RivalSelectionPreview? selectionPreview = null;
+            if (scan.UserSongCount >= MinUserSongsPerInstrument)
+            {
+                var selection = SelectRivalsWithFallback(scan.Candidates.Values, RivalsPerDirection);
+                selectionPreview = new RivalSelectionPreview
+                {
+                    AboveSelected = selection.Above.Selected.Count,
+                    BelowSelected = selection.Below.Selected.Count,
+                    LoosestThresholdUsedAbove = selection.Above.LoosestThresholdUsed,
+                    LoosestThresholdUsedBelow = selection.Below.LoosestThresholdUsed,
+                };
+            }
+
             // Pick median entry by effectiveRank for a probe
             NeighborhoodProbe? probe = null;
             if (rankedEntries.Count > 0)
@@ -621,17 +792,52 @@ public sealed class RivalsCalculator
                 TotalSongs = userScores.Count,
                 MeetsMinimum = userScores.Count >= MinUserSongsPerInstrument,
                 RankedSongs = rankedEntries.Count,
+                CandidateCount = scan.Candidates.Count,
                 BothZero = bothZero,
                 RankOnly = rankOnly,
                 ApiRankOnly = apiRankOnly,
                 BothSet = bothSet,
                 Mismatch = mismatchCount,
+                AboveThresholdCounts = aboveThresholdCounts,
+                BelowThresholdCounts = belowThresholdCounts,
+                SelectionPreview = selectionPreview,
                 Probe = probe,
                 SampleEntries = sampleEntries,
             });
         }
 
         return new RivalsDiagnostics { Instruments = instruments };
+    }
+
+    internal sealed class InstrumentScanResult
+    {
+        public int UserSongCount { get; init; }
+        public int SongsSkippedUnranked { get; init; }
+        public int SongsSkippedSingle { get; init; }
+        public int TotalNeighborsFound { get; init; }
+        public int SongsScanned { get; init; }
+        public Dictionary<string, RivalCandidate> Candidates { get; init; } =
+            new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    internal sealed class SelectedRival
+    {
+        public RivalCandidate Candidate { get; init; } = null!;
+        public int ThresholdUsed { get; init; }
+    }
+
+    internal sealed class DirectionSelectionResult
+    {
+        public IReadOnlyList<SelectedRival> Selected { get; init; } = Array.Empty<SelectedRival>();
+
+        public int? LoosestThresholdUsed =>
+            Selected.Count == 0 ? null : Selected.Min(s => s.ThresholdUsed);
+    }
+
+    internal sealed class RivalFallbackSelection
+    {
+        public DirectionSelectionResult Above { get; init; } = new();
+        public DirectionSelectionResult Below { get; init; } = new();
     }
 }
 
@@ -648,6 +854,7 @@ public sealed class InstrumentDiagnostics
     public int TotalSongs { get; init; }
     public bool MeetsMinimum { get; init; }
     public int RankedSongs { get; init; }
+    public int CandidateCount { get; init; }
     /// <summary>Entries with both Rank and ApiRank = 0.</summary>
     public int BothZero { get; init; }
     /// <summary>Entries with Rank > 0 but ApiRank = 0 (scrape-originated).</summary>
@@ -658,8 +865,28 @@ public sealed class InstrumentDiagnostics
     public int BothSet { get; init; }
     /// <summary>Of BothSet entries, how many have Rank != ApiRank.</summary>
     public int Mismatch { get; init; }
+    public RivalThresholdCounts AboveThresholdCounts { get; init; } = new();
+    public RivalThresholdCounts BelowThresholdCounts { get; init; } = new();
+    public RivalSelectionPreview? SelectionPreview { get; init; }
     public NeighborhoodProbe? Probe { get; init; }
     public IReadOnlyList<EntrySample> SampleEntries { get; init; } = Array.Empty<EntrySample>();
+}
+
+public sealed class RivalThresholdCounts
+{
+    public int AtLeastFive { get; init; }
+    public int AtLeastFour { get; init; }
+    public int AtLeastThree { get; init; }
+    public int AtLeastTwo { get; init; }
+    public int AtLeastOne { get; init; }
+}
+
+public sealed class RivalSelectionPreview
+{
+    public int AboveSelected { get; init; }
+    public int BelowSelected { get; init; }
+    public int? LoosestThresholdUsedAbove { get; init; }
+    public int? LoosestThresholdUsedBelow { get; init; }
 }
 
 public sealed class NeighborhoodProbe

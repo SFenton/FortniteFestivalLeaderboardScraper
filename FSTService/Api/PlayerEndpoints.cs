@@ -541,9 +541,7 @@ public static partial class ApiEndpoints
                     });
                 }
 
-                var bands = featureOptions.Value.PlayerBands
-                    ? persistence.GetPlayerBands(accountId)
-                    : null;
+                    var bands = persistence.GetPlayerBands(accountId);
 
                 var payload = new
                 {

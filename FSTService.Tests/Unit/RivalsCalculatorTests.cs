@@ -92,6 +92,27 @@ public sealed class RivalsCalculatorTests : IDisposable
         db.RecomputeAllRanks(); // only sets Rank for Source='scrape'
     }
 
+    private static void SeedSparseFallbackScenario(IInstrumentDatabase db)
+    {
+        for (int i = 0; i < 12; i++)
+        {
+            var entries = new List<(string, int)>
+            {
+                ("user1", 10000 - i * 100),
+            };
+
+            if (i < 3)
+                entries.Add(("rival_stage3", 10005 - i * 100));
+            else if (i == 3)
+                entries.Add(("rival_stage1", 10001 - i * 100));
+
+            for (int j = 0; j < 3; j++)
+                entries.Add(($"below_{i}_{j}", 9000 - i * 100 - j * 10));
+
+            SeedEntries(db, $"song_{i}", entries.ToArray());
+        }
+    }
+
     // ═══ Scoring formula ═════════════════════════════════════════
 
     [Fact]
@@ -199,6 +220,52 @@ public sealed class RivalsCalculatorTests : IDisposable
         Assert.Equal("rival_0", output[0].RivalAccountId); // highest score first
     }
 
+    [Fact]
+    public void SelectRivalsWithFallback_progressively_relaxes_thresholds_until_cap()
+    {
+        var candidates = new[]
+        {
+            new RivalsCalculator.RivalCandidate { AccountId = "above_5", WeightedScore = 50, SignedDeltaSum = -5, Appearances = 5, AheadCount = 5 },
+            new RivalsCalculator.RivalCandidate { AccountId = "above_4", WeightedScore = 40, SignedDeltaSum = -4, Appearances = 4, AheadCount = 4 },
+            new RivalsCalculator.RivalCandidate { AccountId = "above_3", WeightedScore = 30, SignedDeltaSum = -3, Appearances = 3, AheadCount = 3 },
+            new RivalsCalculator.RivalCandidate { AccountId = "above_2", WeightedScore = 20, SignedDeltaSum = -2, Appearances = 2, AheadCount = 2 },
+            new RivalsCalculator.RivalCandidate { AccountId = "above_1", WeightedScore = 10, SignedDeltaSum = -1, Appearances = 1, AheadCount = 1 },
+        };
+
+        var selection = RivalsCalculator.SelectRivalsWithFallback(candidates, 10);
+
+        Assert.Equal(
+            new[] { "above_5", "above_4", "above_3", "above_2", "above_1" },
+            selection.Above.Selected.Select(s => s.Candidate.AccountId).ToArray());
+        Assert.Equal(
+            new[] { 5, 4, 3, 2, 1 },
+            selection.Above.Selected.Select(s => s.ThresholdUsed).ToArray());
+        Assert.Equal(1, selection.Above.LoosestThresholdUsed);
+    }
+
+    [Fact]
+    public void SelectRivalsWithFallback_one_appearance_stage_prefers_closest_candidates()
+    {
+        var candidates = Enumerable.Range(1, 15)
+            .Select(distance => new RivalsCalculator.RivalCandidate
+            {
+                AccountId = $"rival_{distance}",
+                WeightedScore = 1000 + distance,
+                SignedDeltaSum = -distance,
+                Appearances = 1,
+                AheadCount = 1,
+            })
+            .ToList();
+
+        var selection = RivalsCalculator.SelectRivalsWithFallback(candidates, 10);
+
+        Assert.Equal(10, selection.Above.Selected.Count);
+        Assert.Equal(
+            Enumerable.Range(1, 10).Select(i => $"rival_{i}").ToArray(),
+            selection.Above.Selected.Select(s => s.Candidate.AccountId).ToArray());
+        Assert.All(selection.Above.Selected, selected => Assert.Equal(1, selected.ThresholdUsed));
+    }
+
     // ═══ IntersectCandidates ═════════════════════════════════════
 
     [Fact]
@@ -284,6 +351,27 @@ public sealed class RivalsCalculatorTests : IDisposable
         var guitarComboId = ComboIds.FromInstruments(["Solo_Guitar"]);
         var guitarRivals = result.Rivals.Where(r => r.InstrumentCombo == guitarComboId).ToList();
         Assert.Contains(guitarRivals, r => r.RivalAccountId == "rival1");
+    }
+
+    [Fact]
+    public void ComputeRivals_relaxes_thresholds_for_sparse_single_instrument_users()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        SeedSparseFallbackScenario(db);
+
+        var calc = CreateCalculator(persistence);
+        var result = calc.ComputeRivals("user1");
+
+        var guitarComboId = ComboIds.FromInstruments(["Solo_Guitar"]);
+        var guitarRivals = result.Rivals.Where(r => r.InstrumentCombo == guitarComboId).ToList();
+
+        var stage3 = Assert.Single(guitarRivals,
+            r => r.RivalAccountId == "rival_stage3" && r.Direction == "above");
+        var stage1 = Assert.Single(guitarRivals,
+            r => r.RivalAccountId == "rival_stage1" && r.Direction == "above");
+        Assert.Equal(3, stage3.SharedSongCount);
+        Assert.Equal(1, stage1.SharedSongCount);
     }
 
     [Fact]
@@ -678,6 +766,29 @@ public sealed class RivalsCalculatorTests : IDisposable
         Assert.True(inst.Probe!.NeighborsFound > 0,
             "Probe should find neighbors for scrape entries with dense ranks");
         Assert.True(inst.Probe.EffectiveRank > 0);
+    }
+
+    [Fact]
+    public void GetDiagnostics_reports_threshold_counts_and_selection_preview()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        SeedSparseFallbackScenario(db);
+
+        var calc = CreateCalculator(persistence);
+        var diag = calc.GetDiagnostics("user1");
+
+        var inst = Assert.Single(diag.Instruments);
+        Assert.True(inst.CandidateCount >= 2);
+        Assert.Equal(2, inst.AboveThresholdCounts.AtLeastOne);
+        Assert.Equal(1, inst.AboveThresholdCounts.AtLeastTwo);
+        Assert.Equal(1, inst.AboveThresholdCounts.AtLeastThree);
+        Assert.Equal(0, inst.AboveThresholdCounts.AtLeastFour);
+        Assert.True(inst.BelowThresholdCounts.AtLeastOne > 0);
+        Assert.NotNull(inst.SelectionPreview);
+        Assert.Equal(2, inst.SelectionPreview!.AboveSelected);
+        Assert.Equal(1, inst.SelectionPreview.LoosestThresholdUsedAbove);
+        Assert.Equal(1, inst.SelectionPreview.LoosestThresholdUsedBelow);
     }
 
     [Fact]

@@ -18,6 +18,8 @@ describe('FabSearchContext', () => {
     expect(typeof result.current.openSuggestionsFilter).toBe('function');
     expect(typeof result.current.openPlayerHistorySort).toBe('function');
     expect(typeof result.current.openPaths).toBe('function');
+    expect(typeof result.current.openPlayerQuickLinks).toBe('function');
+    expect(result.current.hasPlayerQuickLinks).toBe(false);
     expect(typeof result.current.shopToggleView).toBe('function');
     expect(typeof result.current.setShopViewMode).toBe('function');
     expect(result.current.shopViewMode).toBe('grid');
@@ -64,6 +66,17 @@ describe('FabSearchContext', () => {
     expect(mockPaths).toHaveBeenCalledTimes(1);
   });
 
+  it('registerPlayerQuickLinks + openPlayerQuickLinks works', () => {
+    const { result } = renderHook(() => useFabSearch(), { wrapper });
+    const mockQuickLinks = vi.fn();
+    act(() => result.current.registerPlayerQuickLinks({ openQuickLinks: mockQuickLinks }));
+    expect(result.current.hasPlayerQuickLinks).toBe(true);
+    act(() => result.current.openPlayerQuickLinks());
+    expect(mockQuickLinks).toHaveBeenCalledTimes(1);
+    act(() => result.current.registerPlayerQuickLinks(null));
+    expect(result.current.hasPlayerQuickLinks).toBe(false);
+  });
+
   it('registerShopActions + shopToggleView calls registered toggle', () => {
     const { result } = renderHook(() => useFabSearch(), { wrapper });
     const mockToggle = vi.fn();
@@ -98,6 +111,8 @@ describe('FabSearchContext', () => {
     expect(() => { act(() => result.current.openSuggestionsFilter()); }).not.toThrow();
     expect(() => { act(() => result.current.openPlayerHistorySort()); }).not.toThrow();
     expect(() => { act(() => result.current.openPaths()); }).not.toThrow();
+    expect(() => { act(() => result.current.openPlayerQuickLinks()); }).not.toThrow();
+    expect(result.current.hasPlayerQuickLinks).toBe(false);
     expect(() => { act(() => result.current.shopToggleView()); }).not.toThrow();
     expect(result.current.shopViewMode).toBe('grid');
   });

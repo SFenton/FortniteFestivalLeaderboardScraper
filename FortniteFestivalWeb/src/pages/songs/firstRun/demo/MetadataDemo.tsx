@@ -14,12 +14,12 @@ import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import DifficultyBars from '../../../../components/songs/metadata/DifficultyBars';
 import { useContainerWidth } from '../../../../hooks/ui/useContainerWidth';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
-import { DEMO_SWAP_INTERVAL_MS, Layout, Gap, CssValue, flexColumn } from '@festival/theme';
+import { DEMO_SWAP_INTERVAL_MS, Layout, Gap, CssValue, Size, StarSize, flexColumn } from '@festival/theme';
 import type { SongDisplay as DemoSong } from '@festival/core/api/serverTypes';
 import { useDemoSongs, FADE_MS, shuffle } from '../../../../hooks/data/useDemoSongs';
 import { DemoSongRow } from './DemoSongRow';
 import { scoreMeta, metadataWrap, mobileTopRow, detailStrip } from '../../../../styles/songRowStyles';
-import { resolvePillFitsTopRow } from '../../layoutMode';
+import { resolveCompactRowMode, resolvePillFitsTopRow } from '../../layoutMode';
 
 /* ── Song pool comes from useDemoSongs hook ── */
 
@@ -110,6 +110,7 @@ const ROW_HEIGHT_DESKTOP = Layout.demoRowHeight;
 // Metadata rows are content-sized and now mirror production compact wrapping,
 // so the old 160px estimate undercounts their real mobile height on short slides.
 const ROW_HEIGHT_MOBILE = Math.max(Layout.demoRowMobileMetaHeight, 200);
+const DESKTOP_METADATA_MIN_WIDTH = Size.thumb + 200 + 78 + StarSize.rowWidth + Gap.xl * 5;
 const containerStyle = { width: CssValue.full, ...flexColumn, gap: Gap.sm };
 
 /* v8 ignore start -- pickNewLayout is only called from the v8-ignored swap cycle */
@@ -127,10 +128,19 @@ export default function MetadataDemo() {
   const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
   const containerWidth = useContainerWidth(containerRef);
+  const compactLayoutRef = useRef(isMobile);
+  const viewportWidth = containerWidth > 0
+    ? containerWidth
+    : (typeof window !== 'undefined' ? window.innerWidth : 0);
+  const useCompactLayout = isMobile || resolveCompactRowMode(
+    viewportWidth,
+    DESKTOP_METADATA_MIN_WIDTH,
+    compactLayoutRef.current,
+  );
   const { rows: songRows, initialDone, pool: songPool } = useDemoSongs({
     rowHeight: ROW_HEIGHT_DESKTOP,
     mobileRowHeight: ROW_HEIGHT_MOBILE,
-    isMobile,
+    isMobile: useCompactLayout,
     autoSwap: false,
   });
   const pillLayoutRef = useRef(true);
@@ -213,32 +223,32 @@ export default function MetadataDemo() {
     pillLayoutRef.current = pillFitsTopRow;
   }, [pillFitsTopRow]);
 
-  if (isMobile) {
-    return (
-      <div ref={containerRef} style={containerStyle}>
-        {rows.map((row, i) => (
-          <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile>
-            <div style={mobileTopRow}>
-              <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} minWidth={0} />
-              {pillFitsTopRow && (
-                <div data-metadata-row="top" style={detailStrip}>
-                  <ScorePill score={row.meta.score} bold />
-                </div>
-              )}
-            </div>
-            {pillFitsTopRow ? <SplitMobileMetadataStrip meta={row.meta} /> : <MobileMetadataStrip meta={row.meta} />}
-          </DemoSongRow>
-        ))}
-      </div>
-    );
-  }
+  useEffect(() => {
+    compactLayoutRef.current = useCompactLayout;
+  }, [useCompactLayout]);
 
   return (
-    <div style={containerStyle}>
+    <div ref={containerRef} style={containerStyle}>
       {rows.map((row, i) => (
-        <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx}>
-          <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} />
-          <MetadataStrip layout={row.layout} meta={row.meta} />
+        <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile={useCompactLayout}>
+          {useCompactLayout ? (
+            <>
+              <div style={mobileTopRow}>
+                <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} minWidth={0} />
+                {pillFitsTopRow && (
+                  <div data-metadata-row="top" style={detailStrip}>
+                    <ScorePill score={row.meta.score} bold />
+                  </div>
+                )}
+              </div>
+              {pillFitsTopRow ? <SplitMobileMetadataStrip meta={row.meta} /> : <MobileMetadataStrip meta={row.meta} />}
+            </>
+          ) : (
+            <>
+              <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} />
+              <MetadataStrip layout={row.layout} meta={row.meta} />
+            </>
+          )}
         </DemoSongRow>
       ))}
     </div>

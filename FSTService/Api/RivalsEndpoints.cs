@@ -292,6 +292,7 @@ public static partial class ApiEndpoints
                     i.TotalSongs,
                     i.MeetsMinimum,
                     i.RankedSongs,
+                    i.CandidateCount,
                     rankBreakdown = new
                     {
                         i.BothZero,
@@ -299,6 +300,32 @@ public static partial class ApiEndpoints
                         i.ApiRankOnly,
                         i.BothSet,
                         i.Mismatch,
+                    },
+                    thresholdCounts = new
+                    {
+                        above = new
+                        {
+                            i.AboveThresholdCounts.AtLeastFive,
+                            i.AboveThresholdCounts.AtLeastFour,
+                            i.AboveThresholdCounts.AtLeastThree,
+                            i.AboveThresholdCounts.AtLeastTwo,
+                            i.AboveThresholdCounts.AtLeastOne,
+                        },
+                        below = new
+                        {
+                            i.BelowThresholdCounts.AtLeastFive,
+                            i.BelowThresholdCounts.AtLeastFour,
+                            i.BelowThresholdCounts.AtLeastThree,
+                            i.BelowThresholdCounts.AtLeastTwo,
+                            i.BelowThresholdCounts.AtLeastOne,
+                        },
+                    },
+                    selectionPreview = i.SelectionPreview is null ? null : new
+                    {
+                        i.SelectionPreview.AboveSelected,
+                        i.SelectionPreview.BelowSelected,
+                        i.SelectionPreview.LoosestThresholdUsedAbove,
+                        i.SelectionPreview.LoosestThresholdUsedBelow,
                     },
                     probe = i.Probe is null ? null : new
                     {

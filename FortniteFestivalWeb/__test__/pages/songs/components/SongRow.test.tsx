@@ -254,6 +254,25 @@ describe('SongRow', () => {
     expect(bottomRow?.querySelectorAll('img')).toHaveLength(4);
   });
 
+  it('falls back to three mobile chip rows when two rows still cannot fit', () => {
+    const { container } = renderSongRow({
+      isMobile: true,
+      showInstrumentIcons: true,
+      score: undefined,
+      enabledInstruments: allEnabledInstruments,
+      containerWidth: 208,
+    });
+
+    const topRow = container.querySelector('[data-instrument-row="top"]');
+    const middleRow = container.querySelector('[data-instrument-row="middle"]');
+    const bottomRow = container.querySelector('[data-instrument-row="bottom"]');
+
+    expect(topRow?.querySelectorAll('img')).toHaveLength(3);
+    expect(middleRow?.querySelectorAll('img')).toHaveLength(3);
+    expect(bottomRow?.querySelectorAll('img')).toHaveLength(3);
+    expect(container.querySelector('[data-instrument-row="single"]')).toBeNull();
+  });
+
   it('keeps instrument chips on a single mobile row when the row is wide enough', () => {
     const { container } = renderSongRow({
       isMobile: true,

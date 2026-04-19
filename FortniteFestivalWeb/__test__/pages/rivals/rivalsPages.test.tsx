@@ -6,7 +6,7 @@
  * per-file coverage thresholds.
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, act } from '@testing-library/react';
+import { render, act, screen } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
@@ -95,9 +95,9 @@ const { default: AllRivalsPage } = await import('../../../src/pages/rivals/AllRi
 
 /* ── Helpers ── */
 
-function renderPage(route: string, element: React.ReactElement, path: string) {
+function renderPage(route: string, element: React.ReactElement, path: string, accountId = 'test-1') {
   return render(
-    <TestProviders route={route} accountId="test-1">
+    <TestProviders route={route} accountId={accountId}>
       <Routes>
         <Route path={path} element={element} />
       </Routes>
@@ -131,6 +131,51 @@ describe('RivalsPage', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     // Page should render content after loading
     expect(container.querySelector('div')).toBeTruthy();
+  });
+
+  it('renders a single-instrument empty-state subtitle when no song rivals exist', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-empty-single', displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+    mockApi.getRivalsList.mockResolvedValue({ above: [], below: [] });
+
+    renderPage('/rivals', <RivalsPage />, '/rivals', 'test-empty-single');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(screen.getByText('Not enough data to identify rivals yet.')).toBeTruthy();
+    expect(screen.getByText('Play more songs on your selected instrument to generate a roster of Rivals.')).toBeTruthy();
+  });
+
+  it('renders a multi-instrument empty-state subtitle when no song rivals exist', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-empty-multi', displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: true,
+      showDrums: true,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+    mockApi.getRivalsList.mockResolvedValue({ above: [], below: [] });
+
+    renderPage('/rivals', <RivalsPage />, '/rivals', 'test-empty-multi');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(screen.getByText('Play more songs on your selected instruments to generate a roster of Rivals.')).toBeTruthy();
   });
 });
 

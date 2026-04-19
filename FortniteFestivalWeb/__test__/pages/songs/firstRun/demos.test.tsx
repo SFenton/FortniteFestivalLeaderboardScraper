@@ -356,6 +356,35 @@ describe('SongIconsDemo', () => {
     expect(container.querySelector('[data-instrument-row="top"]')).toBeNull();
     expect(container.querySelector('[data-instrument-row="bottom"]')).toBeNull();
   });
+
+  it('switches constrained desktop FRE widths into the stacked icon layout', () => {
+    mockIsMobileChrome = false;
+    mockContainerWidth = 335;
+    const { container } = wrap(<SongIconsDemo />);
+
+    const mobileRows = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter(
+      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius,
+    );
+
+    expect(mobileRows.length).toBe(3);
+    expect(container.querySelector('[data-instrument-row="top"]')).toBeTruthy();
+    expect(container.querySelector('[data-instrument-row="bottom"]')).toBeTruthy();
+    expect(container.querySelector('[data-instrument-row="single"]')).toBeNull();
+  });
+
+  it('uses three icon rows on very narrow widths when one or two rows still overflow', () => {
+    mockIsMobileChrome = false;
+    mockContainerWidth = 208;
+    const { container } = wrap(<SongIconsDemo />);
+
+    const topRow = container.querySelector('[data-instrument-row="top"]');
+    const middleRow = container.querySelector('[data-instrument-row="middle"]');
+    const bottomRow = container.querySelector('[data-instrument-row="bottom"]');
+
+    expect(topRow?.querySelectorAll('img')).toHaveLength(3);
+    expect(middleRow?.querySelectorAll('img')).toHaveLength(3);
+    expect(bottomRow?.querySelectorAll('img')).toHaveLength(3);
+  });
 });
 
 /* ── NavigationDemo ── */
@@ -531,6 +560,36 @@ describe('MetadataDemo', () => {
     expect(topRows).toHaveLength(0);
     expect(bottomRows).toHaveLength(0);
     expect(wrapRows[0]?.querySelector('[data-metadata-key="score"]')).toBeTruthy();
+  });
+
+  it('switches constrained desktop FRE widths into the compact metadata layout', () => {
+    mockIsMobile = false;
+    mockContainerWidth = 500;
+    const { container } = wrap(<MetadataDemo />);
+
+    const mobileRows = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius && !el.style.flexShrink
+    );
+    const desktopStrips = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.flexShrink === '1'
+    );
+
+    expect(mobileRows.length).toBe(3);
+    expect(desktopStrips.length).toBe(0);
+    expect(container.querySelectorAll('[data-metadata-row="top"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-metadata-row="bottom"]')).toHaveLength(3);
+  });
+
+  it('uses wrapped metadata rows on very narrow constrained desktop widths', () => {
+    mockIsMobile = false;
+    mockContainerWidth = 280;
+    const { container } = wrap(<MetadataDemo />);
+
+    const wrapRows = container.querySelectorAll('[data-metadata-row="wrap"]');
+    const topRows = container.querySelectorAll('[data-metadata-row="top"]');
+    const bottomRows = container.querySelectorAll('[data-metadata-row="bottom"]');
+
+    expect(wrapRows).toHaveLength(3);
+    expect(topRows).toHaveLength(0);
+    expect(bottomRows).toHaveLength(0);
   });
 
   it('keeps score in the top row on wider mobile widths', () => {
