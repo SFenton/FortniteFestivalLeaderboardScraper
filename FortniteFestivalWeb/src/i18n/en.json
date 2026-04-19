@@ -91,6 +91,7 @@
     "scoreHistory": "Score History",
     "noScores": "No scores recorded yet.",
     "noScoresSubtitle": "When scores are submitted for {{instrument}}, they will show up here on the next leaderboard update.",
+    "viewFullLeaderboard": "View full leaderboard",
     "songNotFound": "Song not found",
     "noEntries": "No {{instrument}} entries"
   },
@@ -820,7 +821,7 @@
     "shop": {
       "overview": {
         "title": "Item Shop",
-        "description": "Browse the songs currently available for purchase in the Fortnite Item Shop."
+        "description": "Browse the songs currently available for purchase in the Item Shop."
       },
       "views": {
         "title": "Grid & List View",

@@ -10,13 +10,17 @@ import RivalSongRow from '../../components/RivalSongRow';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useDemoSongs } from '../../../../hooks/data/useDemoSongs';
+import { useContainerWidth } from '../../../../hooks/ui/useContainerWidth';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import {
   Colors, Font, Weight, Gap, Opacity, CssValue, PointerEvents, flexColumn,
   FADE_DURATION,
 } from '@festival/theme';
 
-const ROW_HEIGHT = 130;
+const DEFAULT_ROW_HEIGHT = 136;
+const COMPACT_ROW_HEIGHT = 156;
+const WIDE_ROW_HEIGHT = 120;
+const MAX_VISIBLE_ROWS = 4;
 const LABEL_HEIGHT = 28;
 const NOOP = () => {};
 
@@ -84,11 +88,16 @@ const CATEGORY_RANK_DATA: Record<string, RankRow[]> = {
 export default function RivalsDetailDemo() {
   const h = useSlideHeight();
   const isMobile = useIsMobile();
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const measuredWidth = useContainerWidth(wrapperRef);
+  const containerWidth = measuredWidth > 0
+    ? measuredWidth
+    : (typeof window !== 'undefined' ? window.innerWidth : 520);
   const s = useStyles();
 
   const { rows: demoSongs, fadingIdx } = useDemoSongs({
-    rowHeight: ROW_HEIGHT,
-    mobileRowHeight: ROW_HEIGHT,
+    rowHeight: DEFAULT_ROW_HEIGHT,
+    mobileRowHeight: COMPACT_ROW_HEIGHT,
     isMobile,
     autoSwap: true,
   });
@@ -120,13 +129,19 @@ export default function RivalsDetailDemo() {
   }, [fadingIdx]);
 
   const budget = h || 320;
-  const maxRows = Math.max(1, Math.floor((budget - LABEL_HEIGHT - Gap.md) / (ROW_HEIGHT + Gap.sm)));
+  const rowHeight = estimateStandaloneRowHeight(containerWidth);
+  const compactBuffer = getCompactBuffer(containerWidth, isMobile);
+  const availableHeight = Math.max(0, budget - LABEL_HEIGHT - Gap.md - compactBuffer);
+  const maxRows = Math.max(
+    1,
+    Math.min(MAX_VISIBLE_ROWS, Math.floor((availableHeight + Gap.sm) / (rowHeight + Gap.sm))),
+  );
 
   const categoryLabel = CATEGORIES[headerIdx]!;
   const rankData = CATEGORY_RANK_DATA[categoryLabel]!;
 
   const visible = useMemo<(RivalSongComparison & { albumArt?: string })[]>(() =>
-    demoSongs.slice(0, Math.min(maxRows, 4)).map((song, i) => {
+    demoSongs.slice(0, Math.min(maxRows, MAX_VISIBLE_ROWS)).map((song, i) => {
       const rd = rankData[i % rankData.length]!;
       return {
         songId: song.title,
@@ -144,13 +159,13 @@ export default function RivalsDetailDemo() {
   [demoSongs, maxRows, rankData]);
 
   return (
-    <div style={s.wrapper}>
+    <div ref={wrapperRef} style={s.wrapper} data-testid="rivals-fre-detail-wrapper" data-row-mode={maxRows === 1 ? 'single' : 'multi'}>
       <FadeIn key={`hdr-${staggerKey}`} delay={allFading ? undefined : 0}>
         <span style={{ ...s.label, ...(allFading ? s.fading : s.visible) }}>
           {categoryLabel}
         </span>
       </FadeIn>
-      <div style={s.list}>
+      <div style={s.list} data-testid="rivals-fre-detail-list" data-visible-rows={String(visible.length)}>
         {visible.map((song, i) => (
           <FadeIn key={`${staggerKey}-${song.songId}`} delay={allFading ? undefined : (i + 1) * 100}>
             <div style={allFading ? s.fading : s.visible}>
@@ -168,6 +183,18 @@ export default function RivalsDetailDemo() {
       </div>
     </div>
   );
+}
+
+function estimateStandaloneRowHeight(containerWidth: number): number {
+  if (containerWidth <= 360) return COMPACT_ROW_HEIGHT;
+  if (containerWidth >= 620) return WIDE_ROW_HEIGHT;
+  return DEFAULT_ROW_HEIGHT;
+}
+
+function getCompactBuffer(containerWidth: number, isMobile: boolean): number {
+  if (containerWidth <= 360) return Gap.lg;
+  if (isMobile || containerWidth <= 520) return Gap.md;
+  return 0;
 }
 
 function useStyles() {

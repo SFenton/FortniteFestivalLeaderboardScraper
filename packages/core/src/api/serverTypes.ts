@@ -441,6 +441,14 @@ export type PlayerBandsResponse = {
   quads: PlayerBandGroup;
 };
 
+export type PlayerBandTypeResponse = {
+  accountId: string;
+  bandType: PlayerBandType;
+  comboId?: string | null;
+  totalCount: number;
+  entries: PlayerBandEntry[];
+};
+
 /** Flat composite rank numbers embedded in the stats response. */
 export type CompositeRanks = {
   adjusted: number;

@@ -2,18 +2,18 @@
  * First-run demo: A single CategoryCard that rotates between category types
  * every 5 seconds with a fade-out/in transition. Uses real songs from the catalog.
  */
-import { useState, useEffect, useMemo, useRef, useCallback, type CSSProperties } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
 import { CategoryCard } from '../../components/CategoryCard';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
+import { useIsNarrow } from '../../../../hooks/ui/useIsMobile';
 import { FADE_DURATION, DEMO_SWAP_INTERVAL_MS, CssValue, PointerEvents, Gap, Opacity, transition, translateY, CssProp, transitions } from '@festival/theme';
 
-// Card header (padding + content + border) + card bottom margin
-const CARD_OVERHEAD = 96;
-const SONG_ROW_HEIGHT = 52;
 const MAX_DEMO_SONGS = 5;
+const FIT_EPSILON = 1;
+const FIT_BUFFER = Gap.section;
 
 type CardTemplate = {
   key: string;
@@ -51,10 +51,14 @@ const TEMPLATES: CardTemplate[] = [
 export default function CategoryCardDemo() {
   const { t } = useTranslation();
   const h = useSlideHeight();
+  const isNarrow = useIsNarrow();
   const { state: { songs: apiSongs } } = useFestival();
   const [templateIdx, setTemplateIdx] = useState(0);
   const [visible, setVisible] = useState(false);
+  const [visibleSongCount, setVisibleSongCount] = useState(MAX_DEMO_SONGS);
+  const [measuredCardHeight, setMeasuredCardHeight] = useState(0);
   const idxRef = useRef(0);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   // Mount: start hidden, transition to visible on next frame
   /* v8 ignore start -- rAF callback depends on real browser frame scheduling */
@@ -64,9 +68,42 @@ export default function CategoryCardDemo() {
   }, []);
   /* v8 ignore stop */
 
-  const maxSongs = h
-    ? Math.min(MAX_DEMO_SONGS, Math.max(1, Math.floor((h - CARD_OVERHEAD) / SONG_ROW_HEIGHT)))
-    : MAX_DEMO_SONGS;
+  // Reset to the optimistic row count whenever the available height or responsive
+  // layout changes; a layout effect below trims rows until the rendered card fits.
+  /* v8 ignore start -- layout effect relies on measured DOM height */
+  useLayoutEffect(() => {
+    setVisibleSongCount(MAX_DEMO_SONGS);
+    setMeasuredCardHeight(0);
+  }, [templateIdx, h, isNarrow]);
+
+  // Watch the rendered card height so late font/layout changes also trigger a
+  // fit pass, not just the initial render.
+  useLayoutEffect(() => {
+    const node = cardRef.current;
+    if (!node) return;
+
+    const update = () => {
+      setMeasuredCardHeight(node.getBoundingClientRect().height);
+    };
+
+    update();
+
+    const ro = new ResizeObserver(() => {
+      update();
+    });
+
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, [templateIdx, visibleSongCount]);
+
+  useLayoutEffect(() => {
+    if (!h || measuredCardHeight <= 0) return;
+
+    if (measuredCardHeight > (h - FIT_BUFFER + FIT_EPSILON) && visibleSongCount > 1) {
+      setVisibleSongCount((current) => current - 1);
+    }
+  }, [h, measuredCardHeight, visibleSongCount, templateIdx, isNarrow]);
+  /* v8 ignore stop */
 
   // Rotate every DEMO_SWAP_INTERVAL_MS: fade out → swap → fade in
   /* v8 ignore start -- timer/rAF swap cycle depends on real browser scheduling */
@@ -92,7 +129,7 @@ export default function CategoryCardDemo() {
     const start = templateIdx * MAX_DEMO_SONGS;
     /* v8 ignore start -- pool always has songs when apiSongs has albumArt */
     const songPool = pool.length > 0
-      ? Array.from({ length: maxSongs }, (_, i) => pool[(start + i) % pool.length]!)
+      ? Array.from({ length: visibleSongCount }, (_, i) => pool[(start + i) % pool.length]!)
       : [];
     /* v8 ignore stop */
     const demoSongs: SuggestionSongItem[] = songPool.map((s, i) => ({
@@ -115,7 +152,7 @@ export default function CategoryCardDemo() {
       songs: demoSongs,
     };
     return { category: cat, albumArtMap: artMap };
-  }, [apiSongs, maxSongs, templateIdx, t]);
+  }, [apiSongs, templateIdx, t, visibleSongCount]);
 
   const emptyScores = useMemo(() => ({}), []);
   const s = useStyles(visible);
@@ -123,8 +160,16 @@ export default function CategoryCardDemo() {
   return (
     /* v8 ignore start -- visible state depends on rAF callback */
     <div style={s.wrapper}>
-    {/* v8 ignore stop */}
-      <CategoryCard category={category} albumArtMap={albumArtMap} scoresIndex={emptyScores} />
+      <div
+        ref={cardRef}
+        style={s.measureWrap}
+        data-testid="suggestions-fre-category-card"
+        data-template-key={category.key}
+        data-song-count={category.songs.length}
+      >
+        {/* v8 ignore stop */}
+        <CategoryCard category={category} albumArtMap={albumArtMap} scoresIndex={emptyScores} />
+      </div>
     </div>
   );
 }
@@ -139,10 +184,13 @@ function useStyles(visible: boolean) {
       wrapper: {
         width: CssValue.full,
         pointerEvents: PointerEvents.none,
-        marginBottom: -Gap.section,
         transition: trans,
         opacity: visible ? 1 : Opacity.none,
         transform: visible ? translateY(0) : translateY(8),
+      } as CSSProperties,
+      measureWrap: {
+        width: CssValue.full,
+        marginBottom: -Gap.section,
       } as CSSProperties,
     };
   }, [visible]);

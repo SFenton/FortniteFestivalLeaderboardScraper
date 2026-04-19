@@ -71,7 +71,7 @@ export default function ShopHighlightDemo() {
           >
             {isMobile ? (
               <div style={mobileTopRow}>
-                <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
+                <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={0} />
               </div>
             ) : (
               <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />

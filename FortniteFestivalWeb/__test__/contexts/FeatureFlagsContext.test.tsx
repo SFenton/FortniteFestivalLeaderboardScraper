@@ -5,17 +5,16 @@ import type { ReactNode } from 'react';
 
 // Dynamic flag values that individual tests can override
 const flagValues = vi.hoisted(() => ({
-  rivals: true, compete: true, leaderboards: true, firstRun: true, playerBands: true,
+  compete: true, leaderboards: true, difficulty: true, playerBands: true,
 }));
 
 // Track whether fetch should fail
 const fetchShouldFail = vi.hoisted(() => ({ value: false }));
 
 beforeEach(() => {
-  flagValues.rivals = true;
   flagValues.compete = true;
   flagValues.leaderboards = true;
-  flagValues.firstRun = true;
+  flagValues.difficulty = true;
   flagValues.playerBands = true;
   fetchShouldFail.value = false;
 
@@ -53,10 +52,9 @@ describe('FeatureFlagsContext', () => {
       const wrapper = makeWrapper();
       const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
-      expect(result.current.rivals).toBe(true);
       expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(true);
-      expect(result.current.firstRun).toBe(true);
+      expect(result.current.difficulty).toBe(true);
       expect(result.current.playerBands).toBe(true);
       expect(fetch).not.toHaveBeenCalled();
     });
@@ -75,27 +73,28 @@ describe('FeatureFlagsContext', () => {
       const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
       await waitFor(() => {
-        expect(result.current.rivals).toBe(true);
+        expect(result.current.leaderboards).toBe(true);
       });
 
       expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(true);
-      expect(result.current.firstRun).toBe(true);
+      expect(result.current.difficulty).toBe(true);
       expect(result.current.playerBands).toBe(true);
       expect(fetch).toHaveBeenCalledWith('/api/features');
     });
 
-    it('returns partial flags when server sends partial response', async () => {
+    it('derives compete from leaderboards when the response is inconsistent', async () => {
       flagValues.leaderboards = false;
+      flagValues.compete = true;
 
       const wrapper = makeWrapper();
       const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
       await waitFor(() => {
-        expect(result.current.rivals).toBe(true);
+        expect(result.current.playerBands).toBe(true);
       });
 
-      expect(result.current.compete).toBe(true);
+      expect(result.current.compete).toBe(false);
       expect(result.current.leaderboards).toBe(false);
       expect(result.current.playerBands).toBe(true);
     });
@@ -110,10 +109,9 @@ describe('FeatureFlagsContext', () => {
         expect(fetch).toHaveBeenCalled();
       });
 
-      expect(result.current.rivals).toBe(false);
       expect(result.current.compete).toBe(false);
       expect(result.current.leaderboards).toBe(false);
-      expect(result.current.firstRun).toBe(false);
+      expect(result.current.difficulty).toBe(false);
       expect(result.current.playerBands).toBe(false);
     });
   });

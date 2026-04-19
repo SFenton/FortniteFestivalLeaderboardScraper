@@ -5,19 +5,32 @@
  */
 import { useMemo, type CSSProperties } from 'react';
 import AlbumArt from '../../../../components/songs/metadata/AlbumArt';
+import MarqueeText from '../../../../components/common/MarqueeText';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useItemShopDemoSongs } from '../../../../hooks/data/useItemShopDemoSongs';
+import { useMarqueeSync } from '../../../../hooks/ui/useMarqueeSync';
 import anim from '../../../../styles/animations.module.css';
 import {
   Font, Weight, Gap, Radius, Layout, Display, Align,
-  CssValue, PointerEvents, frostedCard, flexColumn, padding, truncate,
+  CssValue, PointerEvents, frostedCard, flexColumn, padding,
   Colors,
 } from '@festival/theme';
 
 const ROW_HEIGHT = Layout.demoRowHeight;
 const ART_SIZE = 40;
 const MAX_ROWS = 5;
+
+function ShopRowText({ title, artist, styles }: { title: string; artist: string; styles: ReturnType<typeof useStyles> }) {
+  const { reporters, syncDistance } = useMarqueeSync(2);
+
+  return (
+    <div style={styles.info}>
+      <MarqueeText text={title} as="p" style={styles.title} onMeasure={reporters[0]} syncDistance={syncDistance} />
+      <MarqueeText text={artist} as="p" style={styles.artist} onMeasure={reporters[1]} syncDistance={syncDistance} />
+    </div>
+  );
+}
 
 export default function ShopHighlightingDemo() {
   const h = useSlideHeight();
@@ -37,10 +50,7 @@ export default function ShopHighlightingDemo() {
         return (
           <FadeIn key={song.songId} delay={i * 80} style={s.row} className={pulse ? anim.shopHighlight : undefined}>
             <AlbumArt src={song.albumArt} size={ART_SIZE} />
-            <div style={s.info}>
-              <span style={s.title}>{song.title}</span>
-              <span style={s.artist}>{song.artist}</span>
-            </div>
+            <ShopRowText title={song.title} artist={song.artist} styles={s} />
           </FadeIn>
         );
       })}
@@ -74,12 +84,10 @@ function useStyles() {
     title: {
       fontSize: Font.md,
       fontWeight: Weight.semibold,
-      ...truncate,
     } as CSSProperties,
     artist: {
       fontSize: Font.sm,
       color: Colors.textSubtle,
-      ...truncate,
     } as CSSProperties,
   }), []);
 }

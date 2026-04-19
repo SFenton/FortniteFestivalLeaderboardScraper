@@ -9,6 +9,7 @@ import type {
   ServerInstrumentKey as InstrumentKey,
   AllLeaderboardsResponse,
   PlayerStatsResponse,
+  PlayerBandTypeResponse,
   RivalsOverviewResponse,
   RivalsListResponse,
   RivalDetailResponse,
@@ -192,6 +193,15 @@ export const api = {
   getPlayerStats: (accountId: string) =>
     get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`)
       .then(r => expandWireStatsResponse(r as never)),
+
+  getPlayerBandsByType: (accountId: string, bandType: BandType, comboId?: string) => {
+    const params = new URLSearchParams();
+    if (comboId) params.set('combo', comboId);
+    const qs = params.toString();
+    return getWithETag<PlayerBandTypeResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/bands/${encodeURIComponent(bandType)}${qs ? `?${qs}` : ''}`,
+    );
+  },
 
   getVersion: () => get<{ version: string }>('/api/version'),
 

@@ -95,4 +95,18 @@ public static class BandComboIds
         comboId = FromInstruments(instruments);
         return !string.IsNullOrEmpty(comboId);
     }
+
+    public static (string? ComboId, string? Error) TryNormalizeForBandType(string bandType, string? combo)
+    {
+        if (string.IsNullOrWhiteSpace(combo))
+            return (null, null);
+
+        if (!TryNormalizeComboParam(combo, out var comboId))
+            return (null, "Invalid band combo. Use a normalized server-instrument list such as Solo_Guitar+Solo_Bass.");
+
+        if (ToInstruments(comboId).Count != BandInstrumentMapping.ExpectedMemberCount(bandType))
+            return (null, $"Combo size does not match band type {bandType}.");
+
+        return (comboId, null);
+    }
 }

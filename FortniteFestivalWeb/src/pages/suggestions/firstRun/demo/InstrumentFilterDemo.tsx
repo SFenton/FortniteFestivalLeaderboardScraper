@@ -11,8 +11,10 @@ import { useSettings, visibleInstruments } from '../../../../contexts/SettingsCo
 import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterConfig';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { Layout, TRANSITION_MS } from '@festival/theme';
+import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useDemoStyles } from '../../../songs/firstRun/demo/FilterDemo';
 
+const MOBILE_FIT_BUFFER = Layout.filterToggleRowHeight;
 
 type ToggleState = { label: string; desc: string; on: boolean };
 
@@ -23,6 +25,7 @@ function typeToggles(): ToggleState[] {
 export default function InstrumentFilterDemo() {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const isMobile = useIsMobile();
   const s = useDemoStyles();
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
   const selectorItems = useMemo<InstrumentSelectorItem[]>(
@@ -76,7 +79,8 @@ export default function InstrumentFilterDemo() {
 
   useEffect(() => {
     if (!h) return;
-    const afterInstr = h - Layout.filterInstrumentRowHeight;
+    const availableHeight = Math.max(0, h - (isMobile ? MOBILE_FIT_BUFFER : 0));
+    const afterInstr = availableHeight - Layout.filterInstrumentRowHeight;
     if (!instrument || afterInstr < Layout.filterToggleRowHeight) {
       setMaxToggles(0);
       setShowHeader(false);
@@ -91,7 +95,7 @@ export default function InstrumentFilterDemo() {
       const count = Math.floor(afterInstr / Layout.filterToggleRowHeight);
       setMaxToggles(Math.min(count, toggles.length));
     }
-  }, [h, instrument, toggles.length]);
+  }, [h, instrument, isMobile, toggles.length]);
 
   return (
     <div style={s.wrapper}>

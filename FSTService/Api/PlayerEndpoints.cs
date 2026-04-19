@@ -594,6 +594,43 @@ public static partial class ApiEndpoints
         .WithTags("Players")
         .RequireRateLimiting("public");
 
+        app.MapGet("/api/player/{accountId}/bands/{bandType}", (
+            HttpContext httpContext,
+            string accountId,
+            string bandType,
+            string? combo,
+            GlobalLeaderboardPersistence persistence,
+            [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            if (!BandComboIds.IsValidBandType(bandType))
+                return Results.BadRequest(new { error = $"Unknown band type: {bandType}" });
+
+            var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
+            if (comboValidation.Error is not null)
+                return Results.BadRequest(new { error = comboValidation.Error });
+
+            var cacheKey = $"playerbands:{accountId}:{bandType}:{comboValidation.ComboId}";
+
+            {
+                var result = CacheHelper.ServeIfCached(httpContext, playerCache.Get(cacheKey));
+                if (result is not null) return result;
+            }
+
+            var payload = persistence.GetPlayerBandsByType(accountId, bandType, comboValidation.ComboId);
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = playerCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
+        })
+        .WithTags("Players")
+        .RequireRateLimiting("public");
+
         app.MapGet("/api/player/{accountId}/history", (
             HttpContext httpContext,
             string accountId,

@@ -137,6 +137,19 @@ export const defaultSongSettings = (): SongSettings => ({
   instrument: null,
 });
 
+export function normalizeSongSettings(settings: SongSettings): SongSettings {
+  if (settings.instrument !== null || !isInstrumentSortMode(settings.sortMode)) {
+    return settings;
+  }
+
+  const defaults = defaultSongSettings();
+  return {
+    ...settings,
+    sortMode: defaults.sortMode,
+    sortAscending: defaults.sortAscending,
+  };
+}
+
 export function loadSongSettings(): SongSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -144,7 +157,7 @@ export function loadSongSettings(): SongSettings {
     const parsed = JSON.parse(raw);
     // Merge with defaults to handle missing keys from older versions
     const defaults = defaultSongSettings();
-    return {
+    return normalizeSongSettings({
       sortMode: parsed.sortMode ?? defaults.sortMode,
       sortAscending: parsed.sortAscending ?? defaults.sortAscending,
       metadataOrder: migrateMetadataOrder(parsed.metadataOrder ?? defaults.metadataOrder),
@@ -154,7 +167,7 @@ export function loadSongSettings(): SongSettings {
         ...(parsed.filters ?? {}),
       },
       instrument: parsed.instrument ?? defaults.instrument,
-    };
+    });
   } catch {
     return defaultSongSettings();
   }
@@ -171,12 +184,10 @@ export function saveSongSettings(settings: SongSettings): void {
 export function resetSongSettingsForDeselect(): void {
   const current = loadSongSettings();
   const defaults = defaultSongSettings();
-  const updated: SongSettings = {
+  const updated = normalizeSongSettings({
     ...current,
     filters: defaults.filters,
     instrument: defaults.instrument,
-    sortMode: isInstrumentSortMode(current.sortMode) ? defaults.sortMode : current.sortMode,
-    sortAscending: isInstrumentSortMode(current.sortMode) ? defaults.sortAscending : current.sortAscending,
-  };
+  });
   saveSongSettings(updated);
 }

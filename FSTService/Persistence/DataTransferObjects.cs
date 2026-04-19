@@ -233,6 +233,18 @@ public sealed class PlayerBandsDto
 }
 
 /// <summary>
+/// Dedicated response for one player's bands within a single band type.
+/// </summary>
+public sealed class PlayerBandTypeResponseDto
+{
+    public string AccountId { get; init; } = "";
+    public string BandType { get; init; } = "";
+    public string? ComboId { get; init; }
+    public int TotalCount { get; init; }
+    public List<PlayerBandEntryDto> Entries { get; init; } = [];
+}
+
+/// <summary>
 /// One grouped band section (all/duos/trios/quads) with total count and preview entries.
 /// </summary>
 public sealed class PlayerBandGroupDto

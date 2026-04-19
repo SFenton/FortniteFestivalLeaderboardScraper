@@ -89,7 +89,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
             </NavLink>
           )}
           {/* v8 ignore start -- player-gated link */}
-          {player && flags.rivals && (
+          {player && (
             <NavLink to="/rivals" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               <span style={s.sidebarLinkIcon}><IoPeople size={20} /></span>
               {t('nav.rivals', 'Rivals')}

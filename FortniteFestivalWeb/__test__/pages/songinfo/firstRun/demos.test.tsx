@@ -16,6 +16,11 @@ vi.mock('../../../../src/hooks/chart/useChartDimensions', () => ({
   useChartDimensions: () => ({ chartContainerRef: { current: null }, containerWidth: 800, maxBars: mockMaxBars }),
 }));
 
+let mockContainerWidth = 0;
+vi.mock('../../../../src/hooks/ui/useContainerWidth', () => ({
+  useContainerWidth: () => mockContainerWidth,
+}));
+
 import ChartDemo from '../../../../src/pages/songinfo/firstRun/demo/ChartDemo';
 import BarSelectDemo from '../../../../src/pages/songinfo/firstRun/demo/BarSelectDemo';
 import TopScoresDemo from '../../../../src/pages/songinfo/firstRun/demo/TopScoresDemo';
@@ -30,6 +35,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   mockSlideHeight = 400;
   mockMaxBars = 10;
+  mockContainerWidth = 0;
 });
 
 afterEach(() => {
@@ -107,6 +113,24 @@ describe('TopScoresDemo', () => {
   it('renders view full leaderboard button', () => {
     wrap(<TopScoresDemo />);
     expect(screen.getByText('View full leaderboard')).toBeTruthy();
+  });
+
+  it('uses compact rows on narrow card widths', () => {
+    mockContainerWidth = 360;
+    wrap(<TopScoresDemo />);
+    expect(screen.queryByText('100%')).toBeNull();
+    expect(screen.getByText('486,500').style.width).toBe('');
+    expect(screen.queryByText('PickSlayer')).toBeNull();
+    const compactCta = screen.getByText('View full leaderboard');
+    expect(compactCta).toBeTruthy();
+    expect(compactCta.style.textAlign).toBe('center');
+  });
+
+  it('shows accuracy and keeps fixed score width on wider card widths', () => {
+    mockContainerWidth = 600;
+    wrap(<TopScoresDemo />);
+    expect(screen.getByText('100%')).toBeTruthy();
+    expect(screen.getByText('486,500').style.width).toBe('7ch');
   });
 });
 

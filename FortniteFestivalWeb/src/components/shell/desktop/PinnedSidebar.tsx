@@ -50,7 +50,7 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
           </NavLink>
         )}
         {/* v8 ignore start -- player-gated link */}
-        {player && flags.rivals && (
+        {player && (
           <NavLink to="/rivals" style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoPeople size={20} /></span>
             {t('nav.rivals', 'Rivals')}

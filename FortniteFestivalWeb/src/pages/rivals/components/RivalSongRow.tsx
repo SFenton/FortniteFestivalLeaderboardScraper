@@ -71,20 +71,20 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, sig, pla
           </div>
           <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} sig={sig} size={36} />
         </div>
-        <div style={st.compareRow}>
+        <div className={s.rivalSongCompareRow} style={st.compareRow}>
           <div style={{ ...st.entry, ...(userWins ? st.entryWin : {}) }}>
             <span style={st.entryName}>{playerName ?? t('rivals.detail.you')}</span>
             <span style={st.entryRank}>#{song.userRank.toLocaleString()}</span>
             <span style={st.entryScore}>{song.userScore != null ? song.userScore.toLocaleString() : ''}</span>
           </div>
-          <div style={st.deltaCenter}>
-            <div style={{ ...st.deltaPillGroup, ...st.deltaPillGroupRank }}>
+          <div className={s.rivalSongDeltaCenter} style={st.deltaCenter}>
+            <div className={`${s.rivalSongDeltaPillGroup} ${s.rivalSongDeltaPillGroupRank}`} style={st.deltaPillGroupRank}>
               <span style={deltaStyle}>
                 {rankDeltaText}
               </span>
               <span style={st.deltaLabel}>Rank</span>
             </div>
-            <div style={st.deltaPillGroup}>
+            <div className={s.rivalSongDeltaPillGroup}>
               <span style={scoreDiffStyle}>
                 {scoreDiffText}
               </span>
@@ -194,7 +194,6 @@ function useRivalSongRowStyles() {
       } as CSSProperties,
       compareRow: {
         display: Display.grid,
-        gridTemplateColumns: '1fr auto 1fr',
         columnGap: Gap.xl,
         padding: padding(Gap.sm, Gap.xl, Gap.md),
         position: Position.relative,
@@ -206,9 +205,7 @@ function useRivalSongRowStyles() {
         gap: Gap.md,
       } as CSSProperties,
       deltaPillGroup: {
-        ...flexColumn,
-        alignItems: Align.center,
-        gap: Gap.xs,
+        display: Display.flex,
       } as CSSProperties,
       deltaPillGroupRank: {} as CSSProperties,
       deltaLabel: {

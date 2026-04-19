@@ -9,38 +9,105 @@ import RivalRow from '../../components/RivalRow';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { DEMO_RIVALS_ABOVE, DEMO_RIVALS_BELOW } from '../../../../firstRun/demoData';
+import { useRivalsSharedStyles } from '../../useRivalsSharedStyles';
+import { useContainerWidth } from '../../../../hooks/ui/useContainerWidth';
 import {
   Colors, Font, Weight, Gap, Opacity, CssValue, PointerEvents, flexColumn,
   FADE_DURATION, DEMO_SWAP_INTERVAL_MS,
 } from '@festival/theme';
 
-const RIVAL_ROW_HEIGHT = 100;
+const COMPACT_RIVAL_ROW_HEIGHT = 100;
+const DEFAULT_RIVAL_ROW_HEIGHT = 76;
+const WIDE_RIVAL_ROW_HEIGHT = 60;
 const LABEL_HEIGHT = 28;
+const NARROW_ROW_BREAKPOINT = 380;
+const WIDE_ROW_BREAKPOINT = 620;
+const TWO_SECTION_BUFFER = 48;
 const NOOP = () => {};
+
+function estimateRivalRowHeight(containerWidth: number | undefined) {
+  if (!containerWidth || containerWidth <= NARROW_ROW_BREAKPOINT) {
+    return COMPACT_RIVAL_ROW_HEIGHT;
+  }
+
+  if (containerWidth >= WIDE_ROW_BREAKPOINT) {
+    return WIDE_RIVAL_ROW_HEIGHT;
+  }
+
+  return DEFAULT_RIVAL_ROW_HEIGHT;
+}
 
 export default function RivalsOverviewDemo() {
   const h = useSlideHeight();
   const s = useStyles();
+  const shared = useRivalsSharedStyles();
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const measuredWidth = useContainerWidth(wrapperRef);
+  const containerWidth = measuredWidth > 0
+    ? measuredWidth
+    : (typeof window !== 'undefined' ? window.innerWidth : undefined);
+  const rowHeightEstimate = estimateRivalRowHeight(containerWidth);
 
   const budget = h || 320;
-  const totalRows = Math.max(2, Math.floor((budget - 2 * LABEL_HEIGHT - 2 * Gap.md) / (RIVAL_ROW_HEIGHT + 2)));
+  const rowsWithSections = Math.floor((budget - 2 * LABEL_HEIGHT - 2 * Gap.md) / (rowHeightEstimate + 2));
+  const twoSectionHeight = 2 * rowHeightEstimate + 2 * LABEL_HEIGHT + 2 * Gap.md + TWO_SECTION_BUFFER;
+  const isCompactSingleCard = budget <= twoSectionHeight;
+  const totalRows = Math.max(2, rowsWithSections);
   const half = Math.ceil(totalRows / 2);
-  const aboveCount = Math.min(half, 3);
-  const belowCount = Math.min(totalRows - aboveCount, 3);
+  const aboveCount = isCompactSingleCard ? 1 : Math.min(half, 3);
+  const belowCount = isCompactSingleCard ? 1 : Math.min(totalRows - aboveCount, 3);
 
   const [above, setAbove] = useState<RivalSummary[]>(() => DEMO_RIVALS_ABOVE.slice(0, aboveCount));
   const [below, setBelow] = useState<RivalSummary[]>(() => DEMO_RIVALS_BELOW.slice(0, belowCount));
-  const [fadingGroup, setFadingGroup] = useState<'above' | 'below' | null>(null);
+  const [fadingGroup, setFadingGroup] = useState<'above' | 'below' | 'compact' | null>(null);
+  const [compactGroup, setCompactGroup] = useState<'above' | 'below'>('above');
   const nextGroupRef = useRef<'above' | 'below'>('above');
   const poolIdxRef = useRef({ above: aboveCount, below: belowCount });
+
+  const rotatePool = useCallback((group: 'above' | 'below') => {
+    const rivals = group === 'above' ? DEMO_RIVALS_ABOVE : DEMO_RIVALS_BELOW;
+    const count = group === 'above' ? aboveCount : belowCount;
+    const start = poolIdxRef.current[group];
+    const next = Array.from({ length: count }, (_, i) => rivals[(start + i) % rivals.length]!);
+
+    poolIdxRef.current[group] = (start + count) % rivals.length;
+    return next;
+  }, [aboveCount, belowCount]);
 
   // Resize: adjust visible count
   useEffect(() => {
     setAbove(prev => prev.length === aboveCount ? prev : DEMO_RIVALS_ABOVE.slice(0, aboveCount));
     setBelow(prev => prev.length === belowCount ? prev : DEMO_RIVALS_BELOW.slice(0, belowCount));
+    poolIdxRef.current = { above: aboveCount, below: belowCount };
   }, [aboveCount, belowCount]);
 
+  useEffect(() => {
+    if (isCompactSingleCard) {
+      setCompactGroup('above');
+    }
+  }, [isCompactSingleCard]);
+
   const rotate = useCallback(() => {
+    if (isCompactSingleCard) {
+      const currentGroup = compactGroup;
+      const nextGroup = currentGroup === 'above' ? 'below' : 'above';
+
+      setFadingGroup('compact');
+
+      setTimeout(() => {
+        if (currentGroup === 'above') {
+          setAbove(() => rotatePool('above'));
+        } else {
+          setBelow(() => rotatePool('below'));
+        }
+
+        setCompactGroup(nextGroup);
+        setFadingGroup(null);
+      }, FADE_DURATION);
+
+      return;
+    }
+
     const group = nextGroupRef.current;
     nextGroupRef.current = group === 'above' ? 'below' : 'above';
 
@@ -49,27 +116,13 @@ export default function RivalsOverviewDemo() {
 
     setTimeout(() => {
       if (group === 'above') {
-        setAbove(() => {
-          const start = poolIdxRef.current.above;
-          const next = Array.from({ length: aboveCount }, (_, i) =>
-            DEMO_RIVALS_ABOVE[(start + i) % DEMO_RIVALS_ABOVE.length]!,
-          );
-          poolIdxRef.current.above = (start + aboveCount) % DEMO_RIVALS_ABOVE.length;
-          return next;
-        });
+        setAbove(() => rotatePool('above'));
       } else {
-        setBelow(() => {
-          const start = poolIdxRef.current.below;
-          const next = Array.from({ length: belowCount }, (_, i) =>
-            DEMO_RIVALS_BELOW[(start + i) % DEMO_RIVALS_BELOW.length]!,
-          );
-          poolIdxRef.current.below = (start + belowCount) % DEMO_RIVALS_BELOW.length;
-          return next;
-        });
+        setBelow(() => rotatePool('below'));
       }
       setFadingGroup(null);
     }, FADE_DURATION);
-  }, [aboveCount, belowCount]);
+  }, [compactGroup, isCompactSingleCard, rotatePool]);
 
   useEffect(() => {
     const timer = setInterval(rotate, DEMO_SWAP_INTERVAL_MS);
@@ -77,13 +130,35 @@ export default function RivalsOverviewDemo() {
   }, [rotate]);
 
   let idx = 0;
+  const compactRivals = compactGroup === 'above' ? above : below;
+
+  if (isCompactSingleCard) {
+    return (
+      <div ref={wrapperRef} style={s.wrapper}>
+        <div
+          data-testid="rivals-fre-compact-list"
+          data-compact-direction={compactGroup}
+          style={{ ...shared.rivalList, ...(fadingGroup === 'compact' ? s.fading : s.visible) }}
+        >
+          {compactRivals.map(r => (
+            <FadeIn key={`${compactGroup}-${r.accountId}`} delay={(idx++) * 80}>
+              <RivalRow rival={r} direction={compactGroup} onClick={NOOP} />
+            </FadeIn>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={s.wrapper}>
+    <div ref={wrapperRef} style={s.wrapper}>
       <FadeIn delay={(idx++) * 80}>
         <span style={s.label}>Above You</span>
       </FadeIn>
-      <div style={{ ...s.list, ...(fadingGroup === 'above' ? s.fading : s.visible) }}>
+      <div
+        data-testid="rivals-fre-above-list"
+        style={{ ...shared.rivalList, ...(fadingGroup === 'above' ? s.fading : s.visible) }}
+      >
         {above.map(r => (
           <FadeIn key={r.accountId} delay={(idx++) * 80}>
             <RivalRow rival={r} direction="above" onClick={NOOP} />
@@ -93,7 +168,10 @@ export default function RivalsOverviewDemo() {
       <FadeIn delay={(idx++) * 80}>
         <span style={s.label}>Below You</span>
       </FadeIn>
-      <div style={{ ...s.list, ...(fadingGroup === 'below' ? s.fading : s.visible) }}>
+      <div
+        data-testid="rivals-fre-below-list"
+        style={{ ...shared.rivalList, ...(fadingGroup === 'below' ? s.fading : s.visible) }}
+      >
         {below.map(r => (
           <FadeIn key={r.accountId} delay={(idx++) * 80}>
             <RivalRow rival={r} direction="below" onClick={NOOP} />
@@ -118,10 +196,6 @@ function useStyles() {
         fontSize: Font.lg,
         fontWeight: Weight.bold,
         color: Colors.textPrimary,
-      } as CSSProperties,
-      list: {
-        ...flexColumn,
-        gap: 2,
       } as CSSProperties,
       visible: {
         transition: trans,

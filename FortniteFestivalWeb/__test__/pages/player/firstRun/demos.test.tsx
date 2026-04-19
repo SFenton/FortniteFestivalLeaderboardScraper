@@ -14,11 +14,12 @@ vi.mock('../../../../src/firstRun/SlideHeightContext', () => ({
 let mockIsMobile = false;
 let mockIsMobileChrome = false;
 let mockIsWideDesktop = true;
+let mockIsNarrow = false;
 vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsMobile: () => mockIsMobile,
   useIsMobileChrome: () => mockIsMobileChrome,
   useIsWideDesktop: () => mockIsWideDesktop,
-  useIsNarrow: () => false,
+  useIsNarrow: () => mockIsNarrow,
 }));
 
 // Mock useDemoSongs for TopSongsDemo
@@ -39,6 +40,9 @@ let mockDemoSongsResult: {
 vi.mock('../../../../src/hooks/data/useDemoSongs', () => ({
   useDemoSongs: () => mockDemoSongsResult,
   FADE_MS: 300,
+  fitRows: (containerHeight: number, rowHeight: number) => (containerHeight <= 0
+    ? 1
+    : Math.max(1, Math.floor((containerHeight + 4) / (rowHeight + 4)))),
   shuffle: <T,>(arr: readonly T[]): T[] => [...arr],
 }));
 
@@ -58,6 +62,7 @@ beforeEach(() => {
   mockIsMobile = false;
   mockIsMobileChrome = false;
   mockIsWideDesktop = true;
+  mockIsNarrow = false;
   mockDemoSongsResult = {
     rows: DEMO_SONGS,
     fadingIdx: new Set<number>(),
@@ -261,6 +266,25 @@ describe('TopSongsDemo', () => {
     wrap(<TopSongsDemo />);
     // Mobile renders same song rows — just verifying no crash
     expect(screen.getByText('Demo A')).toBeTruthy();
+  });
+
+  it('uses a taller row budget for narrow two-row mobile layouts', () => {
+    mockIsMobile = true;
+    mockIsNarrow = true;
+    mockSlideHeight = 260;
+    wrap(<TopSongsDemo />);
+    expect(screen.getByText('Demo A')).toBeTruthy();
+    expect(screen.getByText('Demo B')).toBeTruthy();
+    expect(screen.queryByText('Demo C')).toBeNull();
+  });
+
+  it('keeps the one-row budget on wider mobile layouts', () => {
+    mockIsMobile = true;
+    mockIsNarrow = false;
+    mockSlideHeight = 260;
+    wrap(<TopSongsDemo />);
+    expect(screen.getByText('Demo C')).toBeTruthy();
+    expect(screen.queryByText('Demo D')).toBeNull();
   });
 });
 

@@ -43,6 +43,7 @@ import {
   defaultSongSettings,
   defaultSongFilters,
   loadSongSettings,
+  normalizeSongSettings,
   saveSongSettings,
   SONG_SETTINGS_CHANGED_EVENT,
   isFilterActive,
@@ -96,7 +97,7 @@ export default function SongsPage() {
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   
   // Filter metadata keys by visibility settings (computed early for container-width detection)
-  /* v8 ignore start — metadata visibility: settings-dependent presentation filter */
+  /* v8 ignore start ï¿½ metadata visibility: settings-dependent presentation filter */
   const visibleMetadataOrder = useMemo(() => {
     const hidden = new Set<string>();
     if (!appSettings.metadataShowScore) hidden.add('score');
@@ -192,7 +193,7 @@ export default function SongsPage() {
 
   // Re-sync settings from localStorage when changed externally (e.g. PlayerPage card clicks)
   const savingRef = useRef(false);
-  /* v8 ignore start — external settings sync event listener */
+  /* v8 ignore start ï¿½ external settings sync event listener */
   useEffect(() => {
     const sync = () => {
       if (savingRef.current) return; // ignore self-triggered events
@@ -246,7 +247,7 @@ export default function SongsPage() {
   const applyFilter = () => {
     const { instrumentFilter, ...filters } = filterModal.draft;
     setInstrument(instrumentFilter ?? DEFAULT_INSTRUMENT);
-    setSettings(s => ({ ...s, filters, instrument: instrumentFilter }));
+    setSettings(s => normalizeSongSettings({ ...s, filters, instrument: instrumentFilter }));
     filterModal.close();
   };
   const resetFilter = () => {
@@ -260,7 +261,7 @@ export default function SongsPage() {
   const openFilterRef = useRef(openFilter);
   openSortRef.current = openSort;
   openFilterRef.current = openFilter;
-  /* v8 ignore start — FAB action registration callbacks */
+  /* v8 ignore start ï¿½ FAB action registration callbacks */
   useEffect(() => {
     fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
   }, [fabSearch]);
@@ -296,7 +297,7 @@ export default function SongsPage() {
   // Apply invalid-score substitution/dropping (same logic as filterPlayerScores but
   // also builds an invalidity map for the UI indicator, and exempts instruments where
   // the overThreshold filter is active so the user can inspect the raw values).
-  /* v8 ignore start — effectiveScores: invalid-score substitution */
+  /* v8 ignore start ï¿½ effectiveScores: invalid-score substitution */
   type InvalidReason = 'fallback' | 'no-fallback' | 'over-threshold';
   const { effectiveScores, invalidScoreMap } = useMemo(() => {
     const empty = { effectiveScores: [] as PlayerScore[], invalidScoreMap: new Map<string, Map<InstrumentKey, InvalidReason>>() };
@@ -355,7 +356,7 @@ export default function SongsPage() {
           if (!byInst) { byInst = new Map(); invalids.set(s.songId, byInst); }
           byInst.set(inst, 'fallback');
         } else {
-          // Invalid with no fallback — drop from effective scores
+          // Invalid with no fallback ï¿½ drop from effective scores
           let byInst = invalids.get(s.songId);
           if (!byInst) { byInst = new Map(); invalids.set(s.songId, byInst); }
           byInst.set(inst, 'no-fallback');
@@ -369,7 +370,7 @@ export default function SongsPage() {
   /* v8 ignore stop */
 
   // Build lookup: songId ? PlayerScore for the selected instrument
-  /* v8 ignore start — scoreMap: instrument filter loop */
+  /* v8 ignore start ï¿½ scoreMap: instrument filter loop */
   const scoreMap = useMemo(() => {
     if (!playerData) return new Map<string, PlayerScore>();
     const map = new Map<string, PlayerScore>();
@@ -382,7 +383,7 @@ export default function SongsPage() {
   }, [playerData, effectiveScores, instrument]);
   /* v8 ignore stop */
 
-  /* v8 ignore start — allScoreMap: multi-instrument lookup */
+  /* v8 ignore start ï¿½ allScoreMap: multi-instrument lookup */
   // Build a per-song, per-instrument lookup for filter logic
   const allScoreMap = useMemo(() => {
     if (!playerData) return new Map<string, Map<InstrumentKey, PlayerScore>>();
@@ -455,7 +456,7 @@ export default function SongsPage() {
   const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${instrument}|${JSON.stringify(settings.filters)}|${debouncedSearch}`;
   const prevSettingsKeyRef = useRef(settingsKey);
 
-  /* v8 ignore start — animation: stagger/re-stagger effects */
+  /* v8 ignore start ï¿½ animation: stagger/re-stagger effects */
   useEffect(() => {
     if (prevSettingsKeyRef.current === settingsKey) return;
     prevSettingsKeyRef.current = settingsKey;
@@ -516,7 +517,7 @@ export default function SongsPage() {
   const scrollContainerRef = useScrollContainer();
 
   // Scroll to top when content transitions in after a settings change (not on initial mount or back nav)
-  /* v8 ignore start — scroll reset on settings change */
+  /* v8 ignore start ï¿½ scroll reset on settings change */
   useEffect(() => {
     if (loadPhase === LoadPhase.ContentIn && isSettingsChangeRef.current) {
       isSettingsChangeRef.current = false;
@@ -589,7 +590,7 @@ export default function SongsPage() {
             metadataOrder: settings.metadataOrder,
             instrumentOrder: settings.instrumentOrder,
           }}
-          instrumentFilter={instrument}
+          instrumentFilter={settings.instrument}
           hasPlayer={!!playerData}
           hideItemShop={!isShopVisible}
           metadataVisibility={{
@@ -692,7 +693,7 @@ export default function SongsPage() {
                       metadataOrder={visibleMetadataOrder}
                       sortMode={settings.sortMode}
                       isMobile={songRowMobile}
-                      /* v8 ignore start — stagger delay calculation */
+                      /* v8 ignore start ï¿½ stagger delay calculation */
                       staggerDelay={shouldStagger && i < maxVisibleSongs ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
                       /* v8 ignore stop */
                       shopHighlight={isShopHighlighted(song.songId)}

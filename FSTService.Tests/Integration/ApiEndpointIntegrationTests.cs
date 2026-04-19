@@ -79,13 +79,13 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var response = await _client.GetAsync("/api/features");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        // Default config has all features OFF (no Features section in test config)
-        Assert.False(json.GetProperty("rivals").GetBoolean());
+        // Default config keeps the remaining optional features OFF.
         Assert.False(json.GetProperty("compete").GetBoolean());
         Assert.False(json.GetProperty("leaderboards").GetBoolean());
-        Assert.False(json.GetProperty("firstRun").GetBoolean());
         Assert.False(json.GetProperty("difficulty").GetBoolean());
         Assert.False(json.GetProperty("playerBands").GetBoolean());
+        Assert.False(json.TryGetProperty("rivals", out _));
+        Assert.False(json.TryGetProperty("firstRun", out _));
     }
 
     // ─── Progress ───────────────────────────────────────────────
@@ -1480,6 +1480,119 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
     }
 
+    [Fact]
+    public async Task ApiPlayerBandsByType_ReturnsBandsForRequestedType()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+        metaDb.InsertAccountIds(["typedAcct", "typedMate1", "typedMate2", "typedMate3"]);
+        metaDb.InsertAccountNames([
+            ("typedAcct", (string?)"Typed Player"),
+            ("typedMate1", (string?)"Typed Mate One"),
+            ("typedMate2", (string?)"Typed Mate Two"),
+            ("typedMate3", (string?)"Typed Mate Three"),
+        ]);
+
+        SeedBandRows(dataSource, "typed_song_1", "Band_Duets", "typedAcct:typedMate1", "0:1", (0, "typedAcct", 0), (1, "typedMate1", 1));
+        SeedBandRows(dataSource, "typed_song_2", "Band_Duets", "typedAcct:typedMate2", "0:3", (0, "typedAcct", 0), (1, "typedMate2", 3));
+        SeedBandRows(dataSource, "typed_song_3", "Band_Trios", "typedAcct:typedMate1:typedMate3", "0:1:3", (0, "typedAcct", 0), (1, "typedMate1", 1), (2, "typedMate3", 3));
+
+        var response = await _client.GetAsync("/api/player/typedAcct/bands/Band_Duets");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.ETag is not null);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("typedAcct", json.GetProperty("accountId").GetString());
+        Assert.Equal("Band_Duets", json.GetProperty("bandType").GetString());
+        Assert.Equal(2, json.GetProperty("totalCount").GetInt32());
+
+        var entries = json.GetProperty("entries");
+        Assert.Equal(2, entries.GetArrayLength());
+        Assert.All(entries.EnumerateArray(), entry => Assert.Equal("Band_Duets", entry.GetProperty("bandType").GetString()));
+    }
+
+    [Fact]
+    public async Task ApiPlayerBandsByType_FiltersByCombo()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+        metaDb.InsertAccountIds(["comboAcct", "comboMate1", "comboMate2", "comboMate3"]);
+        metaDb.InsertAccountNames([
+            ("comboAcct", (string?)"Combo Player"),
+            ("comboMate1", (string?)"Combo Mate One"),
+            ("comboMate2", (string?)"Combo Mate Two"),
+            ("comboMate3", (string?)"Combo Mate Three"),
+        ]);
+
+        SeedBandRows(dataSource, "combo_song_1", "Band_Duets", "comboAcct:comboMate1", "0:1", (0, "comboAcct", 0), (1, "comboMate1", 1));
+        SeedBandRows(dataSource, "combo_song_2", "Band_Duets", "comboAcct:comboMate1", "1:3", (0, "comboAcct", 3), (1, "comboMate1", 1));
+        SeedBandRows(dataSource, "combo_song_3", "Band_Duets", "comboAcct:comboMate2", "0:1", (0, "comboAcct", 0), (1, "comboMate2", 1));
+        SeedBandRows(dataSource, "combo_song_4", "Band_Duets", "comboAcct:comboMate3", "0:3", (0, "comboAcct", 0), (1, "comboMate3", 3));
+
+        var response = await _client.GetAsync("/api/player/comboAcct/bands/Band_Duets?combo=Solo_Guitar+Solo_Bass");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Solo_Guitar+Solo_Bass", json.GetProperty("comboId").GetString());
+        Assert.Equal(2, json.GetProperty("totalCount").GetInt32());
+
+        var entries = json.GetProperty("entries");
+        Assert.Equal(2, entries.GetArrayLength());
+
+        var filteredTeam = entries
+            .EnumerateArray()
+            .Single(entry => string.Equals(entry.GetProperty("teamKey").GetString(), "comboAcct:comboMate1", StringComparison.Ordinal));
+        var playerMember = filteredTeam.GetProperty("members")
+            .EnumerateArray()
+            .Single(member => string.Equals(member.GetProperty("accountId").GetString(), "comboAcct", StringComparison.Ordinal));
+        var instruments = playerMember.GetProperty("instruments")
+            .EnumerateArray()
+            .Select(value => value.GetString())
+            .ToArray();
+
+        Assert.Contains("Solo_Guitar", instruments);
+        Assert.DoesNotContain("Solo_Vocals", instruments);
+    }
+
+    [Fact]
+    public async Task ApiPlayerBandsByType_ReturnsBadRequest_ForUnknownBandType()
+    {
+        var response = await _client.GetAsync("/api/player/anyAcct/bands/BadType");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("Unknown band type", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task ApiPlayerBandsByType_ReturnsBadRequest_ForComboSizeMismatch()
+    {
+        var response = await _client.GetAsync("/api/player/anyAcct/bands/Band_Duets?combo=Solo_Guitar+Solo_Bass+Solo_Drums");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Combo size does not match band type Band_Duets.", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task ApiPlayerBandsByType_ReturnsEmptyResult_WhenPlayerHasNoBands()
+    {
+        var response = await _client.GetAsync("/api/player/emptyAcct/bands/Band_Quad");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("emptyAcct", json.GetProperty("accountId").GetString());
+        Assert.Equal("Band_Quad", json.GetProperty("bandType").GetString());
+        Assert.Equal(0, json.GetProperty("totalCount").GetInt32());
+        Assert.Equal(0, json.GetProperty("entries").GetArrayLength());
+    }
+
     // ═══ Leaderboard Combined Count ═════════════════════════════
 
     [Fact]
@@ -1531,6 +1644,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         string teamKey,
         params (int MemberIndex, string AccountId, int InstrumentId)[] members)
     {
+        SeedBandRows(dataSource, songId, bandType, teamKey, "", members);
+    }
+
+    private static void SeedBandRows(
+        NpgsqlDataSource dataSource,
+        string songId,
+        string bandType,
+        string teamKey,
+        string instrumentCombo,
+        params (int MemberIndex, string AccountId, int InstrumentId)[] members)
+    {
         using var conn = dataSource.OpenConnection();
 
         foreach (var member in members)
@@ -1541,9 +1665,11 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 VALUES (@songId, @bandType, @teamKey, '', @memberIndex, @accountId, @instrumentId)
                 ON CONFLICT DO NOTHING
                 """;
+            memberCmd.CommandText = memberCmd.CommandText.Replace("''", "@instrumentCombo");
             memberCmd.Parameters.AddWithValue("songId", songId);
             memberCmd.Parameters.AddWithValue("bandType", bandType);
             memberCmd.Parameters.AddWithValue("teamKey", teamKey);
+            memberCmd.Parameters.AddWithValue("instrumentCombo", instrumentCombo);
             memberCmd.Parameters.AddWithValue("memberIndex", member.MemberIndex);
             memberCmd.Parameters.AddWithValue("accountId", member.AccountId);
             memberCmd.Parameters.AddWithValue("instrumentId", member.InstrumentId);
@@ -1555,10 +1681,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 VALUES (@accountId, @songId, @bandType, @teamKey, '')
                 ON CONFLICT DO NOTHING
                 """;
+            lookupCmd.CommandText = lookupCmd.CommandText.Replace("''", "@instrumentCombo");
             lookupCmd.Parameters.AddWithValue("accountId", member.AccountId);
             lookupCmd.Parameters.AddWithValue("songId", songId);
             lookupCmd.Parameters.AddWithValue("bandType", bandType);
             lookupCmd.Parameters.AddWithValue("teamKey", teamKey);
+            lookupCmd.Parameters.AddWithValue("instrumentCombo", instrumentCombo);
             lookupCmd.ExecuteNonQuery();
         }
     }

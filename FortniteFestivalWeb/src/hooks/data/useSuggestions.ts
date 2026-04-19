@@ -3,7 +3,6 @@ import { SuggestionGenerator } from '@festival/core/suggestions/suggestionGenera
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import type { Song as CoreSong, LeaderboardData } from '@festival/core/models';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { api } from '../../api/client';
 import { buildRivalDataIndexFromRivalsAll } from '../../utils/suggestionAdapter';
 import { deriveComboFromSettings } from '../../pages/rivals/helpers/comboUtils';
@@ -26,7 +25,6 @@ export function useSuggestions(
   scoresIndex: Record<string, LeaderboardData>,
   currentSeason = 0,
 ) {
-  const flags = useFeatureFlags();
   const { settings } = useSettings();
 
   // Restore from cache if same account
@@ -95,10 +93,10 @@ export function useSuggestions(
   // eslint-disable-next-line react-hooks/exhaustive-deps -- currentSeason only needed at init
   }, [accountId, coreSongs, scoresIndex]);
 
-  // Fetch rival data when rivals feature is enabled and inject into generator
+  // Fetch rival data and inject into the generator when it becomes ready.
   const rivalDataInjectedRef = useRef(false);
   useEffect(() => {
-    if (!flags.rivals || !generatorRef.current || rivalDataInjectedRef.current) return;
+    if (!generatorRef.current || rivalDataInjectedRef.current) return;
 
     let cancelled = false;
     const combo = deriveComboFromSettings(settings) ?? undefined;
@@ -115,8 +113,8 @@ export function useSuggestions(
       });
 
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- only run once after generator init
-  }, [accountId, flags.rivals, generatorRef.current]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- inject once after generator init using the current settings snapshot
+  }, [accountId, settings, generatorRef.current]);
 
   const loadMore = useCallback(() => {
     const gen = generatorRef.current;

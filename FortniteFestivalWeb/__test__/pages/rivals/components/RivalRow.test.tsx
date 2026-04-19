@@ -76,6 +76,21 @@ describe('RivalRow', () => {
     expect(screen.getByText(/5/)).toBeDefined(); // aheadCount → songs behind
   });
 
+  it('wires the shared compact-layout classes onto the inner row elements', () => {
+    render(<RivalRow rival={makeRival()} direction="below" onClick={vi.fn()} />);
+
+    const content = screen.getByText('TestRival').closest('div') as HTMLElement;
+    const shared = screen.getByText('10 shared songs') as HTMLElement;
+    const pillRow = screen.getByText(/7/).closest('div') as HTMLElement;
+
+    expect(content.className).toContain('rivalRowContent');
+    expect(shared.className).toContain('rivalRowShared');
+    expect(pillRow.className).toContain('rivalRowPillRow');
+    expect(content.style.gridTemplateColumns).toBe('');
+    expect(shared.style.gridColumn).toBe('');
+    expect(pillRow.style.gridRow).toBe('');
+  });
+
   it('forwards style and onAnimationEnd', () => {
     const onAnimEnd = vi.fn();
     const { container } = render(

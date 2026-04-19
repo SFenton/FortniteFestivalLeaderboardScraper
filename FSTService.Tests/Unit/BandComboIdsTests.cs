@@ -28,4 +28,22 @@ public sealed class BandComboIdsTests
         Assert.True(success);
         Assert.Equal("Solo_Guitar+Solo_Bass", comboId);
     }
+
+    [Fact]
+    public void TryNormalizeForBandType_AcceptsMatchingComboSize()
+    {
+        var (comboId, error) = BandComboIds.TryNormalizeForBandType("Band_Duets", "Solo_Bass+Solo_Guitar");
+
+        Assert.Null(error);
+        Assert.Equal("Solo_Guitar+Solo_Bass", comboId);
+    }
+
+    [Fact]
+    public void TryNormalizeForBandType_RejectsMismatchedComboSize()
+    {
+        var (comboId, error) = BandComboIds.TryNormalizeForBandType("Band_Duets", "Solo_Guitar+Solo_Bass+Solo_Drums");
+
+        Assert.Null(comboId);
+        Assert.Equal("Combo size does not match band type Band_Duets.", error);
+    }
 }

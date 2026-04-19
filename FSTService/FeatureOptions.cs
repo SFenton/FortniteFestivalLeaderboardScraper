@@ -1,21 +1,15 @@
 namespace FSTService;
 
 /// <summary>
-/// Feature flags controlling which UI features are enabled.
+/// Feature flags controlling optional UI features and rollout-dependent capabilities.
 /// Loaded from appsettings.json / environment variables.
 /// </summary>
 public sealed class FeatureOptions
 {
     public const string Section = "Features";
 
-    /// <summary>Rivals pages and navigation links.</summary>
-    public bool Rivals { get; set; }
-
     /// <summary>Leaderboards overview and full rankings pages.</summary>
     public bool Leaderboards { get; set; }
-
-    /// <summary>First-run experience carousels on every page.</summary>
-    public bool FirstRun { get; set; }
 
     /// <summary>Difficulty pill on leaderboard and score history rows.</summary>
     public bool Difficulty { get; set; }
@@ -39,8 +33,8 @@ public sealed class FeatureOptions
     public bool UseRankingDeltaTiers { get; set; } = true;
 
     /// <summary>
-    /// Compete page — derived from <see cref="Rivals"/> AND <see cref="Leaderboards"/>.
-    /// CompetePage links to both rivals and rankings; if either is off, compete is off.
+    /// Compete page — derived from <see cref="Leaderboards"/>.
+    /// Rivals are always available; Compete stays gated by the leaderboards rollout.
     /// </summary>
-    public bool Compete => Rivals && Leaderboards;
+    public bool Compete => Leaderboards;
 }

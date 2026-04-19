@@ -62,9 +62,8 @@ public class ScraperOptionsAndModelsTests
     {
         var opts = new FeatureOptions();
 
-        Assert.False(opts.Rivals);
         Assert.False(opts.Leaderboards);
-        Assert.False(opts.FirstRun);
+        Assert.False(opts.Compete);
     }
 
     [Fact]
@@ -74,30 +73,12 @@ public class ScraperOptionsAndModelsTests
     }
 
     [Fact]
-    public void FeatureOptions_Compete_IsDerived_BothOn()
+    public void FeatureOptions_Compete_IsDerived_FromLeaderboards()
     {
-        var opts = new FeatureOptions { Rivals = true, Leaderboards = true };
+        var opts = new FeatureOptions { Leaderboards = true };
         Assert.True(opts.Compete);
-    }
 
-    [Fact]
-    public void FeatureOptions_Compete_IsDerived_RivalsOff()
-    {
-        var opts = new FeatureOptions { Rivals = false, Leaderboards = true };
-        Assert.False(opts.Compete);
-    }
-
-    [Fact]
-    public void FeatureOptions_Compete_IsDerived_LeaderboardsOff()
-    {
-        var opts = new FeatureOptions { Rivals = true, Leaderboards = false };
-        Assert.False(opts.Compete);
-    }
-
-    [Fact]
-    public void FeatureOptions_Compete_IsDerived_BothOff()
-    {
-        var opts = new FeatureOptions { Rivals = false, Leaderboards = false };
+        opts.Leaderboards = false;
         Assert.False(opts.Compete);
     }
 

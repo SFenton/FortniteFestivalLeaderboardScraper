@@ -136,6 +136,24 @@ describe('RivalSongRow', () => {
       expect(row.style.opacity).toBe('0');
     });
 
+    it('applies compact standalone layout hooks without inline overrides that would block container queries', () => {
+      const { container } = render(<RivalSongRow song={makeSong()} onClick={vi.fn()} standalone />);
+
+      const compareRow = container.querySelector('.rivalSongCompareRow, [class*="rivalSongCompareRow"]') as HTMLElement;
+      const deltaCenter = container.querySelector('.rivalSongDeltaCenter, [class*="rivalSongDeltaCenter"]') as HTMLElement;
+      const pillGroups = container.querySelectorAll('.rivalSongDeltaPillGroup, [class*="rivalSongDeltaPillGroup"]');
+      const rankGroup = container.querySelector('.rivalSongDeltaPillGroupRank, [class*="rivalSongDeltaPillGroupRank"]') as HTMLElement;
+
+      expect(compareRow).toBeTruthy();
+      expect(compareRow.style.gridTemplateColumns).toBe('');
+      expect(deltaCenter).toBeTruthy();
+      expect(rankGroup).toBeTruthy();
+      expect(pillGroups.length).toBeGreaterThanOrEqual(2);
+      Array.from(pillGroups).forEach(group => {
+        expect((group as HTMLElement).style.flexDirection).toBe('');
+      });
+    });
+
     it('renders songId when title is null', () => {
       render(<RivalSongRow song={makeSong({ title: undefined, songId: 'my-song-id' })} onClick={vi.fn()} standalone />);
       expect(screen.getByText('my-song-id')).toBeDefined();
