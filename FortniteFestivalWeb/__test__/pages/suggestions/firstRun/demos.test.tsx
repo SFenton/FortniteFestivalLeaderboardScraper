@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { stubResizeObserver } from '../../../helpers/browserStubs';
 import { TestProviders } from '../../../helpers/TestProviders';
 
@@ -13,11 +13,12 @@ vi.mock('../../../../src/firstRun/SlideHeightContext', () => ({
 // Controllable mobile/desktop mocks
 let mockIsMobile = false;
 let mockIsMobileChrome = false;
+let mockIsNarrow = false;
 vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsMobile: () => mockIsMobile,
   useIsMobileChrome: () => mockIsMobileChrome,
   useIsWideDesktop: () => true,
-  useIsNarrow: () => false,
+  useIsNarrow: () => mockIsNarrow,
 }));
 
 // Mock useFestival to provide demo songs with albumArt for CategoryCardDemo and InfiniteScrollDemo
@@ -66,14 +67,44 @@ beforeEach(() => {
   mockSlideHeight = 400;
   mockIsMobile = false;
   mockIsMobileChrome = false;
+  mockIsNarrow = false;
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 function wrap(ui: React.ReactElement) {
   return render(ui, { wrapper: TestProviders });
+}
+
+function makeRect(height: number, width = 360) {
+  return {
+    top: 0,
+    left: 0,
+    bottom: height,
+    right: width,
+    width,
+    height,
+    x: 0,
+    y: 0,
+    toJSON() { return this; },
+  };
+}
+
+function stubSuggestionCardMeasurement() {
+  return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function(this: HTMLElement) {
+    if (this.dataset.testid !== 'suggestions-fre-category-card') {
+      return makeRect(0, 0);
+    }
+
+    const songCount = Number(this.dataset.songCount ?? 0);
+    const templateKey = this.dataset.templateKey ?? '';
+    const headerHeight = templateKey === 'pct_push_bass' ? 160 : 116;
+    const rowHeight = mockIsNarrow && templateKey !== 'unplayed_drums' ? 88 : 52;
+    return makeRect(headerHeight + songCount * rowHeight);
+  });
 }
 
 /* ── CategoryCardDemo ── */
@@ -112,9 +143,35 @@ describe('CategoryCardDemo', () => {
 
   it('handles very small height (1 song minimum)', () => {
     mockSlideHeight = 100;
-    // (100-96)/52 = 0.07 → max(1, floor) = 1
     wrap(<CategoryCardDemo />);
     expect(screen.getByText('Finish the Lead FCs')).toBeTruthy();
+  });
+
+  it('trims narrow two-row cards until the measured height fits', () => {
+    mockIsMobile = true;
+    mockIsNarrow = true;
+    mockSlideHeight = 320;
+    stubSuggestionCardMeasurement();
+
+    const { container } = wrap(<CategoryCardDemo />);
+    const songLinks = container.querySelectorAll('a[href^="/songs/"]');
+
+    expect(songLinks).toHaveLength(1);
+  });
+
+  it('recalculates the visible song count when the next template has a taller header', () => {
+    mockSlideHeight = 415;
+    stubSuggestionCardMeasurement();
+
+    const { container } = wrap(<CategoryCardDemo />);
+    expect(container.querySelectorAll('a[href^="/songs/"]')).toHaveLength(5);
+
+    act(() => {
+      vi.advanceTimersByTime(6000);
+    });
+
+    expect(container.querySelector('[data-template-key="pct_push_bass"]')).toBeTruthy();
+    expect(container.querySelectorAll('a[href^="/songs/"]')).toHaveLength(3);
   });
 });
 
@@ -161,6 +218,15 @@ describe('GlobalFilterDemo', () => {
     // max(1, floor(10/56)) = max(1, 0) = 1
     wrap(<GlobalFilterDemo />);
     expect(screen.getByText('Near FC')).toBeTruthy();
+  });
+
+  it('reserves extra breathing room on mobile by showing fewer toggles', () => {
+    mockIsMobile = true;
+    mockSlideHeight = 360;
+    wrap(<GlobalFilterDemo />);
+
+    expect(screen.getByText('Variety Pack')).toBeTruthy();
+    expect(screen.queryByText('Artist Essentials')).toBeNull();
   });
 });
 
@@ -278,5 +344,24 @@ describe('InstrumentFilterDemo', () => {
     fireEvent.click(screen.getByTitle('Lead'));
     // Toggles should disappear since no instrument is selected
     expect(screen.queryByText('Near FC')).toBeNull();
+  });
+
+  it('shows fewer per-instrument toggles on mobile to preserve title space', () => {
+    mockIsMobile = true;
+    mockSlideHeight = 350;
+    wrap(<InstrumentFilterDemo />);
+
+    expect(screen.getByText('Per-Instrument Types')).toBeTruthy();
+    expect(screen.getByText('Unplayed')).toBeTruthy();
+    expect(screen.queryByText('Variety Pack')).toBeNull();
+  });
+
+  it('drops the per-instrument header on tighter mobile heights before overflowing', () => {
+    mockIsMobile = true;
+    mockSlideHeight = 200;
+    wrap(<InstrumentFilterDemo />);
+
+    expect(screen.queryByText('Per-Instrument Types')).toBeNull();
+    expect(screen.getByText('Near FC')).toBeTruthy();
   });
 });

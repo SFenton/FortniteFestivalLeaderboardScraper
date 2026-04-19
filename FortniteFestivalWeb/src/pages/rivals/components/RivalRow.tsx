@@ -33,12 +33,12 @@ const RivalRow = memo(function RivalRow({ rival, direction, onClick, style, onAn
       onKeyDown={e => { if (e.key === 'Enter') onClick(); }}
       onAnimationEnd={onAnimationEnd}
     >
-      <div style={st.content}>
+      <div className={s.rivalRowContent} style={st.content}>
         <span style={st.name}>
           {name}
         </span>
-        <span style={st.shared}>{t('rivals.sharedSongs', { count: rival.sharedSongCount })}</span>
-        <div style={st.pillRow}>
+        <span className={s.rivalRowShared} style={st.shared}>{t('rivals.sharedSongs', { count: rival.sharedSongCount })}</span>
+        <div className={s.rivalRowPillRow} style={st.pillRow}>
           <span style={st.pillAhead}>{rival.behindCount} {t('rivals.songsAhead', 'songs ahead')}</span>
           <span style={st.pillBehind}>{rival.aheadCount} {t('rivals.songsBehind', 'songs behind')}</span>
         </div>
@@ -77,8 +77,6 @@ function useRivalRowStyles() {
         flex: 1,
         minWidth: 0,
         display: Display.grid,
-        gridTemplateColumns: '1fr auto',
-        gridTemplateRows: 'auto auto',
         gap: padding(Gap.md, Gap.xl),
         position: Position.relative,
         zIndex: 1,
@@ -97,8 +95,6 @@ function useRivalRowStyles() {
         fontWeight: Weight.semibold,
         color: Colors.textPrimary,
         whiteSpace: WhiteSpace.nowrap,
-        gridColumn: '2',
-        gridRow: '1',
         alignSelf: Align.baseline,
         padding: padding(0, Gap.xs),
       } as CSSProperties,
@@ -106,8 +102,6 @@ function useRivalRowStyles() {
         display: Display.flex,
         justifyContent: Justify.between,
         gap: Gap.sm,
-        gridColumn: '1 / -1',
-        gridRow: '2',
       } as CSSProperties,
       pillAhead: {
         ...pillBase,

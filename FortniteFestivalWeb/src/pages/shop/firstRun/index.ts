@@ -5,6 +5,10 @@ import ShopViewsDemo from './demo/ShopViewsDemo';
 import ShopHighlightingDemo from './demo/ShopHighlightingDemo';
 import ShopLeavingTomorrowDemo from './demo/ShopLeavingTomorrowDemo';
 
+type ShopSlidesOptions = {
+  viewToggleAvailable: boolean;
+};
+
 const shopOverviewSlide: FirstRunSlideDef = {
   id: 'shop-overview',
   version: 2,
@@ -43,9 +47,11 @@ const shopLeavingTomorrowSlide: FirstRunSlideDef = {
   contentStaggerCount: 5,
 };
 
-export const shopSlides: FirstRunSlideDef[] = [
-  shopOverviewSlide,
-  shopViewsSlide,
-  shopHighlightingSlide,
-  shopLeavingTomorrowSlide,
-];
+export function shopSlides({ viewToggleAvailable }: ShopSlidesOptions): FirstRunSlideDef[] {
+  return [
+    shopOverviewSlide,
+    ...(viewToggleAvailable ? [shopViewsSlide] : []),
+    shopHighlightingSlide,
+    shopLeavingTomorrowSlide,
+  ];
+}

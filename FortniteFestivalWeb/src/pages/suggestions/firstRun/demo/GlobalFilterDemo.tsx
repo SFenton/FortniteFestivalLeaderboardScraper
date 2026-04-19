@@ -8,11 +8,18 @@ import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterCon
 import { Layout } from '@festival/theme';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
+import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
+
+const MOBILE_FIT_BUFFER = Layout.filterToggleRowHeight + Layout.filterHeaderHeight;
 
 export default function GlobalFilterDemo() {
   const h = useSlideHeight();
+  const isMobile = useIsMobile();
+  const availableHeight = h
+    ? Math.max(0, h - (isMobile ? MOBILE_FIT_BUFFER : 0))
+    : 0;
   const maxToggles = h
-    ? Math.max(1, Math.floor(h / Layout.filterToggleRowHeight))
+    ? Math.max(1, Math.floor(availableHeight / Layout.filterToggleRowHeight))
     : SUGGESTION_TYPES.length;
 
   const [toggleState, setToggleState] = useState<Record<string, boolean>>(() => {

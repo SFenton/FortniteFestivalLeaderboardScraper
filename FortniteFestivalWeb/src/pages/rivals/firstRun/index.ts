@@ -15,7 +15,7 @@ const rivalsOverviewSlide: FirstRunSlideDef = {
 
 const rivalsInstrumentsSlide: FirstRunSlideDef = {
   id: 'rivals-instruments',
-  version: 2,
+  version: 3,
   title: 'firstRun.rivals.instruments.title',
   description: 'firstRun.rivals.instruments.description',
   render: () => createElement(RivalsInstrumentsDemo),
@@ -24,7 +24,7 @@ const rivalsInstrumentsSlide: FirstRunSlideDef = {
 
 const rivalsDetailSlide: FirstRunSlideDef = {
   id: 'rivals-detail',
-  version: 2,
+  version: 3,
   title: 'firstRun.rivals.detail.title',
   description: 'firstRun.rivals.detail.description',
   render: () => createElement(RivalsDetailDemo),

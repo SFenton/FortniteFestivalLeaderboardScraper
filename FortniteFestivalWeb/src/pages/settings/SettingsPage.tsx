@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
 import { ToggleRow } from '../../components/common/ToggleRow';
 import { RadioRow } from '../../components/common/RadioRow';
 import SectionHeader from '../../components/common/SectionHeader';
@@ -14,7 +15,7 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION } from '@festival/theme';
+import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
 import { FrostedCard } from '../../components/common/FrostedCard';
@@ -179,6 +180,7 @@ export default function SettingsPage() {
   const flags = useFeatureFlags();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
+  const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Register first-run slides so replay is always available from Settings
@@ -187,6 +189,7 @@ export default function SettingsPage() {
   const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobileChrome), [isMobileChrome]);
   const playerHistorySlidesMemo = useMemo(() => playerHistorySlides(isMobileChrome), [isMobileChrome]);
   const statisticsSlidesMemo = useMemo(() => statisticsSlides(isMobileChrome), [isMobileChrome]);
+  const shopSlidesMemo = useMemo(() => shopSlides({ viewToggleAvailable: !isNarrowGrid }), [isNarrowGrid]);
   useRegisterFirstRun('songs', t('nav.songs'), songsSlidesMemo);
   useRegisterFirstRun('songinfo', t('nav.songInfo', 'Song Info'), songInfoSlidesMemo);
   useRegisterFirstRun('playerhistory', t('history.title'), playerHistorySlidesMemo);
@@ -195,7 +198,7 @@ export default function SettingsPage() {
   useRegisterFirstRun('leaderboards', t('nav.leaderboards'), leaderboardsSlides);
   useRegisterFirstRun('compete', t('nav.compete'), competeSlides);
   useRegisterFirstRun('rivals', t('rivals.title'), rivalsSlides);
-  useRegisterFirstRun('shop', t('nav.shop'), shopSlides);
+  useRegisterFirstRun('shop', t('nav.shop'), shopSlidesMemo);
   const songsReplay = useFirstRunReplay('songs');
   const songInfoReplay = useFirstRunReplay('songinfo');
   const statsReplay = useFirstRunReplay('statistics');
@@ -507,7 +510,6 @@ export default function SettingsPage() {
           </FadeInDiv>
 
           {/* ── First Run Guides ── */}
-          {flags.firstRun && (
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <SectionHeader title={t('firstRun.settings.showFirstRunTitle')} description={t('firstRun.settings.showFirstRunHint')} />
           <Card>
@@ -557,14 +559,12 @@ export default function SettingsPage() {
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
             )}
-            {flags.rivals && (
             <button style={modalCss.toggleRowSmallerGap} onClick={rivalsReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('rivals.title')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            )}
             <button style={modalCss.toggleRowSmallerGap} onClick={shopReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.shop')}</div>
@@ -573,7 +573,6 @@ export default function SettingsPage() {
             </button>
           </Card>
           </FadeInDiv>
-          )}
 
           {/* ── Reset ── */}
           <FadeInDiv delay={stagger(staggerIndex)}>

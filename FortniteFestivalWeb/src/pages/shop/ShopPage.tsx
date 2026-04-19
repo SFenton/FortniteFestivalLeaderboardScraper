@@ -50,6 +50,7 @@ export default function ShopPage() {
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(loadViewMode);
   const isNarrow = useMediaQuery(QUERY_NARROW_GRID);
+  const shopSlidesMemo = useMemo(() => shopSlides({ viewToggleAvailable: !isNarrow }), [isNarrow]);
   const effectiveView = isNarrow ? 'list' : viewMode;
   const [staggerGen, setStaggerGen] = useState(0);
   const shopStyles = useShopPageStyles();
@@ -144,7 +145,7 @@ export default function ShopPage() {
       staggerRushRef={staggerRushRef}
       scrollDeps={[loadPhase, shopSongs]}
       loadPhase={loadPhase}
-      firstRun={{ key: 'shop', label: t('nav.shop'), slides: shopSlides, gateContext: firstRunGateCtx }}
+      firstRun={{ key: 'shop', label: t('nav.shop'), slides: shopSlidesMemo, gateContext: firstRunGateCtx }}
       before={
         isMobileChrome ? undefined : (
         <PageHeader
