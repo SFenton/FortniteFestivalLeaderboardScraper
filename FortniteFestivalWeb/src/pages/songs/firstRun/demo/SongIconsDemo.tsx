@@ -10,9 +10,9 @@ import SongInfo from '../../../../components/songs/metadata/SongInfo';
 import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';
 import { useContainerWidth } from '../../../../hooks/ui/useContainerWidth';
 import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
-import { Align, CssValue, Display, Gap, Layout, flexColumn } from '@festival/theme';
+import { Align, CssValue, Display, Gap, Layout, Size, flexColumn } from '@festival/theme';
 import { useDemoSongs } from '../../../../hooks/data/useDemoSongs';
-import { resolveInstrumentChipRows, splitInstrumentRows } from '../../layoutMode';
+import { resolveInstrumentChipRows, splitInstrumentRows, type InstrumentChipRowCount } from '../../layoutMode';
 import { DemoSongRow } from './DemoSongRow';
 import { instrumentStatusRow, mobileTopRow as mobileTopRowStyle } from '../../../../styles/songRowStyles';
 
@@ -20,6 +20,8 @@ type DemoScore = { hasScore: boolean; isFC: boolean };
 
 const ROW_HEIGHT_DESKTOP = Layout.demoRowHeight;
 const ROW_HEIGHT_MOBILE = Layout.demoRowMobileIconsHeight;
+const ROW_HEIGHT_THREE_ROWS = Layout.demoRowMobileIconsHeight + 44;
+const DESKTOP_ICON_ROW_RESERVED_WIDTH = Size.thumb + 200 + Gap.xl * 2;
 const containerStyle = { width: CssValue.full, ...flexColumn, gap: Gap.sm };
 
 /* v8 ignore start -- Deterministic hash whose branches depend on input bit patterns */
@@ -45,7 +47,7 @@ function ChipRow({
 }: {
   scores: Record<string, DemoScore>;
   instruments: InstrumentKey[];
-  rowName?: 'desktop' | 'single' | 'top' | 'bottom';
+  rowName?: 'desktop' | 'single' | 'top' | 'middle' | 'bottom';
 }) {
   return (
     <div data-instrument-row={rowName} style={instrumentStatusRow}>
@@ -64,12 +66,38 @@ export default function SongIconsDemo() {
   const isMobile = useIsMobileChrome();
   const { settings } = useSettings();
   const containerRef = useRef<HTMLDivElement>(null);
+  const instrumentRowCountRef = useRef<InstrumentChipRowCount>(1);
   const containerWidth = useContainerWidth(containerRef);
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
+  const instrumentRowWidth = containerWidth > 0
+    ? containerWidth
+    : (typeof window !== 'undefined' ? window.innerWidth : undefined);
+  const desktopInstrumentRowWidth = instrumentRowWidth == null
+    ? undefined
+    : Math.max(1, instrumentRowWidth - DESKTOP_ICON_ROW_RESERVED_WIDTH);
+  const desktopRowCount = resolveInstrumentChipRows(
+    desktopInstrumentRowWidth,
+    instruments.length,
+    undefined,
+    undefined,
+    undefined,
+    instrumentRowCountRef.current,
+  );
+  const stackedInstrumentRowCount = resolveInstrumentChipRows(
+    instrumentRowWidth,
+    instruments.length,
+    undefined,
+    undefined,
+    undefined,
+    instrumentRowCountRef.current,
+  );
+  const useStackedLayout = isMobile || desktopRowCount > 1;
+  instrumentRowCountRef.current = stackedInstrumentRowCount;
+  const compactRowHeight = stackedInstrumentRowCount >= 3 ? ROW_HEIGHT_THREE_ROWS : ROW_HEIGHT_MOBILE;
   const { rows, fadingIdx, initialDone } = useDemoSongs({
     rowHeight: ROW_HEIGHT_DESKTOP,
-    mobileRowHeight: ROW_HEIGHT_MOBILE,
-    isMobile,
+    mobileRowHeight: compactRowHeight,
+    isMobile: useStackedLayout,
   });
 
   // Memoize scores per title so they stay stable across re-renders.
@@ -83,17 +111,10 @@ export default function SongIconsDemo() {
     return map;
   }, [rows, instruments]);
 
-  const instrumentRowWidth = containerWidth > 0
-    ? containerWidth
-    : (typeof window !== 'undefined' ? window.innerWidth : undefined);
-
-  const mobileInstrumentRowCount = isMobile
-    ? resolveInstrumentChipRows(instrumentRowWidth, instruments.length)
-    : 1;
-  const [topRowInstruments, bottomRowInstruments] = useMemo(() => {
-    if (!isMobile || mobileInstrumentRowCount === 1) return [instruments, []] as const;
-    return splitInstrumentRows(instruments);
-  }, [instruments, isMobile, mobileInstrumentRowCount]);
+  const instrumentRows = useMemo(() => {
+    if (!useStackedLayout || stackedInstrumentRowCount === 1) return [instruments];
+    return splitInstrumentRows(instruments, stackedInstrumentRowCount);
+  }, [instruments, stackedInstrumentRowCount, useStackedLayout]);
 
   return (
     <div ref={containerRef} style={containerStyle}>
@@ -102,19 +123,25 @@ export default function SongIconsDemo() {
         const scores = scoresMap.get(song.title) ?? buildScores(song.title, instruments);
         /* v8 ignore stop */
         return (
-          <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile={isMobile}>
-            {isMobile ? (
+          <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile={useStackedLayout}>
+            {useStackedLayout ? (
               <>
                 <div style={mobileTopRowStyle}>
                   <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={0} />
                 </div>
                 <div style={{ display: Display.flex, justifyContent: 'center' }}>
-                  {mobileInstrumentRowCount === 1 ? (
-                    <ChipRow scores={scores} instruments={topRowInstruments} rowName="single" />
+                  {instrumentRows.length === 1 ? (
+                    <ChipRow scores={scores} instruments={instrumentRows[0]!} rowName="single" />
                   ) : (
                     <div style={{ display: Display.flex, flexDirection: 'column', gap: Gap.sm, alignItems: Align.center }}>
-                      <ChipRow scores={scores} instruments={topRowInstruments} rowName="top" />
-                      <ChipRow scores={scores} instruments={bottomRowInstruments} rowName="bottom" />
+                      {instrumentRows.map((row, rowIndex) => {
+                        const rowName = rowIndex === 0
+                          ? 'top'
+                          : rowIndex === instrumentRows.length - 1
+                            ? 'bottom'
+                            : 'middle';
+                        return <ChipRow key={rowName} scores={scores} instruments={row} rowName={rowName} />;
+                      })}
                     </div>
                   )}
                 </div>

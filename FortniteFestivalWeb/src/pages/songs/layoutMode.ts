@@ -9,6 +9,9 @@ import { Gap, InstrumentSize } from '@festival/theme';
 export const COMPACT_ROW_HYSTERESIS = 32;
 export const PILL_LAYOUT_HYSTERESIS = 12;
 export const SONG_ROW_HORIZONTAL_PADDING = Gap.xl * 2;
+export const INSTRUMENT_ROW_HYSTERESIS = 16;
+
+export type InstrumentChipRowCount = 1 | 2 | 3;
 
 export function getInstrumentRowWidth(
   chipCount: number,
@@ -25,21 +28,54 @@ export function resolveInstrumentChipRows(
   horizontalPadding = SONG_ROW_HORIZONTAL_PADDING,
   chipSize = InstrumentSize.chip,
   gap = Gap.sm,
-): 1 | 2 {
+  previousRowCount: InstrumentChipRowCount = 1,
+  hysteresis = INSTRUMENT_ROW_HYSTERESIS,
+): InstrumentChipRowCount {
   if (chipCount <= 1) return 1;
-  if (!width || width <= 0) return 1;
+  if (chipCount <= 4) return 1;
+  if (!width || width <= 0) return previousRowCount;
 
   const availableWidth = width - horizontalPadding;
-  if (availableWidth <= 0) return 2;
+  if (availableWidth <= 0) return previousRowCount > 1 ? previousRowCount : 2;
 
-  return getInstrumentRowWidth(chipCount, chipSize, gap) <= availableWidth ? 1 : 2;
+  const widths: Record<InstrumentChipRowCount, number> = {
+    1: getInstrumentRowWidth(chipCount, chipSize, gap),
+    2: getInstrumentRowWidth(Math.ceil(chipCount / 2), chipSize, gap),
+    3: getInstrumentRowWidth(Math.ceil(chipCount / 3), chipSize, gap),
+  };
+
+  if (previousRowCount === 1) {
+    if (widths[1] <= availableWidth) return 1;
+    if (widths[2] <= availableWidth) return 2;
+    return 3;
+  }
+
+  if (previousRowCount === 2) {
+    if (widths[1] <= availableWidth - hysteresis) return 1;
+    if (widths[2] <= availableWidth) return 2;
+    return 3;
+  }
+
+  if (widths[2] <= availableWidth - hysteresis) return 2;
+  return 3;
 }
 
-export function splitInstrumentRows<T>(items: readonly T[]): readonly [T[], T[]] {
-  if (items.length <= 1) return [items.slice(), []];
+export function splitInstrumentRows<T>(items: readonly T[], rowCount = 2): T[][] {
+  if (rowCount <= 1 || items.length <= 1) return [items.slice()];
 
-  const midpoint = Math.ceil(items.length / 2);
-  return [items.slice(0, midpoint), items.slice(midpoint)];
+  const safeRowCount = Math.max(1, Math.min(rowCount, items.length));
+  const baseSize = Math.floor(items.length / safeRowCount);
+  const remainder = items.length % safeRowCount;
+  const rows: T[][] = [];
+  let start = 0;
+
+  for (let rowIndex = 0; rowIndex < safeRowCount; rowIndex++) {
+    const size = baseSize + (rowIndex < remainder ? 1 : 0);
+    rows.push(items.slice(start, start + size));
+    start += size;
+  }
+
+  return rows;
 }
 
 export function resolveCompactRowMode(

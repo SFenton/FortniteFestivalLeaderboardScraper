@@ -20,7 +20,7 @@ import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import DifficultyPill from '../../../components/songs/metadata/DifficultyPill';
 import ScorePill from '../../../components/songs/metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
-import { resolveInstrumentChipRows, resolvePillFitsTopRow, splitInstrumentRows } from '../layoutMode';
+import { resolveInstrumentChipRows, resolvePillFitsTopRow, splitInstrumentRows, type InstrumentChipRowCount } from '../layoutMode';
 import anim from '../../../styles/animations.module.css';
 
 const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
@@ -275,6 +275,7 @@ export const SongRow = memo(function SongRow({ song,
   }, [score, displayOrder, songIntensityRaw, maxScore, sortMode, instrumentChips, instrumentFilter, allScoreMap]);
 
   const pillLayoutRef = useRef(true);
+  const instrumentChipRowCountRef = useRef<InstrumentChipRowCount>(1);
   const pillFitsTopRow = resolvePillFitsTopRow(containerWidth, pillLayoutRef.current, MOBILE_PILL_THRESHOLD);
 
   useEffect(() => {
@@ -284,11 +285,23 @@ export const SongRow = memo(function SongRow({ song,
   const instrumentRowWidth = containerWidth && containerWidth > 0
     ? containerWidth
     : (typeof window !== 'undefined' ? window.innerWidth : undefined);
-  const mobileInstrumentRowCount = resolveInstrumentChipRows(instrumentRowWidth, instrumentChips?.length ?? 0);
-  const [topInstrumentChips, bottomInstrumentChips] = useMemo(() => {
-    if (!instrumentChips || instrumentChips.length === 0) return [[], []] as const;
-    if (!isMobile || mobileInstrumentRowCount === 1) return [instrumentChips, []] as const;
-    return splitInstrumentRows(instrumentChips);
+  const mobileInstrumentRowCount = resolveInstrumentChipRows(
+    instrumentRowWidth,
+    instrumentChips?.length ?? 0,
+    undefined,
+    undefined,
+    undefined,
+    instrumentChipRowCountRef.current,
+  );
+
+  useEffect(() => {
+    instrumentChipRowCountRef.current = mobileInstrumentRowCount;
+  }, [mobileInstrumentRowCount]);
+
+  const instrumentChipRows = useMemo(() => {
+    if (!instrumentChips || instrumentChips.length === 0) return [] as InstrumentChipStatus[][];
+    if (!isMobile || mobileInstrumentRowCount === 1) return [instrumentChips];
+    return splitInstrumentRows(instrumentChips, mobileInstrumentRowCount);
   }, [instrumentChips, isMobile, mobileInstrumentRowCount]);
 
   const renderInstrumentChip = (chip: InstrumentChipStatus) => (
@@ -299,10 +312,12 @@ export const SongRow = memo(function SongRow({ song,
 
   const renderInstrumentChipRow = (
     chips: readonly InstrumentChipStatus[],
-    rowName: 'desktop' | 'single' | 'top' | 'bottom',
+    rowName: 'desktop' | 'single' | 'top' | 'middle' | 'bottom',
     justifyContent?: CSSProperties['justifyContent'],
+    rowKey?: string,
   ) => (
     <div
+      key={rowKey}
       data-instrument-row={rowName}
       style={justifyContent == null ? s.instrumentStatusRow : { ...s.instrumentStatusRow, justifyContent }}
     >
@@ -310,13 +325,19 @@ export const SongRow = memo(function SongRow({ song,
     </div>
   );
 
-  const mobileChipRow = instrumentChips && instrumentChips.length > 0
-    ? mobileInstrumentRowCount === 1
-      ? renderInstrumentChipRow(topInstrumentChips, 'single', Justify.center)
+  const mobileChipRow = instrumentChipRows.length > 0
+    ? instrumentChipRows.length === 1
+      ? renderInstrumentChipRow(instrumentChipRows[0]!, 'single', Justify.center)
       : (
         <div style={s.mobileInstrumentRows}>
-          {renderInstrumentChipRow(topInstrumentChips, 'top', Justify.center)}
-          {renderInstrumentChipRow(bottomInstrumentChips, 'bottom', Justify.center)}
+          {instrumentChipRows.map((row, rowIndex) => {
+            const rowName = rowIndex === 0
+              ? 'top'
+              : rowIndex === instrumentChipRows.length - 1
+                ? 'bottom'
+                : 'middle';
+                        return renderInstrumentChipRow(row, rowName, Justify.center, rowName);
+          })}
         </div>
       )
     : null;
