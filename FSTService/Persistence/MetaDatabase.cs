@@ -280,8 +280,20 @@ public sealed class MetaDatabase : IMetaDatabase
         if (thresholds.Count == 0) return new();
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _valid_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER) ON COMMIT DROP"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _valid_thresholds VALUES (@s, @i, @m)"; var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text); var pi = c.Parameters.Add("i", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var ((s, i), m) in thresholds) { ps.Value = s; pi.Value = i; pm.Value = m; c.ExecuteNonQuery(); } }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _valid_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER, PRIMARY KEY (song_id, instrument)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var writer = conn.BeginBinaryImport("COPY _valid_thresholds (song_id, instrument, max_score) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var ((songId, instrument), maxScore) in thresholds)
+            {
+                writer.StartRow();
+                writer.Write(songId, NpgsqlDbType.Text);
+                writer.Write(instrument, NpgsqlDbType.Text);
+                writer.Write(maxScore, NpgsqlDbType.Integer);
+            }
+
+            writer.Complete();
+        }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "ANALYZE _valid_thresholds"; c.ExecuteNonQuery(); }
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = "SELECT sh.song_id, sh.instrument, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars FROM score_history sh JOIN _valid_thresholds vt ON vt.song_id = sh.song_id AND vt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= vt.max_score AND sh.new_score = (SELECT MAX(sh2.new_score) FROM score_history sh2 WHERE sh2.account_id = @accountId AND sh2.song_id = sh.song_id AND sh2.instrument = sh.instrument AND sh2.new_score <= vt.max_score) GROUP BY sh.song_id, sh.instrument, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars";
@@ -300,8 +312,20 @@ public sealed class MetaDatabase : IMetaDatabase
         if (entries.Count == 0) return new();
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _bulk_thresholds (account_id TEXT, song_id TEXT, max_score INTEGER) ON COMMIT DROP"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _bulk_thresholds VALUES (@a, @s, @m)"; var pa = c.Parameters.Add("a", NpgsqlTypes.NpgsqlDbType.Text); var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var ((a, s), m) in entries) { pa.Value = a; ps.Value = s; pm.Value = m; c.ExecuteNonQuery(); } }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _bulk_thresholds (account_id TEXT, song_id TEXT, max_score INTEGER, PRIMARY KEY (account_id, song_id)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var writer = conn.BeginBinaryImport("COPY _bulk_thresholds (account_id, song_id, max_score) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var ((accountId, songId), maxScore) in entries)
+            {
+                writer.StartRow();
+                writer.Write(accountId, NpgsqlDbType.Text);
+                writer.Write(songId, NpgsqlDbType.Text);
+                writer.Write(maxScore, NpgsqlDbType.Integer);
+            }
+
+            writer.Complete();
+        }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "ANALYZE _bulk_thresholds"; c.ExecuteNonQuery(); }
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = "SELECT sh.account_id, sh.song_id, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars FROM score_history sh JOIN _bulk_thresholds bt ON bt.account_id = sh.account_id AND bt.song_id = sh.song_id WHERE sh.instrument = @instrument AND sh.new_score <= bt.max_score AND sh.new_score = (SELECT MAX(sh2.new_score) FROM score_history sh2 WHERE sh2.account_id = sh.account_id AND sh2.song_id = sh.song_id AND sh2.instrument = @instrument AND sh2.new_score <= bt.max_score) GROUP BY sh.account_id, sh.song_id, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars";
@@ -667,10 +691,50 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
         using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM rival_song_samples WHERE user_id = @uid"; c.Parameters.AddWithValue("uid", userId); c.ExecuteNonQuery(); }
         using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM user_rivals WHERE user_id = @uid"; c.Parameters.AddWithValue("uid", userId); c.ExecuteNonQuery(); }
-        if (rivals.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO user_rivals (user_id, rival_account_id, instrument_combo, direction, rival_score, avg_signed_delta, shared_song_count, ahead_count, behind_count, computed_at) VALUES (@uid, @rid, @combo, @dir, @score, @delta, @songs, @ahead, @behind, @at)"; var pUid = c.Parameters.Add("uid", NpgsqlTypes.NpgsqlDbType.Text); var pRid = c.Parameters.Add("rid", NpgsqlTypes.NpgsqlDbType.Text); var pCombo = c.Parameters.Add("combo", NpgsqlTypes.NpgsqlDbType.Text); var pDir = c.Parameters.Add("dir", NpgsqlTypes.NpgsqlDbType.Text); var pScore = c.Parameters.Add("score", NpgsqlTypes.NpgsqlDbType.Double); var pDelta = c.Parameters.Add("delta", NpgsqlTypes.NpgsqlDbType.Double); var pSongs = c.Parameters.Add("songs", NpgsqlTypes.NpgsqlDbType.Integer); var pAhead = c.Parameters.Add("ahead", NpgsqlTypes.NpgsqlDbType.Integer); var pBehind = c.Parameters.Add("behind", NpgsqlTypes.NpgsqlDbType.Integer); var pAt = c.Parameters.Add("at", NpgsqlTypes.NpgsqlDbType.TimestampTz); c.Prepare(); foreach (var rv in rivals) { pUid.Value = rv.UserId; pRid.Value = rv.RivalAccountId; pCombo.Value = rv.InstrumentCombo; pDir.Value = rv.Direction; pScore.Value = rv.RivalScore; pDelta.Value = rv.AvgSignedDelta; pSongs.Value = rv.SharedSongCount; pAhead.Value = rv.AheadCount; pBehind.Value = rv.BehindCount; pAt.Value = ParseUtc(rv.ComputedAt); c.ExecuteNonQuery(); } }
-        if (samples.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO rival_song_samples (user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score) VALUES (@uid, @rid, @inst, @sid, @ur, @rr, @rd, @us, @rs)"; var pUid = c.Parameters.Add("uid", NpgsqlTypes.NpgsqlDbType.Text); var pRid = c.Parameters.Add("rid", NpgsqlTypes.NpgsqlDbType.Text); var pInst = c.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Text); var pSid = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text); var pUr = c.Parameters.Add("ur", NpgsqlTypes.NpgsqlDbType.Integer); var pRr = c.Parameters.Add("rr", NpgsqlTypes.NpgsqlDbType.Integer); var pRd = c.Parameters.Add("rd", NpgsqlTypes.NpgsqlDbType.Integer); var pUs = c.Parameters.Add("us", NpgsqlTypes.NpgsqlDbType.Integer); var pRs = c.Parameters.Add("rs", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var s in samples) { pUid.Value = s.UserId; pRid.Value = s.RivalAccountId; pInst.Value = s.Instrument; pSid.Value = s.SongId; pUr.Value = s.UserRank; pRr.Value = s.RivalRank; pRd.Value = s.RankDelta; pUs.Value = (object?)s.UserScore ?? DBNull.Value; pRs.Value = (object?)s.RivalScore ?? DBNull.Value; c.ExecuteNonQuery(); } }
+        if (rivals.Count > 0)
+        {
+            using var writer = conn.BeginBinaryImport(
+                "COPY user_rivals (user_id, rival_account_id, instrument_combo, direction, rival_score, avg_signed_delta, shared_song_count, ahead_count, behind_count, computed_at) FROM STDIN (FORMAT BINARY)");
+            foreach (var rv in rivals)
+            {
+                writer.StartRow();
+                writer.Write(rv.UserId, NpgsqlDbType.Text);
+                writer.Write(rv.RivalAccountId, NpgsqlDbType.Text);
+                writer.Write(rv.InstrumentCombo, NpgsqlDbType.Text);
+                writer.Write(rv.Direction, NpgsqlDbType.Text);
+                writer.Write((float)rv.RivalScore, NpgsqlDbType.Real);
+                writer.Write((float)rv.AvgSignedDelta, NpgsqlDbType.Real);
+                writer.Write(rv.SharedSongCount, NpgsqlDbType.Integer);
+                writer.Write(rv.AheadCount, NpgsqlDbType.Integer);
+                writer.Write(rv.BehindCount, NpgsqlDbType.Integer);
+                writer.Write(ParseUtc(rv.ComputedAt), NpgsqlDbType.TimestampTz);
+            }
+
+            writer.Complete();
+        }
+        if (samples.Count > 0)
+        {
+            using var writer = conn.BeginBinaryImport(
+                "COPY rival_song_samples (user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score) FROM STDIN (FORMAT BINARY)");
+            foreach (var s in samples)
+            {
+                writer.StartRow();
+                writer.Write(s.UserId, NpgsqlDbType.Text);
+                writer.Write(s.RivalAccountId, NpgsqlDbType.Text);
+                writer.Write(s.Instrument, NpgsqlDbType.Text);
+                writer.Write(s.SongId, NpgsqlDbType.Text);
+                writer.Write(s.UserRank, NpgsqlDbType.Integer);
+                writer.Write(s.RivalRank, NpgsqlDbType.Integer);
+                writer.Write(s.RankDelta, NpgsqlDbType.Integer);
+                WriteNullableInt(writer, s.UserScore);
+                WriteNullableInt(writer, s.RivalScore);
+            }
+
+            writer.Complete();
+        }
         tx.Commit();
     }
 
@@ -686,6 +750,7 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
 
         // Delete existing rivals + samples for this user/instrument
         using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rival_song_samples WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
@@ -694,43 +759,49 @@ public sealed class MetaDatabase : IMetaDatabase
         // Insert rivals
         if (rivals.Count > 0)
         {
-            using var c = conn.CreateCommand(); c.Transaction = tx;
-            c.CommandText = "INSERT INTO leaderboard_rivals (user_id, rival_account_id, instrument, rank_method, direction, user_rank, rival_rank, shared_song_count, ahead_count, behind_count, avg_signed_delta, computed_at) VALUES (@uid, @rid, @inst, @rm, @dir, @ur, @rr, @ssc, @ac, @bc, @asd, @ca)";
-            var pUid = c.Parameters.Add("uid", NpgsqlTypes.NpgsqlDbType.Text); var pRid = c.Parameters.Add("rid", NpgsqlTypes.NpgsqlDbType.Text);
-            var pInst = c.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Text); var pRm = c.Parameters.Add("rm", NpgsqlTypes.NpgsqlDbType.Text);
-            var pDir = c.Parameters.Add("dir", NpgsqlTypes.NpgsqlDbType.Text); var pUr = c.Parameters.Add("ur", NpgsqlTypes.NpgsqlDbType.Integer);
-            var pRr = c.Parameters.Add("rr", NpgsqlTypes.NpgsqlDbType.Integer); var pSsc = c.Parameters.Add("ssc", NpgsqlTypes.NpgsqlDbType.Integer);
-            var pAc = c.Parameters.Add("ac", NpgsqlTypes.NpgsqlDbType.Integer); var pBc = c.Parameters.Add("bc", NpgsqlTypes.NpgsqlDbType.Integer);
-            var pAsd = c.Parameters.Add("asd", NpgsqlTypes.NpgsqlDbType.Double); var pCa = c.Parameters.Add("ca", NpgsqlTypes.NpgsqlDbType.TimestampTz);
-            c.Prepare();
+            using var writer = conn.BeginBinaryImport(
+                "COPY leaderboard_rivals (user_id, rival_account_id, instrument, rank_method, direction, user_rank, rival_rank, shared_song_count, ahead_count, behind_count, avg_signed_delta, computed_at) FROM STDIN (FORMAT BINARY)");
             foreach (var r in rivals)
             {
-                pUid.Value = r.UserId; pRid.Value = r.RivalAccountId; pInst.Value = r.Instrument; pRm.Value = r.RankMethod;
-                pDir.Value = r.Direction; pUr.Value = r.UserRank; pRr.Value = r.RivalRank; pSsc.Value = r.SharedSongCount;
-                pAc.Value = r.AheadCount; pBc.Value = r.BehindCount; pAsd.Value = r.AvgSignedDelta;
-                pCa.Value = DateTime.TryParse(r.ComputedAt, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt) ? dt.ToUniversalTime() : DateTime.UtcNow;
-                c.ExecuteNonQuery();
+                writer.StartRow();
+                writer.Write(r.UserId, NpgsqlDbType.Text);
+                writer.Write(r.RivalAccountId, NpgsqlDbType.Text);
+                writer.Write(r.Instrument, NpgsqlDbType.Text);
+                writer.Write(r.RankMethod, NpgsqlDbType.Text);
+                writer.Write(r.Direction, NpgsqlDbType.Text);
+                writer.Write(r.UserRank, NpgsqlDbType.Integer);
+                writer.Write(r.RivalRank, NpgsqlDbType.Integer);
+                writer.Write(r.SharedSongCount, NpgsqlDbType.Integer);
+                writer.Write(r.AheadCount, NpgsqlDbType.Integer);
+                writer.Write(r.BehindCount, NpgsqlDbType.Integer);
+                writer.Write((float)r.AvgSignedDelta, NpgsqlDbType.Real);
+                writer.Write(ParseUtc(r.ComputedAt), NpgsqlDbType.TimestampTz);
             }
+
+            writer.Complete();
         }
 
         // Insert samples
         if (samples.Count > 0)
         {
-            using var c = conn.CreateCommand(); c.Transaction = tx;
-            c.CommandText = "INSERT INTO leaderboard_rival_song_samples (user_id, rival_account_id, instrument, rank_method, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score) VALUES (@uid, @rid, @inst, @rm, @sid, @ur, @rr, @rd, @us, @rs)";
-            var pUid = c.Parameters.Add("uid", NpgsqlTypes.NpgsqlDbType.Text); var pRid = c.Parameters.Add("rid", NpgsqlTypes.NpgsqlDbType.Text);
-            var pInst = c.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Text); var pRm = c.Parameters.Add("rm", NpgsqlTypes.NpgsqlDbType.Text);
-            var pSid = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text); var pUr = c.Parameters.Add("ur", NpgsqlTypes.NpgsqlDbType.Integer);
-            var pRr = c.Parameters.Add("rr", NpgsqlTypes.NpgsqlDbType.Integer); var pRd = c.Parameters.Add("rd", NpgsqlTypes.NpgsqlDbType.Integer);
-            var pUs = c.Parameters.Add("us", NpgsqlTypes.NpgsqlDbType.Integer); var pRs = c.Parameters.Add("rs", NpgsqlTypes.NpgsqlDbType.Integer);
-            c.Prepare();
+            using var writer = conn.BeginBinaryImport(
+                "COPY leaderboard_rival_song_samples (user_id, rival_account_id, instrument, rank_method, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score) FROM STDIN (FORMAT BINARY)");
             foreach (var s in samples)
             {
-                pUid.Value = s.UserId; pRid.Value = s.RivalAccountId; pInst.Value = s.Instrument; pRm.Value = s.RankMethod;
-                pSid.Value = s.SongId; pUr.Value = s.UserRank; pRr.Value = s.RivalRank; pRd.Value = s.RankDelta;
-                pUs.Value = (object?)s.UserScore ?? DBNull.Value; pRs.Value = (object?)s.RivalScore ?? DBNull.Value;
-                c.ExecuteNonQuery();
+                writer.StartRow();
+                writer.Write(s.UserId, NpgsqlDbType.Text);
+                writer.Write(s.RivalAccountId, NpgsqlDbType.Text);
+                writer.Write(s.Instrument, NpgsqlDbType.Text);
+                writer.Write(s.RankMethod, NpgsqlDbType.Text);
+                writer.Write(s.SongId, NpgsqlDbType.Text);
+                writer.Write(s.UserRank, NpgsqlDbType.Integer);
+                writer.Write(s.RivalRank, NpgsqlDbType.Integer);
+                writer.Write(s.RankDelta, NpgsqlDbType.Integer);
+                WriteNullableInt(writer, s.UserScore);
+                WriteNullableInt(writer, s.RivalScore);
             }
+
+            writer.Complete();
         }
 
         tx.Commit();
@@ -778,8 +849,52 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM composite_rankings"; c.ExecuteNonQuery(); }
-        if (rankings.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO composite_rankings (account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, pro_vocals_adjusted_skill, pro_vocals_skill_rank, pro_cymbals_adjusted_skill, pro_cymbals_skill_rank, pro_drums_adjusted_skill, pro_drums_skill_rank, composite_rating_weighted, composite_rank_weighted, composite_rating_fcrate, composite_rank_fcrate, composite_rating_totalscore, composite_rank_totalscore, composite_rating_maxscore, composite_rank_maxscore, computed_at) VALUES (@aid, @instPlayed, @totalSongs, @rating, @rank, @gSkill, @gRank, @bSkill, @bRank, @dSkill, @dRank, @vSkill, @vRank, @pgSkill, @pgRank, @pbSkill, @pbRank, @pvSkill, @pvRank, @pcSkill, @pcRank, @pdSkill, @pdRank, @rWgt, @rkWgt, @rFc, @rkFc, @rTs, @rkTs, @rMs, @rkMs, @now)"; var now = DateTime.UtcNow; c.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.Add("instPlayed", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("totalSongs", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("rating", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("rank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("gSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("gRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("bSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("bRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("dSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("dRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("vSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("vRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("pgSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("pgRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("pbSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("pbRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("pvSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("pvRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("pcSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("pcRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("pdSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("pdRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("rWgt", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("rkWgt", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("rFc", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("rkFc", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("rTs", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("rkTs", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("rMs", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("rkMs", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz); c.Prepare(); foreach (var rv in rankings) { c.Parameters["aid"].Value = rv.AccountId; c.Parameters["instPlayed"].Value = rv.InstrumentsPlayed; c.Parameters["totalSongs"].Value = rv.TotalSongsPlayed; c.Parameters["rating"].Value = rv.CompositeRating; c.Parameters["rank"].Value = rv.CompositeRank; c.Parameters["gSkill"].Value = (object?)rv.GuitarAdjustedSkill ?? DBNull.Value; c.Parameters["gRank"].Value = (object?)rv.GuitarSkillRank ?? DBNull.Value; c.Parameters["bSkill"].Value = (object?)rv.BassAdjustedSkill ?? DBNull.Value; c.Parameters["bRank"].Value = (object?)rv.BassSkillRank ?? DBNull.Value; c.Parameters["dSkill"].Value = (object?)rv.DrumsAdjustedSkill ?? DBNull.Value; c.Parameters["dRank"].Value = (object?)rv.DrumsSkillRank ?? DBNull.Value; c.Parameters["vSkill"].Value = (object?)rv.VocalsAdjustedSkill ?? DBNull.Value; c.Parameters["vRank"].Value = (object?)rv.VocalsSkillRank ?? DBNull.Value; c.Parameters["pgSkill"].Value = (object?)rv.ProGuitarAdjustedSkill ?? DBNull.Value; c.Parameters["pgRank"].Value = (object?)rv.ProGuitarSkillRank ?? DBNull.Value; c.Parameters["pbSkill"].Value = (object?)rv.ProBassAdjustedSkill ?? DBNull.Value; c.Parameters["pbRank"].Value = (object?)rv.ProBassSkillRank ?? DBNull.Value; c.Parameters["pvSkill"].Value = (object?)rv.ProVocalsAdjustedSkill ?? DBNull.Value; c.Parameters["pvRank"].Value = (object?)rv.ProVocalsSkillRank ?? DBNull.Value; c.Parameters["pcSkill"].Value = (object?)rv.ProCymbalsAdjustedSkill ?? DBNull.Value; c.Parameters["pcRank"].Value = (object?)rv.ProCymbalsSkillRank ?? DBNull.Value; c.Parameters["pdSkill"].Value = (object?)rv.ProDrumsAdjustedSkill ?? DBNull.Value; c.Parameters["pdRank"].Value = (object?)rv.ProDrumsSkillRank ?? DBNull.Value; c.Parameters["rWgt"].Value = (object?)rv.CompositeRatingWeighted ?? DBNull.Value; c.Parameters["rkWgt"].Value = (object?)rv.CompositeRankWeighted ?? DBNull.Value; c.Parameters["rFc"].Value = (object?)rv.CompositeRatingFcRate ?? DBNull.Value; c.Parameters["rkFc"].Value = (object?)rv.CompositeRankFcRate ?? DBNull.Value; c.Parameters["rTs"].Value = (object?)rv.CompositeRatingTotalScore ?? DBNull.Value; c.Parameters["rkTs"].Value = (object?)rv.CompositeRankTotalScore ?? DBNull.Value; c.Parameters["rMs"].Value = (object?)rv.CompositeRatingMaxScore ?? DBNull.Value; c.Parameters["rkMs"].Value = (object?)rv.CompositeRankMaxScore ?? DBNull.Value; c.Parameters["now"].Value = now; c.ExecuteNonQuery(); } }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "TRUNCATE composite_rankings"; c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
+        if (rankings.Count > 0)
+        {
+            var now = DateTime.UtcNow;
+            using var writer = conn.BeginBinaryImport(
+                "COPY composite_rankings (account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, pro_vocals_adjusted_skill, pro_vocals_skill_rank, pro_cymbals_adjusted_skill, pro_cymbals_skill_rank, pro_drums_adjusted_skill, pro_drums_skill_rank, composite_rating_weighted, composite_rank_weighted, composite_rating_fcrate, composite_rank_fcrate, composite_rating_totalscore, composite_rank_totalscore, composite_rating_maxscore, composite_rank_maxscore, computed_at) FROM STDIN (FORMAT BINARY)");
+            foreach (var rv in rankings)
+            {
+                writer.StartRow();
+                writer.Write(rv.AccountId, NpgsqlDbType.Text);
+                writer.Write(rv.InstrumentsPlayed, NpgsqlDbType.Integer);
+                writer.Write(rv.TotalSongsPlayed, NpgsqlDbType.Integer);
+                writer.Write((float)rv.CompositeRating, NpgsqlDbType.Real);
+                writer.Write(rv.CompositeRank, NpgsqlDbType.Integer);
+                WriteNullableReal(writer, rv.GuitarAdjustedSkill);
+                WriteNullableInt(writer, rv.GuitarSkillRank);
+                WriteNullableReal(writer, rv.BassAdjustedSkill);
+                WriteNullableInt(writer, rv.BassSkillRank);
+                WriteNullableReal(writer, rv.DrumsAdjustedSkill);
+                WriteNullableInt(writer, rv.DrumsSkillRank);
+                WriteNullableReal(writer, rv.VocalsAdjustedSkill);
+                WriteNullableInt(writer, rv.VocalsSkillRank);
+                WriteNullableReal(writer, rv.ProGuitarAdjustedSkill);
+                WriteNullableInt(writer, rv.ProGuitarSkillRank);
+                WriteNullableReal(writer, rv.ProBassAdjustedSkill);
+                WriteNullableInt(writer, rv.ProBassSkillRank);
+                WriteNullableReal(writer, rv.ProVocalsAdjustedSkill);
+                WriteNullableInt(writer, rv.ProVocalsSkillRank);
+                WriteNullableReal(writer, rv.ProCymbalsAdjustedSkill);
+                WriteNullableInt(writer, rv.ProCymbalsSkillRank);
+                WriteNullableReal(writer, rv.ProDrumsAdjustedSkill);
+                WriteNullableInt(writer, rv.ProDrumsSkillRank);
+                WriteNullableReal(writer, rv.CompositeRatingWeighted);
+                WriteNullableInt(writer, rv.CompositeRankWeighted);
+                WriteNullableReal(writer, rv.CompositeRatingFcRate);
+                WriteNullableInt(writer, rv.CompositeRankFcRate);
+                WriteNullableReal(writer, rv.CompositeRatingTotalScore);
+                WriteNullableInt(writer, rv.CompositeRankTotalScore);
+                WriteNullableReal(writer, rv.CompositeRatingMaxScore);
+                WriteNullableInt(writer, rv.CompositeRankMaxScore);
+                writer.Write(now, NpgsqlDbType.TimestampTz);
+            }
+
+            writer.Complete();
+        }
         tx.Commit();
     }
 
@@ -1787,6 +1902,12 @@ public sealed class MetaDatabase : IMetaDatabase
     private static void WriteNullableInt(NpgsqlBinaryImporter writer, int? value)
     {
         if (value.HasValue) writer.Write(value.Value, NpgsqlDbType.Integer);
+        else writer.WriteNull();
+    }
+
+    private static void WriteNullableReal(NpgsqlBinaryImporter writer, double? value)
+    {
+        if (value.HasValue) writer.Write((float)value.Value, NpgsqlDbType.Real);
         else writer.WriteNull();
     }
 

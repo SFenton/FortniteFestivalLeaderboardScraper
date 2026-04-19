@@ -35,6 +35,13 @@ public sealed class ScrapeTimePrecomputer
     /// </summary>
     private volatile IReadOnlyDictionary<(string SongId, string Instrument), PopulationTierData>? _populationTiers;
 
+    /// <summary>
+    /// Shared single-user precompute inputs cached across repeated PrecomputeUser()
+    /// calls on the same service instance.
+    /// </summary>
+    private volatile SharedPrecomputeInputs? _singleUserSharedInputs;
+    private readonly object _singleUserSharedInputsGate = new();
+
     public ScrapeTimePrecomputer(
         GlobalLeaderboardPersistence persistence,
         IMetaDatabase metaDb,
@@ -70,6 +77,7 @@ public sealed class ScrapeTimePrecomputer
     {
         _metaDb.ClearCachedResponses();
         _populationTiers = null;
+        _singleUserSharedInputs = null;
     }
 
     /// <summary>Number of records staged (during active precomputation) or 0.</summary>
@@ -103,6 +111,12 @@ public sealed class ScrapeTimePrecomputer
         _staging = staging;
 
         var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
+        _singleUserSharedInputs = new SharedPrecomputeInputs(
+            allMaxScores,
+            unfilteredPopulation,
+            instrumentKeys,
+            tiers,
+            bandScoresCache);
 
         // ── Phases 2-7: Independent — run in parallel ───────────
         _progress.SetSubOperation("parallel_precompute");
@@ -154,28 +168,104 @@ public sealed class ScrapeTimePrecomputer
     /// </summary>
     public void PrecomputeUser(string accountId)
     {
-        var allMaxScores = _pathStore.GetAllMaxScores();
-        var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
-        var instrumentKeys = _persistence.GetInstrumentKeys();
-        var tiers = _populationTiers ?? ComputePopulationTiers(allMaxScores, instrumentKeys);
-        var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
+        var sharedInputs = MeasurePrecomputeStep(accountId, "shared_inputs", GetSingleUserSharedInputs);
 
         // Collect entries in a thread-local list, then flush all at once
         var entries = new List<(string Key, byte[] Json, string ETag)>();
-        PrecomputeSinglePlayer(accountId, allMaxScores, unfilteredPopulation, tiers, bandScoresCache,
-            storeOverride: entries);
+        MeasurePrecomputeStoreStep(accountId, "player_profile", entries, () =>
+            PrecomputeSinglePlayer(
+                accountId,
+                sharedInputs.AllMaxScores,
+                sharedInputs.UnfilteredPopulation,
+                sharedInputs.PopulationTiers,
+                sharedInputs.BandScoresCache,
+                storeOverride: entries));
 
         // Sub-resources
-        var displayNames = _metaDb.GetDisplayNames(new[] { accountId });
-        PrecomputePlayerStats(accountId, storeOverride: entries);
-        PrecomputePlayerHistory(accountId, storeOverride: entries);
-        PrecomputePlayerSyncStatus(accountId, storeOverride: entries);
-        PrecomputePlayerRivalsOverview(accountId, storeOverride: entries);
-        PrecomputePlayerRivalsAll(accountId, displayNames, storeOverride: entries);
-        PrecomputePlayerLeaderboardRivals(accountId, instrumentKeys, displayNames, storeOverride: entries);
+        var displayNames = MeasurePrecomputeStep(accountId, "display_name_lookup",
+            () => _metaDb.GetDisplayNames(new[] { accountId }));
+        MeasurePrecomputeStoreStep(accountId, "player_stats", entries,
+            () => PrecomputePlayerStats(accountId, storeOverride: entries));
+        MeasurePrecomputeStoreStep(accountId, "player_history", entries,
+            () => PrecomputePlayerHistory(accountId, storeOverride: entries));
+        MeasurePrecomputeStoreStep(accountId, "player_sync_status", entries,
+            () => PrecomputePlayerSyncStatus(accountId, storeOverride: entries));
+        MeasurePrecomputeStoreStep(accountId, "player_rivals_overview", entries,
+            () => PrecomputePlayerRivalsOverview(accountId, storeOverride: entries));
+        MeasurePrecomputeStoreStep(accountId, "player_rivals_all", entries,
+            () => PrecomputePlayerRivalsAll(accountId, displayNames, storeOverride: entries));
+        MeasurePrecomputeStoreStep(accountId, "player_leaderboard_rivals", entries,
+            () => PrecomputePlayerLeaderboardRivals(accountId, sharedInputs.InstrumentKeys, displayNames, storeOverride: entries));
 
         if (entries.Count > 0)
-            _metaDb.BulkSetCachedResponses(entries);
+        {
+            MeasurePrecomputeStep(accountId, "cache_write",
+                () => _metaDb.BulkSetCachedResponses(entries), entries.Count);
+        }
+    }
+
+    private SharedPrecomputeInputs GetSingleUserSharedInputs()
+    {
+        var cached = _singleUserSharedInputs;
+        if (cached is not null)
+            return cached;
+
+        lock (_singleUserSharedInputsGate)
+        {
+            cached = _singleUserSharedInputs;
+            if (cached is not null)
+                return cached;
+
+            var allMaxScores = _pathStore.GetAllMaxScores();
+            var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
+            var instrumentKeys = _persistence.GetInstrumentKeys();
+            var tiers = _populationTiers ?? ComputePopulationTiers(allMaxScores, instrumentKeys);
+            var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
+
+            cached = new SharedPrecomputeInputs(
+                allMaxScores,
+                unfilteredPopulation,
+                instrumentKeys,
+                tiers,
+                bandScoresCache);
+            _singleUserSharedInputs = cached;
+            return cached;
+        }
+    }
+
+    private T MeasurePrecomputeStep<T>(string accountId, string step, Func<T> action, int? cacheEntries = null)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = action();
+        sw.Stop();
+        LogPrecomputeStep(accountId, step, sw.ElapsedMilliseconds, cacheEntries);
+        return result;
+    }
+
+    private void MeasurePrecomputeStep(string accountId, string step, Action action, int? cacheEntries = null)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        action();
+        sw.Stop();
+        LogPrecomputeStep(accountId, step, sw.ElapsedMilliseconds, cacheEntries);
+    }
+
+    private void MeasurePrecomputeStoreStep(
+        string accountId,
+        string step,
+        List<(string Key, byte[] Json, string ETag)> storeOverride,
+        Action action)
+    {
+        var beforeCount = storeOverride.Count;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        action();
+        sw.Stop();
+        LogPrecomputeStep(accountId, step, sw.ElapsedMilliseconds, storeOverride.Count - beforeCount);
+    }
+
+    private void LogPrecomputeStep(string accountId, string step, long durationMs, int? cacheEntries)
+    {
+        _log.LogInformation($"[Precompute.Step] account={accountId} step={step} duration_ms={durationMs} cache_entries={(cacheEntries?.ToString() ?? "-")}");
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -322,9 +412,6 @@ public sealed class ScrapeTimePrecomputer
         displayNames ??= _metaDb.GetDisplayNames(new[] { accountId });
         var displayName = displayNames.GetValueOrDefault(accountId);
 
-        // Use stored rank column (no CTE) for base rankings
-        var storedRankings = _persistence.GetPlayerStoredRankings(accountId);
-
         // Build max-threshold map for all songs at leeway=5% (max slider)
         var maxThresholds = new Dictionary<(string SongId, string Instrument), int>();
         foreach (var s in scores)
@@ -347,8 +434,7 @@ public sealed class ScrapeTimePrecomputer
         foreach (var s in scores)
         {
             var key = (s.SongId, s.Instrument);
-            var storedRank = storedRankings.GetValueOrDefault(key);
-            var rank = s.ApiRank > 0 ? s.ApiRank : (storedRank.Rank > 0 ? storedRank.Rank : s.Rank);
+            var rank = s.ApiRank > 0 ? s.ApiRank : s.Rank;
             var totalEntries = unfilteredPopulation.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
 
             // Compute minLeeway for the current score
@@ -1015,6 +1101,13 @@ public sealed class ScrapeTimePrecomputer
             userLeaderboardRank = r.UserRank,
         };
     }
+
+    private sealed record SharedPrecomputeInputs(
+        Dictionary<string, SongMaxScores> AllMaxScores,
+        Dictionary<(string SongId, string Instrument), long> UnfilteredPopulation,
+        IReadOnlyList<string> InstrumentKeys,
+        IReadOnlyDictionary<(string SongId, string Instrument), PopulationTierData> PopulationTiers,
+        Dictionary<(string SongId, string Instrument), int[]> BandScoresCache);
 
     // ═══════════════════════════════════════════════════════════════
     // Phase 5: Rankings Pages (page 1 for each instrument × metric)

@@ -90,7 +90,7 @@ public sealed class RankingsCalculator
         _progress.SetSubOperation("per_instrument_rankings");
 
         // Cap at 2 concurrent instruments to avoid OOM-killing PostgreSQL.
-        // Each instrument's ranking pipeline boosts work_mem to 128MB per-session
+        // Each instrument's ranking pipeline boosts work_mem to 256MB per-session
         // (temp table + indexes + 5 ROW_NUMBER window functions). 6 concurrent
         // pipelines × ~1GB peak would exceed the container memory limit.
         await Parallel.ForEachAsync(instruments,
@@ -183,10 +183,13 @@ public sealed class RankingsCalculator
             // Boost work_mem for this connection only — the global setting is
             // kept low (16 MB) to prevent idle backends from holding huge RSS.
             // The ranking pipeline runs 5 ROW_NUMBER() window functions that
-            // benefit from extra sort memory, so we raise it per-session.
+            // spill at 128MB on the Solo_Guitar-heavy benchmark, so raise sort
+            // memory on the dedicated rankings session. Temp-table index builds
+            // are also a notable part of this path, so raise
+            // maintenance_work_mem alongside it.
             using (var wmCmd = conn.CreateCommand())
             {
-                wmCmd.CommandText = "SET work_mem = '128MB'";
+                wmCmd.CommandText = "SET work_mem = '256MB'; SET maintenance_work_mem = '256MB'";
                 wmCmd.ExecuteNonQuery();
             }
 

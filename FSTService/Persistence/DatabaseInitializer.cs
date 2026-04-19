@@ -302,6 +302,9 @@ public static class DatabaseInitializer
             ON score_history (account_id);
         CREATE INDEX IF NOT EXISTS ix_sh_song
             ON score_history (song_id, instrument);
+        CREATE INDEX IF NOT EXISTS ix_sh_valid_lookup
+            ON score_history (account_id, song_id, instrument, new_score DESC)
+            INCLUDE (accuracy, is_full_combo, stars);
         CREATE UNIQUE INDEX IF NOT EXISTS ix_sh_dedup
             ON score_history (account_id, song_id, instrument, new_score, score_achieved_at);
 
