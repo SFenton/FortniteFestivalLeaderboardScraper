@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useState, useCallback, useMemo, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -12,7 +12,7 @@ import {
   resolveInstrumentRanks,
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
-import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
+import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
 import { Gap, Layout, Radius, frostedCard, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
@@ -23,12 +23,13 @@ import { useSettings, isInstrumentVisible } from '../../../../contexts/SettingsC
 import { loadSongSettings, saveSongSettings } from '../../../../utils/songSettings';
 import Page from '../../../Page';
 import PageHeader from '../../../../components/common/PageHeader';
-import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
+import { useIsMobile, useIsWideDesktop } from '../../../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
 import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
 import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../../../contexts/SearchQueryContext';
+import { useScrollContainer } from '../../../../contexts/ScrollContainerContext';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
@@ -41,6 +42,50 @@ import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
 import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRankingDto, PlayerStatsResponse } from '@festival/core/api/serverTypes';
 import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
+
+type PlayerQuickLinkId = 'global' | 'top-songs' | 'bands' | `instrument:${InstrumentKey}`;
+
+interface PlayerQuickLink {
+  id: PlayerQuickLinkId;
+  label: string;
+  landmarkLabel: string;
+  itemKey: string;
+}
+
+const QUICK_LINK_SCROLL_OFFSET = Gap.md;
+
+function getSectionScrollTop(scrollEl: HTMLElement, sectionEl: HTMLElement): number {
+  const scrollRect = scrollEl.getBoundingClientRect();
+  const sectionRect = sectionEl.getBoundingClientRect();
+  return scrollEl.scrollTop + sectionRect.top - scrollRect.top;
+}
+
+function resolveActiveQuickLink(
+  quickLinks: readonly PlayerQuickLink[],
+  sectionRefs: Map<PlayerQuickLinkId, HTMLElement>,
+  scrollEl: HTMLElement,
+): PlayerQuickLinkId | null {
+  if (quickLinks.length === 0) return null;
+
+  const threshold = scrollEl.scrollTop + QUICK_LINK_SCROLL_OFFSET + 1;
+  let active = quickLinks[0]!.id;
+
+  for (const link of quickLinks) {
+    const sectionEl = sectionRefs.get(link.id);
+    if (!sectionEl) continue;
+    if (getSectionScrollTop(scrollEl, sectionEl) <= threshold) {
+      active = link.id;
+      continue;
+    }
+    break;
+  }
+
+  return active;
+}
+
+function getQuickLinkTestId(id: PlayerQuickLinkId): string {
+  return id.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+}
 
 export interface PlayerContentProps {
   data: PlayerResponse;
@@ -100,15 +145,18 @@ export default function PlayerContent({
   const { t } = useTranslation();
   const { settings } = useSettings();
   const { leaderboards: leaderboardsEnabled, playerBands: playerBandsEnabled } = useFeatureFlags();
+  const scrollContainerRef = useScrollContainer();
   const location = useLocation();
   const navigate = useNavigate();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
+  const [activeQuickLink, setActiveQuickLink] = useState<PlayerQuickLinkId | null>(null);
   const bannerVisible = isSyncing || !!(showCompleteBanner && onCompleteBannerDismissed);
   const [bannerCollapsed, setBannerCollapsed] = useState(!bannerVisible);
   useEffect(() => { if (bannerVisible) setBannerCollapsed(false); }, [bannerVisible]);
   const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
+  const sectionRefs = useRef(new Map<PlayerQuickLinkId, HTMLElement>());
 
   // Register FAB "Select as Profile" action
   useEffect(() => {
@@ -242,6 +290,16 @@ export default function PlayerContent({
     /* v8 ignore stop */
   }, [withProfileSwitch, navigate]);
 
+  const isWideDesktop = useIsWideDesktop();
+
+  const registerSectionRef = useCallback((id: PlayerQuickLinkId, element: HTMLElement | null) => {
+    if (element) {
+      sectionRefs.current.set(id, element);
+      return;
+    }
+    sectionRefs.current.delete(id);
+  }, []);
+
   // Build a completely flat list of small items — each becomes a direct child
   // of the grid so each gets a staggered fade-in animation.
   const items: PlayerItem[] = [];
@@ -291,7 +349,8 @@ export default function PlayerContent({
   }
 
   // --- Overall summary stat boxes ---
-  items.push(...buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, statsData?.compositeRanks, settings.enableExperimentalRanks, navigateToLeaderboard));
+  const overallSummaryItems = buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, statsData?.compositeRanks, settings.enableExperimentalRanks, navigateToLeaderboard);
+  items.push(...overallSummaryItems);
 
   // --- Instrument Statistics heading ---
   items.push({
@@ -306,6 +365,7 @@ export default function PlayerContent({
   // --- Per-instrument: header + stat boxes + percentile rows ---
   // Render a section for every visible instrument, even if the player has no
   // scores on it yet — the section will show a "No scores yet" empty state.
+  const instrumentSectionFirstKeys = new Map<InstrumentKey, string>();
   for (const inst of visibleKeys) {
     const scores = byInstrument.get(inst) ?? [];
 
@@ -323,7 +383,11 @@ export default function PlayerContent({
     const totalRanked = hasRankTiers
       ? (statsData!.instrumentRanks as InstrumentRankEntry[])?.find(e => e.ins === comboIdFromInstruments([inst]))?.totalRanked
       : rankingDto?.totalRankedAccounts;
-    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard, data.accountId, totalRanked, leaderboardsEnabled));
+    const instrumentItems = buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard, data.accountId, totalRanked, leaderboardsEnabled);
+    if (instrumentItems.length > 0) {
+      instrumentSectionFirstKeys.set(inst, instrumentItems[0]!.key);
+    }
+    items.push(...instrumentItems);
   }
 
   // --- Top Songs heading ---
@@ -347,9 +411,85 @@ export default function PlayerContent({
     items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === visibleKeys.length - 1, isNarrowGrid));
   }
 
+  const hasBandsSection = playerBandsEnabled && !!statsData;
   if (playerBandsEnabled && statsData) {
     items.push(...buildPlayerBandsItems(t, data.displayName, statsData.bands ?? EMPTY_PLAYER_BANDS));
   }
+
+  const quickLinks = useMemo<PlayerQuickLink[]>(() => {
+    const links: PlayerQuickLink[] = [];
+    const firstOverallKey = overallSummaryItems[0]?.key;
+    if (firstOverallKey) {
+      links.push({
+        id: 'global',
+        label: t('player.globalStatistics'),
+        landmarkLabel: t('player.globalStatistics'),
+        itemKey: firstOverallKey,
+      });
+    }
+
+    for (const inst of visibleKeys) {
+      const itemKey = instrumentSectionFirstKeys.get(inst);
+      if (!itemKey) continue;
+      const label = t('player.instrumentStatisticsLink', { instrument: serverInstrumentLabel(inst) });
+      links.push({
+        id: `instrument:${inst}`,
+        label,
+        landmarkLabel: label,
+        itemKey,
+      });
+    }
+
+    links.push({
+      id: 'top-songs',
+      label: t('player.topSongsPerInstrument'),
+      landmarkLabel: t('player.topSongsPerInstrument'),
+      itemKey: 'top-heading',
+    });
+
+    if (hasBandsSection) {
+      links.push({
+        id: 'bands',
+        label: t('player.bandsShort'),
+        landmarkLabel: t('player.bands', { name: data.displayName }),
+        itemKey: 'bands-heading',
+      });
+    }
+
+    return links;
+  }, [data.displayName, hasBandsSection, instrumentSectionFirstKeys, overallSummaryItems, t, visibleKeys]);
+
+  const quickLinkByItemKey = useMemo(() => new Map(quickLinks.map((link) => [link.itemKey, link])), [quickLinks]);
+
+  useEffect(() => {
+    const scrollEl = scrollContainerRef.current;
+    if (!isWideDesktop || !scrollEl || quickLinks.length === 0) {
+      setActiveQuickLink(null);
+      return;
+    }
+
+    const syncActive = () => {
+      setActiveQuickLink(resolveActiveQuickLink(quickLinks, sectionRefs.current, scrollEl));
+    };
+
+    syncActive();
+    scrollEl.addEventListener('scroll', syncActive, { passive: true });
+    window.addEventListener('resize', syncActive);
+    return () => {
+      scrollEl.removeEventListener('scroll', syncActive);
+      window.removeEventListener('resize', syncActive);
+    };
+  }, [isWideDesktop, quickLinks, scrollContainerRef]);
+
+  const handleQuickLinkClick = useCallback((link: PlayerQuickLink) => {
+    const scrollEl = scrollContainerRef.current;
+    const sectionEl = sectionRefs.current.get(link.id);
+    if (!scrollEl || !sectionEl) return;
+
+    const nextTop = Math.max(0, getSectionScrollTop(scrollEl, sectionEl) - QUICK_LINK_SCROLL_OFFSET);
+    scrollEl.scrollTo({ top: nextTop, behavior: 'smooth' });
+    setActiveQuickLink(link.id);
+  }, [scrollContainerRef]);
 
   // Wire up container-level scroll fade
   const fadeDeps = useMemo(() => [items.length], [items.length]);
@@ -362,6 +502,7 @@ export default function PlayerContent({
     <Page
       scrollRestoreKey={`statistics:${data.accountId}`}
       scrollDeps={fadeDeps}
+      scrollMaskOptions={{ disabled: true }}
       scrollStyle={pps.scrollArea}
       before={
         <PageHeader
@@ -396,7 +537,29 @@ export default function PlayerContent({
       ) : undefined}
     >
         <div style={{ ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}) }}>
-          <div style={{ ...pps.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
+          <div style={pps.overlayFrame}>
+            {isWideDesktop && quickLinks.length > 0 && (
+              <div style={pps.quickLinksOverlay}>
+                <nav style={pps.quickLinksSticky} aria-label={t('player.quickLinks')}>
+                  {quickLinks.map((link) => {
+                    const isActive = link.id === activeQuickLink;
+                    return (
+                      <button
+                        key={link.id}
+                        type="button"
+                        data-testid={`player-quick-link-${getQuickLinkTestId(link.id)}`}
+                        aria-current={isActive ? 'location' : undefined}
+                        style={isActive ? pps.quickLinkButtonActive : pps.quickLinkButton}
+                        onClick={() => handleQuickLinkClick(link)}
+                      >
+                        {link.label}
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+            )}
+            <div style={{ ...pps.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
               // Compute which items are in the initial viewport by accumulating
               // estimated row heights.  The grid is 2-col: span items take a full
@@ -437,13 +600,26 @@ export default function PlayerContent({
               const lastVisibleDelay = visibleCount * STAGGER_ENTRY_OFFSET;
               return items.map((item, i) => {
                 const delay = skipAnim ? undefined : (i < visibleCount ? (i + 1) * STAGGER_ENTRY_OFFSET : lastVisibleDelay);
+                const quickLink = quickLinkByItemKey.get(item.key);
+                const content = quickLink ? (
+                  <section
+                    ref={(element) => registerSectionRef(quickLink.id, element)}
+                    data-player-section={quickLink.id}
+                    data-testid={`player-section-${getQuickLinkTestId(quickLink.id)}`}
+                    aria-label={quickLink.landmarkLabel}
+                    style={pps.sectionLandmark}
+                  >
+                    {item.node}
+                  </section>
+                ) : item.node;
                 return (
                   <FadeIn key={item.key} delay={delay} style={item.span ? { ...pps.gridFullWidth, ...item.style } : item.style}>
-                    {item.node}
+                    {content}
                   </FadeIn>
                 );
               });
             })()}
+            </div>
           </div>
         </div>
     </Page>

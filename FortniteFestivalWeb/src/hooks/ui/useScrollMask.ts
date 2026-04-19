@@ -6,6 +6,8 @@ export interface ScrollMaskOptions {
   size?: number;
   /** When true, use the container's own scroll state instead of the app scroll container. Use for portalled overlays (modals). */
   selfScroll?: boolean;
+  /** When true, clear any applied mask and skip mask updates entirely. */
+  disabled?: boolean;
 }
 
 const DEFAULT_SIZE = 40;
@@ -21,12 +23,23 @@ export function useScrollMask(
 ): () => void {
   const size = options.size ?? DEFAULT_SIZE;
   const selfScroll = options.selfScroll ?? false;
+  const disabled = options.disabled ?? false;
   const rafId = useRef(0);
   const hasMask = useRef(false);
   const scrollContainerRef = useScrollContainer();
 
   const update = useCallback(() => {
     const el = containerRef.current;
+    if (!el) return;
+
+    if (disabled) {
+      if (hasMask.current) {
+        hasMask.current = false;
+        el.style.maskImage = '';
+        el.style.webkitMaskImage = '';
+      }
+      return;
+    }
 
     let atTop: boolean;
     let atBottom: boolean;
@@ -34,14 +47,13 @@ export function useScrollMask(
     let bottomEdge: number;
 
     if (selfScroll) {
-      if (!el) return;
       atTop = el.scrollTop <= 0;
       atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
       topEdge = 0;
       bottomEdge = el.clientHeight;
     } else {
       const scrollEl = scrollContainerRef.current;
-      if (!el || !scrollEl) return;
+      if (!scrollEl) return;
       const scrollRect = scrollEl.getBoundingClientRect();
       const rect = el.getBoundingClientRect();
       atTop = rect.top >= scrollRect.top;
@@ -87,16 +99,18 @@ export function useScrollMask(
 
   // Listen to scroll container (self or app-level)
   useEffect(() => {
+    if (disabled) return;
     const target = selfScroll ? containerRef.current : scrollContainerRef.current;
     if (!target) return;
     target.addEventListener('scroll', throttledUpdate, { passive: true });
     return () => target.removeEventListener('scroll', throttledUpdate);
-  }, [selfScroll, throttledUpdate, containerRef, scrollContainerRef]);
+  }, [disabled, selfScroll, throttledUpdate, containerRef, scrollContainerRef]);
 
   // Re-evaluate mask when the scroll container or content container resizes.
   // This catches layout changes that happen after the initial mount measurement
   // (e.g. header portal rendering, fab spacer margin, window resize).
   useEffect(() => {
+    if (disabled) return;
     const el = containerRef.current;
     const scrollEl = selfScroll ? el : scrollContainerRef.current;
     if (!scrollEl) return;
@@ -104,7 +118,7 @@ export function useScrollMask(
     ro.observe(scrollEl);
     if (el && el !== scrollEl) ro.observe(el);
     return () => ro.disconnect();
-  }, [selfScroll, containerRef, scrollContainerRef, throttledUpdate]);
+  }, [disabled, selfScroll, containerRef, scrollContainerRef, throttledUpdate]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { update(); }, [update, ...deps]);

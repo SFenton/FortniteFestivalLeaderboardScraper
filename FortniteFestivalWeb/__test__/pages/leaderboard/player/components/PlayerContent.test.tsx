@@ -9,10 +9,21 @@ import { FabSearchProvider } from '../../../../../src/contexts/FabSearchContext'
 import { SearchQueryProvider, useSearchQuery } from '../../../../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../../../../src/contexts/PlayerDataContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../../helpers/browserStubs';
+import { stubMatchMedia, stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../../helpers/browserStubs';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
 import PlayerContent from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
 import { SyncPhase } from '@festival/core';
+
+let mockIsWideDesktop = true;
+
+vi.mock('../../../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../../src/hooks/ui/useIsMobile')>();
+  return {
+    ...actual,
+    useIsMobile: () => false,
+    useIsWideDesktop: () => mockIsWideDesktop,
+  };
+});
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -43,6 +54,8 @@ beforeAll(() => { stubScrollTo(); stubResizeObserver(); stubElementDimensions();
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  mockIsWideDesktop = true;
+  stubMatchMedia(false);
   mockApi.getSongs.mockResolvedValue({ songs: [{ songId: 's1', title: 'Test Song', artist: 'Artist A', year: 2024, difficulty: { guitar: 3 }, albumArt: 'art.jpg' }], count: 1, currentSeason: 5 });
   mockApi.getPlayer.mockResolvedValue({ accountId: 'p1', displayName: 'TestPlayer', totalScores: 1, scores: [{ songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 3, percentile: 90, accuracy: 95, isFullCombo: false, stars: 5, season: 5, totalEntries: 500 }] });
   mockApi.getSyncStatus.mockResolvedValue({ accountId: 'p1', isTracked: false, backfill: null, historyRecon: null, rivals: null });
@@ -54,6 +67,23 @@ beforeEach(() => {
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'p1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: '' });
 });
+
+function setDynamicSectionRect(element: HTMLElement, absoluteTop: number, shell: HTMLElement) {
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      top: absoluteTop - shell.scrollTop,
+      left: 0,
+      bottom: absoluteTop - shell.scrollTop + 60,
+      right: 600,
+      width: 600,
+      height: 60,
+      x: 0,
+      y: absoluteTop - shell.scrollTop,
+      toJSON() { return this; },
+    }),
+  });
+}
 
 function ShellInjector({ children }: { children: React.ReactNode }) {
   const sRef = useScrollContainer();
@@ -302,5 +332,144 @@ describe('PlayerContent', () => {
 
     // Search query should be cleared
     await waitFor(() => { expect(getByTestId('search-query').textContent).toBe(''); });
+  });
+
+  it('renders quick links in wide desktop mode', async () => {
+    render(
+      <Providers accountId="p1">
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('navigation', { name: 'Quick Links' })).toBeDefined();
+    });
+
+    expect(screen.getByRole('navigation', { name: 'Quick Links' })).toHaveStyle({ position: 'sticky', top: '0px' });
+    expect(screen.queryByText('Quick Links')).toBeNull();
+    expect(screen.getByTestId('player-quick-link-global')).toBeDefined();
+    expect(screen.getByTestId('player-quick-link-instrument-solo-guitar')).toBeDefined();
+    expect(screen.getByTestId('player-quick-link-instrument-solo-bass')).toBeDefined();
+    expect(screen.getByTestId('player-quick-link-top-songs')).toBeDefined();
+  });
+
+  it('hides quick links outside wide desktop mode', async () => {
+    mockIsWideDesktop = false;
+
+    render(
+      <Providers accountId="p1">
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
+    expect(screen.queryByRole('navigation', { name: 'Quick Links' })).toBeNull();
+  });
+
+  it('shows the bands quick link only when the bands section is enabled', async () => {
+    render(
+      <Providers accountId="p1">
+        <PlayerContent
+          data={playerData as any}
+          songs={songs as any}
+          isSyncing={false}
+          phase={SyncPhase.Idle}
+          backfillProgress={0}
+          historyProgress={0}
+          rivalsProgress={0}
+          itemsCompleted={0}
+          totalItems={0}
+          entriesFound={0}
+          currentSongName={null}
+          seasonsQueried={0}
+          rivalsFound={0}
+          isTrackedPlayer={true}
+          skipAnim
+          statsData={{
+            accountId: 'p1',
+            totalSongs: 1,
+            instruments: [],
+            bands: {
+              all: { totalCount: 1, entries: [] },
+              duos: { totalCount: 1, entries: [] },
+              trios: { totalCount: 0, entries: [] },
+              quads: { totalCount: 0, entries: [] },
+            },
+          } as any}
+          rankingQueryResults={[]}
+        />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-quick-link-bands')).toBeDefined();
+    });
+  });
+
+  it('scrolls the shell container when a quick link is clicked', async () => {
+    render(
+      <Providers accountId="p1">
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-quick-link-top-songs')).toBeDefined();
+    });
+
+    const shell = screen.getByTestId('page-root').parentElement as HTMLElement;
+    const topSongsSection = screen.getByTestId('player-section-top-songs');
+    const scrollToSpy = vi.fn();
+    shell.scrollTo = scrollToSpy as any;
+    shell.scrollTop = 0;
+    setDynamicSectionRect(topSongsSection, 640, shell);
+
+    fireEvent.click(screen.getByTestId('player-quick-link-top-songs'));
+
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 632, behavior: 'smooth' });
+  });
+
+  it('updates the active quick link as the shell scroll position changes', async () => {
+    render(
+      <Providers accountId="p1">
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-quick-link-global')).toBeDefined();
+    });
+
+    const shell = screen.getByTestId('page-root').parentElement as HTMLElement;
+    const globalSection = screen.getByTestId('player-section-global');
+    const guitarSection = screen.getByTestId('player-section-instrument-solo-guitar');
+    const bassSection = screen.getByTestId('player-section-instrument-solo-bass');
+    const topSongsSection = screen.getByTestId('player-section-top-songs');
+
+    setDynamicSectionRect(globalSection, 80, shell);
+    setDynamicSectionRect(guitarSection, 520, shell);
+    setDynamicSectionRect(bassSection, 760, shell);
+    setDynamicSectionRect(topSongsSection, 980, shell);
+
+    shell.scrollTop = 0;
+    fireEvent.scroll(shell);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-quick-link-global')).toHaveAttribute('aria-current', 'location');
+    });
+
+    shell.scrollTop = 600;
+    fireEvent.scroll(shell);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-quick-link-instrument-solo-guitar')).toHaveAttribute('aria-current', 'location');
+    });
+
+    shell.scrollTop = 1100;
+    fireEvent.scroll(shell);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-quick-link-top-songs')).toHaveAttribute('aria-current', 'location');
+    });
   });
 });
