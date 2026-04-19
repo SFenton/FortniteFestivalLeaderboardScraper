@@ -6,10 +6,10 @@
 import { useMemo, type CSSProperties } from 'react';
 import { Layout, Opacity, CssValue, PointerEvents, CssProp, STAGGER_INTERVAL, transition } from '@festival/theme';
 import PlayerSongRow from '../../components/PlayerSongRow';
-import { useDemoSongs, FADE_MS } from '../../../../hooks/data/useDemoSongs';
-import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
+import { useDemoSongs, FADE_MS, fitRows } from '../../../../hooks/data/useDemoSongs';
+import { useIsMobile, useIsNarrow } from '../../../../hooks/ui/useIsMobile';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
-import { topSongsStyles } from '../../components/TopSongsSection';
+import { resolvePlayerSongRowEstimate, topSongsStyles } from '../../components/TopSongsSection';
 
 /* v8 ignore start -- NOOP is passed as prop but never invoked in test (pointerEvents: none) */
 const NOOP = (e: React.MouseEvent) => e.preventDefault();
@@ -21,15 +21,18 @@ const DEMO_PERCENTILES = [1.2, 3.5, 7.8, 14.2, 22.6, 35.1, 48.9];
 
 export default function TopSongsDemo() {
   const isMobile = useIsMobile();
+  const isNarrow = useIsNarrow();
   const h = useSlideHeight();
 
-  const rowHeight = Layout.songRowHeight;
-  const availableForRows = h ?? rowHeight * 4;
-  const maxRows = Math.max(1, Math.floor(availableForRows / rowHeight));
+  const rowHeight = Layout.playerSongRowHeight;
+  const mobileRowHeight = resolvePlayerSongRowEstimate(isNarrow);
+  const visibleRowHeight = isMobile ? mobileRowHeight : rowHeight;
+  const availableForRows = h ?? visibleRowHeight * 4;
+  const maxRows = fitRows(availableForRows, visibleRowHeight);
 
   const { rows, fadingIdx, initialDone } = useDemoSongs({
     rowHeight,
-    mobileRowHeight: rowHeight,
+    mobileRowHeight,
     isMobile,
   });
 

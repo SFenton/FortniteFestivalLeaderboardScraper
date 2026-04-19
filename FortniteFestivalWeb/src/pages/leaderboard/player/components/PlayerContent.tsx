@@ -327,6 +327,9 @@ export default function PlayerContent({
   }
 
   // --- Top Songs heading ---
+  const hasFab = useIsMobile();
+  const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
+
   items.push({
     key: 'top-heading',
     span: true,
@@ -341,7 +344,7 @@ export default function PlayerContent({
   for (let i = 0; i < visibleKeys.length; i++) {
     const inst = visibleKeys[i]!;
     const scores = byInstrument.get(inst) ?? [];
-    items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === visibleKeys.length - 1));
+    items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === visibleKeys.length - 1, isNarrowGrid));
   }
 
   if (playerBandsEnabled && statsData) {
@@ -350,9 +353,6 @@ export default function PlayerContent({
 
   // Wire up container-level scroll fade
   const fadeDeps = useMemo(() => [items.length], [items.length]);
-  const hasFab = useIsMobile();
-
-  const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
 
   // Show the select-profile pill on all platforms (header actions slot handles layout)
   const canShowSelectBtn = true;

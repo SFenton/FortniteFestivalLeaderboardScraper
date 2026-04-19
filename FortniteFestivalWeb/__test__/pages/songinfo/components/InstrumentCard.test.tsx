@@ -5,8 +5,14 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
+import { stubResizeObserver } from '../../../helpers/browserStubs';
 import InstrumentCard from '../../../../src/pages/songinfo/components/InstrumentCard';
 import type { LeaderboardEntry, PlayerScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+
+let mockMeasuredCardWidth = 0;
+vi.mock('../../../../src/hooks/ui/useContainerWidth', () => ({
+  useContainerWidth: () => mockMeasuredCardWidth,
+}));
 
 const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
 let measuredCountedLabelWidth = 320;
@@ -74,6 +80,8 @@ function renderCard(overrides: Partial<typeof baseProps> = {}) {
 
 describe('InstrumentCard', () => {
   beforeAll(() => {
+    stubResizeObserver();
+
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
       configurable: true,
       get() {
@@ -106,6 +114,7 @@ describe('InstrumentCard', () => {
   beforeEach(() => {
     measuredCountedLabelWidth = 320;
     measuredPlainLabelWidth = 140;
+    mockMeasuredCardWidth = 0;
   });
 
   afterAll(() => {
@@ -161,9 +170,9 @@ describe('InstrumentCard', () => {
   });
 
   it('renders accuracy when card is wide enough', () => {
-    setViewportWidth(900);
+    setViewportWidth(1200);
     const entries = [makeEntry(1)];
-    renderCard({ prefetchedEntries: entries, windowWidth: 900 });
+    renderCard({ prefetchedEntries: entries, windowWidth: 1200 });
     expect(screen.getByTestId('accuracy')).toBeTruthy();
   });
 
@@ -172,6 +181,25 @@ describe('InstrumentCard', () => {
     const entries = [makeEntry(1)];
     renderCard({ prefetchedEntries: entries, windowWidth: 300 });
     expect(screen.queryByTestId('accuracy')).toBeNull();
+  });
+
+  it('hides accuracy when a two-column layout makes the card too narrow', () => {
+    setViewportWidth(900);
+    const entries = [makeEntry(1)];
+    renderCard({ prefetchedEntries: entries, windowWidth: 900 });
+    expect(screen.queryByTestId('accuracy')).toBeNull();
+  });
+
+  it('drops fixed score width on compact cards to give names more room', () => {
+    const entries = [makeEntry(1)];
+    renderCard({ prefetchedEntries: entries, windowWidth: 900 });
+    expect(screen.getByText('149,000').style.width).toBe('');
+  });
+
+  it('keeps fixed score width on wide cards', () => {
+    const entries = [makeEntry(1)];
+    renderCard({ prefetchedEntries: entries, windowWidth: 1200 });
+    expect(screen.getByText('149,000').style.width).toBe('8ch');
   });
 
   it('highlights player entry when player is in top entries', () => {
@@ -279,7 +307,7 @@ describe('InstrumentCard', () => {
       prefetchedEntries: entries,
       localEntries: 10030,
       totalEntries: 700000,
-      windowWidth: 430,
+      windowWidth: 1200,
     });
     const button = screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)');
     expect(button.style.whiteSpace).toBe('nowrap');
@@ -308,7 +336,7 @@ describe('InstrumentCard', () => {
       prefetchedEntries: entries,
       localEntries: 10030,
       totalEntries: 700000,
-      windowWidth: 430,
+      windowWidth: 1200,
     });
     expect(screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)')).toBeTruthy();
     expect(screen.queryByText('10,030 tracked')).toBeNull();

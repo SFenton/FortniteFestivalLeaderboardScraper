@@ -96,7 +96,7 @@ export default function ShopViewsDemo() {
         <div style={s.list}>
           {listVisible.map(song => (
             <div key={song.songId} style={s.listRow}>
-              <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
+              <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={0} />
             </div>
           ))}
         </div>

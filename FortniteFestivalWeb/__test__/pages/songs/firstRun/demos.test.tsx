@@ -517,6 +517,36 @@ describe('MetadataDemo', () => {
     );
     expect(metaWraps.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('uses unified wrapped metadata rows on narrow mobile widths', () => {
+    mockIsMobile = true;
+    mockContainerWidth = 280;
+    const { container } = wrap(<MetadataDemo />);
+
+    const wrapRows = container.querySelectorAll('[data-metadata-row="wrap"]');
+    const topRows = container.querySelectorAll('[data-metadata-row="top"]');
+    const bottomRows = container.querySelectorAll('[data-metadata-row="bottom"]');
+
+    expect(wrapRows).toHaveLength(3);
+    expect(topRows).toHaveLength(0);
+    expect(bottomRows).toHaveLength(0);
+    expect(wrapRows[0]?.querySelector('[data-metadata-key="score"]')).toBeTruthy();
+  });
+
+  it('keeps score in the top row on wider mobile widths', () => {
+    mockIsMobile = true;
+    mockContainerWidth = 340;
+    const { container } = wrap(<MetadataDemo />);
+
+    const wrapRows = container.querySelectorAll('[data-metadata-row="wrap"]');
+    const topRows = container.querySelectorAll('[data-metadata-row="top"]');
+    const bottomRows = container.querySelectorAll('[data-metadata-row="bottom"]');
+
+    expect(wrapRows).toHaveLength(0);
+    expect(topRows).toHaveLength(3);
+    expect(bottomRows).toHaveLength(3);
+    expect(bottomRows[0]?.querySelector('[data-metadata-key="score"]')).toBeNull();
+  });
 });
 
 /* ── edge cases — zero slide height ── */

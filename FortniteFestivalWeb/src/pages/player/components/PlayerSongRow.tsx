@@ -33,7 +33,7 @@ const PlayerSongRow = memo(function PlayerSongRow({
   return (
     <a key={songId} href={href} onClick={onClick} style={s.songListRow}>
       <div style={twoRow ? s.rowMainLine : { display: Display.contents }}>
-        <SongInfo albumArt={albumArt} title={title} artist={artist} year={year} />
+        <SongInfo albumArt={albumArt} title={title} artist={artist} year={year} minWidth={twoRow ? 0 : undefined} />
         {!twoRow && percentile != null && (
           <div style={s.topSongRight}>
             <PercentilePill display={formatPercentileBucket(percentile)} />
@@ -68,6 +68,8 @@ function useStyles(twoRow: boolean) {
     rowMainLine: {
       ...flexRow,
       gap: Gap.xl,
+      flex: 1,
+      minWidth: 0,
     } as CSSProperties,
     topSongRight: {
       textAlign: TextAlign.right,

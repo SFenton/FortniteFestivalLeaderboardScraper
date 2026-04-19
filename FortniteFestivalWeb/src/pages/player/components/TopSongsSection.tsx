@@ -10,6 +10,19 @@ import PlayerSongRow from './PlayerSongRow';
 import type { PlayerItem, NavigateToSongDetail } from '../helpers/playerPageTypes';
 import InstrumentEmptyState from '../sections/InstrumentEmptyState';
 
+export const PLAYER_SONG_ROW_TWO_ROW_ESTIMATE = 88;
+
+export function resolvePlayerSongRowEstimate(useTwoRowLayout: boolean): number {
+  return useTwoRowLayout ? PLAYER_SONG_ROW_TWO_ROW_ESTIMATE : Layout.playerSongRowHeight;
+}
+
+function estimateTopSongsListHeight(rowCount: number, useTwoRowLayout: boolean, includeBottomMargin: boolean): number {
+  const rowHeight = resolvePlayerSongRowEstimate(useTwoRowLayout);
+  const rowGaps = Math.max(0, rowCount - 1) * Gap.sm;
+  const marginBottom = includeBottomMargin ? Gap.section : Gap.none;
+  return rowCount * rowHeight + rowGaps + marginBottom;
+}
+
 export function buildTopSongsItems(
   t: (key: string, opts?: Record<string, unknown>) => string,
   inst: InstrumentKey,
@@ -18,6 +31,7 @@ export function buildTopSongsItems(
   displayName: string,
   navigateToSongDetail: NavigateToSongDetail,
   isLast?: boolean,
+  useTwoRowLayout = false,
 ): PlayerItem[] {
   const withPct = scores.filter((s) => s.rank > 0 && (s.totalEntries ?? 0) > 0);
 
@@ -78,12 +92,13 @@ export function buildTopSongsItems(
   /* v8 ignore stop */
 
   const noBottom = bottomScores.length === 0;
+  const topListHasBottomMargin = !(isLast && noBottom);
 
   // Top songs table
   items.push({
     key: `top-songs-${inst}`,
     span: true,
-    heightEstimate: topScores.length * Layout.songRowHeight,
+    heightEstimate: estimateTopSongsListHeight(topScores.length, useTwoRowLayout, topListHasBottomMargin),
     node: (
       <div style={(isLast && noBottom) ? topSongsStyles.songListLast : topSongsStyles.songList}>
         {topScores.map((sc) => renderSongRow(sc))}
@@ -92,6 +107,8 @@ export function buildTopSongsItems(
   });
 
   if (bottomScores.length > 0) {
+    const bottomListHasBottomMargin = !isLast;
+
     // Bottom songs header
     items.push({
       key: `bot-hdr-${inst}`,
@@ -111,7 +128,7 @@ export function buildTopSongsItems(
     items.push({
       key: `bot-songs-${inst}`,
       span: true,
-      heightEstimate: bottomScores.length * Layout.songRowHeight,
+      heightEstimate: estimateTopSongsListHeight(bottomScores.length, useTwoRowLayout, bottomListHasBottomMargin),
       node: (
         <div style={isLast ? topSongsStyles.songListLast : topSongsStyles.songList}>
           {bottomScores.map((sc) => renderSongRow(sc))}

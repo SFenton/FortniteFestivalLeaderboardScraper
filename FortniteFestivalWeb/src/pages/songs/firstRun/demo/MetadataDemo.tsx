@@ -12,12 +12,14 @@ import MiniStars from '../../../../components/songs/metadata/MiniStars';
 import PercentilePill from '../../../../components/songs/metadata/PercentilePill';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import DifficultyBars from '../../../../components/songs/metadata/DifficultyBars';
+import { useContainerWidth } from '../../../../hooks/ui/useContainerWidth';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
-import { DEMO_SWAP_INTERVAL_MS, Layout } from '@festival/theme';
+import { DEMO_SWAP_INTERVAL_MS, Layout, Gap, CssValue, flexColumn } from '@festival/theme';
 import type { SongDisplay as DemoSong } from '@festival/core/api/serverTypes';
 import { useDemoSongs, FADE_MS, shuffle } from '../../../../hooks/data/useDemoSongs';
 import { DemoSongRow } from './DemoSongRow';
 import { scoreMeta, metadataWrap, mobileTopRow, detailStrip } from '../../../../styles/songRowStyles';
+import { resolvePillFitsTopRow } from '../../layoutMode';
 
 /* ── Song pool comes from useDemoSongs hook ── */
 
@@ -26,6 +28,8 @@ import { scoreMeta, metadataWrap, mobileTopRow, detailStrip } from '../../../../
 enum MetadataLayout { ScoreAccuracy, StarsDifficulty, PercentileSeason, ScoreStars, AccuracyDifficulty, PercentileScore }
 
 interface MetaValues { score: number; accuracy: number; fc: boolean; stars: number; percentile: string; season: number; difficulty: number }
+
+type MetadataEntry = { key: string; el: React.ReactNode };
 
 const ALL_LAYOUTS: MetadataLayout[] = [MetadataLayout.ScoreAccuracy, MetadataLayout.StarsDifficulty, MetadataLayout.PercentileSeason, MetadataLayout.ScoreStars, MetadataLayout.AccuracyDifficulty, MetadataLayout.PercentileScore];
 
@@ -60,13 +64,42 @@ function MetadataStrip({ layout, meta }: { layout: MetadataLayout; meta: MetaVal
 }
 
 function MobileMetadataStrip({ meta }: { meta: MetaValues }) {
+  const entries: MetadataEntry[] = [
+    { key: 'score', el: <ScorePill score={meta.score} bold /> },
+    { key: 'percentage', el: <AccuracyDisplay accuracy={meta.accuracy} isFullCombo={meta.fc} /> },
+    { key: 'stars', el: <MiniStars starsCount={meta.stars} isFullCombo={meta.fc} /> },
+    { key: 'percentile', el: <PercentilePill display={meta.percentile} /> },
+    { key: 'seasonachieved', el: <SeasonPill season={meta.season} /> },
+    { key: 'intensity', el: <DifficultyBars level={meta.difficulty} raw /> },
+  ];
+
   return (
-    <div style={metadataWrap}>
-      <AccuracyDisplay accuracy={meta.accuracy} isFullCombo={meta.fc} />
-      <MiniStars starsCount={meta.stars} isFullCombo={meta.fc} />
-      <PercentilePill display={meta.percentile} />
-      <SeasonPill season={meta.season} />
-      <DifficultyBars level={meta.difficulty} raw />
+    <div data-metadata-row="wrap" style={metadataWrap}>
+      {entries.map(entry => (
+        <div key={entry.key} data-metadata-key={entry.key}>
+          {entry.el}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SplitMobileMetadataStrip({ meta }: { meta: MetaValues }) {
+  const entries: MetadataEntry[] = [
+    { key: 'percentage', el: <AccuracyDisplay accuracy={meta.accuracy} isFullCombo={meta.fc} /> },
+    { key: 'stars', el: <MiniStars starsCount={meta.stars} isFullCombo={meta.fc} /> },
+    { key: 'percentile', el: <PercentilePill display={meta.percentile} /> },
+    { key: 'seasonachieved', el: <SeasonPill season={meta.season} /> },
+    { key: 'intensity', el: <DifficultyBars level={meta.difficulty} raw /> },
+  ];
+
+  return (
+    <div data-metadata-row="bottom" style={metadataWrap}>
+      {entries.map(entry => (
+        <div key={entry.key} data-metadata-key={entry.key}>
+          {entry.el}
+        </div>
+      ))}
     </div>
   );
 }
@@ -74,7 +107,10 @@ function MobileMetadataStrip({ meta }: { meta: MetaValues }) {
 /* ── Sizing ── */
 
 const ROW_HEIGHT_DESKTOP = Layout.demoRowHeight;
-const ROW_HEIGHT_MOBILE = Layout.demoRowMobileMetaHeight;
+// Metadata rows are content-sized and now mirror production compact wrapping,
+// so the old 160px estimate undercounts their real mobile height on short slides.
+const ROW_HEIGHT_MOBILE = Math.max(Layout.demoRowMobileMetaHeight, 200);
+const containerStyle = { width: CssValue.full, ...flexColumn, gap: Gap.sm };
 
 /* v8 ignore start -- pickNewLayout is only called from the v8-ignored swap cycle */
 /** Pick a layout not currently shown. */
@@ -89,12 +125,15 @@ type RowState = { song: DemoSong; meta: MetaValues; layout: MetadataLayout };
 
 export default function MetadataDemo() {
   const isMobile = useIsMobile();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerWidth = useContainerWidth(containerRef);
   const { rows: songRows, initialDone, pool: songPool } = useDemoSongs({
     rowHeight: ROW_HEIGHT_DESKTOP,
     mobileRowHeight: ROW_HEIGHT_MOBILE,
     isMobile,
     autoSwap: false,
   });
+  const pillLayoutRef = useRef(true);
 
   const shuffledMeta = useMemo(() => shuffle(META_DATA), []);
 
@@ -168,18 +207,26 @@ export default function MetadataDemo() {
     /* v8 ignore stop */
   }, [rows.length, songPool, shuffledMeta]);
 
+  const pillFitsTopRow = resolvePillFitsTopRow(containerWidth, pillLayoutRef.current);
+
+  useEffect(() => {
+    pillLayoutRef.current = pillFitsTopRow;
+  }, [pillFitsTopRow]);
+
   if (isMobile) {
     return (
-      <div>
+      <div ref={containerRef} style={containerStyle}>
         {rows.map((row, i) => (
           <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile>
             <div style={mobileTopRow}>
-              <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} />
-              <div style={detailStrip}>
-                <ScorePill score={row.meta.score} width="78px" bold />
-              </div>
+              <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} minWidth={0} />
+              {pillFitsTopRow && (
+                <div data-metadata-row="top" style={detailStrip}>
+                  <ScorePill score={row.meta.score} bold />
+                </div>
+              )}
             </div>
-            <MobileMetadataStrip meta={row.meta} />
+            {pillFitsTopRow ? <SplitMobileMetadataStrip meta={row.meta} /> : <MobileMetadataStrip meta={row.meta} />}
           </DemoSongRow>
         ))}
       </div>
@@ -187,7 +234,7 @@ export default function MetadataDemo() {
   }
 
   return (
-    <div>
+    <div style={containerStyle}>
       {rows.map((row, i) => (
         <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx}>
           <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} />

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import type { ServerInstrumentKey as InstrumentKey, ServerSong as Song, PlayerScore } from '@festival/core/api/serverTypes';
-import { buildTopSongsItems } from '../../../../src/pages/player/components/TopSongsSection';
+import { Gap, Layout } from '@festival/theme';
+import { buildTopSongsItems, PLAYER_SONG_ROW_TWO_ROW_ESTIMATE } from '../../../../src/pages/player/components/TopSongsSection';
 
 vi.mock('../../../../src/pages/player/sections/PlayerSectionHeading', () => ({
   default: ({ title }: any) => <div data-testid="heading">{title}</div>,
@@ -66,5 +67,21 @@ describe('buildTopSongsItems', () => {
     const songListItem = items.find(i => i.key.includes('top-songs'));
     const { container } = render(<>{songListItem!.node}</>);
     expect(container.textContent).toContain('unknown-');
+  });
+
+  it('uses the default one-row list height estimate by default', () => {
+    const scores = Array.from({ length: 3 }, (_, i) => makeScore(`s${i}`, i + 1, 100));
+    const songMap = new Map(scores.map(s => [s.songId, makeSong(s.songId)]));
+    const items = buildTopSongsItems(t, inst, scores, songMap, 'Player', navigateToSongDetail);
+    const songListItem = items.find(i => i.key.includes('top-songs'));
+    expect(songListItem?.heightEstimate).toBe(3 * Layout.playerSongRowHeight + 2 * Gap.sm + Gap.section);
+  });
+
+  it('uses the taller narrow two-row list estimate when requested', () => {
+    const scores = Array.from({ length: 3 }, (_, i) => makeScore(`s${i}`, i + 1, 100));
+    const songMap = new Map(scores.map(s => [s.songId, makeSong(s.songId)]));
+    const items = buildTopSongsItems(t, inst, scores, songMap, 'Player', navigateToSongDetail, false, true);
+    const songListItem = items.find(i => i.key.includes('top-songs'));
+    expect(songListItem?.heightEstimate).toBe(3 * PLAYER_SONG_ROW_TWO_ROW_ESTIMATE + 2 * Gap.sm + Gap.section);
   });
 });

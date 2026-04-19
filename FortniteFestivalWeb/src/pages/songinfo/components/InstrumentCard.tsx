@@ -8,10 +8,11 @@ import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { leaderboardCache } from '../../../api/pageCache';
 import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
-import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, NARROW_BREAKPOINT, TextAlign, WhiteSpace, WordBreak, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
+import { Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, TextAlign, WhiteSpace, WordBreak, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { parseApiError } from '../../../utils/apiError';
-import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
+import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
+import { resolveTopScoresColumns } from '../topScoresLayout';
 
 interface InstrumentCardProps {
   songId: string;
@@ -54,12 +55,14 @@ export default memo(function InstrumentCard({
   const navigate = useNavigate();
 
   const isTwoCol = windowWidth >= 840 && !singleColumn;
-  const cardWidth = isTwoCol ? windowWidth / 2 : windowWidth;
-  const showAccuracy = useMediaQuery(QUERY_SHOW_ACCURACY);
-  const showSeason = useMediaQuery(QUERY_SHOW_SEASON);
-  const isCompactCard = cardWidth < NARROW_BREAKPOINT;
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const measuredCardWidth = useContainerWidth(cardRef);
+  const estimatedCardWidth = isTwoCol ? windowWidth / 2 : windowWidth;
+  const cardWidth = measuredCardWidth > 0 ? measuredCardWidth : estimatedCardWidth;
+  const { isCompactCard, showAccuracy, showSeason } = resolveTopScoresColumns(cardWidth);
   const viewAllButtonRef = useRef<HTMLDivElement | null>(null);
   const [viewAllNeedsCompact, setViewAllNeedsCompact] = useState(false);
+  const effectiveScoreWidth = isCompactCard ? undefined : scoreWidth;
 
   const playerInTop = !!(playerAccountId && prefetchedEntries.some(
     (e) => e.accountId === playerAccountId,
@@ -134,6 +137,7 @@ export default memo(function InstrumentCard({
         <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} sig={sig} />
       </div>
       <div
+        ref={cardRef}
         style={hasEntries ? st.card : st.cardNoClick}
         /* v8 ignore start — navigation */
         {...(hasEntries ? { onClick: () => { leaderboardCache.delete(`${songId}:${instrument}`); navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } }); } } : {})}
@@ -173,7 +177,7 @@ export default memo(function InstrumentCard({
                 showDifficulty={showSeason}
                 showSeason={showSeason}
                 showAccuracy={showAccuracy}
-                scoreWidth={scoreWidth}
+                scoreWidth={effectiveScoreWidth}
                 rankWidth={rankWidth}
               />
             </Link>
@@ -204,7 +208,7 @@ export default memo(function InstrumentCard({
               showDifficulty={showSeason}
               showSeason={showSeason}
               showAccuracy={showAccuracy}
-              scoreWidth={scoreWidth}
+              scoreWidth={effectiveScoreWidth}
               rankWidth={rankWidth}
             />
           </Link>
