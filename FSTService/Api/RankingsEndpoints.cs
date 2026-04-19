@@ -411,7 +411,7 @@ public static partial class ApiEndpoints
             if (!BandComboIds.IsValidBandType(bandType))
                 return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
 
-            var comboValidation = TryNormalizeBandCombo(bandType, combo);
+            var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
             if (comboValidation.Error is not null)
                 return Results.BadRequest(new { error = comboValidation.Error });
 
@@ -450,7 +450,7 @@ public static partial class ApiEndpoints
             if (!BandComboIds.IsValidBandType(bandType))
                 return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
 
-            var comboValidation = TryNormalizeBandCombo(bandType, combo);
+            var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
             if (comboValidation.Error is not null)
                 return Results.BadRequest(new { error = comboValidation.Error });
 
@@ -758,17 +758,4 @@ public static partial class ApiEndpoints
         ranking.ComputedAt,
     };
 
-    private static (string? ComboId, string? Error) TryNormalizeBandCombo(string bandType, string? combo)
-    {
-        if (string.IsNullOrWhiteSpace(combo))
-            return (null, null);
-
-        if (!BandComboIds.TryNormalizeComboParam(combo, out var comboId))
-            return (null, "Invalid band combo. Use a normalized server-instrument list such as Solo_Guitar+Solo_Bass.");
-
-        if (BandComboIds.ToInstruments(comboId).Count != BandInstrumentMapping.ExpectedMemberCount(bandType))
-            return (null, $"Combo size does not match band type {bandType}.");
-
-        return (comboId, null);
-    }
 }

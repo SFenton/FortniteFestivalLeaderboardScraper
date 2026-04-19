@@ -1229,92 +1229,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public PlayerBandsDto GetPlayerBands(string accountId, int previewCount = 5)
     {
-        using var conn = _pgDataSource.OpenConnection();
+        var allEntries = GetPlayerBandEntries(accountId);
 
-        var teams = new List<(string BandType, string TeamKey)>();
-        using (var teamCmd = conn.CreateCommand())
-        {
-            teamCmd.CommandText = """
-                SELECT DISTINCT band_type, team_key
-                FROM band_members
-                WHERE account_id = @accountId
-                ORDER BY band_type, team_key
-                """;
-            teamCmd.Parameters.AddWithValue("accountId", accountId);
-
-            using var reader = teamCmd.ExecuteReader();
-            while (reader.Read())
-            {
-                teams.Add((reader.GetString(0), reader.GetString(1)));
-            }
-        }
-
-        if (teams.Count == 0)
+        if (allEntries.Count == 0)
         {
             return CreateEmptyPlayerBands();
         }
-
-        var instrumentsByMember = new Dictionary<(string BandType, string TeamKey, string AccountId), List<string>>();
-        using (var memberCmd = conn.CreateCommand())
-        {
-            memberCmd.CommandText = """
-                WITH player_teams AS (
-                    SELECT DISTINCT band_type, team_key
-                    FROM band_members
-                    WHERE account_id = @accountId
-                )
-                SELECT pt.band_type,
-                       pt.team_key,
-                       bms.account_id,
-                       ARRAY_AGG(DISTINCT bms.instrument_id ORDER BY bms.instrument_id)
-                FROM player_teams pt
-                JOIN band_member_stats bms
-                  ON pt.band_type = bms.band_type
-                 AND pt.team_key = bms.team_key
-                GROUP BY pt.band_type, pt.team_key, bms.account_id
-                ORDER BY pt.band_type, pt.team_key, bms.account_id
-                """;
-            memberCmd.Parameters.AddWithValue("accountId", accountId);
-
-            using var reader = memberCmd.ExecuteReader();
-            while (reader.Read())
-            {
-                var bandType = reader.GetString(0);
-                var teamKey = reader.GetString(1);
-                var memberAccountId = reader.GetString(2);
-                var instrumentIds = reader.IsDBNull(3) ? [] : reader.GetFieldValue<int[]>(3);
-
-                var instruments = instrumentIds
-                    .Select(BandInstrumentMapping.ToLeaderboardType)
-                    .Where(instrument => !string.IsNullOrWhiteSpace(instrument))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList()!;
-
-                instrumentsByMember[(bandType, teamKey, memberAccountId)] = instruments;
-            }
-        }
-
-        var allMemberAccountIds = teams
-            .SelectMany(team => SplitTeamKey(team.TeamKey))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var displayNames = _metaDb.GetDisplayNames(allMemberAccountIds);
-
-        var allEntries = teams
-            .Select(team => new PlayerBandEntryDto
-            {
-                TeamKey = team.TeamKey,
-                BandType = team.BandType,
-                Members = SplitTeamKey(team.TeamKey)
-                    .Select(memberAccountId => new PlayerBandMemberDto
-                    {
-                        AccountId = memberAccountId,
-                        DisplayName = displayNames.GetValueOrDefault(memberAccountId),
-                        Instruments = instrumentsByMember.GetValueOrDefault((team.BandType, team.TeamKey, memberAccountId), []),
-                    })
-                    .ToList(),
-            })
-            .ToList();
 
         var duos = allEntries
             .Where(entry => string.Equals(entry.BandType, "Band_Duets", StringComparison.OrdinalIgnoreCase))
@@ -1336,6 +1256,197 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             Trios = BuildBandGroup(trios, previewCount),
             Quads = BuildBandGroup(quads, previewCount),
         };
+    }
+
+    /// <summary>
+    /// Get all unique bands for one player within a single band type, with optional combo filtering.
+    /// </summary>
+    public PlayerBandTypeResponseDto GetPlayerBandsByType(string accountId, string bandType, string? comboId = null)
+    {
+        var entries = GetPlayerBandEntries(accountId, bandType, comboId);
+
+        return new PlayerBandTypeResponseDto
+        {
+            AccountId = accountId,
+            BandType = bandType,
+            ComboId = comboId,
+            TotalCount = entries.Count,
+            Entries = entries,
+        };
+    }
+
+    private List<PlayerBandEntryDto> GetPlayerBandEntries(string accountId, string? bandTypeFilter = null, string? comboIdFilter = null)
+    {
+        using var conn = _pgDataSource.OpenConnection();
+
+        var teams = GetPlayerBandTeams(conn, accountId, bandTypeFilter, comboIdFilter);
+        if (teams.Count == 0)
+            return [];
+
+        var instrumentsByMember = GetPlayerBandInstrumentsByMember(conn, accountId, teams, bandTypeFilter, comboIdFilter);
+
+        var allMemberAccountIds = teams
+            .SelectMany(team => SplitTeamKey(team.TeamKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var displayNames = _metaDb.GetDisplayNames(allMemberAccountIds);
+
+        return teams
+            .Select(team => new PlayerBandEntryDto
+            {
+                TeamKey = team.TeamKey,
+                BandType = team.BandType,
+                Members = SplitTeamKey(team.TeamKey)
+                    .Select(memberAccountId => new PlayerBandMemberDto
+                    {
+                        AccountId = memberAccountId,
+                        DisplayName = displayNames.GetValueOrDefault(memberAccountId),
+                        Instruments = instrumentsByMember.GetValueOrDefault((team.BandType, team.TeamKey, memberAccountId), []),
+                    })
+                    .ToList(),
+            })
+            .OrderBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<(string BandType, string TeamKey)> GetPlayerBandTeams(
+        NpgsqlConnection conn,
+        string accountId,
+        string? bandTypeFilter,
+        string? comboIdFilter)
+    {
+        var teams = new List<(string BandType, string TeamKey)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        using var teamCmd = conn.CreateCommand();
+        teamCmd.CommandText = bandTypeFilter is null
+            ? """
+                SELECT DISTINCT band_type, team_key, instrument_combo
+                FROM band_members
+                WHERE account_id = @accountId
+                ORDER BY band_type, team_key, instrument_combo
+                """
+            : """
+                SELECT DISTINCT band_type, team_key, instrument_combo
+                FROM band_members
+                WHERE account_id = @accountId
+                  AND band_type = @bandType
+                ORDER BY band_type, team_key, instrument_combo
+                """;
+        teamCmd.Parameters.AddWithValue("accountId", accountId);
+        if (bandTypeFilter is not null)
+            teamCmd.Parameters.AddWithValue("bandType", bandTypeFilter);
+
+        using var reader = teamCmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var bandType = reader.GetString(0);
+            var teamKey = reader.GetString(1);
+            var rawCombo = reader.IsDBNull(2) ? null : reader.GetString(2);
+
+            if (comboIdFilter is not null)
+            {
+                var normalizedComboId = BandComboIds.FromEpicRawCombo(rawCombo);
+                if (!string.Equals(normalizedComboId, comboIdFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
+
+            var dedupeKey = $"{bandType}:{teamKey}";
+            if (seen.Add(dedupeKey))
+                teams.Add((bandType, teamKey));
+        }
+
+        return teams;
+    }
+
+    private static Dictionary<(string BandType, string TeamKey, string AccountId), List<string>> GetPlayerBandInstrumentsByMember(
+        NpgsqlConnection conn,
+        string accountId,
+        List<(string BandType, string TeamKey)> teams,
+        string? bandTypeFilter,
+        string? comboIdFilter)
+    {
+        var selectedTeams = new HashSet<string>(teams.Select(static team => $"{team.BandType}:{team.TeamKey}"), StringComparer.OrdinalIgnoreCase);
+        var instrumentsByMember = new Dictionary<(string BandType, string TeamKey, string AccountId), HashSet<string>>();
+
+        using var memberCmd = conn.CreateCommand();
+        memberCmd.CommandText = bandTypeFilter is null
+            ? """
+                WITH player_teams AS (
+                    SELECT DISTINCT band_type, team_key
+                    FROM band_members
+                    WHERE account_id = @accountId
+                )
+                SELECT pt.band_type,
+                       pt.team_key,
+                       bms.account_id,
+                       bms.instrument_combo,
+                       bms.instrument_id
+                FROM player_teams pt
+                JOIN band_member_stats bms
+                  ON pt.band_type = bms.band_type
+                 AND pt.team_key = bms.team_key
+                ORDER BY pt.band_type, pt.team_key, bms.account_id, bms.instrument_combo, bms.instrument_id
+                """
+            : """
+                WITH player_teams AS (
+                    SELECT DISTINCT band_type, team_key
+                    FROM band_members
+                    WHERE account_id = @accountId
+                      AND band_type = @bandType
+                )
+                SELECT pt.band_type,
+                       pt.team_key,
+                       bms.account_id,
+                       bms.instrument_combo,
+                       bms.instrument_id
+                FROM player_teams pt
+                JOIN band_member_stats bms
+                  ON pt.band_type = bms.band_type
+                 AND pt.team_key = bms.team_key
+                ORDER BY pt.band_type, pt.team_key, bms.account_id, bms.instrument_combo, bms.instrument_id
+                """;
+        memberCmd.Parameters.AddWithValue("accountId", accountId);
+        if (bandTypeFilter is not null)
+            memberCmd.Parameters.AddWithValue("bandType", bandTypeFilter);
+
+        using var reader = memberCmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var bandType = reader.GetString(0);
+            var teamKey = reader.GetString(1);
+            var teamLookupKey = $"{bandType}:{teamKey}";
+            if (!selectedTeams.Contains(teamLookupKey))
+                continue;
+
+            var rawCombo = reader.IsDBNull(3) ? null : reader.GetString(3);
+            if (comboIdFilter is not null)
+            {
+                var rowComboId = BandComboIds.FromEpicRawCombo(rawCombo);
+                if (!string.Equals(rowComboId, comboIdFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
+
+            if (reader.IsDBNull(4))
+                continue;
+
+            var instrument = BandInstrumentMapping.ToLeaderboardType(reader.GetInt32(4));
+            if (string.IsNullOrWhiteSpace(instrument))
+                continue;
+
+            var memberKey = (bandType, teamKey, reader.GetString(2));
+            if (!instrumentsByMember.TryGetValue(memberKey, out var instruments))
+            {
+                instruments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                instrumentsByMember[memberKey] = instruments;
+            }
+
+            instruments.Add(instrument);
+        }
+
+        return instrumentsByMember.ToDictionary(
+            kvp => kvp.Key,
+            kvp => BandComboIds.ToInstruments(BandComboIds.FromInstruments(kvp.Value)).ToList());
     }
 
     /// <summary>
