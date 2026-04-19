@@ -84,6 +84,10 @@ export default function RivalsPage() {
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
+  const noRivalsSubtitle = useMemo(() => {
+    if (activeInstruments.length === 0) return undefined;
+    return t(activeInstruments.length === 1 ? 'rivals.noRivalsSubtitleSingle' : 'rivals.noRivalsSubtitlePlural');
+  }, [activeInstruments.length, t]);
 
   // Data state: initialize from cache when returning to same account
   const hasCachedData = accountId === _cachedAccountId && _cachedInstrumentRivals.length > 0;
@@ -338,7 +342,7 @@ export default function RivalsPage() {
               {activeTab === 'song' ? (
             <div style={{ ...flexColumn, gap: Gap.section }}>
               {!hasAnyRivals && (
-                <EmptyState fullPage title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
+                <EmptyState fullPage title={t('rivals.noRivals')} subtitle={noRivalsSubtitle} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}
 
               {/* Common rivals (appears in ALL selected instruments, 2+ required) */}
