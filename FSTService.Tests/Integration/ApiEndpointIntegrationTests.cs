@@ -97,6 +97,65 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task ApiServiceInfo_ReturnsExpectedShape()
+    {
+        var response = await _client.GetAsync("/api/service-info");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("lastCompletedUpdate", out _));
+        Assert.Equal("idle", json.GetProperty("currentUpdate").GetProperty("status").GetString());
+        Assert.True(json.TryGetProperty("nextScheduledUpdateAt", out _));
+    }
+
+    [Fact]
+    public async Task ApiServiceInfo_UsesLastCompletedScrapeForDurableTiming()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var scrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(scrapeId, songsScraped: 12, totalEntries: 345, totalRequests: 67, totalBytes: 890);
+
+        var response = await _client.GetAsync("/api/service-info");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var lastCompletedUpdate = json.GetProperty("lastCompletedUpdate");
+        var startedAt = DateTimeOffset.Parse(lastCompletedUpdate.GetProperty("startedAt").GetString()!);
+        var completedAt = DateTimeOffset.Parse(lastCompletedUpdate.GetProperty("completedAt").GetString()!);
+        var nextScheduledUpdateAt = DateTimeOffset.Parse(json.GetProperty("nextScheduledUpdateAt").GetString()!);
+
+        Assert.True(startedAt <= completedAt);
+        Assert.Equal(completedAt.AddHours(4), nextScheduledUpdateAt);
+    }
+
+    [Fact]
+    public async Task ApiServiceInfo_ReflectsLiveScrapeProgress()
+    {
+        var tracker = _factory.Services.GetRequiredService<ScrapeProgressTracker>();
+        tracker.EndPass();
+
+        try
+        {
+            tracker.BeginPass(totalLeaderboards: 10, totalSongs: 5, cachedTotalPages: 0);
+            tracker.SetSubOperation("fetching_leaderboards");
+
+            var response = await _client.GetAsync("/api/service-info");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var currentUpdate = json.GetProperty("currentUpdate");
+            Assert.Equal("updating", currentUpdate.GetProperty("status").GetString());
+            Assert.Equal("Scraping", currentUpdate.GetProperty("phase").GetString());
+            Assert.Equal("fetching_leaderboards", currentUpdate.GetProperty("subOperation").GetString());
+            Assert.False(json.TryGetProperty("nextScheduledUpdateAt", out _));
+        }
+        finally
+        {
+            tracker.EndPass();
+        }
+    }
+
     // ─── Songs ──────────────────────────────────────────────────
 
     [Fact]
