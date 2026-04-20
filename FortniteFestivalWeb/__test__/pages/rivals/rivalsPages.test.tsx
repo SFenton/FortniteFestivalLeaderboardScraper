@@ -6,10 +6,11 @@
  * per-file coverage thresholds.
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, act, screen } from '@testing-library/react';
+import { render, act, fireEvent, screen, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
+import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse } from '@festival/core/api/serverTypes';
 
 /* ── API mock ── */
@@ -105,6 +106,48 @@ function renderPage(route: string, element: React.ReactElement, path: string, ac
   );
 }
 
+function renderRivalsPageWithQuickLinks(accountId = 'test-rivals-quick-links') {
+  return render(
+    <TestProviders route="/rivals" accountId={accountId}>
+      <Routes>
+        <Route path="/rivals" element={<RivalsPage />} />
+      </Routes>
+      <RivalsPageQuickLinksHarness />
+    </TestProviders>,
+  );
+}
+
+function RivalsPageQuickLinksHarness() {
+  const pageQuickLinks = usePageQuickLinksController();
+
+  if (!pageQuickLinks.hasPageQuickLinks) {
+    return null;
+  }
+
+  return (
+    <button type="button" data-testid="test-open-page-quick-links" onClick={() => pageQuickLinks.openPageQuickLinks()}>
+      Open Rivals Quick Links
+    </button>
+  );
+}
+
+function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean } = {}) {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query.includes('max-width') ? mobile : query.includes('min-width') ? wide : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 async function advancePastSpinner() {
   await act(async () => { await vi.advanceTimersByTimeAsync(600); });
 }
@@ -176,6 +219,98 @@ describe('RivalsPage', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
     expect(screen.getByText('Play more songs on your selected instruments to generate a roster of Rivals.')).toBeTruthy();
+  });
+});
+
+describe('RivalsPage quick links', () => {
+  it('registers quick links when the song tab has multiple rival sections', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-register', displayName: 'TestPlayer' }));
+
+    renderRivalsPageWithQuickLinks('test-rivals-quick-links-register');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(await screen.findByTestId('test-open-page-quick-links')).toBeTruthy();
+  });
+
+  it('does not register quick links when only one rivals section is visible', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-single', displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    renderRivalsPageWithQuickLinks('test-rivals-quick-links-single');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(screen.queryByTestId('test-open-page-quick-links')).toBeNull();
+  });
+
+  it('opens the rivals quick links modal on compact viewports', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-modal', displayName: 'TestPlayer' }));
+
+    renderRivalsPageWithQuickLinks('test-rivals-quick-links-modal');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
+
+    const list = await screen.findByTestId('rivals-quick-links-modal-list');
+    const items = within(list).getAllByRole('button');
+
+    expect(screen.getByTestId('rivals-quick-link-common')).toBeTruthy();
+    expect(screen.getByTestId('rivals-quick-link-combo')).toBeTruthy();
+    expect(screen.getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();
+    expect(items[0]).toHaveTextContent('Common Rivals');
+    expect(items[1]).toHaveTextContent('Combined Rivals');
+
+    const guitarIcon = screen.getByTestId('rivals-quick-link-solo-guitar').querySelector('img');
+    expect(guitarIcon?.getAttribute('src')).toContain('guitar.png');
+    expect(guitarIcon?.getAttribute('width')).toBe('20');
+    expect(guitarIcon).toHaveStyle({ transform: 'scale(1.15)', transformOrigin: 'center' });
+  });
+
+  it('renders the rivals quick links rail on wide desktop', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-rail', displayName: 'TestPlayer' }));
+
+    renderRivalsPageWithQuickLinks('test-rivals-quick-links-rail');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    const nav = await screen.findByRole('navigation', { name: 'Quick Links' });
+    const pageRoot = screen.getByTestId('page-root');
+    const portal = screen.getByTestId('test-quick-links-portal');
+    const rail = screen.getByTestId('rivals-quick-links-rail');
+    const scrollArea = screen.getByTestId('scroll-area');
+
+    expect(nav).toBeTruthy();
+    expect(within(nav).getByTestId('rivals-quick-link-common')).toBeTruthy();
+    expect(within(nav).getByTestId('rivals-quick-link-combo')).toBeTruthy();
+    expect(within(nav).getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();
+
+    const guitarLink = within(nav).getByTestId('rivals-quick-link-solo-guitar');
+    const guitarIcon = guitarLink.querySelector('img');
+    const guitarIconSlot = guitarLink.querySelector('span[aria-hidden="true"]');
+    expect(guitarIcon?.getAttribute('src')).toContain('guitar.png');
+    expect(guitarIcon?.getAttribute('width')).toBe('20');
+    expect(guitarIcon).toHaveStyle({ transform: 'scale(1.15)', transformOrigin: 'center' });
+    expect(guitarIconSlot).toHaveStyle({ width: '20px' });
+
+    expect(pageRoot).toContainElement(scrollArea);
+    expect(pageRoot).not.toContainElement(rail);
+    expect(portal).toContainElement(rail);
   });
 });
 

@@ -88,6 +88,7 @@ import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_E
 import BackLink from './components/shell/mobile/BackLink';
 import MobileHeader from './components/shell/mobile/MobileHeader';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
+import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/PageQuickLinksContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visiblePathInstruments } from './contexts/SettingsContext';
 import { useProximityGlow } from './hooks/ui/useProximityGlow';
@@ -125,6 +126,7 @@ export default function App() {
         <ShopProvider>
         <FirstRunProvider>
         <FabSearchProvider>
+        <PageQuickLinksProvider>
           <SearchQueryProvider>
             <HashRouter>
               <ScrollContainerProvider>
@@ -132,6 +134,7 @@ export default function App() {
               </ScrollContainerProvider>
             </HashRouter>
           </SearchQueryProvider>
+        </PageQuickLinksProvider>
         </FabSearchProvider>
         </FirstRunProvider>
         </ShopProvider>
@@ -158,12 +161,14 @@ function isAnimatedBgRoute(pathname: string) {
 function WideDesktopLayout({
   shellScrollRef,
   shellPortalRefCallback,
+  shellQuickLinksRailPortalRefCallback,
   player,
   onDeselect,
   onSelectPlayer,
 }: {
   shellScrollRef: React.RefObject<HTMLDivElement | null>;
   shellPortalRefCallback: (el: HTMLDivElement | null) => void;
+  shellQuickLinksRailPortalRefCallback: (el: HTMLDivElement | null) => void;
   player: TrackedPlayer | null;
   onDeselect: () => void;
   onSelectPlayer: () => void;
@@ -197,6 +202,12 @@ function WideDesktopLayout({
         <div ref={shellPortalRefCallback} style={appStyles.headerPortalWide} />
         <div style={{ width: Layout.sidebarWidth, flexShrink: 0 }} />
       </div>
+      {/* Right quick-links overlay — independent chrome outside content scroll */}
+      <div style={appStyles.rightRailOverlay}>
+        <div style={appStyles.sidebarGutter} />
+        <div style={appStyles.centerColumn} />
+        <div ref={shellQuickLinksRailPortalRefCallback} style={appStyles.quickLinksRailPortal} data-testid="shell-quick-links-portal" />
+      </div>
     </div>
   );
 }
@@ -218,8 +229,13 @@ function AppShell() {
   const isWideDesktop = useIsWideDesktop();
   const hasVisiblePathInstruments = visiblePathInstruments(settings).length > 0;
   const fabSearch = useFabSearch();
+  const pageQuickLinks = usePageQuickLinksController();
   const { isShopVisible, getShopUrl } = useShopState();
-  const { scrollRef: shellScrollRef, portalRefCallback: shellPortalRefCallback } = useShellRefs();
+  const {
+    scrollRef: shellScrollRef,
+    portalRefCallback: shellPortalRefCallback,
+    quickLinksRailPortalRefCallback: shellQuickLinksRailPortalRefCallback,
+  } = useShellRefs();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [findPlayerOpen, setFindPlayerOpen] = useState(false);
@@ -353,6 +369,17 @@ function AppShell() {
 
   const wideDesktop = !isMobile && isWideDesktop;
   const onPlayerDetailsPage = location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname);
+  const quickLinksActions = pageQuickLinks.hasPageQuickLinks && pageQuickLinks.pageQuickLinks
+    ? [{
+      label: pageQuickLinks.pageQuickLinks.title,
+      icon: <IoCompass size={Size.iconFab} />,
+      onPress: () => pageQuickLinks.openPageQuickLinks(),
+    }]
+    : [];
+  const withPageQuickLinks = (...groups: { label: string; icon: React.ReactNode; onPress: () => void }[][]) => [
+    ...(quickLinksActions.length > 0 ? [quickLinksActions] : []),
+    ...groups,
+  ];
 
   /** Shared FAB action group for player navigation (Find Player + Profile/Select + optionally Item Shop). */
   const playerActions = (includeShop = true) => [
@@ -410,6 +437,7 @@ function AppShell() {
         <WideDesktopLayout
           shellScrollRef={shellScrollRef}
           shellPortalRefCallback={shellPortalRefCallback}
+          shellQuickLinksRailPortalRefCallback={shellQuickLinksRailPortalRefCallback}
           player={player}
           onDeselect={handleDeselect}
           onSelectPlayer={() => setPlayerModalOpen(true)}
@@ -436,6 +464,7 @@ function AppShell() {
           placeholder={t('songs.searchPlaceholder')}
           actionGroups={[
             [
+              ...quickLinksActions,
               { label: t('common.sortSongs'), icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
               ...(player ? [{ label: t('common.filterSongs'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
             ],
@@ -447,24 +476,24 @@ function AppShell() {
       {isMobile && location.pathname === AppRoutes.suggestions && (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             [
               { label: t('common.filterSuggestions'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openSuggestionsFilter() },
             ],
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
       )}
       {isMobile && RoutePatterns.history.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             [
               { label: t('common.sortPlayerScores'), icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openPlayerHistorySort() },
             ],
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
       )}
@@ -475,7 +504,7 @@ function AppShell() {
         return (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             ...(isNarrow && hasVisiblePathInstruments ? [[{
               label: t('common.viewPaths'), icon: <IoFlash size={Size.iconFab} />, onPress: () => fabSearch.openPaths(),
             },
@@ -486,7 +515,7 @@ function AppShell() {
             }] : []),
             ]] : []),
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
         );
@@ -494,14 +523,14 @@ function AppShell() {
       {isMobile && location.pathname === AppRoutes.shop && (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             ...(!isNarrowGrid ? [[{
               label: fabSearch.shopViewMode === 'grid' ? t('common.listView', 'List View') : t('common.gridView', 'Grid View'),
               icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
               onPress: () => fabSearch.shopToggleView(),
             }]] : []),
             playerActions(false),
-          ]}
+          )}
           onPress={() => {}}
         />
       )}
@@ -513,10 +542,10 @@ function AppShell() {
         return (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             ...(leaderboardActions.length > 0 ? [leaderboardActions] : []),
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
         );
@@ -524,14 +553,14 @@ function AppShell() {
       {isMobile && RoutePatterns.rivals.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             [{
               label: fabSearch.rivalsActiveTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong'),
               icon: fabSearch.rivalsActiveTab === 'song' ? <IoTrophy size={Size.iconFab} /> : <IoMusicalNotes size={Size.iconFab} />,
               onPress: () => fabSearch.rivalsToggleTab(),
             }],
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
       )}
@@ -543,10 +572,10 @@ function AppShell() {
         return currentRivalId ? (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             [{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }],
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
         ) : null;
@@ -559,10 +588,10 @@ function AppShell() {
         return currentRivalId ? (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             [{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }],
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
         ) : null;
@@ -570,17 +599,14 @@ function AppShell() {
       {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
-          actionGroups={[
-            ...((onPlayerDetailsPage && fabSearch.hasPlayerQuickLinks) || fabSearch.playerPageSelect ? [[
-              ...(onPlayerDetailsPage && fabSearch.hasPlayerQuickLinks
-                ? [{ label: t('player.quickLinks'), icon: <IoCompass size={Size.iconFab} />, onPress: () => fabSearch.openPlayerQuickLinks() }]
-                : []),
+          actionGroups={withPageQuickLinks(
+            ...(pageQuickLinks.hasPageQuickLinks || fabSearch.playerPageSelect ? [[
               ...(fabSearch.playerPageSelect
                 ? [{ label: t('common.selectAsProfile', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect }]
                 : []),
             ]] : []),
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
       )}

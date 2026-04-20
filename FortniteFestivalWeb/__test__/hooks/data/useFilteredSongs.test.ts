@@ -543,6 +543,73 @@ describe('useFilteredSongs — additional sort modes', () => {
     const idx2 = ids.indexOf('s2');
     expect(idx1).toBeLessThan(idx2);
   });
+
+  it('sorts by intensity mode ascending using the selected instrument difficulty', () => {
+    const songsWithIntensity = [
+      { ...songs[0], difficulty: { guitar: 5 } },
+      { ...songs[1], difficulty: { guitar: 1 } },
+      { ...songs[2], difficulty: { guitar: 3 } },
+    ] as Song[];
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithIntensity,
+      search: '',
+      sortMode: 'intensity' as any,
+      sortAscending: true,
+      filters: emptyFilters as any,
+      instrument: 'Solo_Guitar' as InstrumentKey,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s2', 's3', 's1']);
+  });
+
+  it('sorts by intensity mode descending using the selected instrument difficulty', () => {
+    const songsWithIntensity = [
+      { ...songs[0], difficulty: { guitar: 5 } },
+      { ...songs[1], difficulty: { guitar: 1 } },
+      { ...songs[2], difficulty: { guitar: 3 } },
+    ] as Song[];
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithIntensity,
+      search: '',
+      sortMode: 'intensity' as any,
+      sortAscending: false,
+      filters: emptyFilters as any,
+      instrument: 'Solo_Guitar' as InstrumentKey,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s1', 's3', 's2']);
+  });
+
+  it.each([
+    ['Solo_PeripheralVocals', { vocals: 5 }, { vocals: 1 }, { vocals: 3 }],
+    ['Solo_PeripheralDrums', { drums: 5 }, { drums: 1 }, { drums: 3 }],
+    ['Solo_PeripheralCymbals', { drums: 5 }, { drums: 1 }, { drums: 3 }],
+  ] as const)('sorts by intensity mode ascending for %s using the normalized song difficulty', (instrument, firstDifficulty, secondDifficulty, thirdDifficulty) => {
+    const songsWithIntensity = [
+      { ...songs[0], difficulty: firstDifficulty },
+      { ...songs[1], difficulty: secondDifficulty },
+      { ...songs[2], difficulty: thirdDifficulty },
+    ] as Song[];
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithIntensity,
+      search: '',
+      sortMode: 'intensity' as any,
+      sortAscending: true,
+      filters: emptyFilters as any,
+      instrument: instrument as InstrumentKey,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s2', 's3', 's1']);
+  });
 });
 
 describe('useFilteredSongs — additional filter branches', () => {

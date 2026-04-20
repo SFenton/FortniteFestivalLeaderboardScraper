@@ -19,8 +19,12 @@ export const appStyles = {
   sidebarGutter: { width: Layout.sidebarWidth, flexShrink: 0 } as CSSProperties,
   /** Center column inside scroll (header spacer + content). */
   centerColumn: { flex: 1, ...flexColumn } as CSSProperties,
-  /** Right gutter for symmetry. */
+  /** Transparent gutter reserving space under the right quick-links overlay. */
   rightGutter: { width: Layout.sidebarWidth, flexShrink: 0 } as CSSProperties,
+  /** Right quick-links overlay — separate from the shell scroll container. */
+  rightRailOverlay: { position: Position.absolute, top: 0, bottom: 0, left: 0, right: 0, maxWidth: wideMaxWidth, margin: CssValue.marginCenter, pointerEvents: PointerEvents.none, zIndex: ZIndex.overlay, display: Display.flex } as CSSProperties,
+  /** Portal host inside the wide-desktop right rail overlay for quick-links chrome. */
+  quickLinksRailPortal: { width: Layout.sidebarWidth, minWidth: 0, minHeight: 0, height: CssValue.full, flexShrink: 0, display: Display.flex, pointerEvents: PointerEvents.auto } as CSSProperties,
   /** Sidebar overlay — absolutely positioned, centered. pointer-events: none lets wheel through. */
   sidebarOverlay: { position: Position.absolute, top: 0, bottom: 0, left: 0, right: 0, maxWidth: wideMaxWidth, margin: CssValue.marginCenter, pointerEvents: PointerEvents.none, zIndex: ZIndex.overlay } as CSSProperties,
   /** Header overlay — absolutely positioned at top, centered. pointer-events: none lets wheel through. */

@@ -3,7 +3,10 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
+import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
@@ -11,7 +14,8 @@ import PageHeader from '../../components/common/PageHeader';
 
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
-import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { InstrumentIcon } from '../../components/display/InstrumentIcons';
+import { useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { IoChevronForward, IoMusicalNotes, IoOptions, IoTrophy } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
@@ -44,6 +48,13 @@ type InstrumentRivals = {
   error: string | null;
 };
 
+type RivalQuickLink = PageQuickLinkItem & {
+  id: 'common' | 'combo' | ServerInstrumentKey;
+};
+
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
+const QUICK_LINK_INSTRUMENT_ICON_SCALE = 1.15;
+
 export default function RivalsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -51,6 +62,8 @@ export default function RivalsPage() {
   const { settings } = useSettings();
   const { player } = useTrackedPlayer();
   const isMobile = useIsMobileChrome();
+  const isWideDesktop = useIsWideDesktop();
+  const scrollContainerRef = useScrollContainer();
   const accountId = player?.accountId;
   const fabSearch = useFabSearch();
 
@@ -291,6 +304,100 @@ export default function RivalsPage() {
     || (commonRivals.above.length > 0 || commonRivals.below.length > 0);
   /* v8 ignore stop */
 
+  const quickLinkItems = useMemo<RivalQuickLink[]>(() => {
+    if (activeTab !== 'song') {
+      return [];
+    }
+
+    const links: RivalQuickLink[] = [];
+
+    if (commonRivals.above.length > 0 || commonRivals.below.length > 0) {
+      const commonLabel = t('rivals.commonRivalsShort', 'Common Rivals');
+      links.push({
+        id: 'common',
+        label: commonLabel,
+        landmarkLabel: commonLabel,
+      });
+    }
+
+    if (combo && comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0)) {
+      const comboLabel = t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') });
+      links.push({
+        id: 'combo',
+        label: comboLabel,
+        landmarkLabel: comboLabel,
+      });
+    }
+
+    for (const entry of instrumentRivals) {
+      if (!entry.data || (entry.data.above.length === 0 && entry.data.below.length === 0)) {
+        continue;
+      }
+
+      const instrumentLabel = t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) });
+      links.push({
+        id: entry.instrument,
+        label: instrumentLabel,
+        landmarkLabel: instrumentLabel,
+        icon: (
+          <InstrumentIcon
+            instrument={entry.instrument}
+            size={QUICK_LINK_GLYPH_ICON_SIZE}
+            style={{
+              transform: `scale(${QUICK_LINK_INSTRUMENT_ICON_SCALE})`,
+              transformOrigin: 'center',
+            }}
+          />
+        ),
+      });
+    }
+
+    return links;
+  }, [activeTab, combo, comboRivals, commonRivals.above.length, commonRivals.below.length, instrumentRivals, t]);
+
+  const {
+    activeItemId,
+    quickLinksOpen,
+    openQuickLinks,
+    closeQuickLinks,
+    handleQuickLinkSelect,
+    registerSectionRef,
+  } = usePageQuickLinks<RivalQuickLink>({
+    items: quickLinkItems,
+    scrollContainerRef,
+    isDesktopRailEnabled: isWideDesktop,
+    scrollOffset: Gap.md,
+  });
+
+  const handleModalQuickLinkSelect = useCallback((link: RivalQuickLink) => {
+    closeQuickLinks();
+    handleQuickLinkSelect(link);
+  }, [closeQuickLinks, handleQuickLinkSelect]);
+
+  const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
+    if (activeTab !== 'song' || phase !== LoadPhase.ContentIn || quickLinkItems.length < 2) {
+      return undefined;
+    }
+
+    return {
+      title: t('rivals.quickLinks'),
+      items: quickLinkItems,
+      activeItemId,
+      visible: quickLinksOpen,
+      onOpen: openQuickLinks,
+      onClose: closeQuickLinks,
+      onSelect: (item) => {
+        const nextItem = item as RivalQuickLink;
+        if (isWideDesktop) {
+          handleQuickLinkSelect(nextItem);
+          return;
+        }
+        handleModalQuickLinkSelect(nextItem);
+      },
+      testIdPrefix: 'rivals',
+    };
+  }, [activeItemId, activeTab, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
+
   /* v8 ignore start -- JSX render tree */
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
 
@@ -300,6 +407,7 @@ export default function RivalsPage() {
       scrollDeps={[phase]}
       loadPhase={phase}
       containerStyle={styles.container}
+      quickLinks={pageQuickLinks}
       before={
         isMobile ? undefined : (
           <PageHeader
@@ -352,7 +460,7 @@ export default function RivalsPage() {
                 const allPreview = [...previewAbove, ...previewBelow];
                 const navigateToCommon = () => navigate(Routes.allRivals('common'), { state: { from: 'rivals' } });
                 return (
-                <div style={styles.section}>
+                <div ref={(element) => registerSectionRef('common', element)} style={styles.section}>
                   <div
                     className={fx.sectionHeaderClickable}
                     style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
@@ -394,7 +502,7 @@ export default function RivalsPage() {
                 const allPreview = [...previewAbove, ...previewBelow];
                 const navigateToCombo = () => navigate(Routes.allRivals('combo'), { state: { from: 'rivals' } });
                 return (
-                <div style={styles.section}>
+                <div ref={(element) => registerSectionRef('combo', element)} style={styles.section}>
                   <div
                     className={fx.sectionHeaderClickable}
                     style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
@@ -437,7 +545,7 @@ export default function RivalsPage() {
                 const allPreview = [...previewAbove, ...previewBelow];
                 const navigateToInstrument = () => navigate(Routes.allRivals(entry.instrument), { state: { from: 'rivals' } });
                 return (
-                  <div key={entry.instrument} style={styles.section}>
+                  <div key={entry.instrument} ref={(element) => registerSectionRef(entry.instrument, element)} style={styles.section}>
                     <div
                       className={fx.sectionHeaderClickable}
                       style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}

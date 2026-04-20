@@ -6,6 +6,7 @@ import { useMemo } from 'react';
 import { type ServerSong as Song, type PlayerScore, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import type { SongFilters, SongSortMode } from '../../utils/songSettings';
 import { compareByMode } from '../../utils/songSort';
+import { getSongInstrumentDifficulty } from '../../utils/songInstrumentDifficulty';
 
 interface FilterSortOptions {
   songs: Song[];
@@ -31,6 +32,10 @@ interface FilterSortOptions {
 }
 
 const PCT_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
+
+function getSongIntensity(song: Song, instrument: InstrumentKey | null): number | undefined {
+  return getSongInstrumentDifficulty(song, instrument);
+}
 
 export function useFilteredSongs({
   songs,
@@ -164,6 +169,20 @@ export function useFilteredSongs({
           cmp = (a.year ?? 0) - (b.year ?? 0); break;
         case 'duration':
           cmp = (a.durationSeconds ?? 0) - (b.durationSeconds ?? 0); break;
+        case 'intensity': {
+          const ia = getSongIntensity(a, inst);
+          const ib = getSongIntensity(b, inst);
+          if (ia != null && ib != null) {
+            cmp = ia - ib;
+          } else if (ia != null) {
+            cmp = -dir;
+          } else if (ib != null) {
+            cmp = dir;
+          } else {
+            cmp = a.title.localeCompare(b.title);
+          }
+          break;
+        }
         /* v8 ignore start -- shop sort tiebreaker chain */
         case 'shop': {
           const aShop = shopSongIds?.has(a.songId) ? 1 : 0;

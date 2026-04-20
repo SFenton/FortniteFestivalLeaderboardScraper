@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
+import { Layout } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
+import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
+import { clearPageTransitionCache } from '../../../src/hooks/ui/usePageTransition';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 
@@ -67,8 +71,50 @@ function renderSongsPage(route = '/songs', accountId?: string) {
       <Routes>
         <Route path="/songs" element={<SongsPage />} />
       </Routes>
+      <PageQuickLinksHarness />
     </TestProviders>,
   );
+}
+
+function PageQuickLinksHarness() {
+  const pageQuickLinks = usePageQuickLinksController();
+
+  if (!pageQuickLinks.hasPageQuickLinks) {
+    return null;
+  }
+
+  return (
+    <button type="button" data-testid="test-open-page-quick-links" onClick={() => pageQuickLinks.openPageQuickLinks()}>
+      Open Page Quick Links
+    </button>
+  );
+}
+
+function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean } = {}) {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query.includes('max-width') ? mobile : query.includes('min-width') ? wide : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
+async function settleSongsPage() {
+  await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(700); });
+}
+
+async function openSongsQuickLinksModal() {
+  await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
+  return await screen.findByTestId('songs-quick-links-modal-list');
 }
 
 describe('SongsPage', () => {
@@ -383,6 +429,495 @@ describe('SongsPage', () => {
       fireEvent.scroll(scrollArea);
     }
     expect(container.textContent).toContain('Alpha Song');
+  });
+});
+
+describe('SongsPage quick links', () => {
+  it('registers title quick links from the visible sections', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    renderSongsPage('/songs');
+
+    await settleSongsPage();
+
+    const openButton = await screen.findByTestId('test-open-page-quick-links');
+    await act(async () => { fireEvent.click(openButton); });
+
+    expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();
+    expect(screen.getByTestId('songs-quick-link-title-a')).toBeTruthy();
+    expect(screen.getByTestId('songs-quick-link-title-b')).toBeTruthy();
+    expect(screen.getByTestId('songs-quick-link-title-g')).toBeTruthy();
+  });
+
+  it('renders title quick links in the wide desktop rail', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    renderSongsPage('/songs');
+
+    await settleSongsPage();
+
+    const nav = await screen.findByRole('navigation', { name: 'Title Quick Links' });
+    const pageRoot = screen.getByTestId('page-root');
+    const portal = screen.getByTestId('test-quick-links-portal');
+    const scrollContainer = screen.getByTestId('test-scroll-container');
+    const rail = screen.getByTestId('songs-quick-links-rail');
+    const scrollArea = screen.getByTestId('scroll-area');
+    expect(nav).toBeTruthy();
+    expect(within(nav).getByTestId('songs-quick-link-title-a')).toBeTruthy();
+    expect(within(nav).getByTestId('songs-quick-link-title-b')).toBeTruthy();
+    expect(within(nav).getByTestId('songs-quick-link-title-g')).toBeTruthy();
+    expect(pageRoot).toContainElement(scrollArea);
+    expect(pageRoot).not.toContainElement(rail);
+    expect(scrollContainer).not.toContainElement(rail);
+    expect(portal).toContainElement(rail);
+    expect(rail).toHaveStyle({ width: `${Layout.sidebarWidth}px` });
+    expect(nav).toHaveStyle({ overscrollBehavior: 'contain' });
+  });
+
+  it('stagger-animates rendered section headers on a fresh Songs visit', async () => {
+    clearPageTransitionCache('songs');
+    setViewportQueries({ mobile: false, wide: false });
+
+    renderSongsPage('/songs');
+    await settleSongsPage();
+
+    const section = await screen.findByTestId('songs-section-title-a');
+    expect(section.style.animation).toContain('fadeInUp');
+    expect(section.style.opacity).toBe('0');
+  });
+
+  it('orders title quick links to match descending sort', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'title',
+      sortAscending: false,
+      instrument: null,
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+
+    renderSongsPage('/songs');
+    await settleSongsPage();
+
+    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
+
+    const itemIds = Array.from(document.querySelectorAll('[data-testid^="songs-quick-link-title-"]')).map((element) => element.getAttribute('data-testid'));
+    expect(itemIds).toEqual([
+      'songs-quick-link-title-g',
+      'songs-quick-link-title-b',
+      'songs-quick-link-title-a',
+    ]);
+  });
+
+  it('hides quick links when fewer than two visible sections remain', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    renderSongsPage('/songs');
+
+    await settleSongsPage();
+    expect(await screen.findByTestId('test-open-page-quick-links')).toBeTruthy();
+
+    const input = screen.getByPlaceholderText('Search songs or artists…');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Alpha' } });
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('test-open-page-quick-links')).toBeNull();
+    });
+  });
+
+  it('builds artist quick-link buckets from the current sort data', () => {
+    const result = buildSongQuickLinkSections({
+      songs: [
+        { songId: 's1', title: 'Alpha Song', artist: 'Artist A' },
+        { songId: 's2', title: 'Beta Song', artist: 'Bravo Band' },
+        { songId: 's3', title: 'Gamma Song', artist: 'City Crew' },
+      ] as any,
+      sortMode: 'artist',
+      instrument: null,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+      shopSongIds: new Set(),
+      leavingTomorrowIds: new Set(),
+      t: (_key: string, options?: Record<string, unknown>) => String(options?.value ?? options?.count ?? options?.defaultValue ?? _key),
+    });
+
+    expect(result.sections.map((section) => section.id)).toEqual([
+      'artist:a',
+      'artist:b',
+      'artist:c',
+    ]);
+  });
+
+  it('builds percentile quick-link buckets without a Top prefix', () => {
+    const result = buildSongQuickLinkSections({
+      songs: [{ songId: 's1', title: 'Alpha Song', artist: 'Artist A' }] as any,
+      sortMode: 'percentile',
+      instrument: 'Solo_Guitar',
+      scoreMap: new Map([
+        ['s1', { songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 1, totalEntries: 100 }],
+      ]) as any,
+      allScoreMap: new Map(),
+      shopSongIds: new Set(),
+      leavingTomorrowIds: new Set(),
+      t: (_key: string, options?: Record<string, unknown>) => String(options?.value ?? options?.count ?? options?.defaultValue ?? _key),
+    });
+
+    expect(result.sections[0]?.label).toBe('1%');
+    expect(result.sections[0]?.landmarkLabel).toBe('1%');
+  });
+
+  it.each([
+    ['Solo_PeripheralVocals', { vocals: 4 }, 'intensity:4'],
+    ['Solo_PeripheralDrums', { drums: 2 }, 'intensity:2'],
+    ['Solo_PeripheralCymbals', { drums: 6 }, 'intensity:6'],
+  ] as const)('builds intensity quick-link buckets for %s from the normalized song difficulty', (instrument, difficulty, expectedId) => {
+    const result = buildSongQuickLinkSections({
+      songs: [{ songId: 's1', title: 'Alpha Song', artist: 'Artist A', difficulty }] as any,
+      sortMode: 'intensity',
+      instrument: instrument as any,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+      shopSongIds: new Set(),
+      leavingTomorrowIds: new Set(),
+      t: (_key: string, options?: Record<string, unknown>) => String(options?.value ?? options?.count ?? options?.defaultValue ?? _key),
+    });
+
+    expect(result.sections[0]?.id).toBe(expectedId);
+  });
+
+  it('renders percentile quick links with Top text inside the pill', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'percentile',
+      sortAscending: true,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 1, totalEntries: 100 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 90000, rank: 8, totalEntries: 100 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 80000, rank: 23, totalEntries: 100 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    const list = await openSongsQuickLinksModal();
+    expect(within(list).getByText('Top 1%')).toBeTruthy();
+  });
+
+  it('renders Top-prefixed plain text percentile quick links in the wide desktop rail', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'percentile',
+      sortAscending: true,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 1, totalEntries: 100 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 90000, rank: 8, totalEntries: 100 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 80000, rank: 23, totalEntries: 100 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    const rail = await screen.findByTestId('songs-quick-links-rail');
+    const percentileButton = within(rail).getByTestId('songs-quick-link-percentile-1');
+
+    expect(percentileButton.textContent).toContain('Top 1%');
+    expect(percentileButton.querySelector('span[style*="background-color"]')).toBeNull();
+  });
+
+  it('renders stars quick links with star containers', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'stars',
+      sortAscending: false,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, stars: 6 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 90000, stars: 5 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 80000, stars: 4 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    await openSongsQuickLinksModal();
+    const starsButton = screen.getByTestId('songs-quick-link-stars-6');
+    expect(starsButton.querySelectorAll('img[alt="★"]').length).toBe(5);
+    const starsRow = starsButton.querySelector('span[style*="justify-content"]') as HTMLElement | null;
+    expect(starsRow?.style.justifyContent).toBe('flex-start');
+  });
+
+  it('renders season quick links and section headers with season containers', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'seasonachieved',
+      sortAscending: false,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, season: 5 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 90000, season: 3 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 80000, season: 5 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    const seasonSection = await screen.findByTestId('songs-section-seasonachieved-s5');
+    const sectionPill = within(seasonSection).getByText('S5');
+    expect(sectionPill.getAttribute('style')).toContain('background-color');
+
+    await openSongsQuickLinksModal();
+    const seasonButton = screen.getByTestId('songs-quick-link-seasonachieved-s5');
+    const quickLinkPill = within(seasonButton).getByText('S5');
+    expect(quickLinkPill.getAttribute('style')).toContain('background-color');
+  });
+
+  it('renders plain text season quick links in the wide desktop rail', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'seasonachieved',
+      sortAscending: false,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, season: 5 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 90000, season: 3 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 80000, season: 5 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    const rail = await screen.findByTestId('songs-quick-links-rail');
+    const seasonButton = within(rail).getByTestId('songs-quick-link-seasonachieved-s5');
+    const seasonLabel = within(seasonButton).getByText('S5');
+
+    expect(seasonButton.textContent).toContain('S5');
+    expect(seasonLabel.getAttribute('style') ?? '').not.toContain('background-color');
+  });
+
+  it('renders intensity quick links with difficulty bar containers', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'intensity',
+      sortAscending: false,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+
+    renderSongsPage('/songs');
+    await settleSongsPage();
+
+    const list = await openSongsQuickLinksModal();
+    const intensityButton = within(list).getByTestId('songs-quick-link-intensity-5');
+    expect(intensityButton).toBeTruthy();
+    expect(intensityButton.querySelector('svg[aria-label="Difficulty 6 of 7"]')).toBeTruthy();
+  });
+
+  it('keeps intensity quick links visual in the wide desktop rail', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'intensity',
+      sortAscending: false,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+
+    renderSongsPage('/songs');
+    await settleSongsPage();
+
+    const rail = await screen.findByTestId('songs-quick-links-rail');
+    const intensityButton = within(rail).getByTestId('songs-quick-link-intensity-5');
+
+    expect(intensityButton.querySelector('svg[aria-label="Difficulty 6 of 7"]')).toBeTruthy();
+  });
+
+  it('renders difficulty quick links with difficulty pill containers', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'difficulty',
+      sortAscending: true,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, difficulty: 0 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 90000, difficulty: 2 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 80000, difficulty: 3 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    await openSongsQuickLinksModal();
+    const difficultyButton = screen.getByTestId('songs-quick-link-difficulty-3');
+    const difficultyPill = within(difficultyButton).getByText('X');
+    expect(difficultyPill.getAttribute('style')).toContain('background-color');
+  });
+
+  it('uses No Score for scoreless difficulty buckets and Unknown Difficulty only for scored songs missing difficulty', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'difficulty',
+      sortAscending: true,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 2,
+      scores: [
+        { songId: 's2', instrument: 'Solo_Guitar', score: 90000 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 80000, difficulty: 3 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    const list = await openSongsQuickLinksModal();
+    expect(within(list).getByTestId('songs-quick-link-difficulty-no-score').textContent).toContain('No Score');
+    expect(within(list).getByTestId('songs-quick-link-difficulty-unknown').textContent).toContain('Unknown Difficulty');
+  });
+
+  it('renders max score percent quick links with pill containers', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'maxdistance',
+      sortAscending: false,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getSongs.mockResolvedValue({ songs: [
+      { songId: 's1', title: 'Alpha Song', artist: 'Artist A', year: 2024, difficulty: { guitar: 3 }, maxScores: { Solo_Guitar: 100000 } },
+      { songId: 's2', title: 'Beta Song', artist: 'Artist B', year: 2023, difficulty: { guitar: 2 }, maxScores: { Solo_Guitar: 100000 } },
+      { songId: 's3', title: 'Gamma Song', artist: 'Artist C', year: 2025, difficulty: { guitar: 5 }, maxScores: { Solo_Guitar: 100000 } },
+    ], count: 3, currentSeason: 5 });
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 99300 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 91000 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    await openSongsQuickLinksModal();
+    const maxDistanceButton = screen.getByTestId('songs-quick-link-maxdistance-100');
+    expect(maxDistanceButton.querySelector('span[style*="background-color"]')).toBeTruthy();
+  });
+
+  it('renders max score diff quick links with pill containers', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    localStorage.setItem('fst:songSettings', JSON.stringify({
+      sortMode: 'maxscorediff',
+      sortAscending: false,
+      instrument: 'Solo_Guitar',
+      metadataOrder: ['score'],
+      instrumentOrder: ['Solo_Guitar'],
+      filters: { missingScores: {}, missingFCs: {}, hasScores: {}, hasFCs: {}, seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {} },
+    }));
+    mockApi.getSongs.mockResolvedValue({ songs: [
+      { songId: 's1', title: 'Alpha Song', artist: 'Artist A', year: 2024, difficulty: { guitar: 3 }, maxScores: { Solo_Guitar: 100000 } },
+      { songId: 's2', title: 'Beta Song', artist: 'Artist B', year: 2023, difficulty: { guitar: 2 }, maxScores: { Solo_Guitar: 100000 } },
+      { songId: 's3', title: 'Gamma Song', artist: 'Artist C', year: 2025, difficulty: { guitar: 5 }, maxScores: { Solo_Guitar: 100000 } },
+    ], count: 3, currentSeason: 5 });
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1',
+      displayName: 'TestPlayer',
+      totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 99500 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 93000 },
+      ],
+    });
+
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    await openSongsQuickLinksModal();
+    const maxDiffButton = screen.getByTestId('songs-quick-link-maxscorediff-lt1k');
+    expect(maxDiffButton.querySelector('span[style*="background-color"]')).toBeTruthy();
+  });
+
+  it('opens the shared quick links modal on mobile layouts', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    renderSongsPage('/songs');
+
+    await settleSongsPage();
+
+    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
+
+    expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();
+    expect(screen.getByText('Title Quick Links')).toBeTruthy();
   });
 });
 
