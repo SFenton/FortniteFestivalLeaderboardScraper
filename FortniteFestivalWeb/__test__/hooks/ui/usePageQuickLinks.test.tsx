@@ -525,4 +525,47 @@ describe('usePageQuickLinks', () => {
     expect(result.current.activeItemId).toBe('j');
     expect(result.current.activeItemId).not.toBe('i');
   });
+
+  it('preserves the clicked quick link across compact modal close and reopen', () => {
+    const scrollEl = createScrollContainer({ clientHeight: 540, scrollHeight: 2000 });
+    const scrollContainerRef = { current: scrollEl };
+    const items: readonly PageQuickLinkItem[] = [
+      { id: 'global', label: 'Global', landmarkLabel: 'Global' },
+      { id: 'top-songs', label: 'Top Songs', landmarkLabel: 'Top Songs' },
+    ];
+
+    const { result } = renderHook(() => usePageQuickLinks({
+      items,
+      scrollContainerRef,
+      isDesktopRailEnabled: false,
+    }));
+
+    const globalSection = createSection(scrollEl, 80);
+    const topSongsSection = createSection(scrollEl, 980);
+
+    act(() => {
+      result.current.registerSectionRef('global', globalSection);
+      result.current.registerSectionRef('top-songs', topSongsSection);
+      result.current.openQuickLinks();
+    });
+
+    expect(result.current.quickLinksOpen).toBe(true);
+    expect(result.current.activeItemId).toBeNull();
+
+    act(() => {
+      result.current.closeQuickLinks();
+      result.current.handleQuickLinkSelect(items[1]!);
+    });
+
+    expect(scrollEl.scrollTop).toBe(972);
+    expect(result.current.quickLinksOpen).toBe(false);
+    expect(result.current.activeItemId).toBe('top-songs');
+
+    act(() => {
+      result.current.openQuickLinks();
+    });
+
+    expect(result.current.quickLinksOpen).toBe(true);
+    expect(result.current.activeItemId).toBe('top-songs');
+  });
 });

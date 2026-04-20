@@ -490,7 +490,12 @@ describe('PlayerContent', () => {
 
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined(); });
     expect(screen.queryByRole('navigation', { name: 'Quick Links' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Quick Links' })).toHaveTextContent('');
+    const trigger = screen.getByRole('button', { name: 'Quick Links' });
+    const icon = trigger.querySelector('svg');
+    expect(trigger).toHaveTextContent('');
+    expect(icon).not.toBeNull();
+    expect(icon).toHaveAttribute('width', '28');
+    expect(icon).toHaveAttribute('height', '28');
   });
 
   it('shows the bands quick link only when the bands section is enabled', async () => {

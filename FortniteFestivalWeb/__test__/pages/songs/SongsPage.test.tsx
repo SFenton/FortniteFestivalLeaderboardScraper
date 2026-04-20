@@ -448,6 +448,19 @@ describe('SongsPage quick links', () => {
     expect(screen.getByTestId('songs-quick-link-title-g')).toBeTruthy();
   });
 
+  it('renders a compact desktop quick links trigger and opens the modal', async () => {
+    setViewportQueries({ mobile: false, wide: false });
+    renderSongsPage('/songs');
+
+    await settleSongsPage();
+
+    const trigger = await screen.findByRole('button', { name: 'Quick Links' });
+    await act(async () => { fireEvent.click(trigger); });
+
+    expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();
+    expect(screen.getByText('Title Quick Links')).toBeTruthy();
+  });
+
   it('renders title quick links in the wide desktop rail', async () => {
     setViewportQueries({ mobile: false, wide: true });
     renderSongsPage('/songs');

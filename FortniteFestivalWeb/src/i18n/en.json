@@ -71,6 +71,7 @@
     "count": "{{filtered}} of {{total}} songs",
     "sort": "Sort",
     "filter": "Filter",
+    "quickLinksButton": "Quick Links",
     "quickLinksTitle": "{{sort}} Quick Links",
     "quickLinks": {
       "numeric": "#",

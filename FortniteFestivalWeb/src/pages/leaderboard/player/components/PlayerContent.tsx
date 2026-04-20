@@ -14,7 +14,7 @@ import {
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Align, Cursor, CssValue, Display, Font, Gap, InstrumentSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, Weight, flexCenter, frostedCard, padding, purpleGlass, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
+import { Align, Cursor, CssValue, Display, Font, Gap, IconSize, InstrumentSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, Weight, flexCenter, frostedCard, padding, purpleGlass, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
@@ -59,7 +59,7 @@ const QUICK_LINK_INSTRUMENT_ICON_SCALE = 1.15;
 const QUICK_LINK_SCROLL_OFFSET = Gap.md;
 const QUICK_LINK_SCROLL_COMPLETE_THRESHOLD = 2;
 const QUICK_LINK_SCROLL_SETTLE_DELAY_MS = 80;
-const QUICK_LINK_ACTION_ICON_SIZE = 18;
+const QUICK_LINK_ACTION_ICON_SIZE = IconSize.md;
 const SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH = 360;
 let pendingSelectProfileExit: { accountId: string; until: number } | null = null;
 

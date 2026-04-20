@@ -16,7 +16,7 @@ import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
-import { IoChevronForward, IoMusicalNotes, IoOptions, IoTrophy } from 'react-icons/io5';
+import { IoChevronForward, IoCompass, IoMusicalNotes, IoOptions, IoTrophy } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
 import { Gap, Size, flexColumn } from '@festival/theme';
@@ -398,6 +398,17 @@ export default function RivalsPage() {
     };
   }, [activeItemId, activeTab, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
 
+  const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
+    ? (
+      <ActionPill
+        icon={<IoCompass size={Size.iconAction} />}
+        label={t('rivals.quickLinks')}
+        onClick={openQuickLinks}
+        active={quickLinksOpen}
+      />
+    )
+    : null;
+
   /* v8 ignore start -- JSX render tree */
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
 
@@ -414,6 +425,7 @@ export default function RivalsPage() {
             title={activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard')}
             actions={phase === LoadPhase.ContentIn ? (
               <>
+                {compactQuickLinksAction}
                 <ActionPill
                   icon={activeTab === 'song' ? <IoTrophy size={Size.iconAction} /> : <IoMusicalNotes size={Size.iconAction} />}
                   label={activeTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong')}

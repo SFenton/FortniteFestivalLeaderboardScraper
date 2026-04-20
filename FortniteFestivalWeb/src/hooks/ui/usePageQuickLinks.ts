@@ -311,6 +311,16 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
     const rawTargetTop = Math.max(0, itemTop - scrollOffset);
     const nextTop = Math.min(rawTargetTop, maxScrollTop);
     const lockWhileVisible = rawTargetTop > maxScrollTop;
+
+    if (!isDesktopRailEnabled) {
+      clearQuickLinkTransition();
+      setActiveItemId(item.id);
+      if (!options?.skipScroll) {
+        scrollEl.scrollTo({ top: nextTop, behavior: 'smooth' });
+      }
+      return;
+    }
+
     const naturalActive = resolveActiveQuickLink(items, sectionRefs.current, scrollEl, scrollOffset, getItemTop);
     const originId = activeItemId && items.some((entry) => entry.id === activeItemId)
       ? activeItemId
@@ -339,7 +349,7 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
     if (!options?.skipScroll) {
       scrollEl.scrollTo({ top: nextTop, behavior: 'smooth' });
     }
-  }, [activeItemId, clearQuickLinkSettleTimer, getItemTop, items, scrollCompleteThreshold, scrollContainerRef, scrollOffset]);
+  }, [activeItemId, clearQuickLinkSettleTimer, clearQuickLinkTransition, getItemTop, isDesktopRailEnabled, items, scrollCompleteThreshold, scrollContainerRef, scrollOffset]);
 
   return {
     activeItemId,

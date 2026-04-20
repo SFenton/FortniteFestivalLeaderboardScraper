@@ -264,7 +264,7 @@ describe('RivalsPage quick links', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: 'Quick Links' })); });
 
     const list = await screen.findByTestId('rivals-quick-links-modal-list');
     const items = within(list).getAllByRole('button');
