@@ -44,49 +44,58 @@ public sealed class PostScrapeBandExtractor
         int totalBandRows = 0;
         int totalMemberStats = 0;
         int totalMemberLookups = 0;
+        var maxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 1, 8);
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-
-        // Count rows with band data to estimate work
-        await using (var countCmd = conn.CreateCommand())
+        long bandContextRowCount;
+        await using (var conn = await _dataSource.OpenConnectionAsync(ct))
         {
-            countCmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE band_members_json IS NOT NULL";
-            var count = (long)(await countCmd.ExecuteScalarAsync(ct))!;
-            _log.LogInformation("Found {Count:N0} solo entries with band context to extract.", count);
-            if (count == 0) return;
+            // Count rows with band data to estimate work
+            await using (var countCmd = conn.CreateCommand())
+            {
+                countCmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE band_members_json IS NOT NULL";
+                bandContextRowCount = (long)(await countCmd.ExecuteScalarAsync(ct))!;
+            }
         }
+
+        _log.LogInformation("Found {Count:N0} solo entries with band context to extract.", bandContextRowCount);
+        if (bandContextRowCount == 0) return;
 
         // Process in batches by song_id to limit transaction size
         var songIds = new List<string>();
-        await using (var songCmd = conn.CreateCommand())
+        await using (var conn = await _dataSource.OpenConnectionAsync(ct))
         {
+            await using var songCmd = conn.CreateCommand();
             songCmd.CommandText = "SELECT DISTINCT song_id FROM leaderboard_entries WHERE band_members_json IS NOT NULL";
             await using var reader = await songCmd.ExecuteReaderAsync(ct);
             while (await reader.ReadAsync(ct))
                 songIds.Add(reader.GetString(0));
         }
 
-        _log.LogInformation("Extracting band data from {SongCount} songs.", songIds.Count);
+        _log.LogInformation("Extracting band data from {SongCount} songs with up to {Parallelism} concurrent workers.",
+            songIds.Count, maxDegreeOfParallelism);
 
         // Load CHOpt max scores for validation
         var allMaxScores = _pathDataStore.GetAllMaxScores();
+        var persistence = new BandLeaderboardPersistence(
+            _dataSource,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<BandLeaderboardPersistence>.Instance);
 
-        foreach (var songId in songIds)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            try
+        await Parallel.ForEachAsync(songIds,
+            new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
+            async (songId, innerCt) =>
             {
-                var (bands, members, lookups) = await ExtractSongBandDataAsync(conn, songId, allMaxScores, ct);
-                totalBandRows += bands;
-                totalMemberStats += members;
-                totalMemberLookups += lookups;
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "Band extraction failed for song {SongId}. Will retry next pass.", songId);
-            }
-        }
+                try
+                {
+                    var (bands, members, lookups) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, innerCt);
+                    Interlocked.Add(ref totalBandRows, bands);
+                    Interlocked.Add(ref totalMemberStats, members);
+                    Interlocked.Add(ref totalMemberLookups, lookups);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(ex, "Band extraction failed for song {SongId}. Will retry next pass.", songId);
+                }
+            });
 
         sw.Stop();
         _log.LogInformation(
@@ -96,10 +105,13 @@ public sealed class PostScrapeBandExtractor
     }
 
     private async Task<(int Bands, int Members, int Lookups)> ExtractSongBandDataAsync(
-        NpgsqlConnection conn, string songId,
+        string songId,
         IReadOnlyDictionary<string, SongMaxScores> allMaxScores,
+        BandLeaderboardPersistence persistence,
         CancellationToken ct)
     {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+
         // Read all band-context rows for this song
         var entries = new List<BandExtractRow>();
         await using (var cmd = conn.CreateCommand())
@@ -220,8 +232,6 @@ public sealed class PostScrapeBandExtractor
             await using var tx = await conn.BeginTransactionAsync(ct);
             try
             {
-                var persistence = new BandLeaderboardPersistence(_dataSource,
-                    Microsoft.Extensions.Logging.Abstractions.NullLogger<BandLeaderboardPersistence>.Instance);
                 var (bands, members, lookups) = persistence.UpsertBandEntriesDirect(
                     songId, bandType, batchEntries, conn, tx);
                 await tx.CommitAsync(ct);

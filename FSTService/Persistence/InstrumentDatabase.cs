@@ -14,6 +14,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 {
     private readonly NpgsqlDataSource _ds;
     private readonly ILogger<InstrumentDatabase> _log;
+    private readonly Lazy<bool> _rankHistoryHasPrimaryKey;
     public string Instrument { get; }
 
     /// <summary>When true, leeway reads resolve from interval tiers instead of dense deltas.</summary>
@@ -24,6 +25,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     /// <summary>Below this entry count, use the prepared-statement loop. Above, use COPY + merge.</summary>
     internal const int BulkThreshold = 50;
+
+    internal const int RankHistoryCleanupBatchSize = 5000;
+    internal const int RankHistoryCleanupMaxBatches = 1;
 
     /// <summary>Serialize band member stats to compact JSON for storage. Returns null for solo entries.</summary>
     private static string? SerializeBandMembers(LeaderboardEntry e)
@@ -37,6 +41,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         Instrument = instrument;
         _ds = dataSource;
         _log = log;
+        _rankHistoryHasPrimaryKey = new Lazy<bool>(ResolveRankHistoryHasPrimaryKey);
     }
 
     public void EnsureSchema() { }
@@ -762,7 +767,28 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return count;
     }
 
-    public List<(string AccountId, string SongId)> GetOverThresholdEntries() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT le.account_id, le.song_id FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument WHERE le.instrument = @instrument AND ss.max_score IS NOT NULL AND le.score > CAST(ss.max_score * 1.05 AS INTEGER)"; cmd.Parameters.AddWithValue("instrument", Instrument); var list = new List<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add((r.GetString(0), r.GetString(1))); return list; }
+    public List<(string AccountId, string SongId)> GetOverThresholdEntries()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT le.account_id, ss.song_id
+            FROM {GetPartitionName("song_stats")} ss
+            CROSS JOIN LATERAL (
+                SELECT le.account_id
+                FROM {GetPartitionName("leaderboard_entries")} le
+                WHERE le.song_id = ss.song_id
+                  AND le.score > CAST(ss.max_score * 1.05 AS INTEGER)
+                ORDER BY le.score DESC
+            ) le
+            WHERE ss.max_score IS NOT NULL";
+
+        var list = new List<(string, string)>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetString(0), r.GetString(1)));
+        return list;
+    }
 
     public void PopulateValidScoreOverrides(IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides)
     {
@@ -798,20 +824,19 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return rows;
     }
 
-    public int SnapshotRankHistory(int retentionDays = 365)
+    public int SnapshotRankHistory(int retentionDays = 365, bool cleanupRetention = true)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var cutoff = today.AddDays(-retentionDays);
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
 
-        // Step A: Delete today's existing rows to guarantee idempotent re-runs.
-        // Without the PK constraint (can be missing on pre-existing tables), the
-        // ON CONFLICT clause below is a no-op and each call would INSERT duplicates.
-        // Must happen BEFORE building _latest_ranks so the temp table reflects the
-        // most recent snapshot from a PREVIOUS day, not the stale today row.
-        using (var c = conn.CreateCommand())
+        // Legacy databases created before rank_history gained its PK cannot rely on
+        // ON CONFLICT for same-day reruns, so keep the delete-and-reinsert path only
+        // for that schema shape. Modern tables can compare against today's latest row
+        // directly and avoid rewriting the whole day on idempotent reruns.
+        if (!_rankHistoryHasPrimaryKey.Value)
         {
+            using var c = conn.CreateCommand();
             c.Transaction = tx;
             c.CommandText = "DELETE FROM rank_history WHERE instrument = @instrument AND snapshot_date = @today";
             c.Parameters.AddWithValue("instrument", Instrument);
@@ -819,7 +844,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             c.ExecuteNonQuery();
         }
 
-        // Step B: Build temp table of each account's latest snapshot (excludes today after Step A)
+        // Step A: Build temp table of each account's latest snapshot.
         using (var c = conn.CreateCommand())
         {
             c.Transaction = tx;
@@ -838,7 +863,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             c.ExecuteNonQuery();
         }
 
-        // Step C: Insert only changed or new accounts
+        // Step B: Insert only changed or new accounts. On modern schemas this also
+        // updates today's row in place when rankings change later the same day.
         using (var c = conn.CreateCommand())
         {
             c.Transaction = tx;
@@ -896,26 +922,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             c.ExecuteNonQuery();
         }
 
-        // Step D: Look-back trim retention — delete only when a successor exists at or before cutoff
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = @"
-                DELETE FROM rank_history rh
-                WHERE rh.instrument = @instrument
-                  AND rh.snapshot_date < @cutoff
-                  AND EXISTS (
-                    SELECT 1 FROM rank_history rh2
-                    WHERE rh2.account_id = rh.account_id
-                      AND rh2.instrument = rh.instrument
-                      AND rh2.snapshot_date > rh.snapshot_date
-                      AND rh2.snapshot_date <= @cutoff
-                  )";
-            c.Parameters.AddWithValue("instrument", Instrument);
-            c.Parameters.AddWithValue("cutoff", cutoff);
-            c.ExecuteNonQuery();
-        }
-
         int rows;
         using (var c = conn.CreateCommand())
         {
@@ -926,7 +932,68 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             rows = Convert.ToInt32(c.ExecuteScalar());
         }
         tx.Commit();
+
+        if (cleanupRetention)
+            CleanupRankHistoryRetention(retentionDays);
+
         return rows;
+    }
+
+    public int CleanupRankHistoryRetention(int retentionDays = 365, int batchSize = RankHistoryCleanupBatchSize, int maxBatches = RankHistoryCleanupMaxBatches)
+    {
+        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
+        if (maxBatches <= 0) throw new ArgumentOutOfRangeException(nameof(maxBatches));
+
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
+        int totalDeleted = 0;
+
+        using var conn = _ds.OpenConnection();
+        for (int batch = 0; batch < maxBatches; batch++)
+        {
+            using var tx = conn.BeginTransaction();
+            using var c = conn.CreateCommand();
+            c.Transaction = tx;
+            c.CommandTimeout = 120;
+            c.CommandText = @"
+                WITH doomed AS (
+                    SELECT account_id, snapshot_date
+                    FROM (
+                        SELECT
+                            account_id,
+                            snapshot_date,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY account_id
+                                ORDER BY snapshot_date DESC
+                            ) AS recency
+                        FROM rank_history
+                        WHERE instrument = @instrument
+                          AND snapshot_date <= @cutoff
+                    ) ranked
+                    WHERE recency > 1
+                    ORDER BY snapshot_date ASC, account_id ASC
+                    LIMIT @batchSize
+                )
+                DELETE FROM rank_history rh
+                USING doomed d
+                WHERE rh.instrument = @instrument
+                  AND rh.account_id = d.account_id
+                  AND rh.snapshot_date = d.snapshot_date";
+            c.Parameters.AddWithValue("instrument", Instrument);
+            c.Parameters.AddWithValue("cutoff", cutoff);
+            c.Parameters.AddWithValue("batchSize", batchSize);
+
+            int deleted = c.ExecuteNonQuery();
+            tx.Commit();
+            totalDeleted += deleted;
+
+            if (deleted == 0)
+                break;
+        }
+
+        if (totalDeleted > 0)
+            _log.LogDebug("Trimmed {DeletedCount} retained rank_history rows for {Instrument}.", totalDeleted, Instrument);
+
+        return totalDeleted;
     }
 
     public (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(string rankBy = "adjusted", int page = 1, int pageSize = 50) { var (col, dir) = RankByColumn(rankBy); using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT COUNT(*) FROM account_rankings WHERE instrument = @instrument"; c.Parameters.AddWithValue("instrument", Instrument); total = Convert.ToInt32(c.ExecuteScalar()); } using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT account_id, songs_played, total_charted_songs, coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score, total_score_rank, max_score_percent, max_score_percent_rank, avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank, computed_at, raw_max_score_percent, raw_weighted_rating FROM account_rankings WHERE instrument = @instrument ORDER BY {col} {dir} LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<AccountRankingDto>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadAccountRanking(r)); return (list, total); }
@@ -934,8 +1001,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     public (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore")
     {
-        var (rankCol, _) = RankByColumn(rankBy);
         var self = GetAccountRanking(accountId); if (self is null) return (new(), null, new());
+        if (radius <= 0) return (new(), self, new());
+        var (rankCol, _) = RankByColumn(rankBy);
         var selfRankValue = InstrumentDatabase.GetRankValue(self, rankBy);
         using var conn = _ds.OpenConnection();
         var above = new List<AccountRankingDto>();
@@ -1027,6 +1095,24 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     };
 
     // ── Leeway-aware ranking queries ─────────────────────────────────
+
+        private bool ResolveRankHistoryHasPrimaryKey()
+        {
+            using var conn = _ds.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conrelid = to_regclass(@tableName)
+                      AND contype = 'p'
+                )";
+            cmd.Parameters.AddWithValue("tableName", "public.rank_history");
+            var hasPrimaryKey = (bool)(cmd.ExecuteScalar() ?? false);
+            if (!hasPrimaryKey)
+                _log.LogWarning("rank_history has no primary key; using legacy same-day snapshot path for {Instrument}.", Instrument);
+            return hasPrimaryKey;
+        }
 
     /// <summary>Maps rankBy to the COALESCE expression for leeway-aware queries.</summary>
     private static (string EffectiveCol, string Direction) EffectiveRankByColumn(string rankBy) => rankBy switch
@@ -1997,6 +2083,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument
                 WHERE vso.instrument = @instrument AND ss.entry_count > 0";
             c.Parameters.AddWithValue("instrument", Instrument);
+            c.ExecuteNonQuery();
+        }
+
+        using (var c = conn.CreateCommand())
+        {
+            c.CommandTimeout = 120;
+            c.CommandText = "ANALYZE _valid_entries; ANALYZE _valid_entries_overrides";
             c.ExecuteNonQuery();
         }
     }

@@ -74,7 +74,7 @@ public sealed class RankingsCalculator
     }
 
     /// <summary>
-    /// Compute all rankings: per-instrument (parallel) → composite → history snapshots → combo rankings.
+    /// Compute all rankings: per-instrument (parallel) → composite → combo → band → history snapshots.
     /// </summary>
     public async Task ComputeAllAsync(FestivalService festivalService, CancellationToken ct = default)
     {
@@ -90,7 +90,7 @@ public sealed class RankingsCalculator
         _progress.SetSubOperation("per_instrument_rankings");
 
         // Cap at 2 concurrent instruments to avoid OOM-killing PostgreSQL.
-        // Each instrument's ranking pipeline boosts work_mem to 128MB per-session
+        // Each instrument's ranking pipeline boosts work_mem to 256MB per-session
         // (temp table + indexes + 5 ROW_NUMBER window functions). 6 concurrent
         // pipelines × ~1GB peak would exceed the container memory limit.
         await Parallel.ForEachAsync(instruments,
@@ -183,10 +183,13 @@ public sealed class RankingsCalculator
             // Boost work_mem for this connection only — the global setting is
             // kept low (16 MB) to prevent idle backends from holding huge RSS.
             // The ranking pipeline runs 5 ROW_NUMBER() window functions that
-            // benefit from extra sort memory, so we raise it per-session.
+            // spill at 128MB on the Solo_Guitar-heavy benchmark, so raise sort
+            // memory on the dedicated rankings session. Temp-table index builds
+            // are also a notable part of this path, so raise
+            // maintenance_work_mem alongside it.
             using (var wmCmd = conn.CreateCommand())
             {
-                wmCmd.CommandText = "SET work_mem = '128MB'";
+                wmCmd.CommandText = "SET work_mem = '256MB'; SET maintenance_work_mem = '256MB'";
                 wmCmd.ExecuteNonQuery();
             }
 
@@ -289,32 +292,7 @@ public sealed class RankingsCalculator
             crossDeltaSw.Elapsed, heapBeforeDeltas, heapAfterDeltas, heapAfterDeltas - heapBeforeDeltas);
         LogPhase("cross_deltas.total", instrument: null, crossDeltaSw.Elapsed);
 
-        // ── Phase 4: History snapshots (parallel per instrument + composite) ──
-        _progress.SetSubOperation("rank_history_snapshots");
-        var snapshotsSw = System.Diagnostics.Stopwatch.StartNew();
-        var snapshotTasks = instruments.Select(instrument => Task.Run(() =>
-        {
-            ct.ThrowIfCancellationRequested();
-            var instSw = System.Diagnostics.Stopwatch.StartNew();
-            var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            db.SnapshotRankHistory();
-            db.SnapshotRankHistoryDeltas();
-            instSw.Stop();
-            LogPhase("snapshots.per_instrument", instrument, instSw.Elapsed);
-            _progress.ReportPhaseItemComplete();
-        }, ct)).ToList();
-
-        await Task.WhenAll(snapshotTasks);
-
-        var compositeSnapSw = System.Diagnostics.Stopwatch.StartNew();
-        _metaDb.SnapshotCompositeRankHistory();
-        compositeSnapSw.Stop();
-        LogPhase("snapshots.composite", instrument: null, compositeSnapSw.Elapsed);
-        _progress.ReportPhaseItemComplete();
-        snapshotsSw.Stop();
-        LogPhase("snapshots.total", instrument: null, snapshotsSw.Elapsed);
-
-        // ── Phase 5: All-combo rankings ──
+        // ── Phase 4: All-combo rankings ──
         _progress.SetSubOperation("combo_rankings");
         var comboSw = System.Diagnostics.Stopwatch.StartNew();
         ComputeAllCombos(instruments, rankingDataFull);
@@ -323,7 +301,7 @@ public sealed class RankingsCalculator
         _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
         LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
 
-        // ── Phase 6: Band team rankings ──
+        // ── Phase 5: Band team rankings ──
         _progress.SetSubOperation("band_rankings");
         var bandSw = System.Diagnostics.Stopwatch.StartNew();
         var totalBandSongs = festivalService.Songs.Count;
@@ -347,6 +325,9 @@ public sealed class RankingsCalculator
         }
         bandSw.Stop();
         LogPhase("band_rankings.total", instrument: null, bandSw.Elapsed);
+
+        // ── Phase 6: History snapshots (best-effort maintenance) ──
+        await SnapshotRankHistoryBestEffortAsync(instruments, ct);
 
         _log.LogInformation("Full rankings computation complete in {Total}.", sw.Elapsed);
         LogPhase("total", instrument: null, sw.Elapsed);
@@ -540,80 +521,12 @@ public sealed class RankingsCalculator
         int combosComputed = 0;
         int totalRows = 0;
 
-        foreach (int mask in ComboIds.WithinGroupComboMasks)
+        var comboIds = ComboIds.WithinGroupComboMasks.Select(ComboIds.FromMask).ToList();
+        foreach (var leaderboard in ComboLeaderboardBuilder.BuildLeaderboards(comboIds, perInstrument))
         {
-            // Build instrument list for this mask from canonical order
-            var comboInstruments = ComboIds.ToInstruments(ComboIds.FromMask(mask));
-
-            // Skip if any instrument in this combo is not in the active set
-            if (!comboInstruments.All(i => perInstrument.ContainsKey(i))) continue;
-
-            var comboId = ComboIds.FromMask(mask);
-            int comboSize = comboInstruments.Count;
-
-            // Intersect accounts across all instruments in this combo + aggregate metrics
-            Dictionary<string, AggregatedMetrics>? accountMetrics = null;
-
-            foreach (var instrument in comboInstruments)
-            {
-                var instData = perInstrument[instrument];
-
-                if (accountMetrics is null)
-                {
-                    accountMetrics = new Dictionary<string, AggregatedMetrics>(instData.Count, StringComparer.OrdinalIgnoreCase);
-                    foreach (var (aid, m) in instData)
-                        accountMetrics[aid] = new AggregatedMetrics(
-                            m.AdjustedRating * m.SongsPlayed, m.WeightedRating * m.SongsPlayed,
-                            m.FullComboCount, m.TotalScore, m.MaxScorePercent, m.SongsPlayed, 1);
-                }
-                else
-                {
-                    var toRemove = new List<string>();
-                    foreach (var aid in accountMetrics.Keys)
-                    {
-                        if (!instData.ContainsKey(aid))
-                            toRemove.Add(aid);
-                    }
-                    foreach (var aid in toRemove)
-                        accountMetrics.Remove(aid);
-
-                    foreach (var (aid, m) in instData)
-                    {
-                        if (accountMetrics.TryGetValue(aid, out var existing))
-                            accountMetrics[aid] = new AggregatedMetrics(
-                                existing.AdjWeightedSum + m.AdjustedRating * m.SongsPlayed,
-                                existing.WgtWeightedSum + m.WeightedRating * m.SongsPlayed,
-                                existing.TotalFcCount + m.FullComboCount,
-                                existing.TotalScore + m.TotalScore,
-                                existing.MaxScoreSum + m.MaxScorePercent,
-                                existing.TotalSongs + m.SongsPlayed,
-                                existing.InstrumentCount + 1);
-                    }
-                }
-            }
-
-            if (accountMetrics is null || accountMetrics.Count == 0) continue;
-
-            // Build final entries with all 5 computed metrics
-            var entries = accountMetrics
-                .Select(kvp =>
-                {
-                    var a = kvp.Value;
-                    return (
-                        AccountId: kvp.Key,
-                        AdjustedRating: a.AdjWeightedSum / a.TotalSongs,
-                        WeightedRating: a.WgtWeightedSum / a.TotalSongs,
-                        FcRate: a.TotalSongs > 0 ? (double)a.TotalFcCount / a.TotalSongs : 0.0,
-                        TotalScore: a.TotalScore,
-                        MaxScorePercent: a.InstrumentCount > 0 ? a.MaxScoreSum / a.InstrumentCount : 0.0,
-                        SongsPlayed: a.TotalSongs,
-                        FullComboCount: a.TotalFcCount);
-                })
-                .ToList();
-
-            _metaDb.ReplaceComboLeaderboard(comboId, entries, entries.Count);
+            _metaDb.ReplaceComboLeaderboard(leaderboard.ComboId, leaderboard.Entries, leaderboard.Entries.Count);
             combosComputed++;
-            totalRows += entries.Count;
+            totalRows += leaderboard.Entries.Count;
         }
 
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
@@ -633,15 +546,88 @@ public sealed class RankingsCalculator
         _log.LogInformation("Computed band rankings for {BandTypeCount} band types.", bandTypes.Count);
     }
 
+    private async Task SnapshotRankHistoryBestEffortAsync(IReadOnlyList<string> instruments, CancellationToken ct)
+    {
+        _progress.SetSubOperation("rank_history_snapshots");
+        var snapshotsSw = System.Diagnostics.Stopwatch.StartNew();
+
+        var snapshotTasks = instruments.Select(instrument => Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            var instSw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                var db = _persistence.GetOrCreateInstrumentDb(instrument);
+                db.SnapshotRankHistory(cleanupRetention: false);
+
+                try
+                {
+                    db.SnapshotRankHistoryDeltas();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(ex,
+                        "Rank history delta snapshot maintenance failed for {Instrument}. Continuing without blocking core rankings.",
+                        instrument);
+                }
+
+                try
+                {
+                    db.CleanupRankHistoryRetention();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(ex,
+                        "Rank history retention cleanup failed for {Instrument}. Continuing without blocking core rankings.",
+                        instrument);
+                }
+
+                instSw.Stop();
+                LogPhase("snapshots.per_instrument", instrument, instSw.Elapsed);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                instSw.Stop();
+                _log.LogWarning(ex,
+                    "Rank history snapshot maintenance failed for {Instrument}. Continuing without blocking core rankings.",
+                    instrument);
+                LogPhase("snapshots.per_instrument.failed", instrument, instSw.Elapsed);
+            }
+            finally
+            {
+                _progress.ReportPhaseItemComplete();
+            }
+        }, ct)).ToList();
+
+        await Task.WhenAll(snapshotTasks);
+
+        var compositeSnapSw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            _metaDb.SnapshotCompositeRankHistory();
+            compositeSnapSw.Stop();
+            LogPhase("snapshots.composite", instrument: null, compositeSnapSw.Elapsed);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            compositeSnapSw.Stop();
+            _log.LogWarning(ex,
+                "Composite rank history snapshot maintenance failed. Continuing without blocking core rankings.");
+            LogPhase("snapshots.composite.failed", instrument: null, compositeSnapSw.Elapsed);
+        }
+        finally
+        {
+            _progress.ReportPhaseItemComplete();
+        }
+
+        snapshotsSw.Stop();
+        LogPhase("snapshots.total", instrument: null, snapshotsSw.Elapsed);
+    }
+
     /// <summary>Per-instrument metric values for a single account.</summary>
     internal readonly record struct AccountMetrics(
         double AdjustedRating, double WeightedRating, double FcRate,
         long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount);
-
-    /// <summary>Accumulated metrics across instruments for a single account within a combo.</summary>
-    private readonly record struct AggregatedMetrics(
-        double AdjWeightedSum, double WgtWeightedSum, int TotalFcCount,
-        long TotalScore, double MaxScoreSum, int TotalSongs, int InstrumentCount);
 
     private static int BitCount(int value)
     {

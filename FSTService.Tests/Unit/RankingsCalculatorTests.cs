@@ -7,6 +7,7 @@ using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using Npgsql;
 using System.Reflection;
 
 namespace FSTService.Tests.Unit;
@@ -649,5 +650,74 @@ public sealed class RankingsCalculatorTests : IDisposable
         // The primary assertion is that we didn't throw
         // NpgsqlOperationInProgressException. Deltas may or may not be
         // written depending on whether metrics actually changed vs base.
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_SnapshotFailure_DoesNotBlockBandRankings()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_0", [
+            MakeEntry("p1", 1000, rank: 1),
+            MakeEntry("p2", 900, rank: 2),
+        ]);
+        guitarDb.UpsertEntries("song_1", [
+            MakeEntry("p1", 1200, rank: 1),
+            MakeEntry("p2", 1100, rank: 2),
+        ]);
+        guitarDb.RecomputeAllRanks();
+
+        var bandPersistence = new BandLeaderboardPersistence(_metaFixture.DataSource, Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000, isFullCombo: true),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+        ]);
+        bandPersistence.UpsertBandEntries("song_1", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1200),
+            MakeBandEntry(["p5", "p6"], "0:3", 800),
+        ]);
+
+        var failingGuitarDb = CreateSnapshotFailingInstrumentDb(guitarDb);
+        var dbField = typeof(GlobalLeaderboardPersistence)
+            .GetField("_instrumentDbs", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var instrumentDbs = (Dictionary<string, IInstrumentDatabase>)dbField.GetValue(_persistence)!;
+        instrumentDbs["Solo_Guitar"] = failingGuitarDb;
+
+        await _sut.ComputeAllAsync(CreateFestivalServiceWithSongs(2), CancellationToken.None);
+
+        var (overall, totalTeams) = _metaFixture.Db.GetBandTeamRankings("Band_Duets");
+        Assert.Equal(3, totalTeams);
+        Assert.Equal(3, overall.Count);
+        Assert.Equal("p1:p2", overall[0].TeamKey);
+
+        Assert.Empty(guitarDb.GetRankHistory("p1", 1));
+    }
+
+    private static IInstrumentDatabase CreateSnapshotFailingInstrumentDb(IInstrumentDatabase inner)
+    {
+        var proxy = Substitute.For<IInstrumentDatabase>();
+        proxy.Instrument.Returns(inner.Instrument);
+        proxy.GetOverThresholdEntries().Returns(_ => inner.GetOverThresholdEntries());
+        proxy.ComputeSongStats(Arg.Any<Dictionary<string, int?>?>(), Arg.Any<Dictionary<string, long>?>())
+            .Returns(call => inner.ComputeSongStats(call.Arg<Dictionary<string, int?>?>(), call.Arg<Dictionary<string, long>?>()));
+        proxy.When(x => x.PopulateValidScoreOverrides(Arg.Any<IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)>>()))
+            .Do(call => inner.PopulateValidScoreOverrides(call.Arg<IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)>>()));
+        proxy.OpenConnection().Returns(_ => inner.OpenConnection());
+        proxy.When(x => x.MaterializeValidEntries(Arg.Any<NpgsqlConnection>(), Arg.Any<double>()))
+            .Do(call => inner.MaterializeValidEntries(call.Arg<NpgsqlConnection>(), call.Arg<double>()));
+        proxy.ComputeAccountRankingsFromMaterialized(Arg.Any<NpgsqlConnection>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<double>(), Arg.Any<double>())
+            .Returns(call => inner.ComputeAccountRankingsFromMaterialized(
+                call.ArgAt<NpgsqlConnection>(0),
+                call.ArgAt<int>(1),
+                call.ArgAt<int>(2),
+                call.ArgAt<double>(3),
+                call.ArgAt<double>(4)));
+        proxy.GetAllRankingSummariesFull().Returns(_ => inner.GetAllRankingSummariesFull());
+        proxy.GetAllRankingSummaries().Returns(_ => inner.GetAllRankingSummaries());
+        proxy.GetAllRankingDeltas().Returns(_ => inner.GetAllRankingDeltas());
+        proxy.SnapshotRankHistory(Arg.Any<int>(), Arg.Any<bool>())
+            .Returns(_ => throw new TimeoutException("synthetic snapshot failure"));
+        return proxy;
     }
 }

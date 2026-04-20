@@ -98,6 +98,7 @@ public sealed class ComboIdsTests
     [InlineData("01", "01")]
     [InlineData("03", "03")]
     [InlineData("3f", "3f")]
+    [InlineData("1ff", "1ff")]
     public void NormalizeAnyComboParam_accepts_hex_ids(string input, string expected)
     {
         Assert.Equal(expected, ComboIds.NormalizeAnyComboParam(input));

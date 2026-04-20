@@ -5,6 +5,10 @@ A simple Windows utility for retrieving your highest Fortnite Festival scores ac
 <img width="835" alt="image" src="https://github.com/user-attachments/assets/9c9f8213-8f5e-401f-a925-d26d1824f47b">
 <img width="833" alt="image" src="https://github.com/user-attachments/assets/ca5dbd34-a7be-41c5-932c-57b9e9bc527b">
 
+## Service and harness docs
+
+The current service-side post-scrape clone and benchmark workflow is documented in [docs/design/PostScrapeCloneHarness.md](docs/design/PostScrapeCloneHarness.md).
+
 
 
 ## Why?

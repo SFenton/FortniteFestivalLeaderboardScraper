@@ -356,11 +356,10 @@ public static partial class ApiEndpoints
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
-            // Normalize combo — accept instrument name ("Solo_Guitar") or hex ID ("01")
-            var normalizedCombo = ComboIds.NormalizeAnyComboParam(combo);
-            if (normalizedCombo is null)
+            var resolvedCombo = TryResolveRivalCombo(combo);
+            if (resolvedCombo is null)
                 return Results.BadRequest(new { error = $"Invalid combo: {combo}" });
-            combo = normalizedCombo;
+            combo = resolvedCombo.Value.CanonicalCombo;
 
             var cacheKey = $"list:{accountId}:{combo}";
             {
@@ -412,6 +411,13 @@ public static partial class ApiEndpoints
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
 
+            var resolvedCombo = TryResolveRivalCombo(combo);
+            if (resolvedCombo is null)
+                return Results.BadRequest(new { error = $"Invalid combo: {combo}" });
+
+            combo = resolvedCombo.Value.CanonicalCombo;
+            var instruments = resolvedCombo.Value.Instruments;
+
             var effectiveLimit = limit ?? 50;
             var effectiveOffset = offset ?? 0;
             var sortMode = sort?.ToLowerInvariant() ?? "closest";
@@ -421,14 +427,6 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
-            // Parse combo into instruments — accepts hex ID ("03") or legacy ("Solo_Guitar+Solo_Bass") or single ("Solo_Guitar")
-            string[] instruments;
-            if (combo.Contains('+'))
-                instruments = combo.Split('+');
-            else if (combo.Length <= 2 && int.TryParse(combo, System.Globalization.NumberStyles.HexNumber, null, out _))
-                instruments = ComboIds.ToInstruments(combo).ToArray();
-            else
-                instruments = [combo]; // single instrument name
             var allSamples = new List<RivalSongSampleRow>();
             foreach (var inst in instruments)
             {
@@ -635,4 +633,15 @@ public static partial class ApiEndpoints
             avgSignedDelta = r.AvgSignedDelta,
         };
     }
+
+    internal static ResolvedRivalCombo? TryResolveRivalCombo(string? combo)
+    {
+        var normalizedCombo = ComboIds.NormalizeAnyComboParam(combo);
+        if (normalizedCombo is null)
+            return null;
+
+        return new ResolvedRivalCombo(normalizedCombo, ComboIds.ToInstruments(normalizedCombo).ToArray());
+    }
+
+    internal readonly record struct ResolvedRivalCombo(string CanonicalCombo, string[] Instruments);
 }

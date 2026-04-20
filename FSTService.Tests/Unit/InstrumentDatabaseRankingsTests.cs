@@ -27,6 +27,51 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Db.UpsertEntries(songId, list);
     }
 
+    private void InsertRankHistoryRow(string accountId, DateOnly snapshotDate, int rank, long totalScore)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO rank_history (
+                account_id, instrument, snapshot_date,
+                adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank, max_score_percent_rank,
+                adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent,
+                songs_played, coverage, full_combo_count, raw_max_score_percent,
+                raw_weighted_rating, raw_skill_rating, schema_version)
+            VALUES (
+                @accountId, @instrument, @snapshotDate,
+                @rank, @rank, @rank, @rank, @rank,
+                0.1, 0.1, 0.5, @totalScore, 0.9,
+                10, 0.5, 5, 0.9,
+                0.1, 0.1, 2)";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.Parameters.AddWithValue("rank", rank);
+        cmd.Parameters.AddWithValue("totalScore", totalScore);
+        cmd.ExecuteNonQuery();
+    }
+
+    private List<DateOnly> GetStoredSnapshotDates(string accountId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT snapshot_date
+            FROM rank_history
+            WHERE instrument = @instrument AND account_id = @accountId
+            ORDER BY snapshot_date";
+        cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+
+        var dates = new List<DateOnly>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            dates.Add(reader.GetFieldValue<DateOnly>(0));
+
+        return dates;
+    }
+
     // ═══════════════════════════════════════════════════════════
     // SongStats
     // ═══════════════════════════════════════════════════════════
@@ -515,6 +560,49 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
 
         var history = Db.GetRankHistory("p1", days: 1);
         Assert.Single(history);
+    }
+
+    [Fact]
+    public void CleanupRankHistoryRetention_PreservesNewestSnapshotAtOrBeforeCutoff()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var cutoff = today.AddDays(-365);
+
+        InsertRankHistoryRow("p1", cutoff.AddDays(-20), 5, 500);
+        InsertRankHistoryRow("p1", cutoff.AddDays(-10), 4, 600);
+        InsertRankHistoryRow("p1", cutoff, 3, 700);
+        InsertRankHistoryRow("p1", cutoff.AddDays(3), 2, 800);
+        InsertRankHistoryRow("p2", cutoff.AddDays(-30), 9, 400);
+
+        var deleted = Db.CleanupRankHistoryRetention(batchSize: 100, maxBatches: 10);
+
+        Assert.Equal(2, deleted);
+        Assert.Equal([cutoff, cutoff.AddDays(3)], GetStoredSnapshotDates("p1"));
+        Assert.Equal([cutoff.AddDays(-30)], GetStoredSnapshotDates("p2"));
+    }
+
+    [Fact]
+    public void SnapshotRankHistory_CleanupRetentionCanBeSkipped()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var cutoff = today.AddDays(-365);
+
+        InsertRankHistoryRow("p1", cutoff.AddDays(-20), 5, 500);
+        InsertRankHistoryRow("p1", cutoff.AddDays(-10), 4, 600);
+
+        Db.UpsertEntries("song1", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+
+        Db.SnapshotRankHistory(cleanupRetention: false);
+
+        Assert.Equal([cutoff.AddDays(-20), cutoff.AddDays(-10), today], GetStoredSnapshotDates("p1"));
+
+        var deleted = Db.CleanupRankHistoryRetention(batchSize: 100, maxBatches: 10);
+
+        Assert.Equal(1, deleted);
+        Assert.Equal([cutoff.AddDays(-10), today], GetStoredSnapshotDates("p1"));
     }
 
     [Fact]
