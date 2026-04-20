@@ -18,7 +18,7 @@ public static partial class ApiEndpoints
             string instrument,
             string? rankBy,
             IMetaDatabase metaDb,
-            GlobalLeaderboardPersistence persistence,
+            LeaderboardRivalsCalculator leaderboardRivalsCalculator,
             ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService cache) =>
         {
@@ -34,31 +34,24 @@ public static partial class ApiEndpoints
             if (effectiveRankBy == "totalscore")
             {
                 {
-                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"lb-rivals:{accountId}:{instrument}:totalscore"));
-                    if (result is not null) return result;
+                    var cachedPrecomputed = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"lb-rivals:{accountId}:{instrument}:totalscore"));
+                    if (cachedPrecomputed is not null) return cachedPrecomputed;
                 }
             }
 
             var cacheKey = $"lb-rivals:{accountId}:{instrument}:{effectiveRankBy}";
             {
-                var result = CacheHelper.ServeIfCached(httpContext, cache.Get(cacheKey));
-                if (result is not null) return result;
+                var cachedResponse = CacheHelper.ServeIfCached(httpContext, cache.Get(cacheKey));
+                if (cachedResponse is not null) return cachedResponse;
             }
 
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
-            var rivals = metaDb.GetLeaderboardRivals(accountId, instrument, effectiveRankBy);
+            var live = leaderboardRivalsCalculator.ComputeInstrument(accountId, instrument, effectiveRankBy);
+            var rivals = live.Rivals;
             var names = metaDb.GetDisplayNames(rivals.Select(r => r.RivalAccountId));
-
-            // Look up user's own rank for context
-            int? userRank = null;
-            var db = persistence.GetOrCreateInstrumentDb(instrument);
-            {
-                var (_, self, _) = db.GetAccountRankingNeighborhood(accountId, 0, effectiveRankBy);
-                if (self is not null)
-                    userRank = InstrumentDatabase.GetRankValue(self, effectiveRankBy);
-            }
+            var userRank = live.GetUserRank(effectiveRankBy);
 
             var above = rivals.Where(r => r.Direction == "above").Select(r => MapRival(r, names));
             var below = rivals.Where(r => r.Direction == "below").Select(r => MapRival(r, names));
@@ -94,9 +87,9 @@ public static partial class ApiEndpoints
             string? rankBy,
             string? sort,
             IMetaDatabase metaDb,
-            GlobalLeaderboardPersistence persistence,
             FestivalService festivalService,
             RivalsCalculator rivalsCalculator,
+            LeaderboardRivalsCalculator leaderboardRivalsCalculator,
             [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService cache) =>
         {
             var effectiveRankBy = rankBy ?? "totalscore";
@@ -113,7 +106,8 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
-            var samples = metaDb.GetLeaderboardRivalSongSamples(accountId, rivalId, instrument, effectiveRankBy);
+            var live = leaderboardRivalsCalculator.ComputeInstrument(accountId, instrument, effectiveRankBy);
+            var samples = live.Samples.Where(s => s.RivalAccountId.Equals(rivalId, StringComparison.OrdinalIgnoreCase)).ToList();
             var rivalName = metaDb.GetDisplayName(rivalId);
 
             // Sort based on preference
@@ -182,6 +176,23 @@ public static partial class ApiEndpoints
         })
         .WithTags("LeaderboardRivals")
         .RequireRateLimiting("public");
+
+        app.MapPost("/api/player/{accountId}/leaderboard-rivals/recompute", (
+            string accountId,
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService cache) =>
+        {
+            cache.InvalidateAll();
+            precomputer.PrecomputeUser(accountId);
+            return Results.Ok(new
+            {
+                accountId,
+                status = "recomputed",
+            });
+        })
+        .WithTags("LeaderboardRivals")
+        .RequireRateLimiting("protected")
+        .RequireAuthorization();
     }
 
     private static object MapRival(LeaderboardRivalRow r, Dictionary<string, string> names)

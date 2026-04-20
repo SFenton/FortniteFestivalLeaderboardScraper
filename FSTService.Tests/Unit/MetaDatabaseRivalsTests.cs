@@ -23,6 +23,7 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         var status = Db.GetRivalsStatus("acct_1");
         Assert.NotNull(status);
         Assert.Equal("pending", status.Status);
+        Assert.Equal(0, status.AlgorithmVersion);
     }
 
     [Fact]
@@ -55,6 +56,7 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         Assert.Equal("complete", status!.Status);
         Assert.Equal(7, status.CombosComputed);
         Assert.Equal(42, status.RivalsFound);
+        Assert.Equal(RivalsAlgorithmVersion.SongRivals, status.AlgorithmVersion);
         Assert.NotNull(status.CompletedAt);
     }
 
@@ -130,6 +132,115 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         Assert.Empty(storedSamples); // old samples deleted
     }
 
+    [Fact]
+    public void DirtyRivalSongs_round_trip_and_clear()
+    {
+        Db.UpsertDirtyRivalSongs(
+        [
+            new RivalDirtySongRow
+            {
+                AccountId = "u1",
+                Instrument = "Solo_Guitar",
+                SongId = "s1",
+                DirtyReason = RivalsDirtyReason.SelfScoreChange,
+                DetectedAt = "2026-01-01T00:00:00Z",
+            },
+            new RivalDirtySongRow
+            {
+                AccountId = "u1",
+                Instrument = "Solo_Guitar",
+                SongId = "s2",
+                DirtyReason = RivalsDirtyReason.NeighborWindowChange,
+                DetectedAt = "2026-01-01T00:00:01Z",
+            },
+        ]);
+
+        var accounts = Db.GetDirtyRivalAccounts();
+        Assert.Single(accounts);
+        Assert.Equal("u1", accounts[0]);
+
+        var dirtySongs = Db.GetDirtyRivalSongs("u1");
+        Assert.Equal(2, dirtySongs.Count);
+
+        Db.ClearDirtyRivalSongs("u1", "Solo_Guitar", ["s1"]);
+
+        dirtySongs = Db.GetDirtyRivalSongs("u1");
+        Assert.Single(dirtySongs);
+        Assert.Equal("s2", dirtySongs[0].SongId);
+
+        Db.ClearAllDirtyRivalSongs("u1");
+        Assert.Empty(Db.GetDirtyRivalSongs("u1"));
+    }
+
+    [Fact]
+    public void ReplaceRivalSelectionState_replaces_fingerprints_and_states()
+    {
+        Db.ReplaceRivalSelectionState(
+            "u1",
+            [
+                new RivalSongFingerprintRow
+                {
+                    AccountId = "u1",
+                    Instrument = "Solo_Guitar",
+                    SongId = "s1",
+                    UserRank = 42,
+                    NeighborhoodSignature = "ABC123",
+                    ComputedAt = "2026-01-01T00:00:00Z",
+                },
+            ],
+            [
+                new RivalInstrumentStateRow
+                {
+                    AccountId = "u1",
+                    Instrument = "Solo_Guitar",
+                    SongCount = 12,
+                    IsEligible = true,
+                    ComputedAt = "2026-01-01T00:00:00Z",
+                },
+            ]);
+
+        var fingerprints = Db.GetRivalSongFingerprints("u1", "Solo_Guitar", ["s1"]);
+        Assert.Single(fingerprints);
+        Assert.Equal(42, fingerprints["s1"].UserRank);
+
+        var states = Db.GetRivalInstrumentStates("u1");
+        Assert.Single(states);
+        Assert.True(states["Solo_Guitar"].IsEligible);
+
+        Db.ReplaceRivalSelectionState(
+            "u1",
+            [
+                new RivalSongFingerprintRow
+                {
+                    AccountId = "u1",
+                    Instrument = "Solo_Bass",
+                    SongId = "s2",
+                    UserRank = 7,
+                    NeighborhoodSignature = "DEF456",
+                    ComputedAt = "2026-01-02T00:00:00Z",
+                },
+            ],
+            [
+                new RivalInstrumentStateRow
+                {
+                    AccountId = "u1",
+                    Instrument = "Solo_Bass",
+                    SongCount = 3,
+                    IsEligible = false,
+                    ComputedAt = "2026-01-02T00:00:00Z",
+                },
+            ]);
+
+        Assert.Empty(Db.GetRivalSongFingerprints("u1", "Solo_Guitar", ["s1"]));
+        fingerprints = Db.GetRivalSongFingerprints("u1", "Solo_Bass", ["s2"]);
+        Assert.Single(fingerprints);
+        Assert.Equal("DEF456", fingerprints["s2"].NeighborhoodSignature);
+
+        states = Db.GetRivalInstrumentStates("u1");
+        Assert.Single(states);
+        Assert.False(states["Solo_Bass"].IsEligible);
+    }
+
     // ═══ GetRivalCombos ══════════════════════════════════════════
 
     [Fact]
@@ -198,12 +309,48 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
                      SongId = "s1", UserRank = 10, RivalRank = 8, RankDelta = -2 },
         };
         Db.ReplaceRivalsData("acct_1", rivals, samples);
+        Db.UpsertDirtyRivalSongs(
+        [
+            new RivalDirtySongRow
+            {
+                AccountId = "acct_1",
+                Instrument = "Solo_Guitar",
+                SongId = "s1",
+                DirtyReason = RivalsDirtyReason.SelfScoreChange,
+                DetectedAt = "2026-01-01T00:00:00Z",
+            },
+        ]);
+        Db.ReplaceRivalSelectionState(
+            "acct_1",
+            [
+                new RivalSongFingerprintRow
+                {
+                    AccountId = "acct_1",
+                    Instrument = "Solo_Guitar",
+                    SongId = "s1",
+                    UserRank = 10,
+                    NeighborhoodSignature = "ABC123",
+                    ComputedAt = "2026-01-01T00:00:00Z",
+                },
+            ],
+            [
+                new RivalInstrumentStateRow
+                {
+                    AccountId = "acct_1",
+                    Instrument = "Solo_Guitar",
+                    SongCount = 1,
+                    IsEligible = false,
+                    ComputedAt = "2026-01-01T00:00:00Z",
+                },
+            ]);
 
         // Unregister last device → cascades to full cleanup
         Db.UnregisterUser("dev1", "acct_1");
 
         Assert.Empty(Db.GetUserRivals("acct_1"));
         Assert.Empty(Db.GetRivalSongSamples("acct_1", "r1"));
+        Assert.Empty(Db.GetDirtyRivalSongs("acct_1"));
+        Assert.Empty(Db.GetRivalInstrumentStates("acct_1"));
         Assert.Null(Db.GetRivalsStatus("acct_1"));
     }
 
@@ -238,6 +385,27 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         var status = Db.GetRivalsStatus("rich");
         Assert.Equal("complete", status!.Status);
         Assert.Equal(20, status.RivalsFound);
+    }
+
+    [Fact]
+    public void ResetStaleRivals_resets_complete_rows_with_old_algorithm_version()
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO rivals_status (account_id, status, combos_computed, total_combos_to_compute, rivals_found, algorithm_version)
+            VALUES ('old_version_user', 'complete', 3, 3, 12, 1)";
+        cmd.ExecuteNonQuery();
+
+        var count = Db.ResetStaleRivals();
+        Assert.Equal(1, count);
+
+        var status = Db.GetRivalsStatus("old_version_user");
+        Assert.NotNull(status);
+        Assert.Equal("pending", status!.Status);
+        Assert.Equal(0, status.CombosComputed);
+        Assert.Equal(0, status.RivalsFound);
+        Assert.Equal(1, status.AlgorithmVersion);
     }
 
     [Fact]

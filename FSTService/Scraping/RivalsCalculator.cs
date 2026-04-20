@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
@@ -51,6 +53,57 @@ public sealed class RivalsCalculator
 
     /// <summary>Invalidate all cached song gap results (call after scrape completion).</summary>
     public void InvalidateSongGapsCache() => _songGapsCache.Clear();
+
+    /// <summary>
+    /// Build the minimal selection-state baseline used to decide whether dirty songs
+    /// actually changed enough to require a full rivals recompute.
+    /// </summary>
+    public RivalSelectionStateSnapshot ComputeSelectionState(
+        string userId,
+        IReadOnlySet<string>? instruments = null,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? songFilterByInstrument = null)
+    {
+        var instrumentKeys = _persistence.GetInstrumentKeys();
+        var now = DateTime.UtcNow.ToString("o");
+        var fingerprints = new List<RivalSongFingerprintRow>();
+        var instrumentStates = new List<RivalInstrumentStateRow>();
+
+        foreach (var instrument in instrumentKeys)
+        {
+            if (instruments is not null && !instruments.Contains(instrument))
+                continue;
+
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            var userScores = db.GetPlayerScores(userId);
+
+            instrumentStates.Add(new RivalInstrumentStateRow
+            {
+                AccountId = userId,
+                Instrument = instrument,
+                SongCount = userScores.Count,
+                IsEligible = userScores.Count >= MinUserSongsPerInstrument,
+                ComputedAt = now,
+            });
+
+            IEnumerable<PlayerScoreDto> scoresToFingerprint = userScores;
+            if (songFilterByInstrument is not null &&
+                songFilterByInstrument.TryGetValue(instrument, out var songFilter))
+            {
+                scoresToFingerprint = userScores.Where(score => songFilter.Contains(score.SongId));
+            }
+
+            foreach (var score in scoresToFingerprint)
+            {
+                fingerprints.Add(BuildSongFingerprint(userId, instrument, db, score, now));
+            }
+        }
+
+        return new RivalSelectionStateSnapshot
+        {
+            Fingerprints = fingerprints,
+            InstrumentStates = instrumentStates,
+        };
+    }
 
     /// <summary>
     /// Quickly count how many valid instrument combos a user will have.
@@ -839,6 +892,51 @@ public sealed class RivalsCalculator
         public DirectionSelectionResult Above { get; init; } = new();
         public DirectionSelectionResult Below { get; init; } = new();
     }
+
+    private static RivalSongFingerprintRow BuildSongFingerprint(
+        string userId,
+        string instrument,
+        IInstrumentDatabase db,
+        PlayerScoreDto entry,
+        string computedAt)
+    {
+        var effectiveRank = entry.Rank > 0 ? entry.Rank : entry.ApiRank;
+        return new RivalSongFingerprintRow
+        {
+            AccountId = userId,
+            Instrument = instrument,
+            SongId = entry.SongId,
+            UserRank = effectiveRank,
+            NeighborhoodSignature = BuildNeighborhoodSignature(db, userId, entry.SongId, effectiveRank),
+            ComputedAt = computedAt,
+        };
+    }
+
+    private static string BuildNeighborhoodSignature(
+        IInstrumentDatabase db,
+        string userId,
+        string songId,
+        int effectiveRank)
+    {
+        if (effectiveRank <= 0)
+            return "UNRANKED";
+
+        var neighbors = db.GetNeighborhood(songId, effectiveRank, NeighborhoodRadius, userId)
+            .OrderBy(n => n.Rank)
+            .ThenBy(n => n.AccountId, StringComparer.OrdinalIgnoreCase);
+
+        var builder = new StringBuilder();
+        builder.Append("R:").Append(effectiveRank).Append('|');
+        foreach (var (accountId, rank, _) in neighbors)
+        {
+            builder.Append(rank)
+                .Append(':')
+                .Append(accountId)
+                .Append('|');
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
+    }
 }
 
 // ─── Diagnostic types ────────────────────────────────────────────
@@ -918,6 +1016,12 @@ public sealed class RivalsResult
     public int CombosComputed { get; init; }
 
     public static RivalsResult Empty { get; } = new();
+}
+
+public sealed class RivalSelectionStateSnapshot
+{
+    public IReadOnlyList<RivalSongFingerprintRow> Fingerprints { get; init; } = Array.Empty<RivalSongFingerprintRow>();
+    public IReadOnlyList<RivalInstrumentStateRow> InstrumentStates { get; init; } = Array.Empty<RivalInstrumentStateRow>();
 }
 
 /// <summary>

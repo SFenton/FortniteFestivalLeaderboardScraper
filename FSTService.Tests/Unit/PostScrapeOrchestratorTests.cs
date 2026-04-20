@@ -30,7 +30,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
     private readonly PathDataStore _pathDataStore;
-    private readonly ILogger<PostScrapeOrchestrator> _log;
+    private readonly TestLogger<PostScrapeOrchestrator> _log;
 
     private readonly PostScrapeOrchestrator _sut;
 
@@ -100,7 +100,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         _notifications = new NotificationService(Substitute.For<ILogger<NotificationService>>());
         _progress = new ScrapeProgressTracker();
         _pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
-        _log = Substitute.For<ILogger<PostScrapeOrchestrator>>();
+        _log = new TestLogger<PostScrapeOrchestrator>();
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
@@ -648,6 +648,42 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         // Should run without error â€” exercises the dirtyMap building path
         await _sut.ComputeRivalsAsync(ctx, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ComputeRivalsAsync_LogsDirtyReasonSummary()
+    {
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.AddDirtyRivalSongs(
+        [
+            new RivalDirtySongRow
+            {
+                AccountId = "acct-rival-1",
+                Instrument = "Solo_Guitar",
+                SongId = "song-1",
+                DirtyReason = RivalsDirtyReason.SelfScoreChange,
+                DetectedAt = "2026-01-01T00:00:00Z",
+            },
+            new RivalDirtySongRow
+            {
+                AccountId = "acct-rival-2",
+                Instrument = "Solo_Bass",
+                SongId = "song-2",
+                DirtyReason = RivalsDirtyReason.NeighborWindowChange,
+                DetectedAt = "2026-01-01T00:00:01Z",
+            },
+        ]);
+
+        var ctx = CreateContext(
+            registeredIds: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct-rival-1", "acct-rival-2" },
+            aggregates: aggregates);
+
+        await _sut.ComputeRivalsAsync(ctx, CancellationToken.None);
+
+        Assert.Contains(_log.Entries, entry =>
+            entry.Message.Contains("Song-rivals dirty summary", StringComparison.Ordinal) &&
+            entry.Message.Contains("neighbor_window_change=1", StringComparison.Ordinal) &&
+            entry.Message.Contains("self_score_change=1", StringComparison.Ordinal));
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

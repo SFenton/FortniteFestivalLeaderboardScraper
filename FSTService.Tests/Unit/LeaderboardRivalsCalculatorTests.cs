@@ -79,6 +79,23 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public void ComputeInstrument_ComputesLiveWithoutPersistingRows()
+    {
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        SeedScoresAndRankings(db,
+            ("song1", [("user", 1000), ("above1", 1100), ("below1", 900)]),
+            ("song2", [("user", 2000), ("above1", 2100), ("below1", 1900)]));
+
+        var result = _sut.ComputeInstrument("user", "Solo_Guitar", "totalscore");
+
+        Assert.True(result.UserFound);
+        Assert.NotEmpty(result.Rivals);
+        Assert.NotEmpty(result.Samples);
+        Assert.Empty(_metaFixture.Db.GetLeaderboardRivals("user", "Solo_Guitar", "totalscore"));
+    }
+
+    [Fact]
     public void ComputeForUser_FindsNeighborsAndBuildsRivals()
     {
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");

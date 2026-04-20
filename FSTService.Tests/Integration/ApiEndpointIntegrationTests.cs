@@ -1892,6 +1892,22 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task LeaderboardRivals_Recompute_RequiresApiKey()
+    {
+        var response = await _client.PostAsync("/api/player/acct1/leaderboard-rivals/recompute", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task LeaderboardRivals_Recompute_WithApiKey_ReturnsOk()
+    {
+        var response = await _authedClient.PostAsync("/api/player/acct1/leaderboard-rivals/recompute", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("recomputed", json.GetProperty("status").GetString());
+    }
+
+    [Fact]
     public async Task Rivals_GetCombos_WithSeededData_ReturnsCombos()
     {
         // Seed rivals data via the recompute endpoint first

@@ -764,7 +764,8 @@ static int RunPrecompute(string[] args)
         services.LoggerFactory.CreateLogger<ScrapeTimePrecomputer>(),
         services.LoggerFactory,
         CreateJsonSerializerOptions(),
-        services.Features);
+        services.Features,
+        services.LeaderboardRivalsCalculator);
 
     var sw = Stopwatch.StartNew();
     if (string.IsNullOrWhiteSpace(accountIdsArg))
