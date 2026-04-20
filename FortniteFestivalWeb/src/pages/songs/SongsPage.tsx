@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -9,7 +9,7 @@ import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSettings } from '../../contexts/SettingsContext';
-import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../contexts/SearchQueryContext';
 import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
@@ -20,8 +20,8 @@ import { useShop } from '../../contexts/ShopContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
-import { LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Layout, MaxWidth, BoxSizing, CssValue, flexCenter, padding } from '@festival/theme';
+import { accuracyBgColor, maxScoreColor, LoadPhase } from '@festival/core';
+import { Gap, Colors, Font, Layout, MaxWidth, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, border, flexCenter, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -34,12 +34,20 @@ import PageHeader from '../../components/common/PageHeader';
 import { SongRow } from './components/SongRow';
 import { SongsToolbar } from './components/SongsToolbar';
 import { visibleInstruments } from '../../contexts/SettingsContext';
+import { getPageQuickLinkTestId, usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
+import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import SortModal from './modals/SortModal';
 import type { SortDraft } from './modals/SortModal';
 import FilterModal from './modals/FilterModal';
 import type { FilterDraft } from './modals/FilterModal';
+import DifficultyBars from '../../components/songs/metadata/DifficultyBars';
+import DifficultyPill from '../../components/songs/metadata/DifficultyPill';
+import MiniStars from '../../components/songs/metadata/MiniStars';
+import PercentilePill from '../../components/songs/metadata/PercentilePill';
+import SeasonPill from '../../components/songs/metadata/SeasonPill';
 import {
   type SongSettings,
+  type SongSortMode,
   defaultSongSettings,
   defaultSongFilters,
   loadSongSettings,
@@ -50,6 +58,7 @@ import {
 } from '../../utils/songSettings';
 import { resolveCompactRowMode } from './layoutMode';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
+import { buildSongQuickLinkSections, type SongQuickLinkSection } from './songQuickLinks';
 
 /**
  * Estimated minimum width (px) for each metadata element in desktop row layout.
@@ -74,6 +83,211 @@ const ROW_FIXED_OVERHEAD = 262;
 /** Safety buffer (px) so compact mode fires before any metadata could clip. */
 const ROW_WIDTH_BUFFER = 60;
 
+const SONG_SORT_LABEL_KEYS: Record<SongSortMode, string> = {
+  title: 'sort.title',
+  artist: 'sort.artist',
+  year: 'sort.year',
+  duration: 'sort.duration',
+  shop: 'sort.itemShop',
+  hasfc: 'sort.hasFC',
+  lastplayed: 'sort.lastPlayed',
+  score: 'sort.score',
+  percentage: 'sort.percentage',
+  percentile: 'sort.percentile',
+  stars: 'sort.stars',
+  seasonachieved: 'sort.seasonAchieved',
+  intensity: 'sort.intensity',
+  difficulty: 'sort.difficulty',
+  maxdistance: 'sort.maxDistance',
+  maxscorediff: 'sort.maxScoreDiff',
+};
+
+type SongQuickLink = PageQuickLinkItem & {
+  rowIndex: number;
+};
+
+const SONG_QUICK_LINK_PERCENTAGE_PILL_STYLE: CSSProperties = {
+  padding: padding(Gap.xs, Gap.sm),
+  borderRadius: Radius.xs,
+  display: Display.inlineBlock,
+  textAlign: TextAlign.center,
+  boxSizing: BoxSizing.borderBox,
+  minWidth: MetadataSize.accuracyPillMinWidth,
+  fontWeight: Weight.semibold,
+  color: Colors.textPrimary,
+  border: border(Border.thick, CssValue.transparent),
+};
+
+function getSongQuickLinkBucketKey(id: string): string {
+  const separator = id.indexOf(':');
+  return separator >= 0 ? id.slice(separator + 1) : id;
+}
+
+function getPercentileQuickLinkTier(bucketKey: string): 'top1' | 'top5' | 'default' {
+  const bucket = Number(bucketKey);
+  if (!Number.isFinite(bucket)) return 'default';
+  if (bucket <= 1) return 'top1';
+  if (bucket <= 5) return 'top5';
+  return 'default';
+}
+
+function getPercentageQuickLinkValue(bucketKey: string): number | null {
+  switch (bucketKey) {
+    case '100':
+      return 100;
+    case '99':
+      return 99;
+    case '98':
+      return 98;
+    case '95':
+      return 96;
+    case '90':
+      return 92;
+    case 'lt90':
+      return 89;
+    default:
+      return null;
+  }
+}
+
+function getMaxDistanceQuickLinkValue(bucketKey: string): number | null {
+  switch (bucketKey) {
+    case '100':
+      return 100;
+    case '99':
+      return 99.5;
+    case '98':
+      return 98.5;
+    case '95':
+      return 96;
+    case '90':
+      return 92;
+    case 'lt90':
+      return 89;
+    default:
+      return null;
+  }
+}
+
+function getMaxScoreDiffQuickLinkValue(bucketKey: string): number | null {
+  switch (bucketKey) {
+    case 'max':
+      return 100;
+    case 'lt1k':
+      return 99.8;
+    case 'lt5k':
+      return 99.1;
+    case 'lt10k':
+      return 98.3;
+    case 'lt25k':
+      return 96;
+    case 'lt50k':
+      return 92;
+    case 'gte50k':
+      return 85;
+    default:
+      return null;
+  }
+}
+
+function renderSongQuickLinkLabel(sortMode: SongSortMode, section: Pick<SongQuickLinkSection, 'id' | 'label'>, isWideDesktop = false): ReactNode {
+  const bucketKey = getSongQuickLinkBucketKey(section.id);
+
+  if (isWideDesktop) {
+    if (sortMode === 'percentile') {
+      return bucketKey === 'no-rank' ? section.label : `Top ${section.label}`;
+    }
+
+    if (sortMode !== 'intensity') {
+      return section.label;
+    }
+  }
+
+  if (sortMode === 'percentile') {
+    if (bucketKey === 'no-rank') {
+      return section.label;
+    }
+
+    return <PercentilePill display={`Top ${section.label}`} tier={getPercentileQuickLinkTier(bucketKey)} />;
+  }
+
+  if (sortMode === 'percentage') {
+    const bucketValue = getPercentageQuickLinkValue(bucketKey);
+    if (bucketValue == null) {
+      return section.label;
+    }
+
+    return (
+      <span style={{ ...SONG_QUICK_LINK_PERCENTAGE_PILL_STYLE, backgroundColor: accuracyBgColor(bucketValue) }}>
+        {section.label}
+      </span>
+    );
+  }
+
+  if (sortMode === 'stars') {
+    const stars = Number(bucketKey);
+    if (!Number.isFinite(stars) || stars <= 0) {
+      return section.label;
+    }
+
+    return <MiniStars starsCount={stars} isFullCombo={false} align="start" />;
+  }
+
+  if (sortMode === 'seasonachieved') {
+    const season = Number(bucketKey.replace(/^s/i, ''));
+    if (!Number.isFinite(season) || season <= 0) {
+      return section.label;
+    }
+
+    return <SeasonPill season={season} />;
+  }
+
+  if (sortMode === 'intensity') {
+    const intensity = Number(bucketKey);
+    if (!Number.isFinite(intensity) || intensity < 0) {
+      return section.label;
+    }
+
+    return <DifficultyBars level={intensity} raw />;
+  }
+
+  if (sortMode === 'difficulty') {
+    const difficulty = Number(bucketKey);
+    if (!Number.isFinite(difficulty) || difficulty < 0) {
+      return section.label;
+    }
+
+    return <DifficultyPill difficulty={difficulty} />;
+  }
+
+  if (sortMode === 'maxdistance') {
+    const bucketValue = getMaxDistanceQuickLinkValue(bucketKey);
+    if (bucketValue == null) {
+      return section.label;
+    }
+
+    return <PercentilePill display={section.label} color={maxScoreColor(bucketValue)} />;
+  }
+
+  if (sortMode === 'maxscorediff') {
+    const bucketValue = getMaxScoreDiffQuickLinkValue(bucketKey);
+    if (bucketValue == null) {
+      return section.label;
+    }
+
+    return <PercentilePill display={section.label} color={maxScoreColor(bucketValue)} />;
+  }
+
+  return section.label;
+}
+
+function renderSongSectionLabel(sortMode: SongSortMode, section: SongQuickLinkSection, sectionLabelStyle: CSSProperties): ReactNode {
+  const label = renderSongQuickLinkLabel(sortMode, section);
+  return typeof label === 'string'
+    ? <span style={sectionLabelStyle}>{label}</span>
+    : label;
+}
+
 function getMinDesktopRowWidth(visibleKeys: string[], sortMode?: string): number {
   let width = ROW_FIXED_OVERHEAD;
   for (const key of visibleKeys) {
@@ -94,6 +308,7 @@ export default function SongsPage() {
   const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
+  const isWideDesktop = useIsWideDesktop();
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   
   // Filter metadata keys by visibility settings (computed early for container-width detection)
@@ -416,6 +631,34 @@ export default function SongsPage() {
     shopVisible: isShopVisible,
   });
 
+  const sectionModel = useMemo(() => buildSongQuickLinkSections({
+    songs: filtered,
+    sortMode: settings.sortMode,
+    instrument: settings.instrument,
+    scoreMap,
+    allScoreMap,
+    shopSongIds: shopCtx.shopSongIds,
+    leavingTomorrowIds: shopCtx.leavingTomorrowIds,
+    t,
+  }), [allScoreMap, filtered, scoreMap, settings.instrument, settings.sortMode, shopCtx.leavingTomorrowIds, shopCtx.shopSongIds, t]);
+
+  const hasQuickLinkSections = sectionModel.sections.length >= 2;
+  const sortLabel = t(SONG_SORT_LABEL_KEYS[settings.sortMode] ?? 'sort.title');
+  const quickLinksTitle = t('songs.quickLinksTitle', { sort: sortLabel });
+  const quickLinkItems = useMemo<SongQuickLink[]>(() => {
+    if (!hasQuickLinkSections) {
+      return [];
+    }
+
+    return sectionModel.sections.map((section) => ({
+      id: section.id,
+      label: renderSongQuickLinkLabel(settings.sortMode, section, isWideDesktop),
+      landmarkLabel: section.landmarkLabel,
+      icon: null,
+      rowIndex: section.rowIndex,
+    }));
+  }, [hasQuickLinkSections, isWideDesktop, sectionModel.sections, settings.sortMode]);
+
   const hasPlayer = !!playerData;
 
   const enabledInstruments = useMemo(
@@ -505,13 +748,17 @@ export default function SongsPage() {
   }, [loadPhase]);
 
   // Turn off stagger after all animations finish
-  const maxVisibleSongs = useMemo(() => estimateVisibleCount(songRowMobile ? 120 : 72), [songRowMobile]);
+  const maxVisibleRows = useMemo(() => estimateVisibleCount(songRowMobile ? 120 : 72), [songRowMobile]);
+  const getRowStaggerDelay = useCallback((rowIndex: number): number | undefined => {
+    if (!shouldStagger || rowIndex >= maxVisibleRows) return undefined;
+    return staggerDelay(rowIndex, 125, maxVisibleRows) ?? maxVisibleRows * 125;
+  }, [maxVisibleRows, shouldStagger]);
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
-    const totalAnimTime = (maxVisibleSongs + 1) * 125 + 400;
+    const totalAnimTime = (maxVisibleRows + 1) * 125 + 400;
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
-  }, [loadPhase, shouldStagger, maxVisibleSongs]);
+  }, [loadPhase, shouldStagger, maxVisibleRows]);
   /* v8 ignore stop */
 
   const scrollContainerRef = useScrollContainer();
@@ -528,16 +775,84 @@ export default function SongsPage() {
   /* v8 ignore stop */
 
   // -- Virtual list --
-  const ROW_HEIGHT = songRowMobile ? 122 : 68; // row + 2px gap
+  const SONG_ROW_HEIGHT = songRowMobile ? 122 : 68;
+  const SECTION_ROW_HEIGHT = songRowMobile ? 44 : 52;
+  const VIRTUAL_ROW_GAP = 2;
+  const quickLinkTopById = useMemo(() => {
+    const offsets = new Map<string, number>();
+    if (!hasQuickLinkSections) {
+      return offsets;
+    }
+
+    let offset = 0;
+    for (const row of sectionModel.rows) {
+      if (row.type === 'section') {
+        offsets.set(row.section.id, offset);
+      }
+      offset += (row.type === 'section' ? SECTION_ROW_HEIGHT : SONG_ROW_HEIGHT) + VIRTUAL_ROW_GAP;
+    }
+
+    return offsets;
+  }, [SECTION_ROW_HEIGHT, SONG_ROW_HEIGHT, hasQuickLinkSections, sectionModel.rows]);
+
+  const {
+    activeItemId,
+    quickLinksOpen,
+    openQuickLinks,
+    closeQuickLinks,
+    handleQuickLinkSelect,
+    registerSectionRef,
+  } = usePageQuickLinks<SongQuickLink>({
+    items: quickLinkItems,
+    scrollContainerRef,
+    isDesktopRailEnabled: isWideDesktop,
+    getItemTop: (id) => quickLinkTopById.get(id) ?? null,
+    scrollOffset: Gap.md,
+  });
+
   const listParentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
-    count: loadPhase === LoadPhase.ContentIn ? filtered.length : 0,
-    estimateSize: () => ROW_HEIGHT,
+    count: loadPhase === LoadPhase.ContentIn ? sectionModel.rows.length : 0,
+    estimateSize: (index) => sectionModel.rows[index]?.type === 'section' ? SECTION_ROW_HEIGHT : SONG_ROW_HEIGHT,
     overscan: 8,
-    gap: 2,
+    gap: VIRTUAL_ROW_GAP,
     getScrollElement: () => scrollContainerRef.current,
     scrollMargin: listParentRef.current?.offsetTop ?? 0,
   });
+
+  const handleSongQuickLinkSelect = useCallback((link: SongQuickLink) => {
+    handleQuickLinkSelect(link, { skipScroll: true });
+    virtualizer.scrollToIndex(link.rowIndex, { align: 'start' });
+  }, [handleQuickLinkSelect, virtualizer]);
+
+  const handleModalQuickLinkSelect = useCallback((link: SongQuickLink) => {
+    closeQuickLinks();
+    handleSongQuickLinkSelect(link);
+  }, [closeQuickLinks, handleSongQuickLinkSelect]);
+
+  const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
+    if (quickLinkItems.length < 2 || loadPhase !== LoadPhase.ContentIn) {
+      return undefined;
+    }
+
+    return {
+      title: quickLinksTitle,
+      items: quickLinkItems,
+      activeItemId,
+      visible: quickLinksOpen,
+      onOpen: openQuickLinks,
+      onClose: closeQuickLinks,
+      onSelect: (item) => {
+        const nextItem = item as SongQuickLink;
+        if (isWideDesktop) {
+          handleSongQuickLinkSelect(nextItem);
+          return;
+        }
+        handleModalQuickLinkSelect(nextItem);
+      },
+      testIdPrefix: 'songs',
+    };
+  }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleSongQuickLinkSelect, isWideDesktop, loadPhase, openQuickLinks, quickLinkItems, quickLinksOpen, quickLinksTitle]);
 
   const emptyStagger = useStaggerStyle(200, { skip: !shouldStagger });
   const songsStyles = useSongsStyles();
@@ -550,11 +865,12 @@ export default function SongsPage() {
   return (
     <Page
       scrollRestoreKey="songs"
-      scrollDeps={[loadPhase, filtered]}
+      scrollDeps={[loadPhase, filtered, quickLinkItems.length]}
       staggerRushRef={staggerRushRef}
       containerStyle={{ paddingTop: Layout.paddingTop }}
       firstRun={{ key: 'songs', label: t('nav.songs'), slides: songsSlidesMemo, gateContext: firstRunGateCtx }}
       fabSpacer={isMobileChrome ? 'fixed' : 'end'}
+      quickLinks={pageQuickLinks}
       before={<>
         <LoadGate phase={loadPhase} overlay>
         {!isMobileChrome && (
@@ -667,11 +983,11 @@ export default function SongsPage() {
             }}
           >
             {loadPhase === LoadPhase.ContentIn && virtualizer.getVirtualItems().map((virtualRow) => {
-                const song = filtered[virtualRow.index]!;
-                const i = virtualRow.index;
+                const row = sectionModel.rows[virtualRow.index]!;
+                const rowDelay = getRowStaggerDelay(virtualRow.index);
                 return (
                   <div
-                    key={song.songId}
+                    key={row.type === 'section' ? `section:${row.section.id}` : `song:${row.song.songId}`}
                     style={{
                       position: 'absolute',
                       top: 0,
@@ -682,25 +998,42 @@ export default function SongsPage() {
                     ref={virtualizer.measureElement}
                     data-index={virtualRow.index}
                   >
-                    <SongRow
-                      song={song}
-                      score={hasPlayer ? scoreMap.get(song.songId) : undefined}
-                      instrument={instrument}
-                      instrumentFilter={settings.instrument}
-                      allScoreMap={hasPlayer ? allScoreMap.get(song.songId) : undefined}
-                      showInstrumentIcons={hasPlayer && !appSettings.songsHideInstrumentIcons}
-                      enabledInstruments={enabledInstruments}
-                      metadataOrder={visibleMetadataOrder}
-                      sortMode={settings.sortMode}
-                      isMobile={songRowMobile}
-                      /* v8 ignore start � stagger delay calculation */
-                      staggerDelay={shouldStagger && i < maxVisibleSongs ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
-                      /* v8 ignore stop */
-                      shopHighlight={isShopHighlighted(song.songId)}
-                      shopHighlightRed={isLeavingTomorrow(song.songId)}
-                      invalidInstruments={invalidScoreMap.get(song.songId)}
-                      containerWidth={containerWidth}
-                    />
+                    {row.type === 'section' ? (
+                      <div
+                        ref={(element) => registerSectionRef(row.section.id, element)}
+                        data-testid={`songs-section-${getPageQuickLinkTestId(row.section.id)}`}
+                        aria-label={row.section.landmarkLabel}
+                        style={{
+                          ...songsStyles.sectionRow,
+                          paddingTop: row.section.rowIndex === 0 ? 0 : Gap.lg,
+                          ...buildStaggerStyle(rowDelay),
+                        }}
+                        onAnimationEnd={clearStaggerStyle}
+                      >
+                        <div style={songsStyles.sectionDivider} />
+                        <div style={songsStyles.sectionLabelRow}>
+                          {renderSongSectionLabel(settings.sortMode, row.section, songsStyles.sectionLabel)}
+                        </div>
+                      </div>
+                    ) : (
+                      <SongRow
+                        song={row.song}
+                        score={hasPlayer ? scoreMap.get(row.song.songId) : undefined}
+                        instrument={instrument}
+                        instrumentFilter={settings.instrument}
+                        allScoreMap={hasPlayer ? allScoreMap.get(row.song.songId) : undefined}
+                        showInstrumentIcons={hasPlayer && !appSettings.songsHideInstrumentIcons}
+                        enabledInstruments={enabledInstruments}
+                        metadataOrder={visibleMetadataOrder}
+                        sortMode={settings.sortMode}
+                        isMobile={songRowMobile}
+                        staggerDelay={rowDelay}
+                        shopHighlight={isShopHighlighted(row.song.songId)}
+                        shopHighlightRed={isLeavingTomorrow(row.song.songId)}
+                        invalidInstruments={invalidScoreMap.get(row.song.songId)}
+                        containerWidth={containerWidth}
+                      />
+                    )}
                   </div>
                 );
             })}
@@ -719,6 +1052,30 @@ function useSongsStyles() {
     } as CSSProperties,
     list: {
       paddingTop: Gap.lg,
+    } as CSSProperties,
+    sectionRow: {
+      display: 'flex',
+      flexDirection: 'column' as const,
+      gap: Gap.sm,
+      width: '100%',
+      boxSizing: BoxSizing.borderBox,
+    } as CSSProperties,
+    sectionDivider: {
+      width: '100%',
+      height: 1,
+      backgroundColor: Colors.white10,
+    } as CSSProperties,
+    sectionLabelRow: {
+      display: 'flex',
+      alignItems: 'center',
+      padding: padding(0, Gap.sm),
+    } as CSSProperties,
+    sectionLabel: {
+      color: Colors.textSecondary,
+      fontSize: Font.md,
+      fontWeight: 700,
+      letterSpacing: '0.08em',
+      textTransform: 'uppercase' as const,
     } as CSSProperties,
     center: {
       ...flexCenter,

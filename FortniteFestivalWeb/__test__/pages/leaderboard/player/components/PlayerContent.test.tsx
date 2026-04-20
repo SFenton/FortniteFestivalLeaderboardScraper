@@ -5,12 +5,13 @@ import { MemoryRouter } from 'react-router-dom';
 import { SettingsProvider } from '../../../../../src/contexts/SettingsContext';
 import { FeatureFlagsProvider } from '../../../../../src/contexts/FeatureFlagsContext';
 import { FestivalProvider } from '../../../../../src/contexts/FestivalContext';
-import { FabSearchProvider, useFabSearch } from '../../../../../src/contexts/FabSearchContext';
+import { FabSearchProvider } from '../../../../../src/contexts/FabSearchContext';
+import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../../../src/contexts/PageQuickLinksContext';
 import { SearchQueryProvider, useSearchQuery } from '../../../../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../../../../src/contexts/PlayerDataContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { stubMatchMedia, stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../../helpers/browserStubs';
-import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
+import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
 import PlayerContent from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
 import { SyncPhase } from '@festival/core';
 
@@ -90,6 +91,7 @@ function setDynamicSectionRect(element: HTMLElement, absoluteTop: number, shell:
 function ShellInjector({ children }: { children: React.ReactNode }) {
   const sRef = useScrollContainer();
   const setPortalNode = useHeaderPortalRef();
+  const setQuickLinksRailNode = useQuickLinksRailPortalRef();
 
   return (
     <>
@@ -102,9 +104,18 @@ function ShellInjector({ children }: { children: React.ReactNode }) {
           el.scrollTo = (() => {}) as any;
           sRef.current = el;
         }
-      }}>
+      }} data-testid="test-scroll-container">
         {children}
       </div>
+      <div ref={(el) => {
+        if (el) {
+          Object.defineProperty(el, 'clientHeight', { value: 620, writable: true, configurable: true });
+          setQuickLinksRailNode(el);
+          return;
+        }
+
+        setQuickLinksRailNode(null);
+      }} data-testid="test-quick-links-portal" />
     </>
   );
 }
@@ -117,6 +128,7 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
       <FeatureFlagsProvider>
       <FestivalProvider>
         <FabSearchProvider>
+          <PageQuickLinksProvider>
           <SearchQueryProvider>
             <PlayerDataProvider accountId={accountId}>
               <ScrollContainerProvider>
@@ -126,6 +138,7 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
               </ScrollContainerProvider>
             </PlayerDataProvider>
           </SearchQueryProvider>
+          </PageQuickLinksProvider>
         </FabSearchProvider>
       </FestivalProvider>
       </FeatureFlagsProvider>
@@ -135,12 +148,12 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
 }
 
 function FabQuickLinksSpy() {
-  const fabSearch = useFabSearch();
+  const pageQuickLinks = usePageQuickLinksController();
 
   return (
     <>
-      <span data-testid="fab-player-quick-links">{String(fabSearch.hasPlayerQuickLinks)}</span>
-      <button data-testid="fab-player-quick-links-open" onClick={() => fabSearch.openPlayerQuickLinks()}>
+      <span data-testid="fab-player-quick-links">{String(pageQuickLinks.hasPageQuickLinks)}</span>
+      <button data-testid="fab-player-quick-links-open" onClick={() => pageQuickLinks.openPageQuickLinks()}>
         Open Quick Links
       </button>
     </>
@@ -366,8 +379,13 @@ describe('PlayerContent', () => {
     const bassLink = screen.getByTestId('player-quick-link-instrument-solo-bass');
     const topSongsLink = screen.getByTestId('player-quick-link-top-songs');
     const quickLinksNav = screen.getByRole('navigation', { name: 'Quick Links' });
+    const quickLinksRail = screen.getByTestId('player-quick-links-rail');
+    const quickLinksPortal = screen.getByTestId('test-quick-links-portal');
+    const scrollContainer = screen.getByTestId('test-scroll-container');
 
-    expect(quickLinksNav).toHaveStyle({ position: 'sticky', top: '0px', overflowY: 'auto', maxHeight: '540px' });
+    expect(quickLinksPortal).toContainElement(quickLinksRail);
+    expect(scrollContainer).not.toContainElement(quickLinksRail);
+    expect(quickLinksNav).toHaveStyle({ overflowY: 'auto', overscrollBehavior: 'contain', maxHeight: '620px' });
     expect(screen.queryByText('Quick Links')).toBeNull();
     expect(globalLink).toBeDefined();
     expect(guitarLink).toBeDefined();
@@ -414,6 +432,50 @@ describe('PlayerContent', () => {
       height: '48px',
     });
     expect(screen.queryByText('Select Player Profile')).toBeNull();
+  });
+
+  it('animates the select profile slot out so quick links can settle smoothly', async () => {
+    mockIsWideDesktop = false;
+    mockHasFab = false;
+
+    const initialRender = render(
+      <Providers>
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+    });
+
+    expect(screen.getByTestId('player-header-actions')).toHaveStyle({ gap: '8px' });
+    expect(screen.getByTestId('player-select-profile-slot')).toHaveStyle({ maxWidth: '360px', overflow: 'hidden' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Player Profile' }));
+
+    const exitingSlot = screen.getByTestId('player-select-profile-slot');
+    expect(screen.getByTestId('player-header-actions')).toHaveStyle({ gap: '0px' });
+    expect(exitingSlot).toHaveStyle({ maxWidth: '0px', opacity: '0' });
+    expect(exitingSlot.querySelector('button')).not.toBeNull();
+    expect(JSON.parse(localStorage.getItem('fst:trackedPlayer') ?? 'null')).toMatchObject({ accountId: 'p1', displayName: 'TestPlayer' });
+
+    initialRender.unmount();
+    render(
+      <Providers>
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    expect(screen.getByTestId('player-header-actions')).toHaveStyle({ gap: '0px' });
+    const remountedExitSlot = screen.queryByTestId('player-select-profile-slot');
+    if (remountedExitSlot) {
+      expect(remountedExitSlot).toHaveStyle({ maxWidth: '0px', opacity: '0' });
+    }
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('player-select-profile-slot')).toBeNull();
+    });
   });
 
   it('renders an icon-only quick links trigger on mobile', async () => {

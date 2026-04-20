@@ -13,21 +13,23 @@
  * Pages that need direct access to the scroll element (virtualizers, auto-scroll)
  * use `usePageScroll()` which returns `{ scrollRef, scrollTo }`.
  */
-import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode, type RefObject, type CSSProperties } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigationType } from 'react-router-dom';
 import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, BoxSizing, PointerEvents, padding, Gap, SPINNER_FADE_MS } from '@festival/theme';
-import { useIsMobile } from '../hooks/ui/useIsMobile';
+import { useIsMobile, useIsWideDesktop } from '../hooks/ui/useIsMobile';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../hooks/ui/useScrollRestore';
-import { useScrollContainer, useHeaderPortal } from '../contexts/ScrollContainerContext';
+import { useScrollContainer, useHeaderPortal, useQuickLinksRailPortal } from '../contexts/ScrollContainerContext';
+import { usePageQuickLinksController } from '../contexts/PageQuickLinksContext';
 import { useRegisterFirstRun } from '../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../components/firstRun/FirstRunCarousel';
 import type { FirstRunSlideDef, FirstRunGateContext } from '../firstRun/types';
 import { LoadPhase } from '@festival/core';
 import ArcSpinner from '../components/common/ArcSpinner';
+import { PageQuickLinksRail, PageQuickLinksModal, type PageQuickLinksConfig } from '../components/page/PageQuickLinks';
 
 /** Page-level style objects — importable by SuspenseFallback, PlayerPage consumers, etc. */
 export const pageCss = {
@@ -106,6 +108,8 @@ export interface PageProps {
   containerClassName?: string;
   /** Inline styles merged onto the container div. */
   containerStyle?: React.CSSProperties;
+  /** Optional page-level quick-links config. */
+  quickLinks?: PageQuickLinksConfig;
   /** Content rendered before the scroll area (e.g. headers sitting outside scroll). */
   before?: ReactNode;
   /** Content rendered after the scroll area (e.g. modals, footers). */
@@ -172,6 +176,7 @@ export default function Page({
   scrollStyle,
   containerClassName,
   containerStyle,
+  quickLinks,
   before,
   after,
   background,
@@ -186,6 +191,8 @@ export default function Page({
   const scrollRef = externalScrollRef ?? internalRef;
   const scrollContainerRef = useScrollContainer();
   const portalTarget = useHeaderPortal();
+  const quickLinksRailPortal = useQuickLinksRailPortal();
+  const { registerPageQuickLinks } = usePageQuickLinksController();
 
   const stableScrollDeps = useMemo(() => scrollDeps ?? [], [scrollDeps]);
   useScrollMask(scrollRef, stableScrollDeps, scrollMaskOptions);
@@ -238,6 +245,49 @@ export default function Page({
   }, [portalTarget]);
 
   const isMobile = useIsMobile();
+  const isWideDesktop = useIsWideDesktop();
+  const [quickLinksMaxHeight, setQuickLinksMaxHeight] = useState<number | null>(null);
+
+  const hasQuickLinks = !!quickLinks && quickLinks.items.length > 0;
+  const quickLinksTitle = quickLinks?.title;
+  const quickLinksOpenHandler = quickLinks?.onOpen;
+
+  useEffect(() => {
+    if (!hasQuickLinks || !quickLinksTitle || !quickLinksOpenHandler) {
+      registerPageQuickLinks(null);
+      return;
+    }
+
+    registerPageQuickLinks({ title: quickLinksTitle, openQuickLinks: quickLinksOpenHandler });
+    return () => registerPageQuickLinks(null);
+  }, [hasQuickLinks, quickLinksOpenHandler, quickLinksTitle, registerPageQuickLinks]);
+
+  useEffect(() => {
+    const target = isWideDesktop
+      ? (quickLinksRailPortal ?? scrollContainerRef.current ?? scrollRef.current)
+      : (scrollContainerRef.current ?? scrollRef.current);
+    if (!hasQuickLinks || !isWideDesktop || !target) {
+      setQuickLinksMaxHeight(null);
+      return;
+    }
+
+    const updateQuickLinksMaxHeight = () => {
+      const nextHeight = target.clientHeight > 0 ? target.clientHeight : window.innerHeight;
+      setQuickLinksMaxHeight(nextHeight);
+    };
+
+    updateQuickLinksMaxHeight();
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(updateQuickLinksMaxHeight)
+      : null;
+    resizeObserver?.observe(target);
+    window.addEventListener('resize', updateQuickLinksMaxHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateQuickLinksMaxHeight);
+    };
+  }, [hasQuickLinks, isWideDesktop, quickLinksRailPortal, scrollContainerRef, scrollRef]);
 
   // 'fixed' mode: shrink the shell scroll container so content never scrolls behind the FAB
   useEffect(() => {
@@ -251,6 +301,26 @@ export default function Page({
   const pgStyle = pageStyle(variant);
   const saStyle = scrollAreaStyle(scrollVariant);
   const cStyle = getContainerStyle(containerVariant);
+  const resolvedContainerStyle = {
+    ...cStyle,
+    paddingTop: isMobile ? Gap.sm : Gap.md,
+    ...containerStyle,
+  } as CSSProperties;
+  const content = children;
+  const scrollArea = (
+    <div data-testid="scroll-area" className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
+      <div className={containerClassName} style={resolvedContainerStyle}>
+        {loadPhase != null && loadPhase !== LoadPhase.ContentIn ? null : content}
+      </div>
+      {fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}
+    </div>
+  );
+  const quickLinksRail = hasQuickLinks && isWideDesktop && quickLinks && quickLinksRailPortal
+    ? createPortal(
+      <PageQuickLinksRail quickLinks={{ ...quickLinks, maxHeight: quickLinksMaxHeight }} />,
+      quickLinksRailPortal,
+    )
+    : null;
 
   const pageScrollValue = useMemo(() => ({ scrollRef, resetRush }), [scrollRef, resetRush]);
 
@@ -269,15 +339,12 @@ export default function Page({
           <ArcSpinner />
         </div>
       )}
-      <div data-testid="scroll-area" className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
-        <div className={containerClassName} style={{ ...cStyle, paddingTop: isMobile ? Gap.sm : Gap.md, ...containerStyle }}>
-          {loadPhase != null && loadPhase !== LoadPhase.ContentIn ? null : children}
-        </div>
-        {fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}
-      </div>
+      {scrollArea}
+      {hasQuickLinks && quickLinks ? <PageQuickLinksModal quickLinks={quickLinks} /> : null}
       {after}
       {firstRunConfig && <PageFirstRun config={firstRunConfig} />}
     </div>
+    {quickLinksRail}
     </PageScrollContext.Provider>
   );
 }

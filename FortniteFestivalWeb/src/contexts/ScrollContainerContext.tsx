@@ -15,6 +15,13 @@ interface HeaderPortalValue {
 }
 const HeaderPortalContext = createContext<HeaderPortalValue>({ node: null, setNode: () => {} });
 
+/* ── Wide-desktop quick-links rail portal target ── */
+interface QuickLinksRailPortalValue {
+  node: HTMLDivElement | null;
+  setNode: (el: HTMLDivElement | null) => void;
+}
+const QuickLinksRailPortalContext = createContext<QuickLinksRailPortalValue>({ node: null, setNode: () => {} });
+
 /** Returns the portal target DOM node (or null before mount). */
 export function useHeaderPortal(): HTMLDivElement | null {
   return useContext(HeaderPortalContext).node;
@@ -23,6 +30,16 @@ export function useHeaderPortal(): HTMLDivElement | null {
 /** Returns a ref callback to assign to the portal target div. */
 export function useHeaderPortalRef(): (el: HTMLDivElement | null) => void {
   return useContext(HeaderPortalContext).setNode;
+}
+
+/** Returns the wide-desktop quick-links rail portal target DOM node (or null before mount). */
+export function useQuickLinksRailPortal(): HTMLDivElement | null {
+  return useContext(QuickLinksRailPortalContext).node;
+}
+
+/** Returns a ref callback to assign to the wide-desktop quick-links rail portal target div. */
+export function useQuickLinksRailPortalRef(): (el: HTMLDivElement | null) => void {
+  return useContext(QuickLinksRailPortalContext).setNode;
 }
 
 /**
@@ -37,6 +54,7 @@ export const HEADER_PORTAL_HEIGHT_VAR = '--header-portal-h';
 export function ScrollContainerProvider({ children }: { children: ReactNode }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [portalNode, setPortalNode] = useState<HTMLDivElement | null>(null);
+  const [quickLinksRailNode, setQuickLinksRailNode] = useState<HTMLDivElement | null>(null);
 
   // Observe portal target height and write directly to a CSS custom property
   // on the document root. This bypasses React state so height changes during
@@ -58,10 +76,13 @@ export function ScrollContainerProvider({ children }: { children: ReactNode }) {
   }, [portalNode]);
 
   const portalValue: HeaderPortalValue = { node: portalNode, setNode: setPortalNode };
+  const quickLinksRailPortalValue: QuickLinksRailPortalValue = { node: quickLinksRailNode, setNode: setQuickLinksRailNode };
   return (
     <ScrollContainerContext.Provider value={scrollRef}>
       <HeaderPortalContext.Provider value={portalValue}>
-        {children}
+        <QuickLinksRailPortalContext.Provider value={quickLinksRailPortalValue}>
+          {children}
+        </QuickLinksRailPortalContext.Provider>
       </HeaderPortalContext.Provider>
     </ScrollContainerContext.Provider>
   );
@@ -73,9 +94,13 @@ export function ScrollContainerProvider({ children }: { children: ReactNode }) {
 export function useShellRefs() {
   const scrollRef = useScrollContainer();
   const setPortalNode = useHeaderPortalRef();
+  const setQuickLinksRailNode = useQuickLinksRailPortalRef();
   // Stable ref callback for the portal target div
   const portalRefCallback = useCallback((el: HTMLDivElement | null) => {
     setPortalNode(el);
   }, [setPortalNode]);
-  return { scrollRef, portalRefCallback };
+  const quickLinksRailPortalRefCallback = useCallback((el: HTMLDivElement | null) => {
+    setQuickLinksRailNode(el);
+  }, [setQuickLinksRailNode]);
+  return { scrollRef, portalRefCallback, quickLinksRailPortalRefCallback };
 }

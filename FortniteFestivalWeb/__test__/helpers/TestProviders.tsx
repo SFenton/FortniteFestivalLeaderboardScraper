@@ -10,10 +10,11 @@ import { FestivalProvider } from '../../src/contexts/FestivalContext';
 import { ShopProvider } from '../../src/contexts/ShopContext';
 import { FeatureFlagsProvider } from '../../src/contexts/FeatureFlagsContext';
 import { FabSearchProvider } from '../../src/contexts/FabSearchContext';
+import { PageQuickLinksProvider } from '../../src/contexts/PageQuickLinksContext';
 import { SearchQueryProvider } from '../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../src/contexts/PlayerDataContext';
 import { FirstRunProvider } from '../../src/contexts/FirstRunContext';
-import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef } from '../../src/contexts/ScrollContainerContext';
+import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../src/contexts/ScrollContainerContext';
 
 /** Create a QueryClient configured for tests: no retries, no gc delays. */
 export function createTestQueryClient() {
@@ -33,6 +34,7 @@ export function createTestQueryClient() {
 function ShellRefInjector({ children }: { children: ReactNode }) {
   const scrollRef = useScrollContainer();
   const setPortalNode = useHeaderPortalRef();
+  const setQuickLinksRailNode = useQuickLinksRailPortalRef();
 
   return (
     <>
@@ -48,6 +50,7 @@ function ShellRefInjector({ children }: { children: ReactNode }) {
       }} data-testid="test-scroll-container">
         {children}
       </div>
+      <div ref={setQuickLinksRailNode} data-testid="test-quick-links-portal" />
     </>
   );
 }
@@ -61,6 +64,7 @@ export function TestProviders({ children, route = '/', accountId }: { children: 
       <FestivalProvider>
         <ShopProvider>
         <FabSearchProvider>
+        <PageQuickLinksProvider>
           <SearchQueryProvider>
             <PlayerDataProvider accountId={accountId}>
               <FirstRunProvider>
@@ -74,6 +78,7 @@ export function TestProviders({ children, route = '/', accountId }: { children: 
               </FirstRunProvider>
             </PlayerDataProvider>
           </SearchQueryProvider>
+        </PageQuickLinksProvider>
         </FabSearchProvider>
         </ShopProvider>
       </FestivalProvider>
