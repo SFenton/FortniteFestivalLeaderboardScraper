@@ -31,6 +31,7 @@ return command switch
     "run-leaderboard-rivals" => RunLeaderboardRivals(rest),
     "run-player-stats" => RunPlayerStats(rest),
     "run-precompute" => RunPrecompute(rest),
+    "run-band-rankings" => RunBandRankings(rest),
     "run-band-extraction" => RunBandExtraction(rest),
     _ => Fail($"Unknown subcommand: {command}")
 };
@@ -868,6 +869,119 @@ static int RunBandExtraction(string[] args)
     return 0;
 }
 
+static int RunBandRankings(string[] args)
+{
+    string? pg = null;
+    string? outPath = null;
+    string? bandTypesArg = null;
+    var defaults = BandTeamRankingRebuildOptions.Default;
+    var writeMode = defaults.WriteMode;
+    var commandTimeoutSeconds = defaults.CommandTimeoutSeconds;
+    var analyzeStagingTable = defaults.AnalyzeStagingTable;
+    var disableSynchronousCommit = defaults.DisableSynchronousCommit;
+
+    for (int i = 0; i < args.Length; i++)
+    {
+        switch (args[i])
+        {
+            case "--pg":
+                pg = args[++i];
+                break;
+            case "--out":
+                outPath = args[++i];
+                break;
+            case "--band-types":
+                bandTypesArg = args[++i];
+                break;
+            case "--write-mode":
+                writeMode = ParseBandTeamRankingWriteMode(args[++i], "--write-mode");
+                break;
+            case "--command-timeout-seconds":
+                commandTimeoutSeconds = ParseNonNegativeIntArg(args[++i], "--command-timeout-seconds");
+                break;
+            case "--analyze-staging":
+                analyzeStagingTable = ParseBoolArg(args[++i], "--analyze-staging");
+                break;
+            case "--disable-synchronous-commit":
+                disableSynchronousCommit = ParseBoolArg(args[++i], "--disable-synchronous-commit");
+                break;
+        }
+    }
+
+    if (string.IsNullOrWhiteSpace(pg))
+        return Fail("--pg is required");
+
+    using var dataSource = NpgsqlDataSource.Create(pg!);
+    ValidateTablesExist(dataSource, PresetCatalog.BandRankingsExecutionTables, label: "band rankings execution");
+
+    using var services = CreateHarnessServices(dataSource);
+    var requestedBandTypes = ParseCsvListOrEmpty(bandTypesArg);
+    var scope = requestedBandTypes.Count == 0 ? "all" : "explicit";
+    var options = new BandTeamRankingRebuildOptions
+    {
+        WriteMode = writeMode,
+        CommandTimeoutSeconds = commandTimeoutSeconds,
+        AnalyzeStagingTable = analyzeStagingTable,
+        DisableSynchronousCommit = disableSynchronousCommit,
+    };
+
+    Console.WriteLine($"Database: {FormatConnection(pg!)}");
+    Console.WriteLine($"Band types: {(requestedBandTypes.Count == 0 ? "all" : string.Join(", ", requestedBandTypes))}");
+    Console.WriteLine($"Write mode: {writeMode}");
+    Console.WriteLine($"Command timeout: {(commandTimeoutSeconds == 0 ? "none" : $"{commandTimeoutSeconds}s")}");
+    Console.WriteLine($"Analyze staging: {analyzeStagingTable}");
+    Console.WriteLine($"Disable synchronous commit: {disableSynchronousCommit}");
+
+    var beforeCounts = CaptureTableCounts(dataSource, PresetCatalog.BandRankingsOutputTables);
+    var repairService = new BandRankingRepairService(
+        services.MetaDb,
+        dataSource,
+        services.LoggerFactory.CreateLogger<BandRankingRepairService>());
+
+    var sw = Stopwatch.StartNew();
+    var results = repairService.Rebuild(requestedBandTypes.Count == 0 ? null : requestedBandTypes, options: options);
+    sw.Stop();
+
+    var afterCounts = CaptureTableCounts(dataSource, PresetCatalog.BandRankingsOutputTables);
+    foreach (var count in afterCounts)
+    {
+        var before = beforeCounts.FirstOrDefault(x => x.Table.Equals(count.Table, StringComparison.OrdinalIgnoreCase));
+        Console.WriteLine($"{count.Table,-32} before={before?.Rows ?? 0,12:N0} after={count.Rows,12:N0} delta={count.Rows - (before?.Rows ?? 0),12:N0}");
+    }
+
+    foreach (var result in results)
+    {
+        Console.WriteLine(
+            $"{result.BandType,-16} source={result.After.SourceRows,12:N0} rankable={result.After.RankableRows,12:N0} rankings={result.After.RankingRows,12:N0} combos={result.After.ComboCatalogEntries,6:N0} total={result.Elapsed.TotalMilliseconds,9:F1}ms");
+
+        if (result.Metrics is not null)
+        {
+            Console.WriteLine(
+                $"{string.Empty,16} materialize={result.Metrics.MaterializeResultsMs,9:F1}ms analyze={result.Metrics.AnalyzeResultsMs,9:F1}ms delete={result.Metrics.DeleteExistingMs,9:F1}ms insert={result.Metrics.InsertRankingsMs,9:F1}ms stats={result.Metrics.InsertStatsMs,9:F1}ms rows={result.Metrics.ResultRowCount,12:N0}");
+        }
+    }
+
+    var payload = new BandRankingsRunSummary
+    {
+        CapturedAtUtc = DateTime.UtcNow.ToString("o"),
+        Mode = "run-band-rankings",
+        Database = DescribeConnection(pg!),
+        Scope = scope,
+        BandTypes = results.Select(result => result.BandType).ToArray(),
+        WriteMode = writeMode.ToString(),
+        CommandTimeoutSeconds = commandTimeoutSeconds,
+        AnalyzeStagingTable = analyzeStagingTable,
+        DisableSynchronousCommit = disableSynchronousCommit,
+        TotalChartedSongs = results.FirstOrDefault()?.TotalChartedSongs ?? 0,
+        TotalElapsedMs = Math.Round(sw.Elapsed.TotalMilliseconds, 3),
+        Results = results,
+        TableCounts = MergeTableCounts(beforeCounts, afterCounts),
+    };
+
+    EmitJson(outPath, payload);
+    return 0;
+}
+
 static int ComputeAndStorePlayerStats(
     GlobalLeaderboardPersistence persistence,
     IMetaDatabase metaDb,
@@ -1435,6 +1549,24 @@ static int ParsePositiveIntArg(string value, string argumentName)
     throw new ArgumentException($"{argumentName} must be a positive integer", argumentName);
 }
 
+static int ParseNonNegativeIntArg(string value, string argumentName)
+{
+    if (int.TryParse(value, out var parsed) && parsed >= 0)
+        return parsed;
+
+    throw new ArgumentException($"{argumentName} must be zero or a positive integer", argumentName);
+}
+
+static BandTeamRankingWriteMode ParseBandTeamRankingWriteMode(string value, string argumentName)
+{
+    return value.Trim().ToLowerInvariant() switch
+    {
+        "combo-batched" or "combo_batched" or "combobatched" => BandTeamRankingWriteMode.ComboBatched,
+        "monolithic" => BandTeamRankingWriteMode.Monolithic,
+        _ => throw new ArgumentException($"{argumentName} must be one of: combo-batched, monolithic", argumentName),
+    };
+}
+
 static CloneFilters CreateFilters(string? accountIdsArg, string? songIdsArg, string? instrumentsArg, string? bandTypesArg)
 {
     return new CloneFilters
@@ -1642,6 +1774,7 @@ static void PrintUsage()
                     PostScrapeCloneHarness run-leaderboard-rivals --pg <connection-string> [--account-ids <csv>] [--max-degree-of-parallelism <int>] [--leaderboard-rival-radius <int>] [--out <path>]
                     PostScrapeCloneHarness run-player-stats --pg <connection-string> [--account-ids <csv>] [--max-degree-of-parallelism <int>] [--out <path>]
                     PostScrapeCloneHarness run-precompute --pg <connection-string> [--account-ids <csv>] [--player-bands <true|false>] [--out <path>]
+                    PostScrapeCloneHarness run-band-rankings --pg <connection-string> [--band-types <csv>] [--write-mode <combo-batched|monolithic>] [--command-timeout-seconds <int>] [--analyze-staging <true|false>] [--disable-synchronous-commit <true|false>] [--out <path>]
                     PostScrapeCloneHarness run-band-extraction --pg <connection-string> [--out <path>]
 
         Notes:
@@ -1651,6 +1784,7 @@ static void PrintUsage()
                     - `run-rankings` executes `RankingsCalculator.ComputeAllAsync` directly against the selected database and records phase timings plus before/after output table counts.
                     - `run-rivals`, `run-leaderboard-rivals`, and `run-player-stats` default to all registered users unless `--account-ids` is supplied.
                     - `run-precompute` runs the full registered-user precompute when `--account-ids` is omitted; otherwise it precomputes only the supplied users.
+                    - `run-band-rankings` rebuilds derived band team rankings with a selectable write strategy and emits per-band timing breakdowns.
           - Filter options are best-effort and apply directly to matching table columns (`account_id`, `user_id`, `team_members`, `song_id`, `instrument`, `band_type`).
           - `--tables` overrides the preset with an explicit table list.
           - This harness never mutates the source database.
@@ -1713,6 +1847,23 @@ sealed class RankingsRunSummary
     public int SongsLoaded { get; init; }
     public double TotalElapsedMs { get; init; }
     public IReadOnlyList<RankingsPhaseTiming> PhaseTimings { get; init; } = [];
+    public IReadOnlyList<TableCountDelta> TableCounts { get; init; } = [];
+}
+
+sealed class BandRankingsRunSummary
+{
+    public string CapturedAtUtc { get; init; } = string.Empty;
+    public string Mode { get; init; } = string.Empty;
+    public ConnectionSummary Database { get; init; } = new();
+    public string Scope { get; init; } = string.Empty;
+    public IReadOnlyList<string> BandTypes { get; init; } = [];
+    public string WriteMode { get; init; } = string.Empty;
+    public int CommandTimeoutSeconds { get; init; }
+    public bool AnalyzeStagingTable { get; init; }
+    public bool DisableSynchronousCommit { get; init; }
+    public int TotalChartedSongs { get; init; }
+    public double TotalElapsedMs { get; init; }
+    public IReadOnlyList<BandRankingRepairResult> Results { get; init; } = [];
     public IReadOnlyList<TableCountDelta> TableCounts { get; init; } = [];
 }
 
@@ -2191,6 +2342,17 @@ static class PresetCatalog
         "band_members",
         "band_team_rankings",
         "band_team_ranking_stats",
+    ]);
+
+    public static readonly IReadOnlyList<string> BandRankingsOutputTables = Unique([
+        "band_team_rankings",
+        "band_team_ranking_stats",
+    ]);
+
+    public static readonly IReadOnlyList<string> BandRankingsExecutionTables = Unique([
+        "songs",
+        "band_entries",
+        .. BandRankingsOutputTables,
     ]);
 
     public static readonly IReadOnlyList<string> BandExecutionTables = Unique([
