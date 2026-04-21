@@ -1,7 +1,7 @@
 import {
   createContext,
   useContext,
-  useState,
+  useReducer,
   useCallback,
   useEffect,
   useMemo,
@@ -193,32 +193,89 @@ type SettingsContextValue = {
   setSettings: (s: AppSettings) => void;
   updateSettings: (partial: Partial<AppSettings>) => void;
   resetSettings: () => void;
+  pendingMobileHeaderTransitionToken: number | null;
+  consumeMobileHeaderTransitionToken: (token: number) => void;
 };
+
+interface SettingsState {
+  settings: AppSettings;
+  pendingMobileHeaderTransitionToken: number | null;
+  nextMobileHeaderTransitionToken: number;
+}
+
+type SettingsAction =
+  | { type: 'set-settings'; settings: AppSettings }
+  | { type: 'update-settings'; partial: Partial<AppSettings> }
+  | { type: 'reset-settings' }
+  | { type: 'consume-mobile-header-transition'; token: number };
+
+function applySettings(state: SettingsState, nextSettings: AppSettings): SettingsState {
+  if (state.settings.showButtonsInHeaderMobile === nextSettings.showButtonsInHeaderMobile) {
+    return { ...state, settings: nextSettings };
+  }
+
+  const nextToken = state.nextMobileHeaderTransitionToken + 1;
+  return {
+    settings: nextSettings,
+    pendingMobileHeaderTransitionToken: nextToken,
+    nextMobileHeaderTransitionToken: nextToken,
+  };
+}
+
+function settingsReducer(state: SettingsState, action: SettingsAction): SettingsState {
+  switch (action.type) {
+    case 'set-settings':
+      return applySettings(state, action.settings);
+    case 'update-settings':
+      return applySettings(state, { ...state.settings, ...action.partial });
+    case 'reset-settings':
+      return applySettings(state, defaultAppSettings());
+    case 'consume-mobile-header-transition':
+      return state.pendingMobileHeaderTransitionToken === action.token
+        ? { ...state, pendingMobileHeaderTransitionToken: null }
+        : state;
+    default:
+      return state;
+  }
+}
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettingsState] = useState<AppSettings>(loadSettings);
+  const [state, dispatch] = useReducer(settingsReducer, undefined, () => ({
+    settings: loadSettings(),
+    pendingMobileHeaderTransitionToken: null,
+    nextMobileHeaderTransitionToken: 0,
+  }));
 
   useEffect(() => {
-    saveSettings(settings);
-  }, [settings]);
+    saveSettings(state.settings);
+  }, [state.settings]);
 
   const setSettings = useCallback((s: AppSettings) => {
-    setSettingsState(s);
+    dispatch({ type: 'set-settings', settings: s });
   }, []);
 
   const updateSettings = useCallback((partial: Partial<AppSettings>) => {
-    setSettingsState(prev => ({ ...prev, ...partial }));
+    dispatch({ type: 'update-settings', partial });
   }, []);
 
   const resetSettings = useCallback(() => {
-    setSettingsState(defaultAppSettings());
+    dispatch({ type: 'reset-settings' });
+  }, []);
+
+  const consumeMobileHeaderTransitionToken = useCallback((token: number) => {
+    dispatch({ type: 'consume-mobile-header-transition', token });
   }, []);
 
   const value = useMemo<SettingsContextValue>(() => ({
-    settings, setSettings, updateSettings, resetSettings,
-  }), [settings, setSettings, updateSettings, resetSettings]);
+    settings: state.settings,
+    setSettings,
+    updateSettings,
+    resetSettings,
+    pendingMobileHeaderTransitionToken: state.pendingMobileHeaderTransitionToken,
+    consumeMobileHeaderTransitionToken,
+  }), [state.settings, state.pendingMobileHeaderTransitionToken, setSettings, updateSettings, resetSettings, consumeMobileHeaderTransitionToken]);
 
   return (
     <SettingsContext.Provider value={value}>

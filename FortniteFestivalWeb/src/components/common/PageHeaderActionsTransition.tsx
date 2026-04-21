@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { FAST_FADE_MS, FADE_DURATION, TRANSITION_MS } from '@festival/theme';
+import { FAST_FADE_MS, TRANSITION_MS } from '@festival/theme';
 import { useSettings } from '../../contexts/SettingsContext';
 
 type Phase = 'hidden' | 'visible' | 'pre-enter' | 'expanding' | 'entering' | 'fading' | 'collapsing';
 
-interface PageHeaderTransitionProps {
+interface PageHeaderActionsTransitionProps {
   visible: boolean;
   children: ReactNode;
   testId?: string;
 }
 
-export default function PageHeaderTransition({ visible, children, testId }: PageHeaderTransitionProps) {
+export default function PageHeaderActionsTransition({ visible, children, testId }: PageHeaderActionsTransitionProps) {
   const { pendingMobileHeaderTransitionToken, consumeMobileHeaderTransitionToken } = useSettings();
   const initialEnterTokenRef = useRef<number | null>(visible ? pendingMobileHeaderTransitionToken : null);
   const pendingTransitionTokenRef = useRef<number | null>(pendingMobileHeaderTransitionToken);
@@ -18,7 +18,7 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
   const [phase, setPhase] = useState<Phase>(visible
     ? (initialEnterTokenRef.current != null ? 'pre-enter' : 'visible')
     : 'hidden');
-  const [measuredHeight, setMeasuredHeight] = useState(0);
+  const [measuredWidth, setMeasuredWidth] = useState(0);
   const outerRef = useRef<HTMLDivElement>(null);
   const lastChildrenRef = useRef(children);
   const initialRenderRef = useRef(true);
@@ -38,12 +38,12 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
     timersRef.current = [];
   }, []);
 
-  const measureHeight = useCallback(() => {
+  const measureWidth = useCallback(() => {
     const element = outerRef.current;
     if (!element) return;
-    const nextHeight = element.scrollHeight;
-    if (nextHeight > 0) {
-      setMeasuredHeight(previous => previous === nextHeight ? previous : nextHeight);
+    const nextWidth = element.scrollWidth;
+    if (nextWidth > 0) {
+      setMeasuredWidth(previous => previous === nextWidth ? previous : nextWidth);
     }
   }, []);
 
@@ -56,19 +56,19 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
     setPhase('pre-enter');
 
     timersRef.current.push(window.setTimeout(() => {
-      measureHeight();
+      measureWidth();
       setPhase('expanding');
     }, 0));
 
     timersRef.current.push(window.setTimeout(() => {
-      measureHeight();
+      measureWidth();
       setPhase('entering');
     }, TRANSITION_MS));
 
     timersRef.current.push(window.setTimeout(() => {
       setPhase('visible');
-    }, TRANSITION_MS + FADE_DURATION + 50));
-  }, [measureHeight]);
+    }, TRANSITION_MS + FAST_FADE_MS + 50));
+  }, [measureWidth]);
 
   const scheduleExit = useCallback(() => {
     if (phaseRef.current === 'pre-enter') {
@@ -77,11 +77,11 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
       return;
     }
 
-    measureHeight();
+    measureWidth();
     setPhase('fading');
 
     timersRef.current.push(window.setTimeout(() => {
-      measureHeight();
+      measureWidth();
       setPhase('collapsing');
     }, FAST_FADE_MS));
 
@@ -89,7 +89,7 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
       setMounted(false);
       setPhase('hidden');
     }, FAST_FADE_MS + TRANSITION_MS));
-  }, [measureHeight]);
+  }, [measureWidth]);
 
   const consumePendingTransition = useCallback((token: number | null): boolean => {
     if (token == null) {
@@ -102,8 +102,8 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
 
   useLayoutEffect(() => {
     if (!mounted) return;
-    measureHeight();
-  }, [mounted, phase, children, measureHeight]);
+    measureWidth();
+  }, [children, measureWidth, mounted, phase]);
 
   useEffect(() => {
     if (initialRenderRef.current) {
@@ -119,14 +119,13 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
 
     if (visible) {
       if (!consumePendingTransition(pendingTransitionTokenRef.current)) {
-        measureHeight();
+        measureWidth();
         setPhase('visible');
         setMounted(true);
         return clearTimers;
       }
 
       scheduleEnter();
-
       return clearTimers;
     }
 
@@ -142,28 +141,31 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
     }
 
     scheduleExit();
-
     return clearTimers;
-  }, [clearTimers, consumePendingTransition, measureHeight, scheduleEnter, scheduleExit, visible]);
+  }, [clearTimers, consumePendingTransition, measureWidth, scheduleEnter, scheduleExit, visible]);
 
   useEffect(() => () => {
     clearTimers();
   }, [clearTimers]);
 
   const outerStyle = useMemo(() => {
-    const maxHeight = phase === 'hidden' || phase === 'pre-enter' || phase === 'collapsing'
+    const maxWidth = phase === 'hidden' || phase === 'pre-enter' || phase === 'collapsing'
       ? '0px'
-      : measuredHeight > 0 ? `${measuredHeight}px` : undefined;
+      : measuredWidth > 0 ? `${measuredWidth}px` : undefined;
 
     return {
-      overflow: phase === 'visible' ? 'visible' : 'hidden',
-      maxHeight,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      overflow: 'hidden',
+      minWidth: 0,
+      maxWidth,
       transition: phase === 'expanding' || phase === 'collapsing'
-        ? `max-height ${TRANSITION_MS}ms ease`
+        ? `max-width ${TRANSITION_MS}ms ease`
         : undefined,
-      willChange: phase === 'expanding' || phase === 'collapsing' ? 'max-height' : undefined,
+      willChange: phase === 'expanding' || phase === 'collapsing' ? 'max-width' : undefined,
     } as CSSProperties;
-  }, [measuredHeight, phase]);
+  }, [measuredWidth, phase]);
 
   const contentStyle = useMemo(() => {
     if (phase === 'visible') return undefined;
@@ -171,25 +173,23 @@ export default function PageHeaderTransition({ visible, children, testId }: Page
     if (phase === 'entering') {
       return {
         opacity: 0,
-        willChange: 'opacity, transform',
-        animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards`,
+        willChange: 'opacity',
+        animation: `fadeIn ${FAST_FADE_MS}ms ease-out forwards`,
       } as CSSProperties;
     }
 
     if (phase === 'fading') {
       return {
         opacity: 0,
-        transform: 'translateY(12px)',
-        transition: `opacity ${FAST_FADE_MS}ms ease-out, transform ${FAST_FADE_MS}ms ease-out`,
-        willChange: 'opacity, transform',
+        transition: `opacity ${FAST_FADE_MS}ms ease-out`,
+        willChange: 'opacity',
         pointerEvents: 'none',
       } as CSSProperties;
     }
 
     return {
       opacity: 0,
-      transform: 'translateY(12px)',
-      willChange: 'opacity, transform',
+      willChange: 'opacity',
       pointerEvents: 'none',
     } as CSSProperties;
   }, [phase]);

@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FAST_FADE_MS, TRANSITION_MS } from '@festival/theme';
-import PageHeaderTransition from '../../../src/components/common/PageHeaderTransition';
+import PageHeaderActionsTransition from '../../../src/components/common/PageHeaderActionsTransition';
 import { SettingsProvider, useSettings } from '../../../src/contexts/SettingsContext';
 
 interface HarnessProps {
@@ -11,40 +11,40 @@ interface HarnessProps {
 
 let latestSettings: ReturnType<typeof useSettings> | null = null;
 
-function Harness({ visible, pageKey = 'page-header' }: HarnessProps) {
+function Harness({ visible, pageKey = 'page-header-actions' }: HarnessProps) {
   latestSettings = useSettings();
   return (
-    <PageHeaderTransition key={pageKey} visible={visible} testId="page-header-transition">
+    <PageHeaderActionsTransition key={pageKey} visible={visible} testId="page-header-actions-transition">
       <button type="button">Quick Links</button>
-    </PageHeaderTransition>
+    </PageHeaderActionsTransition>
   );
 }
 
-describe('PageHeaderTransition', () => {
-  let scrollHeightDescriptor: PropertyDescriptor | undefined;
+describe('PageHeaderActionsTransition', () => {
+  let scrollWidthDescriptor: PropertyDescriptor | undefined;
 
   beforeEach(() => {
     vi.useFakeTimers();
     latestSettings = null;
-    scrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
-    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    scrollWidthDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
       configurable: true,
       get() {
-        return 80;
+        return 120;
       },
     });
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    if (scrollHeightDescriptor) {
-      Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeightDescriptor);
+    if (scrollWidthDescriptor) {
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidthDescriptor);
     } else {
-      delete (HTMLElement.prototype as Partial<HTMLElement>).scrollHeight;
+      delete (HTMLElement.prototype as Partial<HTMLElement>).scrollWidth;
     }
   });
 
-  it('keeps the header mounted during fade/collapse before unmounting on exit', () => {
+  it('keeps the actions mounted during fade/collapse before unmounting on exit', () => {
     const { rerender } = render(
       <SettingsProvider>
         <Harness visible />
@@ -64,29 +64,29 @@ describe('PageHeaderTransition', () => {
     );
 
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
-    expect(screen.getByTestId('page-header-transition')).toBeDefined();
+    expect(screen.getByTestId('page-header-actions-transition')).toBeDefined();
 
     act(() => {
       vi.advanceTimersByTime(FAST_FADE_MS + TRANSITION_MS - 1);
     });
 
-    expect(screen.getByTestId('page-header-transition')).toBeDefined();
+    expect(screen.getByTestId('page-header-actions-transition')).toBeDefined();
 
     act(() => {
       vi.advanceTimersByTime(1);
     });
 
-    expect(screen.queryByTestId('page-header-transition')).toBeNull();
+    expect(screen.queryByTestId('page-header-actions-transition')).toBeNull();
   });
 
-  it('expands the area before revealing the header content on enter', () => {
+  it('expands width before revealing the actions on enter', () => {
     const { rerender } = render(
       <SettingsProvider>
         <Harness visible={false} />
       </SettingsProvider>,
     );
 
-    expect(screen.queryByTestId('page-header-transition')).toBeNull();
+    expect(screen.queryByTestId('page-header-actions-transition')).toBeNull();
 
     act(() => {
       latestSettings?.updateSettings({ showButtonsInHeaderMobile: false });
@@ -99,15 +99,15 @@ describe('PageHeaderTransition', () => {
       </SettingsProvider>,
     );
 
-    const wrapper = screen.getByTestId('page-header-transition');
-    expect(wrapper.style.maxHeight).toBe('0px');
+    const wrapper = screen.getByTestId('page-header-actions-transition');
+    expect(wrapper.style.maxWidth).toBe('0px');
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
 
     act(() => {
       vi.advanceTimersByTime(0);
     });
 
-    expect(wrapper.style.maxHeight).toBe('80px');
+    expect(wrapper.style.maxWidth).toBe('120px');
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
 
     act(() => {
@@ -120,7 +120,7 @@ describe('PageHeaderTransition', () => {
   it('does not replay the enter animation on a later page mount without another setting flip', () => {
     const { rerender } = render(
       <SettingsProvider>
-        <Harness visible={false} pageKey="settings" />
+        <Harness visible={false} pageKey="statistics" />
       </SettingsProvider>,
     );
 
@@ -131,22 +131,22 @@ describe('PageHeaderTransition', () => {
 
     rerender(
       <SettingsProvider>
-        <Harness visible pageKey="settings" />
+        <Harness visible pageKey="statistics" />
       </SettingsProvider>,
     );
 
     act(() => {
-      vi.advanceTimersByTime(TRANSITION_MS + 500);
+      vi.advanceTimersByTime(TRANSITION_MS + FAST_FADE_MS + 100);
     });
 
     rerender(
       <SettingsProvider>
-        <Harness visible pageKey="songs" />
+        <Harness visible pageKey="statistics-remount" />
       </SettingsProvider>,
     );
 
-    const wrapper = screen.getByTestId('page-header-transition');
+    const wrapper = screen.getByTestId('page-header-actions-transition');
     expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-    expect(wrapper.style.maxHeight).not.toBe('0px');
+    expect(wrapper.style.maxWidth).toBe('120px');
   });
 });

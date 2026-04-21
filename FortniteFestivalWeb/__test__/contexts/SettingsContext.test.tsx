@@ -166,6 +166,30 @@ describe('SettingsContext', () => {
       expect(result.current.settings.showBass).toBe(true);
     });
 
+    it('arms and consumes a one-shot mobile header transition token when the setting flips', () => {
+      const { result } = renderHook(() => useSettings(), { wrapper });
+
+      expect(result.current.pendingMobileHeaderTransitionToken).toBeNull();
+
+      act(() => {
+        result.current.updateSettings({ showButtonsInHeaderMobile: false });
+      });
+
+      expect(result.current.pendingMobileHeaderTransitionToken).toBe(1);
+
+      act(() => {
+        result.current.consumeMobileHeaderTransitionToken(1);
+      });
+
+      expect(result.current.pendingMobileHeaderTransitionToken).toBeNull();
+
+      act(() => {
+        result.current.updateSettings({ showButtonsInHeaderMobile: true });
+      });
+
+      expect(result.current.pendingMobileHeaderTransitionToken).toBe(2);
+    });
+
     it('setSettings replaces the entire settings object', () => {
       const { result } = renderHook(() => useSettings(), { wrapper });
       const custom = { ...defaultAppSettings(), showDrums: false };

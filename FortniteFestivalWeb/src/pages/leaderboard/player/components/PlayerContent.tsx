@@ -35,7 +35,7 @@ import { useScrollContainer } from '../../../../contexts/ScrollContainerContext'
 import { getPageQuickLinkTestId, usePageQuickLinks, type PageQuickLinkItem } from '../../../../hooks/ui/usePageQuickLinks';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
-import PageHeaderTransition from '../../../../components/common/PageHeaderTransition';
+import PageHeaderActionsTransition from '../../../../components/common/PageHeaderActionsTransition';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
 import { buildOverallSummaryItems } from '../../../player/sections/OverallSummarySection';
 import { buildInstrumentStatsItems } from '../../../player/sections/InstrumentStatsSection';
@@ -214,7 +214,7 @@ export default function PlayerContent({
     }
     registerPlayerPageSelect({
       displayName: data.displayName,
-      /* v8 ignore start — profile switch callbacks */
+      /* v8 ignore start ΓÇö profile switch callbacks */
       onSelect: () => {
         if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
           setPendingSwitch(() => primeTrackedPlayerSelection);
@@ -228,7 +228,7 @@ export default function PlayerContent({
   }, [data.accountId, data.displayName, trackedPlayer, primeTrackedPlayerSelection, registerPlayerPageSelect]);
 
   // Helper: wrap a navigation action with profile-switch logic when viewing another player
-  /* v8 ignore start — navigation + profile switch */
+  /* v8 ignore start ΓÇö navigation + profile switch */
   const withProfileSwitch = useCallback((action: () => void) => {
     if (!isTrackedPlayer) {
       const selectAndGo = () => {
@@ -258,7 +258,7 @@ export default function PlayerContent({
   // Use rank tiers from stats response when available; fall back to per-instrument ranking results
   const hasRankTiers = !!statsData?.instrumentRanks?.length;
 
-  // Build map of instrument → AccountRankingEntry for passing to sections
+  // Build map of instrument ΓåÆ AccountRankingEntry for passing to sections
   const instrumentRankings = useMemo(() => {
     const map = new Map<InstrumentKey, AccountRankingEntry>();
 
@@ -276,7 +276,7 @@ export default function PlayerContent({
           fcRateRank: resolved.fcRate,
           totalScoreRank: resolved.totalScore,
           maxScorePercentRank: resolved.maxScore,
-          // Non-rank fields default — only ranks used in stat cards
+          // Non-rank fields default ΓÇö only ranks used in stat cards
           songsPlayed: 0, totalChartedSongs: 0, coverage: 0,
           rawSkillRating: 0, adjustedSkillRating: 0,
           weightedRating: 0, fcRate: 0, totalScore: 0,
@@ -307,7 +307,7 @@ export default function PlayerContent({
   const searchQuery = useSearchQuery();
 
   // Stable navigation helpers to reduce closure overhead in onClick handlers
-  /* v8 ignore start — navigation helpers */
+  /* v8 ignore start ΓÇö navigation helpers */
   const navigateToSongs = useCallback((settingsUpdater: (s: ReturnType<typeof loadSongSettings>) => ReturnType<typeof loadSongSettings>) => {
     withProfileSwitch(() => {
       const s = loadSongSettings();
@@ -318,13 +318,13 @@ export default function PlayerContent({
     });
   }, [withProfileSwitch, navigate, location.pathname, searchQuery]);
 
-  /* v8 ignore start — navigation helper */
+  /* v8 ignore start ΓÇö navigation helper */
   const navigateToSongDetail = useCallback((songId: string, instrument: InstrumentKey, opts?: { autoScroll?: boolean }) => {
     withProfileSwitch(() => navigate(`/songs/${songId}?instrument=${encodeURIComponent(instrument)}`, { state: { backTo: location.pathname, ...opts } }));
     /* v8 ignore stop */
   }, [withProfileSwitch, navigate, location.pathname]);
 
-  /* v8 ignore start — navigation helper */
+  /* v8 ignore start ΓÇö navigation helper */
   const navigateToLeaderboard = useCallback((instrument: InstrumentKey | null, metric: RankingMetric) => {
     withProfileSwitch(() => {
       if (instrument) {
@@ -338,7 +338,7 @@ export default function PlayerContent({
 
   const isWideDesktop = useIsWideDesktop();
 
-  // Build a completely flat list of small items — each becomes a direct child
+  // Build a completely flat list of small items ΓÇö each becomes a direct child
   // of the grid so each gets a staggered fade-in animation.
   const items: PlayerItem[] = [];
 
@@ -402,7 +402,7 @@ export default function PlayerContent({
 
   // --- Per-instrument: header + stat boxes + percentile rows ---
   // Render a section for every visible instrument, even if the player has no
-  // scores on it yet — the section will show a "No scores yet" empty state.
+  // scores on it yet ΓÇö the section will show a "No scores yet" empty state.
   const instrumentSectionFirstKeys = new Map<InstrumentKey, string>();
   for (const inst of visibleKeys) {
     const scores = byInstrument.get(inst) ?? [];
@@ -589,7 +589,53 @@ export default function PlayerContent({
       />
     )
     : null;
-  const showMobilePageHeader = !hasFab || settings.showButtonsInHeaderMobile;
+  const playerHeaderActions = (quickLinksAction || selectBtnMounted) ? (
+    <div
+      data-testid="player-header-actions"
+      style={{
+        ...PLAYER_HEADER_ACTIONS_STYLE,
+        gap: quickLinksAction && selectBtnVisible ? Gap.md : Gap.none,
+      }}
+    >
+      {selectBtnMounted ? (
+        <div
+          data-testid="player-select-profile-slot"
+          aria-hidden={!selectBtnVisible}
+          style={{
+            ...SELECT_PROFILE_ACTION_SLOT_STYLE,
+            maxWidth: selectBtnVisible
+              ? (hasFab ? Layout.pillButtonHeight : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
+              : 0,
+            opacity: selectBtnVisible ? 1 : 0,
+          }}
+        >
+          <SelectProfilePill
+            visible={selectBtnVisible}
+            isMobile={hasFab}
+            onClick={() => {
+              /* v8 ignore start */
+              if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+                  setPendingSwitch(() => primeTrackedPlayerSelection);
+              } else {
+                  primeTrackedPlayerSelection();
+              /* v8 ignore stop */
+              }
+            }}
+          />
+        </div>
+      ) : null}
+      {quickLinksAction}
+    </div>
+  ) : null;
+
+  const mobilePlayerHeaderActions = playerHeaderActions ? (
+    <PageHeaderActionsTransition
+      visible={settings.showButtonsInHeaderMobile}
+      testId="player-header-actions-transition"
+    >
+      {playerHeaderActions}
+    </PageHeaderActionsTransition>
+  ) : undefined;
 
   return (
     <Page
@@ -598,92 +644,16 @@ export default function PlayerContent({
       scrollStyle={pps.scrollArea}
       quickLinks={quickLinks.length > 0 ? pageQuickLinks : undefined}
       before={hasFab ? (
-        <PageHeaderTransition visible={showMobilePageHeader}>
-          <PageHeader
-            title={data.displayName}
-            actions={(quickLinksAction || selectBtnMounted) ? (
-              <div
-                data-testid="player-header-actions"
-                style={{
-                  ...PLAYER_HEADER_ACTIONS_STYLE,
-                  gap: quickLinksAction && selectBtnVisible ? Gap.md : Gap.none,
-                }}
-              >
-                {selectBtnMounted ? (
-                  <div
-                    data-testid="player-select-profile-slot"
-                    aria-hidden={!selectBtnVisible}
-                    style={{
-                      ...SELECT_PROFILE_ACTION_SLOT_STYLE,
-                      maxWidth: selectBtnVisible
-                        ? (hasFab ? Layout.pillButtonHeight : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
-                        : 0,
-                      opacity: selectBtnVisible ? 1 : 0,
-                    }}
-                  >
-                    <SelectProfilePill
-                      visible={selectBtnVisible}
-                      isMobile={hasFab}
-                      onClick={() => {
-                        /* v8 ignore start */
-                        if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
-                            setPendingSwitch(() => primeTrackedPlayerSelection);
-                        } else {
-                            primeTrackedPlayerSelection();
-                        /* v8 ignore stop */
-                        }
-                      }}
-                    />
-                  </div>
-                ) : null}
-                {quickLinksAction}
-              </div>
-            ) : undefined}
-          />
-        </PageHeaderTransition>
-      ) : showMobilePageHeader ? (
         <PageHeader
           title={data.displayName}
-          actions={(quickLinksAction || selectBtnMounted) ? (
-            <div
-              data-testid="player-header-actions"
-              style={{
-                ...PLAYER_HEADER_ACTIONS_STYLE,
-                gap: quickLinksAction && selectBtnVisible ? Gap.md : Gap.none,
-              }}
-            >
-              {selectBtnMounted ? (
-                <div
-                  data-testid="player-select-profile-slot"
-                  aria-hidden={!selectBtnVisible}
-                  style={{
-                    ...SELECT_PROFILE_ACTION_SLOT_STYLE,
-                    maxWidth: selectBtnVisible
-                      ? (hasFab ? Layout.pillButtonHeight : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
-                      : 0,
-                    opacity: selectBtnVisible ? 1 : 0,
-                  }}
-                >
-                  <SelectProfilePill
-                    visible={selectBtnVisible}
-                    isMobile={hasFab}
-                    onClick={() => {
-                      /* v8 ignore start */
-                      if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
-                          setPendingSwitch(() => primeTrackedPlayerSelection);
-                      } else {
-                          primeTrackedPlayerSelection();
-                      /* v8 ignore stop */
-                      }
-                    }}
-                  />
-                </div>
-              ) : null}
-              {quickLinksAction}
-            </div>
-          ) : undefined}
+          actions={mobilePlayerHeaderActions}
         />
-      ) : undefined}
+      ) : (
+        <PageHeader
+          title={data.displayName}
+          actions={playerHeaderActions ?? undefined}
+        />
+      )}
       after={<>
         {pendingSwitch ? (
           <ConfirmAlert

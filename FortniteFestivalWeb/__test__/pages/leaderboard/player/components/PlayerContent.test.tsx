@@ -369,7 +369,7 @@ describe('PlayerContent', () => {
     React.act(() => { setQueryFn('hello'); });
     expect(getByTestId('search-query').textContent).toBe('hello');
 
-    // Click "Songs Played" stat card — triggers navigateToSongs
+    // Click "Songs Played" stat card ΓÇö triggers navigateToSongs
     const songsPlayed = screen.getAllByText('Songs Played')[0]!;
     fireEvent.click(songsPlayed);
 
@@ -687,9 +687,11 @@ describe('PlayerContent', () => {
       expect(screen.getByTestId('player-section-top-songs')).toBeDefined();
     });
 
+    expect(screen.getByText('TestPlayer')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Select Player Profile' })).toBeNull();
     expect(screen.queryByTestId('player-header-actions')).toBeNull();
+    expect(screen.queryByTestId('player-header-actions-transition')).toBeNull();
   });
 
   it('shows the bands quick link only when the bands section is enabled', async () => {
