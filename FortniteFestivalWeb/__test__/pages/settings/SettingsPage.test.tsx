@@ -75,6 +75,26 @@ beforeEach(() => {
   }) as unknown as typeof fetch;
 });
 
+function mockScrollWidths(scale = 7) {
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+  Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+    configurable: true,
+    get() {
+      const text = this.textContent ?? '';
+      return Math.max(0, text.length * scale);
+    },
+  });
+
+  return () => {
+    if (original) {
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', original);
+      return;
+    }
+
+    delete (HTMLElement.prototype as Partial<HTMLElement>).scrollWidth;
+  };
+}
+
 function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean; } = {}) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -353,6 +373,39 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Service Info')).toBeDefined();
     expect(screen.getByText('Most recent leaderboard update start')).toBeDefined();
     expect(screen.getByText('Leaderboard update status')).toBeDefined();
+  });
+
+  it('keeps service info rows inline when every row fits on one line', async () => {
+    renderSettings();
+
+    const list = await screen.findByTestId('settings-service-info-list');
+    expect(list.getAttribute('data-layout')).toBe('inline');
+    expect(screen.getByTestId('settings-service-info-row-last-update-start').getAttribute('data-layout')).toBe('inline');
+    expect(screen.getByTestId('settings-service-info-row-next-scheduled-update').getAttribute('data-layout')).toBe('inline');
+  });
+
+  it('stacks every service info row when any inline row would overflow', async () => {
+    const restoreScrollWidths = mockScrollWidths(32);
+
+    try {
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({
+        accountId: '195e93ef108143b2975ee46662d4d0e1',
+        displayName: 'Tracked Player',
+      }));
+
+      renderSettings();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('settings-service-info-list').getAttribute('data-layout')).toBe('stacked');
+      });
+
+      expect(screen.getByTestId('settings-service-info-row-last-update-start').getAttribute('data-layout')).toBe('stacked');
+      expect(screen.getByTestId('settings-service-info-row-next-scheduled-update').getAttribute('data-layout')).toBe('stacked');
+      expect(screen.getByTestId('settings-service-info-row-selected-player-id').getAttribute('data-layout')).toBe('stacked');
+      expect(screen.getByTestId('settings-service-info-row-selected-player-rivals-status').getAttribute('data-layout')).toBe('stacked');
+    } finally {
+      restoreScrollWidths();
+    }
   });
 
   it('displays service info values after fetch', async () => {
