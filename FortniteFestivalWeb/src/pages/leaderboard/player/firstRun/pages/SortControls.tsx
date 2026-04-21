@@ -6,6 +6,7 @@ export const sortMobileSlide: FirstRunSlideDef = {
   version: 1,
   title: 'firstRun.playerHistory.sort.title',
   description: 'firstRun.playerHistory.sort.descriptionMobile',
+  contentKey: 'playerhistory-sort',
   render: () => <SortControlsDemo />,
   contentStaggerCount: 3,
 };
@@ -15,6 +16,7 @@ export const sortDesktopSlide: FirstRunSlideDef = {
   version: 1,
   title: 'firstRun.playerHistory.sort.title',
   description: 'firstRun.playerHistory.sort.descriptionDesktop',
+  contentKey: 'playerhistory-sort',
   render: () => <SortControlsDemo />,
   contentStaggerCount: 3,
 };

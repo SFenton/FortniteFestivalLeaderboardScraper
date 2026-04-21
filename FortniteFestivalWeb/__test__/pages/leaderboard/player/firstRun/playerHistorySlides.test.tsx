@@ -47,6 +47,11 @@ describe('slide definitions', () => {
     expect(sortMobileSlide.description).not.toBe(sortDesktopSlide.description);
   });
 
+  it('sort slides share a contentKey so viewport variants reuse seen-state', () => {
+    expect(sortMobileSlide.contentKey).toBe('playerhistory-sort');
+    expect(sortDesktopSlide.contentKey).toBe('playerhistory-sort');
+  });
+
   it('slide render() returns JSX', () => {
     for (const slide of slides) {
       expect(slide.render()).toBeTruthy();
