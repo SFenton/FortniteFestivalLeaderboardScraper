@@ -2,33 +2,26 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
-import type { ServerSong, ServerInstrumentKey, SongDifficulty } from '@festival/core/api/serverTypes';
+import type { ServerSong, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { Gap, Radius, frostedCard } from '@festival/theme';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import SectionHeader from '../../../components/common/SectionHeader';
-
-type Row = {
-  key: ServerInstrumentKey;
-  /** SongDifficulty field used to look up the intensity. Omit when no data exists for this slot. */
-  diffField?: keyof SongDifficulty;
-};
+import { getSongInstrumentDifficulty } from '../../../utils/songInstrumentDifficulty';
 
 /**
  * Fixed ordering — matches the instrument list the user requested.
- * Note: Mic Mode, Pro Drums, and Pro Drums + Cymbals have no corresponding
- * field in `SongDifficulty` today, so their bars always render empty.
  */
-const ROWS: readonly Row[] = [
-  { key: 'Solo_Guitar',           diffField: 'guitar' },
-  { key: 'Solo_Bass',             diffField: 'bass' },
-  { key: 'Solo_Drums',            diffField: 'drums' },
-  { key: 'Solo_Vocals',           diffField: 'vocals' },
-  { key: 'Solo_PeripheralGuitar', diffField: 'proGuitar' },
-  { key: 'Solo_PeripheralBass',   diffField: 'proBass' },
-  { key: 'Solo_PeripheralVocals' },
-  { key: 'Solo_PeripheralDrums' },
-  { key: 'Solo_PeripheralCymbals' },
+const ROWS: readonly ServerInstrumentKey[] = [
+  'Solo_Guitar',
+  'Solo_Bass',
+  'Solo_Drums',
+  'Solo_Vocals',
+  'Solo_PeripheralGuitar',
+  'Solo_PeripheralBass',
+  'Solo_PeripheralVocals',
+  'Solo_PeripheralDrums',
+  'Solo_PeripheralCymbals',
 ];
 
 interface IntensityCardProps {
@@ -47,19 +40,22 @@ const IntensityCard = memo(function IntensityCard({ song, sig, style, onAnimatio
   const { t } = useTranslation();
   const st = useIntensityCardStyles();
 
-  const diff = song?.difficulty;
+  const visibleRows = useMemo(() => ROWS
+    .map((key) => ({ key, raw: song ? getSongInstrumentDifficulty(song, key) : undefined }))
+    .filter((row) => row.raw != null), [song]);
+
+  if (visibleRows.length === 0) return null;
 
   return (
     <div style={style} onAnimationEnd={onAnimationEnd}>
       <SectionHeader title={t('songInfo.intensity.title', 'Intensity')} />
       <div style={st.card}>
         <div style={st.grid}>
-          {ROWS.map((row) => {
-            const raw = row.diffField != null ? diff?.[row.diffField] : undefined;
+          {visibleRows.map((row) => {
             return (
               <div key={row.key} style={st.row}>
                 <InstrumentHeader instrument={row.key} size={InstrumentHeaderSize.SM} iconOnly sig={sig} />
-                <DifficultyBars level={raw ?? 0} raw />
+                <DifficultyBars level={row.raw!} raw />
               </div>
             );
           })}

@@ -59,6 +59,7 @@ describe('INSTRUMENT_STATUS_COLORS', () => {
     expect(INSTRUMENT_STATUS_COLORS.fullCombo.fill).toBe(Colors.gold);
     expect(INSTRUMENT_STATUS_COLORS.hasScore.fill).toBe(Colors.statusGreen);
     expect(INSTRUMENT_STATUS_COLORS.noScore.fill).toBe(Colors.statusRed);
+    expect(INSTRUMENT_STATUS_COLORS.unavailable.fill).toBe(Colors.surfaceMuted);
   });
 });
 
@@ -73,5 +74,9 @@ describe('getInstrumentStatusVisual', () => {
 
   it('returns noScore when no score', () => {
     expect(getInstrumentStatusVisual(false, false)).toBe(INSTRUMENT_STATUS_COLORS.noScore);
+  });
+
+  it('returns unavailable when the instrument is not charted for the song', () => {
+    expect(getInstrumentStatusVisual(false, false, false)).toBe(INSTRUMENT_STATUS_COLORS.unavailable);
   });
 });

@@ -210,6 +210,28 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiSongs_Difficulty_OmitsMicModePropertyWhenSongHasNoChart()
+    {
+        var response = await _client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var songs = json.GetProperty("songs");
+        JsonElement? testSong = null;
+        for (var i = 0; i < songs.GetArrayLength(); i++)
+        {
+          if (songs[i].GetProperty("songId").GetString() == "testSongNoMic")
+          {
+              testSong = songs[i];
+              break;
+          }
+        }
+
+        Assert.True(testSong.HasValue);
+        var diff = testSong!.Value.GetProperty("difficulty");
+        Assert.False(diff.TryGetProperty("proVocals", out _));
+    }
+
+    [Fact]
     public async Task ApiSongs_ExposesDurationSeconds()
     {
         var response = await _client.GetAsync("/api/songs");
@@ -3649,6 +3671,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     an = "Test Artist",
                     dn = 235,
                     @in = new In { gr = 5, ba = 3, vl = 4, ds = 2, pg = 6, pb = 5, pd = 7, bd = 4 },
+                }
+            };
+            dict["testSongNoMic"] = new Song
+            {
+                track = new Track
+                {
+                    su = "testSongNoMic",
+                    tt = "Integration Test Song Without Mic Mode",
+                    an = "Test Artist",
+                    dn = 240,
+                    @in = new In { gr = 4, ba = 2, vl = 5, ds = 3, pg = 5, pb = 4, pd = 6, bd = 99 },
                 }
             };
             dirtyField.SetValue(service, true);

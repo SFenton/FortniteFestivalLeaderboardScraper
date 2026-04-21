@@ -18,6 +18,9 @@ namespace FortniteFestival.Core
 
     public class Track
     {
+        public static bool HasChartedDifficulty(int? difficulty)
+            => difficulty.HasValue && difficulty.Value >= 0 && difficulty.Value != 99;
+
         public string tt { get; set; }
         public int ry { get; set; }
         public int dn { get; set; }
@@ -85,13 +88,15 @@ namespace FortniteFestival.Core
         }
         public int ProVocalsDifficulty
         {
-            get => @in == null ? -1 : (@in.bd == 0 ? -1 : @in.bd);
+            get => HasChartedDifficulty(@in?.bd) ? @in!.bd : -1;
             set
             {
                 if (@in == null) @in = new In();
                 @in.bd = value;
             }
         }
+
+        public bool HasProVocalsChart => HasChartedDifficulty(@in?.bd);
     }
 
     public class Song

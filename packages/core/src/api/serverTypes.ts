@@ -58,7 +58,26 @@ export type SongDifficulty = {
   vocals?: number;
   proGuitar?: number;
   proBass?: number;
+  proDrums?: number;
+  proCymbals?: number;
+  proVocals?: number;
 };
+
+export const SERVER_SONG_DIFFICULTY_KEYS: Record<ServerInstrumentKey, keyof SongDifficulty> = {
+  Solo_Guitar: 'guitar',
+  Solo_Bass: 'bass',
+  Solo_Drums: 'drums',
+  Solo_Vocals: 'vocals',
+  Solo_PeripheralGuitar: 'proGuitar',
+  Solo_PeripheralBass: 'proBass',
+  Solo_PeripheralVocals: 'proVocals',
+  Solo_PeripheralCymbals: 'proCymbals',
+  Solo_PeripheralDrums: 'proDrums',
+};
+
+export function isChartedServerDifficulty(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value !== 99;
+}
 
 /** Song as returned by the FSTService /api/songs endpoint. */
 export type ServerSong = {
@@ -79,6 +98,24 @@ export type ServerSong = {
   /** Population tiers per instrument for client-side filtered-total computation. */
   populationTiers?: Partial<Record<ServerInstrumentKey, PopulationTierData>> | null;
 };
+
+export function getServerSongInstrumentDifficulty(
+  song: ServerSong,
+  instrument: ServerInstrumentKey | null | undefined,
+): number | undefined {
+  if (!instrument) return undefined;
+
+  const difficultyKey = SERVER_SONG_DIFFICULTY_KEYS[instrument];
+  const difficulty = song.difficulty?.[difficultyKey];
+  return isChartedServerDifficulty(difficulty) ? difficulty : undefined;
+}
+
+export function serverSongSupportsInstrument(
+  song: ServerSong,
+  instrument: ServerInstrumentKey | null | undefined,
+): boolean {
+  return getServerSongInstrumentDifficulty(song, instrument) != null;
+}
 
 /** Song as returned by the /api/shop endpoint (enriched with catalog metadata). */
 export type ShopSong = {

@@ -177,6 +177,17 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.Equal(0, RankingsCalculator.CountChartedSongs(svc, "Solo_Guitar"));
     }
 
+    [Fact]
+    public void CountChartedSongs_ExcludesMicModeSongsMarkedWithSentinel99()
+    {
+        var svc = CreateFestivalServiceWithSongs(3);
+        svc.Songs[0].track.@in.bd = 99;
+        svc.Songs[1].track.@in.bd = 0;
+        svc.Songs[2].track.@in.bd = 4;
+
+        Assert.Equal(2, RankingsCalculator.CountChartedSongs(svc, "Solo_PeripheralVocals"));
+    }
+
     // ═══════════════════════════════════════════════════════════
     // ComputeAllCombos
     // ═══════════════════════════════════════════════════════════

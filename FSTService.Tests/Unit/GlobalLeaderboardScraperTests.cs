@@ -1,7 +1,10 @@
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using FortniteFestival.Core;
+using FortniteFestival.Core.Persistence;
+using FortniteFestival.Core.Services;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
@@ -14,12 +17,34 @@ public class GlobalLeaderboardScraperTests
     private readonly ILogger<GlobalLeaderboardScraper> _log = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
     private readonly ScrapeProgressTracker _progress = new();
 
-    private (GlobalLeaderboardScraper scraper, MockHttpMessageHandler handler) CreateScraper()
+    private (GlobalLeaderboardScraper scraper, MockHttpMessageHandler handler) CreateScraper(FestivalService? festivalService = null)
     {
         var handler = new MockHttpMessageHandler();
         var http = new HttpClient(handler);
-        var scraper = new GlobalLeaderboardScraper(http, _progress, _log, maxLookupRetries: 0);
+        var scraper = new GlobalLeaderboardScraper(http, _progress, _log, maxLookupRetries: 0, festivalService: festivalService);
         return (scraper, handler);
+    }
+
+    private static FestivalService CreateFestivalServiceWithMicModeDifficulty(int bd)
+    {
+        var service = new FestivalService((IFestivalPersistence?)null);
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var songsField = typeof(FestivalService).GetField("_songs", flags)!;
+        var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;
+        var dict = (Dictionary<string, Song>)songsField.GetValue(service)!;
+        dict["song-1"] = new Song
+        {
+            track = new Track
+            {
+                su = "song-1",
+                tt = "Song 1",
+                an = "Artist 1",
+                @in = new In { bd = bd },
+            },
+        };
+        dirtyField.SetValue(service, true);
+        _ = service.Songs;
+        return service;
     }
 
     /// <summary>
@@ -116,6 +141,23 @@ public class GlobalLeaderboardScraperTests
     }
 
     // ─── AllInstruments ─────────────────────────────────
+
+    [Fact]
+    public async Task ScrapeLeaderboardAsync_SkipsMicModeSongsWithoutChart()
+    {
+        var service = CreateFestivalServiceWithMicModeDifficulty(99);
+        var (scraper, handler) = CreateScraper(service);
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song-1",
+            "Solo_PeripheralVocals",
+            "token",
+            "account");
+
+        Assert.Empty(handler.Requests);
+        Assert.Empty(result.Entries);
+        Assert.Equal(0, result.Requests);
+    }
 
     [Fact]
     public void AllInstruments_Contains9Instruments()

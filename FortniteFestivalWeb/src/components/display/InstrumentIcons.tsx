@@ -75,9 +75,11 @@ export const INSTRUMENT_STATUS_COLORS = {
   fullCombo: { fill: Colors.gold, stroke: Colors.goldStroke },
   hasScore: { fill: Colors.statusGreen, stroke: Colors.statusGreenStroke },
   noScore: { fill: Colors.statusRed, stroke: Colors.statusRedStroke },
+  unavailable: { fill: Colors.surfaceMuted, stroke: Colors.textDisabled },
 } as const;
 
-export function getInstrumentStatusVisual(hasScore: boolean, isFullCombo: boolean) {
+export function getInstrumentStatusVisual(hasScore: boolean, isFullCombo: boolean, isAvailable = true) {
+  if (!isAvailable) return INSTRUMENT_STATUS_COLORS.unavailable;
   if (isFullCombo) return INSTRUMENT_STATUS_COLORS.fullCombo;
   if (hasScore) return INSTRUMENT_STATUS_COLORS.hasScore;
   return INSTRUMENT_STATUS_COLORS.noScore;

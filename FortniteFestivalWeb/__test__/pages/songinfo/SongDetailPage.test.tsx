@@ -179,6 +179,29 @@ describe('SongDetailPage', () => {
     });
   });
 
+  it('hides Mic Mode intensity and leaderboard sections when the song has no Mic Mode chart', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: false,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: true,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    renderSongDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Song')).toBeDefined();
+    });
+
+    expect(screen.queryByText('Mic Mode')).toBeNull();
+    expect(document.getElementById('instrument-card-Solo_PeripheralVocals')).toBeNull();
+  });
+
   it('shows "Song not found" for invalid songId', async () => {
     render(
       <TestProviders route="/songs">

@@ -8,7 +8,7 @@ import InvalidScoreIcon from './InvalidScoreIcon';
 import { Link, useLocation } from 'react-router-dom';
 import { IoBagHandle, IoChevronForward, IoTimerOutline } from 'react-icons/io5';
 import { formatPercentileBucket, maxScoreColor } from '@festival/core';
-import type { ServerSong as Song, PlayerScore, SongDifficulty, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { Colors, Gap, Radius, Font, Weight, InstrumentSize, frostedCard, flexRow, flexColumn, flexCenter, truncate, CssValue, Align, Justify, Display, Position, Layout, BorderStyle, padding } from '@festival/theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/display/InstrumentIcons';
 import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
@@ -20,17 +20,9 @@ import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import DifficultyPill from '../../../components/songs/metadata/DifficultyPill';
 import ScorePill from '../../../components/songs/metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
+import { getSongInstrumentDifficulty, songSupportsInstrument } from '../../../utils/songInstrumentDifficulty';
 import { resolveInstrumentChipRows, resolvePillFitsTopRow, splitInstrumentRows, type InstrumentChipRowCount } from '../layoutMode';
 import anim from '../../../styles/animations.module.css';
-
-const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
-  Solo_Guitar: 'guitar',
-  Solo_Bass: 'bass',
-  Solo_Drums: 'drums',
-  Solo_Vocals: 'vocals',
-  Solo_PeripheralGuitar: 'proGuitar',
-  Solo_PeripheralBass: 'proBass',
-};
 
 /** Below this container width (px), mobile rows use unified wrapping instead of top-row primary element. */
 const MOBILE_PILL_THRESHOLD = 310;
@@ -191,13 +183,14 @@ export const SongRow = memo(function SongRow({ song,
   const instrumentChips = useMemo<InstrumentChipStatus[] | null>(() => {
     if (!showInstrumentIcons || instrumentFilter != null) return null;
     return enabledInstruments.map(key => {
+      const isAvailable = songSupportsInstrument(song, key);
       const ps = allScoreMap?.get(key);
       const hasScore = !!ps && ps.score > 0;
       const isFC = !!ps?.isFullCombo;
-      const { fill, stroke } = getInstrumentStatusVisual(hasScore, isFC);
+      const { fill, stroke } = getInstrumentStatusVisual(hasScore, isFC, isAvailable);
       return { key, fill, stroke };
     });
-  }, [showInstrumentIcons, instrumentFilter, allScoreMap, enabledInstruments]);
+  }, [showInstrumentIcons, instrumentFilter, allScoreMap, enabledInstruments, song]);
 
   const linkRef = useRef<HTMLAnchorElement>(null);
   const location = useLocation();
@@ -233,8 +226,7 @@ export const SongRow = memo(function SongRow({ song,
     return order;
   }, [metadataOrder, sortMode]);
 
-  const diffKey = INSTRUMENT_DIFFICULTY_KEY[instrument];
-  const songIntensityRaw = diffKey != null ? song.difficulty?.[diffKey] : undefined;
+  const songIntensityRaw = getSongInstrumentDifficulty(song, instrument);
   const maxScore = song.maxScores?.[instrument];
 
   const entries = useMemo(() => {

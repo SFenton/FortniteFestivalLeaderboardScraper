@@ -11,9 +11,9 @@ import type { SongSortMode } from '../../../../src/utils/songSettings';
 vi.mock('../../../../src/components/display/InstrumentIcons', () => ({
   InstrumentIcon: ({ instrument, size }: { instrument: string; size: number }) =>
     <img data-testid={`instrument-${instrument}`} alt={instrument} width={size} height={size} />,
-  getInstrumentStatusVisual: (hasScore: boolean, isFC: boolean) => ({
-    fill: hasScore ? (isFC ? 'gold' : 'green') : 'red',
-    stroke: hasScore ? (isFC ? 'goldStroke' : 'greenStroke') : 'redStroke',
+  getInstrumentStatusVisual: (hasScore: boolean, isFC: boolean, isAvailable = true) => ({
+    fill: !isAvailable ? 'gray' : hasScore ? (isFC ? 'gold' : 'green') : 'red',
+    stroke: !isAvailable ? 'gray' : hasScore ? (isFC ? 'goldStroke' : 'greenStroke') : 'redStroke',
   }),
 }));
 
@@ -177,6 +177,21 @@ describe('SongRow', () => {
     });
     expect(screen.getByTestId('instrument-Solo_Guitar')).toBeTruthy();
     expect(screen.getByTestId('instrument-Solo_Bass')).toBeTruthy();
+  });
+
+  it('renders Mic Mode as an unavailable gray chip when the song has no Mic Mode chart', () => {
+    const { container } = renderSongRow({
+      song: { ...baseSong, difficulty: { guitar: 3 } } as Song,
+      showInstrumentIcons: true,
+      instrumentFilter: undefined,
+      enabledInstruments: ['Solo_PeripheralVocals'] as InstrumentKey[],
+      score: undefined,
+      allScoreMap: new Map(),
+    });
+
+    const chip = container.querySelector('[data-instrument-row="desktop"] > div') as HTMLElement;
+    expect(chip.style.backgroundColor).toBe('gray');
+    expect(chip.style.borderColor).toBe('gray');
   });
 
   it('does not show instrument chips when instrumentFilter is set', () => {

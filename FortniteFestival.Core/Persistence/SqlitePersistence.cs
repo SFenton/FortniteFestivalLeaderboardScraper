@@ -633,7 +633,7 @@ ON CONFLICT(SongId) DO UPDATE SET Title=$title, Artist=$artist";
                                     if (!r.IsDBNull(17))
                                     {
                                         var pv = r.GetInt32(17);
-                                        song.track.@in.bd = pv <= 0 ? 0 : pv; // store 0 internally when missing
+                                        song.track.@in.bd = Track.HasChartedDifficulty(pv) ? pv : 99;
                                     }
                                 }
                                 list.Add(song);
@@ -729,8 +729,8 @@ ON CONFLICT(SongId) DO UPDATE SET Title=$title, Artist=$artist, ActiveDate=$acti
                             cmd.Parameters[14].Value = s.track?.@in?.pg ?? 0; // PlasticGuitarDiff
                             cmd.Parameters[15].Value = s.track?.@in?.pb ?? 0; // PlasticBassDiff (re-using pb until clarified)
                             cmd.Parameters[16].Value = s.track?.@in?.pd ?? 0; // PlasticDrumsDiff
-                            var proVocals = s.track?.@in?.bd ?? 0;
-                            if (proVocals == 0) proVocals = -1; // sentinel when unavailable
+                            var rawProVocals = s.track?.@in?.bd;
+                            var proVocals = Track.HasChartedDifficulty(rawProVocals) ? rawProVocals!.Value : 99;
                             cmd.Parameters[17].Value = proVocals; // ProVocalsDiff from bd
                             await cmd.ExecuteNonQueryAsync();
                             count++;

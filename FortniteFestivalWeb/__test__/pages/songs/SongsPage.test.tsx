@@ -691,9 +691,9 @@ describe('SongsPage quick links', () => {
   });
 
   it.each([
-    ['Solo_PeripheralVocals', { vocals: 4 }, 'intensity:4'],
-    ['Solo_PeripheralDrums', { drums: 2 }, 'intensity:2'],
-    ['Solo_PeripheralCymbals', { drums: 6 }, 'intensity:6'],
+    ['Solo_PeripheralVocals', { proVocals: 4 }, 'intensity:4'],
+    ['Solo_PeripheralDrums', { proDrums: 2 }, 'intensity:2'],
+    ['Solo_PeripheralCymbals', { proCymbals: 6 }, 'intensity:6'],
   ] as const)('builds intensity quick-link buckets for %s from the normalized song difficulty', (instrument, difficulty, expectedId) => {
     const result = buildSongQuickLinkSections({
       songs: [{ songId: 's1', title: 'Alpha Song', artist: 'Artist A', difficulty }] as any,

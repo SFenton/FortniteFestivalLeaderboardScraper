@@ -73,6 +73,18 @@ describe('SuggestionGenerator', () => {
     expect(out[0].key).toBe('first_plays_mixed');
   });
 
+  test('does not treat absent Mic Mode charts as unplayed Mic Mode suggestions', () => {
+    const song: Song = {
+      track: { su: 'a', tt: 'Song A', an: 'Artist 1', in: { gr: 3, bd: 99 } },
+    };
+
+    const gen = new SuggestionGenerator({seed: 1, disableSkipping: true, fixedDisplayCount: 2});
+    gen.setSource([song], {});
+
+    const getUnplayedInstruments = (gen as any).getUnplayedInstruments as (candidate: Song) => string[];
+    expect(getUnplayedInstruments.call(gen, song)).not.toContain('peripheral_vocals');
+  });
+
   test('uses random display count when fixedDisplayCount is not set', () => {
     const songs: Song[] = Array.from({length: 20}).map((_, i) => mkSong(`s${i}`, `Song ${i}`, `Artist ${i}`, 2001));
     const scoresIndex: Record<string, LeaderboardData> = Object.fromEntries(

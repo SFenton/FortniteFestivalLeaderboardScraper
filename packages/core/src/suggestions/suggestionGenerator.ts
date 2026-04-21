@@ -1,5 +1,6 @@
 import type {InstrumentKey} from '../instruments';
 import type {LeaderboardData, ScoreTracker, Song} from '../models';
+import {songSupportsInstrument} from '../songAvailability';
 import type {RivalDataIndex, SuggestionCategory, SuggestionSongItem} from './types';
 
 export type Rng = {nextInt: (maxExclusive: number) => number; nextDouble: () => number};
@@ -244,6 +245,7 @@ export class SuggestionGenerator {
     const b = this.scoresIndex[song.track.su];
     const out: InstrumentKey[] = [];
     for (const ins of Instruments) {
+      if (!songSupportsInstrument(song, ins)) continue;
       const tr = b ? getTracker(b, ins) : undefined;
       if (!tr || tr.numStars === 0) out.push(ins);
     }
@@ -852,6 +854,7 @@ export class SuggestionGenerator {
   private unplayedInstrument(instrument: InstrumentKey): SuggestionCategory[] {
     const list = this.songs
       .filter(s => {
+        if (!songSupportsInstrument(s, instrument)) return false;
         const b = this.scoresIndex[s.track.su];
         const tr = getTracker(b, instrument);
         return !b || !tr || tr.numStars === 0;
@@ -876,6 +879,7 @@ export class SuggestionGenerator {
   private unplayedInstrumentDecade(instrument: InstrumentKey): SuggestionCategory[] {
     const list = this.songs
       .filter(s => {
+        if (!songSupportsInstrument(s, instrument)) return false;
         const b = this.scoresIndex[s.track.su];
         const tr = getTracker(b, instrument);
         return !b || !tr || tr.numStars === 0;

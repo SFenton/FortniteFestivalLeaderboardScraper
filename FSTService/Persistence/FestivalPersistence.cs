@@ -65,7 +65,7 @@ public sealed class FestivalPersistence : IFestivalPersistence
                 if (!r.IsDBNull(17))
                 {
                     var pv = r.GetInt32(17);
-                    song.track.@in.bd = pv <= 0 ? 0 : pv;
+                    song.track.@in.bd = Track.HasChartedDifficulty(pv) ? pv : 99;
                 }
             }
             list.Add(song);
@@ -102,8 +102,8 @@ public sealed class FestivalPersistence : IFestivalPersistence
                     plastic_drums_diff = EXCLUDED.plastic_drums_diff, pro_vocals_diff = EXCLUDED.pro_vocals_diff
                 """;
 
-            var proVocals = s.track?.@in?.bd ?? 0;
-            if (proVocals == 0) proVocals = -1;
+            var rawProVocals = s.track?.@in?.bd;
+            var proVocals = Track.HasChartedDifficulty(rawProVocals) ? rawProVocals!.Value : 99;
 
             cmd.Parameters.AddWithValue("id", s.track?.su ?? string.Empty);
             cmd.Parameters.AddWithValue("title", s.track?.tt ?? string.Empty);

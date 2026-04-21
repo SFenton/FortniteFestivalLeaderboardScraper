@@ -5,7 +5,25 @@ import { compareByMode } from '../../../src/pages/songs/components/SongRow';
 import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 
 function song(id: string, title: string, artist: string, year?: number, maxScores?: Partial<Record<InstrumentKey, number>>): Song {
-  return { songId: id, title, artist, year: year ?? 2024, albumArt: '', maxScores: maxScores ?? null } as unknown as Song;
+  return {
+    songId: id,
+    title,
+    artist,
+    year: year ?? 2024,
+    albumArt: '',
+    maxScores: maxScores ?? null,
+    difficulty: {
+      guitar: 3,
+      bass: 3,
+      drums: 3,
+      vocals: 3,
+      proGuitar: 3,
+      proBass: 3,
+      proVocals: 3,
+      proDrums: 3,
+      proCymbals: 3,
+    },
+  } as Song;
 }
 
 function score(songId: string, overrides: Partial<PlayerScore> = {}): PlayerScore {
@@ -189,13 +207,13 @@ describe('useFilteredSongs', () => {
 
   it('applies difficulty filter', () => {
     const songsWithDiff = [
-      { ...songs[0], difficulty: 3 },
-      { ...songs[1], difficulty: 5 },
-      { ...songs[2], difficulty: 3 },
+      { ...songs[0], difficulty: { guitar: 3 } },
+      { ...songs[1], difficulty: { guitar: 5 } },
+      { ...songs[2], difficulty: { guitar: 3 } },
     ];
     const scoreMap = new Map([['s1', score('s1')], ['s2', score('s2')], ['s3', score('s3')]]);
     const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])]));
-    const filters = { ...emptyFilters, difficultyFilter: { 3: true, 5: false } };
+    const filters = { ...emptyFilters, difficultyFilter: { 4: true, 6: false } };
     const { result } = renderHook(() => useFilteredSongs({
       songs: songsWithDiff as any, search: '', sortMode: 'title' as any, sortAscending: true,
       filters: filters as any, instrument: 'guitar' as InstrumentKey,
@@ -587,9 +605,9 @@ describe('useFilteredSongs — additional sort modes', () => {
   });
 
   it.each([
-    ['Solo_PeripheralVocals', { vocals: 5 }, { vocals: 1 }, { vocals: 3 }],
-    ['Solo_PeripheralDrums', { drums: 5 }, { drums: 1 }, { drums: 3 }],
-    ['Solo_PeripheralCymbals', { drums: 5 }, { drums: 1 }, { drums: 3 }],
+    ['Solo_PeripheralVocals', { proVocals: 5 }, { proVocals: 1 }, { proVocals: 3 }],
+    ['Solo_PeripheralDrums', { proDrums: 5 }, { proDrums: 1 }, { proDrums: 3 }],
+    ['Solo_PeripheralCymbals', { proCymbals: 5 }, { proCymbals: 1 }, { proCymbals: 3 }],
   ] as const)('sorts by intensity mode ascending for %s using the normalized song difficulty', (instrument, firstDifficulty, secondDifficulty, thirdDifficulty) => {
     const songsWithIntensity = [
       { ...songs[0], difficulty: firstDifficulty },
@@ -609,6 +627,27 @@ describe('useFilteredSongs — additional sort modes', () => {
     }));
 
     expect(result.current.map(s => s.songId)).toEqual(['s2', 's3', 's1']);
+  });
+
+  it('hides songs without Mic Mode when Mic Mode is selected', () => {
+    const songsWithMicMode = [
+      { ...songs[0], difficulty: { proVocals: 4 } },
+      { ...songs[1], difficulty: { proVocals: null } },
+      { ...songs[2], difficulty: { proVocals: 2 } },
+    ] as Song[];
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithMicMode,
+      search: '',
+      sortMode: 'title' as any,
+      sortAscending: true,
+      filters: emptyFilters as any,
+      instrument: 'Solo_PeripheralVocals' as InstrumentKey,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s1', 's3']);
   });
 });
 
@@ -725,13 +764,13 @@ describe('useFilteredSongs — instrument-specific filters ignored when no instr
 
   it('ignores difficultyFilter when instrument is null', () => {
     const songsWithDiff = [
-      { ...songs[0], difficulty: 3 },
-      { ...songs[1], difficulty: 5 },
-      { ...songs[2], difficulty: 3 },
+      { ...songs[0], difficulty: { guitar: 3 } },
+      { ...songs[1], difficulty: { guitar: 5 } },
+      { ...songs[2], difficulty: { guitar: 3 } },
     ];
     const scoreMap = new Map([['s1', score('s1')], ['s2', score('s2')], ['s3', score('s3')]]);
     const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])]));
-    const filters = { ...emptyFilters, difficultyFilter: { 3: true, 5: false } };
+    const filters = { ...emptyFilters, difficultyFilter: { 4: true, 6: false } };
     const { result } = renderHook(() => useFilteredSongs({
       songs: songsWithDiff as any, search: '', sortMode: 'title' as any, sortAscending: true,
       filters: filters as any, instrument: null,
