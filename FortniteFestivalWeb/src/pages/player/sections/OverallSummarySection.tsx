@@ -58,7 +58,7 @@ export function buildOverallSummaryItems(
   cardStyle: React.CSSProperties,
   compositeRanks?: CompositeRanks | null,
   enableExperimentalRanks?: boolean,
-  navigateToLeaderboard?: (instrument: InstrumentKey | null, metric: RankingMetric) => void,
+  navigateToLeaderboard?: (instrument: InstrumentKey | null, metric: RankingMetric, rank?: number) => void,
 ): PlayerItem[] {
   const items: PlayerItem[] = [];
 
@@ -103,7 +103,7 @@ export function buildOverallSummaryItems(
         boxes.push({
           label: t(METRIC_I18N_KEY[metric]),
           value: `#${rank.toLocaleString()}`,
-          onClick: navigateToLeaderboard ? () => navigateToLeaderboard(null, metric) : undefined,
+          onClick: navigateToLeaderboard ? () => navigateToLeaderboard(null, metric, rank) : undefined,
         });
       }
     }

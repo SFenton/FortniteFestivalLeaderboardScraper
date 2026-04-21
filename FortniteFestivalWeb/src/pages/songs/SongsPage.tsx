@@ -22,7 +22,7 @@ import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { accuracyBgColor, maxScoreColor, LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Layout, MaxWidth, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, border, flexCenter, padding } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, FADE_DURATION, STAGGER_INTERVAL, border, flexCenter, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -756,12 +756,16 @@ export default function SongsPage() {
     if (!shouldStagger || rowIndex >= maxVisibleRows) return undefined;
     return staggerDelay(rowIndex, 125, maxVisibleRows) ?? maxVisibleRows * 125;
   }, [maxVisibleRows, shouldStagger]);
+  const desktopRailRevealDelayMs = useMemo(
+    () => shouldStagger ? ((maxVisibleRows + 1) * STAGGER_INTERVAL) + FADE_DURATION : 0,
+    [maxVisibleRows, shouldStagger],
+  );
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
-    const totalAnimTime = (maxVisibleRows + 1) * 125 + 400;
+    const totalAnimTime = desktopRailRevealDelayMs;
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
-  }, [loadPhase, shouldStagger, maxVisibleRows]);
+  }, [desktopRailRevealDelayMs, loadPhase, shouldStagger]);
   /* v8 ignore stop */
 
   const scrollContainerRef = useScrollContainer();
@@ -845,6 +849,7 @@ export default function SongsPage() {
       visible: quickLinksOpen,
       onOpen: openQuickLinks,
       onClose: closeQuickLinks,
+      desktopRailRevealDelayMs: isWideDesktop ? desktopRailRevealDelayMs : 0,
       onSelect: (item) => {
         const nextItem = item as SongQuickLink;
         if (isWideDesktop) {
@@ -855,7 +860,7 @@ export default function SongsPage() {
       },
       testIdPrefix: 'songs',
     };
-  }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleSongQuickLinkSelect, isWideDesktop, loadPhase, openQuickLinks, quickLinkItems, quickLinksOpen, quickLinksTitle]);
+  }, [activeItemId, closeQuickLinks, desktopRailRevealDelayMs, handleModalQuickLinkSelect, handleSongQuickLinkSelect, isWideDesktop, loadPhase, openQuickLinks, quickLinkItems, quickLinksOpen, quickLinksTitle]);
 
   const quickLinksButtonLabel = t('songs.quickLinksButton');
   const compactQuickLinksAction = !isWideDesktop && pageQuickLinks

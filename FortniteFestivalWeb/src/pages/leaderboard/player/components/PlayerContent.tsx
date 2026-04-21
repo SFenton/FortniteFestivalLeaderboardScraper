@@ -14,7 +14,7 @@ import {
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Align, Display, Gap, IconSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, frostedCard, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
+import { Align, Display, Gap, IconSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, FADE_DURATION, frostedCard, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
@@ -32,13 +32,16 @@ import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
 import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../../../contexts/SearchQueryContext';
 import { useScrollContainer } from '../../../../contexts/ScrollContainerContext';
+import { useScrollFade } from '../../../../hooks/ui/useScrollFade';
 import { getPageQuickLinkTestId, usePageQuickLinks, type PageQuickLinkItem } from '../../../../hooks/ui/usePageQuickLinks';
+import { staggerCompletionDelay } from '../../../../hooks/ui/useStagger';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
 import PageHeaderActionsTransition from '../../../../components/common/PageHeaderActionsTransition';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
 import { buildOverallSummaryItems } from '../../../player/sections/OverallSummarySection';
 import { buildInstrumentStatsItems } from '../../../player/sections/InstrumentStatsSection';
+import { getLeaderboardPageForRank } from '../../../leaderboards/helpers/rankingHelpers';
 import { buildTopSongsItems } from '../../../player/components/TopSongsSection';
 import { buildPlayerBandsItems, EMPTY_PLAYER_BANDS } from '../../../player/components/PlayerBandsSection';
 import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
@@ -112,6 +115,41 @@ function clearPendingSelectProfileExit(accountId: string) {
   if (pendingSelectProfileExit?.accountId === accountId) {
     pendingSelectProfileExit = null;
   }
+}
+
+function estimateVisiblePlayerGridItemCount(items: PlayerItem[]): number {
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+  const gap = Gap.md;
+  let accHeight = 0;
+  let col = 0;
+  let rowMax = 0;
+  let visibleCount = items.length;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
+    if (item.span) {
+      if (col === 1) {
+        accHeight += rowMax + gap;
+        col = 0;
+        rowMax = 0;
+      }
+      accHeight += item.heightEstimate + gap;
+    } else {
+      rowMax = Math.max(rowMax, item.heightEstimate);
+      col++;
+      if (col === 2) {
+        accHeight += rowMax + gap;
+        col = 0;
+        rowMax = 0;
+      }
+    }
+
+    if (accHeight > vh && visibleCount === items.length) {
+      visibleCount = i + 2;
+    }
+  }
+
+  return visibleCount;
 }
 
 export interface PlayerContentProps {
@@ -193,6 +231,7 @@ export default function PlayerContent({
   const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
   const pendingSelectProfileExitTimerRef = useRef<number | null>(null);
+  const gridListRef = useRef<HTMLDivElement>(null);
 
   const clearPendingSelectProfileExitTimer = useCallback(() => {
     if (pendingSelectProfileExitTimerRef.current === null) return;
@@ -214,7 +253,7 @@ export default function PlayerContent({
     }
     registerPlayerPageSelect({
       displayName: data.displayName,
-      /* v8 ignore start ΓÇö profile switch callbacks */
+      /* v8 ignore start — profile switch callbacks */
       onSelect: () => {
         if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
           setPendingSwitch(() => primeTrackedPlayerSelection);
@@ -228,7 +267,7 @@ export default function PlayerContent({
   }, [data.accountId, data.displayName, trackedPlayer, primeTrackedPlayerSelection, registerPlayerPageSelect]);
 
   // Helper: wrap a navigation action with profile-switch logic when viewing another player
-  /* v8 ignore start ΓÇö navigation + profile switch */
+  /* v8 ignore start — navigation + profile switch */
   const withProfileSwitch = useCallback((action: () => void) => {
     if (!isTrackedPlayer) {
       const selectAndGo = () => {
@@ -258,7 +297,7 @@ export default function PlayerContent({
   // Use rank tiers from stats response when available; fall back to per-instrument ranking results
   const hasRankTiers = !!statsData?.instrumentRanks?.length;
 
-  // Build map of instrument ΓåÆ AccountRankingEntry for passing to sections
+  // Build map of instrument → AccountRankingEntry for passing to sections
   const instrumentRankings = useMemo(() => {
     const map = new Map<InstrumentKey, AccountRankingEntry>();
 
@@ -276,7 +315,7 @@ export default function PlayerContent({
           fcRateRank: resolved.fcRate,
           totalScoreRank: resolved.totalScore,
           maxScorePercentRank: resolved.maxScore,
-          // Non-rank fields default ΓÇö only ranks used in stat cards
+          // Non-rank fields default — only ranks used in stat cards
           songsPlayed: 0, totalChartedSongs: 0, coverage: 0,
           rawSkillRating: 0, adjustedSkillRating: 0,
           weightedRating: 0, fcRate: 0, totalScore: 0,
@@ -307,7 +346,7 @@ export default function PlayerContent({
   const searchQuery = useSearchQuery();
 
   // Stable navigation helpers to reduce closure overhead in onClick handlers
-  /* v8 ignore start ΓÇö navigation helpers */
+  /* v8 ignore start — navigation helpers */
   const navigateToSongs = useCallback((settingsUpdater: (s: ReturnType<typeof loadSongSettings>) => ReturnType<typeof loadSongSettings>) => {
     withProfileSwitch(() => {
       const s = loadSongSettings();
@@ -318,19 +357,21 @@ export default function PlayerContent({
     });
   }, [withProfileSwitch, navigate, location.pathname, searchQuery]);
 
-  /* v8 ignore start ΓÇö navigation helper */
+  /* v8 ignore start — navigation helper */
   const navigateToSongDetail = useCallback((songId: string, instrument: InstrumentKey, opts?: { autoScroll?: boolean }) => {
     withProfileSwitch(() => navigate(`/songs/${songId}?instrument=${encodeURIComponent(instrument)}`, { state: { backTo: location.pathname, ...opts } }));
     /* v8 ignore stop */
   }, [withProfileSwitch, navigate, location.pathname]);
 
-  /* v8 ignore start ΓÇö navigation helper */
-  const navigateToLeaderboard = useCallback((instrument: InstrumentKey | null, metric: RankingMetric) => {
+  /* v8 ignore start — navigation helper */
+  const navigateToLeaderboard = useCallback((instrument: InstrumentKey | null, metric: RankingMetric, rank?: number) => {
     withProfileSwitch(() => {
+      const page = getLeaderboardPageForRank(rank ?? 0);
       if (instrument) {
-        navigate(Routes.fullRankings(instrument, metric));
+        navigate(Routes.fullRankings(instrument, metric, page));
       } else {
-        navigate(`${Routes.leaderboards}?rankBy=${encodeURIComponent(metric)}`);
+        const params = new URLSearchParams({ rankBy: metric, page: String(page) });
+        navigate(`${Routes.leaderboards}?${params.toString()}`);
       }
     });
     /* v8 ignore stop */
@@ -338,7 +379,7 @@ export default function PlayerContent({
 
   const isWideDesktop = useIsWideDesktop();
 
-  // Build a completely flat list of small items ΓÇö each becomes a direct child
+  // Build a completely flat list of small items — each becomes a direct child
   // of the grid so each gets a staggered fade-in animation.
   const items: PlayerItem[] = [];
 
@@ -402,7 +443,7 @@ export default function PlayerContent({
 
   // --- Per-instrument: header + stat boxes + percentile rows ---
   // Render a section for every visible instrument, even if the player has no
-  // scores on it yet ΓÇö the section will show a "No scores yet" empty state.
+  // scores on it yet — the section will show a "No scores yet" empty state.
   const instrumentSectionFirstKeys = new Map<InstrumentKey, string>();
   for (const inst of visibleKeys) {
     const scores = byInstrument.get(inst) ?? [];
@@ -453,6 +494,11 @@ export default function PlayerContent({
   if (playerBandsEnabled && statsData) {
     items.push(...buildPlayerBandsItems(t, data.displayName, statsData.bands ?? EMPTY_PLAYER_BANDS));
   }
+
+  const visibleStaggerItemCount = useMemo(() => estimateVisiblePlayerGridItemCount(items), [items]);
+  const desktopRailRevealDelayMs = skipAnim
+    ? 0
+    : staggerCompletionDelay(visibleStaggerItemCount, STAGGER_ENTRY_OFFSET, FADE_DURATION);
 
   const quickLinks = useMemo<PlayerQuickLink[]>(() => {
     const links: PlayerQuickLink[] = [];
@@ -533,8 +579,9 @@ export default function PlayerContent({
     handleQuickLinkSelect(link);
   }, [closeQuickLinks, handleQuickLinkSelect]);
 
-  // Wire up container-level scroll fade
+  // Wire up per-item scroll fade for the player grid.
   const fadeDeps = useMemo(() => [items.length], [items.length]);
+  useScrollFade(scrollContainerRef, gridListRef, fadeDeps);
 
   // Show the select-profile pill on all platforms (header actions slot handles layout)
   const selectBtnVisible = !isTrackedPlayer && trackedPlayer?.accountId !== data.accountId;
@@ -569,6 +616,7 @@ export default function PlayerContent({
     visible: quickLinksOpen,
     onOpen: openQuickLinks,
     onClose: closeQuickLinks,
+    desktopRailRevealDelayMs: isWideDesktop ? desktopRailRevealDelayMs : 0,
     onSelect: (item) => {
       const nextItem = item as PlayerQuickLink;
       if (isWideDesktop) {
@@ -578,7 +626,7 @@ export default function PlayerContent({
       handleModalQuickLinkSelect(nextItem);
     },
     testIdPrefix: 'player',
-  }), [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, quickLinks, quickLinksOpen, quickLinksTitle]);
+  }), [activeItemId, closeQuickLinks, desktopRailRevealDelayMs, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, quickLinks, quickLinksOpen, quickLinksTitle]);
 
   const quickLinksAction = !isWideDesktop && quickLinks.length > 0
     ? (
@@ -669,48 +717,14 @@ export default function PlayerContent({
       </>}
     >
         <div style={{ ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}) }}>
-            <div style={{ ...pps.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
+            <div ref={gridListRef} style={{ ...pps.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
-              // Compute which items are in the initial viewport by accumulating
-              // estimated row heights.  The grid is 2-col: span items take a full
-              // row, non-span items pair up (each row = max of the pair's height).
-              /* v8 ignore start -- SSR guard: window always defined in jsdom */
-              const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
-              /* v8 ignore stop */
-              const gap = Gap.md;
-              let accHeight = 0;
-              let col = 0; // 0 = left, 1 = right in the 2-col grid
-              let rowMax = 0;
-              let visibleCount = items.length; // default: animate all
-
-              for (let i = 0; i < items.length; i++) {
-                const item = items[i]!;
-                if (item.span) {
-                  // Flush any pending half-row
-                  if (col === 1) {
-                    accHeight += rowMax + gap;
-                    col = 0;
-                    rowMax = 0;
-                  }
-                  accHeight += item.heightEstimate + gap;
-                } else {
-                  rowMax = Math.max(rowMax, item.heightEstimate);
-                  col++;
-                  if (col === 2) {
-                    accHeight += rowMax + gap;
-                    col = 0;
-                    rowMax = 0;
-                  }
-                }
-                if (accHeight > vh && visibleCount === items.length) {
-                  visibleCount = i + 2; // +1 for the partially-visible item, +1 for 0-index
-                }
-              }
-
+              const visibleCount = visibleStaggerItemCount;
               const lastVisibleDelay = visibleCount * STAGGER_ENTRY_OFFSET;
               return items.map((item, i) => {
                 const delay = skipAnim ? undefined : (i < visibleCount ? (i + 1) * STAGGER_ENTRY_OFFSET : lastVisibleDelay);
                 const quickLink = quickLinkByItemKey.get(item.key);
+                const itemTestId = item.key.endsWith('-pct-table') ? `player-item-${item.key}` : undefined;
                 const content = quickLink ? (
                   <section
                     ref={(element) => registerSectionRef(quickLink.id, element)}
@@ -723,7 +737,7 @@ export default function PlayerContent({
                   </section>
                 ) : item.node;
                 return (
-                  <FadeIn key={item.key} delay={delay} style={item.span ? { ...pps.gridFullWidth, ...item.style } : item.style}>
+                  <FadeIn key={item.key} data-testid={itemTestId} delay={delay} style={item.span ? { ...pps.gridFullWidth, ...item.style } : item.style}>
                     {content}
                   </FadeIn>
                 );

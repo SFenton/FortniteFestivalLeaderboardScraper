@@ -449,6 +449,8 @@ describe('RivalsPage quick links', () => {
     expect(pageRoot).toContainElement(scrollArea);
     expect(pageRoot).not.toContainElement(rail);
     expect(portal).toContainElement(rail);
+    expect(rail).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+    expect(rail.style.animation).toContain('fadeIn');
   });
 });
 

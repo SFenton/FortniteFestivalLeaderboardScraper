@@ -18,7 +18,7 @@ import InstrumentHeader from '../../components/display/InstrumentHeader';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
 import { InstrumentHeaderSize, formatRatingValue, rankColor } from '@festival/core';
 import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
-import { getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth } from './helpers/rankingHelpers';
+import { LEADERBOARD_PAGE_SIZE, getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth } from './helpers/rankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -31,8 +31,6 @@ import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerS
 import { Size } from '@festival/theme';
 import InstrumentPickerModal from './modals/InstrumentPickerModal';
 import RankByModal from './modals/RankByModal';
-
-const PAGE_SIZE = 25;
 
 export default function FullRankingsPage() {
   const { t } = useTranslation();
@@ -89,8 +87,8 @@ export default function FullRankingsPage() {
   const [page, setPage] = useState(cached?.page ?? pageParam);
 
   const { data, isFetching, error } = useQuery({
-    queryKey: queryKeys.rankings(instrument, metric, page, PAGE_SIZE),
-    queryFn: () => api.getRankings(instrument, metric, page, PAGE_SIZE),
+    queryKey: queryKeys.rankings(instrument, metric, page, LEADERBOARD_PAGE_SIZE),
+    queryFn: () => api.getRankings(instrument, metric, page, LEADERBOARD_PAGE_SIZE),
     // Keep previous page data visible during pagination, but NOT across
     // instrument/metric changes (those should trigger a full stagger cycle).
     placeholderData: (prev, prevQuery) => {
@@ -106,7 +104,7 @@ export default function FullRankingsPage() {
     enabled: !!player,
   });
 
-  const totalPages = data ? Math.ceil(data.totalAccounts / PAGE_SIZE) : 0;
+  const totalPages = data ? Math.ceil(data.totalAccounts / LEADERBOARD_PAGE_SIZE) : 0;
   const entries = data?.entries ?? [];
 
   // Cache page number for scroll restoration

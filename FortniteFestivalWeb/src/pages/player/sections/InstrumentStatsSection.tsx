@@ -73,7 +73,7 @@ export function buildInstrumentStatsItems(
   overThresholdCount?: number,
   rankingEntry?: AccountRankingEntry,
   enableExperimentalRanks?: boolean,
-  navigateToLeaderboard?: (instrument: ServerInstrumentKey | null, metric: RankingMetric) => void,
+  navigateToLeaderboard?: (instrument: ServerInstrumentKey | null, metric: RankingMetric, rank?: number) => void,
   accountId?: string,
   totalRankedAccounts?: number,
   enableLeaderboards?: boolean,
@@ -167,7 +167,7 @@ export function buildInstrumentStatsItems(
       cards.push({
         label: t(METRIC_I18N_KEY[metric]),
         value: rank > 0 ? `#${rank.toLocaleString()}` : '\u2014',
-        onClick: navigateToLeaderboard && rank > 0 ? () => navigateToLeaderboard(inst, metric) : undefined,
+        onClick: navigateToLeaderboard && rank > 0 ? () => navigateToLeaderboard(inst, metric, rank) : undefined,
       });
     }
   }

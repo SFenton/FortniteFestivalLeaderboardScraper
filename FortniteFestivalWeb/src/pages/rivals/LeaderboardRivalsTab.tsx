@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
-import { useStagger } from '../../hooks/ui/useStagger';
+import { staggerCompletionDelay, useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
@@ -43,6 +43,7 @@ interface LeaderboardRivalsTabProps {
   rankBy: RankingMetric;
   registerSectionRef: (id: string, element: HTMLElement | null) => void;
   onQuickLinksChange?: (items: LeaderboardRivalQuickLink[]) => void;
+  onDesktopRailRevealDelayChange?: (delayMs: number) => void;
 }
 
 export default function LeaderboardRivalsTab({
@@ -51,6 +52,7 @@ export default function LeaderboardRivalsTab({
   rankBy,
   registerSectionRef,
   onQuickLinksChange,
+  onDesktopRailRevealDelayChange,
 }: LeaderboardRivalsTabProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -152,6 +154,36 @@ export default function LeaderboardRivalsTab({
   const hasAnyError = instrumentRivals.some(r => r.error);
 
   const PREVIEW_COUNT = 3;
+
+  const desktopRailRevealDelayMs = useMemo(() => {
+    if (!shouldStagger) {
+      return 0;
+    }
+
+    if (allReady && !hasAnyRivals) {
+      return staggerCompletionDelay(1);
+    }
+
+    let staggerItemCount = 0;
+    for (const entry of instrumentRivals) {
+      if (!entry.data || (entry.data.above.length === 0 && entry.data.below.length === 0)) {
+        continue;
+      }
+
+      const previewCount = Math.min(PREVIEW_COUNT, entry.data.above.length) + Math.min(PREVIEW_COUNT, entry.data.below.length);
+      staggerItemCount += previewCount + 2;
+    }
+
+    return staggerCompletionDelay(staggerItemCount);
+  }, [allReady, hasAnyRivals, instrumentRivals, shouldStagger]);
+
+  useEffect(() => {
+    onDesktopRailRevealDelayChange?.(desktopRailRevealDelayMs);
+  }, [desktopRailRevealDelayMs, onDesktopRailRevealDelayChange]);
+
+  useEffect(() => () => {
+    onDesktopRailRevealDelayChange?.(0);
+  }, [onDesktopRailRevealDelayChange]);
 
   /* v8 ignore start -- render helpers */
   const navigateToRival = (instrument: ServerInstrumentKey, rivalId: string, rivalName?: string | null) => {

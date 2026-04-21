@@ -169,6 +169,30 @@ describe('Page', () => {
     expect(nav).toHaveStyle({ overscrollBehavior: 'contain', paddingTop: '8px', paddingLeft: '8px', boxSizing: 'border-box', maxHeight: '620px' });
   });
 
+  it('delays the wide desktop rail reveal as a single fade when configured', () => {
+    setViewportQueries({ mobile: false, wide: true });
+
+    const quickLinks = {
+      title: 'Quick Links',
+      items: [{ id: 'alpha', label: 'Alpha', landmarkLabel: 'Alpha', icon: <span>A</span> }],
+      activeItemId: 'alpha',
+      visible: false,
+      onOpen: () => {},
+      onClose: () => {},
+      onSelect: () => {},
+      desktopRailRevealDelayMs: 750,
+      testIdPrefix: 'page',
+    };
+
+    render(<PageWrapper quickLinks={quickLinks}><div>Page content</div></PageWrapper>);
+
+    const rail = screen.getByTestId('page-quick-links-rail');
+
+    expect(rail).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+    expect(rail.style.animation).toContain('fadeIn');
+    expect(rail.style.animation).toContain('750ms');
+  });
+
   it('keeps wheel input over the rail isolated from the shell scroll owner', () => {
     setViewportQueries({ mobile: false, wide: true });
 
