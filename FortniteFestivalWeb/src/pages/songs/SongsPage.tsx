@@ -785,6 +785,52 @@ export default function SongsPage() {
   const SONG_ROW_HEIGHT = songRowMobile ? 122 : 68;
   const SECTION_ROW_HEIGHT = songRowMobile ? 44 : 52;
   const VIRTUAL_ROW_GAP = 2;
+  const listParentRef = useRef<HTMLDivElement>(null);
+  const [listScrollMargin, setListScrollMargin] = useState(0);
+  const resolveListScrollMargin = useCallback((scrollEl: HTMLElement | null = scrollContainerRef.current) => {
+    const listEl = listParentRef.current;
+    if (!scrollEl || !listEl) {
+      return 0;
+    }
+
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const listRect = listEl.getBoundingClientRect();
+    return Math.max(0, scrollEl.scrollTop + listRect.top - scrollRect.top);
+  }, [scrollContainerRef]);
+
+  useEffect(() => {
+    if (loadPhase !== LoadPhase.ContentIn || filtered.length === 0) {
+      setListScrollMargin(0);
+      return;
+    }
+
+    const updateListScrollMargin = () => {
+      const nextMargin = Math.round(resolveListScrollMargin());
+      setListScrollMargin((current) => current === nextMargin ? current : nextMargin);
+    };
+
+    updateListScrollMargin();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(updateListScrollMargin)
+      : null;
+    if (containerRef.current) {
+      resizeObserver?.observe(containerRef.current);
+    }
+    if (listParentRef.current) {
+      resizeObserver?.observe(listParentRef.current);
+    }
+    if (scrollContainerRef.current) {
+      resizeObserver?.observe(scrollContainerRef.current);
+    }
+    window.addEventListener('resize', updateListScrollMargin);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updateListScrollMargin);
+    };
+  }, [filtered.length, loadPhase, resolveListScrollMargin, scrollContainerRef]);
+
   const quickLinkTopById = useMemo(() => {
     const offsets = new Map<string, number>();
     if (!hasQuickLinkSections) {
@@ -801,6 +847,14 @@ export default function SongsPage() {
 
     return offsets;
   }, [SECTION_ROW_HEIGHT, SONG_ROW_HEIGHT, hasQuickLinkSections, sectionModel.rows]);
+  const getQuickLinkItemTop = useCallback((id: string, scrollEl: HTMLElement) => {
+    const rowTop = quickLinkTopById.get(id);
+    if (rowTop == null) {
+      return null;
+    }
+
+    return resolveListScrollMargin(scrollEl) + rowTop;
+  }, [quickLinkTopById, resolveListScrollMargin]);
 
   const {
     activeItemId,
@@ -813,18 +867,17 @@ export default function SongsPage() {
     items: quickLinkItems,
     scrollContainerRef,
     isDesktopRailEnabled: isWideDesktop,
-    getItemTop: (id) => quickLinkTopById.get(id) ?? null,
+    getItemTop: getQuickLinkItemTop,
     scrollOffset: Gap.md,
   });
 
-  const listParentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: loadPhase === LoadPhase.ContentIn ? sectionModel.rows.length : 0,
     estimateSize: (index) => sectionModel.rows[index]?.type === 'section' ? SECTION_ROW_HEIGHT : SONG_ROW_HEIGHT,
     overscan: 8,
     gap: VIRTUAL_ROW_GAP,
     getScrollElement: () => scrollContainerRef.current,
-    scrollMargin: listParentRef.current?.offsetTop ?? 0,
+    scrollMargin: listScrollMargin,
   });
 
   const handleSongQuickLinkSelect = useCallback((link: SongQuickLink) => {
@@ -1005,6 +1058,7 @@ export default function SongsPage() {
         ) : (
           <div
             ref={listParentRef}
+            data-testid="songs-virtual-list"
             style={{ ...songsStyles.list,
               height: virtualizer.getTotalSize(),
               position: 'relative',

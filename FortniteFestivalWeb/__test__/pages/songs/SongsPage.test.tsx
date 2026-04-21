@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
-import { Colors, Layout } from '@festival/theme';
+import { Colors, Gap, Layout } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
@@ -486,6 +486,80 @@ describe('SongsPage quick links', () => {
     expect(portal).toContainElement(rail);
     expect(rail).toHaveStyle({ width: `${Layout.sidebarWidth}px` });
     expect(nav).toHaveStyle({ overscrollBehavior: 'contain' });
+  });
+
+  it('updates the wide desktop highlight for offscreen virtualized quick-link targets', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    mockApi.getSongs.mockResolvedValue({
+      songs: [
+        'Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf',
+        'Hotel', 'India', 'Juliet', 'Kilo', 'Lima', 'Mike',
+      ].map((title, index) => ({
+        songId: `song-${index + 1}`,
+        title: `${title} Song`,
+        artist: `Artist ${title}`,
+        year: 2024,
+        difficulty: { guitar: 3 },
+      })),
+      count: 13,
+      currentSeason: 5,
+    });
+
+    renderSongsPage('/songs');
+    await settleSongsPage();
+
+    const scrollContainer = screen.getByTestId('test-scroll-container') as HTMLElement;
+    const virtualList = screen.getByTestId('songs-virtual-list') as HTMLElement;
+    const listTop = 180;
+    const mikeTargetScrollTop = listTop + (12 * ((52 + 2) + (68 + 2)));
+
+    Object.defineProperty(scrollContainer, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: 0,
+        left: 0,
+        bottom: 800,
+        right: 1024,
+        width: 1024,
+        height: 800,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      }),
+    });
+
+    Object.defineProperty(virtualList, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: listTop - scrollContainer.scrollTop,
+        left: 0,
+        bottom: listTop - scrollContainer.scrollTop + 2200,
+        right: 1024,
+        width: 1024,
+        height: 2200,
+        x: 0,
+        y: listTop - scrollContainer.scrollTop,
+        toJSON() { return this; },
+      }),
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    const alphaButton = screen.getByTestId('songs-quick-link-title-a');
+    const mikeButton = screen.getByTestId('songs-quick-link-title-m');
+    expect(mikeButton).not.toHaveAttribute('aria-current');
+
+    await act(async () => {
+      fireEvent.click(mikeButton);
+      scrollContainer.scrollTop = mikeTargetScrollTop;
+      fireEvent.scroll(scrollContainer);
+      await vi.advanceTimersByTimeAsync(160);
+    });
+
+    expect(mikeButton).toHaveAttribute('aria-current', 'location');
+    expect(alphaButton).not.toHaveAttribute('aria-current', 'location');
   });
 
   it('stagger-animates rendered section headers on a fresh Songs visit', async () => {

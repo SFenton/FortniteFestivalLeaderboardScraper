@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createEvent, fireEvent, render, screen } from '@testing-library/react';
+import { act, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import React, { type ReactNode } from 'react';
 import { Layout, MaxWidth } from '@festival/theme';
@@ -191,6 +191,58 @@ describe('Page', () => {
     expect(rail).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
     expect(rail.style.animation).toContain('fadeIn');
     expect(rail.style.animation).toContain('750ms');
+  });
+
+  it('keeps the rail interactive after reveal and updates the active item without re-hiding', async () => {
+    vi.useFakeTimers();
+    try {
+      setViewportQueries({ mobile: false, wide: true });
+
+      const quickLinks = {
+        title: 'Quick Links',
+        items: [
+          { id: 'alpha', label: 'Alpha', landmarkLabel: 'Alpha', icon: <span>A</span> },
+          { id: 'beta', label: 'Beta', landmarkLabel: 'Beta', icon: <span>B</span> },
+        ],
+        activeItemId: 'alpha',
+        visible: false,
+        onOpen: () => {},
+        onClose: () => {},
+        onSelect: () => {},
+        desktopRailRevealDelayMs: 750,
+        testIdPrefix: 'page',
+      };
+
+      const { rerender } = render(<PageWrapper quickLinks={quickLinks}><div>Page content</div></PageWrapper>);
+
+      const rail = screen.getByTestId('page-quick-links-rail');
+      expect(rail).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1150);
+      });
+
+      const revealedRail = screen.getByTestId('page-quick-links-rail');
+      expect(revealedRail.style.pointerEvents).not.toBe('none');
+      expect(revealedRail.style.opacity).not.toBe('0');
+      expect(revealedRail.style.animation).toBe('');
+      expect(screen.getByTestId('page-quick-link-alpha')).toHaveAttribute('aria-current', 'location');
+
+      rerender(
+        <PageWrapper quickLinks={{ ...quickLinks, activeItemId: 'beta' }}>
+          <div>Page content</div>
+        </PageWrapper>,
+      );
+
+      const updatedRail = screen.getByTestId('page-quick-links-rail');
+      expect(updatedRail.style.pointerEvents).not.toBe('none');
+      expect(updatedRail.style.opacity).not.toBe('0');
+      expect(updatedRail.style.animation).toBe('');
+      expect(screen.getByTestId('page-quick-link-beta')).toHaveAttribute('aria-current', 'location');
+      expect(screen.getByTestId('page-quick-link-alpha')).not.toHaveAttribute('aria-current');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps wheel input over the rail isolated from the shell scroll owner', () => {

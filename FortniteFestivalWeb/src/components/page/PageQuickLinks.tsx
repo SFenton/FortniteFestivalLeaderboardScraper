@@ -70,18 +70,39 @@ export function PageQuickLinksRail<T extends PageQuickLinkItem>({ quickLinks }: 
   const revealDelayMs = quickLinks.desktopRailRevealDelayMs ?? 0;
   const [activeRevealDelayMs, setActiveRevealDelayMs] = useState(revealDelayMs > 0 ? revealDelayMs : 0);
   const [railRevealed, setRailRevealed] = useState(revealDelayMs <= 0);
+  const previousRevealDelayMsRef = useRef(revealDelayMs);
 
   useEffect(() => {
-    if (revealDelayMs > 0) {
-      setActiveRevealDelayMs(revealDelayMs);
-      setRailRevealed(false);
+    const previousRevealDelayMs = previousRevealDelayMsRef.current;
+    previousRevealDelayMsRef.current = revealDelayMs;
+
+    if (revealDelayMs <= 0) {
+      if (activeRevealDelayMs <= 0) {
+        setRailRevealed(true);
+      }
       return;
     }
 
-    if (railRevealed) {
-      setActiveRevealDelayMs(0);
+    if (previousRevealDelayMs <= 0 || previousRevealDelayMs !== revealDelayMs) {
+      setActiveRevealDelayMs(revealDelayMs);
+      setRailRevealed(false);
     }
-  }, [railRevealed, revealDelayMs]);
+  }, [activeRevealDelayMs, revealDelayMs]);
+
+  useEffect(() => {
+    if (railRevealed || activeRevealDelayMs <= 0) {
+      return;
+    }
+
+    const revealTimeoutId = window.setTimeout(() => {
+      setActiveRevealDelayMs(0);
+      setRailRevealed(true);
+    }, activeRevealDelayMs + FADE_DURATION);
+
+    return () => {
+      window.clearTimeout(revealTimeoutId);
+    };
+  }, [activeRevealDelayMs, railRevealed]);
 
   const handleRailAnimationEnd = useCallback(() => {
     setActiveRevealDelayMs(0);

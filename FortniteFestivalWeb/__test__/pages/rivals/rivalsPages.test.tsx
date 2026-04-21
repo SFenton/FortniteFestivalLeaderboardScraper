@@ -520,6 +520,14 @@ describe('AllRivalsPage', () => {
     expect(container.innerHTML.length).toBeGreaterThan(0);
   });
 
+  it('fetches exact combo categories directly when the route carries a combo id', async () => {
+    renderPage('/rivals/all?category=c0', <AllRivalsPage />, '/rivals/all');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'c0');
+  });
+
   it('renders the page with instrument category', async () => {
     const { container } = renderPage('/rivals/all?category=Solo_Guitar', <AllRivalsPage />, '/rivals/all');
     await advancePastSpinner();
