@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
-import { Layout } from '@festival/theme';
+import { Colors, Layout } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
@@ -456,10 +456,12 @@ describe('SongsPage quick links', () => {
 
     const trigger = await screen.findByRole('button', { name: 'Quick Links' });
     expect(trigger.parentElement).toHaveStyle({ alignSelf: 'flex-start' });
+    expect(trigger).not.toHaveStyle({ backgroundColor: Colors.accentBlue });
     await act(async () => { fireEvent.click(trigger); });
 
     expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();
     expect(screen.getByText('Title Quick Links')).toBeTruthy();
+    expect(trigger).not.toHaveStyle({ backgroundColor: Colors.accentBlue });
   });
 
   it('renders title quick links in the wide desktop rail', async () => {

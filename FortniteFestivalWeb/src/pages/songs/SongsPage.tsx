@@ -863,7 +863,6 @@ export default function SongsPage() {
         icon={<IoCompass size={Size.iconAction} />}
         label={quickLinksButtonLabel}
         onClick={openQuickLinks}
-        active={quickLinksOpen}
       />
     )
     : undefined;
@@ -906,6 +905,7 @@ export default function SongsPage() {
                 />
               </div>
             }
+            actionsAlign="start"
             actions={compactQuickLinksAction}
           />
         )}
