@@ -14,7 +14,7 @@ import {
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Align, Display, Gap, IconSize, InstrumentSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, frostedCard, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
+import { Align, Display, Gap, IconSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, frostedCard, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
@@ -47,6 +47,7 @@ import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRa
 import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import type { PageQuickLinksConfig } from '../../../../components/page/PageQuickLinks';
+import { createPreserveShellScrollState } from '../../../../utils/quietNavigation';
 
 type PlayerQuickLinkId = 'global' | 'top-songs' | 'bands' | `instrument:${InstrumentKey}`;
 
@@ -177,7 +178,13 @@ export default function PlayerContent({
   const primeTrackedPlayerSelection = useCallback(() => {
     primeSelectProfileExit(data.accountId);
     setPlayer({ accountId: data.accountId, displayName: data.displayName });
-  }, [data.accountId, data.displayName, setPlayer]);
+    if (location.pathname !== Routes.statistics) {
+      navigate(Routes.statistics, {
+        replace: true,
+        state: createPreserveShellScrollState(`profile-select:${data.accountId}`),
+      });
+    }
+  }, [data.accountId, data.displayName, location.pathname, navigate, setPlayer]);
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const bannerVisible = isSyncing || !!(showCompleteBanner && onCompleteBannerDismissed);
   const [bannerCollapsed, setBannerCollapsed] = useState(!bannerVisible);
@@ -581,6 +588,7 @@ export default function PlayerContent({
       />
     )
     : null;
+  const showMobilePageHeader = !hasFab || settings.showButtonsInHeaderMobile;
 
   return (
     <Page
@@ -589,7 +597,7 @@ export default function PlayerContent({
       scrollMaskOptions={{ disabled: true }}
       scrollStyle={pps.scrollArea}
       quickLinks={quickLinks.length > 0 ? pageQuickLinks : undefined}
-      before={
+      before={showMobilePageHeader ? (
         <PageHeader
           title={data.displayName}
           actions={(quickLinksAction || selectBtnMounted) ? (
@@ -607,7 +615,7 @@ export default function PlayerContent({
                   style={{
                     ...SELECT_PROFILE_ACTION_SLOT_STYLE,
                     maxWidth: selectBtnVisible
-                      ? (hasFab ? InstrumentSize.lg : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
+                      ? (hasFab ? Layout.pillButtonHeight : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
                       : 0,
                     opacity: selectBtnVisible ? 1 : 0,
                   }}
@@ -631,7 +639,7 @@ export default function PlayerContent({
             </div>
           ) : undefined}
         />
-      }
+      ) : undefined}
       after={<>
         {pendingSwitch ? (
           <ConfirmAlert

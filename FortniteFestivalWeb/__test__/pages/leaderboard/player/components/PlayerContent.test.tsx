@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { SettingsProvider } from '../../../../../src/contexts/SettingsContext';
 import { FeatureFlagsProvider } from '../../../../../src/contexts/FeatureFlagsContext';
 import { FestivalProvider } from '../../../../../src/contexts/FestivalContext';
@@ -12,8 +12,11 @@ import { PlayerDataProvider } from '../../../../../src/contexts/PlayerDataContex
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { stubMatchMedia, stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../../helpers/browserStubs';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
-import PlayerContent from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
+import PlayerContentBase from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
 import { SyncPhase } from '@festival/core';
+import { IconSize, Layout } from '@festival/theme';
+
+const PlayerContent = PlayerContentBase as unknown as (props: any) => React.JSX.Element;
 
 let mockIsWideDesktop = true;
 let mockHasFab = false;
@@ -120,7 +123,7 @@ function ShellInjector({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Providers({ children, accountId }: { children: React.ReactNode; accountId?: string }) {
+function Providers({ children, accountId, route = '/' }: { children: React.ReactNode; accountId?: string; route?: string }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return (
     <QueryClientProvider client={qc}>
@@ -133,7 +136,7 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
             <PlayerDataProvider accountId={accountId}>
               <ScrollContainerProvider>
               <ShellInjector>
-              <MemoryRouter>{children}</MemoryRouter>
+              <MemoryRouter initialEntries={[route]}>{children}</MemoryRouter>
               </ShellInjector>
               </ScrollContainerProvider>
             </PlayerDataProvider>
@@ -144,6 +147,17 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
       </FeatureFlagsProvider>
     </SettingsProvider>
     </QueryClientProvider>
+  );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  const preserveShellScroll = !!(location.state as { preserveShellScrollKey?: string } | null)?.preserveShellScrollKey;
+  return (
+    <>
+      <span data-testid="location-path">{location.pathname}</span>
+      <span data-testid="location-preserve-scroll">{String(preserveShellScroll)}</span>
+    </>
   );
 }
 
@@ -513,6 +527,34 @@ describe('PlayerContent', () => {
     });
   });
 
+  it('redirects to /statistics when selecting the viewed player as profile', async () => {
+    mockIsWideDesktop = false;
+    mockHasFab = false;
+
+    render(
+      <Providers route="/player/p1">
+        <LocationProbe />
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Player Profile' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path').textContent).toBe('/statistics');
+    });
+    expect(screen.getByTestId('location-preserve-scroll').textContent).toBe('true');
+
+    expect(JSON.parse(localStorage.getItem('fst:trackedPlayer') ?? 'null')).toMatchObject({
+      accountId: 'p1',
+      displayName: 'TestPlayer',
+    });
+  });
+
   it('renders a labeled quick links trigger on mobile using the same pill style', async () => {
     mockIsWideDesktop = false;
     mockHasFab = true;
@@ -536,6 +578,64 @@ describe('PlayerContent', () => {
       paddingLeft: '12px',
       paddingRight: '12px',
     });
+  });
+
+  it('renders Select Player Profile on mobile as a compact purple circle aligned to Quick Links', async () => {
+    mockIsWideDesktop = false;
+    mockHasFab = true;
+
+    render(
+      <Providers>
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+    });
+
+    const selectButton = screen.getByRole('button', { name: 'Select Player Profile' });
+    const selectButtonStyle = selectButton.getAttribute('style') ?? '';
+    expect(selectButtonStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(selectButtonStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
+    expect(selectButtonStyle).toContain('border-radius: 999px');
+    expect(selectButton.className).toContain('profileCircleBreathe');
+
+    const selectIcon = selectButton.querySelector('svg');
+    expect(selectIcon).not.toBeNull();
+    expect(selectIcon).toHaveAttribute('height', `${IconSize.action}`);
+    expect(selectIcon).toHaveAttribute('width', `${IconSize.action}`);
+
+    expect(screen.getByTestId('player-select-profile-slot')).toHaveStyle({
+      maxWidth: `${Layout.pillButtonHeight}px`,
+      opacity: '1',
+    });
+
+    const actionButtons = Array.from(screen.getByTestId('player-header-actions').querySelectorAll('button'));
+    expect(actionButtons).toHaveLength(2);
+    expect(actionButtons[0]).toHaveAccessibleName('Select Player Profile');
+    expect(actionButtons[1]).toHaveAccessibleName('Quick Links');
+  });
+
+  it('hides the mobile player header actions when the setting is off', async () => {
+    mockIsWideDesktop = false;
+    mockHasFab = true;
+    localStorage.setItem('fst:appSettings', JSON.stringify({ showButtonsInHeaderMobile: false }));
+
+    render(
+      <Providers accountId="p1">
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('player-section-top-songs')).toBeDefined();
+    });
+
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select Player Profile' })).toBeNull();
+    expect(screen.queryByTestId('player-header-actions')).toBeNull();
   });
 
   it('shows the bands quick link only when the bands section is enabled', async () => {
