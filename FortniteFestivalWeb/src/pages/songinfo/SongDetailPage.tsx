@@ -184,8 +184,7 @@ export default function SongDetailPage() {
       );
     });
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- cached/leewayParam intentionally omitted
-  }, [songId]);
+  }, [songId, leewayParam]);
   /* v8 ignore stop */
 
   // Clear the cache-skip flag after all fetch effects have had a chance to check it.
