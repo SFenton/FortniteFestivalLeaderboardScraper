@@ -405,7 +405,6 @@ export default function RivalsPage() {
         icon={<IoCompass size={Size.iconAction} />}
         label={t('rivals.quickLinks')}
         onClick={openQuickLinks}
-        active={quickLinksOpen}
       />
     )
     : null;

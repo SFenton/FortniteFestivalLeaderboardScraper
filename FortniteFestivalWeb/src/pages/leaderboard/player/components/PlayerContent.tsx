@@ -604,7 +604,6 @@ export default function PlayerContent({
           icon={<IoCompass size={QUICK_LINK_PILL_ICON_SIZE} />}
           label={quickLinksTitle}
           onClick={openQuickLinks}
-          active={quickLinksOpen}
         />
       ))
     : null;
