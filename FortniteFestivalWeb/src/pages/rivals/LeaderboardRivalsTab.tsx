@@ -19,8 +19,7 @@ import fx from '../../styles/effects.module.css';
 
 // Module-level cache for instant back-navigation
 let _cachedInstrumentRivals: InstrumentLeaderboardRivals[] = [];
-let _cachedAccountId: string | null = null;
-let _cachedRankBy: string | null = null;
+let _cachedLeaderboardKey: string | null = null;
 
 type InstrumentLeaderboardRivals = {
   instrument: ServerInstrumentKey;
@@ -40,10 +39,9 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
   const navigate = useNavigate();
   const { settings } = useSettings();
   const activeInstruments = visibleInstruments(settings);
+  const leaderboardScopeKey = `${accountId}:${rankBy}:${activeInstruments.join(',')}`;
 
-  const hasCached = accountId === _cachedAccountId
-    && rankBy === _cachedRankBy
-    && _cachedInstrumentRivals.length > 0;
+  const hasCached = leaderboardScopeKey === _cachedLeaderboardKey && _cachedInstrumentRivals.length > 0;
 
   const [instrumentRivals, setInstrumentRivals] = useState<InstrumentLeaderboardRivals[]>(
     hasCached ? _cachedInstrumentRivals : [],
@@ -91,10 +89,9 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
   // Persist to module cache
   useEffect(() => {
     if (!allReady || !accountId) return;
-    _cachedAccountId = accountId;
-    _cachedRankBy = rankBy;
+    _cachedLeaderboardKey = leaderboardScopeKey;
     _cachedInstrumentRivals = instrumentRivals;
-  }, [allReady, accountId, rankBy, instrumentRivals]);
+  }, [allReady, accountId, leaderboardScopeKey, instrumentRivals]);
 
   const { next: nextStagger, clearAnim } = useStagger(shouldStagger);
   const shared = useRivalsSharedStyles();

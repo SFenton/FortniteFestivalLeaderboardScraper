@@ -39,7 +39,7 @@ import RankByModal from '../leaderboards/modals/RankByModal';
 let _cachedInstrumentRivals: InstrumentRivals[] = [];
 let _cachedComboRivals: RivalsListResponse | null = null;
 let _cachedComputedAt: string | null = null;
-let _cachedAccountId: string | null = null;
+let _cachedRivalsKey: string | null = null;
 
 type InstrumentRivals = {
   instrument: ServerInstrumentKey;
@@ -97,13 +97,14 @@ export default function RivalsPage() {
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
+  const rivalsScopeKey = `${accountId ?? ''}:${activeInstruments.join(',')}:${combo ?? 'none'}`;
   const noRivalsSubtitle = useMemo(() => {
     if (activeInstruments.length === 0) return undefined;
     return t(activeInstruments.length === 1 ? 'rivals.noRivalsSubtitleSingle' : 'rivals.noRivalsSubtitlePlural');
   }, [activeInstruments.length, t]);
 
   // Data state: initialize from cache when returning to same account
-  const hasCachedData = accountId === _cachedAccountId && _cachedInstrumentRivals.length > 0;
+  const hasCachedData = rivalsScopeKey === _cachedRivalsKey && _cachedInstrumentRivals.length > 0;
 
   const [instrumentRivals, setInstrumentRivals] = useState<InstrumentRivals[]>(hasCachedData ? _cachedInstrumentRivals : []);
   const [comboRivals, setComboRivals] = useState<RivalsListResponse | null>(hasCachedData ? _cachedComboRivals : null);
@@ -221,7 +222,7 @@ export default function RivalsPage() {
   // Persist data to module-level cache for instant back-nav
   useEffect(() => {
     if (!allReady || !accountId) return;
-    _cachedAccountId = accountId;
+    _cachedRivalsKey = rivalsScopeKey;
     _cachedInstrumentRivals = instrumentRivals;
     _cachedComboRivals = comboRivals;
     _cachedComputedAt = computedAt;
@@ -271,7 +272,7 @@ export default function RivalsPage() {
   }, [instrumentRivals]);
   /* v8 ignore stop */
 
-  const { phase, shouldStagger } = usePageTransition(`rivals:${accountId}`, allReady, hasCachedData);
+  const { phase, shouldStagger } = usePageTransition(`rivals:${rivalsScopeKey}`, allReady, hasCachedData);
   const { forDelay: stagger, next: nextStagger, clearAnim } = useStagger(shouldStagger);
   const shared = useRivalsSharedStyles();
   const styles = useMemo(() => ({

@@ -8,6 +8,8 @@ export interface PageHeaderProps {
   subtitle?: string;
   /** Optional action elements (pills, buttons) rendered on the right. */
   actions?: ReactNode;
+  /** Vertical alignment for the actions slot relative to the title block. */
+  actionsAlign?: 'center' | 'start';
   /** Extra inline styles (e.g. for stagger animation). */
   style?: CSSProperties;
   /** Animation end handler. */
@@ -26,6 +28,7 @@ export default function PageHeader({
   title,
   subtitle,
   actions,
+  actionsAlign = 'center',
   style,
   onAnimationEnd,
   className,
@@ -45,7 +48,7 @@ export default function PageHeader({
           {subtitle && <div style={s.subtitle}>{subtitle}</div>}
         </div>
         )}
-        {actions && <div style={s.actions}>{actions}</div>}
+        {actions && <div style={actionsAlign === 'start' ? s.actionsTop : s.actions}>{actions}</div>}
       </div>
     </div>
   );
@@ -84,6 +87,13 @@ function useStyles() {
       ...flexRow,
       gap: Gap.md,
       flexShrink: 0,
+      alignSelf: 'center',
+    } as CSSProperties,
+    actionsTop: {
+      ...flexRow,
+      gap: Gap.md,
+      flexShrink: 0,
+      alignSelf: 'flex-start',
     } as CSSProperties,
   }), []);
 }

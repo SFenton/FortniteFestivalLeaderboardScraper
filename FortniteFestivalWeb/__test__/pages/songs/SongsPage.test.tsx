@@ -455,6 +455,7 @@ describe('SongsPage quick links', () => {
     await settleSongsPage();
 
     const trigger = await screen.findByRole('button', { name: 'Quick Links' });
+    expect(trigger.parentElement).toHaveStyle({ alignSelf: 'flex-start' });
     await act(async () => { fireEvent.click(trigger); });
 
     expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();

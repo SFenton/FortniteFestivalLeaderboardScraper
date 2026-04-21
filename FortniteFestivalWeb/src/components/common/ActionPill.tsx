@@ -6,7 +6,7 @@
 import type { CSSProperties } from 'react';
 import { Colors, Gap, Radius, Font, Weight, Layout, frostedCard, flexCenter, transitions, transition, TRANSITION_MS } from '@festival/theme';
 
-const PILL_TRANSITION = transitions(
+export const ACTION_PILL_TRANSITION = transitions(
   transition('background-color', TRANSITION_MS),
   transition('border-color', TRANSITION_MS),
   transition('color', TRANSITION_MS),
@@ -28,7 +28,7 @@ const pillStyle: CSSProperties = {
   fontSize: Font.sm,
   ...frostedCard,
   color: Colors.textPrimary,
-  transition: PILL_TRANSITION,
+  transition: ACTION_PILL_TRANSITION,
 };
 
 const pillActiveOverrides: CSSProperties = {
@@ -58,9 +58,11 @@ export interface ActionPillProps {
   className?: string;
   /** Extra style (e.g. for stagger animations). */
   style?: React.CSSProperties;
+  /** Optional tab index override. */
+  tabIndex?: number;
 }
 
-export function ActionPill({ icon, label, onClick, active, dot, className, style }: ActionPillProps) {
+export function ActionPill({ icon, label, onClick, active, dot, className, style, tabIndex }: ActionPillProps) {
   const merged = active ? { ...pillStyle, ...pillActiveOverrides, ...style } : { ...pillStyle, ...style };
 
   return (
@@ -70,6 +72,7 @@ export function ActionPill({ icon, label, onClick, active, dot, className, style
       onClick={onClick}
       title={label}
       aria-label={label}
+      tabIndex={tabIndex}
     >
       {icon}
       <span>{label}</span>

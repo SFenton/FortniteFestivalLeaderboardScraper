@@ -54,10 +54,15 @@ export default function AllRivalsPage() {
   const isCombo = category === 'combo';
   const isInstrument = VALID_INSTRUMENTS.has(category);
   const instrument = isInstrument ? (category as ServerInstrumentKey) : null;
+  const rivalsScopeKey = isCommon
+    ? activeInstruments.join(',')
+    : isCombo
+      ? (combo ?? 'none')
+      : (instrument ?? 'none');
 
   // ─── Data state (initialize from cache when returning) ─────
 
-  const cacheKey = `${accountId}:${category}:${mode ?? 'song'}`;
+  const cacheKey = `${accountId ?? ''}:${category}:${mode ?? 'song'}:${isLeaderboard ? rankBy : 'song'}:${rivalsScopeKey}`;
   const hasCachedData = cacheKey === _cachedAllRivalsKey;
   const [instrumentData, setInstrumentData] = useState<Map<ServerInstrumentKey, RivalsListResponse>>(hasCachedData ? _cachedInstrumentData : new Map());
   const [singleData, setSingleData] = useState<RivalsListResponse | null>(hasCachedData ? _cachedSingleData : null);

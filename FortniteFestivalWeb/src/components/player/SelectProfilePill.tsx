@@ -7,10 +7,11 @@
 import { useMemo, type CSSProperties } from 'react';
 import { IoPersonAdd } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
+import { ActionPill, ACTION_PILL_TRANSITION } from '../common/ActionPill';
 import {
-  Colors, IconSize, Font, Weight, Gap, Radius, InstrumentSize,
-  Display, Position, Align, Justify, Cursor, Isolation, PointerEvents, WhiteSpace, CssProp,
-  padding, transition, transitions, scale, flexCenter,
+  Colors, IconSize, InstrumentSize, Radius,
+  Position, Align, Cursor, Isolation, PointerEvents, CssProp,
+  transition, transitions, scale, flexCenter,
   purpleGlass,
   TRANSITION_MS, PILL_SCALE_HIDDEN,
 } from '@festival/theme';
@@ -42,35 +43,25 @@ export function SelectProfilePill({ visible, onClick, isMobile }: SelectProfileP
   }
 
   return (
-    <button type="button" style={s.pill} onClick={onClick} tabIndex={visible ? 0 : -1}>
-      <IoPersonAdd size={IconSize.xs} />
-      {t('common.selectPlayerProfile')}
-    </button>
+    <ActionPill
+      icon={<IoPersonAdd size={IconSize.action} />}
+      label={t('common.selectPlayerProfile')}
+      onClick={onClick}
+      style={s.pill}
+      tabIndex={visible ? 0 : -1}
+    />
   );
 }
 
 function useStyles(visible: boolean, isMobile?: boolean) {
   return useMemo(() => ({
     pill: {
-      // pillBase layout
-      display: Display.flex,
-      alignItems: Align.center,
-      justifyContent: Justify.center,
-      position: Position.relative,
-      width: 'auto',
-      gap: Gap.md,
-      height: IconSize.xl,
-      borderRadius: Radius.full,
-      cursor: Cursor.pointer,
-      fontWeight: Weight.semibold,
-      whiteSpace: WhiteSpace.nowrap,
-      // purpleGlass
       ...purpleGlass,
-      // pill-specific
-      padding: padding(0, IconSize.md, 0, Gap.section),
+      position: Position.relative,
+      backgroundImage: 'none',
       color: Colors.textPrimary,
-      fontSize: Font.lg,
       transition: transitions(
+        ACTION_PILL_TRANSITION,
         transition(CssProp.opacity, TRANSITION_MS),
         transition(CssProp.transform, TRANSITION_MS),
       ),

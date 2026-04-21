@@ -823,17 +823,13 @@ export default function SongsPage() {
   });
 
   const handleSongQuickLinkSelect = useCallback((link: SongQuickLink) => {
+    handleQuickLinkSelect(link, { skipScroll: true });
     virtualizer.scrollToIndex(link.rowIndex, { align: 'start' });
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        handleQuickLinkSelect(link);
-      });
-    });
   }, [handleQuickLinkSelect, virtualizer]);
 
   const handleModalQuickLinkSelect = useCallback((link: SongQuickLink) => {
-    closeQuickLinks();
     handleSongQuickLinkSelect(link);
+    closeQuickLinks();
   }, [closeQuickLinks, handleSongQuickLinkSelect]);
 
   const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {

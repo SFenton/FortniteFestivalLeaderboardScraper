@@ -220,6 +220,46 @@ describe('RivalsPage', () => {
 
     expect(screen.getByText('Play more songs on your selected instruments to generate a roster of Rivals.')).toBeTruthy();
   });
+
+  it('refetches newly enabled instruments after remounting with changed settings', async () => {
+    const accountId = 'test-rivals-settings-remount';
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId, displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    const firstRender = renderPage('/rivals', <RivalsPage />, '/rivals', accountId);
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    firstRender.unmount();
+
+    mockApi.getRivalsList.mockClear();
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: false,
+      showDrums: true,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    renderPage('/rivals', <RivalsPage />, '/rivals', accountId);
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith(accountId, 'Solo_Drums');
+  });
 });
 
 describe('RivalsPage quick links', () => {
@@ -399,5 +439,45 @@ describe('AllRivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(container.querySelector('div')).toBeTruthy();
+  });
+
+  it('refetches common rivals when enabled instruments change between remounts', async () => {
+    const accountId = 'test-all-rivals-settings-remount';
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId, displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: true,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    const firstRender = renderPage('/rivals/all?category=common', <AllRivalsPage />, '/rivals/all', accountId);
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    firstRender.unmount();
+
+    mockApi.getRivalsList.mockClear();
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: true,
+      showDrums: true,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    renderPage('/rivals/all?category=common', <AllRivalsPage />, '/rivals/all', accountId);
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith(accountId, 'Solo_Drums');
   });
 });
