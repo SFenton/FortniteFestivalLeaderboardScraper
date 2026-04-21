@@ -69,7 +69,7 @@ export function PageQuickLinksRail<T extends PageQuickLinkItem>({ quickLinks }: 
   const testIdPrefix = quickLinks.testIdPrefix ?? 'page';
   const revealDelayMs = quickLinks.desktopRailRevealDelayMs ?? 0;
   const [activeRevealDelayMs, setActiveRevealDelayMs] = useState(revealDelayMs > 0 ? revealDelayMs : 0);
-  const [railRevealed, setRailRevealed] = useState(revealDelayMs <= 0);
+  const [railRevealed, setRailRevealed] = useState(false);
   const previousRevealDelayMsRef = useRef(revealDelayMs);
 
   useEffect(() => {
@@ -77,8 +77,8 @@ export function PageQuickLinksRail<T extends PageQuickLinkItem>({ quickLinks }: 
     previousRevealDelayMsRef.current = revealDelayMs;
 
     if (revealDelayMs <= 0) {
-      if (activeRevealDelayMs <= 0) {
-        setRailRevealed(true);
+      if (!railRevealed && activeRevealDelayMs > 0) {
+        setActiveRevealDelayMs(0);
       }
       return;
     }
@@ -87,10 +87,10 @@ export function PageQuickLinksRail<T extends PageQuickLinkItem>({ quickLinks }: 
       setActiveRevealDelayMs(revealDelayMs);
       setRailRevealed(false);
     }
-  }, [activeRevealDelayMs, revealDelayMs]);
+  }, [activeRevealDelayMs, railRevealed, revealDelayMs]);
 
   useEffect(() => {
-    if (railRevealed || activeRevealDelayMs <= 0) {
+    if (railRevealed) {
       return;
     }
 
@@ -109,7 +109,7 @@ export function PageQuickLinksRail<T extends PageQuickLinkItem>({ quickLinks }: 
     setRailRevealed(true);
   }, []);
 
-  const railStyle = !railRevealed && activeRevealDelayMs > 0
+  const railStyle = !railRevealed
     ? {
       ...pps.quickLinksOverlay,
       opacity: 0,

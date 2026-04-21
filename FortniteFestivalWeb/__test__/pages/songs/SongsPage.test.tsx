@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
-import { Colors, Gap, Layout } from '@festival/theme';
+import { Colors, Gap, Layout, FADE_DURATION } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
@@ -486,6 +486,39 @@ describe('SongsPage quick links', () => {
     expect(portal).toContainElement(rail);
     expect(rail).toHaveStyle({ width: `${Layout.sidebarWidth}px` });
     expect(nav).toHaveStyle({ overscrollBehavior: 'contain' });
+  });
+
+  it('keeps the delayed rail fade armed until the wide desktop fade completes', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    clearPageTransitionCache('songs');
+
+    renderSongsPage('/songs');
+    await settleSongsPage();
+
+    const rail = screen.getByTestId('songs-quick-links-rail');
+    const initialAnimation = rail.style.animation;
+    const delayMatches = initialAnimation.match(/(\d+)ms/g) ?? [];
+    const initialDelayMs = Number(delayMatches[1]?.replace('ms', ''));
+
+    expect(initialAnimation).toContain('fadeIn');
+    expect(initialDelayMs).toBeGreaterThan(0);
+    expect(rail.style.pointerEvents).toBe('none');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(initialDelayMs + 10);
+    });
+
+    const railBeforeFadeCompletes = screen.getByTestId('songs-quick-links-rail');
+    expect(railBeforeFadeCompletes.style.animation).toBe(initialAnimation);
+    expect(railBeforeFadeCompletes.style.pointerEvents).toBe('none');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FADE_DURATION + 50);
+    });
+
+    const revealedRail = screen.getByTestId('songs-quick-links-rail');
+    expect(revealedRail.style.animation).toBe('');
+    expect(revealedRail.style.pointerEvents).not.toBe('none');
   });
 
   it('updates the wide desktop highlight for offscreen virtualized quick-link targets', async () => {

@@ -760,12 +760,16 @@ export default function SongsPage() {
     () => shouldStagger ? ((maxVisibleRows + 1) * STAGGER_INTERVAL) + FADE_DURATION : 0,
     [maxVisibleRows, shouldStagger],
   );
+  const staggerRetireDelayMs = useMemo(
+    () => desktopRailRevealDelayMs + (isWideDesktop && hasQuickLinkSections ? FADE_DURATION : 0),
+    [desktopRailRevealDelayMs, hasQuickLinkSections, isWideDesktop],
+  );
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
-    const totalAnimTime = desktopRailRevealDelayMs;
+    const totalAnimTime = staggerRetireDelayMs;
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
-  }, [desktopRailRevealDelayMs, loadPhase, shouldStagger]);
+  }, [loadPhase, shouldStagger, staggerRetireDelayMs]);
   /* v8 ignore stop */
 
   const scrollContainerRef = useScrollContainer();

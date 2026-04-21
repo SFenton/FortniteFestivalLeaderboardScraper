@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { act, createEvent, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import React, { type ReactNode } from 'react';
-import { Layout, MaxWidth } from '@festival/theme';
+import { FADE_DURATION, Layout, MaxWidth } from '@festival/theme';
 import Page, { pageCss } from '../../../src/pages/Page';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../src/contexts/ScrollContainerContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
@@ -193,6 +193,42 @@ describe('Page', () => {
     expect(rail.style.animation).toContain('750ms');
   });
 
+  it('fades the rail in immediately when mounted with a zero reveal delay', async () => {
+    vi.useFakeTimers();
+    try {
+      setViewportQueries({ mobile: false, wide: true });
+
+      const quickLinks = {
+        title: 'Quick Links',
+        items: [{ id: 'alpha', label: 'Alpha', landmarkLabel: 'Alpha', icon: <span>A</span> }],
+        activeItemId: 'alpha',
+        visible: false,
+        onOpen: () => {},
+        onClose: () => {},
+        onSelect: () => {},
+        desktopRailRevealDelayMs: 0,
+        testIdPrefix: 'page',
+      };
+
+      render(<PageWrapper quickLinks={quickLinks}><div>Page content</div></PageWrapper>);
+
+      const rail = screen.getByTestId('page-quick-links-rail');
+      expect(rail).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+      expect(rail.style.animation).toContain('fadeIn');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FADE_DURATION + 50);
+      });
+
+      const revealedRail = screen.getByTestId('page-quick-links-rail');
+      expect(revealedRail.style.pointerEvents).not.toBe('none');
+      expect(revealedRail.style.opacity).not.toBe('0');
+      expect(revealedRail.style.animation).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the rail interactive after reveal and updates the active item without re-hiding', async () => {
     vi.useFakeTimers();
     try {
@@ -219,7 +255,7 @@ describe('Page', () => {
       expect(rail).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(1150);
+        await vi.advanceTimersByTimeAsync(750 + FADE_DURATION + 50);
       });
 
       const revealedRail = screen.getByTestId('page-quick-links-rail');
@@ -240,6 +276,50 @@ describe('Page', () => {
       expect(updatedRail.style.animation).toBe('');
       expect(screen.getByTestId('page-quick-link-beta')).toHaveAttribute('aria-current', 'location');
       expect(screen.getByTestId('page-quick-link-alpha')).not.toHaveAttribute('aria-current');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts an immediate fade when a pending reveal delay collapses to zero', async () => {
+    vi.useFakeTimers();
+    try {
+      setViewportQueries({ mobile: false, wide: true });
+
+      const quickLinks = {
+        title: 'Quick Links',
+        items: [{ id: 'alpha', label: 'Alpha', landmarkLabel: 'Alpha', icon: <span>A</span> }],
+        activeItemId: 'alpha',
+        visible: false,
+        onOpen: () => {},
+        onClose: () => {},
+        onSelect: () => {},
+        desktopRailRevealDelayMs: 750,
+        testIdPrefix: 'page',
+      };
+
+      const { rerender } = render(<PageWrapper quickLinks={quickLinks}><div>Page content</div></PageWrapper>);
+
+      expect(screen.getByTestId('page-quick-links-rail')).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+
+      rerender(
+        <PageWrapper quickLinks={{ ...quickLinks, desktopRailRevealDelayMs: 0 }}>
+          <div>Page content</div>
+        </PageWrapper>,
+      );
+
+      const rail = screen.getByTestId('page-quick-links-rail');
+      expect(rail).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+      expect(rail.style.animation).toContain('fadeIn');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FADE_DURATION + 50);
+      });
+
+      const revealedRail = screen.getByTestId('page-quick-links-rail');
+      expect(revealedRail.style.pointerEvents).not.toBe('none');
+      expect(revealedRail.style.opacity).not.toBe('0');
+      expect(revealedRail.style.animation).toBe('');
     } finally {
       vi.useRealTimers();
     }
