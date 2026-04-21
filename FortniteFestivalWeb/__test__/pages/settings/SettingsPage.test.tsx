@@ -121,7 +121,7 @@ describe('SettingsPage', () => {
   it('renders content on mobile', () => {
     setViewportQueries({ mobile: true, wide: false });
     renderSettings();
-    expect(screen.getByRole('heading', { name: 'Settings' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
     expect(screen.getByText('App Settings')).toBeDefined();
   });

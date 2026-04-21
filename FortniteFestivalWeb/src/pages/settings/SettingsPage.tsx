@@ -372,7 +372,7 @@ export default function SettingsPage() {
       scrollRestoreKey="settings"
       containerStyle={st.container}
       quickLinks={pageQuickLinks}
-      before={<PageHeader title={t('settings.title')} style={headerStagger} actions={compactQuickLinksAction} />}
+      before={<PageHeader title={isMobile ? undefined : t('settings.title')} style={headerStagger} actions={compactQuickLinksAction} />}
       after={<>
         {showResetConfirm && (
           /* v8 ignore start — confirm dialog callbacks */
