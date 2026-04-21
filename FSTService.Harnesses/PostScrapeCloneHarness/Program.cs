@@ -1084,6 +1084,11 @@ static HarnessServices CreateHarnessServices(
         dataSource,
         Options.Create(featureOptions));
     persistence.Initialize();
+    var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(
+        persistence,
+        metaDb,
+        Options.Create(new ScraperOptions()),
+        loggerFactory.CreateLogger<LeaderboardRivalsCalculator>());
 
     return new HarnessServices
     {
@@ -1093,6 +1098,7 @@ static HarnessServices CreateHarnessServices(
         PathStore = new PathDataStore(dataSource, loggerFactory.CreateLogger<PathDataStore>()),
         Progress = new ScrapeProgressTracker(),
         Features = featureOptions,
+        LeaderboardRivalsCalculator = leaderboardRivalsCalculator,
     };
 }
 
@@ -2217,6 +2223,7 @@ sealed class HarnessServices : IDisposable
     public PathDataStore PathStore { get; init; } = null!;
     public ScrapeProgressTracker Progress { get; init; } = null!;
     public FeatureOptions Features { get; init; } = null!;
+    public LeaderboardRivalsCalculator LeaderboardRivalsCalculator { get; init; } = null!;
 
     public void Dispose()
     {

@@ -37,7 +37,7 @@ public sealed class BandRankingRepairServiceTests : IDisposable
     }
 
     [Fact]
-    public void Rebuild_PopulatesBandRankingTables()
+    public void Rebuild_PopulatesBandRankingTables_UsesDefaultMonolithicWriteModeWithoutAnalyze()
     {
         SeedSongs("song_0", "song_1");
         SeedBandEntries();
@@ -51,7 +51,8 @@ public sealed class BandRankingRepairServiceTests : IDisposable
         Assert.Equal(3, result.After.OverallTeams);
         Assert.True(result.After.ComboCatalogEntries > 0);
         Assert.NotNull(result.Metrics);
-        Assert.Equal(BandTeamRankingWriteMode.ComboBatched, result.Metrics!.WriteMode);
+        Assert.Equal(BandTeamRankingWriteMode.Monolithic, result.Metrics!.WriteMode);
+        Assert.Equal(0, result.Metrics.AnalyzeResultsMs);
         Assert.True(result.Metrics.ResultRowCount > 0);
     }
 

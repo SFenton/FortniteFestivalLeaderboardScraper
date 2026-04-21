@@ -1244,22 +1244,43 @@ public sealed class MetaDatabase : IMetaDatabase
         var resolvedOptions = ResolveBandTeamRankingRebuildOptions(options);
         var expectedMembers = BandInstrumentMapping.ExpectedMemberCount(bandType);
         var totalSw = Stopwatch.StartNew();
+        var lastCompletedStage = "open_connection";
+        var currentStage = resolvedOptions.DisableSynchronousCommit
+            ? "disable_synchronous_commit"
+            : "materialize_results";
+        var syncCommitMs = 0d;
+        var materializeMs = 0d;
+        var analyzeMs = 0d;
+        var distinctComboCount = 0;
+        var deleteExistingMs = 0d;
+        var insertRankingsMs = 0d;
+        var insertStatsMs = 0d;
+        var resultRowCount = 0;
+        var statsRowCount = 0;
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
 
-        if (resolvedOptions.DisableSynchronousCommit)
+        try
         {
-            using var cmd = conn.CreateCommand();
-            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-            cmd.CommandText = "SET LOCAL synchronous_commit = off";
-            cmd.ExecuteNonQuery();
-        }
+            if (resolvedOptions.DisableSynchronousCommit)
+            {
+                var syncCommitSw = Stopwatch.StartNew();
+                using var cmd = conn.CreateCommand();
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = "SET LOCAL synchronous_commit = off";
+                cmd.ExecuteNonQuery();
+                syncCommitSw.Stop();
+                syncCommitMs = RoundElapsed(syncCommitSw);
+                LogBandRebuildStage(bandType, resolvedOptions, "disable_synchronous_commit", syncCommitMs);
+                lastCompletedStage = "disable_synchronous_commit";
+            }
 
-        var materializeSw = Stopwatch.StartNew();
-        using (var cmd = conn.CreateCommand())
-        {
-            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-            cmd.CommandText = @"
+            currentStage = "materialize_results";
+            var materializeSw = Stopwatch.StartNew();
+            using (var cmd = conn.CreateCommand())
+            {
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = @"
                 CREATE TEMP TABLE _band_rank_results ON COMMIT DROP AS
                 WITH NormalizedEntries AS (
                     SELECT
@@ -1483,33 +1504,38 @@ public sealed class MetaDatabase : IMetaDatabase
                     raw_weighted_rating,
                     @now AS computed_at
                 FROM ComboRanked;";
-            cmd.Parameters.AddWithValue("bandType", bandType);
-            cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs);
-            cmd.Parameters.AddWithValue("expectedMembers", expectedMembers);
-            cmd.Parameters.AddWithValue("m", credibilityThreshold);
-            cmd.Parameters.AddWithValue("c", populationMedian);
-            cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-            cmd.ExecuteNonQuery();
-        }
-        materializeSw.Stop();
+                cmd.Parameters.AddWithValue("bandType", bandType);
+                cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs);
+                cmd.Parameters.AddWithValue("expectedMembers", expectedMembers);
+                cmd.Parameters.AddWithValue("m", credibilityThreshold);
+                cmd.Parameters.AddWithValue("c", populationMedian);
+                cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+                cmd.ExecuteNonQuery();
+            }
+            materializeSw.Stop();
+            materializeMs = RoundElapsed(materializeSw);
+            LogBandRebuildStage(bandType, resolvedOptions, "materialize_results", materializeMs);
+            lastCompletedStage = "materialize_results";
 
-        var analyzeMs = 0d;
-        if (resolvedOptions.AnalyzeStagingTable)
-        {
-            var analyzeSw = Stopwatch.StartNew();
-            using var cmd = conn.CreateCommand();
-            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-            cmd.CommandText = "ANALYZE _band_rank_results";
-            cmd.ExecuteNonQuery();
-            analyzeSw.Stop();
-            analyzeMs = RoundElapsed(analyzeSw);
-        }
+            if (resolvedOptions.AnalyzeStagingTable)
+            {
+                currentStage = "analyze_results";
+                var analyzeSw = Stopwatch.StartNew();
+                using var cmd = conn.CreateCommand();
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = "ANALYZE _band_rank_results";
+                cmd.ExecuteNonQuery();
+                analyzeSw.Stop();
+                analyzeMs = RoundElapsed(analyzeSw);
+                LogBandRebuildStage(bandType, resolvedOptions, "analyze_results", analyzeMs);
+                lastCompletedStage = "analyze_results";
+            }
 
-        int distinctComboCount;
-        using (var cmd = conn.CreateCommand())
-        {
-            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-            cmd.CommandText = @"
+            currentStage = "count_distinct_combos";
+            using (var cmd = conn.CreateCommand())
+            {
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = @"
                 SELECT COUNT(*)::INT
                 FROM (
                     SELECT combo_id
@@ -1517,73 +1543,124 @@ public sealed class MetaDatabase : IMetaDatabase
                     WHERE ranking_scope = 'combo'
                     GROUP BY combo_id
                 ) combos;";
-            distinctComboCount = Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
-        }
+                distinctComboCount = Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
+            }
+            LogBandRebuildStage(bandType, resolvedOptions, "count_distinct_combos", 0d, distinctComboCount);
+            lastCompletedStage = "count_distinct_combos";
 
-        var deleteSw = Stopwatch.StartNew();
-        using (var cmd = conn.CreateCommand())
-        {
-            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-            cmd.CommandText = "DELETE FROM band_team_ranking_stats WHERE band_type = @bandType; DELETE FROM band_team_rankings WHERE band_type = @bandType;";
-            cmd.Parameters.AddWithValue("bandType", bandType);
-            cmd.ExecuteNonQuery();
-        }
-        deleteSw.Stop();
+            currentStage = "delete_existing";
+            var deleteSw = Stopwatch.StartNew();
+            using (var cmd = conn.CreateCommand())
+            {
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = "DELETE FROM band_team_ranking_stats WHERE band_type = @bandType; DELETE FROM band_team_rankings WHERE band_type = @bandType;";
+                cmd.Parameters.AddWithValue("bandType", bandType);
+                cmd.ExecuteNonQuery();
+            }
+            deleteSw.Stop();
+            deleteExistingMs = RoundElapsed(deleteSw);
+            LogBandRebuildStage(bandType, resolvedOptions, "delete_existing", deleteExistingMs);
+            lastCompletedStage = "delete_existing";
 
-        var insertRankingsSw = Stopwatch.StartNew();
-        var resultRowCount = resolvedOptions.WriteMode switch
-        {
-            BandTeamRankingWriteMode.Monolithic => InsertBandTeamRankingRowsMonolithic(conn, tx, resolvedOptions),
-            BandTeamRankingWriteMode.ComboBatched => InsertBandTeamRankingRowsComboBatched(conn, tx, resolvedOptions),
-            _ => throw new ArgumentOutOfRangeException(nameof(resolvedOptions.WriteMode), resolvedOptions.WriteMode, "Unsupported band ranking write mode."),
-        };
-        insertRankingsSw.Stop();
+            currentStage = "insert_rankings";
+            var insertRankingsSw = Stopwatch.StartNew();
+            resultRowCount = resolvedOptions.WriteMode switch
+            {
+                BandTeamRankingWriteMode.Monolithic => InsertBandTeamRankingRowsMonolithic(conn, tx, resolvedOptions),
+                BandTeamRankingWriteMode.ComboBatched => InsertBandTeamRankingRowsComboBatched(conn, tx, resolvedOptions),
+                _ => throw new ArgumentOutOfRangeException(nameof(resolvedOptions.WriteMode), resolvedOptions.WriteMode, "Unsupported band ranking write mode."),
+            };
+            insertRankingsSw.Stop();
+            insertRankingsMs = RoundElapsed(insertRankingsSw);
+            LogBandRebuildStage(bandType, resolvedOptions, "insert_rankings", insertRankingsMs, rowCount: resultRowCount);
+            lastCompletedStage = "insert_rankings";
 
-        var insertStatsSw = Stopwatch.StartNew();
-        int statsRowCount;
-        using (var cmd = conn.CreateCommand())
-        {
-            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-            cmd.CommandText = @"
+            currentStage = "insert_stats";
+            var insertStatsSw = Stopwatch.StartNew();
+            using (var cmd = conn.CreateCommand())
+            {
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = @"
                 INSERT INTO band_team_ranking_stats (band_type, ranking_scope, combo_id, total_teams, computed_at)
                 SELECT band_type, ranking_scope, combo_id, COUNT(*), MAX(computed_at)
                 FROM _band_rank_results
                 GROUP BY band_type, ranking_scope, combo_id;";
-            statsRowCount = cmd.ExecuteNonQuery();
+                statsRowCount = cmd.ExecuteNonQuery();
+            }
+            insertStatsSw.Stop();
+            insertStatsMs = RoundElapsed(insertStatsSw);
+            LogBandRebuildStage(bandType, resolvedOptions, "insert_stats", insertStatsMs, rowCount: statsRowCount);
+            lastCompletedStage = "insert_stats";
+
+            currentStage = "commit";
+            tx.Commit();
+            LogBandRebuildStage(bandType, resolvedOptions, "commit", 0d);
+            lastCompletedStage = "commit";
+
+            totalSw.Stop();
+            var metrics = new BandTeamRankingRebuildMetrics(
+                bandType,
+                resolvedOptions.WriteMode,
+                resultRowCount,
+                statsRowCount,
+                distinctComboCount,
+                materializeMs,
+                analyzeMs,
+                deleteExistingMs,
+                insertRankingsMs,
+                insertStatsMs,
+                RoundElapsed(totalSw));
+
+            _log.LogInformation(
+                "Rebuilt band team rankings for {BandType} using {WriteMode}: rows={ResultRowCount}, stats={StatsRowCount}, combos={DistinctComboCount}, materializeMs={MaterializeResultsMs}, analyzeMs={AnalyzeResultsMs}, deleteMs={DeleteExistingMs}, insertMs={InsertRankingsMs}, statsMs={InsertStatsMs}, totalMs={TotalElapsedMs}",
+                metrics.BandType,
+                metrics.WriteMode,
+                metrics.ResultRowCount,
+                metrics.StatsRowCount,
+                metrics.DistinctComboCount,
+                metrics.MaterializeResultsMs,
+                metrics.AnalyzeResultsMs,
+                metrics.DeleteExistingMs,
+                metrics.InsertRankingsMs,
+                metrics.InsertStatsMs,
+                metrics.TotalElapsedMs);
+
+            return metrics;
         }
-        insertStatsSw.Stop();
+        catch
+        {
+            totalSw.Stop();
+            _log.LogWarning(
+                "Band team ranking rebuild failed for {BandType} using {WriteMode}: timeoutSeconds={CommandTimeoutSeconds}, lastCompletedStage={LastCompletedStage}, failingStage={FailingStage}, syncCommitMs={SyncCommitMs}, materializeMs={MaterializeResultsMs}, analyzeMs={AnalyzeResultsMs}, deleteMs={DeleteExistingMs}, insertMs={InsertRankingsMs}, statsMs={InsertStatsMs}, distinctCombos={DistinctComboCount}, resultRows={ResultRowCount}, statsRows={StatsRowCount}, totalMs={TotalElapsedMs}",
+                bandType,
+                resolvedOptions.WriteMode,
+                resolvedOptions.CommandTimeoutSeconds,
+                lastCompletedStage,
+                currentStage,
+                syncCommitMs,
+                materializeMs,
+                analyzeMs,
+                deleteExistingMs,
+                insertRankingsMs,
+                insertStatsMs,
+                distinctComboCount,
+                resultRowCount,
+                statsRowCount,
+                RoundElapsed(totalSw));
+            throw;
+        }
+    }
 
-        tx.Commit();
-
-        totalSw.Stop();
-        var metrics = new BandTeamRankingRebuildMetrics(
-            bandType,
-            resolvedOptions.WriteMode,
-            resultRowCount,
-            statsRowCount,
-            distinctComboCount,
-            RoundElapsed(materializeSw),
-            analyzeMs,
-            RoundElapsed(deleteSw),
-            RoundElapsed(insertRankingsSw),
-            RoundElapsed(insertStatsSw),
-            RoundElapsed(totalSw));
-
+    private void LogBandRebuildStage(string bandType, BandTeamRankingRebuildOptions options, string stage, double elapsedMs, int? rowCount = null)
+    {
         _log.LogInformation(
-            "Rebuilt band team rankings for {BandType} using {WriteMode}: rows={ResultRowCount}, stats={StatsRowCount}, combos={DistinctComboCount}, materializeMs={MaterializeResultsMs}, analyzeMs={AnalyzeResultsMs}, deleteMs={DeleteExistingMs}, insertMs={InsertRankingsMs}, statsMs={InsertStatsMs}, totalMs={TotalElapsedMs}",
-            metrics.BandType,
-            metrics.WriteMode,
-            metrics.ResultRowCount,
-            metrics.StatsRowCount,
-            metrics.DistinctComboCount,
-            metrics.MaterializeResultsMs,
-            metrics.AnalyzeResultsMs,
-            metrics.DeleteExistingMs,
-            metrics.InsertRankingsMs,
-            metrics.InsertStatsMs,
-            metrics.TotalElapsedMs);
-
-        return metrics;
+            "[BandRankings.Stage] band_type={BandType} write_mode={WriteMode} timeout_seconds={CommandTimeoutSeconds} stage={Stage} elapsed_ms={ElapsedMs} row_count={RowCount}",
+            bandType,
+            options.WriteMode,
+            options.CommandTimeoutSeconds,
+            stage,
+            elapsedMs,
+            rowCount?.ToString() ?? "-");
     }
 
     private static BandTeamRankingRebuildOptions ResolveBandTeamRankingRebuildOptions(BandTeamRankingRebuildOptions? options)

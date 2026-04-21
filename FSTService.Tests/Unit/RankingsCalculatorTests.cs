@@ -36,8 +36,7 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         _pathStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
 
-        _sut = new RankingsCalculator(_persistence, _metaFixture.Db,
-            _pathStore, new ScrapeProgressTracker(), Options.Create(new FeatureOptions()), Substitute.For<ILogger<RankingsCalculator>>());
+        _sut = CreateSut();
     }
 
     public void Dispose()
@@ -45,6 +44,17 @@ public sealed class RankingsCalculatorTests : IDisposable
         _persistence.Dispose();
         _metaFixture.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
+    }
+
+    private RankingsCalculator CreateSut(IMetaDatabase? metaDb = null, FeatureOptions? features = null)
+    {
+        return new RankingsCalculator(
+            _persistence,
+            metaDb ?? _metaFixture.Db,
+            _pathStore,
+            new ScrapeProgressTracker(),
+            Options.Create(features ?? new FeatureOptions()),
+            Substitute.For<ILogger<RankingsCalculator>>());
     }
 
     private static LeaderboardEntry MakeEntry(string accountId, int score,
@@ -694,6 +704,62 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.Empty(guitarDb.GetRankHistory("p1", 1));
     }
 
+    [Fact]
+    public async Task ComputeAllAsync_BandFailure_DoesNotBlockSnapshots()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_0",
+        [
+            MakeEntry("p1", 1000, rank: 1),
+            MakeEntry("p2", 900, rank: 2),
+        ]);
+        guitarDb.UpsertEntries("song_1",
+        [
+            MakeEntry("p1", 1100, rank: 1),
+            MakeEntry("p2", 1000, rank: 2),
+        ]);
+        guitarDb.RecomputeAllRanks();
+
+        var attemptedBandTypes = new List<string>();
+        var failingMetaDb = CreateBandFailingMetaDatabase(_metaFixture.Db, ["Band_Duets"], attemptedBandTypes);
+        var sut = CreateSut(failingMetaDb);
+
+        await sut.ComputeAllAsync(CreateFestivalServiceWithSongs(2), CancellationToken.None);
+
+        var history = guitarDb.GetRankHistory("p1", 10);
+        Assert.Single(history);
+        Assert.Contains("Band_Duets", attemptedBandTypes);
+    }
+
+    [Fact]
+    public void ComputeBandRankings_BandFailure_DoesNotBlockLaterBandTypes()
+    {
+        var bandPersistence = new BandLeaderboardPersistence(_metaFixture.DataSource, Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000, isFullCombo: true),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+        ]);
+        bandPersistence.UpsertBandEntries("song_0", "Band_Trios",
+        [
+            MakeBandEntry(["p1", "p2", "p3"], "0:1:3", 1200, isFullCombo: true),
+            MakeBandEntry(["p4", "p5", "p6"], "0:2:3", 1100),
+        ]);
+
+        var attemptedBandTypes = new List<string>();
+        var failingMetaDb = CreateBandFailingMetaDatabase(_metaFixture.Db, ["Band_Duets"], attemptedBandTypes);
+        var sut = CreateSut(failingMetaDb);
+
+        sut.ComputeBandRankings(BandInstrumentMapping.AllBandTypes, totalChartedSongs: 1);
+
+        Assert.Equal(BandInstrumentMapping.AllBandTypes, attemptedBandTypes);
+        Assert.Empty(_metaFixture.Db.GetBandTeamRankings("Band_Duets").Entries);
+
+        var (trioEntries, trioTotalTeams) = _metaFixture.Db.GetBandTeamRankings("Band_Trios");
+        Assert.Equal(2, trioTotalTeams);
+        Assert.Equal("p1:p2:p3", trioEntries[0].TeamKey);
+    }
+
     private static IInstrumentDatabase CreateSnapshotFailingInstrumentDb(IInstrumentDatabase inner)
     {
         var proxy = Substitute.For<IInstrumentDatabase>();
@@ -718,6 +784,71 @@ public sealed class RankingsCalculatorTests : IDisposable
         proxy.GetAllRankingDeltas().Returns(_ => inner.GetAllRankingDeltas());
         proxy.SnapshotRankHistory(Arg.Any<int>(), Arg.Any<bool>())
             .Returns(_ => throw new TimeoutException("synthetic snapshot failure"));
+        return proxy;
+    }
+
+    private static IMetaDatabase CreateBandFailingMetaDatabase(IMetaDatabase inner, IReadOnlyList<string> failingBandTypes, List<string>? attemptedBandTypes = null)
+    {
+        var failingSet = new HashSet<string>(failingBandTypes, StringComparer.OrdinalIgnoreCase);
+        var proxy = Substitute.For<IMetaDatabase>();
+
+        proxy.GetAllLeaderboardPopulation().Returns(_ => inner.GetAllLeaderboardPopulation());
+        proxy.GetBulkBestValidScores(Arg.Any<string>(), Arg.Any<Dictionary<(string AccountId, string SongId), int>>())
+            .Returns(call => inner.GetBulkBestValidScores(
+                call.Arg<string>(),
+                call.Arg<Dictionary<(string AccountId, string SongId), int>>()));
+        proxy.When(x => x.ReplaceCompositeRankings(Arg.Any<IReadOnlyList<CompositeRankingDto>>()))
+            .Do(call => inner.ReplaceCompositeRankings(call.Arg<IReadOnlyList<CompositeRankingDto>>()));
+        proxy.When(x => x.TruncateCompositeRankingDeltas())
+            .Do(_ => inner.TruncateCompositeRankingDeltas());
+        proxy.When(x => x.WriteCompositeRankingDeltas(Arg.Any<IReadOnlyList<(string AccountId, double LeewayBucket,
+            double AdjustedRating, double WeightedRating, double FcRateRating,
+            double TotalScore, double MaxScoreRating, int InstrumentsPlayed, int TotalSongsPlayed)>>()))
+            .Do(call => inner.WriteCompositeRankingDeltas(call.Arg<IReadOnlyList<(string AccountId, double LeewayBucket,
+                double AdjustedRating, double WeightedRating, double FcRateRating,
+                double TotalScore, double MaxScoreRating, int InstrumentsPlayed, int TotalSongsPlayed)>>()));
+        proxy.When(x => x.ReplaceComboLeaderboard(
+                Arg.Any<string>(),
+                Arg.Any<IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate,
+                    long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)>>(),
+                Arg.Any<int>()))
+            .Do(call => inner.ReplaceComboLeaderboard(
+                call.Arg<string>(),
+                call.Arg<IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate,
+                    long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)>>(),
+                call.ArgAt<int>(2)));
+        proxy.When(x => x.TruncateComboRankingDeltas())
+            .Do(_ => inner.TruncateComboRankingDeltas());
+        proxy.When(x => x.WriteComboRankingDeltas(Arg.Any<IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,
+            double AdjustedRating, double WeightedRating, double FcRate,
+            long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)>>()))
+            .Do(call => inner.WriteComboRankingDeltas(call.Arg<IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,
+                double AdjustedRating, double WeightedRating, double FcRate,
+                long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)>>()));
+        proxy.When(x => x.SnapshotCompositeRankHistory(Arg.Any<int>()))
+            .Do(call => inner.SnapshotCompositeRankHistory(call.Arg<int>()));
+        proxy.When(x => x.RebuildBandTeamRankings(
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<int>(),
+                Arg.Any<double>(),
+                Arg.Any<BandTeamRankingRebuildOptions?>()))
+            .Do(call =>
+            {
+                var bandType = call.Arg<string>();
+                attemptedBandTypes?.Add(bandType);
+
+                if (failingSet.Contains(bandType))
+                    throw new TimeoutException($"synthetic band rebuild failure for {bandType}");
+
+                inner.RebuildBandTeamRankings(
+                    bandType,
+                    call.ArgAt<int>(1),
+                    call.ArgAt<int>(2),
+                    call.ArgAt<double>(3),
+                    call.ArgAt<BandTeamRankingRebuildOptions?>(4));
+            });
+
         return proxy;
     }
 }

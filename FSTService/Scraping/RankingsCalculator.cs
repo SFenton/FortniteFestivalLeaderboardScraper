@@ -74,7 +74,7 @@ public sealed class RankingsCalculator
     }
 
     /// <summary>
-    /// Compute all rankings: per-instrument (parallel) → composite → combo → band → history snapshots.
+    /// Compute all rankings: per-instrument (parallel) → composite → combo → history snapshots → band.
     /// </summary>
     public async Task ComputeAllAsync(FestivalService festivalService, CancellationToken ct = default)
     {
@@ -85,7 +85,7 @@ public sealed class RankingsCalculator
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
-        // Total steps: instruments(9) + composite(1) + snapshots(instruments+1) + combos(1) + bandTypes(3) = 24
+        // Total steps: instruments(9) + composite(1) + combos(1) + snapshots(instruments+1) + bandTypes(3) = 24
         _progress.BeginPhaseProgress(instruments.Count + 1 + instruments.Count + 1 + 1 + bandTypes.Count);
         _progress.SetSubOperation("per_instrument_rankings");
 
@@ -301,33 +301,15 @@ public sealed class RankingsCalculator
         _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
         LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
 
-        // ── Phase 5: Band team rankings ──
+        // ── Phase 5: History snapshots (best-effort maintenance) ──
+        await SnapshotRankHistoryBestEffortAsync(instruments, ct);
+
+        // ── Phase 6: Band team rankings (best-effort per band type) ──
         _progress.SetSubOperation("band_rankings");
         var bandSw = System.Diagnostics.Stopwatch.StartNew();
-        var totalBandSongs = festivalService.Songs.Count;
-        if (totalBandSongs > 0)
-        {
-            foreach (var bandType in bandTypes)
-            {
-                ct.ThrowIfCancellationRequested();
-                var perBandSw = System.Diagnostics.Stopwatch.StartNew();
-                _metaDb.RebuildBandTeamRankings(bandType, totalBandSongs, CredibilityThreshold, PopulationMedian);
-                perBandSw.Stop();
-                LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
-                _progress.ReportPhaseItemComplete();
-            }
-        }
-        else
-        {
-            _log.LogWarning("No songs are loaded, skipping band rankings.");
-            foreach (var _ in bandTypes)
-                _progress.ReportPhaseItemComplete();
-        }
+        ComputeBandRankings(bandTypes, festivalService.Songs.Count, ct, _progress.ReportPhaseItemComplete);
         bandSw.Stop();
         LogPhase("band_rankings.total", instrument: null, bandSw.Elapsed);
-
-        // ── Phase 6: History snapshots (best-effort maintenance) ──
-        await SnapshotRankHistoryBestEffortAsync(instruments, ct);
 
         _log.LogInformation("Full rankings computation complete in {Total}.", sw.Elapsed);
         LogPhase("total", instrument: null, sw.Elapsed);
@@ -532,18 +514,44 @@ public sealed class RankingsCalculator
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
     }
 
-    internal void ComputeBandRankings(IReadOnlyList<string> bandTypes, int totalChartedSongs)
+    internal void ComputeBandRankings(IReadOnlyList<string> bandTypes, int totalChartedSongs, CancellationToken ct = default, Action? onBandComplete = null)
     {
         if (totalChartedSongs <= 0)
         {
             _log.LogWarning("No charted songs available, skipping band rankings.");
+            foreach (var _ in bandTypes)
+                onBandComplete?.Invoke();
             return;
         }
 
+        int successfulBandTypes = 0;
         foreach (var bandType in bandTypes)
-            _metaDb.RebuildBandTeamRankings(bandType, totalChartedSongs, CredibilityThreshold, PopulationMedian);
+        {
+            ct.ThrowIfCancellationRequested();
+            var perBandSw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                _metaDb.RebuildBandTeamRankings(bandType, totalChartedSongs, CredibilityThreshold, PopulationMedian);
+                perBandSw.Stop();
+                LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
+                successfulBandTypes++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                perBandSw.Stop();
+                _log.LogWarning(ex,
+                    "Band team ranking rebuild failed for {BandType}. Continuing with remaining band types.",
+                    bandType);
+                LogPhase("band_rankings.per_type.failed", bandType, perBandSw.Elapsed);
+            }
+            finally
+            {
+                onBandComplete?.Invoke();
+            }
+        }
 
-        _log.LogInformation("Computed band rankings for {BandTypeCount} band types.", bandTypes.Count);
+        _log.LogInformation("Computed band rankings for {SuccessfulBandTypeCount}/{BandTypeCount} band types.",
+            successfulBandTypes, bandTypes.Count);
     }
 
     private async Task SnapshotRankHistoryBestEffortAsync(IReadOnlyList<string> instruments, CancellationToken ct)
