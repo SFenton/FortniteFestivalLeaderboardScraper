@@ -34,6 +34,7 @@ import { shopSlides } from '../shop/firstRun';
 import { api } from '../../api/client';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
+import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { IoCompass } from 'react-icons/io5';
@@ -366,13 +367,17 @@ export default function SettingsPage() {
   const headerStagger: CSSProperties = !skipAnimRef.current
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
     : {};
+  const showMobilePageHeader = !isMobile || settings.showButtonsInHeaderMobile;
+  const settingsHeader = <PageHeader title={isMobile ? undefined : t('settings.title')} style={isMobile ? undefined : headerStagger} actions={compactQuickLinksAction} />;
 
   return (
     <Page
       scrollRestoreKey="settings"
       containerStyle={st.container}
       quickLinks={pageQuickLinks}
-      before={<PageHeader title={isMobile ? undefined : t('settings.title')} style={headerStagger} actions={compactQuickLinksAction} />}
+      before={isMobile
+        ? <PageHeaderTransition visible={showMobilePageHeader}>{settingsHeader}</PageHeaderTransition>
+        : settingsHeader}
       after={<>
         {showResetConfirm && (
           /* v8 ignore start — confirm dialog callbacks */
@@ -504,6 +509,13 @@ export default function SettingsPage() {
                   description={t('settings.lightTrailsDesc', 'Show a soft glow that follows your cursor across cards. Only visible with a mouse — disabling may improve performance.')}
                   checked={!settings.disableLightTrails}
                   onToggle={() => updateSettings({ disableLightTrails: !settings.disableLightTrails })}
+                  large={isMobile}
+                />
+                <ToggleRow
+                  label={t('settings.showButtonsInHeaderMobile', 'Show Buttons In Header (Mobile)')}
+                  description={t('settings.showButtonsInHeaderMobileDesc', 'Shows the Quick Links, Select Player Profile, Song Rivals, and similar header text/buttons on mobile. Turn this off to hide them and free up screen space; these actions will still be available from the floating action button on supported pages.')}
+                  checked={settings.showButtonsInHeaderMobile}
+                  onToggle={() => updateSettings({ showButtonsInHeaderMobile: !settings.showButtonsInHeaderMobile })}
                   large={isMobile}
                 />
               </Card>

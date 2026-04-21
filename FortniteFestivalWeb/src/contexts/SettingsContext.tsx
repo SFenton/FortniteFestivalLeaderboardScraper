@@ -27,6 +27,7 @@ export type AppSettings = {
   filterInvalidScoresLeeway: number;
   enableExperimentalRanks: boolean;
   disableLightTrails: boolean;
+  showButtonsInHeaderMobile: boolean;
 
   /* Item Shop */
   hideItemShop: boolean;
@@ -65,6 +66,7 @@ export const defaultAppSettings = (): AppSettings => ({
   filterInvalidScoresLeeway: 1,
   enableExperimentalRanks: false,
   disableLightTrails: false,
+  showButtonsInHeaderMobile: true,
 
   hideItemShop: false,
   disableShopHighlighting: false,

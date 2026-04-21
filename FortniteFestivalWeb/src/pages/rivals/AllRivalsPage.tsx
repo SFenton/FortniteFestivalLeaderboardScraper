@@ -19,6 +19,7 @@ import { Layout, Font, Weight, Colors, Gap } from '@festival/theme';
 import Page from '../Page';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
+import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedAllRivalsKey: string | null = null;
@@ -243,6 +244,7 @@ export default function AllRivalsPage() {
     : isInstrument
       ? t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(instrument!) })
       : t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') });
+  const showMobilePageHeader = !isMobile || settings.showButtonsInHeaderMobile;
 
   return (
     <Page
@@ -251,7 +253,20 @@ export default function AllRivalsPage() {
       loadPhase={phase}
       containerClassName={undefined}
       fabSpacer={phase === LoadPhase.ContentIn && !hasRivals ? 'none' : 'end'}
-      before={
+      before={isMobile ? (
+        <PageHeaderTransition visible={showMobilePageHeader}>
+          <PageHeader
+            title={
+              <h1 style={{ display: 'flex', alignItems: 'center', gap: Gap.sm, margin: 0, fontSize: Font.title, fontWeight: Weight.bold, color: Colors.textPrimary }}>
+                {isInstrument && instrument && (
+                  <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.SM} iconOnly />
+                )}
+                {titleText}
+              </h1>
+            }
+          />
+        </PageHeaderTransition>
+      ) : showMobilePageHeader ? (
         <PageHeader
           title={
             <h1 style={{ display: 'flex', alignItems: 'center', gap: Gap.sm, margin: 0, fontSize: Font.title, fontWeight: Weight.bold, color: Colors.textPrimary }}>
@@ -262,7 +277,7 @@ export default function AllRivalsPage() {
             </h1>
           }
         />
-      }
+      ) : undefined}
     >
       {phase === LoadPhase.ContentIn && (
             <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>

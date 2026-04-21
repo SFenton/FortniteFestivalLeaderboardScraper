@@ -406,6 +406,19 @@ describe('RivalsPage quick links', () => {
     expect(within(list).getByTestId('rivals-quick-link-solo-peripheraldrums')).toBeTruthy();
   });
 
+  it('hides the mobile rivals header buttons when the setting is off', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    localStorage.setItem('fst:appSettings', JSON.stringify({ showButtonsInHeaderMobile: false }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-hide-mobile-header', displayName: 'TestPlayer' }));
+
+    renderRivalsPageWithQuickLinks('test-rivals-hide-mobile-header');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(screen.queryByRole('button', { name: 'Leaderboard Rivals' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+  });
+
   it('renders the rivals quick links rail on wide desktop', async () => {
     setViewportQueries({ mobile: false, wide: true });
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-rail', displayName: 'TestPlayer' }));

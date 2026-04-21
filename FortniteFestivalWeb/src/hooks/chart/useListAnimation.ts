@@ -19,7 +19,30 @@ function calcListHeight(n: number): number {
   return n > 0 ? n * CARD_HEIGHT + (n - 1) * CARD_GAP : 0;
 }
 
-export function useListAnimation<T>(visibleCards: T[], skipAnimation?: boolean) {
+function areListsEqual<T>(
+  previous: T[],
+  next: T[],
+  isEqual: (a: T, b: T) => boolean,
+): boolean {
+  if (previous === next) return true;
+  if (previous.length !== next.length) return false;
+
+  for (let i = 0; i < previous.length; i += 1) {
+    const prevItem = previous[i];
+    const nextItem = next[i];
+    if (prevItem == null || nextItem == null || !isEqual(prevItem, nextItem)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function useListAnimation<T>(
+  visibleCards: T[],
+  skipAnimation?: boolean,
+  isEqual: (a: T, b: T) => boolean = Object.is,
+) {
   const [displayedCards, setDisplayedCards] = useState<T[]>(visibleCards);
   const [listPhase, setListPhase] = useState<ListPhase>(ListPhase.Idle);
   const [listHeight, setListHeight] = useState(() => calcListHeight(visibleCards.length));
@@ -29,7 +52,7 @@ export function useListAnimation<T>(visibleCards: T[], skipAnimation?: boolean) 
   const prevCardsRef = useRef(visibleCards);
 
   useEffect(() => {
-    if (prevCardsRef.current === visibleCards) return;
+    if (areListsEqual(prevCardsRef.current, visibleCards, isEqual)) return;
     prevCardsRef.current = visibleCards;
 
     listTimers.current.forEach(clearTimeout);
@@ -88,7 +111,7 @@ export function useListAnimation<T>(visibleCards: T[], skipAnimation?: boolean) 
     }
 
     return () => { listTimers.current.forEach(clearTimeout); };
-  }, [visibleCards]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visibleCards, skipAnimation, isEqual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { displayedCards, listPhase, listHeight };
 }

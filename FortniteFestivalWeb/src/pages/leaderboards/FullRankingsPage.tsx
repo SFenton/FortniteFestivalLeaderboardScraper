@@ -13,6 +13,7 @@ import { PaginatedLeaderboard } from '../../components/leaderboard/PaginatedLead
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import { ActionPill } from '../../components/common/ActionPill';
+import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
 import { InstrumentHeaderSize, formatRatingValue, rankColor } from '@festival/core';
@@ -148,6 +149,7 @@ export default function FullRankingsPage() {
     if (!playerRanking) return undefined;
     return computeRankWidth([getRankForMetric(playerRanking, metric)]);
   }, [playerRanking, metric]);
+  const showMobilePageHeader = !isMobileChrome || settings.showButtonsInHeaderMobile;
 
   return (
     <Page
@@ -155,7 +157,20 @@ export default function FullRankingsPage() {
       staggerRushRef={staggerRushRef}
       scrollRestoreKey={`rankings:${cacheKey}:${page}`}
       fabSpacer="none"
-      before={
+      before={isMobileChrome ? (
+        <PageHeaderTransition visible={showMobilePageHeader}>
+          <PageHeader
+            title={
+              <InstrumentHeader
+                instrument={instrument}
+                size={InstrumentHeaderSize.MD}
+                label={`${serverInstrumentLabel(instrument)} ${t('rankings.title')}`}
+                subtitle={data ? t('rankings.totalRanked', { count: data.totalAccounts, formattedCount: data.totalAccounts.toLocaleString() }) : undefined}
+              />
+            }
+          />
+        </PageHeaderTransition>
+      ) : showMobilePageHeader ? (
         <PageHeader
           title={
             <InstrumentHeader
@@ -186,7 +201,7 @@ export default function FullRankingsPage() {
             ) : undefined
           }
         />
-      }
+      ) : undefined}
       after={<>
         <InstrumentPickerModal
           visible={instrumentModal.visible}

@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
-import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../../../helpers/browserStubs';
+import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver, stubMatchMedia } from '../../../helpers/browserStubs';
+import { IconSize, Layout } from '@festival/theme';
 
 vi.mock('../../../../src/api/client', () => ({
   api: {
@@ -17,13 +18,13 @@ vi.mock('../../../../src/api/client', () => ({
 }));
 
 vi.mock('react-icons/io5', () => {
-  const Stub = (p: any) => <span data-testid={p['aria-label'] ?? 'icon'} />;
+  const Stub = (p: any) => <span data-testid={p['aria-label'] ?? 'icon'} data-size={String(p.size ?? '')} />;
   return {
     IoMenu: Stub, IoClose: Stub, IoArrowUp: Stub, IoArrowDown: Stub,
     IoPerson: Stub, IoSearch: Stub, IoFilter: Stub, IoSwapVertical: Stub,
     IoMusicalNotes: Stub, IoChevronBack: Stub, IoEllipsisVertical: Stub,
     IoSettingsSharp: Stub, IoRefresh: Stub, IoAdd: Stub, IoRemove: Stub,
-    IoCheckmarkCircle: Stub, IoAlertCircle: Stub,
+    IoCheckmarkCircle: Stub, IoAlertCircle: Stub, IoFlash: Stub, IoBagHandle: Stub,
   };
 });
 
@@ -38,6 +39,10 @@ beforeAll(() => {
   if (!HTMLElement.prototype.getAnimations) {
     HTMLElement.prototype.getAnimations = vi.fn().mockReturnValue([]) as any;
   }
+});
+
+beforeEach(() => {
+  stubMatchMedia(false);
 });
 
 import SongInfoHeader from '../../../../src/components/songs/headers/SongInfoHeader';
@@ -210,5 +215,43 @@ describe('SongInfoHeader', () => {
       </TestProviders>,
     );
     expect(container.querySelector('[role="link"]')).toBeNull();
+  });
+
+  it('renders View Paths on desktop with compact pill metrics', () => {
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} onOpenPaths={vi.fn()} />
+      </TestProviders>,
+    );
+
+    const button = screen.getByRole('button', { name: 'View Paths' });
+    expect(button).toHaveStyle({
+      height: `${Layout.pillButtonHeight}px`,
+      fontSize: '12px',
+      paddingLeft: '12px',
+      paddingRight: '12px',
+    });
+
+    const icon = button.querySelector(`[data-size="${IconSize.action}"]`);
+    expect(icon).not.toBeNull();
+  });
+
+  it('renders View Paths on mobile as a compact purple circle', () => {
+    stubMatchMedia(true);
+
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} onOpenPaths={vi.fn()} />
+      </TestProviders>,
+    );
+
+    const button = screen.getByRole('button', { name: 'View Paths' });
+    const buttonStyle = button.getAttribute('style') ?? '';
+    expect(buttonStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(buttonStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
+    expect(buttonStyle).toContain('border-radius: 999px');
+
+    const icon = button.querySelector(`[data-size="${IconSize.action}"]`);
+    expect(icon).not.toBeNull();
   });
 });

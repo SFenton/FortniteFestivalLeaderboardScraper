@@ -53,6 +53,10 @@ describe('SettingsContext', () => {
     it('has visual order disabled by default', () => {
       expect(defaultAppSettings().songRowVisualOrderEnabled).toBe(false);
     });
+
+    it('shows page header buttons on mobile by default', () => {
+      expect(defaultAppSettings().showButtonsInHeaderMobile).toBe(true);
+    });
   });
 
   describe('isInstrumentVisible', () => {
@@ -125,12 +129,13 @@ describe('SettingsContext', () => {
     });
 
     it('loads persisted settings from localStorage', () => {
-      const custom: AppSettings = { ...defaultAppSettings(), showLead: false, metadataShowStars: false };
+      const custom: AppSettings = { ...defaultAppSettings(), showLead: false, metadataShowStars: false, showButtonsInHeaderMobile: false };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(custom));
 
       const { result } = renderHook(() => useSettings(), { wrapper });
       expect(result.current.settings.showLead).toBe(false);
       expect(result.current.settings.metadataShowStars).toBe(false);
+      expect(result.current.settings.showButtonsInHeaderMobile).toBe(false);
     });
 
     it('merges partial persisted settings with defaults', () => {

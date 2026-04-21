@@ -308,7 +308,7 @@ export default memo(function ScoreHistoryChart({
     }
     /* v8 ignore stop */
     return (
-      <div key={point.date} style={{ ...(i === 0 ? scoreListCardBestStyle : scoreListCardBase), ...animStyle }}>
+      <div key={`${point.date}:${point.score}:${i}`} style={{ ...(i === 0 ? scoreListCardBestStyle : scoreListCardBase), ...animStyle }}>
         <LeaderboardEntry
           label={new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
           displayName=""
@@ -344,6 +344,7 @@ export default memo(function ScoreHistoryChart({
       renderChart={renderChart}
       renderDetailCard={renderDetailCard}
       listData={visibleCards}
+      listIdentity={CHART_POINT_IDENTITY}
       renderListItem={renderListItem}
       viewAllLabel={chartData.length > 5 ? t('chart.viewAllScores') : undefined}
       onViewAll={chartData.length > 5 ? handleViewAll : undefined}

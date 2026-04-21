@@ -33,6 +33,7 @@ import EmptyState from '../../components/common/EmptyState';
 import { ActionPill } from '../../components/common/ActionPill';
 import { parseApiError } from '../../utils/apiError';
 import PageHeader from '../../components/common/PageHeader';
+import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { SongRow } from './components/SongRow';
 import { SongsToolbar } from './components/SongsToolbar';
 import { visibleInstruments } from '../../contexts/SettingsContext';
@@ -869,6 +870,7 @@ export default function SongsPage() {
 
   const emptyStagger = useStaggerStyle(200, { skip: !shouldStagger });
   const songsStyles = useSongsStyles();
+  const showMobilePageHeader = !isMobileChrome || appSettings.showButtonsInHeaderMobile;
 
   if (error) {
     const parsed = parseApiError(error);
@@ -887,9 +889,11 @@ export default function SongsPage() {
       before={<>
         <LoadGate phase={loadPhase} overlay>
           {isMobileChrome ? (
-            <PageHeader
-              actions={compactQuickLinksAction}
-            />
+            <PageHeaderTransition visible={showMobilePageHeader}>
+              <PageHeader
+                actions={compactQuickLinksAction}
+              />
+            </PageHeaderTransition>
           ) : (
             <PageHeader
               title={

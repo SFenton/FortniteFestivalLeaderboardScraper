@@ -356,6 +356,25 @@ describe('SettingsPage', () => {
     expect(stored.filterInvalidScores).toBe(true);
   });
 
+  it('toggles Show Buttons In Header (Mobile)', () => {
+    renderSettings();
+    const toggle = screen.getByText('Show Buttons In Header (Mobile)').closest('button')!;
+    fireEvent.click(toggle);
+
+    const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
+    expect(stored.showButtonsInHeaderMobile).toBe(false);
+  });
+
+  it('hides the mobile quick links header trigger when the setting is off', () => {
+    setViewportQueries({ mobile: true, wide: false });
+    localStorage.setItem('fst:appSettings', JSON.stringify({ showButtonsInHeaderMobile: false }));
+
+    renderSettings();
+
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.getByText('App Settings')).toBeDefined();
+  });
+
   it('toggles Disable Item Shop Highlighting', () => {
     renderSettings();
     const toggle = screen.getByText('Disable Item Shop Highlighting').closest('button')!;

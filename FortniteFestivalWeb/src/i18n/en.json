@@ -367,6 +367,8 @@
     "filterInvalidScores": "Filter Invalid Scores",
     "experimentalRanks": "Enable Experimental Leaderboard Ranks",
     "experimentalRanksDesc": "Enable this to see more ranking mechanisms in the Leaderboards page.",
+    "showButtonsInHeaderMobile": "Show Buttons In Header (Mobile)",
+    "showButtonsInHeaderMobileDesc": "Shows the Quick Links, Select Player Profile, Song Rivals, and similar header text/buttons on mobile. Turn this off to hide them and free up screen space; these actions will still be available from the floating action button on supported pages.",
     "leeway": "Leeway",
     "resetAll": "Reset All Settings",
     "resetSection": "Reset Settings",

@@ -939,6 +939,17 @@ describe('SongsPage quick links', () => {
     expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();
     expect(screen.getByText('Title Quick Links')).toBeTruthy();
   });
+
+  it('hides the mobile quick links header trigger when the setting is off', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    localStorage.setItem('fst:appSettings', JSON.stringify({ showButtonsInHeaderMobile: false }));
+
+    renderSongsPage('/songs');
+
+    await settleSongsPage();
+
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+  });
 });
 
 describe('SongsPage — branch coverage (extracted)', () => {

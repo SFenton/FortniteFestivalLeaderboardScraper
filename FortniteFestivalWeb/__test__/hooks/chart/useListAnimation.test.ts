@@ -58,6 +58,21 @@ describe('useListAnimation', () => {
     expect(result.current.displayedCards).toBe(cards);
   });
 
+  it('does not restagger when a new array has the same logical items', () => {
+    const isSamePoint = (a: ChartPoint, b: ChartPoint) => a.date === b.date && a.score === b.score;
+    let cards = [makePoint({ date: '2024-01-01', score: 100 }), makePoint({ date: '2024-01-02', score: 200 })];
+
+    const { result, rerender } = renderHook(() => useListAnimation(cards, false, isSamePoint));
+    const initialDisplayed = result.current.displayedCards;
+
+    cards = [makePoint({ date: '2024-01-01', score: 100 }), makePoint({ date: '2024-01-02', score: 200 })];
+    rerender();
+
+    expect(result.current.listPhase).toBe(ListPhase.Idle);
+    expect(result.current.displayedCards).toBe(initialDisplayed);
+    expect(result.current.listHeight).toBe(calcListHeight(2));
+  });
+
   describe('transition from empty to cards', () => {
     it('enters In phase then settles to Idle', async () => {
       const empty: ChartPoint[] = [];
