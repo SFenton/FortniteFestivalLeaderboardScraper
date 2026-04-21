@@ -4,7 +4,8 @@ import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
-import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
 import { ToggleRow } from '../../components/common/ToggleRow';
 import { RadioRow } from '../../components/common/RadioRow';
@@ -15,6 +16,7 @@ import { type ColumnKey } from '../songinfo/components/path/PathDataTable';
 import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
+import { ActionPill } from '../../components/common/ActionPill';
 import type { ServerInstrumentKey as InstrumentKey, ServiceInfoResponse, SyncStatusResponse } from '@festival/core/api/serverTypes';
 import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
@@ -34,6 +36,9 @@ import { api } from '../../api/client';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
+import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
+import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
+import { IoCompass } from 'react-icons/io5';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
@@ -41,6 +46,12 @@ const SERVICE_INFO_POLL_MS = 5_000;
 
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;
+
+ type SettingsQuickLinkId = 'app-settings' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'reset';
+
+type SettingsQuickLink = PageQuickLinkItem & {
+  id: SettingsQuickLinkId;
+};
 
 function FadeInDiv({ delay, children, style }: { delay?: number; children: React.ReactNode; style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -252,6 +263,8 @@ export default function SettingsPage() {
   const flags = useFeatureFlags();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
+  const isWideDesktop = useIsWideDesktop();
+  const scrollContainerRef = useScrollContainer();
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
@@ -455,6 +468,71 @@ export default function SettingsPage() {
     [settings.pathColumnOrder],
   );
 
+  const settingsQuickLinksTitle = t('settings.quickLinks');
+  const quickLinkItems = useMemo<SettingsQuickLink[]>(() => ([
+    { id: 'app-settings', label: t('settings.appSettings'), landmarkLabel: t('settings.appSettings') },
+    { id: 'item-shop', label: t('settings.itemShop', 'Item Shop'), landmarkLabel: t('settings.itemShop', 'Item Shop') },
+    { id: 'show-instruments', label: t('settings.showInstruments'), landmarkLabel: t('settings.showInstruments') },
+    { id: 'show-metadata', label: t('settings.showMetadata'), landmarkLabel: t('settings.showMetadata') },
+    { id: 'version', label: t('settings.versionTitle'), landmarkLabel: t('settings.versionTitle') },
+    { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title') },
+    { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle') },
+    { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection') },
+  ]), [settingsQuickLinksTitle, t]);
+
+  const {
+    activeItemId,
+    quickLinksOpen,
+    openQuickLinks,
+    closeQuickLinks,
+    handleQuickLinkSelect,
+    registerSectionRef,
+  } = usePageQuickLinks<SettingsQuickLink>({
+    items: quickLinkItems,
+    scrollContainerRef,
+    isDesktopRailEnabled: isWideDesktop,
+    scrollOffset: Gap.md,
+  });
+
+  const handleModalQuickLinkSelect = useCallback((link: SettingsQuickLink) => {
+    closeQuickLinks();
+    handleQuickLinkSelect(link);
+  }, [closeQuickLinks, handleQuickLinkSelect]);
+
+  const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
+    if (quickLinkItems.length < 2) {
+      return undefined;
+    }
+
+    return {
+      title: settingsQuickLinksTitle,
+      items: quickLinkItems,
+      activeItemId,
+      visible: quickLinksOpen,
+      onOpen: openQuickLinks,
+      onClose: closeQuickLinks,
+      onSelect: (item) => {
+        const nextItem = item as SettingsQuickLink;
+        if (isWideDesktop) {
+          handleQuickLinkSelect(nextItem);
+          return;
+        }
+        handleModalQuickLinkSelect(nextItem);
+      },
+      testIdPrefix: 'settings',
+    };
+  }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, quickLinkItems, quickLinksOpen, settingsQuickLinksTitle]);
+
+  const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
+    ? (
+      <ActionPill
+        icon={<IoCompass size={Size.iconAction} />}
+        label={settingsQuickLinksTitle}
+        onClick={openQuickLinks}
+      />
+    )
+    : undefined;
+
   let staggerIndex = 0;
   const stagger = (idx: number): number | undefined => skipAnimRef.current ? undefined : idx * STAGGER_INTERVAL;
   const headerStagger: CSSProperties = !skipAnimRef.current
@@ -465,7 +543,8 @@ export default function SettingsPage() {
     <Page
       scrollRestoreKey="settings"
       containerStyle={st.container}
-      before={!isMobileChrome ? <PageHeader title={t('settings.title')} style={headerStagger} /> : undefined}
+      quickLinks={pageQuickLinks}
+      before={<PageHeader title={t('settings.title')} style={headerStagger} actions={compactQuickLinksAction} />}
       after={<>
         {showResetConfirm && (
           /* v8 ignore start — confirm dialog callbacks */
@@ -493,310 +572,326 @@ export default function SettingsPage() {
 
           {/* ── App Settings ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <SectionHeader title={t('settings.appSettings')} description={t('settings.appSettingsHint')} />
-          <Card>
-            <ToggleRow
-              label={t('settings.showInstrumentIcons')}
-              description={t('settings.showInstrumentIconsDesc')}
-              checked={!settings.songsHideInstrumentIcons}
-              onToggle={() => updateSettings({ songsHideInstrumentIcons: !settings.songsHideInstrumentIcons })}
-              large={isMobile}
-            />
-            <ToggleRow
-              label={t('settings.enableVisualOrder')}
-              description={t('settings.enableVisualOrderDesc')}
-              checked={settings.songRowVisualOrderEnabled}
-              onToggle={() => updateSettings({ songRowVisualOrderEnabled: !settings.songRowVisualOrderEnabled })}
-              large={isMobile}
-            />
-            <div data-testid="visual-order-collapse" style={st.visualOrderCollapseGrid}>
-              <div style={st.visualOrderCollapseInner}>
-                <div style={st.innerSectionTitle}>{t('settings.songRowVisualOrder')}</div>
-                <div style={st.sectionHint}>
-                  {t('settings.songRowVisualOrderDesc')}
-                </div>
-                <div style={st.reorderListWrap}>
-                  <ReorderList
-                    items={visualOrderItems}
-                    /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
-                    onReorder={items => {
-                      const visibleSet = new Set(items.map(i => i.key));
-                      const hiddenKeys = settings.songRowVisualOrder.filter(k => !visibleSet.has(k));
-                      updateSettings({ songRowVisualOrder: [...items.map(i => i.key), ...hiddenKeys] });
-                    }}
-                    /* v8 ignore stop */
-                  />
-                </div>
-              </div>
-            </div>
-            <div style={st.standaloneRow}>
-              <div style={st.standaloneLabel}>{t('settings.pathDefaultView')}</div>
-              <div style={st.standaloneDesc}>
-                {t('settings.pathDefaultViewDesc')}
-              </div>
-              <RadioRow
-                label={t('settings.pathDefaultViewImage')}
-                selected={settings.pathDefaultView === 'image'}
-                onSelect={() => updateSettings({ pathDefaultView: 'image' })}
-              />
-              <RadioRow
-                label={t('settings.pathDefaultViewText')}
-                selected={settings.pathDefaultView === 'text'}
-                onSelect={() => updateSettings({ pathDefaultView: 'text' })}
-              />
-            </div>
-            <div style={st.standaloneRow}>
-              <div style={st.standaloneLabel}>{t('settings.pathColumnOrder')}</div>
-              <div style={st.standaloneDesc}>
-                {t('settings.pathColumnOrderDesc')}
-              </div>
-              <div style={st.reorderListWrap}>
-                <ReorderList
-                  items={pathColumnOrderItems}
-                  /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
-                  onReorder={items => {
-                    updateSettings({ pathColumnOrder: items.map(i => i.key) as ColumnKey[] });
-                  }}
-                  /* v8 ignore stop */
+            <div ref={(element) => registerSectionRef('app-settings', element)}>
+              <SectionHeader title={t('settings.appSettings')} description={t('settings.appSettingsHint')} />
+              <Card>
+                <ToggleRow
+                  label={t('settings.showInstrumentIcons')}
+                  description={t('settings.showInstrumentIconsDesc')}
+                  checked={!settings.songsHideInstrumentIcons}
+                  onToggle={() => updateSettings({ songsHideInstrumentIcons: !settings.songsHideInstrumentIcons })}
+                  large={isMobile}
                 />
-              </div>
-            </div>
-            <ToggleRow
-              label={t('settings.filterInvalidScores')}
-              description={t('settings.filterInvalidScoresToggleDesc')}
-              checked={settings.filterInvalidScores}
-              onToggle={() => updateSettings({ filterInvalidScores: !settings.filterInvalidScores })}
-              large={isMobile}
-            />
-            <div style={st.collapseGrid}>
-              <div style={st.collapseInner}>
-                <div style={st.leewayContent}>
-                  <div style={st.innerSectionTitle}>{t('settings.maxScoreLeeway')}</div>
-                  <div style={st.leewayDesc}>
-                    {t('settings.maxScoreLeewayDesc', { leeway: settings.filterInvalidScoresLeeway, maxScore: (100000 * (1 + settings.filterInvalidScoresLeeway / 100)).toLocaleString() })}
+                <ToggleRow
+                  label={t('settings.enableVisualOrder')}
+                  description={t('settings.enableVisualOrderDesc')}
+                  checked={settings.songRowVisualOrderEnabled}
+                  onToggle={() => updateSettings({ songRowVisualOrderEnabled: !settings.songRowVisualOrderEnabled })}
+                  large={isMobile}
+                />
+                <div data-testid="visual-order-collapse" style={st.visualOrderCollapseGrid}>
+                  <div style={st.visualOrderCollapseInner}>
+                    <div style={st.innerSectionTitle}>{t('settings.songRowVisualOrder')}</div>
+                    <div style={st.sectionHint}>
+                      {t('settings.songRowVisualOrderDesc')}
+                    </div>
+                    <div style={st.reorderListWrap}>
+                      <ReorderList
+                        items={visualOrderItems}
+                        /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
+                        onReorder={items => {
+                          const visibleSet = new Set(items.map(i => i.key));
+                          const hiddenKeys = settings.songRowVisualOrder.filter(k => !visibleSet.has(k));
+                          updateSettings({ songRowVisualOrder: [...items.map(i => i.key), ...hiddenKeys] });
+                        }}
+                        /* v8 ignore stop */
+                      />
+                    </div>
                   </div>
-                  <LeewaySlider
-                    value={settings.filterInvalidScoresLeeway}
-                    onChange={v => updateSettings({ filterInvalidScoresLeeway: v })}
+                </div>
+                <div style={st.standaloneRow}>
+                  <div style={st.standaloneLabel}>{t('settings.pathDefaultView')}</div>
+                  <div style={st.standaloneDesc}>
+                    {t('settings.pathDefaultViewDesc')}
+                  </div>
+                  <RadioRow
+                    label={t('settings.pathDefaultViewImage')}
+                    selected={settings.pathDefaultView === 'image'}
+                    onSelect={() => updateSettings({ pathDefaultView: 'image' })}
+                  />
+                  <RadioRow
+                    label={t('settings.pathDefaultViewText')}
+                    selected={settings.pathDefaultView === 'text'}
+                    onSelect={() => updateSettings({ pathDefaultView: 'text' })}
                   />
                 </div>
-              </div>
+                <div style={st.standaloneRow}>
+                  <div style={st.standaloneLabel}>{t('settings.pathColumnOrder')}</div>
+                  <div style={st.standaloneDesc}>
+                    {t('settings.pathColumnOrderDesc')}
+                  </div>
+                  <div style={st.reorderListWrap}>
+                    <ReorderList
+                      items={pathColumnOrderItems}
+                      /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
+                      onReorder={items => {
+                        updateSettings({ pathColumnOrder: items.map(i => i.key) as ColumnKey[] });
+                      }}
+                      /* v8 ignore stop */
+                    />
+                  </div>
+                </div>
+                <ToggleRow
+                  label={t('settings.filterInvalidScores')}
+                  description={t('settings.filterInvalidScoresToggleDesc')}
+                  checked={settings.filterInvalidScores}
+                  onToggle={() => updateSettings({ filterInvalidScores: !settings.filterInvalidScores })}
+                  large={isMobile}
+                />
+                <div style={st.collapseGrid}>
+                  <div style={st.collapseInner}>
+                    <div style={st.leewayContent}>
+                      <div style={st.innerSectionTitle}>{t('settings.maxScoreLeeway')}</div>
+                      <div style={st.leewayDesc}>
+                        {t('settings.maxScoreLeewayDesc', { leeway: settings.filterInvalidScoresLeeway, maxScore: (100000 * (1 + settings.filterInvalidScoresLeeway / 100)).toLocaleString() })}
+                      </div>
+                      <LeewaySlider
+                        value={settings.filterInvalidScoresLeeway}
+                        onChange={v => updateSettings({ filterInvalidScoresLeeway: v })}
+                      />
+                    </div>
+                  </div>
+                </div>
+                {flags.leaderboards && (
+                <ToggleRow
+                  label={t('settings.experimentalRanks')}
+                  description={t('settings.experimentalRanksDesc')}
+                  checked={settings.enableExperimentalRanks}
+                  onToggle={() => updateSettings({ enableExperimentalRanks: !settings.enableExperimentalRanks })}
+                  large={isMobile}
+                />
+                )}
+                <ToggleRow
+                  label={t('settings.lightTrails', 'Light Trails')}
+                  description={t('settings.lightTrailsDesc', 'Show a soft glow that follows your cursor across cards. Only visible with a mouse — disabling may improve performance.')}
+                  checked={!settings.disableLightTrails}
+                  onToggle={() => updateSettings({ disableLightTrails: !settings.disableLightTrails })}
+                  large={isMobile}
+                />
+              </Card>
             </div>
-            {flags.leaderboards && (
-            <ToggleRow
-              label={t('settings.experimentalRanks')}
-              description={t('settings.experimentalRanksDesc')}
-              checked={settings.enableExperimentalRanks}
-              onToggle={() => updateSettings({ enableExperimentalRanks: !settings.enableExperimentalRanks })}
-              large={isMobile}
-            />
-            )}
-            <ToggleRow
-              label={t('settings.lightTrails', 'Light Trails')}
-              description={t('settings.lightTrailsDesc', 'Show a soft glow that follows your cursor across cards. Only visible with a mouse — disabling may improve performance.')}
-              checked={!settings.disableLightTrails}
-              onToggle={() => updateSettings({ disableLightTrails: !settings.disableLightTrails })}
-              large={isMobile}
-            />
-          </Card>
           </FadeInDiv>
 
           {/* ── Item Shop ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <SectionHeader title={t('settings.itemShop', 'Item Shop')} description={t('settings.itemShopHint', 'Control how Item Shop availability is displayed.')} />
-          <Card>
-            <ToggleRow
-              label={t('settings.disableShopHighlighting', 'Disable Item Shop Highlighting')}
-              description={t('settings.disableShopHighlightingDesc', 'Turn off the pulsing highlight on songs available in the Item Shop.')}
-              checked={settings.disableShopHighlighting}
-              onToggle={() => updateSettings({ disableShopHighlighting: !settings.disableShopHighlighting })}
-              disabled={settings.hideItemShop}
-              large={isMobile}
-            />
-            <ToggleRow
-              label={t('settings.hideItemShop', 'Hide Item Shop')}
-              description={t('settings.hideItemShopDesc', 'Hide all Item Shop UI elements including navigation, buttons, and sort options.')}
-              checked={settings.hideItemShop}
-              onToggle={() => updateSettings({ hideItemShop: !settings.hideItemShop })}
-              large={isMobile}
-            />
-          </Card>
+            <div ref={(element) => registerSectionRef('item-shop', element)}>
+              <SectionHeader title={t('settings.itemShop', 'Item Shop')} description={t('settings.itemShopHint', 'Control how Item Shop availability is displayed.')} />
+              <Card>
+                <ToggleRow
+                  label={t('settings.disableShopHighlighting', 'Disable Item Shop Highlighting')}
+                  description={t('settings.disableShopHighlightingDesc', 'Turn off the pulsing highlight on songs available in the Item Shop.')}
+                  checked={settings.disableShopHighlighting}
+                  onToggle={() => updateSettings({ disableShopHighlighting: !settings.disableShopHighlighting })}
+                  disabled={settings.hideItemShop}
+                  large={isMobile}
+                />
+                <ToggleRow
+                  label={t('settings.hideItemShop', 'Hide Item Shop')}
+                  description={t('settings.hideItemShopDesc', 'Hide all Item Shop UI elements including navigation, buttons, and sort options.')}
+                  checked={settings.hideItemShop}
+                  onToggle={() => updateSettings({ hideItemShop: !settings.hideItemShop })}
+                  large={isMobile}
+                />
+              </Card>
+            </div>
           </FadeInDiv>
 
           {/* ── Instruments ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <SectionHeader title={t('settings.showInstruments')} description={t('settings.showInstrumentsHint')} />
-          <Card>
-            {INSTRUMENT_SHOW_MAP.map(inst => (
-              <ToggleRow
-                key={inst.showKey}
-                label={t(inst.i18nKey)}
-                icon={<InstrumentIcon instrument={inst.key} size={isMobile ? 28 : 24} />}
-                checked={settings[inst.showKey]}
-                onToggle={() => toggleShow(inst.showKey)}
-                disabled={settings[inst.showKey] && showActiveCount <= 1}
-                large={isMobile}
-              />
-            ))}
-          </Card>
+            <div ref={(element) => registerSectionRef('show-instruments', element)}>
+              <SectionHeader title={t('settings.showInstruments')} description={t('settings.showInstrumentsHint')} />
+              <Card>
+                {INSTRUMENT_SHOW_MAP.map(inst => (
+                  <ToggleRow
+                    key={inst.showKey}
+                    label={t(inst.i18nKey)}
+                    icon={<InstrumentIcon instrument={inst.key} size={isMobile ? 28 : 24} />}
+                    checked={settings[inst.showKey]}
+                    onToggle={() => toggleShow(inst.showKey)}
+                    disabled={settings[inst.showKey] && showActiveCount <= 1}
+                    large={isMobile}
+                  />
+                ))}
+              </Card>
+            </div>
           </FadeInDiv>
 
           {/* ── Instrument Metadata ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <SectionHeader title={t('settings.showMetadata')} description={t('settings.showMetadataHint')} />
-          <Card>
-            {METADATA_TOGGLES.map(m => (
-              <ToggleRow
-                key={m.key}
-                label={t(m.i18nKey)}
-                checked={settings[m.key]}
-                onToggle={() => toggleMetadata(m.key)}
-                large={isMobile}
-              />
-            ))}
-          </Card>
+            <div ref={(element) => registerSectionRef('show-metadata', element)}>
+              <SectionHeader title={t('settings.showMetadata')} description={t('settings.showMetadataHint')} />
+              <Card>
+                {METADATA_TOGGLES.map(m => (
+                  <ToggleRow
+                    key={m.key}
+                    label={t(m.i18nKey)}
+                    checked={settings[m.key]}
+                    onToggle={() => toggleMetadata(m.key)}
+                    large={isMobile}
+                  />
+                ))}
+              </Card>
+            </div>
           </FadeInDiv>
 
           {/* ── Version ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <SectionHeader title={t('settings.versionTitle')} description={t('settings.versionHint')} />
-          <Card>
-            <div style={st.versionRow}>
-              <span>{t('settings.appVersion')}</span>
-              <span style={st.versionValue}>{APP_VERSION}</span>
+            <div ref={(element) => registerSectionRef('version', element)}>
+              <SectionHeader title={t('settings.versionTitle')} description={t('settings.versionHint')} />
+              <Card>
+                <div style={st.versionRow}>
+                  <span>{t('settings.appVersion')}</span>
+                  <span style={st.versionValue}>{APP_VERSION}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceVersion')}</span>
+                  <span style={st.versionValue}>{serviceVersion ?? t('common.loading')}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.coreVersion')}</span>
+                  <span style={st.versionValue}>{CORE_VERSION}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.themeVersion')}</span>
+                  <span style={st.versionValue}>{THEME_VERSION}</span>
+                </div>
+              </Card>
             </div>
-            <div style={st.versionRow}>
-              <span>{t('settings.serviceVersion')}</span>
-              <span style={st.versionValue}>{serviceVersion ?? t('common.loading')}</span>
-            </div>
-            <div style={st.versionRow}>
-              <span>{t('settings.coreVersion')}</span>
-              <span style={st.versionValue}>{CORE_VERSION}</span>
-            </div>
-            <div style={st.versionRow}>
-              <span>{t('settings.themeVersion')}</span>
-              <span style={st.versionValue}>{THEME_VERSION}</span>
-            </div>
-          </Card>
           </FadeInDiv>
 
           {/* ── Service Info ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <SectionHeader title={t('settings.serviceInfo.title')} description={t('settings.serviceInfo.hint')} />
-          <Card>
-            <div style={st.versionRow}>
-              <span>{t('settings.serviceInfo.lastUpdateStart')}</span>
-              <span style={st.versionValue}>{lastLeaderboardUpdateStart}</span>
-            </div>
-            <div style={st.versionRow}>
-              <span>{t('settings.serviceInfo.lastUpdateComplete')}</span>
-              <span style={st.versionValue}>{lastLeaderboardUpdateComplete}</span>
-            </div>
-            <div style={st.versionRow}>
-              <span>{t('settings.serviceInfo.updateStatus')}</span>
-              <span style={st.versionValue}>{leaderboardUpdateStatus}</span>
-            </div>
-            <div style={st.versionRow}>
-              <span>{t('settings.serviceInfo.updateSubStatus')}</span>
-              <span style={st.versionValue}>{leaderboardUpdateSubStatus}</span>
-            </div>
-            <div style={st.versionRow}>
-              <span>{t('settings.serviceInfo.nextScheduledUpdate')}</span>
-              <span style={st.versionValue}>{nextLeaderboardScheduledUpdate}</span>
-            </div>
-            {trackedPlayer && (
-              <>
+            <div ref={(element) => registerSectionRef('service-info', element)}>
+              <SectionHeader title={t('settings.serviceInfo.title')} description={t('settings.serviceInfo.hint')} />
+              <Card>
                 <div style={st.versionRow}>
-                  <span>{t('settings.serviceInfo.selectedPlayerId')}</span>
-                  <span style={st.versionValue}>{trackedPlayer.accountId}</span>
+                  <span>{t('settings.serviceInfo.lastUpdateStart')}</span>
+                  <span style={st.versionValue}>{lastLeaderboardUpdateStart}</span>
                 </div>
                 <div style={st.versionRow}>
-                  <span>{t('settings.serviceInfo.selectedPlayerRivalsStatus')}</span>
-                  <span style={st.versionValue}>{trackedPlayerRivalsStatus}</span>
+                  <span>{t('settings.serviceInfo.lastUpdateComplete')}</span>
+                  <span style={st.versionValue}>{lastLeaderboardUpdateComplete}</span>
                 </div>
-              </>
-            )}
-          </Card>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceInfo.updateStatus')}</span>
+                  <span style={st.versionValue}>{leaderboardUpdateStatus}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceInfo.updateSubStatus')}</span>
+                  <span style={st.versionValue}>{leaderboardUpdateSubStatus}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceInfo.nextScheduledUpdate')}</span>
+                  <span style={st.versionValue}>{nextLeaderboardScheduledUpdate}</span>
+                </div>
+                {trackedPlayer && (
+                  <>
+                    <div style={st.versionRow}>
+                      <span>{t('settings.serviceInfo.selectedPlayerId')}</span>
+                      <span style={st.versionValue}>{trackedPlayer.accountId}</span>
+                    </div>
+                    <div style={st.versionRow}>
+                      <span>{t('settings.serviceInfo.selectedPlayerRivalsStatus')}</span>
+                      <span style={st.versionValue}>{trackedPlayerRivalsStatus}</span>
+                    </div>
+                  </>
+                )}
+              </Card>
+            </div>
           </FadeInDiv>
 
           {/* ── First Run Guides ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <SectionHeader title={t('firstRun.settings.showFirstRunTitle')} description={t('firstRun.settings.showFirstRunHint')} />
-          <Card>
-            <button style={modalCss.toggleRowSmallerGap} onClick={songsReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('nav.songs')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-            <button style={modalCss.toggleRowSmallerGap} onClick={songInfoReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('nav.songInfo', 'Song Info')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-            <button style={modalCss.toggleRowSmallerGap} onClick={statsReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('nav.statistics')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-            <button style={modalCss.toggleRowSmallerGap} onClick={suggestionsReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('nav.suggestions')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-            <button style={modalCss.toggleRowSmallerGap} onClick={playerHistoryReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('history.title')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-            {flags.leaderboards && (
-            <button style={modalCss.toggleRowSmallerGap} onClick={leaderboardsReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('nav.leaderboards')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-            )}
-            {flags.compete && (
-            <button style={modalCss.toggleRowSmallerGap} onClick={competeReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('nav.compete')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-            )}
-            <button style={modalCss.toggleRowSmallerGap} onClick={rivalsReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('rivals.title')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-            <button style={modalCss.toggleRowSmallerGap} onClick={shopReplay.open}>
-              <div style={modalCss.toggleContent}>
-                <div style={modalCss.toggleLabel}>{t('nav.shop')}</div>
-              </div>
-              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-            </button>
-          </Card>
+            <div ref={(element) => registerSectionRef('first-run', element)}>
+              <SectionHeader title={t('firstRun.settings.showFirstRunTitle')} description={t('firstRun.settings.showFirstRunHint')} />
+              <Card>
+                <button style={modalCss.toggleRowSmallerGap} onClick={songsReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('nav.songs')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+                <button style={modalCss.toggleRowSmallerGap} onClick={songInfoReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('nav.songInfo', 'Song Info')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+                <button style={modalCss.toggleRowSmallerGap} onClick={statsReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('nav.statistics')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+                <button style={modalCss.toggleRowSmallerGap} onClick={suggestionsReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('nav.suggestions')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+                <button style={modalCss.toggleRowSmallerGap} onClick={playerHistoryReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('history.title')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+                {flags.leaderboards && (
+                <button style={modalCss.toggleRowSmallerGap} onClick={leaderboardsReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('nav.leaderboards')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+                )}
+                {flags.compete && (
+                <button style={modalCss.toggleRowSmallerGap} onClick={competeReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('nav.compete')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+                )}
+                <button style={modalCss.toggleRowSmallerGap} onClick={rivalsReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('rivals.title')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+                <button style={modalCss.toggleRowSmallerGap} onClick={shopReplay.open}>
+                  <div style={modalCss.toggleContent}>
+                    <div style={modalCss.toggleLabel}>{t('nav.shop')}</div>
+                  </div>
+                  <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+                </button>
+              </Card>
+            </div>
           </FadeInDiv>
 
           {/* ── Reset ── */}
           <FadeInDiv delay={stagger(staggerIndex)}>
-          <div style={st.resetRow}>
-            <div>
-              <SectionHeader title={t('settings.resetSection')} description={t('settings.resetDescription')} flush />
+            <div ref={(element) => registerSectionRef('reset', element)}>
+              <div style={st.resetRow}>
+                <div>
+                  <SectionHeader title={t('settings.resetSection')} description={t('settings.resetDescription')} flush />
+                </div>
+                <button
+                  style={st.resetButton}
+                  onClick={() => setShowResetConfirm(true)}
+                >
+                  {t('settings.resetAll')}
+                </button>
+              </div>
             </div>
-            <button
-              style={st.resetButton}
-              onClick={() => setShowResetConfirm(true)}
-            >
-              {t('settings.resetAll')}
-            </button>
-          </div>
           </FadeInDiv>
 
         </div>

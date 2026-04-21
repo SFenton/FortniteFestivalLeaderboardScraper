@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties, 
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { IoCompass } from 'react-icons/io5';
 import { staggerDelay, estimateVisibleCount, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import { useStaggerStyle, buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
@@ -21,7 +22,7 @@ import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { accuracyBgColor, maxScoreColor, LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Layout, MaxWidth, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, border, flexCenter, padding } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, border, flexCenter, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -29,6 +30,7 @@ import SyncBanner from '../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../components/page/SyncCompleteBanner';
 import CollapseOnExit from '../../components/page/CollapseOnExit';
 import EmptyState from '../../components/common/EmptyState';
+import { ActionPill } from '../../components/common/ActionPill';
 import { parseApiError } from '../../utils/apiError';
 import PageHeader from '../../components/common/PageHeader';
 import { SongRow } from './components/SongRow';
@@ -826,8 +828,8 @@ export default function SongsPage() {
   }, [handleQuickLinkSelect, virtualizer]);
 
   const handleModalQuickLinkSelect = useCallback((link: SongQuickLink) => {
-    closeQuickLinks();
     handleSongQuickLinkSelect(link);
+    closeQuickLinks();
   }, [closeQuickLinks, handleSongQuickLinkSelect]);
 
   const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
@@ -854,6 +856,17 @@ export default function SongsPage() {
     };
   }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleSongQuickLinkSelect, isWideDesktop, loadPhase, openQuickLinks, quickLinkItems, quickLinksOpen, quickLinksTitle]);
 
+  const quickLinksButtonLabel = t('songs.quickLinksButton');
+  const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
+    ? (
+      <ActionPill
+        icon={<IoCompass size={Size.iconAction} />}
+        label={quickLinksButtonLabel}
+        onClick={openQuickLinks}
+      />
+    )
+    : undefined;
+
   const emptyStagger = useStaggerStyle(200, { skip: !shouldStagger });
   const songsStyles = useSongsStyles();
 
@@ -873,27 +886,33 @@ export default function SongsPage() {
       quickLinks={pageQuickLinks}
       before={<>
         <LoadGate phase={loadPhase} overlay>
-        {!isMobileChrome && (
-          <PageHeader
-            title={
-              <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
-                <SongsToolbar
-                  search={search}
-                  onSearchChange={setSearch}
-                  instrument={settings.instrument}
-                  sortActive={sortActive}
-                  filtersActive={filtersActive}
-                  hasSongs={songs.length > 0 && !isLoading}
-                  hasPlayer={hasPlayer}
-                  filteredCount={filtered.length}
-                  totalCount={songs.length}
-                  onOpenSort={openSort}
-                  onOpenFilter={openFilter}
-                />
-              </div>
-            }
-          />
-        )}
+          {isMobileChrome ? (
+            <PageHeader
+              actions={compactQuickLinksAction}
+            />
+          ) : (
+            <PageHeader
+              title={
+                <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
+                  <SongsToolbar
+                    search={search}
+                    onSearchChange={setSearch}
+                    instrument={settings.instrument}
+                    sortActive={sortActive}
+                    filtersActive={filtersActive}
+                    hasSongs={songs.length > 0 && !isLoading}
+                    hasPlayer={hasPlayer}
+                    filteredCount={filtered.length}
+                    totalCount={songs.length}
+                    onOpenSort={openSort}
+                    onOpenFilter={openFilter}
+                  />
+                </div>
+              }
+              actionsAlign="start"
+              actions={compactQuickLinksAction}
+            />
+          )}
         </LoadGate>
       </>}
       after={<>

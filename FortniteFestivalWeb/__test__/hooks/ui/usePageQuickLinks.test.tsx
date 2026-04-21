@@ -525,4 +525,117 @@ describe('usePageQuickLinks', () => {
     expect(result.current.activeItemId).toBe('j');
     expect(result.current.activeItemId).not.toBe('i');
   });
+
+  it('keeps the clicked compact quick link active while an external scroll controller moves toward it', async () => {
+    const scrollEl = createScrollContainer({ clientHeight: 540, scrollHeight: 3200 });
+    const scrollContainerRef = { current: scrollEl };
+    const items: readonly PageQuickLinkItem[] = [
+      { id: 'numeric', label: '#', landmarkLabel: '#' },
+      { id: 'a', label: 'A', landmarkLabel: 'A' },
+      { id: 'b', label: 'B', landmarkLabel: 'B' },
+    ];
+
+    const { result } = renderHook(() => usePageQuickLinks({
+      items,
+      scrollContainerRef,
+      isDesktopRailEnabled: false,
+    }));
+
+    const numericSection = createSection(scrollEl, 0);
+    const aSection = createSection(scrollEl, 2500);
+    const bSection = createSection(scrollEl, 2628);
+
+    act(() => {
+      result.current.registerSectionRef('numeric', numericSection);
+      result.current.registerSectionRef('a', aSection);
+      result.current.registerSectionRef('b', bSection);
+      fireEvent.scroll(scrollEl);
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeItemId).toBe('numeric');
+    });
+
+    act(() => {
+      result.current.handleQuickLinkSelect(items[2]!, { skipScroll: true });
+    });
+
+    expect(result.current.activeItemId).toBe('b');
+    expect(scrollEl.scrollTo).not.toHaveBeenCalled();
+
+    act(() => {
+      dispatchScroll(scrollEl, 2546);
+    });
+
+    expect(result.current.activeItemId).toBe('b');
+    expect(result.current.activeItemId).not.toBe('a');
+
+    act(() => {
+      dispatchScroll(scrollEl, 2620);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120);
+    });
+
+    expect(result.current.activeItemId).toBe('b');
+
+    act(() => {
+      dispatchScroll(scrollEl, 2500);
+    });
+
+    await waitFor(() => {
+      expect(result.current.activeItemId).toBe('a');
+    });
+  });
+
+  it('resyncs compact modal active state after manual scroll before reopen', () => {
+    const scrollEl = createScrollContainer({ clientHeight: 540, scrollHeight: 2000 });
+    const scrollContainerRef = { current: scrollEl };
+    const items: readonly PageQuickLinkItem[] = [
+      { id: 'global', label: 'Global', landmarkLabel: 'Global' },
+      { id: 'top-songs', label: 'Top Songs', landmarkLabel: 'Top Songs' },
+    ];
+
+    const { result } = renderHook(() => usePageQuickLinks({
+      items,
+      scrollContainerRef,
+      isDesktopRailEnabled: false,
+    }));
+
+    const globalSection = createSection(scrollEl, 80);
+    const topSongsSection = createSection(scrollEl, 980);
+
+    act(() => {
+      result.current.registerSectionRef('global', globalSection);
+      result.current.registerSectionRef('top-songs', topSongsSection);
+      fireEvent.scroll(scrollEl);
+      result.current.openQuickLinks();
+    });
+
+    expect(result.current.quickLinksOpen).toBe(true);
+    expect(result.current.activeItemId).toBe('global');
+
+    act(() => {
+      result.current.closeQuickLinks();
+      result.current.handleQuickLinkSelect(items[1]!);
+    });
+
+    expect(scrollEl.scrollTop).toBe(972);
+    expect(result.current.quickLinksOpen).toBe(false);
+    expect(result.current.activeItemId).toBe('top-songs');
+
+    act(() => {
+      dispatchScroll(scrollEl, 80);
+    });
+
+    expect(result.current.activeItemId).toBe('global');
+
+    act(() => {
+      result.current.openQuickLinks();
+    });
+
+    expect(result.current.quickLinksOpen).toBe(true);
+    expect(result.current.activeItemId).toBe('global');
+  });
 });

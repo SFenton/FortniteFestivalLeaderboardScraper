@@ -71,6 +71,7 @@
     "count": "{{filtered}} of {{total}} songs",
     "sort": "Sort",
     "filter": "Filter",
+    "quickLinksButton": "Quick Links",
     "quickLinksTitle": "{{sort}} Quick Links",
     "quickLinks": {
       "numeric": "#",
@@ -334,6 +335,7 @@
   },
   "settings": {
     "title": "Settings",
+    "quickLinks": "Quick Links",
     "appSettings": "App Settings",
     "appSettingsHint": "General Festival Score Tracker app settings.",
     "showInstrumentIcons": "Show Instrument Icons",

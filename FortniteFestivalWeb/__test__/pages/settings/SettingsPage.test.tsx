@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor, act, within } from '@testing-librar
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
+import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { ScrollContainerProvider, useHeaderPortalRef, useQuickLinksRailPortalRef, useScrollContainer } from '../../../src/contexts/ScrollContainerContext';
 
 vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true }),
@@ -57,19 +59,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   localStorage.clear();
-  Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
-  });
+  setViewportQueries();
   // Mock fetch for /api/version
   global.fetch = vi.fn().mockImplementation((url: string) => {
     if (typeof url === 'string' && url.includes('/api/version')) {
@@ -85,23 +75,12 @@ beforeEach(() => {
   }) as unknown as typeof fetch;
 });
 
-function renderSettings() {
-  return render(
-    <MemoryRouter>
-    <SettingsProvider>
-      <FirstRunProvider>
-        <SettingsPage />
-      </FirstRunProvider>
-    </SettingsProvider>
-    </MemoryRouter>,
-  );
-}
-
-describe('SettingsPage', () => {
-  it('renders content on mobile', () => {
-    // Mock mobile viewport
-    (window.matchMedia as ReturnType<typeof vi.fn>).mockImplementation((query: string) => ({
-      matches: true,
+function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean; } = {}) {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query.includes('max-width') ? mobile : query.includes('min-width') ? wide : false,
       media: query,
       onchange: null,
       addListener: vi.fn(),
@@ -109,16 +88,144 @@ describe('SettingsPage', () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       dispatchEvent: vi.fn(),
-    }));
+    })),
+  });
+}
+
+function ShellRefInjector({ children }: { children: React.ReactNode }) {
+  const scrollRef = useScrollContainer();
+  const setPortalNode = useHeaderPortalRef();
+  const setQuickLinksRailNode = useQuickLinksRailPortalRef();
+
+  return (
+    <>
+      <div ref={setPortalNode} data-testid="test-header-portal" />
+      <div
+        ref={(el) => {
+          if (el && !scrollRef.current) {
+            Object.defineProperty(el, 'scrollHeight', { value: 5000, writable: true, configurable: true });
+            Object.defineProperty(el, 'scrollTop', { value: 0, writable: true, configurable: true });
+            Object.defineProperty(el, 'clientHeight', { value: 800, writable: true, configurable: true });
+            el.scrollTo = (() => {}) as any;
+            scrollRef.current = el;
+          }
+        }}
+        data-testid="test-scroll-container"
+      >
+        {children}
+      </div>
+      <div ref={setQuickLinksRailNode} data-testid="test-quick-links-portal" />
+    </>
+  );
+}
+
+function PageQuickLinksHarness() {
+  const pageQuickLinks = usePageQuickLinksController();
+
+  if (!pageQuickLinks.hasPageQuickLinks) {
+    return null;
+  }
+
+  return (
+    <button type="button" data-testid="test-open-page-quick-links" onClick={() => pageQuickLinks.openPageQuickLinks()}>
+      Open Settings Quick Links
+    </button>
+  );
+}
+
+function renderSettings({ withQuickLinksHarness = false }: { withQuickLinksHarness?: boolean; } = {}) {
+  return render(
+    <ScrollContainerProvider>
+      <ShellRefInjector>
+        <MemoryRouter>
+          <PageQuickLinksProvider>
+            <SettingsProvider>
+              <FirstRunProvider>
+                <SettingsPage />
+                {withQuickLinksHarness ? <PageQuickLinksHarness /> : null}
+              </FirstRunProvider>
+            </SettingsProvider>
+          </PageQuickLinksProvider>
+        </MemoryRouter>
+      </ShellRefInjector>
+    </ScrollContainerProvider>,
+  );
+}
+
+describe('SettingsPage', () => {
+  it('renders content on mobile', () => {
+    setViewportQueries({ mobile: true, wide: false });
     renderSettings();
-    // The "Settings" heading is in the app shell, not the page itself.
-    // Verify core content renders instead.
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
     expect(screen.getByText('App Settings')).toBeDefined();
   });
 
   it('renders App Settings section', () => {
     renderSettings();
     expect(screen.getByText('App Settings')).toBeDefined();
+  });
+
+  it('registers quick links with the shared page controller', async () => {
+    renderSettings({ withQuickLinksHarness: true });
+    expect(await screen.findByTestId('test-open-page-quick-links')).toBeDefined();
+  });
+
+  it('renders a compact desktop quick links trigger and opens the modal', async () => {
+    renderSettings();
+
+    const trigger = await screen.findByRole('button', { name: 'Quick Links' });
+    fireEvent.click(trigger);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Quick Links' });
+    expect(dialog).toBeDefined();
+
+    fireEvent.click(screen.getByTestId('settings-quick-link-item-shop'));
+    fireEvent.transitionEnd(dialog);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Quick Links' })).toBeNull();
+    });
+  });
+
+  it('renders a mobile quick links trigger and opens the modal', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+
+    renderSettings();
+
+    const trigger = await screen.findByRole('button', { name: 'Quick Links' });
+    fireEvent.click(trigger);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Quick Links' });
+    expect(dialog).toBeDefined();
+
+    fireEvent.click(screen.getByTestId('settings-quick-link-first-run'));
+    fireEvent.transitionEnd(dialog);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Quick Links' })).toBeNull();
+    });
+  });
+
+  it('opens the settings quick links modal with the expected sections and closes on selection', async () => {
+    renderSettings({ withQuickLinksHarness: true });
+
+    fireEvent.click(await screen.findByTestId('test-open-page-quick-links'));
+
+    const list = await screen.findByTestId('settings-quick-links-modal-list');
+    expect(within(list).getByTestId('settings-quick-link-app-settings')).toHaveTextContent('App Settings');
+    expect(within(list).getByTestId('settings-quick-link-item-shop')).toHaveTextContent('Item Shop');
+    expect(within(list).getByTestId('settings-quick-link-service-info')).toHaveTextContent('Service Info');
+    expect(within(list).getByTestId('settings-quick-link-first-run')).toHaveTextContent('First Run Guides');
+    expect(within(list).getByTestId('settings-quick-link-reset')).toHaveTextContent('Reset Settings');
+
+    const dialog = screen.getByRole('dialog', { name: 'Quick Links' });
+    fireEvent.click(within(list).getByTestId('settings-quick-link-reset'));
+    fireEvent.transitionEnd(dialog);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Quick Links' })).toBeNull();
+    });
   });
 
   it('renders Show Instruments section with all instruments', () => {

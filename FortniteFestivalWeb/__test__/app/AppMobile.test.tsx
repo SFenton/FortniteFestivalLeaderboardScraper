@@ -4,7 +4,7 @@
  * bottom nav, and route-specific floating action buttons.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor, fireEvent, screen } from '@testing-library/react';
+import { render, waitFor, fireEvent, screen, within } from '@testing-library/react';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -21,6 +21,19 @@ const mockApi = vi.hoisted(() => {
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'p1', count: 0, history: [] }),
     getLeaderboard: fn().mockResolvedValue({ songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 's1', instruments: [] }),
+    getRivalsOverview: fn().mockResolvedValue({ computedAt: '2024-01-01T00:00:00Z' }),
+    getRivalsList: fn().mockResolvedValue({
+      combo: 'Solo_Guitar',
+      above: [{ accountId: 'rival-1', displayName: 'RivalAbove', sharedSongCount: 5, rivalScore: 300, aheadCount: 2, behindCount: 3, avgSignedDelta: 1.5 }],
+      below: [{ accountId: 'rival-2', displayName: 'RivalBelow', sharedSongCount: 4, rivalScore: 200, aheadCount: 1, behindCount: 4, avgSignedDelta: -1.2 }],
+    }),
+    getLeaderboardRivals: fn().mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      userRank: 18,
+      above: [{ accountId: 'leader-rival-1', displayName: 'LeaderAbove', sharedSongCount: 6, aheadCount: 3, behindCount: 3, avgSignedDelta: 1.25, leaderboardRank: 12, userLeaderboardRank: 18 }],
+      below: [{ accountId: 'leader-rival-2', displayName: 'LeaderBelow', sharedSongCount: 5, aheadCount: 2, behindCount: 3, avgSignedDelta: -0.75, leaderboardRank: 24, userLeaderboardRank: 18 }],
+    }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'p1', stats: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' }),
@@ -29,7 +42,7 @@ const mockApi = vi.hoisted(() => {
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
-import App from '../../src/App';
+import App, { getFabQuickLinksActionLabel, mergePageQuickLinksIntoFabGroups } from '../../src/App';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
 
@@ -90,6 +103,46 @@ beforeEach(() => {
 });
 
 describe('App — mobile FAB branches', () => {
+  it('merges quick links into the page-specific FAB group', () => {
+    const createAction = (label: string) => ({ label, icon: <span>{label}</span>, onPress: vi.fn() });
+
+    const groups = mergePageQuickLinksIntoFabGroups(
+      [createAction('Quick Links')],
+      [createAction('Leaderboard Rivals')],
+      [createAction('Find Player')],
+    );
+
+    expect(groups.map(group => group.map(action => action.label))).toEqual([
+      ['Quick Links', 'Leaderboard Rivals'],
+      ['Find Player'],
+    ]);
+  });
+
+  it('keeps quick links separate when there are no page-specific FAB actions', () => {
+    const createAction = (label: string) => ({ label, icon: <span>{label}</span>, onPress: vi.fn() });
+
+    const groups = mergePageQuickLinksIntoFabGroups(
+      [createAction('Quick Links')],
+      [],
+      [createAction('Find Player')],
+    );
+
+    expect(groups.map(group => group.map(action => action.label))).toEqual([
+      ['Quick Links'],
+      ['Find Player'],
+    ]);
+  });
+
+  it('uses a generic label for shell FAB quick links instead of a page-specific title', () => {
+    const t = vi.fn().mockImplementation((key: string, fallback?: string) => {
+      if (key === 'common.quickLinks') return 'Quick Links';
+      return fallback ?? key;
+    });
+
+    expect(getFabQuickLinksActionLabel(t as any)).toBe('Quick Links');
+    expect(getFabQuickLinksActionLabel(t as any)).not.toBe('Title Quick Links');
+  });
+
   it('renders BottomNav and FAB on mobile /songs', async () => {
     setMobile();
     const { container } = render(<App />);
@@ -179,6 +232,28 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       expect(container.innerHTML.length).toBeGreaterThan(200);
     });
+    window.location.hash = '';
+  });
+
+  it('keeps Rivals quick links in the same FAB section as the tab toggle on mobile', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/rivals';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Quick Links').length).toBeGreaterThan(0);
+    }, { timeout: 5000 });
+
+    fireEvent.click(screen.getByLabelText('Actions'));
+
+    const menu = await screen.findByTestId('fab-menu');
+    await waitFor(() => {
+      expect(within(menu).getByText('Quick Links')).toBeDefined();
+      expect(within(menu).getByText('Leaderboard Rivals')).toBeDefined();
+    });
+    expect(within(menu).getAllByTestId('fab-menu-divider')).toHaveLength(1);
+
     window.location.hash = '';
   });
 

@@ -426,12 +426,47 @@ describe('PlayerContent', () => {
     const trigger = screen.getByRole('button', { name: 'Quick Links' });
     expect(trigger).toHaveTextContent('Quick Links');
     expect(trigger).toHaveStyle({
-      backgroundColor: 'rgb(124, 58, 237)',
-      fontSize: '16px',
+      backgroundColor: 'rgba(18, 24, 38, 0.78)',
+      color: 'rgb(255, 255, 255)',
+      fontSize: '12px',
       fontWeight: '600',
       height: '48px',
+      paddingLeft: '12px',
+      paddingRight: '12px',
     });
     expect(screen.queryByText('Select Player Profile')).toBeNull();
+  });
+
+  it('renders Select Player Profile with compact pill metrics and keeps Quick Links on the right', async () => {
+    mockIsWideDesktop = false;
+    mockHasFab = false;
+
+    render(
+      <Providers>
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+    });
+
+    const selectButton = screen.getByRole('button', { name: 'Select Player Profile' });
+    expect(selectButton).toHaveStyle({
+      backgroundColor: 'rgb(124, 58, 237)',
+      color: 'rgb(255, 255, 255)',
+      fontSize: '12px',
+      fontWeight: '600',
+      height: '48px',
+      paddingLeft: '12px',
+      paddingRight: '12px',
+    });
+
+    const actionButtons = Array.from(screen.getByTestId('player-header-actions').querySelectorAll('button'));
+    expect(actionButtons).toHaveLength(2);
+    expect(actionButtons[0]).toHaveAccessibleName('Select Player Profile');
+    expect(actionButtons[1]).toHaveAccessibleName('Quick Links');
   });
 
   it('animates the select profile slot out so quick links can settle smoothly', async () => {
@@ -478,7 +513,7 @@ describe('PlayerContent', () => {
     });
   });
 
-  it('renders an icon-only quick links trigger on mobile', async () => {
+  it('renders a labeled quick links trigger on mobile using the same pill style', async () => {
     mockIsWideDesktop = false;
     mockHasFab = true;
 
@@ -490,7 +525,17 @@ describe('PlayerContent', () => {
 
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined(); });
     expect(screen.queryByRole('navigation', { name: 'Quick Links' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Quick Links' })).toHaveTextContent('');
+    const trigger = screen.getByRole('button', { name: 'Quick Links' });
+    expect(trigger).toHaveTextContent('Quick Links');
+    expect(trigger).toHaveStyle({
+      backgroundColor: 'rgba(18, 24, 38, 0.78)',
+      color: 'rgb(255, 255, 255)',
+      fontSize: '12px',
+      fontWeight: '600',
+      height: '48px',
+      paddingLeft: '12px',
+      paddingRight: '12px',
+    });
   });
 
   it('shows the bands quick link only when the bands section is enabled', async () => {

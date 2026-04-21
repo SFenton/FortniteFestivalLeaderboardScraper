@@ -151,6 +151,32 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
   const sectionRefs = useRef(new Map<string, HTMLElement>());
   const quickLinkTransitionRef = useRef<QuickLinkTransitionState | null>(null);
   const quickLinkSettleTimerRef = useRef<number | null>(null);
+  const loggedActiveItemIdRef = useRef<string | null>(null);
+
+  const emitQuickLinkDebug = useCallback((event: string, payload: Record<string, unknown>) => {
+    const scrollEl = scrollContainerRef.current;
+    console.log('[quick-links]', JSON.stringify({
+      event,
+      compact: !isDesktopRailEnabled,
+      scrollTop: scrollEl?.scrollTop ?? null,
+      ...payload,
+    }));
+  }, [isDesktopRailEnabled, scrollContainerRef]);
+
+  const setLoggedActiveItemId = useCallback((nextId: string | null, reason: string, payload?: Record<string, unknown>) => {
+    const previousId = loggedActiveItemIdRef.current;
+    if (previousId !== nextId) {
+      emitQuickLinkDebug('active-change', {
+        reason,
+        previousId,
+        nextId,
+        ...payload,
+      });
+      loggedActiveItemIdRef.current = nextId;
+    }
+
+    setActiveItemId(nextId);
+  }, [emitQuickLinkDebug]);
 
   const clearQuickLinkSettleTimer = useCallback(() => {
     if (quickLinkSettleTimerRef.current === null) return;
@@ -193,9 +219,9 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
 
   useEffect(() => {
     const scrollEl = scrollContainerRef.current;
-    if (!isDesktopRailEnabled || !scrollEl || items.length === 0) {
+    if (!scrollEl || items.length === 0) {
       clearQuickLinkTransition();
-      setActiveItemId(null);
+      setLoggedActiveItemId(null, 'no-scroll-or-items');
       return;
     }
 
@@ -203,7 +229,7 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
       const naturalActive = resolveActiveQuickLink(items, sectionRefs.current, scrollEl, scrollOffset, getItemTop);
       const transitionState = quickLinkTransitionRef.current;
       if (!transitionState) {
-        setActiveItemId(naturalActive);
+        setLoggedActiveItemId(naturalActive, 'natural-scroll');
         return;
       }
 
@@ -213,7 +239,7 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
       if (transitionState.phase === 'scrolling') {
         if (targetItemTop == null) {
           clearQuickLinkTransition();
-          setActiveItemId(naturalActive);
+          setLoggedActiveItemId(naturalActive, 'scrolling-target-missing');
           return;
         }
 
@@ -246,47 +272,47 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
               lockWhileVisible: currentTransitionState.lockWhileVisible,
               anchorScrollTop: scrollEl.scrollTop,
             };
-            setActiveItemId(currentTransitionState.targetId);
+            setLoggedActiveItemId(currentTransitionState.targetId, 'scroll-settled-arrival');
           }, scrollSettleDelayMs);
         } else {
           clearQuickLinkSettleTimer();
         }
 
         const originStillExists = items.some((item) => item.id === transitionState.originId);
-        setActiveItemId(originStillExists ? transitionState.originId : naturalActive);
+        setLoggedActiveItemId(originStillExists ? transitionState.originId : naturalActive, 'scroll-origin-hold');
         return;
       }
 
       if (transitionState.lockWhileVisible) {
         if (targetVisible) {
-          setActiveItemId(transitionState.targetId);
+          setLoggedActiveItemId(transitionState.targetId, 'owned-visible-lock');
           return;
         }
 
         clearQuickLinkTransition();
-        setActiveItemId(naturalActive);
+        setLoggedActiveItemId(naturalActive, 'owned-visible-release');
         return;
       }
 
       if (targetVisible && Math.abs(scrollEl.scrollTop - transitionState.anchorScrollTop) <= scrollCompleteThreshold) {
-        setActiveItemId(transitionState.targetId);
+        setLoggedActiveItemId(transitionState.targetId, 'owned-anchor-hold');
         return;
       }
 
       if (targetItemTop != null) {
         const targetRelativeTop = targetItemTop - scrollEl.scrollTop;
         if (targetRelativeTop >= -REACHABLE_TARGET_OWNERSHIP_PX && targetRelativeTop <= scrollOffset + REACHABLE_TARGET_OWNERSHIP_PX) {
-          setActiveItemId(transitionState.targetId);
+          setLoggedActiveItemId(transitionState.targetId, 'owned-reachable-band');
           return;
         }
 
         clearQuickLinkTransition();
-        setActiveItemId(naturalActive);
+        setLoggedActiveItemId(naturalActive, 'owned-release-natural');
         return;
       }
 
       clearQuickLinkTransition();
-      setActiveItemId(naturalActive);
+      setLoggedActiveItemId(naturalActive, 'owned-target-missing');
     };
 
     syncActive();
@@ -297,7 +323,7 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
       scrollEl.removeEventListener('scroll', syncActive);
       window.removeEventListener('resize', syncActive);
     };
-  }, [clearQuickLinkSettleTimer, clearQuickLinkTransition, getItemTop, isDesktopRailEnabled, items, scrollCompleteThreshold, scrollContainerRef, scrollOffset, scrollSettleDelayMs]);
+  }, [clearQuickLinkSettleTimer, clearQuickLinkTransition, getItemTop, isDesktopRailEnabled, items, scrollCompleteThreshold, scrollContainerRef, scrollOffset, scrollSettleDelayMs, setLoggedActiveItemId]);
 
   const handleQuickLinkSelect = useCallback((item: T, options?: { skipScroll?: boolean; }) => {
     const scrollEl = scrollContainerRef.current;
@@ -311,6 +337,49 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
     const rawTargetTop = Math.max(0, itemTop - scrollOffset);
     const nextTop = Math.min(rawTargetTop, maxScrollTop);
     const lockWhileVisible = rawTargetTop > maxScrollTop;
+
+    emitQuickLinkDebug('click-intent', {
+      targetId: item.id,
+      skipScroll: !!options?.skipScroll,
+      itemTop,
+      nextTop,
+      lockWhileVisible,
+    });
+
+    if (!isDesktopRailEnabled) {
+      clearQuickLinkSettleTimer();
+      if (Math.abs(scrollEl.scrollTop - nextTop) <= scrollCompleteThreshold) {
+        quickLinkTransitionRef.current = {
+          phase: 'owned',
+          targetId: item.id,
+          lockWhileVisible,
+          anchorScrollTop: scrollEl.scrollTop,
+        };
+        setLoggedActiveItemId(item.id, 'compact-click-immediate-arrival');
+        return;
+      }
+
+      quickLinkTransitionRef.current = {
+        phase: 'scrolling',
+        originId: item.id,
+        targetId: item.id,
+        lockWhileVisible,
+      };
+      setLoggedActiveItemId(item.id, 'compact-click-hold');
+      if (!options?.skipScroll) {
+        scrollEl.scrollTo({ top: nextTop, behavior: 'smooth' });
+        if (Math.abs(scrollEl.scrollTop - nextTop) <= scrollCompleteThreshold) {
+          quickLinkTransitionRef.current = {
+            phase: 'owned',
+            targetId: item.id,
+            lockWhileVisible,
+            anchorScrollTop: scrollEl.scrollTop,
+          };
+        }
+      }
+      return;
+    }
+
     const naturalActive = resolveActiveQuickLink(items, sectionRefs.current, scrollEl, scrollOffset, getItemTop);
     const originId = activeItemId && items.some((entry) => entry.id === activeItemId)
       ? activeItemId
@@ -324,7 +393,7 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
         lockWhileVisible,
         anchorScrollTop: scrollEl.scrollTop,
       };
-      setActiveItemId(item.id);
+      setLoggedActiveItemId(item.id, 'desktop-click-immediate-arrival');
       return;
     }
 
@@ -335,11 +404,11 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
       targetId: item.id,
       lockWhileVisible,
     };
-    setActiveItemId(originId);
+    setLoggedActiveItemId(originId, 'desktop-click-origin-hold', { targetId: item.id });
     if (!options?.skipScroll) {
       scrollEl.scrollTo({ top: nextTop, behavior: 'smooth' });
     }
-  }, [activeItemId, clearQuickLinkSettleTimer, getItemTop, items, scrollCompleteThreshold, scrollContainerRef, scrollOffset]);
+  }, [activeItemId, clearQuickLinkSettleTimer, clearQuickLinkTransition, emitQuickLinkDebug, getItemTop, isDesktopRailEnabled, items, scrollCompleteThreshold, scrollContainerRef, scrollOffset, setLoggedActiveItemId]);
 
   return {
     activeItemId,
