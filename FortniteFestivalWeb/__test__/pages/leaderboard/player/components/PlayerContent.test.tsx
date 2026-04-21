@@ -425,6 +425,60 @@ describe('PlayerContent', () => {
     expect(topSongsLink.querySelector('svg')).not.toBeNull();
   });
 
+  it('applies the shared page scroll fade on the player details page', async () => {
+    const { container } = render(
+      <Providers accountId="p1">
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('TestPlayer')).toBeDefined();
+    });
+
+    const scrollContainer = screen.getByTestId('test-scroll-container');
+    const pageRoot = screen.getByTestId('page-root');
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]');
+
+    expect(scrollArea).toBeTruthy();
+
+    Object.defineProperty(scrollContainer, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: 0,
+        left: 0,
+        bottom: 540,
+        right: 1024,
+        width: 1024,
+        height: 540,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      }),
+    });
+
+    Object.defineProperty(pageRoot, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: 0,
+        left: 0,
+        bottom: 1280,
+        right: 1024,
+        width: 1024,
+        height: 1280,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      }),
+    });
+
+    fireEvent.scroll(scrollContainer);
+
+    await waitFor(() => {
+      expect(pageRoot.style.maskImage).toContain('linear-gradient');
+    });
+  });
+
   it('renders a labeled quick links trigger on compact desktop', async () => {
     mockIsWideDesktop = false;
     mockHasFab = false;

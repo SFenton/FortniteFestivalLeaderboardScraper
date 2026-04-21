@@ -35,6 +35,7 @@ import { useScrollContainer } from '../../../../contexts/ScrollContainerContext'
 import { getPageQuickLinkTestId, usePageQuickLinks, type PageQuickLinkItem } from '../../../../hooks/ui/usePageQuickLinks';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
+import PageHeaderTransition from '../../../../components/common/PageHeaderTransition';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
 import { buildOverallSummaryItems } from '../../../player/sections/OverallSummarySection';
 import { buildInstrumentStatsItems } from '../../../player/sections/InstrumentStatsSection';
@@ -594,10 +595,53 @@ export default function PlayerContent({
     <Page
       scrollRestoreKey={`statistics:${data.accountId}`}
       scrollDeps={fadeDeps}
-      scrollMaskOptions={{ disabled: true }}
       scrollStyle={pps.scrollArea}
       quickLinks={quickLinks.length > 0 ? pageQuickLinks : undefined}
-      before={showMobilePageHeader ? (
+      before={hasFab ? (
+        <PageHeaderTransition visible={showMobilePageHeader}>
+          <PageHeader
+            title={data.displayName}
+            actions={(quickLinksAction || selectBtnMounted) ? (
+              <div
+                data-testid="player-header-actions"
+                style={{
+                  ...PLAYER_HEADER_ACTIONS_STYLE,
+                  gap: quickLinksAction && selectBtnVisible ? Gap.md : Gap.none,
+                }}
+              >
+                {selectBtnMounted ? (
+                  <div
+                    data-testid="player-select-profile-slot"
+                    aria-hidden={!selectBtnVisible}
+                    style={{
+                      ...SELECT_PROFILE_ACTION_SLOT_STYLE,
+                      maxWidth: selectBtnVisible
+                        ? (hasFab ? Layout.pillButtonHeight : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
+                        : 0,
+                      opacity: selectBtnVisible ? 1 : 0,
+                    }}
+                  >
+                    <SelectProfilePill
+                      visible={selectBtnVisible}
+                      isMobile={hasFab}
+                      onClick={() => {
+                        /* v8 ignore start */
+                        if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+                            setPendingSwitch(() => primeTrackedPlayerSelection);
+                        } else {
+                            primeTrackedPlayerSelection();
+                        /* v8 ignore stop */
+                        }
+                      }}
+                    />
+                  </div>
+                ) : null}
+                {quickLinksAction}
+              </div>
+            ) : undefined}
+          />
+        </PageHeaderTransition>
+      ) : showMobilePageHeader ? (
         <PageHeader
           title={data.displayName}
           actions={(quickLinksAction || selectBtnMounted) ? (
