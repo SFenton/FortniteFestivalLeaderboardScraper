@@ -335,6 +335,7 @@
   },
   "settings": {
     "title": "Settings",
+    "quickLinks": "Quick Links",
     "appSettings": "App Settings",
     "appSettingsHint": "General Festival Score Tracker app settings.",
     "showInstrumentIcons": "Show Instrument Icons",
