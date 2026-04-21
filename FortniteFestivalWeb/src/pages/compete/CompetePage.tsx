@@ -2,7 +2,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 import { IoChevronForward } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
@@ -10,8 +10,13 @@ import { rankingsCache } from '../../api/pageCache';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
-import { comboIdFromInstruments } from '@festival/core/combos';
-import type { RankingsPageResponse, ComboPageResponse, AccountRankingDto, ComboRankingEntry } from '@festival/core/api/serverTypes';
+import type {
+  RankingsPageResponse,
+  ComboPageResponse,
+  AccountRankingDto,
+  ComboRankingEntry,
+  RivalSummary,
+} from '@festival/core/api/serverTypes';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import EmptyState from '../../components/common/EmptyState';
@@ -31,6 +36,28 @@ import {
 } from '@festival/theme';
 import fx from '../../styles/effects.module.css';
 import { competeSlides } from './firstRun';
+import { rankingScopeLabel, resolveSupportedRankingScopes, type RankingScope } from '../../utils/rankingScopes';
+
+type PlayerRankingResult = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
+
+type NormalizedRankingEntry = {
+  accountId: string;
+  displayName?: string;
+  rank: number;
+  ratingLabel: string;
+};
+
+type CompeteScopeViewModel = {
+  scope: RankingScope;
+  label: string;
+  leaderboardEntries: NormalizedRankingEntry[];
+  playerEntry: NormalizedRankingEntry | null;
+  playerInTop: boolean;
+  leaderboardError: unknown;
+  rivalsAbove: RivalSummary[];
+  rivalsBelow: RivalSummary[];
+  rivalsError: unknown;
+};
 
 export default function CompetePage() {
   const { t } = useTranslation();
@@ -41,213 +68,294 @@ export default function CompetePage() {
 
   const accountId = player?.accountId ?? '';
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
-  const previewInstrument = instruments[0] ?? null;
-  const isMulti = instruments.length >= 2;
-  const comboId = useMemo(
-    () => isMulti ? comboIdFromInstruments(instruments) : null,
-    [instruments, isMulti],
-  );
+  const scopes = useMemo(() => resolveSupportedRankingScopes(instruments), [instruments]);
 
-  type PlayerRankingResult = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
-
-  // Leaderboard top 10 — combo rankings (2+ instruments) or per-instrument (1)
-  const { data: leaderboardData, isLoading: leaderboardLoading, error: leaderboardError } = useQuery<RankingsPageResponse | ComboPageResponse>({
-    queryKey: isMulti
-      ? queryKeys.comboRankings(comboId!, 'totalscore', 1, 10)
-      : queryKeys.rankings(previewInstrument ?? 'Solo_Guitar', 'totalscore', 1, 10),
-    queryFn: () => isMulti
-      ? api.getComboRankings(comboId!, 'totalscore', 1, 10)
-      : api.getRankings(previewInstrument!, 'totalscore', 1, 10),
-    enabled: !!previewInstrument,
+  const leaderboardQueries = useQueries({
+    queries: scopes.map((scope) => (
+      scope.kind === 'combo'
+        ? {
+            queryKey: queryKeys.comboRankings(scope.comboId, 'totalscore', 1, 10),
+            queryFn: () => api.getComboRankings(scope.comboId, 'totalscore', 1, 10),
+          }
+        : {
+            queryKey: queryKeys.rankings(scope.instrument, 'totalscore', 1, 10),
+            queryFn: () => api.getRankings(scope.instrument, 'totalscore', 1, 10),
+          }
+    )),
   });
 
-  // Player's own ranking for the same metric
-  const { data: playerRanking } = useQuery<PlayerRankingResult>({
-    queryKey: isMulti
-      ? queryKeys.playerComboRanking(accountId, comboId!, 'totalscore')
-      : queryKeys.playerRanking(previewInstrument ?? 'Solo_Guitar', accountId, 'totalscore'),
-    queryFn: () => isMulti
-      ? api.getPlayerComboRanking(accountId, comboId!, 'totalscore')
-      : api.getPlayerRanking(previewInstrument!, accountId, 'totalscore'),
-    enabled: !!accountId && !!previewInstrument,
+  const playerQueries = useQueries({
+    queries: accountId
+      ? scopes.map((scope) => (
+          scope.kind === 'combo'
+            ? {
+                queryKey: queryKeys.playerComboRanking(accountId, scope.comboId, 'totalscore'),
+                queryFn: () => api.getPlayerComboRanking(accountId, scope.comboId, 'totalscore'),
+              }
+            : {
+                queryKey: queryKeys.playerRanking(scope.instrument, accountId, 'totalscore'),
+                queryFn: () => api.getPlayerRanking(scope.instrument, accountId, 'totalscore'),
+              }
+        ))
+      : [],
   });
 
-  // Normalize to common shape for rendering
-  const leaderboardEntries = useMemo(() => {
-    if (!leaderboardData) return [];
-    if ('entries' in leaderboardData && 'comboId' in leaderboardData) {
-      // ComboPageResponse
-      return leaderboardData.entries.map(e => ({
-        accountId: e.accountId,
-        displayName: e.displayName,
-        rank: e.rank,
-        ratingLabel: formatRating(e.totalScore, 'totalscore'),
-      }));
-    }
-    // RankingsPageResponse
-    if ('entries' in leaderboardData) {
-      return leaderboardData.entries.map(e => ({
-        accountId: e.accountId,
-        displayName: e.displayName,
-        rank: e.totalScoreRank,
-        ratingLabel: formatRating(e.totalScore, 'totalscore'),
-      }));
-    }
-    return [];
-  }, [leaderboardData]);
+  const rivalsQueries = useQueries({
+    queries: accountId
+      ? scopes.map((scope) => ({
+          queryKey: queryKeys.rivalsList(accountId, scope.queryValue),
+          queryFn: () => api.getRivalsList(accountId, scope.queryValue),
+        }))
+      : [],
+  });
 
-  const playerEntry = useMemo(() => {
-    if (!playerRanking) return null;
-    if ('comboId' in playerRanking) {
-      // Combo player ranking
+  const scopeSections = useMemo<CompeteScopeViewModel[]>(() => (
+    scopes.map((scope, index) => {
+      const leaderboardData = leaderboardQueries[index]?.data as RankingsPageResponse | ComboPageResponse | undefined;
+      const playerRanking = playerQueries[index]?.data as PlayerRankingResult | undefined;
+      const rivalsData = rivalsQueries[index]?.data as { above: RivalSummary[]; below: RivalSummary[] } | undefined;
+
+      const leaderboardEntries = normalizeLeaderboardEntries(leaderboardData);
+      const playerEntry = normalizePlayerEntry(playerRanking);
+
       return {
-        accountId: playerRanking.accountId,
-        displayName: playerRanking.displayName,
-        rank: playerRanking.rank,
-        ratingLabel: formatRating(playerRanking.totalScore, 'totalscore'),
+        scope,
+        label: rankingScopeLabel(scope),
+        leaderboardEntries,
+        playerEntry,
+        playerInTop: !!(accountId && leaderboardEntries.some((entry) => entry.accountId === accountId)),
+        leaderboardError: leaderboardQueries[index]?.error,
+        rivalsAbove: rivalsData?.above.slice(0, 3) ?? [],
+        rivalsBelow: rivalsData?.below.slice(0, 3) ?? [],
+        rivalsError: rivalsQueries[index]?.error,
       };
-    }
-    // Per-instrument player ranking
-    return {
-      accountId: playerRanking.accountId,
-      displayName: playerRanking.displayName,
-      rank: playerRanking.totalScoreRank,
-      ratingLabel: formatRating(playerRanking.totalScore, 'totalscore'),
-    };
-  }, [playerRanking]);
+    })
+  ), [accountId, leaderboardQueries, playerQueries, rivalsQueries, scopes]);
 
-  const playerInTop = !!(accountId && leaderboardEntries.some(e => e.accountId === accountId));
+  const allLeaderboardsErrored = leaderboardQueries.length > 0 && leaderboardQueries.every((query) => !!query.error);
+  const firstLeaderboardError = leaderboardQueries.find((query) => query.error)?.error;
+  const leaderboardReady = leaderboardQueries.every((query) => !query.isLoading);
+  const rivalsReady = !accountId || rivalsQueries.every((query) => !query.isLoading);
 
-  const leaderboardNavTarget = isMulti ? Routes.leaderboards : Routes.fullRankings(previewInstrument!, 'totalscore');
-  const navigateToLeaderboards = () => {
-    if (!isMulti && previewInstrument) rankingsCache.delete(`${previewInstrument}:totalscore`);
-    navigate(leaderboardNavTarget);
-  };
-
-  // Rivals — closest 3 above + 3 below for first visible instrument
-  const { data: rivalsData, error: rivalsError } = useQuery({
-    queryKey: queryKeys.rivalsList(accountId, previewInstrument ?? ''),
-    queryFn: () => api.getRivalsList(accountId, previewInstrument!),
-    enabled: !!accountId && !!previewInstrument,
-  });
-
-  const above = rivalsData?.above.slice(0, 3) ?? [];
-  const below = rivalsData?.below.slice(0, 3) ?? [];
-
-  // Wait for leaderboards; also wait for rivals if a player is tracked
-  const rivalsReady = !accountId || !previewInstrument || !!rivalsData || !!rivalsError;
-  const isReady = (!leaderboardLoading || !!leaderboardError) && rivalsReady;
-  const hasError = !!leaderboardError;
+  const isReady = (leaderboardReady && rivalsReady) || allLeaderboardsErrored;
+  const hasError = allLeaderboardsErrored;
   const { phase, shouldStagger } = usePageTransition('compete', isReady, isReady);
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled: settings.enableExperimentalRanks }), [player, settings.enableExperimentalRanks]);
+  const firstRunGateCtx = useMemo(
+    () => ({ hasPlayer: !!player, experimentalRanksEnabled: settings.enableExperimentalRanks }),
+    [player, settings.enableExperimentalRanks],
+  );
+
+  const navigateToLeaderboards = (scope: RankingScope) => {
+    const navTarget = scope.kind === 'combo'
+      ? Routes.fullComboRankings(scope.comboId, 'totalscore')
+      : Routes.fullRankings(scope.instrument, 'totalscore');
+    const cacheKey = scope.kind === 'combo'
+      ? `combo:${scope.comboId}:totalscore`
+      : `${scope.instrument}:totalscore`;
+
+    rankingsCache.delete(cacheKey);
+    navigate(navTarget);
+  };
+
+  const navigateToAllRivals = (scope: RankingScope) => {
+    navigate(Routes.allRivals(scope.queryValue), { state: { from: 'compete' } });
+  };
+
+  const navigateToRivalDetail = (scope: RankingScope, rival: RivalSummary) => {
+    navigate(Routes.rivalDetail(rival.accountId, rival.displayName ?? undefined), {
+      state: { combo: scope.queryValue, rivalName: rival.displayName ?? undefined },
+    });
+  };
 
   return (
-    <Page scrollRestoreKey="compete" loadPhase={phase} before={isMobile ? undefined : <PageHeader title={t('compete.title')} />}
+    <Page
+      scrollRestoreKey="compete"
+      loadPhase={phase}
+      before={isMobile ? undefined : <PageHeader title={t('compete.title')} />}
       firstRun={{ key: 'compete', label: t('nav.compete'), slides: competeSlides, gateContext: firstRunGateCtx }}
     >
       {phase === 'contentIn' && hasError && (() => {
-        const parsed = parseApiError(String(leaderboardError));
-        return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
+        const parsed = parseApiError(String(firstLeaderboardError));
+        return (
+          <EmptyState
+            fullPage
+            title={parsed.title}
+            subtitle={parsed.subtitle}
+            style={buildStaggerStyle(200)}
+            onAnimationEnd={clearStaggerStyle}
+          />
+        );
       })()}
       {phase === 'contentIn' && !hasError && (
-      <div style={s.content}>
-      {/* Leaderboards section */}
-      <div style={s.section}>
-        <div
-          className={fx.sectionHeaderClickable}
-          style={{ ...s.sectionHeaderClickable, ...stagger() }}
-          onAnimationEnd={clearAnim}
-          onClick={navigateToLeaderboards}
-          role="button"
-          tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter') navigateToLeaderboards(); }}
-        >
-          <div style={s.cardHeaderText}>
-            <span style={s.cardTitle}>{t('compete.leaderboards')}</span>
+        <div style={s.content}>
+          <div style={s.section}>
+            <div style={{ ...s.sectionHeader, ...stagger() }} onAnimationEnd={clearAnim}>
+              <span style={s.sectionTitle}>{t('compete.leaderboards')}</span>
+            </div>
+            {scopeSections.map((section) => (
+              <div key={`leaderboards:${section.scope.scopeKey}`} style={s.scopeGroup}>
+                <div
+                  className={fx.sectionHeaderClickable}
+                  style={{ ...s.sectionHeaderClickable, ...stagger() }}
+                  onAnimationEnd={clearAnim}
+                  onClick={() => navigateToLeaderboards(section.scope)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => { if (event.key === 'Enter') navigateToLeaderboards(section.scope); }}
+                >
+                  <div style={s.cardHeaderText}>
+                    <span style={s.cardTitle}>{section.label}</span>
+                  </div>
+                  <span style={s.seeAll}>{t('compete.seeAll')}</span>
+                  <IoChevronForward size={20} style={s.chevron} />
+                </div>
+                <div style={s.list}>
+                  {section.leaderboardEntries.map((entry) => (
+                    <Link
+                      key={`${section.scope.scopeKey}:${entry.accountId}`}
+                      to={`/player/${entry.accountId}`}
+                      style={{ ...(entry.accountId === accountId ? s.playerRow : s.row), ...stagger() }}
+                      onAnimationEnd={clearAnim}
+                    >
+                      <RankingEntry
+                        rank={entry.rank}
+                        displayName={entry.displayName ?? entry.accountId.slice(0, 8)}
+                        ratingLabel={entry.ratingLabel}
+                        isPlayer={entry.accountId === accountId}
+                      />
+                    </Link>
+                  ))}
+                  {section.playerEntry && !section.playerInTop && (
+                    <Link to={`/player/${section.playerEntry.accountId}`} style={{ ...s.playerRow, ...stagger() }} onAnimationEnd={clearAnim}>
+                      <RankingEntry
+                        rank={section.playerEntry.rank}
+                        displayName={section.playerEntry.displayName ?? section.playerEntry.accountId.slice(0, 8)}
+                        ratingLabel={section.playerEntry.ratingLabel}
+                        isPlayer
+                      />
+                    </Link>
+                  )}
+                  {!section.leaderboardError && section.leaderboardEntries.length === 0 && !section.playerEntry && (
+                    <div style={{ ...s.emptyHint, ...stagger() }} onAnimationEnd={clearAnim}>{t('rankings.noRankings')}</div>
+                  )}
+                  {section.leaderboardError && (
+                    <div style={{ ...s.emptyHint, ...stagger() }} onAnimationEnd={clearAnim}>
+                      {parseApiError(String(section.leaderboardError)).title}
+                    </div>
+                  )}
+                </div>
+                <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={() => navigateToLeaderboards(section.scope)}>
+                  {t('compete.viewFullLeaderboards')}
+                </div>
+              </div>
+            ))}
           </div>
-          <span style={s.seeAll}>{t('compete.seeAll')}</span>
-          <IoChevronForward size={20} style={s.chevron} />
-        </div>
-        <div style={s.list}>
-          {leaderboardEntries.map((e) => (
-            <Link key={e.accountId} to={`/player/${e.accountId}`} style={{ ...(e.accountId === accountId ? s.playerRow : s.row), ...stagger() }} onAnimationEnd={clearAnim}>
-              <RankingEntry
-                rank={e.rank}
-                displayName={e.displayName ?? e.accountId.slice(0, 8)}
-                ratingLabel={e.ratingLabel}
-                isPlayer={e.accountId === accountId}
-              />
-            </Link>
-          ))}
-          {playerEntry && !playerInTop && (
-            <Link to={`/player/${playerEntry.accountId}`} style={{ ...s.playerRow, ...stagger() }} onAnimationEnd={clearAnim}>
-              <RankingEntry
-                rank={playerEntry.rank}
-                displayName={playerEntry.displayName ?? playerEntry.accountId.slice(0, 8)}
-                ratingLabel={playerEntry.ratingLabel}
-                isPlayer
-              />
-            </Link>
-          )}
-        </div>
-        <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={navigateToLeaderboards}>
-          {t('compete.viewFullLeaderboards')}
-        </div>
-      </div>
 
-      {/* Rivals section */}
-      <div style={s.section}>
-        <div
-          className={fx.sectionHeaderClickable}
-          style={{ ...s.sectionHeaderClickable, ...stagger() }}
-          onAnimationEnd={clearAnim}
-          onClick={() => navigate(Routes.rivals)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter') navigate(Routes.rivals); }}
-        >
-          <div style={s.cardHeaderText}>
-            <span style={s.cardTitle}>{t('compete.rivals')}</span>
-          </div>
-          <span style={s.seeAll}>{t('compete.seeAll')}</span>
-          <IoChevronForward size={20} style={s.chevron} />
-        </div>
-        {above.length > 0 || below.length > 0 ? (
-          <div style={s.rivalList}>
-            {above.map((r) => (
-              <RivalRow
-                key={r.accountId}
-                rival={r}
-                direction="above"
-                onClick={() => navigate(Routes.rivalDetail(r.accountId, r.displayName ?? undefined))}
-                style={stagger()}
-                onAnimationEnd={clearAnim}
-              />
+          <div style={s.section}>
+            <div style={{ ...s.sectionHeader, ...stagger() }} onAnimationEnd={clearAnim}>
+              <span style={s.sectionTitle}>{t('compete.rivals')}</span>
+            </div>
+            {scopeSections.map((section) => (
+              <div key={`rivals:${section.scope.scopeKey}`} style={s.scopeGroup}>
+                <div
+                  className={fx.sectionHeaderClickable}
+                  style={{ ...s.sectionHeaderClickable, ...stagger() }}
+                  onAnimationEnd={clearAnim}
+                  onClick={() => navigateToAllRivals(section.scope)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => { if (event.key === 'Enter') navigateToAllRivals(section.scope); }}
+                >
+                  <div style={s.cardHeaderText}>
+                    <span style={s.cardTitle}>{section.label}</span>
+                  </div>
+                  <span style={s.seeAll}>{t('compete.seeAll')}</span>
+                  <IoChevronForward size={20} style={s.chevron} />
+                </div>
+                {section.rivalsAbove.length > 0 || section.rivalsBelow.length > 0 ? (
+                  <div style={s.rivalList}>
+                    {section.rivalsAbove.map((rival) => (
+                      <RivalRow
+                        key={`above:${section.scope.scopeKey}:${rival.accountId}`}
+                        rival={rival}
+                        direction="above"
+                        onClick={() => navigateToRivalDetail(section.scope, rival)}
+                        style={stagger()}
+                        onAnimationEnd={clearAnim}
+                      />
+                    ))}
+                    {section.rivalsBelow.map((rival) => (
+                      <RivalRow
+                        key={`below:${section.scope.scopeKey}:${rival.accountId}`}
+                        rival={rival}
+                        direction="below"
+                        onClick={() => navigateToRivalDetail(section.scope, rival)}
+                        style={stagger()}
+                        onAnimationEnd={clearAnim}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ ...s.emptyHint, ...stagger() }} onAnimationEnd={clearAnim}>
+                    {section.rivalsError ? parseApiError(String(section.rivalsError)).title : t('compete.noRivals')}
+                  </div>
+                )}
+                <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={() => navigateToAllRivals(section.scope)}>
+                  {t('compete.viewAllRivals')}
+                </div>
+              </div>
             ))}
-            {below.map((r) => (
-              <RivalRow
-                key={r.accountId}
-                rival={r}
-                direction="below"
-                onClick={() => navigate(Routes.rivalDetail(r.accountId, r.displayName ?? undefined))}
-                style={stagger()}
-                onAnimationEnd={clearAnim}
-              />
-            ))}
           </div>
-        ) : (
-          <div style={{ ...s.emptyHint, ...stagger() }} onAnimationEnd={clearAnim}>{t('compete.noRivals')}</div>
-        )}
-        <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={() => navigate(Routes.rivals)}>
-          {t('compete.viewAllRivals')}
         </div>
-      </div>
-      </div>
       )}
     </Page>
   );
+}
+
+function normalizeLeaderboardEntries(data: RankingsPageResponse | ComboPageResponse | undefined): NormalizedRankingEntry[] {
+  if (!data) {
+    return [];
+  }
+
+  if ('comboId' in data) {
+    return data.entries.map((entry) => ({
+      accountId: entry.accountId,
+      displayName: entry.displayName,
+      rank: entry.rank,
+      ratingLabel: formatRating(entry.totalScore, 'totalscore'),
+    }));
+  }
+
+  return data.entries.map((entry) => ({
+    accountId: entry.accountId,
+    displayName: entry.displayName,
+    rank: entry.totalScoreRank,
+    ratingLabel: formatRating(entry.totalScore, 'totalscore'),
+  }));
+}
+
+function normalizePlayerEntry(playerRanking: PlayerRankingResult | undefined): NormalizedRankingEntry | null {
+  if (!playerRanking) {
+    return null;
+  }
+
+  if ('comboId' in playerRanking) {
+    return {
+      accountId: playerRanking.accountId,
+      displayName: playerRanking.displayName,
+      rank: playerRanking.rank,
+      ratingLabel: formatRating(playerRanking.totalScore, 'totalscore'),
+    };
+  }
+
+  return {
+    accountId: playerRanking.accountId,
+    displayName: playerRanking.displayName,
+    rank: playerRanking.totalScoreRank,
+    ratingLabel: formatRating(playerRanking.totalScore, 'totalscore'),
+  };
 }
 
 function useCompeteStyles() {
@@ -265,12 +373,26 @@ function useCompeteStyles() {
       transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
       fontSize: Font.md,
     };
+
     return {
       content: {
         ...flexColumn,
         gap: Gap.section,
       } as CSSProperties,
       section: {
+        ...flexColumn,
+        gap: Gap.sm,
+      } as CSSProperties,
+      sectionHeader: {
+        paddingBottom: Gap.md,
+      } as CSSProperties,
+      sectionTitle: {
+        display: Display.block,
+        fontSize: Font.lg,
+        fontWeight: Weight.bold,
+        color: Colors.textPrimary,
+      } as CSSProperties,
+      scopeGroup: {
         ...flexColumn,
         gap: Gap.sm,
       } as CSSProperties,
