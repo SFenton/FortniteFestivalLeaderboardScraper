@@ -91,6 +91,63 @@ function setDynamicSectionRect(element: HTMLElement, absoluteTop: number, shell:
   });
 }
 
+function setDynamicRect(element: HTMLElement, absoluteTop: number, height: number, shell: HTMLElement) {
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      top: absoluteTop - shell.scrollTop,
+      left: 0,
+      bottom: absoluteTop - shell.scrollTop + height,
+      right: 600,
+      width: 600,
+      height,
+      x: 0,
+      y: absoluteTop - shell.scrollTop,
+      toJSON() { return this; },
+    }),
+  });
+}
+
+function stubIntersectingObserver() {
+  const OriginalIntersectionObserver = globalThis.IntersectionObserver;
+
+  class MockIntersectionObserver {
+    private readonly callback: IntersectionObserverCallback;
+
+    constructor(callback: IntersectionObserverCallback) {
+      this.callback = callback;
+    }
+
+    observe(target: Element) {
+      const rect = target.getBoundingClientRect();
+      this.callback([
+        {
+          target,
+          isIntersecting: true,
+          intersectionRatio: 1,
+          time: 0,
+          boundingClientRect: rect,
+          intersectionRect: rect,
+          rootBounds: null,
+        } as IntersectionObserverEntry,
+      ], this as unknown as IntersectionObserver);
+    }
+
+    unobserve() {}
+    disconnect() {}
+    readonly root = null;
+    readonly rootMargin = '';
+    readonly thresholds = [] as readonly number[];
+    takeRecords(): IntersectionObserverEntry[] { return []; }
+  }
+
+  globalThis.IntersectionObserver = MockIntersectionObserver as unknown as typeof globalThis.IntersectionObserver;
+
+  return () => {
+    globalThis.IntersectionObserver = OriginalIntersectionObserver;
+  };
+}
+
 function ShellInjector({ children }: { children: React.ReactNode }) {
   const sRef = useScrollContainer();
   const setPortalNode = useHeaderPortalRef();
@@ -369,7 +426,7 @@ describe('PlayerContent', () => {
     React.act(() => { setQueryFn('hello'); });
     expect(getByTestId('search-query').textContent).toBe('hello');
 
-    // Click "Songs Played" stat card ΓÇö triggers navigateToSongs
+    // Click "Songs Played" stat card — triggers navigateToSongs
     const songsPlayed = screen.getAllByText('Songs Played')[0]!;
     fireEvent.click(songsPlayed);
 
@@ -425,6 +482,23 @@ describe('PlayerContent', () => {
     expect(topSongsLink.querySelector('svg')).not.toBeNull();
   });
 
+  it('delays the wide desktop rail reveal until the player grid stagger finishes', async () => {
+    render(
+      <Providers accountId="p1">
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim={false} statsData={null} rankingQueryResults={[]} />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('navigation', { name: 'Quick Links' })).toBeDefined();
+    });
+
+    const quickLinksRail = screen.getByTestId('player-quick-links-rail');
+
+    expect(quickLinksRail).toHaveStyle({ opacity: '0', pointerEvents: 'none' });
+    expect(quickLinksRail.style.animation).toContain('fadeIn');
+  });
+
   it('applies the shared page scroll fade on the player details page', async () => {
     const { container } = render(
       <Providers accountId="p1">
@@ -477,6 +551,51 @@ describe('PlayerContent', () => {
     await waitFor(() => {
       expect(pageRoot.style.maskImage).toContain('linear-gradient');
     });
+  });
+
+  it('applies per-item scroll fade to the percentile table when it re-enters from above', async () => {
+    const restoreIntersectionObserver = stubIntersectingObserver();
+
+    try {
+      render(
+        <Providers accountId="p1">
+          <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim statsData={null} rankingQueryResults={[]} />
+        </Providers>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('TestPlayer')).toBeDefined();
+      });
+
+      const scrollContainer = screen.getByTestId('test-scroll-container');
+      const percentileTable = screen.getByTestId('player-item-Solo_Guitar-pct-table');
+
+      Object.defineProperty(scrollContainer, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({
+          top: 0,
+          left: 0,
+          bottom: 540,
+          right: 1024,
+          width: 1024,
+          height: 540,
+          x: 0,
+          y: 0,
+          toJSON() { return this; },
+        }),
+      });
+
+      setDynamicRect(percentileTable, 180, 320, scrollContainer);
+      Object.defineProperty(scrollContainer, 'scrollTop', { value: 200, writable: true, configurable: true });
+
+      fireEvent.scroll(scrollContainer);
+
+      await waitFor(() => {
+        expect(percentileTable.style.maskImage).toContain('linear-gradient');
+      });
+    } finally {
+      restoreIntersectionObserver();
+    }
   });
 
   it('renders a labeled quick links trigger on compact desktop', async () => {
