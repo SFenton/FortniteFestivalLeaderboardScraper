@@ -11,6 +11,7 @@ import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
@@ -29,7 +30,7 @@ import fx from '../../styles/effects.module.css';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import Page from '../Page';
 import { rivalsSlides } from './firstRun';
-import LeaderboardRivalsTab from './LeaderboardRivalsTab';
+import LeaderboardRivalsTab, { type LeaderboardRivalQuickLink } from './LeaderboardRivalsTab';
 import { ActionPill } from '../../components/common/ActionPill';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -60,6 +61,7 @@ export default function RivalsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { settings } = useSettings();
+  const { leaderboards: leaderboardsEnabled } = useFeatureFlags();
   const { player } = useTrackedPlayer();
   const isMobile = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
@@ -111,6 +113,7 @@ export default function RivalsPage() {
   const [comboLoading, setComboLoading] = useState(false);
   const [computedAt, setComputedAt] = useState<string | null>(hasCachedData ? _cachedComputedAt : null);
   const [, setPlayerName] = useState<string | null>(null);
+  const [leaderboardQuickLinkItems, setLeaderboardQuickLinkItems] = useState<LeaderboardRivalQuickLink[]>([]);
 
   // Register toggle action for FAB and sync active tab
   const toggleTabRef = useRef(toggleTab);
@@ -306,8 +309,8 @@ export default function RivalsPage() {
   /* v8 ignore stop */
 
   const quickLinkItems = useMemo<RivalQuickLink[]>(() => {
-    if (activeTab !== 'song') {
-      return [];
+    if (activeTab === 'leaderboard') {
+      return leaderboardQuickLinkItems;
     }
 
     const links: RivalQuickLink[] = [];
@@ -354,7 +357,7 @@ export default function RivalsPage() {
     }
 
     return links;
-  }, [activeTab, combo, comboRivals, commonRivals.above.length, commonRivals.below.length, instrumentRivals, t]);
+  }, [activeTab, combo, comboRivals, commonRivals.above.length, commonRivals.below.length, instrumentRivals, leaderboardQuickLinkItems, t]);
 
   const {
     activeItemId,
@@ -376,7 +379,7 @@ export default function RivalsPage() {
   }, [closeQuickLinks, handleQuickLinkSelect]);
 
   const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
-    if (activeTab !== 'song' || phase !== LoadPhase.ContentIn || quickLinkItems.length < 2) {
+    if (phase !== LoadPhase.ContentIn || quickLinkItems.length < 2) {
       return undefined;
     }
 
@@ -397,7 +400,7 @@ export default function RivalsPage() {
       },
       testIdPrefix: 'rivals',
     };
-  }, [activeItemId, activeTab, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
+  }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
 
   const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
     ? (
@@ -408,6 +411,23 @@ export default function RivalsPage() {
       />
     )
     : null;
+
+  const toggleTabAction = (
+    <ActionPill
+      icon={activeTab === 'song' ? <IoTrophy size={Size.iconAction} /> : <IoMusicalNotes size={Size.iconAction} />}
+      label={activeTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong')}
+      onClick={toggleTab}
+    />
+  );
+
+  const mobileHeaderActions = leaderboardsEnabled
+    ? (
+      <>
+        {toggleTabAction}
+        {compactQuickLinksAction}
+      </>
+    )
+    : compactQuickLinksAction;
 
   /* v8 ignore start -- JSX render tree */
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
@@ -420,16 +440,12 @@ export default function RivalsPage() {
       containerStyle={styles.container}
       quickLinks={pageQuickLinks}
       before={
-        isMobile ? undefined : (
-          <PageHeader
-            title={activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard')}
-            actions={phase === LoadPhase.ContentIn ? (
+        <PageHeader
+          title={isMobile ? undefined : (activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard'))}
+          actions={phase === LoadPhase.ContentIn ? (
+            isMobile ? mobileHeaderActions : (
               <>
-                <ActionPill
-                  icon={activeTab === 'song' ? <IoTrophy size={Size.iconAction} /> : <IoMusicalNotes size={Size.iconAction} />}
-                  label={activeTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong')}
-                  onClick={toggleTab}
-                />
+                {toggleTabAction}
                 {compactQuickLinksAction}
                 {activeTab === 'leaderboard' && settings.enableExperimentalRanks && (
                   <ActionPill
@@ -440,9 +456,9 @@ export default function RivalsPage() {
                   />
                 )}
               </>
-            ) : undefined}
-          />
-        )
+            )
+          ) : undefined}
+        />
       }
       firstRun={{ key: 'rivals', label: t('rivals.title'), slides: rivalsSlides, gateContext: firstRunGateCtx }}
       fabSpacer={phase === LoadPhase.ContentIn && !hasAnyRivals ? 'none' : 'end'}
@@ -594,7 +610,13 @@ export default function RivalsPage() {
               })}
             </div>
               ) : (
-                <LeaderboardRivalsTab accountId={accountId} shouldStagger={shouldStagger} rankBy={rankBy} />
+                <LeaderboardRivalsTab
+                  accountId={accountId}
+                  shouldStagger={shouldStagger}
+                  rankBy={rankBy}
+                  registerSectionRef={registerSectionRef}
+                  onQuickLinksChange={setLeaderboardQuickLinkItems}
+                />
               )}
             </>
       )}

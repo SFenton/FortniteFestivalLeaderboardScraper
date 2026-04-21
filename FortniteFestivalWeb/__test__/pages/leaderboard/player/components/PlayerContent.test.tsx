@@ -513,7 +513,7 @@ describe('PlayerContent', () => {
     });
   });
 
-  it('renders an icon-only quick links trigger on mobile', async () => {
+  it('renders a labeled quick links trigger on mobile using the same pill style', async () => {
     mockIsWideDesktop = false;
     mockHasFab = true;
 
@@ -526,11 +526,16 @@ describe('PlayerContent', () => {
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined(); });
     expect(screen.queryByRole('navigation', { name: 'Quick Links' })).toBeNull();
     const trigger = screen.getByRole('button', { name: 'Quick Links' });
-    const icon = trigger.querySelector('svg');
-    expect(trigger).toHaveTextContent('');
-    expect(icon).not.toBeNull();
-    expect(icon).toHaveAttribute('width', '28');
-    expect(icon).toHaveAttribute('height', '28');
+    expect(trigger).toHaveTextContent('Quick Links');
+    expect(trigger).toHaveStyle({
+      backgroundColor: 'rgba(18, 24, 38, 0.78)',
+      color: 'rgb(255, 255, 255)',
+      fontSize: '12px',
+      fontWeight: '600',
+      height: '48px',
+      paddingLeft: '12px',
+      paddingRight: '12px',
+    });
   });
 
   it('shows the bands quick link only when the bands section is enabled', async () => {

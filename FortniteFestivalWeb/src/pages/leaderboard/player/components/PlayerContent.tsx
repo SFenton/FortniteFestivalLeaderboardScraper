@@ -14,7 +14,7 @@ import {
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Align, Cursor, CssValue, Display, Gap, IconSize, InstrumentSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, flexCenter, frostedCard, purpleGlass, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
+import { Align, Display, Gap, IconSize, InstrumentSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, frostedCard, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
@@ -61,7 +61,6 @@ const QUICK_LINK_SCROLL_OFFSET = Gap.md;
 const QUICK_LINK_SCROLL_COMPLETE_THRESHOLD = 2;
 const QUICK_LINK_SCROLL_SETTLE_DELAY_MS = 80;
 const QUICK_LINK_PILL_ICON_SIZE = IconSize.action;
-const QUICK_LINK_CIRCLE_ICON_SIZE = IconSize.md;
 const SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH = 360;
 let pendingSelectProfileExit: { accountId: string; until: number } | null = null;
 
@@ -112,19 +111,6 @@ function clearPendingSelectProfileExit(accountId: string) {
     pendingSelectProfileExit = null;
   }
 }
-
-const QUICK_LINKS_TRIGGER_CIRCLE_STYLE: CSSProperties = {
-  ...purpleGlass,
-  ...flexCenter,
-  width: InstrumentSize.lg,
-  height: InstrumentSize.lg,
-  borderRadius: Radius.full,
-  color: CssValue.inherit,
-  border: 'none',
-  cursor: Cursor.pointer,
-  flexShrink: 0,
-  alignSelf: Align.center,
-};
 
 export interface PlayerContentProps {
   data: PlayerResponse;
@@ -587,25 +573,13 @@ export default function PlayerContent({
   }), [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, quickLinks, quickLinksOpen, quickLinksTitle]);
 
   const quickLinksAction = !isWideDesktop && quickLinks.length > 0
-    ? (hasFab
-      ? (
-        <button
-          type="button"
-          data-testid="player-quick-links-trigger"
-          style={QUICK_LINKS_TRIGGER_CIRCLE_STYLE}
-          onClick={openQuickLinks}
-          aria-label={quickLinksTitle}
-        >
-          <IoCompass size={QUICK_LINK_CIRCLE_ICON_SIZE} />
-        </button>
-      )
-      : (
-        <ActionPill
-          icon={<IoCompass size={QUICK_LINK_PILL_ICON_SIZE} />}
-          label={quickLinksTitle}
-          onClick={openQuickLinks}
-        />
-      ))
+    ? (
+      <ActionPill
+        icon={<IoCompass size={QUICK_LINK_PILL_ICON_SIZE} />}
+        label={quickLinksTitle}
+        onClick={openQuickLinks}
+      />
+    )
     : null;
 
   return (

@@ -19,10 +19,11 @@ const FABMenu = memo(function FABMenu({ groups, visible, onAction }: FABMenuProp
     <div
       style={s.menu}
       data-glow-scope=""
+      data-testid="fab-menu"
     >
       {groups.map((group, gi) => (
         <Fragment key={gi}>
-          {gi > 0 && <div style={s.divider} />}
+          {gi > 0 && <div style={s.divider} data-testid="fab-menu-divider" />}
           {group.map((action) => (
             <button key={action.label} style={s.item} onClick={() => onAction(action)}>
               <span style={s.itemIcon}>{action.icon}</span>

@@ -87,12 +87,14 @@ function useStyles() {
       ...flexRow,
       gap: Gap.md,
       flexShrink: 0,
+      marginLeft: 'auto',
       alignSelf: 'center',
     } as CSSProperties,
     actionsTop: {
       ...flexRow,
       gap: Gap.md,
       flexShrink: 0,
+      marginLeft: 'auto',
       alignSelf: 'flex-start',
     } as CSSProperties,
   }), []);

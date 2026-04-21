@@ -11,7 +11,7 @@ import { Route, Routes } from 'react-router-dom';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
-import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse } from '@festival/core/api/serverTypes';
+import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse, LeaderboardRivalsListResponse } from '@festival/core/api/serverTypes';
 
 /* ── API mock ── */
 
@@ -38,6 +38,13 @@ const mockApi = vi.hoisted(() => ({
     ] satisfies RivalSongComparison[],
   } satisfies RivalDetailResponse),
   getRivalsOverview: vi.fn().mockResolvedValue({ computedAt: '2024-01-01T00:00:00Z' }),
+  getLeaderboardRivals: vi.fn().mockResolvedValue({
+    instrument: 'Solo_Guitar',
+    rankBy: 'totalscore',
+    userRank: 18,
+    above: [{ accountId: 'leader-rival-1', displayName: 'LeaderAbove', sharedSongCount: 6, aheadCount: 3, behindCount: 3, avgSignedDelta: 1.25, leaderboardRank: 12, userLeaderboardRank: 18 }],
+    below: [{ accountId: 'leader-rival-2', displayName: 'LeaderBelow', sharedSongCount: 5, aheadCount: 2, behindCount: 3, avgSignedDelta: -0.75, leaderboardRank: 24, userLeaderboardRank: 18 }],
+  } satisfies LeaderboardRivalsListResponse),
   trackPlayer: vi.fn().mockResolvedValue({ accountId: 'test-1', displayName: 'TestPlayer' }),
   getSyncStatus: vi.fn().mockResolvedValue({ ready: true }),
   getVersions: vi.fn().mockResolvedValue({ songs: '1' }),
@@ -77,6 +84,13 @@ beforeEach(() => {
     ],
   });
   mockApi.getRivalsOverview.mockResolvedValue({ computedAt: '2024-01-01T00:00:00Z' });
+  mockApi.getLeaderboardRivals.mockResolvedValue({
+    instrument: 'Solo_Guitar',
+    rankBy: 'totalscore',
+    userRank: 18,
+    above: [{ accountId: 'leader-rival-1', displayName: 'LeaderAbove', sharedSongCount: 6, aheadCount: 3, behindCount: 3, avgSignedDelta: 1.25, leaderboardRank: 12, userLeaderboardRank: 18 }],
+    below: [{ accountId: 'leader-rival-2', displayName: 'LeaderBelow', sharedSongCount: 5, aheadCount: 2, behindCount: 3, avgSignedDelta: -0.75, leaderboardRank: 24, userLeaderboardRank: 18 }],
+  });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-1', displayName: 'TestPlayer' });
   mockApi.getSyncStatus.mockResolvedValue({ ready: true });
   mockApi.getVersions.mockResolvedValue({ songs: '1' });
@@ -106,9 +120,9 @@ function renderPage(route: string, element: React.ReactElement, path: string, ac
   );
 }
 
-function renderRivalsPageWithQuickLinks(accountId = 'test-rivals-quick-links') {
+function renderRivalsPageWithQuickLinks(accountId = 'test-rivals-quick-links', route = '/rivals') {
   return render(
-    <TestProviders route="/rivals" accountId={accountId}>
+    <TestProviders route={route} accountId={accountId}>
       <Routes>
         <Route path="/rivals" element={<RivalsPage />} />
       </Routes>
@@ -326,6 +340,70 @@ describe('RivalsPage quick links', () => {
     expect(guitarIcon?.getAttribute('src')).toContain('guitar.png');
     expect(guitarIcon?.getAttribute('width')).toBe('20');
     expect(guitarIcon).toHaveStyle({ transform: 'scale(1.15)', transformOrigin: 'center' });
+  });
+
+  it('opens the rivals quick links modal from the mobile header trigger', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-mobile', displayName: 'TestPlayer' }));
+
+    renderRivalsPageWithQuickLinks('test-rivals-quick-links-mobile');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(screen.queryByRole('heading', { name: 'Song Rivals' })).toBeNull();
+
+    const toggleButton = await screen.findByRole('button', { name: 'Leaderboard Rivals' });
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
+    const actionButtons = within(toggleButton.parentElement as HTMLElement).getAllByRole('button');
+
+    expect(toggleButton.parentElement).toBe(quickLinksButton.parentElement);
+    expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
+    expect(actionButtons.indexOf(toggleButton)).toBeLessThan(actionButtons.indexOf(quickLinksButton));
+    await act(async () => { fireEvent.click(quickLinksButton); });
+
+    const list = await screen.findByTestId('rivals-quick-links-modal-list');
+    expect(within(list).getByTestId('rivals-quick-link-common')).toBeTruthy();
+    expect(within(list).getByTestId('rivals-quick-link-combo')).toBeTruthy();
+  });
+
+  it('shows only the quick links pill on mobile when leaderboards are disabled', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ leaderboards: false }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-mobile-no-leaderboards', displayName: 'TestPlayer' }));
+
+    renderRivalsPageWithQuickLinks('test-rivals-quick-links-mobile-no-leaderboards');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(screen.queryByRole('heading', { name: 'Song Rivals' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Leaderboard Rivals' })).toBeNull();
+
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
+    expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
+  });
+
+  it('shows quick links to the right of Song Rivals on the mobile leaderboard tab', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-mobile-leaderboard', displayName: 'TestPlayer' }));
+
+    renderRivalsPageWithQuickLinks('test-rivals-quick-links-mobile-leaderboard', '/rivals?tab=leaderboard');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(screen.queryByRole('heading', { name: 'Leaderboard Rivals' })).toBeNull();
+
+    const toggleButton = await screen.findByRole('button', { name: 'Song Rivals' });
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
+    const actionButtons = within(toggleButton.parentElement as HTMLElement).getAllByRole('button');
+
+    expect(toggleButton.parentElement).toBe(quickLinksButton.parentElement);
+    expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
+    expect(actionButtons.indexOf(toggleButton)).toBeLessThan(actionButtons.indexOf(quickLinksButton));
+
+    await act(async () => { fireEvent.click(quickLinksButton); });
+
+    const list = await screen.findByTestId('rivals-quick-links-modal-list');
+    expect(within(list).getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();
+    expect(within(list).getByTestId('rivals-quick-link-solo-peripheraldrums')).toBeTruthy();
   });
 
   it('renders the rivals quick links rail on wide desktop', async () => {

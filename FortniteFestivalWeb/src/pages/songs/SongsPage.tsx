@@ -886,29 +886,33 @@ export default function SongsPage() {
       quickLinks={pageQuickLinks}
       before={<>
         <LoadGate phase={loadPhase} overlay>
-        {!isMobileChrome && (
-          <PageHeader
-            title={
-              <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
-                <SongsToolbar
-                  search={search}
-                  onSearchChange={setSearch}
-                  instrument={settings.instrument}
-                  sortActive={sortActive}
-                  filtersActive={filtersActive}
-                  hasSongs={songs.length > 0 && !isLoading}
-                  hasPlayer={hasPlayer}
-                  filteredCount={filtered.length}
-                  totalCount={songs.length}
-                  onOpenSort={openSort}
-                  onOpenFilter={openFilter}
-                />
-              </div>
-            }
-            actionsAlign="start"
-            actions={compactQuickLinksAction}
-          />
-        )}
+          {isMobileChrome ? (
+            <PageHeader
+              actions={compactQuickLinksAction}
+            />
+          ) : (
+            <PageHeader
+              title={
+                <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
+                  <SongsToolbar
+                    search={search}
+                    onSearchChange={setSearch}
+                    instrument={settings.instrument}
+                    sortActive={sortActive}
+                    filtersActive={filtersActive}
+                    hasSongs={songs.length > 0 && !isLoading}
+                    hasPlayer={hasPlayer}
+                    filteredCount={filtered.length}
+                    totalCount={songs.length}
+                    onOpenSort={openSort}
+                    onOpenFilter={openFilter}
+                  />
+                </div>
+              }
+              actionsAlign="start"
+              actions={compactQuickLinksAction}
+            />
+          )}
         </LoadGate>
       </>}
       after={<>

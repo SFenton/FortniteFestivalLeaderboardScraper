@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
@@ -7,6 +7,7 @@ import { useSettings, visibleInstruments } from '../../contexts/SettingsContext'
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
+import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { InstrumentHeaderSize } from '@festival/core';
 import { IoChevronForward } from 'react-icons/io5';
 import { Gap, flexColumn } from '@festival/theme';
@@ -16,6 +17,7 @@ import RivalRow from './components/RivalRow';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
+import type { PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 
 // Module-level cache for instant back-navigation
 let _cachedInstrumentRivals: InstrumentLeaderboardRivals[] = [];
@@ -28,13 +30,28 @@ type InstrumentLeaderboardRivals = {
   error: string | null;
 };
 
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
+const QUICK_LINK_INSTRUMENT_ICON_SCALE = 1.15;
+
+export type LeaderboardRivalQuickLink = PageQuickLinkItem & {
+  id: ServerInstrumentKey;
+};
+
 interface LeaderboardRivalsTabProps {
   accountId: string;
   shouldStagger: boolean;
   rankBy: RankingMetric;
+  registerSectionRef: (id: string, element: HTMLElement | null) => void;
+  onQuickLinksChange?: (items: LeaderboardRivalQuickLink[]) => void;
 }
 
-export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy }: LeaderboardRivalsTabProps) {
+export default function LeaderboardRivalsTab({
+  accountId,
+  shouldStagger,
+  rankBy,
+  registerSectionRef,
+  onQuickLinksChange,
+}: LeaderboardRivalsTabProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { settings } = useSettings();
@@ -100,6 +117,38 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
     r.data && (r.data.above.length > 0 || r.data.below.length > 0),
   );
 
+  const quickLinkItems = useMemo<LeaderboardRivalQuickLink[]>(() => instrumentRivals.flatMap((entry) => {
+    if (!entry.data || (entry.data.above.length === 0 && entry.data.below.length === 0)) {
+      return [];
+    }
+
+    const instrumentLabel = t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) });
+
+    return [{
+      id: entry.instrument,
+      label: instrumentLabel,
+      landmarkLabel: instrumentLabel,
+      icon: (
+        <InstrumentIcon
+          instrument={entry.instrument}
+          size={QUICK_LINK_GLYPH_ICON_SIZE}
+          style={{
+            transform: `scale(${QUICK_LINK_INSTRUMENT_ICON_SCALE})`,
+            transformOrigin: 'center',
+          }}
+        />
+      ),
+    }];
+  }), [instrumentRivals, t]);
+
+  useEffect(() => {
+    onQuickLinksChange?.(quickLinkItems);
+  }, [onQuickLinksChange, quickLinkItems]);
+
+  useEffect(() => () => {
+    onQuickLinksChange?.([]);
+  }, [onQuickLinksChange]);
+
   const hasAnyError = instrumentRivals.some(r => r.error);
 
   const PREVIEW_COUNT = 3;
@@ -136,7 +185,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
         const navigateToAllRivals = () => navigate(Routes.allRivals(entry.instrument, 'leaderboard', rankBy));
 
         return (
-          <div key={entry.instrument} style={shared.section}>
+          <div key={entry.instrument} ref={(element) => registerSectionRef(entry.instrument, element)} style={shared.section}>
             <div
               className={fx.sectionHeaderClickable}
               style={{ ...shared.sectionHeaderClickable, ...nextStagger() }}

@@ -2,6 +2,7 @@ import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavig
 import { IoCompass, IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { ShopProvider } from './contexts/ShopContext';
@@ -96,7 +97,7 @@ import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
 import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
-import FloatingActionButton from './components/shell/fab/FloatingActionButton';
+import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
@@ -149,6 +150,29 @@ export default function App() {
 import { useTabNavigation } from './hooks/ui/useTabNavigation';
 
 const CHANGELOG_STORAGE_KEY = 'fst:changelog';
+
+export function getFabQuickLinksActionLabel(t: TFunction): string {
+  return t('common.quickLinks', 'Quick Links');
+}
+
+export function mergePageQuickLinksIntoFabGroups(
+  quickLinksActions: ActionItem[],
+  pageSpecificActions: ActionItem[],
+  ...otherGroups: ActionItem[][]
+): ActionItem[][] {
+  const actionGroups: ActionItem[][] = [];
+
+  if (quickLinksActions.length > 0) {
+    actionGroups.push(pageSpecificActions.length > 0 ? [...quickLinksActions, ...pageSpecificActions] : quickLinksActions);
+  } else if (pageSpecificActions.length > 0) {
+    actionGroups.push(pageSpecificActions);
+  }
+
+  return [
+    ...actionGroups,
+    ...otherGroups.filter(group => group.length > 0),
+  ];
+}
 
 const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
 /* v8 ignore start — route detection helper */
@@ -371,15 +395,13 @@ function AppShell() {
   const onPlayerDetailsPage = location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname);
   const quickLinksActions = pageQuickLinks.hasPageQuickLinks && pageQuickLinks.pageQuickLinks
     ? [{
-      label: pageQuickLinks.pageQuickLinks.title,
+      label: getFabQuickLinksActionLabel(t),
       icon: <IoCompass size={Size.iconFab} />,
       onPress: () => pageQuickLinks.openPageQuickLinks(),
     }]
     : [];
-  const withPageQuickLinks = (...groups: { label: string; icon: React.ReactNode; onPress: () => void }[][]) => [
-    ...(quickLinksActions.length > 0 ? [quickLinksActions] : []),
-    ...groups,
-  ];
+  const withPageQuickLinks = (pageSpecificActions: ActionItem[], ...groups: ActionItem[][]) =>
+    mergePageQuickLinksIntoFabGroups(quickLinksActions, pageSpecificActions, ...groups);
 
   /** Shared FAB action group for player navigation (Find Player + Profile/Select + optionally Item Shop). */
   const playerActions = (includeShop = true) => [
@@ -462,14 +484,13 @@ function AppShell() {
           mode="songs"
           defaultOpen
           placeholder={t('songs.searchPlaceholder')}
-          actionGroups={[
+          actionGroups={withPageQuickLinks(
             [
-              ...quickLinksActions,
               { label: t('common.sortSongs'), icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
               ...(player ? [{ label: t('common.filterSongs'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
             ],
             playerActions(),
-          ]}
+          )}
           onPress={() => {}}
         />
       )}
@@ -477,9 +498,7 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
-            [
-              { label: t('common.filterSuggestions'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openSuggestionsFilter() },
-            ],
+            [{ label: t('common.filterSuggestions'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openSuggestionsFilter() }],
             playerActions(),
           )}
           onPress={() => {}}
@@ -505,15 +524,14 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
-            ...(isNarrow && hasVisiblePathInstruments ? [[{
+            isNarrow && hasVisiblePathInstruments ? [{
               label: t('common.viewPaths'), icon: <IoFlash size={Size.iconFab} />, onPress: () => fabSearch.openPaths(),
             },
             ...(isShopVisible && currentShopUrl ? [{
               label: t('common.viewInItemShop', 'View in Item Shop'), icon: <IoBagHandle size={Size.iconFab} />,
               /* v8 ignore next */
               onPress: () => window.open(currentShopUrl, '_blank', 'noopener,noreferrer'),
-            }] : []),
-            ]] : []),
+            }] : [])] : [],
             playerActions(),
           )}
           onPress={() => {}}
@@ -524,11 +542,11 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
-            ...(!isNarrowGrid ? [[{
+            !isNarrowGrid ? [{
               label: fabSearch.shopViewMode === 'grid' ? t('common.listView', 'List View') : t('common.gridView', 'Grid View'),
               icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
               onPress: () => fabSearch.shopToggleView(),
-            }]] : []),
+            }] : [],
             playerActions(false),
           )}
           onPress={() => {}}
@@ -543,7 +561,7 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
-            ...(leaderboardActions.length > 0 ? [leaderboardActions] : []),
+            leaderboardActions,
             playerActions(),
           )}
           onPress={() => {}}
@@ -600,11 +618,11 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
-            ...(pageQuickLinks.hasPageQuickLinks || fabSearch.playerPageSelect ? [[
+            pageQuickLinks.hasPageQuickLinks || fabSearch.playerPageSelect ? [
               ...(fabSearch.playerPageSelect
                 ? [{ label: t('common.selectAsProfile', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect }]
                 : []),
-            ]] : []),
+            ] : [],
             playerActions(),
           )}
           onPress={() => {}}

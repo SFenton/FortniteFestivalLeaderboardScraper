@@ -929,8 +929,12 @@ describe('SongsPage quick links', () => {
     renderSongsPage('/songs');
 
     await settleSongsPage();
+    expect(screen.queryByRole('heading', { name: 'Songs' })).toBeNull();
 
-    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
+    expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
+
+    await act(async () => { fireEvent.click(quickLinksButton); });
 
     expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();
     expect(screen.getByText('Title Quick Links')).toBeTruthy();
