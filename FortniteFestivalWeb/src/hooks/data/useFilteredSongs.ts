@@ -6,7 +6,7 @@ import { useMemo } from 'react';
 import { type ServerSong as Song, type PlayerScore, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import type { SongFilters, SongSortMode } from '../../utils/songSettings';
 import { compareByMode } from '../../utils/songSort';
-import { getSongInstrumentDifficulty } from '../../utils/songInstrumentDifficulty';
+import { getSongInstrumentDifficulty, songSupportsInstrument } from '../../utils/songInstrumentDifficulty';
 
 interface FilterSortOptions {
   songs: Song[];
@@ -79,7 +79,7 @@ export function useFilteredSongs({
     const starKeys = Object.keys(f.starsFilter);
     const checkStars = inst != null && hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
     const diffKeys = Object.keys(f.difficultyFilter);
-    const checkDiff = inst != null && hasPlayerData && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
+    const checkDiff = inst != null && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
 
     const list = songs.filter(s => {
       if (q && !s.title.toLowerCase().includes(q) && !s.artist.toLowerCase().includes(q)) return false;
@@ -91,7 +91,17 @@ export function useFilteredSongs({
         if (f.shopLeavingTomorrow && !leavingTomorrowIds?.has(s.songId)) return false;
       }
 
-      if (!hasPlayerData) return true;
+      if (inst && !songSupportsInstrument(s, inst)) return false;
+
+      if (!hasPlayerData) {
+        if (checkDiff) {
+          const diff = getSongIntensity(s, inst);
+          const difficultyBucket = diff == null ? 0 : Math.max(1, Math.min(7, Math.trunc(diff) + 1));
+          if (f.difficultyFilter[difficultyBucket] === false) return false;
+        }
+
+        return true;
+      }
 
       const byInst = allScoreMap.get(s.songId);
 
@@ -99,6 +109,8 @@ export function useFilteredSongs({
       if (activeFilterInstruments.length > 0) {
         let anyInstrumentPassed = false;
         for (const key of activeFilterInstruments) {
+          if (!songSupportsInstrument(s, key)) continue;
+
           const ps = byInst?.get(key);
           const hasScore = !!ps?.score;
           const hasFC = !!ps?.isFullCombo;
@@ -149,9 +161,9 @@ export function useFilteredSongs({
         if (f.starsFilter[stars] === false) return false;
       }
       if (checkDiff) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- difficulty may be flat number from API
-        const diff = (s as any).difficulty ?? 0;
-        if (f.difficultyFilter[diff] === false) return false;
+        const diff = getSongIntensity(s, inst);
+        const difficultyBucket = diff == null ? 0 : Math.max(1, Math.min(7, Math.trunc(diff) + 1));
+        if (f.difficultyFilter[difficultyBucket] === false) return false;
       }
       return true;
     });

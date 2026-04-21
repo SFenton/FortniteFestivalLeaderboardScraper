@@ -79,20 +79,11 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             IPathDataStore pathStore,
-            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
-            // ── Check precomputed store ──────────────────────────
-            var cacheKey = $"lb:{songId}:{top ?? 10}:{leeway}";
-            {
-                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet(cacheKey));
-                if (result is not null) return result;
-            }
-
             // ── Check cache ──────────────────────────────────────
-            // Re-key to match legacy format for non-precomputed variants
             var legacyCacheKey = $"lb:{songId}:{top}:{leeway}";
             {
                 var result = CacheHelper.ServeIfCached(httpContext, lbCache.Get(legacyCacheKey));

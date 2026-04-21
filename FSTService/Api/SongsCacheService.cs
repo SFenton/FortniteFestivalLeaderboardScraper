@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -136,7 +137,7 @@ public sealed class SongsCacheService
                     genres     = s.track.ge,
                     // Difficulty per instrument. proDrums and proCymbals share the same
                     // spark-track value (@in.pd) — Epic stores a single plastic-drums difficulty.
-                    // proVocals is mic-mode difficulty (@in.bd); 0 is treated as missing (null).
+                    // proVocals is mic-mode difficulty (@in.bd); 99 means the song has no Mic Mode chart.
                     difficulty = s.track.@in is null ? null : new
                     {
                         guitar     = (int?)s.track.@in.gr,
@@ -147,7 +148,7 @@ public sealed class SongsCacheService
                         proBass    = (int?)s.track.@in.pb,
                         proDrums   = (int?)s.track.@in.pd,
                         proCymbals = (int?)s.track.@in.pd,
-                        proVocals  = s.track.@in.bd == 0 ? (int?)null : s.track.@in.bd,
+                        proVocals  = Track.HasChartedDifficulty(s.track.@in.bd) ? s.track.@in.bd : (int?)null,
                     },
                     maxScores = ms is null ? null : new Dictionary<string, int?>
                     {

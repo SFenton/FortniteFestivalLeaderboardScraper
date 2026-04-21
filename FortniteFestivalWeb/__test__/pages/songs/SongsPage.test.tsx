@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
-import { Colors, Layout } from '@festival/theme';
+import { Colors, Gap, Layout, FADE_DURATION } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
@@ -488,6 +488,113 @@ describe('SongsPage quick links', () => {
     expect(nav).toHaveStyle({ overscrollBehavior: 'contain' });
   });
 
+  it('keeps the delayed rail fade armed until the wide desktop fade completes', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    clearPageTransitionCache('songs');
+
+    renderSongsPage('/songs');
+    await settleSongsPage();
+
+    const rail = screen.getByTestId('songs-quick-links-rail');
+    const initialAnimation = rail.style.animation;
+    const delayMatches = initialAnimation.match(/(\d+)ms/g) ?? [];
+    const initialDelayMs = Number(delayMatches[1]?.replace('ms', ''));
+
+    expect(initialAnimation).toContain('fadeIn');
+    expect(initialDelayMs).toBeGreaterThan(0);
+    expect(rail.style.pointerEvents).toBe('none');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(initialDelayMs + 10);
+    });
+
+    const railBeforeFadeCompletes = screen.getByTestId('songs-quick-links-rail');
+    expect(railBeforeFadeCompletes.style.animation).toBe(initialAnimation);
+    expect(railBeforeFadeCompletes.style.pointerEvents).toBe('none');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FADE_DURATION + 50);
+    });
+
+    const revealedRail = screen.getByTestId('songs-quick-links-rail');
+    expect(revealedRail.style.animation).toBe('');
+    expect(revealedRail.style.pointerEvents).not.toBe('none');
+  });
+
+  it('updates the wide desktop highlight for offscreen virtualized quick-link targets', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    mockApi.getSongs.mockResolvedValue({
+      songs: [
+        'Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf',
+        'Hotel', 'India', 'Juliet', 'Kilo', 'Lima', 'Mike',
+      ].map((title, index) => ({
+        songId: `song-${index + 1}`,
+        title: `${title} Song`,
+        artist: `Artist ${title}`,
+        year: 2024,
+        difficulty: { guitar: 3 },
+      })),
+      count: 13,
+      currentSeason: 5,
+    });
+
+    renderSongsPage('/songs');
+    await settleSongsPage();
+
+    const scrollContainer = screen.getByTestId('test-scroll-container') as HTMLElement;
+    const virtualList = screen.getByTestId('songs-virtual-list') as HTMLElement;
+    const listTop = 180;
+    const mikeTargetScrollTop = listTop + (12 * ((52 + 2) + (68 + 2)));
+
+    Object.defineProperty(scrollContainer, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: 0,
+        left: 0,
+        bottom: 800,
+        right: 1024,
+        width: 1024,
+        height: 800,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      }),
+    });
+
+    Object.defineProperty(virtualList, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        top: listTop - scrollContainer.scrollTop,
+        left: 0,
+        bottom: listTop - scrollContainer.scrollTop + 2200,
+        right: 1024,
+        width: 1024,
+        height: 2200,
+        x: 0,
+        y: listTop - scrollContainer.scrollTop,
+        toJSON() { return this; },
+      }),
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    const alphaButton = screen.getByTestId('songs-quick-link-title-a');
+    const mikeButton = screen.getByTestId('songs-quick-link-title-m');
+    expect(mikeButton).not.toHaveAttribute('aria-current');
+
+    await act(async () => {
+      fireEvent.click(mikeButton);
+      scrollContainer.scrollTop = mikeTargetScrollTop;
+      fireEvent.scroll(scrollContainer);
+      await vi.advanceTimersByTimeAsync(160);
+    });
+
+    expect(mikeButton).toHaveAttribute('aria-current', 'location');
+    expect(alphaButton).not.toHaveAttribute('aria-current', 'location');
+  });
+
   it('stagger-animates rendered section headers on a fresh Songs visit', async () => {
     clearPageTransitionCache('songs');
     setViewportQueries({ mobile: false, wide: false });
@@ -584,9 +691,9 @@ describe('SongsPage quick links', () => {
   });
 
   it.each([
-    ['Solo_PeripheralVocals', { vocals: 4 }, 'intensity:4'],
-    ['Solo_PeripheralDrums', { drums: 2 }, 'intensity:2'],
-    ['Solo_PeripheralCymbals', { drums: 6 }, 'intensity:6'],
+    ['Solo_PeripheralVocals', { proVocals: 4 }, 'intensity:4'],
+    ['Solo_PeripheralDrums', { proDrums: 2 }, 'intensity:2'],
+    ['Solo_PeripheralCymbals', { proCymbals: 6 }, 'intensity:6'],
   ] as const)('builds intensity quick-link buckets for %s from the normalized song difficulty', (instrument, difficulty, expectedId) => {
     const result = buildSongQuickLinkSections({
       songs: [{ songId: 's1', title: 'Alpha Song', artist: 'Artist A', difficulty }] as any,
@@ -938,6 +1045,17 @@ describe('SongsPage quick links', () => {
 
     expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();
     expect(screen.getByText('Title Quick Links')).toBeTruthy();
+  });
+
+  it('hides the mobile quick links header trigger when the setting is off', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    localStorage.setItem('fst:appSettings', JSON.stringify({ showButtonsInHeaderMobile: false }));
+
+    renderSongsPage('/songs');
+
+    await settleSongsPage();
+
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
   });
 });
 

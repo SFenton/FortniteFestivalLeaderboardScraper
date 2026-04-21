@@ -210,6 +210,28 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiSongs_Difficulty_OmitsMicModePropertyWhenSongHasNoChart()
+    {
+        var response = await _client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var songs = json.GetProperty("songs");
+        JsonElement? testSong = null;
+        for (var i = 0; i < songs.GetArrayLength(); i++)
+        {
+          if (songs[i].GetProperty("songId").GetString() == "testSongNoMic")
+          {
+              testSong = songs[i];
+              break;
+          }
+        }
+
+        Assert.True(testSong.HasValue);
+        var diff = testSong!.Value.GetProperty("difficulty");
+        Assert.False(diff.TryGetProperty("proVocals", out _));
+    }
+
+    [Fact]
     public async Task ApiSongs_ExposesDurationSeconds()
     {
         var response = await _client.GetAsync("/api/songs");
@@ -1417,6 +1439,98 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         {
             Assert.Equal(0, instruments[i].GetProperty("count").GetInt32());
         }
+    }
+
+    [Fact]
+    public async Task ApiLeaderboardAll_IgnoresStalePrecomputedCache_AndReturnsFreshResults()
+    {
+        const string songId = "allSongStaleCache";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+
+            var guitarDb = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            guitarDb.UpsertEntries(songId, new[]
+            {
+                new LeaderboardEntry { AccountId = "freshGuitar1", Score = 111_000 },
+                new LeaderboardEntry { AccountId = "freshGuitar2", Score = 101_000 },
+            });
+
+            var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
+            bassDb.UpsertEntries(songId, new[]
+            {
+                new LeaderboardEntry { AccountId = "freshBass1", Score = 95_000 },
+            });
+
+            metaDb.UpsertLeaderboardPopulation(new[]
+            {
+                (songId, "Solo_Guitar", 200L),
+                (songId, "Solo_Bass", 50L),
+            });
+
+            var stalePayload = new
+            {
+                songId,
+                instruments = new[]
+                {
+                    new
+                    {
+                        instrument = "Solo_Guitar",
+                        count = 0,
+                        totalEntries = 10,
+                        localEntries = 10,
+                        entries = Array.Empty<object>(),
+                    },
+                    new
+                    {
+                        instrument = "Solo_Bass",
+                        count = 0,
+                        totalEntries = 5,
+                        localEntries = 5,
+                        entries = Array.Empty<object>(),
+                    },
+                },
+            };
+
+            var staleJson = JsonSerializer.SerializeToUtf8Bytes(stalePayload);
+            metaDb.BulkSetCachedResponses(new[]
+            {
+                ($"lb:{songId}:10:", staleJson, ResponseCacheService.ComputeETag(staleJson)),
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/all?top=10");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var instruments = json.GetProperty("instruments");
+
+        JsonElement guitar = default;
+        JsonElement bass = default;
+        foreach (var inst in instruments.EnumerateArray())
+        {
+            switch (inst.GetProperty("instrument").GetString())
+            {
+                case "Solo_Guitar":
+                    guitar = inst;
+                    break;
+                case "Solo_Bass":
+                    bass = inst;
+                    break;
+            }
+        }
+
+        Assert.Equal(2, guitar.GetProperty("count").GetInt32());
+        Assert.Equal(2, guitar.GetProperty("localEntries").GetInt32());
+        Assert.Equal(200, guitar.GetProperty("totalEntries").GetInt32());
+        Assert.Equal(2, guitar.GetProperty("entries").GetArrayLength());
+
+        Assert.Equal(1, bass.GetProperty("count").GetInt32());
+        Assert.Equal(1, bass.GetProperty("localEntries").GetInt32());
+        Assert.Equal(50, bass.GetProperty("totalEntries").GetInt32());
+        Assert.Equal(1, bass.GetProperty("entries").GetArrayLength());
     }
 
     // ═══ Player Stats Endpoint ══════════════════════════════════
@@ -3557,6 +3671,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     an = "Test Artist",
                     dn = 235,
                     @in = new In { gr = 5, ba = 3, vl = 4, ds = 2, pg = 6, pb = 5, pd = 7, bd = 4 },
+                }
+            };
+            dict["testSongNoMic"] = new Song
+            {
+                track = new Track
+                {
+                    su = "testSongNoMic",
+                    tt = "Integration Test Song Without Mic Mode",
+                    an = "Test Artist",
+                    dn = 240,
+                    @in = new In { gr = 4, ba = 2, vl = 5, ds = 3, pg = 5, pb = 4, pd = 6, bd = 99 },
                 }
             };
             dirtyField.SetValue(service, true);

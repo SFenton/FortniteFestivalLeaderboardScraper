@@ -3,7 +3,7 @@
  * backFallback, mobile header, and changelog modal.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor, act, fireEvent } from '@testing-library/react';
+import { render, waitFor, act, fireEvent, screen, within } from '@testing-library/react';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -154,6 +154,95 @@ describe('App — coverage: changelog modal', () => {
 });
 
 describe('App — coverage: backFallback for detail routes', () => {
+  it('preserves shell scroll when quietly rewriting the viewed player to /statistics', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
+    mockApi.searchAccounts.mockResolvedValue({ results: [{ accountId: 'p1', displayName: 'TrackedP' }] });
+    window.location.hash = '#/player/p1';
+    const initialHistoryLength = window.history.length;
+
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    try {
+      const { container } = render(<App />);
+
+      await waitFor(() => {
+        expect(container.querySelector('#main-content')).toBeTruthy();
+      });
+
+      const shellScroll = container.querySelector('#main-content')?.parentElement?.parentElement as HTMLDivElement;
+      shellScroll.scrollTo = vi.fn((x?: number | ScrollToOptions, y?: number) => {
+        if (typeof x === 'object') {
+          shellScroll.scrollTop = x.top ?? 0;
+          return;
+        }
+        if (typeof y === 'number') {
+          shellScroll.scrollTop = y;
+        }
+      }) as any;
+      shellScroll.scrollTop = 480;
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Profile')).toBeTruthy();
+      });
+
+      await act(async () => {
+        fireEvent.click(screen.getByLabelText('Profile'));
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: 'Select Player Profile' })).toBeTruthy();
+      });
+
+      const dialog = screen.getByRole('dialog', { name: 'Select Player Profile' });
+      const modalInput = within(dialog).getByPlaceholderText(/search player/i);
+      fireEvent.change(modalInput, { target: { value: 'Tr' } });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350);
+      });
+      await act(async () => { await Promise.resolve(); });
+
+      const spinner = within(dialog).queryByTestId('arc-spinner');
+      if (spinner?.parentElement) fireEvent.transitionEnd(spinner.parentElement);
+
+      await waitFor(() => {
+        expect(within(dialog).getByText('TrackedP')).toBeTruthy();
+      });
+
+      await act(async () => {
+        fireEvent.click(within(dialog).getByText('TrackedP'));
+      });
+
+      await waitFor(() => {
+        expect(window.location.hash).toBe('#/statistics');
+      });
+
+      expect(JSON.parse(localStorage.getItem('fst:trackedPlayer') ?? 'null')).toMatchObject({
+        accountId: 'p1',
+        displayName: 'TrackedP',
+      });
+      expect(window.history.length).toBe(initialHistoryLength);
+      expect(shellScroll.scrollTop).toBe(480);
+    } finally {
+      vi.useRealTimers();
+      window.location.hash = '';
+    }
+  });
+
   it('renders back navigation for song detail route', async () => {
     // Set tracked player so statistics route works
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));

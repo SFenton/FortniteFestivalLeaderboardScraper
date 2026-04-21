@@ -9,7 +9,7 @@ import { IoPersonAdd } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
 import { ActionPill, ACTION_PILL_TRANSITION } from '../common/ActionPill';
 import {
-  Colors, IconSize, InstrumentSize, Radius,
+  Colors, IconSize, Layout, Radius,
   Position, Align, Cursor, Isolation, PointerEvents, CssProp,
   transition, transitions, scale, flexCenter,
   purpleGlass,
@@ -25,7 +25,7 @@ export interface SelectProfilePillProps {
 
 export function SelectProfilePill({ visible, onClick, isMobile }: SelectProfilePillProps) {
   const { t } = useTranslation();
-  const s = useStyles(visible, isMobile);
+  const s = useStyles(visible);
 
   if (isMobile) {
     return (
@@ -37,7 +37,7 @@ export function SelectProfilePill({ visible, onClick, isMobile }: SelectProfileP
         aria-label={t('common.selectPlayerProfile')}
         tabIndex={visible ? 0 : -1}
       >
-        <IoPersonAdd size={IconSize.sm} />
+        <IoPersonAdd size={IconSize.action} />
       </button>
     );
   }
@@ -53,7 +53,7 @@ export function SelectProfilePill({ visible, onClick, isMobile }: SelectProfileP
   );
 }
 
-function useStyles(visible: boolean, isMobile?: boolean) {
+function useStyles(visible: boolean) {
   return useMemo(() => ({
     pill: {
       ...purpleGlass,
@@ -70,8 +70,8 @@ function useStyles(visible: boolean, isMobile?: boolean) {
       pointerEvents: visible ? PointerEvents.auto : PointerEvents.none,
     } as CSSProperties,
     circle: {
-      width: InstrumentSize.lg,
-      height: InstrumentSize.lg,
+      width: Layout.pillButtonHeight,
+      height: Layout.pillButtonHeight,
       borderRadius: Radius.full,
       ...flexCenter,
       color: Colors.textPrimary,
@@ -90,5 +90,5 @@ function useStyles(visible: boolean, isMobile?: boolean) {
       transform: visible ? scale(1) : scale(PILL_SCALE_HIDDEN),
       pointerEvents: visible ? PointerEvents.auto : PointerEvents.none,
     } as CSSProperties,
-  }), [visible, isMobile]);
+  }), [visible]);
 }

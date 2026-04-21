@@ -8,7 +8,7 @@ import { useSettings, visibleInstruments } from '../../contexts/SettingsContext'
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
-import { useStagger } from '../../hooks/ui/useStagger';
+import { staggerCompletionDelay, useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
@@ -32,6 +32,7 @@ import Page from '../Page';
 import { rivalsSlides } from './firstRun';
 import LeaderboardRivalsTab, { type LeaderboardRivalQuickLink } from './LeaderboardRivalsTab';
 import { ActionPill } from '../../components/common/ActionPill';
+import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import RankByModal from '../leaderboards/modals/RankByModal';
@@ -114,6 +115,7 @@ export default function RivalsPage() {
   const [computedAt, setComputedAt] = useState<string | null>(hasCachedData ? _cachedComputedAt : null);
   const [, setPlayerName] = useState<string | null>(null);
   const [leaderboardQuickLinkItems, setLeaderboardQuickLinkItems] = useState<LeaderboardRivalQuickLink[]>([]);
+  const [leaderboardRailRevealDelayMs, setLeaderboardRailRevealDelayMs] = useState(0);
 
   // Register toggle action for FAB and sync active tab
   const toggleTabRef = useRef(toggleTab);
@@ -308,6 +310,35 @@ export default function RivalsPage() {
     || (commonRivals.above.length > 0 || commonRivals.below.length > 0);
   /* v8 ignore stop */
 
+  const songTabDesktopRailRevealDelayMs = useMemo(() => {
+    if (!shouldStagger) {
+      return 0;
+    }
+
+    let staggerItemCount = 0;
+    const addSection = (aboveCount: number, belowCount: number) => {
+      staggerItemCount += Math.min(PREVIEW_COUNT, aboveCount) + Math.min(PREVIEW_COUNT, belowCount) + 2;
+    };
+
+    if (commonRivals.above.length > 0 || commonRivals.below.length > 0) {
+      addSection(commonRivals.above.length, commonRivals.below.length);
+    }
+
+    if (combo && comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0)) {
+      addSection(comboRivals.above.length, comboRivals.below.length);
+    }
+
+    for (const entry of instrumentRivals) {
+      if (!entry.data || (entry.data.above.length === 0 && entry.data.below.length === 0)) {
+        continue;
+      }
+
+      addSection(entry.data.above.length, entry.data.below.length);
+    }
+
+    return staggerCompletionDelay(staggerItemCount);
+  }, [combo, comboRivals, commonRivals.above.length, commonRivals.below.length, instrumentRivals, shouldStagger]);
+
   const quickLinkItems = useMemo<RivalQuickLink[]>(() => {
     if (activeTab === 'leaderboard') {
       return leaderboardQuickLinkItems;
@@ -390,6 +421,9 @@ export default function RivalsPage() {
       visible: quickLinksOpen,
       onOpen: openQuickLinks,
       onClose: closeQuickLinks,
+      desktopRailRevealDelayMs: isWideDesktop
+        ? (activeTab === 'song' ? songTabDesktopRailRevealDelayMs : leaderboardRailRevealDelayMs)
+        : 0,
       onSelect: (item) => {
         const nextItem = item as RivalQuickLink;
         if (isWideDesktop) {
@@ -400,7 +434,7 @@ export default function RivalsPage() {
       },
       testIdPrefix: 'rivals',
     };
-  }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
+  }, [activeItemId, activeTab, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, leaderboardRailRevealDelayMs, openQuickLinks, phase, quickLinkItems, quickLinksOpen, songTabDesktopRailRevealDelayMs, t]);
 
   const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
     ? (
@@ -428,6 +462,7 @@ export default function RivalsPage() {
       </>
     )
     : compactQuickLinksAction;
+  const showMobilePageHeader = !isMobile || settings.showButtonsInHeaderMobile;
 
   /* v8 ignore start -- JSX render tree */
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
@@ -440,25 +475,34 @@ export default function RivalsPage() {
       containerStyle={styles.container}
       quickLinks={pageQuickLinks}
       before={
-        <PageHeader
-          title={isMobile ? undefined : (activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard'))}
-          actions={phase === LoadPhase.ContentIn ? (
-            isMobile ? mobileHeaderActions : (
-              <>
-                {toggleTabAction}
-                {compactQuickLinksAction}
-                {activeTab === 'leaderboard' && settings.enableExperimentalRanks && (
-                  <ActionPill
-                    icon={<IoOptions size={Size.iconAction} />}
-                    label={t(`rankings.metric.${rankBy}`)}
-                    onClick={openMetricModal}
-                    active={rankBy !== 'totalscore'}
-                  />
-                )}
-              </>
-            )
-          ) : undefined}
-        />
+        isMobile ? (
+          <PageHeaderTransition visible={showMobilePageHeader}>
+            <PageHeader
+              title={undefined}
+              actions={phase === LoadPhase.ContentIn ? mobileHeaderActions : undefined}
+            />
+          </PageHeaderTransition>
+        ) : showMobilePageHeader ? (
+          <PageHeader
+            title={isMobile ? undefined : (activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard'))}
+            actions={phase === LoadPhase.ContentIn ? (
+              isMobile ? mobileHeaderActions : (
+                <>
+                  {toggleTabAction}
+                  {compactQuickLinksAction}
+                  {activeTab === 'leaderboard' && settings.enableExperimentalRanks && (
+                    <ActionPill
+                      icon={<IoOptions size={Size.iconAction} />}
+                      label={t(`rankings.metric.${rankBy}`)}
+                      onClick={openMetricModal}
+                      active={rankBy !== 'totalscore'}
+                    />
+                  )}
+                </>
+              )
+            ) : undefined}
+          />
+        ) : undefined
       }
       firstRun={{ key: 'rivals', label: t('rivals.title'), slides: rivalsSlides, gateContext: firstRunGateCtx }}
       fabSpacer={phase === LoadPhase.ContentIn && !hasAnyRivals ? 'none' : 'end'}
@@ -616,6 +660,7 @@ export default function RivalsPage() {
                   rankBy={rankBy}
                   registerSectionRef={registerSectionRef}
                   onQuickLinksChange={setLeaderboardQuickLinkItems}
+                  onDesktopRailRevealDelayChange={setLeaderboardRailRevealDelayMs}
                 />
               )}
             </>

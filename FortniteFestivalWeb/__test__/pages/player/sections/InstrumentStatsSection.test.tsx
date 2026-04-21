@@ -38,6 +38,7 @@ vi.mock('../../../../src/components/songs/metadata/GoldStars', () => ({
 const t = (key: string) => key;
 const navigateToSongs = vi.fn();
 const navigateToSongDetail = vi.fn();
+const navigateToLeaderboard = vi.fn();
 const inst: InstrumentKey = 'Solo_Guitar';
 
 function makeScore(overrides: Partial<PlayerScore> = {}): PlayerScore {
@@ -59,6 +60,20 @@ describe('pctGold', () => {
 /** Build items from raw scores (mirrors the old API for test convenience). */
 function buildItems(scores: PlayerScore[], totalSongs: number, ...rest: Parameters<typeof buildInstrumentStatsItems> extends [any, any, any, ...infer R] ? R : never) {
   return buildInstrumentStatsItems(t, inst, computeInstrumentStats(scores, totalSongs), ...rest);
+}
+
+function findItemByTestId(items: ReturnType<typeof buildItems>, testId: string) {
+  for (const item of items) {
+    if (!item.key.includes('card')) continue;
+    const view = render(<>{item.node}</>);
+    const match = view.queryByTestId(testId);
+    view.unmount();
+    if (match) {
+      return item;
+    }
+  }
+
+  return undefined;
 }
 
 describe('buildInstrumentStatsItems', () => {
@@ -240,6 +255,60 @@ describe('buildInstrumentStatsItems', () => {
       }
     }
     expect(navigateToSongs).toHaveBeenCalled();
+  });
+
+  it('passes the instrument, metric, and rank to leaderboard navigation', () => {
+    navigateToLeaderboard.mockClear();
+    const scores = [makeScore({ rank: 1, totalEntries: 100 })];
+    const rankingEntry = { totalScoreRank: 26 } as any;
+    const items = buildItems(
+      scores,
+      100,
+      'Player',
+      navigateToSongs,
+      navigateToSongDetail,
+      {},
+      undefined,
+      rankingEntry,
+      false,
+      navigateToLeaderboard,
+      undefined,
+      undefined,
+      true,
+    );
+
+    const totalScoreItem = findItemByTestId(items, 'stat-player.totalScoreRank');
+    const { getByTestId } = render(<>{totalScoreItem!.node}</>);
+    fireEvent.click(getByTestId('stat-player.totalScoreRank'));
+
+    expect(navigateToLeaderboard).toHaveBeenCalledWith('Solo_Guitar', 'totalscore', 26);
+  });
+
+  it('does not wire leaderboard navigation when the rank is not positive', () => {
+    navigateToLeaderboard.mockClear();
+    const scores = [makeScore({ rank: 1, totalEntries: 100 })];
+    const rankingEntry = { totalScoreRank: 0 } as any;
+    const items = buildItems(
+      scores,
+      100,
+      'Player',
+      navigateToSongs,
+      navigateToSongDetail,
+      {},
+      undefined,
+      rankingEntry,
+      false,
+      navigateToLeaderboard,
+      undefined,
+      undefined,
+      true,
+    );
+
+    const totalScoreItem = findItemByTestId(items, 'stat-player.totalScoreRank');
+    const { getByTestId } = render(<>{totalScoreItem!.node}</>);
+    fireEvent.click(getByTestId('stat-player.totalScoreRank'));
+
+    expect(navigateToLeaderboard).not.toHaveBeenCalled();
   });
 });
 

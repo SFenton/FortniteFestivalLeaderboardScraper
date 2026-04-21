@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeRankWidth, formatRating, getRatingForMetric, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { LEADERBOARD_PAGE_SIZE, computeRankWidth, formatRating, getLeaderboardPageForRank, getRatingForMetric, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import type { AccountRankingEntry } from '@festival/core/api/serverTypes';
 import type { RankingMetric } from '@festival/core/api/serverTypes';
 import { Layout } from '@festival/theme';
@@ -31,6 +31,29 @@ describe('computeRankWidth', () => {
     const small = computeRankWidth([1]);
     const large = computeRankWidth([1, 999999]);
     expect(large).toBeGreaterThan(small);
+  });
+});
+
+describe('getLeaderboardPageForRank', () => {
+  it('returns page 1 for the first rank', () => {
+    expect(getLeaderboardPageForRank(1)).toBe(1);
+  });
+
+  it('keeps the last rank on a page on that same page', () => {
+    expect(getLeaderboardPageForRank(LEADERBOARD_PAGE_SIZE)).toBe(1);
+  });
+
+  it('moves the first rank after a page boundary to the next page', () => {
+    expect(getLeaderboardPageForRank(LEADERBOARD_PAGE_SIZE + 1)).toBe(2);
+  });
+
+  it('maps later boundaries to the expected page', () => {
+    expect(getLeaderboardPageForRank(51)).toBe(3);
+  });
+
+  it('falls back to page 1 for invalid ranks', () => {
+    expect(getLeaderboardPageForRank(0)).toBe(1);
+    expect(getLeaderboardPageForRank(Number.NaN)).toBe(1);
   });
 });
 

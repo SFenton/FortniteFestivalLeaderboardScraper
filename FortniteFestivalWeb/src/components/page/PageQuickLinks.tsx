@@ -1,9 +1,9 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { playerPageStyles as pps } from '../player/playerPageStyles';
 import ModalShell from '../modals/components/ModalShell';
 import { modalStyles } from '../modals/modalStyles';
-import { Gap } from '@festival/theme';
+import { FADE_DURATION, Gap } from '@festival/theme';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { getPageQuickLinkTestId, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 
@@ -36,6 +36,7 @@ export type PageQuickLinksConfig<T extends PageQuickLinkItem = PageQuickLinkItem
   onClose: () => void;
   onSelect: (item: T) => void;
   maxHeight?: number | null;
+  desktopRailRevealDelayMs?: number;
   testIdPrefix?: string;
 };
 
@@ -66,9 +67,60 @@ function PageQuickLinksButtons<T extends PageQuickLinkItem>({ items, activeItemI
 
 export function PageQuickLinksRail<T extends PageQuickLinkItem>({ quickLinks }: { quickLinks: PageQuickLinksConfig<T>; }) {
   const testIdPrefix = quickLinks.testIdPrefix ?? 'page';
+  const revealDelayMs = quickLinks.desktopRailRevealDelayMs ?? 0;
+  const [activeRevealDelayMs, setActiveRevealDelayMs] = useState(revealDelayMs > 0 ? revealDelayMs : 0);
+  const [railRevealed, setRailRevealed] = useState(false);
+  const previousRevealDelayMsRef = useRef(revealDelayMs);
+
+  useEffect(() => {
+    const previousRevealDelayMs = previousRevealDelayMsRef.current;
+    previousRevealDelayMsRef.current = revealDelayMs;
+
+    if (revealDelayMs <= 0) {
+      if (!railRevealed && activeRevealDelayMs > 0) {
+        setActiveRevealDelayMs(0);
+      }
+      return;
+    }
+
+    if (previousRevealDelayMs <= 0 || previousRevealDelayMs !== revealDelayMs) {
+      setActiveRevealDelayMs(revealDelayMs);
+      setRailRevealed(false);
+    }
+  }, [activeRevealDelayMs, railRevealed, revealDelayMs]);
+
+  useEffect(() => {
+    if (railRevealed) {
+      return;
+    }
+
+    const revealTimeoutId = window.setTimeout(() => {
+      setActiveRevealDelayMs(0);
+      setRailRevealed(true);
+    }, activeRevealDelayMs + FADE_DURATION);
+
+    return () => {
+      window.clearTimeout(revealTimeoutId);
+    };
+  }, [activeRevealDelayMs, railRevealed]);
+
+  const handleRailAnimationEnd = useCallback(() => {
+    setActiveRevealDelayMs(0);
+    setRailRevealed(true);
+  }, []);
+
+  const railStyle = !railRevealed
+    ? {
+      ...pps.quickLinksOverlay,
+      opacity: 0,
+      pointerEvents: 'none' as const,
+      willChange: 'opacity',
+      animation: `fadeIn ${FADE_DURATION}ms ease-out ${activeRevealDelayMs}ms forwards`,
+    }
+    : pps.quickLinksOverlay;
 
   return (
-    <div style={pps.quickLinksOverlay} data-testid={`${testIdPrefix}-quick-links-rail`}>
+    <div style={railStyle} data-testid={`${testIdPrefix}-quick-links-rail`} onAnimationEnd={handleRailAnimationEnd}>
       <nav
         style={{
           ...pps.quickLinksSticky,

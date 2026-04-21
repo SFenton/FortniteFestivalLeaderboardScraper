@@ -75,6 +75,26 @@ beforeEach(() => {
   }) as unknown as typeof fetch;
 });
 
+function mockScrollWidths(scale = 7) {
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+  Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+    configurable: true,
+    get() {
+      const text = this.textContent ?? '';
+      return Math.max(0, text.length * scale);
+    },
+  });
+
+  return () => {
+    if (original) {
+      Object.defineProperty(HTMLElement.prototype, 'scrollWidth', original);
+      return;
+    }
+
+    delete (HTMLElement.prototype as Partial<HTMLElement>).scrollWidth;
+  };
+}
+
 function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean; } = {}) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -156,7 +176,7 @@ describe('SettingsPage', () => {
   it('renders content on mobile', () => {
     setViewportQueries({ mobile: true, wide: false });
     renderSettings();
-    expect(screen.getByRole('heading', { name: 'Settings' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
     expect(screen.getByText('App Settings')).toBeDefined();
   });
@@ -355,6 +375,39 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Leaderboard update status')).toBeDefined();
   });
 
+  it('keeps service info rows inline when every row fits on one line', async () => {
+    renderSettings();
+
+    const list = await screen.findByTestId('settings-service-info-list');
+    expect(list.getAttribute('data-layout')).toBe('inline');
+    expect(screen.getByTestId('settings-service-info-row-last-update-start').getAttribute('data-layout')).toBe('inline');
+    expect(screen.getByTestId('settings-service-info-row-next-scheduled-update').getAttribute('data-layout')).toBe('inline');
+  });
+
+  it('stacks every service info row when any inline row would overflow', async () => {
+    const restoreScrollWidths = mockScrollWidths(32);
+
+    try {
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({
+        accountId: '195e93ef108143b2975ee46662d4d0e1',
+        displayName: 'Tracked Player',
+      }));
+
+      renderSettings();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('settings-service-info-list').getAttribute('data-layout')).toBe('stacked');
+      });
+
+      expect(screen.getByTestId('settings-service-info-row-last-update-start').getAttribute('data-layout')).toBe('stacked');
+      expect(screen.getByTestId('settings-service-info-row-next-scheduled-update').getAttribute('data-layout')).toBe('stacked');
+      expect(screen.getByTestId('settings-service-info-row-selected-player-id').getAttribute('data-layout')).toBe('stacked');
+      expect(screen.getByTestId('settings-service-info-row-selected-player-rivals-status').getAttribute('data-layout')).toBe('stacked');
+    } finally {
+      restoreScrollWidths();
+    }
+  });
+
   it('displays service info values after fetch', async () => {
     renderSettings();
 
@@ -423,6 +476,25 @@ describe('SettingsPage', () => {
 
     const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
     expect(stored.filterInvalidScores).toBe(true);
+  });
+
+  it('toggles Show Buttons In Header (Mobile)', () => {
+    renderSettings();
+    const toggle = screen.getByText('Show Buttons In Header (Mobile)').closest('button')!;
+    fireEvent.click(toggle);
+
+    const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
+    expect(stored.showButtonsInHeaderMobile).toBe(false);
+  });
+
+  it('hides the mobile quick links header trigger when the setting is off', () => {
+    setViewportQueries({ mobile: true, wide: false });
+    localStorage.setItem('fst:appSettings', JSON.stringify({ showButtonsInHeaderMobile: false }));
+
+    renderSettings();
+
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.getByText('App Settings')).toBeDefined();
   });
 
   it('toggles Disable Item Shop Highlighting', () => {

@@ -19,6 +19,8 @@ import { Layout, Font, Weight, Colors, Gap } from '@festival/theme';
 import Page from '../Page';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
+import PageHeaderTransition from '../../components/common/PageHeaderTransition';
+import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScopes';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedAllRivalsKey: string | null = null;
@@ -51,13 +53,15 @@ export default function AllRivalsPage() {
 
   // Determine mode from category
   const isCommon = category === 'common';
-  const isCombo = category === 'combo';
+  const isExactCombo = isRankingScopeComboId(category);
+  const isCombo = category === 'combo' || isExactCombo;
   const isInstrument = VALID_INSTRUMENTS.has(category);
   const instrument = isInstrument ? (category as ServerInstrumentKey) : null;
+  const resolvedCombo = isExactCombo ? category : combo;
   const rivalsScopeKey = isCommon
     ? activeInstruments.join(',')
     : isCombo
-      ? (combo ?? 'none')
+      ? (resolvedCombo ?? 'none')
       : (instrument ?? 'none');
 
   // ─── Data state (initialize from cache when returning) ─────
@@ -138,20 +142,20 @@ export default function AllRivalsPage() {
   // ─── Fetch: combo (derived from settings) ────────────────────
 
   useEffect(() => {
-    if (!isCombo || !accountId || !combo) {
+    if (!isCombo || !accountId || !resolvedCombo) {
       if (isCombo) setLoading(false);
       return;
     }
     if (hasCachedData) return;
     let cancelled = false;
     setLoading(true);
-    api.getRivalsList(accountId, combo).then(res => {
+    api.getRivalsList(accountId, resolvedCombo).then(res => {
       if (!cancelled) { setSingleData(res); setLoading(false); }
     }).catch(() => {
       if (!cancelled) { setSingleData(null); setLoading(false); }
     });
     return () => { cancelled = true; };
-  }, [isCombo, accountId, combo]);
+  }, [isCombo, accountId, resolvedCombo]);
 
   // ─── Common rivals: intersection logic ───────────────────────
 
@@ -225,7 +229,7 @@ export default function AllRivalsPage() {
     return { '--rival-name-width': `${Math.ceil(maxLen * 0.85)}ch` } as React.CSSProperties;
   };
 
-  const effectiveCombo = isCommon ? combo : isCombo ? combo : instrument;
+  const effectiveCombo = isCommon ? combo : isCombo ? resolvedCombo : instrument;
   const navigateToRival = (rivalId: string, rivalName?: string | null) => {
     navigate(Routes.rivalDetail(rivalId, rivalName ?? undefined), {
       state: isLeaderboard
@@ -242,7 +246,8 @@ export default function AllRivalsPage() {
     ? t('rivals.commonRivalsShort', 'Common Rivals')
     : isInstrument
       ? t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(instrument!) })
-      : t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') });
+      : t('rivals.instrumentRivalsShort', { instrument: isExactCombo ? comboScopeLabel(category) : t('rivals.combo') });
+  const showMobilePageHeader = !isMobile || settings.showButtonsInHeaderMobile;
 
   return (
     <Page
@@ -251,7 +256,20 @@ export default function AllRivalsPage() {
       loadPhase={phase}
       containerClassName={undefined}
       fabSpacer={phase === LoadPhase.ContentIn && !hasRivals ? 'none' : 'end'}
-      before={
+      before={isMobile ? (
+        <PageHeaderTransition visible={showMobilePageHeader}>
+          <PageHeader
+            title={
+              <h1 style={{ display: 'flex', alignItems: 'center', gap: Gap.sm, margin: 0, fontSize: Font.title, fontWeight: Weight.bold, color: Colors.textPrimary }}>
+                {isInstrument && instrument && (
+                  <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.SM} iconOnly />
+                )}
+                {titleText}
+              </h1>
+            }
+          />
+        </PageHeaderTransition>
+      ) : showMobilePageHeader ? (
         <PageHeader
           title={
             <h1 style={{ display: 'flex', alignItems: 'center', gap: Gap.sm, margin: 0, fontSize: Font.title, fontWeight: Weight.bold, color: Colors.textPrimary }}>
@@ -262,7 +280,7 @@ export default function AllRivalsPage() {
             </h1>
           }
         />
-      }
+      ) : undefined}
     >
       {phase === LoadPhase.ContentIn && (
             <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>

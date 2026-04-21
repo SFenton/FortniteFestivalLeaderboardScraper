@@ -1,6 +1,8 @@
 import type { RankingMetric, AccountRankingEntry, CompositeRankingEntry } from '@festival/core/api/serverTypes';
 import { Layout } from '@festival/theme';
 
+export const LEADERBOARD_PAGE_SIZE = 25;
+
 /** Get the rank value for a given metric from an AccountRankingEntry. */
 export function getRankForMetric(entry: AccountRankingEntry, metric: RankingMetric): number {
   switch (metric) {
@@ -30,6 +32,12 @@ export function getSongsLabel(
 ): string {
   if (metric === 'fcrate') return `${entry.fullComboCount} / ${entry.totalChartedSongs}`;
   return `${entry.songsPlayed} / ${entry.totalChartedSongs}`;
+}
+
+/** Map a 1-based leaderboard rank to the page containing that rank. */
+export function getLeaderboardPageForRank(rank: number, pageSize: number = LEADERBOARD_PAGE_SIZE): number {
+  if (!Number.isFinite(rank) || rank <= 0) return 1;
+  return Math.floor((rank - 1) / pageSize) + 1;
 }
 
 /** Format a rating value for display based on the metric type. */

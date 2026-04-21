@@ -19,6 +19,7 @@ const t = (key: string) => key;
 const visibleKeys: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass'];
 const navigateToSongs = vi.fn();
 const navigateToSongDetail = vi.fn();
+const navigateToLeaderboard = vi.fn();
 
 function makeStats(overrides: Partial<OverallStats> = {}): OverallStats {
   return {
@@ -95,6 +96,45 @@ describe('buildOverallSummaryItems', () => {
     const { container } = render(<>{rankItem!.node}</>);
     fireEvent.click(container.querySelector('[data-testid]')!);
     expect(navigateToSongDetail).not.toHaveBeenCalled();
+  });
+
+  it('passes the metric and rank to overall leaderboard navigation', () => {
+    navigateToLeaderboard.mockClear();
+    const items = buildOverallSummaryItems(
+      t,
+      makeStats(),
+      100,
+      visibleKeys,
+      navigateToSongs,
+      navigateToSongDetail,
+      {},
+      { totalScore: 26 } as any,
+      false,
+      navigateToLeaderboard,
+    );
+
+    const totalScoreItem = items.find(i => i.key.includes('player.totalScoreRank'));
+    const { getByTestId } = render(<>{totalScoreItem!.node}</>);
+    fireEvent.click(getByTestId('stat-player.totalScoreRank'));
+
+    expect(navigateToLeaderboard).toHaveBeenCalledWith(null, 'totalscore', 26);
+  });
+
+  it('omits overall leaderboard cards when the rank is not positive', () => {
+    const items = buildOverallSummaryItems(
+      t,
+      makeStats(),
+      100,
+      visibleKeys,
+      navigateToSongs,
+      navigateToSongDetail,
+      {},
+      { totalScore: 0 } as any,
+      false,
+      navigateToLeaderboard,
+    );
+
+    expect(items.find(i => i.key.includes('player.totalScoreRank'))).toBeUndefined();
   });
 });
 

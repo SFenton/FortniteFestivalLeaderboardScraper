@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
 import SongDetailPage, { clearSongDetailCache } from '../../../src/pages/songinfo/SongDetailPage';
+import { useSettings } from '../../../src/contexts/SettingsContext';
 import { songInfoSlides } from '../../../src/pages/songinfo/firstRun';
 import { contentHash } from '../../../src/firstRun/types';
 import { TestProviders } from '../../helpers/TestProviders';
@@ -111,6 +112,16 @@ function renderSongDetail(route = '/songs/song-1', accountId?: string) {
   );
 }
 
+function SettingsLeewayButton({ leeway }: { leeway: number; }) {
+  const { updateSettings } = useSettings();
+
+  return (
+    <button onClick={() => updateSettings({ filterInvalidScores: true, filterInvalidScoresLeeway: leeway })}>
+      Set leeway {leeway}
+    </button>
+  );
+}
+
 describe('SongDetailPage', () => {
   it('renders without crashing', async () => {
     renderSongDetail();
@@ -168,6 +179,29 @@ describe('SongDetailPage', () => {
     });
   });
 
+  it('hides Mic Mode intensity and leaderboard sections when the song has no Mic Mode chart', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: false,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: true,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    renderSongDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Song')).toBeDefined();
+    });
+
+    expect(screen.queryByText('Mic Mode')).toBeNull();
+    expect(document.getElementById('instrument-card-Solo_PeripheralVocals')).toBeNull();
+  });
+
   it('shows "Song not found" for invalid songId', async () => {
     render(
       <TestProviders route="/songs">
@@ -185,6 +219,40 @@ describe('SongDetailPage', () => {
     renderSongDetail();
     await waitFor(() => {
       expect(mockApi.getAllLeaderboards).toHaveBeenCalledWith('song-1', 10, undefined);
+    });
+  });
+
+  it('refetches all leaderboards when leeway changes', async () => {
+    mockApi.getAllLeaderboards.mockImplementation(async (_songId: string, _top: number, leeway?: number) => ({
+      songId: 'song-1',
+      instruments: [
+        {
+          instrument: 'Solo_Guitar',
+          count: 1,
+          totalEntries: leeway === 5 ? 150 : 100,
+          localEntries: leeway === 5 ? 120 : 80,
+          entries: [{ accountId: 'a1', displayName: 'P1', score: 145000, rank: 1 }],
+        },
+      ],
+    }));
+
+    render(
+      <TestProviders route="/songs/song-1">
+        <SettingsLeewayButton leeway={5} />
+        <Routes>
+          <Route path="/songs/:songId" element={<SongDetailPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getAllLeaderboards).toHaveBeenCalledWith('song-1', 10, undefined);
+    });
+
+    fireEvent.click(screen.getByText('Set leeway 5'));
+
+    await waitFor(() => {
+      expect(mockApi.getAllLeaderboards).toHaveBeenCalledWith('song-1', 10, 5);
     });
   });
 

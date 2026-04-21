@@ -108,6 +108,9 @@ import { changelogHash } from './changelog';
 import ErrorBoundary from './components/page/ErrorBoundary';
 import SuspenseFallback from './components/common/SuspenseFallback';
 import RouteErrorFallback from './components/page/RouteErrorFallback';
+import { createPreserveShellScrollState, type PreserveShellScrollState } from './utils/quietNavigation';
+
+const consumedPreserveShellScrollKeys = new Set<string>();
 import { QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
@@ -311,9 +314,15 @@ function AppShell() {
   /* v8 ignore start — deep AppInner: routing/navigation logic embedded in render */
   const handleSelect = (p: TrackedPlayer) => {
     setPlayer(p);
-    // Navigate to statistics unless already on that player's page
-    if (location.pathname !== AppRoutes.player(p.accountId)) {
-      navigate(AppRoutes.statistics);
+    // Tracked profiles live on the statistics tab root; rewrite detail URLs quietly.
+    if (location.pathname !== AppRoutes.statistics) {
+      const preserveScroll = location.pathname === AppRoutes.player(p.accountId);
+      navigate(
+        AppRoutes.statistics,
+        preserveScroll
+          ? { replace: true, state: createPreserveShellScrollState(`profile-select:${p.accountId}`) }
+          : { replace: true },
+      );
     }
   };
   /* v8 ignore stop */
@@ -663,7 +672,9 @@ function AppShell() {
 
 /* v8 ignore start — scroll restoration utility */
 function ScrollToTop() {
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
+  const preserveShellScrollKey = (location.state as PreserveShellScrollState | null)?.preserveShellScrollKey;
   const scrollContainerRef = useScrollContainer();
   useEffect(() => {
     if ('scrollRestoration' in history) {
@@ -671,6 +682,10 @@ function ScrollToTop() {
     }
   }, []);
   useEffect(() => {
+    if (preserveShellScrollKey && !consumedPreserveShellScrollKeys.has(preserveShellScrollKey)) {
+      consumedPreserveShellScrollKeys.add(preserveShellScrollKey);
+      return;
+    }
     // On browser refresh, always scroll to top — page exemptions only apply to in-app navigation
     if (!IS_PAGE_RELOAD) {
       if (pathname === AppRoutes.suggestions || pathname === AppRoutes.songs) return;
@@ -678,7 +693,7 @@ function ScrollToTop() {
       if (RoutePatterns.songDetail.test(pathname)) return;
     }
     scrollContainerRef.current?.scrollTo(0, 0);
-  }, [pathname, scrollContainerRef]);
+  }, [pathname, preserveShellScrollKey, scrollContainerRef]);
   return null;
 }
 /* v8 ignore stop */

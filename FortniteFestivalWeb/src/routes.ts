@@ -16,8 +16,10 @@ export const Routes = {
   suggestions: '/suggestions',
   compete: '/compete',
   leaderboards: '/leaderboards',
-  fullRankings: (instrument: string, rankBy?: string) =>
-    `/leaderboards/all?instrument=${encodeURIComponent(instrument)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}`,
+  fullRankings: (instrument: string, rankBy?: string, page?: number) =>
+    `/leaderboards/all?instrument=${encodeURIComponent(instrument)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}${page != null ? `&page=${page}` : ''}`,
+  fullComboRankings: (comboId: string, rankBy?: string, page?: number) =>
+    `/leaderboards/all?combo=${encodeURIComponent(comboId)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}${page != null ? `&page=${page}` : ''}`,
   shop: '/shop',
   settings: '/settings',
 } as const;

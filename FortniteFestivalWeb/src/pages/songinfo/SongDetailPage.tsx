@@ -25,6 +25,7 @@ import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useShopState } from '../../hooks/data/useShopState';
 import { LoadPhase } from '@festival/core';
+import { serverSongSupportsInstrument } from '@festival/core/api/serverTypes';
 import PathsModal from './components/path/PathsModal';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
@@ -58,13 +59,19 @@ export default function SongDetailPage() {
   } = useFestival();
   const { player } = useTrackedPlayer();
   const { settings } = useSettings();
+  const song = songs.find((s) => s.songId === songId);
+  const configuredInstruments = visibleInstruments(settings);
+  const activeInstruments = useMemo(
+    () => song ? configuredInstruments.filter((instrument) => serverSongSupportsInstrument(song, instrument)) : configuredInstruments,
+    [configuredInstruments, song],
+  );
+  const resolvedDefaultInstrument = defaultInstrument && activeInstruments.includes(defaultInstrument) ? defaultInstrument : undefined;
 
   // First-run carousel
   const isMobile = useIsMobile();
   const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobile), [isMobile]);
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
-  const activeInstruments = visibleInstruments(settings);
   const activePathInstruments = visiblePathInstruments(settings);
   const canViewPaths = activePathInstruments.length > 0;
   const fabSearch = useFabSearch();
@@ -118,7 +125,6 @@ export default function SongDetailPage() {
     }
   }, [canViewPaths, pathsOpen]);
 
-  const song = songs.find((s) => s.songId === songId);
   const shopUrl = song ? getShopUrl(song.songId) : undefined;
   const showShop = isShopVisible && !!shopUrl;
 
@@ -184,8 +190,7 @@ export default function SongDetailPage() {
       );
     });
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- cached/leewayParam intentionally omitted
-  }, [songId]);
+  }, [songId, leewayParam]);
   /* v8 ignore stop */
 
   // Clear the cache-skip flag after all fetch effects have had a chance to check it.
@@ -307,13 +312,13 @@ export default function SongDetailPage() {
   /* v8 ignore start — DOM scroll positioning */
   const autoScroll = !!(location.state as Record<string, unknown> | null)?.autoScroll;
   useEffect(() => {
-    if (phase !== LoadPhase.ContentIn || !defaultInstrument || hasScrolled.current || !autoScroll) return;
+    if (phase !== LoadPhase.ContentIn || !resolvedDefaultInstrument || hasScrolled.current || !autoScroll) return;
     hasScrolled.current = true;
     // Wait for stagger animations to complete before measuring position
     const id = setTimeout(() => {
       if (userScrolledRef.current) return;
-      const target = document.getElementById(`player-score-${defaultInstrument}`)
-        ?? document.getElementById(`instrument-card-${defaultInstrument}`);
+      const target = document.getElementById(`player-score-${resolvedDefaultInstrument}`)
+        ?? document.getElementById(`instrument-card-${resolvedDefaultInstrument}`);
       if (!target) return;
       const targetRect = target.getBoundingClientRect();
       const nav = document.querySelector('nav');
@@ -327,7 +332,7 @@ export default function SongDetailPage() {
     }, 1500);
     return () => clearTimeout(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- autoScroll frozen at mount
-  }, [phase, defaultInstrument]);
+  }, [phase, resolvedDefaultInstrument]);
   /* v8 ignore stop */
 
   const styles = useSongDetailStyles();
@@ -392,7 +397,7 @@ export default function SongDetailPage() {
                 songId={songId}
                 accountId={player.accountId}
                 playerName={player.displayName}
-                defaultInstrument={defaultInstrument}
+                defaultInstrument={resolvedDefaultInstrument}
                 history={filteredScoreHistory}
                 visibleInstruments={activeInstruments}
                 skipAnimation={skipAnim}

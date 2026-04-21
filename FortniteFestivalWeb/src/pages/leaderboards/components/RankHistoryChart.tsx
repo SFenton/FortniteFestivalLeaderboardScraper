@@ -35,7 +35,7 @@ const RANK_GRADIENT = 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113)
 
 /** Identity function for matching RankHistoryChartPoints across pagination. */
 const RANK_POINT_IDENTITY = (a: RankHistoryChartPoint, b: RankHistoryChartPoint) =>
-  a.date === b.date;
+  a.date === b.date && a.rank === b.rank && a.value === b.value;
 
 /* ── List card styles ── */
 const listCardBase: React.CSSProperties = {
@@ -288,7 +288,7 @@ export default memo(function RankHistoryChart({
     const isPctMetric = metric === 'fcrate' || metric === 'maxscore';
     const pct = isPctMetric ? point.value * 100 : 0;
     return (
-      <div key={point.date} style={{ ...(i === 0 ? listCardBest : listCardBase), ...animStyle }}>
+      <div key={`${point.date}:${point.rank}:${point.value}:${i}`} style={{ ...(i === 0 ? listCardBest : listCardBase), ...animStyle }}>
         <span style={{ flex: 1, color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{dateStr}</span>
         <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
         {percentileStr
@@ -317,6 +317,7 @@ export default memo(function RankHistoryChart({
       renderChart={renderChart}
       renderDetailCard={renderDetailCard}
       listData={listData}
+      listIdentity={RANK_POINT_IDENTITY}
       renderListItem={renderListItem}
       skipAnimation={skipAnimation}
     />

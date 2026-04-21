@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using FortniteFestival.Core;
+using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
@@ -83,6 +84,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     private readonly ScrapeProgressTracker _progress;
     private readonly ResilientHttpExecutor _executor;
     private readonly int _maxLookupRetries;
+    private readonly FestivalService? _festivalService;
 
     /// <summary>Exposes the underlying HTTP executor for diagnostics (CDN wire counters).</summary>
     public ResilientHttpExecutor Executor => _executor;
@@ -91,13 +93,34 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         HttpClient http,
         ScrapeProgressTracker progress,
         ILogger<GlobalLeaderboardScraper> log,
-        int maxLookupRetries = ResilientHttpExecutor.DefaultMaxRetries)
+        int maxLookupRetries = ResilientHttpExecutor.DefaultMaxRetries,
+        FestivalService? festivalService = null)
     {
         _http = http;
         _progress = progress;
         _log = log;
         _maxLookupRetries = maxLookupRetries;
+        _festivalService = festivalService;
         _executor = new ResilientHttpExecutor(http, log);
+    }
+
+    private bool SupportsSongInstrument(string songId, string instrument)
+    {
+        if (!instrument.Equals("Solo_PeripheralVocals", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (_festivalService is null)
+            return true;
+
+        foreach (var candidate in _festivalService.Songs)
+        {
+            if (!string.Equals(candidate.track?.su, songId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return candidate.track?.HasProVocalsChart ?? false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -122,6 +145,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         AdaptiveConcurrencyLimiter? limiter = null,
         CancellationToken ct = default)
     {
+        if (!SupportsSongInstrument(songId, instrument)) return null;
+
         return await LookupAccountInWindowAsync(
             songId, instrument, "alltime", targetAccountId,
             accessToken, callerAccountId, limiter, ct);
@@ -281,6 +306,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         CancellationToken ct = default)
     {
         if (targetAccountIds.Count == 0) return [];
+        if (!SupportsSongInstrument(songId, instrument)) return [];
 
         var eventId = $"alltime_{songId}_{instrument}";
         var baseUrl = $"{EventsBase}/api/v2/games/FNFestival/leaderboards/{eventId}/alltime/scores" +
@@ -396,6 +422,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         CancellationToken ct = default)
     {
         if (targetAccountIds.Count == 0) return [];
+        if (!SupportsSongInstrument(songId, instrument)) return [];
 
         var eventId = $"{seasonPrefix}_{songId}";
         var windowId = $"{songId}_{instrument}";
@@ -522,6 +549,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         AdaptiveConcurrencyLimiter? limiter = null,
         CancellationToken ct = default)
     {
+        if (!SupportsSongInstrument(songId, instrument)) return null;
+
         return await LookupAccountInWindowAsync(
             songId, instrument, windowId, targetAccountId,
             accessToken, callerAccountId, limiter, ct);
@@ -542,6 +571,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         AdaptiveConcurrencyLimiter? limiter = null,
         CancellationToken ct = default)
     {
+        if (!SupportsSongInstrument(songId, instrument)) return [];
+
         return await LookupAllSessionsInWindowAsync(
             songId, instrument, windowId, targetAccountId,
             accessToken, callerAccountId, limiter, ct);
@@ -890,6 +921,24 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         bool deferDeepScrape = false,
         double validCutoffMultiplier = 0.95)
     {
+        if (!SupportsSongInstrument(songId, instrument))
+        {
+            _progress.ReportPage0(1);
+            _progress.ReportLeaderboardComplete(instrument);
+            return new GlobalLeaderboardResult
+            {
+                SongId = songId,
+                Instrument = instrument,
+                Entries = [],
+                EntriesCount = 0,
+                TotalPages = 0,
+                ReportedTotalPages = 0,
+                PagesScraped = 0,
+                Requests = 0,
+                BytesReceived = 0,
+            };
+        }
+
         // ── Page 0: discover totalPages ──
         bool page0Acquired = false;
         if (limiter is not null) { await limiter.WaitAsync(ct); page0Acquired = true; }

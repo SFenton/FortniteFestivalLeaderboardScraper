@@ -69,6 +69,8 @@ export type GraphCardProps<T> = {
 
   /** Items for the animated list beneath the chart. */
   listData?: T[];
+  /** Semantic equality for list items to suppress no-op list rerender animations. */
+  listIdentity?: (a: T, b: T) => boolean;
   /** Render a single list item. */
   renderListItem?: (point: T, index: number, phase: 'idle' | 'in' | 'out') => ReactNode;
 
@@ -99,6 +101,7 @@ function GraphCardInner<T>({
   renderChart,
   renderDetailCard,
   listData,
+  listIdentity,
   renderListItem,
   viewAllLabel,
   onViewAll,
@@ -139,7 +142,7 @@ function GraphCardInner<T>({
   const { displayedPoint, cardPhase, cardHeight, cardContentRef } = useCardAnimation(selectedPoint);
 
   // List animation
-  const { displayedCards, listPhase, listHeight } = useListAnimation(listData ?? [], skipAnimation);
+  const { displayedCards, listPhase, listHeight } = useListAnimation(listData ?? [], skipAnimation, listIdentity ?? identity);
 
   const compactLabels = useMemo(() => ({
     previous: t('aria.previousInstrument'),

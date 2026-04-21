@@ -8,11 +8,12 @@ export interface InstrumentChipProps {
   instrument: ServerInstrumentKey;
   hasScore: boolean;
   isFC: boolean;
+  isAvailable?: boolean;
   size?: number;
 }
 
-export const InstrumentChip = memo(function InstrumentChip({ instrument, hasScore, isFC, size = 24 }: InstrumentChipProps) {
-  const visual = getInstrumentStatusVisual(hasScore, isFC);
+export const InstrumentChip = memo(function InstrumentChip({ instrument, hasScore, isFC, isAvailable = true, size = 24 }: InstrumentChipProps) {
+  const visual = getInstrumentStatusVisual(hasScore, isFC, isAvailable);
   const s = useStyles(visual.fill, visual.stroke);
   return (
     <div style={s.chip}>

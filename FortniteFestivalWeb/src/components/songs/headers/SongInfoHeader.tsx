@@ -11,7 +11,7 @@ import { IoFlash, IoBagHandle } from 'react-icons/io5';
 import {
   Colors, Font, Gap, Radius, Layout, Weight, ObjectFit, Size, AlbumArtSize,
   IconSize, InstrumentSize, Display, Align, Justify, CssValue, Cursor, Position, Isolation,
-  flexRow, flexCenter, padding, purpleGlass,
+  flexRow, flexCenter, purpleGlass,
 } from '@festival/theme';
 import type { CSSProperties } from 'react';
 import { type ServerSong as Song, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
@@ -127,13 +127,13 @@ export default function SongInfoHeader({
             {/* v8 ignore start — action buttons */}
             {!isMobile && onOpenPaths && (
               <button onClick={onOpenPaths} style={s.viewPathsButton}>
-                <IoFlash size={IconSize.action} style={{ marginRight: Gap.md }} />
+                <IoFlash size={IconSize.action} />
                 {t('common.viewPaths')}
               </button>
             )}
             {isMobile && onOpenPaths && (
               <button onClick={onOpenPaths} style={s.viewPathsCircle} aria-label={t('common.viewPaths')}>
-                <IoFlash size={IconSize.sm} />
+                <IoFlash size={IconSize.action} />
               </button>
             )}
             {!isMobile && showShop && (
@@ -166,10 +166,12 @@ function useStyles(collapsed: boolean, animate?: boolean) {
       display: Display.inlineFlex,
       alignItems: Align.center,
       justifyContent: Justify.center,
-      padding: padding(0, Layout.buttonPaddingH, 0, Gap.section),
+      gap: Gap.md,
+      paddingLeft: Gap.xl,
+      paddingRight: Gap.xl,
       borderRadius: Radius.full,
       color: Colors.textPrimary,
-      fontSize: Font.lg,
+      fontSize: Font.sm,
       fontWeight: Weight.semibold,
       textDecoration: CssValue.none,
       cursor: Cursor.pointer,
@@ -196,8 +198,8 @@ function useStyles(collapsed: boolean, animate?: boolean) {
       instIconWrap: { ...flexCenter, width: Size.iconXl, height: Size.iconXl } as CSSProperties,
       viewPathsButton: { ...purpleGlass, ...buttonBase } as CSSProperties,
       viewPathsCircle: {
-        width: InstrumentSize.lg,
-        height: InstrumentSize.lg,
+        width: Layout.pillButtonHeight,
+        height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
         ...flexCenter,
         ...purpleGlass,

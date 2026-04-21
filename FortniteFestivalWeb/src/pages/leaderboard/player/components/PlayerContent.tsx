@@ -14,7 +14,7 @@ import {
 } from '../../../player/helpers/playerStats';
 import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Align, Display, Gap, IconSize, InstrumentSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, frostedCard, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
+import { Align, Display, Gap, IconSize, Justify, Layout, Overflow, Radius, TRANSITION_MS, FADE_DURATION, frostedCard, transition, transitions, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
@@ -32,12 +32,16 @@ import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
 import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../../../contexts/SearchQueryContext';
 import { useScrollContainer } from '../../../../contexts/ScrollContainerContext';
+import { useScrollFade } from '../../../../hooks/ui/useScrollFade';
 import { getPageQuickLinkTestId, usePageQuickLinks, type PageQuickLinkItem } from '../../../../hooks/ui/usePageQuickLinks';
+import { staggerCompletionDelay } from '../../../../hooks/ui/useStagger';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
+import PageHeaderActionsTransition from '../../../../components/common/PageHeaderActionsTransition';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
 import { buildOverallSummaryItems } from '../../../player/sections/OverallSummarySection';
 import { buildInstrumentStatsItems } from '../../../player/sections/InstrumentStatsSection';
+import { getLeaderboardPageForRank } from '../../../leaderboards/helpers/rankingHelpers';
 import { buildTopSongsItems } from '../../../player/components/TopSongsSection';
 import { buildPlayerBandsItems, EMPTY_PLAYER_BANDS } from '../../../player/components/PlayerBandsSection';
 import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
@@ -47,6 +51,7 @@ import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRa
 import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import type { PageQuickLinksConfig } from '../../../../components/page/PageQuickLinks';
+import { createPreserveShellScrollState } from '../../../../utils/quietNavigation';
 
 type PlayerQuickLinkId = 'global' | 'top-songs' | 'bands' | `instrument:${InstrumentKey}`;
 
@@ -110,6 +115,41 @@ function clearPendingSelectProfileExit(accountId: string) {
   if (pendingSelectProfileExit?.accountId === accountId) {
     pendingSelectProfileExit = null;
   }
+}
+
+function estimateVisiblePlayerGridItemCount(items: PlayerItem[]): number {
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+  const gap = Gap.md;
+  let accHeight = 0;
+  let col = 0;
+  let rowMax = 0;
+  let visibleCount = items.length;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
+    if (item.span) {
+      if (col === 1) {
+        accHeight += rowMax + gap;
+        col = 0;
+        rowMax = 0;
+      }
+      accHeight += item.heightEstimate + gap;
+    } else {
+      rowMax = Math.max(rowMax, item.heightEstimate);
+      col++;
+      if (col === 2) {
+        accHeight += rowMax + gap;
+        col = 0;
+        rowMax = 0;
+      }
+    }
+
+    if (accHeight > vh && visibleCount === items.length) {
+      visibleCount = i + 2;
+    }
+  }
+
+  return visibleCount;
 }
 
 export interface PlayerContentProps {
@@ -177,7 +217,13 @@ export default function PlayerContent({
   const primeTrackedPlayerSelection = useCallback(() => {
     primeSelectProfileExit(data.accountId);
     setPlayer({ accountId: data.accountId, displayName: data.displayName });
-  }, [data.accountId, data.displayName, setPlayer]);
+    if (location.pathname !== Routes.statistics) {
+      navigate(Routes.statistics, {
+        replace: true,
+        state: createPreserveShellScrollState(`profile-select:${data.accountId}`),
+      });
+    }
+  }, [data.accountId, data.displayName, location.pathname, navigate, setPlayer]);
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const bannerVisible = isSyncing || !!(showCompleteBanner && onCompleteBannerDismissed);
   const [bannerCollapsed, setBannerCollapsed] = useState(!bannerVisible);
@@ -185,6 +231,7 @@ export default function PlayerContent({
   const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
   const pendingSelectProfileExitTimerRef = useRef<number | null>(null);
+  const gridListRef = useRef<HTMLDivElement>(null);
 
   const clearPendingSelectProfileExitTimer = useCallback(() => {
     if (pendingSelectProfileExitTimerRef.current === null) return;
@@ -317,12 +364,14 @@ export default function PlayerContent({
   }, [withProfileSwitch, navigate, location.pathname]);
 
   /* v8 ignore start — navigation helper */
-  const navigateToLeaderboard = useCallback((instrument: InstrumentKey | null, metric: RankingMetric) => {
+  const navigateToLeaderboard = useCallback((instrument: InstrumentKey | null, metric: RankingMetric, rank?: number) => {
     withProfileSwitch(() => {
+      const page = getLeaderboardPageForRank(rank ?? 0);
       if (instrument) {
-        navigate(Routes.fullRankings(instrument, metric));
+        navigate(Routes.fullRankings(instrument, metric, page));
       } else {
-        navigate(`${Routes.leaderboards}?rankBy=${encodeURIComponent(metric)}`);
+        const params = new URLSearchParams({ rankBy: metric, page: String(page) });
+        navigate(`${Routes.leaderboards}?${params.toString()}`);
       }
     });
     /* v8 ignore stop */
@@ -446,6 +495,11 @@ export default function PlayerContent({
     items.push(...buildPlayerBandsItems(t, data.displayName, statsData.bands ?? EMPTY_PLAYER_BANDS));
   }
 
+  const visibleStaggerItemCount = useMemo(() => estimateVisiblePlayerGridItemCount(items), [items]);
+  const desktopRailRevealDelayMs = skipAnim
+    ? 0
+    : staggerCompletionDelay(visibleStaggerItemCount, STAGGER_ENTRY_OFFSET, FADE_DURATION);
+
   const quickLinks = useMemo<PlayerQuickLink[]>(() => {
     const links: PlayerQuickLink[] = [];
     const firstOverallKey = overallSummaryItems[0]?.key;
@@ -525,8 +579,9 @@ export default function PlayerContent({
     handleQuickLinkSelect(link);
   }, [closeQuickLinks, handleQuickLinkSelect]);
 
-  // Wire up container-level scroll fade
+  // Wire up per-item scroll fade for the player grid.
   const fadeDeps = useMemo(() => [items.length], [items.length]);
+  useScrollFade(scrollContainerRef, gridListRef, fadeDeps);
 
   // Show the select-profile pill on all platforms (header actions slot handles layout)
   const selectBtnVisible = !isTrackedPlayer && trackedPlayer?.accountId !== data.accountId;
@@ -561,6 +616,7 @@ export default function PlayerContent({
     visible: quickLinksOpen,
     onOpen: openQuickLinks,
     onClose: closeQuickLinks,
+    desktopRailRevealDelayMs: isWideDesktop ? desktopRailRevealDelayMs : 0,
     onSelect: (item) => {
       const nextItem = item as PlayerQuickLink;
       if (isWideDesktop) {
@@ -570,7 +626,7 @@ export default function PlayerContent({
       handleModalQuickLinkSelect(nextItem);
     },
     testIdPrefix: 'player',
-  }), [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, quickLinks, quickLinksOpen, quickLinksTitle]);
+  }), [activeItemId, closeQuickLinks, desktopRailRevealDelayMs, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, quickLinks, quickLinksOpen, quickLinksTitle]);
 
   const quickLinksAction = !isWideDesktop && quickLinks.length > 0
     ? (
@@ -581,57 +637,71 @@ export default function PlayerContent({
       />
     )
     : null;
+  const playerHeaderActions = (quickLinksAction || selectBtnMounted) ? (
+    <div
+      data-testid="player-header-actions"
+      style={{
+        ...PLAYER_HEADER_ACTIONS_STYLE,
+        gap: quickLinksAction && selectBtnVisible ? Gap.md : Gap.none,
+      }}
+    >
+      {selectBtnMounted ? (
+        <div
+          data-testid="player-select-profile-slot"
+          aria-hidden={!selectBtnVisible}
+          style={{
+            ...SELECT_PROFILE_ACTION_SLOT_STYLE,
+            maxWidth: selectBtnVisible
+              ? (hasFab ? Layout.pillButtonHeight : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
+              : 0,
+            opacity: selectBtnVisible ? 1 : 0,
+          }}
+        >
+          <SelectProfilePill
+            visible={selectBtnVisible}
+            isMobile={hasFab}
+            onClick={() => {
+              /* v8 ignore start */
+              if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+                  setPendingSwitch(() => primeTrackedPlayerSelection);
+              } else {
+                  primeTrackedPlayerSelection();
+              /* v8 ignore stop */
+              }
+            }}
+          />
+        </div>
+      ) : null}
+      {quickLinksAction}
+    </div>
+  ) : null;
+
+  const mobilePlayerHeaderActions = playerHeaderActions ? (
+    <PageHeaderActionsTransition
+      visible={settings.showButtonsInHeaderMobile}
+      testId="player-header-actions-transition"
+    >
+      {playerHeaderActions}
+    </PageHeaderActionsTransition>
+  ) : undefined;
 
   return (
     <Page
       scrollRestoreKey={`statistics:${data.accountId}`}
       scrollDeps={fadeDeps}
-      scrollMaskOptions={{ disabled: true }}
       scrollStyle={pps.scrollArea}
       quickLinks={quickLinks.length > 0 ? pageQuickLinks : undefined}
-      before={
+      before={hasFab ? (
         <PageHeader
           title={data.displayName}
-          actions={(quickLinksAction || selectBtnMounted) ? (
-            <div
-              data-testid="player-header-actions"
-              style={{
-                ...PLAYER_HEADER_ACTIONS_STYLE,
-                gap: quickLinksAction && selectBtnVisible ? Gap.md : Gap.none,
-              }}
-            >
-              {selectBtnMounted ? (
-                <div
-                  data-testid="player-select-profile-slot"
-                  aria-hidden={!selectBtnVisible}
-                  style={{
-                    ...SELECT_PROFILE_ACTION_SLOT_STYLE,
-                    maxWidth: selectBtnVisible
-                      ? (hasFab ? InstrumentSize.lg : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
-                      : 0,
-                    opacity: selectBtnVisible ? 1 : 0,
-                  }}
-                >
-                  <SelectProfilePill
-                    visible={selectBtnVisible}
-                    isMobile={hasFab}
-                    onClick={() => {
-                      /* v8 ignore start */
-                      if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
-                          setPendingSwitch(() => primeTrackedPlayerSelection);
-                      } else {
-                          primeTrackedPlayerSelection();
-                      /* v8 ignore stop */
-                      }
-                    }}
-                  />
-                </div>
-              ) : null}
-              {quickLinksAction}
-            </div>
-          ) : undefined}
+          actions={mobilePlayerHeaderActions}
         />
-      }
+      ) : (
+        <PageHeader
+          title={data.displayName}
+          actions={playerHeaderActions ?? undefined}
+        />
+      )}
       after={<>
         {pendingSwitch ? (
           <ConfirmAlert
@@ -647,48 +717,14 @@ export default function PlayerContent({
       </>}
     >
         <div style={{ ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}) }}>
-            <div style={{ ...pps.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
+            <div ref={gridListRef} style={{ ...pps.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
-              // Compute which items are in the initial viewport by accumulating
-              // estimated row heights.  The grid is 2-col: span items take a full
-              // row, non-span items pair up (each row = max of the pair's height).
-              /* v8 ignore start -- SSR guard: window always defined in jsdom */
-              const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
-              /* v8 ignore stop */
-              const gap = Gap.md;
-              let accHeight = 0;
-              let col = 0; // 0 = left, 1 = right in the 2-col grid
-              let rowMax = 0;
-              let visibleCount = items.length; // default: animate all
-
-              for (let i = 0; i < items.length; i++) {
-                const item = items[i]!;
-                if (item.span) {
-                  // Flush any pending half-row
-                  if (col === 1) {
-                    accHeight += rowMax + gap;
-                    col = 0;
-                    rowMax = 0;
-                  }
-                  accHeight += item.heightEstimate + gap;
-                } else {
-                  rowMax = Math.max(rowMax, item.heightEstimate);
-                  col++;
-                  if (col === 2) {
-                    accHeight += rowMax + gap;
-                    col = 0;
-                    rowMax = 0;
-                  }
-                }
-                if (accHeight > vh && visibleCount === items.length) {
-                  visibleCount = i + 2; // +1 for the partially-visible item, +1 for 0-index
-                }
-              }
-
+              const visibleCount = visibleStaggerItemCount;
               const lastVisibleDelay = visibleCount * STAGGER_ENTRY_OFFSET;
               return items.map((item, i) => {
                 const delay = skipAnim ? undefined : (i < visibleCount ? (i + 1) * STAGGER_ENTRY_OFFSET : lastVisibleDelay);
                 const quickLink = quickLinkByItemKey.get(item.key);
+                const itemTestId = item.key.endsWith('-pct-table') ? `player-item-${item.key}` : undefined;
                 const content = quickLink ? (
                   <section
                     ref={(element) => registerSectionRef(quickLink.id, element)}
@@ -701,7 +737,7 @@ export default function PlayerContent({
                   </section>
                 ) : item.node;
                 return (
-                  <FadeIn key={item.key} delay={delay} style={item.span ? { ...pps.gridFullWidth, ...item.style } : item.style}>
+                  <FadeIn key={item.key} data-testid={itemTestId} delay={delay} style={item.span ? { ...pps.gridFullWidth, ...item.style } : item.style}>
                     {content}
                   </FadeIn>
                 );

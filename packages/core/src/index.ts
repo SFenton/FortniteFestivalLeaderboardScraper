@@ -5,6 +5,7 @@ export * from './keys';
 export * from './stars';
 export * from './settings';
 export * from './models';
+export * from './songAvailability';
 export * from './httpErrorHelper';
 export * from './concurrency';
 export * from './persistence';

@@ -15,7 +15,12 @@ export type FirstRunGateContext = {
 export type FirstRunSlideDef = {
   /** Unique slide ID, e.g. "songs-list-overview" */
   id: string;
-  /** Bump for major content rewrites */
+  /**
+   * Replay contract version.
+   * Only bump when users who already dismissed this slide should intentionally
+   * see it again. Do not use demo/layout/animation polish as a reason to
+   * increment this value.
+   */
   version: number;
   /** i18n key for the slide title */
   title: string;
@@ -23,8 +28,9 @@ export type FirstRunSlideDef = {
   description: string;
   /**
    * Override the string hashed to detect content changes.
-   * When set, used instead of `title + description` so that platform-variant
-   * slides (same id, different descriptions) share a single seen-record hash.
+   * When set, used instead of `title + description` so that multiple slide
+   * definitions can share the same seen-state even when their copy differs.
+   * Use this for mobile/desktop variants that should behave like one slide.
    */
   contentKey?: string;
   /** Predicate — slide only shown when this returns true. Omit for "always show". */
@@ -76,7 +82,7 @@ export function contentHash(text: string): string {
   return (hash >>> 0).toString(HEX_RADIX);
 }
 
-/** Check whether a slide is unseen (missing, newer version, or changed hash). */
+/** Check whether a slide is unseen (missing, intentional replay bump, or changed hash). */
 export function isSlideUnseen(slide: FirstRunSlideDef, seen: FirstRunStorage): boolean {
   const record = seen[slide.id];
   if (!record) return true;

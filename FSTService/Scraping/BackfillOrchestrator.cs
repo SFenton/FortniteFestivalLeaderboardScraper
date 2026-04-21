@@ -3,6 +3,7 @@ using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
@@ -25,6 +26,7 @@ public sealed class BackfillOrchestrator
     private readonly SharedDopPool _pool;
     private readonly BatchResultProcessor _resultProcessor;
     private readonly ScrapeTimePrecomputer _precomputer;
+    private readonly ResponseCacheService _leaderboardAllCache;
     private readonly ILogger<BackfillOrchestrator> _log;
 
     public BackfillOrchestrator(
@@ -40,6 +42,7 @@ public sealed class BackfillOrchestrator
         SharedDopPool pool,
         BatchResultProcessor resultProcessor,
         ScrapeTimePrecomputer precomputer,
+        [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService leaderboardAllCache,
         ILogger<BackfillOrchestrator> log)
     {
         _backfillQueue = backfillQueue;
@@ -54,6 +57,7 @@ public sealed class BackfillOrchestrator
         _pool = pool;
         _resultProcessor = resultProcessor;
         _precomputer = precomputer;
+        _leaderboardAllCache = leaderboardAllCache;
         _log = log;
     }
 
@@ -184,6 +188,9 @@ public sealed class BackfillOrchestrator
                     _log.LogWarning(ex, "Post-history-recon actions failed for {AccountId}.", user.AccountId);
                 }
             }
+
+            if (result.EntriesUpdated > 0)
+                _leaderboardAllCache.InvalidateAll();
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

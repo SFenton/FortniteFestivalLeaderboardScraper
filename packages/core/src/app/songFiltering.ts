@@ -1,5 +1,6 @@
 import type {InstrumentKey} from '../instruments';
 import type {LeaderboardData, ScoreTracker, Song} from '../models';
+import {getSongInstrumentDifficulty, songSupportsInstrument} from '../songAvailability';
 import type {Settings} from '../settings';
 
 import type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortKey, SongSortMode} from '../songListConfig';
@@ -16,37 +17,15 @@ const selectTracker = (ld: LeaderboardData, key: InstrumentKey): ScoreTracker | 
   | ScoreTracker
   | undefined;
 
-const fallbackDifficulty = (song: Song, key: InstrumentKey): number => {
-  const i = song.track.in ?? {};
-  switch (key) {
-    case 'guitar':
-      return i.gr ?? 0;
-    case 'bass':
-      return i.ba ?? 0;
-    case 'drums':
-      return i.ds ?? 0;
-    case 'vocals':
-      return i.vl ?? 0;
-    case 'pro_guitar':
-      return i.pg ?? i.gr ?? 0;
-    case 'pro_bass':
-      return i.pb ?? i.ba ?? 0;
-    case 'peripheral_vocals':
-      return i.vl ?? 0;
-    case 'peripheral_cymbals':
-      return i.ds ?? 0;
-    case 'peripheral_drums':
-      return i.ds ?? 0;
-    default:
-      return 0;
-  }
-};
+const fallbackDifficulty = (song: Song, key: InstrumentKey): number => getSongInstrumentDifficulty(song, key) ?? 0;
 
 const difficultyBucketForSong = (
   song: Song,
   entry: LeaderboardData | undefined,
   key: InstrumentKey,
 ): number => {
+  if (!songSupportsInstrument(song, key)) return 0;
+
   const tracker = entry ? selectTracker(entry, key) : undefined;
   if (!tracker?.initialized) return 0;
   const raw = Number.isFinite(tracker.difficulty) ? Math.trunc(tracker.difficulty) : 0;

@@ -53,6 +53,10 @@ describe('SettingsContext', () => {
     it('has visual order disabled by default', () => {
       expect(defaultAppSettings().songRowVisualOrderEnabled).toBe(false);
     });
+
+    it('shows page header buttons on mobile by default', () => {
+      expect(defaultAppSettings().showButtonsInHeaderMobile).toBe(true);
+    });
   });
 
   describe('isInstrumentVisible', () => {
@@ -125,12 +129,13 @@ describe('SettingsContext', () => {
     });
 
     it('loads persisted settings from localStorage', () => {
-      const custom: AppSettings = { ...defaultAppSettings(), showLead: false, metadataShowStars: false };
+      const custom: AppSettings = { ...defaultAppSettings(), showLead: false, metadataShowStars: false, showButtonsInHeaderMobile: false };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(custom));
 
       const { result } = renderHook(() => useSettings(), { wrapper });
       expect(result.current.settings.showLead).toBe(false);
       expect(result.current.settings.metadataShowStars).toBe(false);
+      expect(result.current.settings.showButtonsInHeaderMobile).toBe(false);
     });
 
     it('merges partial persisted settings with defaults', () => {
@@ -159,6 +164,30 @@ describe('SettingsContext', () => {
 
       expect(result.current.settings.showLead).toBe(false);
       expect(result.current.settings.showBass).toBe(true);
+    });
+
+    it('arms and consumes a one-shot mobile header transition token when the setting flips', () => {
+      const { result } = renderHook(() => useSettings(), { wrapper });
+
+      expect(result.current.pendingMobileHeaderTransitionToken).toBeNull();
+
+      act(() => {
+        result.current.updateSettings({ showButtonsInHeaderMobile: false });
+      });
+
+      expect(result.current.pendingMobileHeaderTransitionToken).toBe(1);
+
+      act(() => {
+        result.current.consumeMobileHeaderTransitionToken(1);
+      });
+
+      expect(result.current.pendingMobileHeaderTransitionToken).toBeNull();
+
+      act(() => {
+        result.current.updateSettings({ showButtonsInHeaderMobile: true });
+      });
+
+      expect(result.current.pendingMobileHeaderTransitionToken).toBe(2);
     });
 
     it('setSettings replaces the entire settings object', () => {

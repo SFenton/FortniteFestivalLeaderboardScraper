@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { useStagger } from '../../../src/hooks/ui/useStagger';
-import { STAGGER_INTERVAL } from '@festival/theme';
+import { staggerCompletionDelay, useStagger } from '../../../src/hooks/ui/useStagger';
+import { FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
 
 describe('useStagger', () => {
   it('returns undefined styles when shouldStagger is false', () => {
@@ -57,5 +57,11 @@ describe('useStagger', () => {
     result.current.clearAnim(event);
     expect(el.style.opacity).toBe('');
     expect(el.style.animation).toBe('');
+  });
+
+  it('computes the total completion delay for a staggered sequence', () => {
+    expect(staggerCompletionDelay(0)).toBe(0);
+    expect(staggerCompletionDelay(1)).toBe(FADE_DURATION);
+    expect(staggerCompletionDelay(3)).toBe((2 * STAGGER_INTERVAL) + FADE_DURATION);
   });
 });

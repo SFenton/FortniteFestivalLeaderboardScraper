@@ -70,6 +70,18 @@ describe('Routes', () => {
     );
   });
 
+  it('generates full rankings path with rankBy', () => {
+    expect(Routes.fullRankings('Solo_Guitar', 'totalscore')).toBe('/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore');
+  });
+
+  it('generates full rankings path with rankBy and page', () => {
+    expect(Routes.fullRankings('Solo_Guitar', 'totalscore', 2)).toBe('/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore&page=2');
+  });
+
+  it('generates full combo rankings path with rankBy and page', () => {
+    expect(Routes.fullComboRankings('05', 'totalscore', 2)).toBe('/leaderboards/all?combo=05&rankBy=totalscore&page=2');
+  });
+
   it('encodes special characters in rivalry mode', () => {
     expect(Routes.rivalry('rival-id-2', 'almost_passed')).toBe(
       '/rivals/rival-id-2/rivalry?mode=almost_passed',

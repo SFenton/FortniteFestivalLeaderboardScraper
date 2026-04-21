@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -10,6 +10,7 @@ import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
 import { ToggleRow } from '../../components/common/ToggleRow';
 import { RadioRow } from '../../components/common/RadioRow';
 import SectionHeader from '../../components/common/SectionHeader';
+import MarqueeText from '../../components/common/MarqueeText';
 import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
 import { type ColumnKey } from '../songinfo/components/path/PathDataTable';
@@ -36,13 +37,16 @@ import { api } from '../../api/client';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
+import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
+import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { IoCompass } from 'react-icons/io5';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
 const SERVICE_INFO_POLL_MS = 5_000;
+const SERVICE_INFO_INLINE_KEY_MIN_WIDTH = 300;
 
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;
@@ -51,6 +55,12 @@ let _hasRendered = false;
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
+};
+
+type ServiceInfoRowItem = {
+  id: string;
+  label: string;
+  value: string;
 };
 
 function FadeInDiv({ delay, children, style }: { delay?: number; children: React.ReactNode; style?: CSSProperties }) {
@@ -256,6 +266,71 @@ function describeTrackedPlayerRivalsStatus(t: TFunction, syncStatus: SyncStatusR
   }
 }
 
+function estimateTextWidth(text: string, fontSize = Font.md): number {
+  return Math.ceil(Array.from(text).length * fontSize * 0.62);
+}
+
+function measureSingleLineTextWidth(el: HTMLElement | null, text: string, fontSize = Font.md): number {
+  const measured = Math.max(el?.scrollWidth ?? 0, el?.offsetWidth ?? 0);
+  return measured > 0 ? measured : estimateTextWidth(text, fontSize);
+}
+
+function ServiceInfoRows({ rows, styles }: { rows: ServiceInfoRowItem[]; styles: ReturnType<typeof useSettingsStyles> }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const keyMeasureRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+  const valueMeasureRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+  const listWidth = useContainerWidth(listRef);
+  const [stackAllRows, setStackAllRows] = useState(false);
+
+  useLayoutEffect(() => {
+    if (rows.length === 0 || listWidth <= 0) {
+      return;
+    }
+
+    const nextStackAllRows = rows.some((row) => {
+      const keyWidth = measureSingleLineTextWidth(keyMeasureRefs.current[row.id] ?? null, row.label);
+      const valueWidth = measureSingleLineTextWidth(valueMeasureRefs.current[row.id] ?? null, row.value);
+      return Math.max(keyWidth, SERVICE_INFO_INLINE_KEY_MIN_WIDTH) + valueWidth + Gap.md > listWidth;
+    });
+
+    setStackAllRows(prev => prev === nextStackAllRows ? prev : nextStackAllRows);
+  }, [listWidth, rows]);
+
+  return (
+    <div ref={listRef} data-testid="settings-service-info-list" data-layout={stackAllRows ? 'stacked' : 'inline'} style={styles.serviceInfoList}>
+      <div aria-hidden="true" style={styles.serviceInfoMeasureBox}>
+        {rows.map((row) => (
+          <div key={row.id} style={styles.serviceInfoMeasureRow}>
+            <span ref={(element) => { keyMeasureRefs.current[row.id] = element; }} style={styles.serviceInfoMeasureText}>{row.label}</span>
+            <span ref={(element) => { valueMeasureRefs.current[row.id] = element; }} style={styles.serviceInfoMeasureText}>{row.value}</span>
+          </div>
+        ))}
+      </div>
+
+      {rows.map((row) => (
+        <div
+          key={row.id}
+          data-testid={`settings-service-info-row-${row.id}`}
+          data-layout={stackAllRows ? 'stacked' : 'inline'}
+          style={stackAllRows ? styles.serviceInfoRowStacked : styles.serviceInfoRowInline}
+        >
+          {stackAllRows ? (
+            <>
+              <span style={styles.serviceInfoKeyStacked}>{row.label}</span>
+              <MarqueeText text={row.value} as="span" style={styles.serviceInfoValueStacked} />
+            </>
+          ) : (
+            <>
+              <span style={styles.serviceInfoKeyInline}>{row.label}</span>
+              <span style={styles.serviceInfoValueInline}>{row.value}</span>
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { settings, updateSettings, resetSettings } = useSettings();
@@ -409,6 +484,35 @@ export default function SettingsPage() {
     ? describeTrackedPlayerRivalsStatus(t, trackedPlayerSyncStatus, trackedPlayerFallback)
     : null;
 
+  const serviceInfoRows = useMemo<ServiceInfoRowItem[]>(() => {
+    const rows: ServiceInfoRowItem[] = [
+      { id: 'last-update-start', label: t('settings.serviceInfo.lastUpdateStart'), value: lastLeaderboardUpdateStart },
+      { id: 'last-update-complete', label: t('settings.serviceInfo.lastUpdateComplete'), value: lastLeaderboardUpdateComplete },
+      { id: 'update-status', label: t('settings.serviceInfo.updateStatus'), value: leaderboardUpdateStatus },
+      { id: 'update-sub-status', label: t('settings.serviceInfo.updateSubStatus'), value: leaderboardUpdateSubStatus },
+      { id: 'next-scheduled-update', label: t('settings.serviceInfo.nextScheduledUpdate'), value: nextLeaderboardScheduledUpdate },
+    ];
+
+    if (trackedPlayer) {
+      rows.push(
+        { id: 'selected-player-id', label: t('settings.serviceInfo.selectedPlayerId'), value: trackedPlayer.accountId },
+        { id: 'selected-player-rivals-status', label: t('settings.serviceInfo.selectedPlayerRivalsStatus'), value: trackedPlayerRivalsStatus ?? trackedPlayerFallback },
+      );
+    }
+
+    return rows;
+  }, [
+    lastLeaderboardUpdateComplete,
+    lastLeaderboardUpdateStart,
+    leaderboardUpdateStatus,
+    leaderboardUpdateSubStatus,
+    nextLeaderboardScheduledUpdate,
+    t,
+    trackedPlayer,
+    trackedPlayerFallback,
+    trackedPlayerRivalsStatus,
+  ]);
+
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
 
   const toggleShow = useCallback(
@@ -538,13 +642,17 @@ export default function SettingsPage() {
   const headerStagger: CSSProperties = !skipAnimRef.current
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
     : {};
+  const showMobilePageHeader = !isMobile || settings.showButtonsInHeaderMobile;
+  const settingsHeader = <PageHeader title={isMobile ? undefined : t('settings.title')} style={isMobile ? undefined : headerStagger} actions={compactQuickLinksAction} />;
 
   return (
     <Page
       scrollRestoreKey="settings"
       containerStyle={st.container}
       quickLinks={pageQuickLinks}
-      before={<PageHeader title={t('settings.title')} style={headerStagger} actions={compactQuickLinksAction} />}
+      before={isMobile
+        ? <PageHeaderTransition visible={showMobilePageHeader}>{settingsHeader}</PageHeaderTransition>
+        : settingsHeader}
       after={<>
         {showResetConfirm && (
           /* v8 ignore start — confirm dialog callbacks */
@@ -678,6 +786,13 @@ export default function SettingsPage() {
                   onToggle={() => updateSettings({ disableLightTrails: !settings.disableLightTrails })}
                   large={isMobile}
                 />
+                <ToggleRow
+                  label={t('settings.showButtonsInHeaderMobile', 'Show Buttons In Header (Mobile)')}
+                  description={t('settings.showButtonsInHeaderMobileDesc', 'Shows the Quick Links, Select Player Profile, Song Rivals, and similar header text/buttons on mobile. Turn this off to hide them and free up screen space; these actions will still be available from the floating action button on supported pages.')}
+                  checked={settings.showButtonsInHeaderMobile}
+                  onToggle={() => updateSettings({ showButtonsInHeaderMobile: !settings.showButtonsInHeaderMobile })}
+                  large={isMobile}
+                />
               </Card>
             </div>
           </FadeInDiv>
@@ -774,38 +889,7 @@ export default function SettingsPage() {
             <div ref={(element) => registerSectionRef('service-info', element)}>
               <SectionHeader title={t('settings.serviceInfo.title')} description={t('settings.serviceInfo.hint')} />
               <Card>
-                <div style={st.versionRow}>
-                  <span>{t('settings.serviceInfo.lastUpdateStart')}</span>
-                  <span style={st.versionValue}>{lastLeaderboardUpdateStart}</span>
-                </div>
-                <div style={st.versionRow}>
-                  <span>{t('settings.serviceInfo.lastUpdateComplete')}</span>
-                  <span style={st.versionValue}>{lastLeaderboardUpdateComplete}</span>
-                </div>
-                <div style={st.versionRow}>
-                  <span>{t('settings.serviceInfo.updateStatus')}</span>
-                  <span style={st.versionValue}>{leaderboardUpdateStatus}</span>
-                </div>
-                <div style={st.versionRow}>
-                  <span>{t('settings.serviceInfo.updateSubStatus')}</span>
-                  <span style={st.versionValue}>{leaderboardUpdateSubStatus}</span>
-                </div>
-                <div style={st.versionRow}>
-                  <span>{t('settings.serviceInfo.nextScheduledUpdate')}</span>
-                  <span style={st.versionValue}>{nextLeaderboardScheduledUpdate}</span>
-                </div>
-                {trackedPlayer && (
-                  <>
-                    <div style={st.versionRow}>
-                      <span>{t('settings.serviceInfo.selectedPlayerId')}</span>
-                      <span style={st.versionValue}>{trackedPlayer.accountId}</span>
-                    </div>
-                    <div style={st.versionRow}>
-                      <span>{t('settings.serviceInfo.selectedPlayerRivalsStatus')}</span>
-                      <span style={st.versionValue}>{trackedPlayerRivalsStatus}</span>
-                    </div>
-                  </>
-                )}
+                <ServiceInfoRows rows={serviceInfoRows} styles={st} />
               </Card>
             </div>
           </FadeInDiv>
@@ -988,6 +1072,69 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     } as CSSProperties,
     versionValue: {
       color: Colors.textSecondary,
+    } as CSSProperties,
+    serviceInfoList: {
+      position: 'relative',
+      ...flexColumn,
+      gap: Gap.none,
+    } as CSSProperties,
+    serviceInfoMeasureBox: {
+      position: 'absolute',
+      inset: 0,
+      visibility: 'hidden',
+      pointerEvents: 'none',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    serviceInfoMeasureRow: {
+      ...flexBetween,
+      padding: padding(Gap.sm, Gap.none),
+      fontSize: Font.md,
+    } as CSSProperties,
+    serviceInfoMeasureText: {
+      display: 'inline-block',
+      whiteSpace: 'nowrap',
+      fontSize: Font.md,
+    } as CSSProperties,
+    serviceInfoRowInline: {
+      ...flexBetween,
+      alignItems: Align.center,
+      gap: Gap.md,
+      padding: padding(Gap.md, Gap.none),
+      fontSize: Font.md,
+    } as CSSProperties,
+    serviceInfoKeyInline: {
+      flex: '1 1 auto',
+      minWidth: 0,
+      width: CssValue.full,
+      maxWidth: CssValue.full,
+      minInlineSize: SERVICE_INFO_INLINE_KEY_MIN_WIDTH,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+      textOverflow: 'ellipsis',
+      fontWeight: Weight.bold,
+      paddingRight: Gap.md,
+    } as CSSProperties,
+    serviceInfoValueInline: {
+      flexShrink: 0,
+      whiteSpace: 'nowrap',
+      color: Colors.textSecondary,
+      textAlign: TextAlign.right,
+    } as CSSProperties,
+    serviceInfoRowStacked: {
+      ...flexColumn,
+      padding: padding(Gap.md, Gap.none),
+      fontSize: Font.md,
+    } as CSSProperties,
+    serviceInfoKeyStacked: {
+      color: Colors.textPrimary,
+      fontWeight: Weight.bold,
+      lineHeight: LineHeight.relaxed,
+    } as CSSProperties,
+    serviceInfoValueStacked: {
+      width: CssValue.full,
+      minWidth: 0,
+      color: Colors.textSecondary,
+      textAlign: TextAlign.left,
     } as CSSProperties,
     resetRow: {
       ...flexBetween,

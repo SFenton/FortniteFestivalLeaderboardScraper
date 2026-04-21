@@ -1,3 +1,4 @@
+using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using Microsoft.Extensions.Options;
@@ -646,8 +647,8 @@ public sealed class RankingsCalculator
 
     /// <summary>
     /// Count how many songs are charted for a given instrument.
-    /// Valid difficulty values are 0–6. Values outside this range (e.g. 99 = sentinel/N/A)
-    /// indicate the song has no chart for that instrument and are excluded.
+    /// Negative legacy sentinels and Spark's 99 Mic Mode sentinel indicate that
+    /// the song has no chart for that instrument and are excluded.
     /// </summary>
     internal static int CountChartedSongs(FestivalService festivalService, string instrument)
     {
@@ -663,12 +664,12 @@ public sealed class RankingsCalculator
                 "Solo_Drums" => song.track.@in.ds,
                 "Solo_PeripheralGuitar" => song.track.@in.pg,
                 "Solo_PeripheralBass" => song.track.@in.pb,
-                "Solo_PeripheralVocals" => song.track.@in.bd == 0 ? -1 : song.track.@in.bd,
+                "Solo_PeripheralVocals" => song.track.@in.bd,
                 "Solo_PeripheralCymbals" => song.track.@in.pd,
                 "Solo_PeripheralDrums" => song.track.@in.pd,
                 _ => -1,
             };
-            if (diff >= 0 && diff <= 6) count++;
+            if (Track.HasChartedDifficulty(diff)) count++;
         }
         return count;
     }

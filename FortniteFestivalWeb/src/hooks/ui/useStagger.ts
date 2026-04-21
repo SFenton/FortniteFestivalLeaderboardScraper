@@ -1,6 +1,18 @@
 import { useCallback, useRef, type CSSProperties } from 'react';
 import { FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
 
+export function staggerCompletionDelay(
+  itemCount: number,
+  interval: number = STAGGER_INTERVAL,
+  fadeDuration: number = FADE_DURATION,
+): number {
+  if (itemCount <= 0) {
+    return 0;
+  }
+
+  return (itemCount - 1) * interval + fadeDuration;
+}
+
 /**
  * Encapsulates the stagger animation pattern used across pages.
  *
