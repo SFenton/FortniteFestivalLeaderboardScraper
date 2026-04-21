@@ -304,7 +304,14 @@ describe('RivalsPage quick links', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: 'Quick Links' })); });
+    const toggleButton = await screen.findByRole('button', { name: 'Leaderboard Rivals' });
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
+    const actionButtons = within(toggleButton.parentElement as HTMLElement).getAllByRole('button');
+
+    expect(toggleButton.parentElement).toBe(quickLinksButton.parentElement);
+    expect(actionButtons.indexOf(toggleButton)).toBeLessThan(actionButtons.indexOf(quickLinksButton));
+
+    await act(async () => { fireEvent.click(quickLinksButton); });
 
     const list = await screen.findByTestId('rivals-quick-links-modal-list');
     const items = within(list).getAllByRole('button');

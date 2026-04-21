@@ -425,12 +425,12 @@ export default function RivalsPage() {
             title={activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard')}
             actions={phase === LoadPhase.ContentIn ? (
               <>
-                {compactQuickLinksAction}
                 <ActionPill
                   icon={activeTab === 'song' ? <IoTrophy size={Size.iconAction} /> : <IoMusicalNotes size={Size.iconAction} />}
                   label={activeTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong')}
                   onClick={toggleTab}
                 />
+                {compactQuickLinksAction}
                 {activeTab === 'leaderboard' && settings.enableExperimentalRanks && (
                   <ActionPill
                     icon={<IoOptions size={Size.iconAction} />}
