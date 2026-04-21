@@ -1,3 +1,4 @@
+using System.Globalization;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -34,7 +35,12 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
 
     private void SeedBandRankingsSource()
     {
-        var persistence = new BandLeaderboardPersistence(_fixture.DataSource, Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+        SeedBandRankingsSource(_fixture);
+    }
+
+    private static void SeedBandRankingsSource(InMemoryMetaDatabase fixture)
+    {
+        var persistence = new BandLeaderboardPersistence(fixture.DataSource, Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
         persistence.UpsertBandEntries("song_0", "Band_Duets",
         [
             MakeBandEntry(["p1", "p2"], "0:1", 1000, isFullCombo: true),
@@ -295,6 +301,97 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         var combos = Db.GetBandRankingCombos("Band_Duets");
         Assert.Contains(combos, entry => entry.ComboId == comboId && entry.TeamCount == 2);
         Assert.Contains(combos, entry => entry.ComboId == BandComboIds.FromInstruments(["Solo_Guitar", "Solo_Guitar"]) && entry.TeamCount == 1);
+    }
+
+    [Fact]
+    public void RebuildBandTeamRankings_ComboBatchedMatchesMonolithic()
+    {
+        using var monolithicFixture = new InMemoryMetaDatabase();
+        using var comboBatchedFixture = new InMemoryMetaDatabase();
+
+        SeedBandRankingsSource(monolithicFixture);
+        SeedBandRankingsSource(comboBatchedFixture);
+
+        var monolithicMetrics = monolithicFixture.Db.RebuildBandTeamRankingsMeasured(
+            "Band_Duets",
+            totalChartedSongs: 2,
+            options: new BandTeamRankingRebuildOptions
+            {
+                WriteMode = BandTeamRankingWriteMode.Monolithic,
+                AnalyzeStagingTable = false,
+            });
+
+        var comboBatchedMetrics = comboBatchedFixture.Db.RebuildBandTeamRankingsMeasured(
+            "Band_Duets",
+            totalChartedSongs: 2,
+            options: new BandTeamRankingRebuildOptions
+            {
+                WriteMode = BandTeamRankingWriteMode.ComboBatched,
+                AnalyzeStagingTable = false,
+            });
+
+        Assert.Equal(monolithicMetrics.ResultRowCount, comboBatchedMetrics.ResultRowCount);
+        Assert.Equal(monolithicMetrics.StatsRowCount, comboBatchedMetrics.StatsRowCount);
+        Assert.Equal(monolithicMetrics.DistinctComboCount, comboBatchedMetrics.DistinctComboCount);
+
+        var monolithicOverall = monolithicFixture.Db.GetBandTeamRankings("Band_Duets", pageSize: 50).Entries
+            .Select(SerializeBandTeamRanking)
+            .ToList();
+        var comboBatchedOverall = comboBatchedFixture.Db.GetBandTeamRankings("Band_Duets", pageSize: 50).Entries
+            .Select(SerializeBandTeamRanking)
+            .ToList();
+        Assert.Equal(monolithicOverall, comboBatchedOverall);
+
+        var monolithicCombos = monolithicFixture.Db.GetBandRankingCombos("Band_Duets")
+            .OrderBy(entry => entry.ComboId, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => $"{entry.ComboId}:{entry.TeamCount}")
+            .ToList();
+        var comboBatchedCombos = comboBatchedFixture.Db.GetBandRankingCombos("Band_Duets")
+            .OrderBy(entry => entry.ComboId, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => $"{entry.ComboId}:{entry.TeamCount}")
+            .ToList();
+        Assert.Equal(monolithicCombos, comboBatchedCombos);
+
+        foreach (var comboId in monolithicFixture.Db.GetBandRankingCombos("Band_Duets").Select(entry => entry.ComboId))
+        {
+            var monolithicEntries = monolithicFixture.Db.GetBandTeamRankings("Band_Duets", comboId, pageSize: 50).Entries
+                .Select(SerializeBandTeamRanking)
+                .ToList();
+            var comboBatchedEntries = comboBatchedFixture.Db.GetBandTeamRankings("Band_Duets", comboId, pageSize: 50).Entries
+                .Select(SerializeBandTeamRanking)
+                .ToList();
+            Assert.Equal(monolithicEntries, comboBatchedEntries);
+        }
+    }
+
+    private static string SerializeBandTeamRanking(BandTeamRankingDto entry)
+    {
+        return string.Join("|",
+        [
+            entry.BandType,
+            entry.ComboId ?? string.Empty,
+            entry.TeamKey,
+            string.Join(",", entry.TeamMembers),
+            entry.SongsPlayed.ToString(CultureInfo.InvariantCulture),
+            entry.TotalChartedSongs.ToString(CultureInfo.InvariantCulture),
+            entry.Coverage.ToString("R", CultureInfo.InvariantCulture),
+            entry.RawSkillRating.ToString("R", CultureInfo.InvariantCulture),
+            entry.AdjustedSkillRating.ToString("R", CultureInfo.InvariantCulture),
+            entry.AdjustedSkillRank.ToString(CultureInfo.InvariantCulture),
+            entry.WeightedRating.ToString("R", CultureInfo.InvariantCulture),
+            entry.WeightedRank.ToString(CultureInfo.InvariantCulture),
+            entry.FcRate.ToString("R", CultureInfo.InvariantCulture),
+            entry.FcRateRank.ToString(CultureInfo.InvariantCulture),
+            entry.TotalScore.ToString(CultureInfo.InvariantCulture),
+            entry.TotalScoreRank.ToString(CultureInfo.InvariantCulture),
+            entry.AvgAccuracy.ToString("R", CultureInfo.InvariantCulture),
+            entry.FullComboCount.ToString(CultureInfo.InvariantCulture),
+            entry.AvgStars.ToString("R", CultureInfo.InvariantCulture),
+            entry.BestRank.ToString(CultureInfo.InvariantCulture),
+            entry.AvgRank.ToString("R", CultureInfo.InvariantCulture),
+            entry.RawWeightedRating?.ToString("R", CultureInfo.InvariantCulture) ?? "null",
+            entry.TotalRankedTeams.ToString(CultureInfo.InvariantCulture),
+        ]);
     }
 
     // ═══════════════════════════════════════════════════════════

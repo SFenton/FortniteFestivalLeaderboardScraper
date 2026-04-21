@@ -134,11 +134,7 @@ public sealed class PostScrapeOrchestrator
         // ── Solo rivals ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
         {
-            await RunPhaseAsync("Rivals+LeaderboardRivals", () => Task.WhenAll(
-                ComputeRivalsAsync(ctx, ct),
-                rankingsSucceeded
-                    ? ComputeLeaderboardRivalsAsync(ctx, ct)
-                    : Task.CompletedTask));
+            await RunPhaseAsync("Rivals", () => ComputeRivalsAsync(ctx, ct));
         }
 
         // ── Solo player stats + precompute ──
@@ -527,26 +523,36 @@ public sealed class PostScrapeOrchestrator
 
         try
         {
-            // Build dirty-instruments map from ChangedAccountIds.
-            // For v1, any change on a user triggers full recompute (no per-instrument tracking yet).
-            Dictionary<string, HashSet<string>>? dirtyMap = null;
-            if (ctx.Aggregates.ChangedAccountIds.Count > 0)
-            {
-                dirtyMap = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-                // For now, mark all instruments dirty for any changed registered user
-                foreach (var accountId in ctx.Aggregates.ChangedAccountIds)
-                {
-                    if (ctx.RegisteredIds.Contains(accountId))
-                        dirtyMap[accountId] = null!; // null = all instruments
-                }
-            }
+            var dirtySongs = ctx.Aggregates.DirtyRivalSongs
+                .Where(row => ctx.RegisteredIds.Contains(row.AccountId))
+                .ToList();
 
-            await _rivalsOrchestrator.ComputeAllAsync(ctx.RegisteredIds, dirtyMap, ct);
+            _log.LogInformation(
+                "Song-rivals dirty summary: dirtySongs={DirtySongs}, dirtyAccounts={DirtyAccounts}, reasons={DirtyReasonCounts}.",
+                dirtySongs.Count,
+                dirtySongs.Select(row => row.AccountId).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                FormatCountSummary(dirtySongs.GroupBy(row => row.DirtyReason, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase)));
+
+            if (dirtySongs.Count > 0)
+                _persistence.Meta.UpsertDirtyRivalSongs(dirtySongs);
+
+            await _rivalsOrchestrator.ComputeAllAsync(ctx.RegisteredIds, null, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Rivals computation failed. Will retry next pass.");
         }
+    }
+
+    private static string FormatCountSummary(IReadOnlyDictionary<string, int> counts)
+    {
+        if (counts.Count == 0)
+            return "none";
+
+        return string.Join(", ",
+            counts.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => $"{pair.Key}={pair.Value}"));
     }
 
     /// <summary>

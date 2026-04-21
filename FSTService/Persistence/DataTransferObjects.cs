@@ -313,6 +313,7 @@ public sealed class RivalsStatusInfo
     public int CombosComputed { get; init; }
     public int TotalCombosToCompute { get; init; }
     public int RivalsFound { get; init; }
+    public int AlgorithmVersion { get; init; }
     public string? StartedAt { get; init; }
     public string? CompletedAt { get; init; }
     public string? ErrorMessage { get; init; }
@@ -349,6 +350,43 @@ public sealed class RivalSongSampleRow
     public int RankDelta { get; init; }
     public int? UserScore { get; init; }
     public int? RivalScore { get; init; }
+}
+
+/// <summary>
+/// A dirty song/instrument pair that may require song-rivals selection refresh.
+/// </summary>
+public sealed class RivalDirtySongRow
+{
+    public string AccountId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public string SongId { get; init; } = "";
+    public string DirtyReason { get; init; } = "";
+    public string DetectedAt { get; init; } = "";
+}
+
+/// <summary>
+/// Minimal selection fingerprint for one user/song/instrument neighborhood.
+/// </summary>
+public sealed class RivalSongFingerprintRow
+{
+    public string AccountId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public string SongId { get; init; } = "";
+    public int UserRank { get; init; }
+    public string NeighborhoodSignature { get; init; } = "";
+    public string ComputedAt { get; init; } = "";
+}
+
+/// <summary>
+/// Cached instrument eligibility state used to detect threshold crossings.
+/// </summary>
+public sealed class RivalInstrumentStateRow
+{
+    public string AccountId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public int SongCount { get; init; }
+    public bool IsEligible { get; init; }
+    public string ComputedAt { get; init; } = "";
 }
 
 /// <summary>

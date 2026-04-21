@@ -129,7 +129,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>
     /// Persist a single <see cref="GlobalLeaderboardResult"/> (one song + one instrument)
     /// by UPSERTing into the correct instrument DB. Optionally detects score changes
-    /// for registered users.
+    /// for registered users and flags tracked users whose rivals neighborhood changed.
     /// </summary>
     /// <returns>
     /// The number of rows affected and the set of account IDs seen in this result.
@@ -140,17 +140,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         var db = GetOrCreateInstrumentDb(result.Instrument);
 
-        // ── Pre-UPSERT: snapshot registered users' current state for change detection ──
+        // ── Pre-UPSERT: snapshot current state for accounts present in this result ──
         Dictionary<string, LeaderboardEntry>? previousState = null;
         if (registeredAccountIds is { Count: > 0 })
         {
-            // Collect which registered users appear in this result
-            var relevantIds = new List<string>();
-            foreach (var entry in result.Entries)
-            {
-                if (registeredAccountIds.Contains(entry.AccountId))
-                    relevantIds.Add(entry.AccountId);
-            }
+            var relevantIds = result.Entries
+                .Select(entry => entry.AccountId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
             // Single batch query instead of N individual GetEntry() calls
             if (relevantIds.Count > 0)
@@ -164,26 +161,46 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             : db.UpsertEntries(result.SongId, result.Entries);
         bool hasNewEntries = rowsAffected > 0 && result.Entries.Count > 0;
 
-        // ── Post-UPSERT: detect score changes for registered users ──
+        // ── Post-UPSERT: detect score changes for registered users and flag affected rivals ──
         var changedAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var dirtyRivalSongs = new Dictionary<string, RivalDirtySongRow>(StringComparer.OrdinalIgnoreCase);
         var scoreChanges = new List<ScoreChangeRecord>();
+        var detectedAt = DateTime.UtcNow.ToString("o");
         if (previousState is not null)
         {
+            var affectedRankIntervals = new List<(int Lo, int Hi)>();
+
             foreach (var entry in result.Entries)
             {
+                previousState.TryGetValue(entry.AccountId, out var prev);
+                var hadPreviousEntry = prev is not null;
+                var oldRank = hadPreviousEntry ? ResolveRank(prev!) : 0;
+                var newRank = ResolveRank(entry);
+                var scoreChanged = hadPreviousEntry ? entry.Score != prev!.Score : true;
+                var rankChanged = hadPreviousEntry && oldRank > 0 && newRank > 0 && oldRank != newRank;
+                var intervalLowSeed = oldRank > 0 && newRank > 0 ? Math.Min(oldRank, newRank) : Math.Max(oldRank, newRank);
+                var intervalHighSeed = Math.Max(oldRank, newRank);
+
+                if ((scoreChanged || rankChanged) && intervalHighSeed > 0)
+                {
+                    var lo = Math.Max(1, intervalLowSeed - RivalsCalculator.NeighborhoodRadius);
+                    var hi = Math.Max(1, intervalHighSeed + RivalsCalculator.NeighborhoodRadius);
+                    affectedRankIntervals.Add((lo, hi));
+                }
+
                 if (!registeredAccountIds!.Contains(entry.AccountId))
                     continue;
 
-                if (previousState.TryGetValue(entry.AccountId, out var prev))
+                if (hadPreviousEntry)
                 {
                     // Existing entry — check if score actually changed
-                    if (entry.Score != prev.Score)
+                    if (scoreChanged)
                     {
                         scoreChanges.Add(new ScoreChangeRecord
                         {
                             SongId = result.SongId, Instrument = result.Instrument,
                             AccountId = entry.AccountId,
-                            OldScore = prev.Score, NewScore = entry.Score,
+                            OldScore = prev!.Score, NewScore = entry.Score,
                             OldRank = prev.Rank, NewRank = entry.Rank,
                             Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
                             Stars = entry.Stars, Percentile = entry.Percentile,
@@ -191,6 +208,26 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                             AllTimeRank = entry.Rank, Difficulty = entry.Difficulty,
                         });
                         changedAccountIds.Add(entry.AccountId);
+                        dirtyRivalSongs[entry.AccountId] = new RivalDirtySongRow
+                        {
+                            AccountId = entry.AccountId,
+                            Instrument = result.Instrument,
+                            SongId = result.SongId,
+                            DirtyReason = RivalsDirtyReason.SelfScoreChange,
+                            DetectedAt = detectedAt,
+                        };
+                    }
+                    else if (rankChanged)
+                    {
+                        changedAccountIds.Add(entry.AccountId);
+                        dirtyRivalSongs[entry.AccountId] = new RivalDirtySongRow
+                        {
+                            AccountId = entry.AccountId,
+                            Instrument = result.Instrument,
+                            SongId = result.SongId,
+                            DirtyReason = RivalsDirtyReason.SelfRankChange,
+                            DetectedAt = detectedAt,
+                        };
                     }
                 }
                 else
@@ -208,12 +245,42 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         AllTimeRank = entry.Rank, Difficulty = entry.Difficulty,
                     });
                     changedAccountIds.Add(entry.AccountId);
+                    dirtyRivalSongs[entry.AccountId] = new RivalDirtySongRow
+                    {
+                        AccountId = entry.AccountId,
+                        Instrument = result.Instrument,
+                        SongId = result.SongId,
+                        DirtyReason = RivalsDirtyReason.SelfScoreChange,
+                        DetectedAt = detectedAt,
+                    };
                 }
             }
 
             // Batch-insert all score changes in one transaction
             if (scoreChanges.Count > 0)
                 _metaDb.InsertScoreChanges(scoreChanges);
+
+            if (registeredAccountIds is { Count: > 0 } && affectedRankIntervals.Count > 0)
+            {
+                foreach (var (lo, hi) in MergeRankIntervals(affectedRankIntervals))
+                {
+                    foreach (var accountId in db.GetAccountsInRankRange(result.SongId, lo, hi))
+                    {
+                        if (registeredAccountIds.Contains(accountId))
+                        {
+                            changedAccountIds.Add(accountId);
+                            dirtyRivalSongs.TryAdd(accountId, new RivalDirtySongRow
+                            {
+                                AccountId = accountId,
+                                Instrument = result.Instrument,
+                                SongId = result.SongId,
+                                DirtyReason = RivalsDirtyReason.NeighborWindowChange,
+                                DetectedAt = detectedAt,
+                            });
+                        }
+                    }
+                }
+            }
         }
 
         // Persist account IDs to meta DB so the name resolver can
@@ -229,9 +296,38 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             RowsAffected = rowsAffected,
             ScoreChangesDetected = scoreChanges.Count,
             ChangedAccountIds = changedAccountIds,
+            DirtyRivalSongs = dirtyRivalSongs.Values.ToList(),
             HasNewEntries = hasNewEntries,
         };
     }
+
+    private static IEnumerable<(int Lo, int Hi)> MergeRankIntervals(List<(int Lo, int Hi)> intervals)
+    {
+        if (intervals.Count == 0)
+            yield break;
+
+        intervals.Sort(static (left, right) => left.Lo.CompareTo(right.Lo));
+        var current = intervals[0];
+
+        for (var index = 1; index < intervals.Count; index++)
+        {
+            var next = intervals[index];
+            if (next.Lo <= current.Hi + 1)
+            {
+                current = (current.Lo, Math.Max(current.Hi, next.Hi));
+                continue;
+            }
+
+            yield return current;
+            current = next;
+        }
+
+        yield return current;
+    }
+
+    private static int ResolveRank(LeaderboardEntry entry) => entry.Rank > 0 ? entry.Rank : entry.ApiRank;
+
+    private static int ResolveRank(LeaderboardEntryDto entry) => entry.Rank > 0 ? entry.Rank : entry.ApiRank;
 
     /// <summary>
     /// Get total entry counts across all instrument DBs (for status reporting).
@@ -260,6 +356,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         private int _totalChanges;
         private int _songsWithData;
         private readonly ConcurrentHashSet _changedAccountIds = new();
+        private readonly ConcurrentDictionary<(string AccountId, string SongId, string Instrument), RivalDirtySongRow>
+            _dirtyRivalSongs = new();
         private readonly ConcurrentDictionary<(string AccountId, string SongId, string Instrument), byte>
             _seenRegisteredEntries = new();
         private readonly ConcurrentDictionary<string, byte> _deferredAccountIds = new(StringComparer.OrdinalIgnoreCase);
@@ -270,6 +368,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         public int TotalChanges => _totalChanges;
         public int SongsWithData => _songsWithData;
         public IReadOnlyCollection<string> ChangedAccountIds => _changedAccountIds;
+        public IReadOnlyCollection<RivalDirtySongRow> DirtyRivalSongs => _dirtyRivalSongs.Values.ToArray();
 
         /// <summary>
         /// All (AccountId, SongId, Instrument) tuples for registered users whose entries
@@ -292,6 +391,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         public void AddChanges(int count) => Interlocked.Add(ref _totalChanges, count);
         public void IncrementSongsWithData() => Interlocked.Increment(ref _songsWithData);
         public void AddChangedAccountIds(IEnumerable<string> ids) => _changedAccountIds.AddRange(ids);
+
+        public void AddDirtyRivalSongs(IEnumerable<RivalDirtySongRow> rows)
+        {
+            foreach (var row in rows)
+                _dirtyRivalSongs[(row.AccountId, row.SongId, row.Instrument)] = row;
+        }
 
         /// <summary>Accumulate account IDs for a deferred bulk write after drain.</summary>
         public void AddDeferredAccountIds(IEnumerable<string> ids)
@@ -423,6 +528,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         var persistResult = PersistResult(item.Result, item.RegisteredAccountIds, pgConnTx);
         agg.AddChangedAccountIds(persistResult.ChangedAccountIds);
+        agg.AddDirtyRivalSongs(persistResult.DirtyRivalSongs);
         agg.AddEntries(item.Result.Entries.Count);
         agg.AddChanges(persistResult.ScoreChangesDetected);
         if (persistResult.HasNewEntries || persistResult.ScoreChangesDetected > 0)
@@ -1889,8 +1995,14 @@ public sealed class PersistResult
     public bool HasNewEntries { get; init; }
 
     /// <summary>
-    /// Account IDs of registered users whose scores changed in this result.
-    /// Used to flag stale entries for refresh.
+    /// Account IDs of registered users whose own score changed or whose song-rivals
+    /// neighborhood changed in this result.
+    /// Used to flag stale rivals for refresh.
     /// </summary>
     public HashSet<string> ChangedAccountIds { get; init; } = [];
+
+    /// <summary>
+    /// Song-level dirty evidence used to decide whether rivals actually need recomputation.
+    /// </summary>
+    public IReadOnlyList<RivalDirtySongRow> DirtyRivalSongs { get; init; } = Array.Empty<RivalDirtySongRow>();
 }

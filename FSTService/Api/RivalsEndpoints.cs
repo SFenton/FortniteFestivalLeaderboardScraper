@@ -609,10 +609,12 @@ public static partial class ApiEndpoints
         app.MapPost("/api/player/{accountId}/rivals/recompute", (
             string accountId,
             IMetaDatabase metaDb,
-            RivalsOrchestrator rivalsOrchestrator) =>
+            RivalsOrchestrator rivalsOrchestrator,
+            ScrapeTimePrecomputer precomputer) =>
         {
             metaDb.EnsureRivalsStatus(accountId);
             rivalsOrchestrator.ComputeForUser(accountId);
+            precomputer.PrecomputeUser(accountId);
             return Results.Ok(new { accountId, status = "recomputed" });
         })
         .WithTags("Rivals")

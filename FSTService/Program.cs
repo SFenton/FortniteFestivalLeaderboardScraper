@@ -316,7 +316,8 @@ builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
         sp.GetRequiredService<ILogger<ScrapeTimePrecomputer>>(),
         sp.GetRequiredService<ILoggerFactory>(),
         jsonOpts,
-        sp.GetRequiredService<IOptions<FeatureOptions>>().Value);
+        sp.GetRequiredService<IOptions<FeatureOptions>>().Value,
+        sp.GetRequiredService<LeaderboardRivalsCalculator>());
 });
 
 builder.Services.AddHttpClient<ItemShopService>()

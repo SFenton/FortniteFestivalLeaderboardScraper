@@ -13,6 +13,35 @@ vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
 import SettingsPage from '../../../src/pages/settings/SettingsPage';
 import { stubResizeObserver, stubScrollTo, stubElementDimensions } from '../../helpers/browserStubs';
 
+const defaultServiceInfo = {
+  lastCompletedUpdate: {
+    startedAt: '2026-04-20T12:00:00Z',
+    completedAt: '2026-04-20T12:30:00Z',
+  },
+  currentUpdate: {
+    status: 'idle',
+    startedAt: null,
+    phase: null,
+    subOperation: null,
+  },
+  nextScheduledUpdateAt: '2026-04-20T16:30:00Z',
+};
+
+const defaultSyncStatus = {
+  accountId: 'tracked-player-1',
+  isTracked: true,
+  backfill: null,
+  historyRecon: null,
+  rivals: {
+    status: 'complete',
+    combosComputed: 8,
+    totalCombosToCompute: 8,
+    rivalsFound: 14,
+    startedAt: '2026-04-20T12:31:00Z',
+    completedAt: '2026-04-20T12:32:00Z',
+  },
+};
+
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver();
@@ -35,6 +64,12 @@ beforeEach(() => {
   global.fetch = vi.fn().mockImplementation((url: string) => {
     if (typeof url === 'string' && url.includes('/api/version')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+    }
+    if (typeof url === 'string' && url.includes('/api/service-info')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
+    }
+    if (typeof url === 'string' && url.includes('/sync-status')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
     }
     return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
   }) as unknown as typeof fetch;
@@ -180,6 +215,7 @@ describe('SettingsPage', () => {
     const list = await screen.findByTestId('settings-quick-links-modal-list');
     expect(within(list).getByTestId('settings-quick-link-app-settings')).toHaveTextContent('App Settings');
     expect(within(list).getByTestId('settings-quick-link-item-shop')).toHaveTextContent('Item Shop');
+    expect(within(list).getByTestId('settings-quick-link-service-info')).toHaveTextContent('Service Info');
     expect(within(list).getByTestId('settings-quick-link-first-run')).toHaveTextContent('First Run Guides');
     expect(within(list).getByTestId('settings-quick-link-reset')).toHaveTextContent('Reset Settings');
 
@@ -310,6 +346,39 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Festival Score Tracker Version')).toBeDefined();
     expect(screen.getByText('App Version')).toBeDefined();
     expect(screen.getByText('Service Version')).toBeDefined();
+  });
+
+  it('renders Service Info section', () => {
+    renderSettings();
+    expect(screen.getByText('Service Info')).toBeDefined();
+    expect(screen.getByText('Most recent leaderboard update start')).toBeDefined();
+    expect(screen.getByText('Leaderboard update status')).toBeDefined();
+  });
+
+  it('displays service info values after fetch', async () => {
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByText(new Date(defaultServiceInfo.lastCompletedUpdate.startedAt).toLocaleString())).toBeDefined();
+    });
+
+    expect(screen.getByText(new Date(defaultServiceInfo.lastCompletedUpdate.completedAt).toLocaleString())).toBeDefined();
+    expect(screen.getByText('Idle')).toBeDefined();
+    expect(screen.getByText('Waiting for the next scheduled update')).toBeDefined();
+    expect(screen.getByText(new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString())).toBeDefined();
+  });
+
+  it('shows tracked player rows when a player is selected', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByText('Selected player ID')).toBeDefined();
+    });
+
+    expect(screen.getByText('tracked-player-1')).toBeDefined();
+    expect(screen.getByText('Selected player Rivals status')).toBeDefined();
+    expect(screen.getByText('Complete')).toBeDefined();
   });
 
   it('displays service version after fetch', async () => {

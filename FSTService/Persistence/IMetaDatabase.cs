@@ -119,6 +119,14 @@ public interface IMetaDatabase : IDisposable
     RivalsStatusInfo? GetRivalsStatus(string accountId);
     List<string> GetPendingRivalsAccounts();
     int ResetStaleRivals();
+    void UpsertDirtyRivalSongs(IReadOnlyList<RivalDirtySongRow> dirtySongs);
+    List<string> GetDirtyRivalAccounts();
+    List<RivalDirtySongRow> GetDirtyRivalSongs(string accountId);
+    void ClearDirtyRivalSongs(string accountId, string instrument, IReadOnlyCollection<string> songIds);
+    void ClearAllDirtyRivalSongs(string accountId);
+    Dictionary<string, RivalSongFingerprintRow> GetRivalSongFingerprints(string accountId, string instrument, IReadOnlyCollection<string> songIds);
+    Dictionary<string, RivalInstrumentStateRow> GetRivalInstrumentStates(string accountId);
+    void ReplaceRivalSelectionState(string accountId, IReadOnlyList<RivalSongFingerprintRow> fingerprints, IReadOnlyList<RivalInstrumentStateRow> instrumentStates);
     void ReplaceRivalsData(string userId, IReadOnlyList<UserRivalRow> rivals, IReadOnlyList<RivalSongSampleRow> samples);
     List<UserRivalRow> GetUserRivals(string userId, string? instrumentCombo = null, string? direction = null);
     List<RivalComboSummary> GetRivalCombos(string userId);
@@ -157,7 +165,8 @@ public interface IMetaDatabase : IDisposable
     int GetComboTotalAccounts(string comboId);
 
     // ── Band team rankings ──────────────────────────────────────────
-    void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5);
+    void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
+    BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
     (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null);
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);

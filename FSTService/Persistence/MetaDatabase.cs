@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FSTService.Scraping;
 using Npgsql;
 using NpgsqlTypes;
@@ -541,7 +542,7 @@ public sealed class MetaDatabase : IMetaDatabase
             if (remaining == 0)
             {
                 // Cascade-delete all per-account data (account_id column)
-                foreach (var t in new[] { "player_stats", "player_stats_tiers", "backfill_status", "backfill_progress", "history_recon_status", "history_recon_progress", "rivals_status" })
+                foreach (var t in new[] { "player_stats", "player_stats_tiers", "backfill_status", "backfill_progress", "history_recon_status", "history_recon_progress", "rivals_status", "rivals_dirty_songs", "rival_song_fingerprints", "rival_instrument_state" })
                 { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = $"DELETE FROM {t} WHERE account_id = @id"; c.Parameters.AddWithValue("id", accountId); c.ExecuteNonQuery(); }
                 // Rivals tables use user_id column
                 foreach (var t in new[] { "user_rivals", "rival_song_samples" })
@@ -681,11 +682,197 @@ public sealed class MetaDatabase : IMetaDatabase
 
     public void EnsureRivalsStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO rivals_status (account_id, status) VALUES (@id, 'pending') ON CONFLICT DO NOTHING"; cmd.Parameters.AddWithValue("id", accountId); cmd.ExecuteNonQuery(); }
     public void StartRivals(string accountId, int totalCombosToCompute = 0) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'in_progress', started_at = @now, total_combos_to_compute = @total, combos_computed = 0, rivals_found = 0, error_message = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.Parameters.AddWithValue("total", totalCombosToCompute); cmd.ExecuteNonQuery(); }
-    public void CompleteRivals(string accountId, int combosComputed, int rivalsFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'complete', combos_computed = @combos, rivals_found = @rivals, completed_at = @now, error_message = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("combos", combosComputed); cmd.Parameters.AddWithValue("rivals", rivalsFound); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public void CompleteRivals(string accountId, int combosComputed, int rivalsFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'complete', combos_computed = @combos, rivals_found = @rivals, algorithm_version = @version, completed_at = @now, error_message = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("combos", combosComputed); cmd.Parameters.AddWithValue("rivals", rivalsFound); cmd.Parameters.AddWithValue("version", RivalsAlgorithmVersion.SongRivals); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
     public void FailRivals(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'error', error_message = @err, completed_at = @now WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
-    public RivalsStatusInfo? GetRivalsStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, combos_computed, total_combos_to_compute, rivals_found, started_at, completed_at, error_message FROM rivals_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); if (!r.Read()) return null; return new RivalsStatusInfo { AccountId = r.GetString(0), Status = r.GetString(1), CombosComputed = r.GetInt32(2), TotalCombosToCompute = r.GetInt32(3), RivalsFound = r.GetInt32(4), StartedAt = r.IsDBNull(5) ? null : r.GetDateTime(5).ToString("o"), CompletedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), ErrorMessage = r.IsDBNull(7) ? null : r.GetString(7) }; }
+    public RivalsStatusInfo? GetRivalsStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, combos_computed, total_combos_to_compute, rivals_found, algorithm_version, started_at, completed_at, error_message FROM rivals_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); if (!r.Read()) return null; return new RivalsStatusInfo { AccountId = r.GetString(0), Status = r.GetString(1), CombosComputed = r.GetInt32(2), TotalCombosToCompute = r.GetInt32(3), RivalsFound = r.GetInt32(4), AlgorithmVersion = r.GetInt32(5), StartedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), CompletedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8) }; }
     public List<string> GetPendingRivalsAccounts() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id FROM rivals_status WHERE status IN ('pending', 'in_progress')"; var list = new List<string>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(r.GetString(0)); return list; }
-    public int ResetStaleRivals() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'pending', combos_computed = 0, rivals_found = 0, error_message = NULL WHERE status = 'complete' AND rivals_found = 0"; return cmd.ExecuteNonQuery(); }
+    public int ResetStaleRivals() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'pending', combos_computed = 0, rivals_found = 0, error_message = NULL WHERE status = 'complete' AND (rivals_found = 0 OR algorithm_version < @version)"; cmd.Parameters.AddWithValue("version", RivalsAlgorithmVersion.SongRivals); return cmd.ExecuteNonQuery(); }
+
+    public void UpsertDirtyRivalSongs(IReadOnlyList<RivalDirtySongRow> dirtySongs)
+    {
+        if (dirtySongs.Count == 0)
+            return;
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO rivals_dirty_songs (account_id, instrument, song_id, dirty_reason, detected_at) VALUES (@accountId, @instrument, @songId, @reason, @detectedAt) ON CONFLICT (account_id, instrument, song_id) DO UPDATE SET dirty_reason = EXCLUDED.dirty_reason, detected_at = EXCLUDED.detected_at";
+        var pAccountId = cmd.Parameters.Add("accountId", NpgsqlDbType.Text);
+        var pInstrument = cmd.Parameters.Add("instrument", NpgsqlDbType.Text);
+        var pSongId = cmd.Parameters.Add("songId", NpgsqlDbType.Text);
+        var pReason = cmd.Parameters.Add("reason", NpgsqlDbType.Text);
+        var pDetectedAt = cmd.Parameters.Add("detectedAt", NpgsqlDbType.TimestampTz);
+        cmd.Prepare();
+
+        foreach (var dirtySong in dirtySongs)
+        {
+            pAccountId.Value = dirtySong.AccountId;
+            pInstrument.Value = dirtySong.Instrument;
+            pSongId.Value = dirtySong.SongId;
+            pReason.Value = dirtySong.DirtyReason;
+            pDetectedAt.Value = ParseUtc(dirtySong.DetectedAt);
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+    }
+
+    public List<string> GetDirtyRivalAccounts()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT DISTINCT account_id FROM rivals_dirty_songs ORDER BY account_id";
+        var list = new List<string>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(r.GetString(0));
+        return list;
+    }
+
+    public List<RivalDirtySongRow> GetDirtyRivalSongs(string accountId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT account_id, instrument, song_id, dirty_reason, detected_at FROM rivals_dirty_songs WHERE account_id = @id ORDER BY instrument, song_id";
+        cmd.Parameters.AddWithValue("id", accountId);
+        var list = new List<RivalDirtySongRow>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new RivalDirtySongRow
+            {
+                AccountId = r.GetString(0),
+                Instrument = r.GetString(1),
+                SongId = r.GetString(2),
+                DirtyReason = r.GetString(3),
+                DetectedAt = r.GetDateTime(4).ToString("o"),
+            });
+        }
+
+        return list;
+    }
+
+    public void ClearDirtyRivalSongs(string accountId, string instrument, IReadOnlyCollection<string> songIds)
+    {
+        if (songIds.Count == 0)
+            return;
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM rivals_dirty_songs WHERE account_id = @id AND instrument = @instrument AND song_id = ANY(@songIds)";
+        cmd.Parameters.AddWithValue("id", accountId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("songIds", songIds.ToArray());
+        cmd.ExecuteNonQuery();
+    }
+
+    public void ClearAllDirtyRivalSongs(string accountId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM rivals_dirty_songs WHERE account_id = @id";
+        cmd.Parameters.AddWithValue("id", accountId);
+        cmd.ExecuteNonQuery();
+    }
+
+    public Dictionary<string, RivalSongFingerprintRow> GetRivalSongFingerprints(string accountId, string instrument, IReadOnlyCollection<string> songIds)
+    {
+        var dict = new Dictionary<string, RivalSongFingerprintRow>(StringComparer.OrdinalIgnoreCase);
+        if (songIds.Count == 0)
+            return dict;
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT account_id, instrument, song_id, user_rank, neighborhood_signature, computed_at FROM rival_song_fingerprints WHERE account_id = @id AND instrument = @instrument AND song_id = ANY(@songIds)";
+        cmd.Parameters.AddWithValue("id", accountId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("songIds", songIds.ToArray());
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            dict[r.GetString(2)] = new RivalSongFingerprintRow
+            {
+                AccountId = r.GetString(0),
+                Instrument = r.GetString(1),
+                SongId = r.GetString(2),
+                UserRank = r.GetInt32(3),
+                NeighborhoodSignature = r.GetString(4),
+                ComputedAt = r.GetDateTime(5).ToString("o"),
+            };
+        }
+
+        return dict;
+    }
+
+    public Dictionary<string, RivalInstrumentStateRow> GetRivalInstrumentStates(string accountId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT account_id, instrument, song_count, is_eligible, computed_at FROM rival_instrument_state WHERE account_id = @id";
+        cmd.Parameters.AddWithValue("id", accountId);
+        var dict = new Dictionary<string, RivalInstrumentStateRow>(StringComparer.OrdinalIgnoreCase);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            dict[r.GetString(1)] = new RivalInstrumentStateRow
+            {
+                AccountId = r.GetString(0),
+                Instrument = r.GetString(1),
+                SongCount = r.GetInt32(2),
+                IsEligible = r.GetBoolean(3),
+                ComputedAt = r.GetDateTime(4).ToString("o"),
+            };
+        }
+
+        return dict;
+    }
+
+    public void ReplaceRivalSelectionState(string accountId, IReadOnlyList<RivalSongFingerprintRow> fingerprints, IReadOnlyList<RivalInstrumentStateRow> instrumentStates)
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM rival_song_fingerprints WHERE account_id = @id"; c.Parameters.AddWithValue("id", accountId); c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM rival_instrument_state WHERE account_id = @id"; c.Parameters.AddWithValue("id", accountId); c.ExecuteNonQuery(); }
+
+        if (fingerprints.Count > 0)
+        {
+            using var writer = conn.BeginBinaryImport(
+                "COPY rival_song_fingerprints (account_id, instrument, song_id, user_rank, neighborhood_signature, computed_at) FROM STDIN (FORMAT BINARY)");
+            foreach (var row in fingerprints)
+            {
+                writer.StartRow();
+                writer.Write(row.AccountId, NpgsqlDbType.Text);
+                writer.Write(row.Instrument, NpgsqlDbType.Text);
+                writer.Write(row.SongId, NpgsqlDbType.Text);
+                writer.Write(row.UserRank, NpgsqlDbType.Integer);
+                writer.Write(row.NeighborhoodSignature, NpgsqlDbType.Text);
+                writer.Write(ParseUtc(row.ComputedAt), NpgsqlDbType.TimestampTz);
+            }
+
+            writer.Complete();
+        }
+
+        if (instrumentStates.Count > 0)
+        {
+            using var writer = conn.BeginBinaryImport(
+                "COPY rival_instrument_state (account_id, instrument, song_count, is_eligible, computed_at) FROM STDIN (FORMAT BINARY)");
+            foreach (var row in instrumentStates)
+            {
+                writer.StartRow();
+                writer.Write(row.AccountId, NpgsqlDbType.Text);
+                writer.Write(row.Instrument, NpgsqlDbType.Text);
+                writer.Write(row.SongCount, NpgsqlDbType.Integer);
+                writer.Write(row.IsEligible, NpgsqlDbType.Boolean);
+                writer.Write(ParseUtc(row.ComputedAt), NpgsqlDbType.TimestampTz);
+            }
+
+            writer.Complete();
+        }
+
+        tx.Commit();
+    }
 
     public void ReplaceRivalsData(string userId, IReadOnlyList<UserRivalRow> rivals, IReadOnlyList<RivalSongSampleRow> samples)
     {
@@ -1047,24 +1234,31 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── Band team rankings ──────────────────────────────────────────
 
-    public void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5)
+    public void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null)
     {
+        RebuildBandTeamRankingsMeasured(bandType, totalChartedSongs, credibilityThreshold, populationMedian, options);
+    }
+
+    public BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null)
+    {
+        var resolvedOptions = ResolveBandTeamRankingRebuildOptions(options);
         var expectedMembers = BandInstrumentMapping.ExpectedMemberCount(bandType);
+        var totalSw = Stopwatch.StartNew();
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
 
-        using (var cmd = conn.CreateCommand())
+        if (resolvedOptions.DisableSynchronousCommit)
         {
-            cmd.Transaction = tx;
-            cmd.CommandText = "DELETE FROM band_team_rankings WHERE band_type = @bandType; DELETE FROM band_team_ranking_stats WHERE band_type = @bandType;";
-            cmd.Parameters.AddWithValue("bandType", bandType);
+            using var cmd = conn.CreateCommand();
+            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+            cmd.CommandText = "SET LOCAL synchronous_commit = off";
             cmd.ExecuteNonQuery();
         }
 
+        var materializeSw = Stopwatch.StartNew();
         using (var cmd = conn.CreateCommand())
         {
-            cmd.Transaction = tx;
-            cmd.CommandTimeout = 300;
+            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
             cmd.CommandText = @"
                 CREATE TEMP TABLE _band_rank_results ON COMMIT DROP AS
                 WITH NormalizedEntries AS (
@@ -1297,11 +1491,117 @@ public sealed class MetaDatabase : IMetaDatabase
             cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
             cmd.ExecuteNonQuery();
         }
+        materializeSw.Stop();
 
+        var analyzeMs = 0d;
+        if (resolvedOptions.AnalyzeStagingTable)
+        {
+            var analyzeSw = Stopwatch.StartNew();
+            using var cmd = conn.CreateCommand();
+            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+            cmd.CommandText = "ANALYZE _band_rank_results";
+            cmd.ExecuteNonQuery();
+            analyzeSw.Stop();
+            analyzeMs = RoundElapsed(analyzeSw);
+        }
+
+        int distinctComboCount;
         using (var cmd = conn.CreateCommand())
         {
-            cmd.Transaction = tx;
+            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
             cmd.CommandText = @"
+                SELECT COUNT(*)::INT
+                FROM (
+                    SELECT combo_id
+                    FROM _band_rank_results
+                    WHERE ranking_scope = 'combo'
+                    GROUP BY combo_id
+                ) combos;";
+            distinctComboCount = Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
+        }
+
+        var deleteSw = Stopwatch.StartNew();
+        using (var cmd = conn.CreateCommand())
+        {
+            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+            cmd.CommandText = "DELETE FROM band_team_ranking_stats WHERE band_type = @bandType; DELETE FROM band_team_rankings WHERE band_type = @bandType;";
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.ExecuteNonQuery();
+        }
+        deleteSw.Stop();
+
+        var insertRankingsSw = Stopwatch.StartNew();
+        var resultRowCount = resolvedOptions.WriteMode switch
+        {
+            BandTeamRankingWriteMode.Monolithic => InsertBandTeamRankingRowsMonolithic(conn, tx, resolvedOptions),
+            BandTeamRankingWriteMode.ComboBatched => InsertBandTeamRankingRowsComboBatched(conn, tx, resolvedOptions),
+            _ => throw new ArgumentOutOfRangeException(nameof(resolvedOptions.WriteMode), resolvedOptions.WriteMode, "Unsupported band ranking write mode."),
+        };
+        insertRankingsSw.Stop();
+
+        var insertStatsSw = Stopwatch.StartNew();
+        int statsRowCount;
+        using (var cmd = conn.CreateCommand())
+        {
+            ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+            cmd.CommandText = @"
+                INSERT INTO band_team_ranking_stats (band_type, ranking_scope, combo_id, total_teams, computed_at)
+                SELECT band_type, ranking_scope, combo_id, COUNT(*), MAX(computed_at)
+                FROM _band_rank_results
+                GROUP BY band_type, ranking_scope, combo_id;";
+            statsRowCount = cmd.ExecuteNonQuery();
+        }
+        insertStatsSw.Stop();
+
+        tx.Commit();
+
+        totalSw.Stop();
+        var metrics = new BandTeamRankingRebuildMetrics(
+            bandType,
+            resolvedOptions.WriteMode,
+            resultRowCount,
+            statsRowCount,
+            distinctComboCount,
+            RoundElapsed(materializeSw),
+            analyzeMs,
+            RoundElapsed(deleteSw),
+            RoundElapsed(insertRankingsSw),
+            RoundElapsed(insertStatsSw),
+            RoundElapsed(totalSw));
+
+        _log.LogInformation(
+            "Rebuilt band team rankings for {BandType} using {WriteMode}: rows={ResultRowCount}, stats={StatsRowCount}, combos={DistinctComboCount}, materializeMs={MaterializeResultsMs}, analyzeMs={AnalyzeResultsMs}, deleteMs={DeleteExistingMs}, insertMs={InsertRankingsMs}, statsMs={InsertStatsMs}, totalMs={TotalElapsedMs}",
+            metrics.BandType,
+            metrics.WriteMode,
+            metrics.ResultRowCount,
+            metrics.StatsRowCount,
+            metrics.DistinctComboCount,
+            metrics.MaterializeResultsMs,
+            metrics.AnalyzeResultsMs,
+            metrics.DeleteExistingMs,
+            metrics.InsertRankingsMs,
+            metrics.InsertStatsMs,
+            metrics.TotalElapsedMs);
+
+        return metrics;
+    }
+
+    private static BandTeamRankingRebuildOptions ResolveBandTeamRankingRebuildOptions(BandTeamRankingRebuildOptions? options)
+    {
+        var resolved = options ?? BandTeamRankingRebuildOptions.Default;
+        if (resolved.CommandTimeoutSeconds < 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "CommandTimeoutSeconds must be zero or greater.");
+
+        return resolved;
+    }
+
+    private static void ConfigureBandRebuildCommand(NpgsqlCommand cmd, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options)
+    {
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = options.CommandTimeoutSeconds;
+    }
+
+    private static string BuildBandTeamRankingInsertSql(string whereClause, string orderByClause) => $@"
                 INSERT INTO band_team_rankings (
                     band_type, ranking_scope, combo_id, team_key, team_members,
                     songs_played, total_charted_songs, coverage, raw_skill_rating,
@@ -1314,23 +1614,63 @@ public sealed class MetaDatabase : IMetaDatabase
                     adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
                     fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
                     full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating, computed_at
-                FROM _band_rank_results;";
-            cmd.ExecuteNonQuery();
-        }
+                FROM _band_rank_results
+                {whereClause}
+                {orderByClause};";
+
+    private static int InsertBandTeamRankingRowsMonolithic(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = BuildBandTeamRankingInsertSql(string.Empty, "ORDER BY ranking_scope, combo_id, team_key");
+        return cmd.ExecuteNonQuery();
+    }
+
+    private static int InsertBandTeamRankingRowsComboBatched(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options)
+    {
+        var insertedRows = 0;
 
         using (var cmd = conn.CreateCommand())
         {
-            cmd.Transaction = tx;
-            cmd.CommandText = @"
-                INSERT INTO band_team_ranking_stats (band_type, ranking_scope, combo_id, total_teams, computed_at)
-                SELECT band_type, ranking_scope, combo_id, COUNT(*), MAX(computed_at)
-                FROM _band_rank_results
-                GROUP BY band_type, ranking_scope, combo_id;";
-            cmd.ExecuteNonQuery();
+            ConfigureBandRebuildCommand(cmd, tx, options);
+            cmd.CommandText = BuildBandTeamRankingInsertSql("WHERE ranking_scope = 'overall'", "ORDER BY team_key");
+            insertedRows += cmd.ExecuteNonQuery();
         }
 
-        tx.Commit();
+        var comboIds = new List<string>();
+        using (var cmd = conn.CreateCommand())
+        {
+            ConfigureBandRebuildCommand(cmd, tx, options);
+            cmd.CommandText = @"
+                SELECT combo_id
+                FROM _band_rank_results
+                WHERE ranking_scope = 'combo'
+                GROUP BY combo_id
+                ORDER BY combo_id;";
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                comboIds.Add(reader.GetString(0));
+        }
+
+        if (comboIds.Count == 0)
+            return insertedRows;
+
+        using var insertCmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(insertCmd, tx, options);
+        insertCmd.CommandText = BuildBandTeamRankingInsertSql("WHERE ranking_scope = 'combo' AND combo_id = @comboId", "ORDER BY team_key");
+        var comboIdParam = insertCmd.Parameters.Add("comboId", NpgsqlDbType.Text);
+
+        foreach (var comboId in comboIds)
+        {
+            comboIdParam.Value = comboId;
+            insertedRows += insertCmd.ExecuteNonQuery();
+        }
+
+        return insertedRows;
     }
+
+    private static double RoundElapsed(Stopwatch sw) => Math.Round(sw.Elapsed.TotalMilliseconds, 3);
 
     public (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50)
     {

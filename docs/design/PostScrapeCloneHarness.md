@@ -20,6 +20,7 @@ The harness never mutates the source database.
 | `run-leaderboard-rivals` | Execute leaderboard rivals generation. |
 | `run-player-stats` | Execute player stats tier generation. |
 | `run-precompute` | Execute API response precompute for all registered users or an explicit account slice. |
+| `run-band-rankings` | Rebuild derived band team rankings with a selectable write strategy. |
 | `run-band-extraction` | Execute post-scrape band extraction. |
 
 All commands can emit JSON artifacts with `--out`.
@@ -103,10 +104,19 @@ dotnet run --project FSTService.Harnesses/PostScrapeCloneHarness/PostScrapeClone
   run-rankings --pg "<target-pg>" --out harness-output/run-rankings.json
 
 dotnet run --project FSTService.Harnesses/PostScrapeCloneHarness/PostScrapeCloneHarness.csproj -- \
+  run-band-rankings --pg "<target-pg>" --band-types "Band_Duets" --write-mode combo-batched --out harness-output/run-band-rankings.json
+
+dotnet run --project FSTService.Harnesses/PostScrapeCloneHarness/PostScrapeCloneHarness.csproj -- \
   run-precompute --pg "<target-pg>" --account-ids "<csv>" --out harness-output/run-precompute.json
 ```
 
-The downstream runners emit before/after row counts for their output tables, and rankings/precompute also emit timing breakdowns.
+The downstream runners emit before/after row counts for their output tables. Rankings, band rankings, and precompute also emit timing breakdowns.
+
+`run-band-rankings` supports these A/B switches:
+
+- `--band-types` to target one or more band types instead of rebuilding all three
+- `--write-mode combo-batched|monolithic` to compare the optimized batched writer against the legacy one-shot insert path
+- `--command-timeout-seconds`, `--analyze-staging`, and `--disable-synchronous-commit` for controlled write-path experiments
 
 ## Benchmark Environment Used In This Workstream
 
@@ -158,6 +168,7 @@ Examples:
 
 - `post-scrape-run-rivals-explicit-copy-rerun-fixed.json`
 - `post-scrape-run-precompute-explicit-top20-no-stored-rank-rerun.json`
+- `post-scrape-run-band-rankings-duets-combo-batched-rerun.json`
 - `post-scrape-run-band-extraction-rerun-parallel.json`
 
 This keeps A/B runs diffable without opening each file.

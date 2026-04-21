@@ -50,6 +50,9 @@ public sealed class BandRankingRepairServiceTests : IDisposable
         Assert.True(result.After.RankingRows > 0);
         Assert.Equal(3, result.After.OverallTeams);
         Assert.True(result.After.ComboCatalogEntries > 0);
+        Assert.NotNull(result.Metrics);
+        Assert.Equal(BandTeamRankingWriteMode.ComboBatched, result.Metrics!.WriteMode);
+        Assert.True(result.Metrics.ResultRowCount > 0);
     }
 
     private void SeedSongs(params string[] songIds)

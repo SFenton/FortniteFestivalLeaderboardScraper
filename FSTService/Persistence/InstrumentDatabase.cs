@@ -555,6 +555,25 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return list;
     }
 
+    public List<string> GetAccountsInRankRange(string songId, int minRank, int maxRank)
+    {
+        if (minRank > maxRank)
+            (minRank, maxRank) = (maxRank, minRank);
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT account_id FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND rank BETWEEN @lo AND @hi ORDER BY rank ASC";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("lo", Math.Max(1, minRank));
+        cmd.Parameters.AddWithValue("hi", Math.Max(1, maxRank));
+        var list = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add(reader.GetString(0));
+        return list;
+    }
+
     // ── Player queries ───────────────────────────────────────────────
 
     public HashSet<string> GetSongIdsForAccount(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument"; cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("instrument", Instrument); var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add(r.GetString(0)); return set; }

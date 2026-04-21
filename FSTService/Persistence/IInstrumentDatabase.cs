@@ -27,6 +27,7 @@ public interface IInstrumentDatabase : IDisposable
     Dictionary<string, int> GetAllSongCounts();
     (List<LeaderboardEntryDto> Entries, int TotalCount) GetLeaderboardWithCount(string songId, int? top = null, int offset = 0, int? maxScore = null);
     List<(string AccountId, int Rank, int Score)> GetNeighborhood(string songId, int centerRank, int rankRadius, string excludeAccountId);
+    List<string> GetAccountsInRankRange(string songId, int minRank, int maxRank);
 
     // ── Player queries ───────────────────────────────────────────────
     HashSet<string> GetSongIdsForAccount(string accountId);

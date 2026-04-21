@@ -1,5 +1,7 @@
 using System.Reflection;
+using FSTService.Persistence;
 using FSTService.Scraping;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
 
@@ -39,6 +41,50 @@ public static partial class ApiEndpoints
             return Results.Ok(tracker.GetProgressResponse());
         })
         .WithTags("Progress")
+        .RequireRateLimiting("public");
+
+        app.MapGet("/api/service-info", (
+            HttpContext httpContext,
+            ScrapeProgressTracker tracker,
+            IMetaDatabase metaDb,
+            IOptions<ScraperOptions> scraperOptions) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=1";
+
+            var progress = tracker.GetProgressResponse();
+            var current = progress.Current;
+            var lastCompletedUpdate = metaDb.GetLastCompletedScrapeRun();
+            var isUpdating = current is not null;
+            string? nextScheduledUpdateAt = null;
+
+            if (!isUpdating
+                && lastCompletedUpdate?.CompletedAt is not null
+                && DateTimeOffset.TryParse(lastCompletedUpdate.CompletedAt, out var completedAtUtc))
+            {
+                nextScheduledUpdateAt = completedAtUtc
+                    .ToUniversalTime()
+                    .Add(scraperOptions.Value.ScrapeInterval)
+                    .ToString("o");
+            }
+
+            return Results.Ok(new
+            {
+                lastCompletedUpdate = lastCompletedUpdate is null ? null : new
+                {
+                    startedAt = lastCompletedUpdate.StartedAt,
+                    completedAt = lastCompletedUpdate.CompletedAt,
+                },
+                currentUpdate = new
+                {
+                    status = isUpdating ? "updating" : "idle",
+                    startedAt = current?.StartedAtUtc,
+                    phase = current?.Operation,
+                    subOperation = current?.SubOperation,
+                },
+                nextScheduledUpdateAt,
+            });
+        })
+        .WithTags("Health")
         .RequireRateLimiting("public");
     }
 }

@@ -1,5 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
@@ -16,7 +17,7 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { ActionPill } from '../../components/common/ActionPill';
-import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey, ServiceInfoResponse, SyncStatusResponse } from '@festival/core/api/serverTypes';
 import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
@@ -32,6 +33,7 @@ import { competeSlides } from '../compete/firstRun';
 import { rivalsSlides } from '../rivals/firstRun';
 import { shopSlides } from '../shop/firstRun';
 import { api } from '../../api/client';
+import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import PageHeaderTransition from '../../components/common/PageHeaderTransition';
@@ -41,10 +43,12 @@ import { IoCompass } from 'react-icons/io5';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
+const SERVICE_INFO_POLL_MS = 5_000;
+
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;
 
-type SettingsQuickLinkId = 'app-settings' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'first-run' | 'reset';
+ type SettingsQuickLinkId = 'app-settings' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'reset';
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
@@ -186,9 +190,77 @@ function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number
 }
 /* v8 ignore stop */
 
+function formatLocalDateTime(value: string | null | undefined, fallback: string): string {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.valueOf())) return fallback;
+  return parsed.toLocaleString();
+}
+
+function describeServiceSubStatus(t: TFunction, serviceInfo: ServiceInfoResponse): string {
+  if (serviceInfo.currentUpdate.status === 'idle') {
+    return t('settings.serviceInfo.subStatusIdle');
+  }
+
+  const phase = serviceInfo.currentUpdate.phase;
+  const subOperation = serviceInfo.currentUpdate.subOperation;
+
+  if (phase === 'Scraping') {
+    if (subOperation === 'fetching_leaderboards' || subOperation === 'deep_scraping') {
+      return t('settings.serviceInfo.subStatusUpdatingScores');
+    }
+    if (subOperation === 'persisting_scores' || subOperation === 'flushing_solo' || subOperation === 'flushing_band') {
+      return t('settings.serviceInfo.subStatusWritingScores');
+    }
+    return t('settings.serviceInfo.subStatusPostProcessing');
+  }
+
+  if (phase === 'BackfillingScores' || phase === 'ReconstructingHistory' || phase === 'SongMachine' || phase === 'CalculatingFirstSeen') {
+    return t('settings.serviceInfo.subStatusUpdatingHistory');
+  }
+
+  if (phase === 'PostScrapeEnrichment' || phase === 'ResolvingNames' || phase === 'RefreshingRegisteredUsers') {
+    return t('settings.serviceInfo.subStatusPostProcessing');
+  }
+
+  if (phase === 'ComputingRivals') {
+    return t('settings.serviceInfo.subStatusUpdatingRivals');
+  }
+
+  if (phase === 'ComputingRankings' || phase === 'Precomputing' || phase === 'Finalizing') {
+    return t('settings.serviceInfo.subStatusUpdatingLeaderboards');
+  }
+
+  if (phase === 'BandScraping') {
+    return t('settings.serviceInfo.subStatusUpdatingBandScores');
+  }
+
+  if (phase === 'Initializing') {
+    return t('settings.serviceInfo.subStatusInitializing');
+  }
+
+  return t('settings.serviceInfo.subStatusWorking');
+}
+
+function describeTrackedPlayerRivalsStatus(t: TFunction, syncStatus: SyncStatusResponse | null, fallback: string): string {
+  switch (syncStatus?.rivals?.status) {
+    case 'pending':
+      return t('settings.serviceInfo.rivalsPending');
+    case 'in_progress':
+      return t('settings.serviceInfo.rivalsUpdating');
+    case 'complete':
+      return t('settings.serviceInfo.rivalsComplete');
+    case 'error':
+      return t('settings.serviceInfo.rivalsError');
+    default:
+      return syncStatus?.isTracked ? t('settings.serviceInfo.rivalsPending') : fallback;
+  }
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { settings, updateSettings, resetSettings } = useSettings();
+  const { player: trackedPlayer } = useTrackedPlayer();
   const flags = useFeatureFlags();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
@@ -223,6 +295,10 @@ export default function SettingsPage() {
   const rivalsReplay = useFirstRunReplay('rivals');
   const shopReplay = useFirstRunReplay('shop');
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
+  const [serviceInfo, setServiceInfo] = useState<ServiceInfoResponse | null>(null);
+  const [serviceInfoLoadFailed, setServiceInfoLoadFailed] = useState(false);
+  const [trackedPlayerSyncStatus, setTrackedPlayerSyncStatus] = useState<SyncStatusResponse | null>(null);
+  const [trackedPlayerSyncLoadFailed, setTrackedPlayerSyncLoadFailed] = useState(false);
   // Skip stagger on revisit
   const skipAnimRef = useRef(_hasRendered);
   _hasRendered = true;
@@ -237,7 +313,102 @@ export default function SettingsPage() {
       .catch(() => { /* service unreachable */ });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const loadServiceInfo = async () => {
+      try {
+        const data = await api.getServiceInfo();
+        if (cancelled) return;
+        setServiceInfo(data);
+        setServiceInfoLoadFailed(false);
+      } catch {
+        if (!cancelled) setServiceInfoLoadFailed(true);
+      } finally {
+        if (!cancelled) {
+          timer = setTimeout(loadServiceInfo, SERVICE_INFO_POLL_MS);
+        }
+      }
+    };
+
+    void loadServiceInfo();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    if (!trackedPlayer?.accountId) {
+      setTrackedPlayerSyncStatus(null);
+      setTrackedPlayerSyncLoadFailed(false);
+      return undefined;
+    }
+
+    setTrackedPlayerSyncStatus(null);
+    setTrackedPlayerSyncLoadFailed(false);
+
+    const loadTrackedPlayerSyncStatus = async () => {
+      try {
+        const data = await api.getSyncStatus(trackedPlayer.accountId);
+        if (cancelled) return;
+        setTrackedPlayerSyncStatus(data);
+        setTrackedPlayerSyncLoadFailed(false);
+      } catch {
+        if (!cancelled) setTrackedPlayerSyncLoadFailed(true);
+      } finally {
+        if (!cancelled) {
+          timer = setTimeout(loadTrackedPlayerSyncStatus, SERVICE_INFO_POLL_MS);
+        }
+      }
+    };
+
+    void loadTrackedPlayerSyncStatus();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [trackedPlayer?.accountId]);
   /* v8 ignore stop */
+
+  const serviceInfoFallback = serviceInfoLoadFailed ? t('common.failedToLoad') : serviceInfo ? t('settings.serviceInfo.unavailable') : t('common.loading');
+  const trackedPlayerFallback = trackedPlayerSyncLoadFailed ? t('common.failedToLoad') : trackedPlayerSyncStatus ? t('settings.serviceInfo.unavailable') : t('common.loading');
+
+  const lastLeaderboardUpdateStart = formatLocalDateTime(
+    serviceInfo?.currentUpdate.status === 'updating'
+      ? serviceInfo.currentUpdate.startedAt
+      : serviceInfo?.lastCompletedUpdate?.startedAt,
+    serviceInfoFallback,
+  );
+  const lastLeaderboardUpdateComplete = formatLocalDateTime(
+    serviceInfo?.lastCompletedUpdate?.completedAt,
+    serviceInfoFallback,
+  );
+  const leaderboardUpdateStatus = serviceInfo
+    ? serviceInfo.currentUpdate.status === 'updating'
+      ? t('settings.serviceInfo.statusUpdating')
+      : t('settings.serviceInfo.statusIdle')
+    : serviceInfoFallback;
+  const leaderboardUpdateSubStatus = serviceInfo
+    ? describeServiceSubStatus(t, serviceInfo)
+    : serviceInfoFallback;
+  const nextLeaderboardScheduledUpdate = serviceInfo
+    ? serviceInfo.nextScheduledUpdateAt
+      ? formatLocalDateTime(serviceInfo.nextScheduledUpdateAt, serviceInfoFallback)
+      : serviceInfo.currentUpdate.status === 'updating'
+        ? t('settings.serviceInfo.afterCurrentUpdate')
+        : t('settings.serviceInfo.awaitingFirstUpdate')
+    : serviceInfoFallback;
+  const trackedPlayerRivalsStatus = trackedPlayer
+    ? describeTrackedPlayerRivalsStatus(t, trackedPlayerSyncStatus, trackedPlayerFallback)
+    : null;
 
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
 
@@ -305,6 +476,7 @@ export default function SettingsPage() {
     { id: 'show-instruments', label: t('settings.showInstruments'), landmarkLabel: t('settings.showInstruments') },
     { id: 'show-metadata', label: t('settings.showMetadata'), landmarkLabel: t('settings.showMetadata') },
     { id: 'version', label: t('settings.versionTitle'), landmarkLabel: t('settings.versionTitle') },
+    { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title') },
     { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle') },
     { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection') },
   ]), [settingsQuickLinksTitle, t]);
@@ -605,6 +777,47 @@ export default function SettingsPage() {
                   <span>{t('settings.themeVersion')}</span>
                   <span style={st.versionValue}>{THEME_VERSION}</span>
                 </div>
+              </Card>
+            </div>
+          </FadeInDiv>
+
+          {/* ── Service Info ── */}
+          <FadeInDiv delay={stagger(staggerIndex++)}>
+            <div ref={(element) => registerSectionRef('service-info', element)}>
+              <SectionHeader title={t('settings.serviceInfo.title')} description={t('settings.serviceInfo.hint')} />
+              <Card>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceInfo.lastUpdateStart')}</span>
+                  <span style={st.versionValue}>{lastLeaderboardUpdateStart}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceInfo.lastUpdateComplete')}</span>
+                  <span style={st.versionValue}>{lastLeaderboardUpdateComplete}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceInfo.updateStatus')}</span>
+                  <span style={st.versionValue}>{leaderboardUpdateStatus}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceInfo.updateSubStatus')}</span>
+                  <span style={st.versionValue}>{leaderboardUpdateSubStatus}</span>
+                </div>
+                <div style={st.versionRow}>
+                  <span>{t('settings.serviceInfo.nextScheduledUpdate')}</span>
+                  <span style={st.versionValue}>{nextLeaderboardScheduledUpdate}</span>
+                </div>
+                {trackedPlayer && (
+                  <>
+                    <div style={st.versionRow}>
+                      <span>{t('settings.serviceInfo.selectedPlayerId')}</span>
+                      <span style={st.versionValue}>{trackedPlayer.accountId}</span>
+                    </div>
+                    <div style={st.versionRow}>
+                      <span>{t('settings.serviceInfo.selectedPlayerRivalsStatus')}</span>
+                      <span style={st.versionValue}>{trackedPlayerRivalsStatus}</span>
+                    </div>
+                  </>
+                )}
               </Card>
             </div>
           </FadeInDiv>

@@ -334,6 +334,20 @@ export type SyncStatusResponse = {
   } | null;
 };
 
+export type ServiceInfoResponse = {
+  lastCompletedUpdate: {
+    startedAt: string;
+    completedAt: string | null;
+  } | null;
+  currentUpdate: {
+    status: 'idle' | 'updating';
+    startedAt: string | null;
+    phase: string | null;
+    subOperation: string | null;
+  };
+  nextScheduledUpdateAt: string | null;
+};
+
 /** Score history entry as returned by /api/player/{id}/history. */
 export type ServerScoreHistoryEntry = {
   songId: string;

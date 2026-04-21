@@ -538,10 +538,13 @@ public static class DatabaseInitializer
             combos_computed          INTEGER NOT NULL DEFAULT 0,
             total_combos_to_compute  INTEGER NOT NULL DEFAULT 0,
             rivals_found             INTEGER NOT NULL DEFAULT 0,
+            algorithm_version        INTEGER NOT NULL DEFAULT 0,
             started_at               TIMESTAMPTZ,
             completed_at             TIMESTAMPTZ,
             error_message            TEXT
         );
+
+        ALTER TABLE rivals_status ADD COLUMN IF NOT EXISTS algorithm_version INTEGER NOT NULL DEFAULT 0;
 
         -- =====================================================================
         -- USER RIVALS (from fst-meta.db)
@@ -583,6 +586,52 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_rs_rival
             ON rival_song_samples (user_id, rival_account_id, instrument);
+
+        -- =====================================================================
+        -- RIVALS DIRTY SONGS (selection refresh queue)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS rivals_dirty_songs (
+            account_id    TEXT        NOT NULL,
+            instrument    TEXT        NOT NULL,
+            song_id       TEXT        NOT NULL,
+            dirty_reason  TEXT        NOT NULL,
+            detected_at   TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (account_id, instrument, song_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_rds_account
+            ON rivals_dirty_songs (account_id, instrument);
+
+        -- =====================================================================
+        -- RIVALS SONG FINGERPRINTS (selection-state baseline)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS rival_song_fingerprints (
+            account_id              TEXT        NOT NULL,
+            instrument              TEXT        NOT NULL,
+            song_id                 TEXT        NOT NULL,
+            user_rank               INTEGER     NOT NULL,
+            neighborhood_signature  TEXT        NOT NULL,
+            computed_at             TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (account_id, instrument, song_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_rsf_account
+            ON rival_song_fingerprints (account_id, instrument);
+
+        -- =====================================================================
+        -- RIVALS INSTRUMENT STATE (eligibility baseline)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS rival_instrument_state (
+            account_id    TEXT        NOT NULL,
+            instrument    TEXT        NOT NULL,
+            song_count    INTEGER     NOT NULL,
+            is_eligible   BOOLEAN     NOT NULL,
+            computed_at   TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (account_id, instrument)
+        );
 
         -- =====================================================================
         -- ITEM SHOP TRACKS (from fst-meta.db)

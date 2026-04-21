@@ -27,7 +27,7 @@ public sealed class BandRankingRepairService
         return new BandRankingRepairOverview(GetTotalChartedSongs(), counts);
     }
 
-    public IReadOnlyList<BandRankingRepairResult> Rebuild(IReadOnlyList<string>? bandTypes = null, int? totalChartedSongs = null)
+    public IReadOnlyList<BandRankingRepairResult> Rebuild(IReadOnlyList<string>? bandTypes = null, int? totalChartedSongs = null, BandTeamRankingRebuildOptions? options = null)
     {
         var resolved = ResolveBandTypes(bandTypes);
         int chartedSongs = totalChartedSongs ?? GetTotalChartedSongs();
@@ -37,10 +37,11 @@ public sealed class BandRankingRepairService
         {
             var before = GetCounts(bandType);
             var sw = Stopwatch.StartNew();
+            BandTeamRankingRebuildMetrics? metrics = null;
 
             if (chartedSongs > 0)
             {
-                _metaDb.RebuildBandTeamRankings(bandType, chartedSongs, CredibilityThreshold, PopulationMedian);
+                metrics = _metaDb.RebuildBandTeamRankingsMeasured(bandType, chartedSongs, CredibilityThreshold, PopulationMedian, options);
             }
             else
             {
@@ -49,7 +50,7 @@ public sealed class BandRankingRepairService
 
             sw.Stop();
             var after = GetCounts(bandType);
-            results.Add(new BandRankingRepairResult(bandType, chartedSongs, before, after, sw.Elapsed));
+            results.Add(new BandRankingRepairResult(bandType, chartedSongs, before, after, sw.Elapsed, metrics));
         }
 
         return results;
@@ -134,7 +135,8 @@ public sealed record BandRankingRepairResult(
     int TotalChartedSongs,
     BandRankingCounts Before,
     BandRankingCounts After,
-    TimeSpan Elapsed);
+    TimeSpan Elapsed,
+    BandTeamRankingRebuildMetrics? Metrics = null);
 
 public sealed record BandRankingCounts(
     string BandType,

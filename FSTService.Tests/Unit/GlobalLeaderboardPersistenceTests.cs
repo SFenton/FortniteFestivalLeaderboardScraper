@@ -114,6 +114,9 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
 
         Assert.Equal(1, pr.ScoreChangesDetected);
         Assert.Contains("acct_1", pr.ChangedAccountIds);
+        Assert.Single(pr.DirtyRivalSongs);
+        Assert.Equal(RivalsDirtyReason.SelfScoreChange, pr.DirtyRivalSongs[0].DirtyReason);
+        Assert.Equal("song_1", pr.DirtyRivalSongs[0].SongId);
 
         // Verify change was recorded in meta DB
         var history = _metaFixture.Db.GetScoreHistory("acct_1");
@@ -172,6 +175,48 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             registered);
 
         Assert.Equal(0, pr.ScoreChangesDetected);
+    }
+
+    [Fact]
+    public void PersistResult_marks_registered_user_self_rank_dirty_when_untracked_player_moves_nearby()
+    {
+        using var glp = CreatePersistence();
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct_tracked" };
+
+        var initial = new GlobalLeaderboardResult
+        {
+            SongId = "song_1",
+            Instrument = "Solo_Guitar",
+            Entries = new List<LeaderboardEntry>
+            {
+                new() { AccountId = "acct_1", Score = 120_000, Rank = 1, Accuracy = 99, IsFullCombo = true, Stars = 6, Season = 3, Percentile = 100.0 },
+                new() { AccountId = "acct_tracked", Score = 110_000, Rank = 2, Accuracy = 98, IsFullCombo = true, Stars = 6, Season = 3, Percentile = 99.5 },
+                new() { AccountId = "acct_3", Score = 100_000, Rank = 3, Accuracy = 97, IsFullCombo = false, Stars = 5, Season = 3, Percentile = 99.0 },
+                new() { AccountId = "acct_untracked", Score = 70_000, Rank = 4, Accuracy = 95, IsFullCombo = false, Stars = 5, Season = 3, Percentile = 95.0 },
+            },
+        };
+
+        var moved = new GlobalLeaderboardResult
+        {
+            SongId = "song_1",
+            Instrument = "Solo_Guitar",
+            Entries = new List<LeaderboardEntry>
+            {
+                new() { AccountId = "acct_1", Score = 120_000, Rank = 1, Accuracy = 99, IsFullCombo = true, Stars = 6, Season = 3, Percentile = 100.0 },
+                new() { AccountId = "acct_untracked", Score = 115_000, Rank = 2, Accuracy = 98, IsFullCombo = true, Stars = 6, Season = 3, Percentile = 99.8 },
+                new() { AccountId = "acct_tracked", Score = 110_000, Rank = 3, Accuracy = 98, IsFullCombo = true, Stars = 6, Season = 3, Percentile = 99.5 },
+                new() { AccountId = "acct_3", Score = 100_000, Rank = 4, Accuracy = 97, IsFullCombo = false, Stars = 5, Season = 3, Percentile = 99.0 },
+            },
+        };
+
+        glp.PersistResult(initial, registered);
+        var pr = glp.PersistResult(moved, registered);
+
+        Assert.Equal(0, pr.ScoreChangesDetected);
+        Assert.Contains("acct_tracked", pr.ChangedAccountIds);
+        Assert.Single(pr.DirtyRivalSongs);
+        Assert.Equal("acct_tracked", pr.DirtyRivalSongs[0].AccountId);
+        Assert.Equal(RivalsDirtyReason.SelfRankChange, pr.DirtyRivalSongs[0].DirtyReason);
     }
 
     // ═══ Multi-Instrument Support ═══════════════════════════════
@@ -279,6 +324,45 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         agg.AddChangedAccountIds(["acct_1", "acct_3"]);
 
         Assert.Equal(3, agg.ChangedAccountIds.Count);
+    }
+
+    [Fact]
+    public void PipelineAggregates_dirty_rival_songs_deduplicates_by_song_key()
+    {
+        var agg = new GlobalLeaderboardPersistence.PipelineAggregates();
+
+        agg.AddDirtyRivalSongs(
+        [
+            new RivalDirtySongRow
+            {
+                AccountId = "acct_1",
+                Instrument = "Solo_Guitar",
+                SongId = "song_1",
+                DirtyReason = RivalsDirtyReason.SelfScoreChange,
+                DetectedAt = "2026-01-01T00:00:00Z",
+            },
+        ]);
+        agg.AddDirtyRivalSongs(
+        [
+            new RivalDirtySongRow
+            {
+                AccountId = "acct_1",
+                Instrument = "Solo_Guitar",
+                SongId = "song_1",
+                DirtyReason = RivalsDirtyReason.NeighborWindowChange,
+                DetectedAt = "2026-01-01T00:00:01Z",
+            },
+            new RivalDirtySongRow
+            {
+                AccountId = "acct_2",
+                Instrument = "Solo_Bass",
+                SongId = "song_2",
+                DirtyReason = RivalsDirtyReason.SelfRankChange,
+                DetectedAt = "2026-01-01T00:00:02Z",
+            },
+        ]);
+
+        Assert.Equal(2, agg.DirtyRivalSongs.Count);
     }
 
     // ═══ Initialize ═════════════════════════════════════════════
@@ -457,15 +541,11 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     // ═══ GetLeaderboardWithCount ════════════════════════════════
 
     [Fact]
-    public void GetOrCreateInstrumentDb_CreatesNewDb_ForUnknownInstrument()
+    public void GetOrCreateInstrumentDb_Throws_ForUnknownInstrument()
     {
         using var glp = CreatePersistence();
-        // "Solo_Keys" doesn't exist in AllInstruments — triggers the create-new path
-        var db = glp.GetOrCreateInstrumentDb("Solo_Keys");
-        Assert.NotNull(db);
-        Assert.Equal("Solo_Keys", db.Instrument);
-        // Verify it's queryable
-        Assert.Equal(0, db.GetTotalEntryCount());
+        var ex = Assert.Throws<ArgumentException>(() => glp.GetOrCreateInstrumentDb("Solo_Keys"));
+        Assert.Contains("Unknown instrument key", ex.Message);
     }
 
     [Fact]

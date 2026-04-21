@@ -22,6 +22,7 @@ public sealed class ScrapeTimePrecomputer
     private readonly ILoggerFactory _loggerFactory;
     private readonly JsonSerializerOptions _jsonOpts;
     private readonly FeatureOptions _features;
+    private readonly LeaderboardRivalsCalculator? _leaderboardRivalsCalculator;
 
     /// <summary>
     /// Disk staging writer for bulk precomputation. Created per PrecomputeAllAsync call,
@@ -50,7 +51,8 @@ public sealed class ScrapeTimePrecomputer
         ILogger<ScrapeTimePrecomputer> log,
         ILoggerFactory loggerFactory,
         JsonSerializerOptions jsonOpts,
-        FeatureOptions features)
+        FeatureOptions features,
+        LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null)
     {
         _persistence = persistence;
         _metaDb = metaDb;
@@ -60,6 +62,7 @@ public sealed class ScrapeTimePrecomputer
         _loggerFactory = loggerFactory;
         _jsonOpts = jsonOpts;
         _features = features;
+        _leaderboardRivalsCalculator = leaderboardRivalsCalculator;
     }
 
     /// <summary>Returns a precomputed response if available, else null.</summary>
@@ -1040,16 +1043,29 @@ public sealed class ScrapeTimePrecomputer
     {
         foreach (var instrument in instrumentKeys)
         {
-            var rivals = _metaDb.GetLeaderboardRivals(accountId, instrument, "totalscore");
-            if (rivals.Count == 0) continue;
+            var live = _leaderboardRivalsCalculator?.ComputeInstrument(accountId, instrument, "totalscore");
+            var rivals = live is null
+                ? _metaDb.GetLeaderboardRivals(accountId, instrument, "totalscore")
+                : live.Rivals.ToList();
+
+            if (rivals.Count == 0 && _leaderboardRivalsCalculator is null)
+                continue;
 
             var rivalNames = _metaDb.GetDisplayNames(rivals.Select(r => r.RivalAccountId));
             foreach (var kv in displayNames)
                 rivalNames.TryAdd(kv.Key, kv.Value);
 
-            int? userRank = null;
-            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            int? userRank;
+            if (live is not null)
             {
+                userRank = live.GetUserRank("totalscore");
+                if (!live.UserFound && live.Rivals.Count == 0)
+                    continue;
+            }
+            else
+            {
+                userRank = null;
+                var db = _persistence.GetOrCreateInstrumentDb(instrument);
                 var (_, self, _) = db.GetAccountRankingNeighborhood(accountId, 0, "totalscore");
                 if (self is not null)
                     userRank = InstrumentDatabase.GetRankValue(self, "totalscore");

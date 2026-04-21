@@ -5,6 +5,7 @@ import type {
   AccountSearchResponse,
   TrackPlayerResponse,
   SyncStatusResponse,
+  ServiceInfoResponse,
   PlayerHistoryResponse,
   ServerInstrumentKey as InstrumentKey,
   AllLeaderboardsResponse,
@@ -174,6 +175,9 @@ export const api = {
 
   getSyncStatus: (accountId: string) =>
     get<SyncStatusResponse>(`/api/player/${encodeURIComponent(accountId)}/sync-status`),
+
+  getServiceInfo: () =>
+    get<ServiceInfoResponse>('/api/service-info'),
 
   getPlayerHistory: (accountId: string, songId?: string, instrument?: string) => {
     const params = new URLSearchParams();
