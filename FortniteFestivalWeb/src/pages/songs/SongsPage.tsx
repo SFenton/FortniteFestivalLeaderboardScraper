@@ -886,7 +886,7 @@ export default function SongsPage() {
 
   const handleSongQuickLinkSelect = useCallback((link: SongQuickLink) => {
     handleQuickLinkSelect(link, { skipScroll: true });
-    virtualizer.scrollToIndex(link.rowIndex, { align: 'start' });
+    virtualizer.scrollToIndex(link.rowIndex, { align: 'start', behavior: 'smooth' });
   }, [handleQuickLinkSelect, virtualizer]);
 
   const handleModalQuickLinkSelect = useCallback((link: SongQuickLink) => {
