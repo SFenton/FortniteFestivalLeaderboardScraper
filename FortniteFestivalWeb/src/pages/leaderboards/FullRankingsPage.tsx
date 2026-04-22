@@ -136,6 +136,7 @@ export default function FullRankingsPage() {
 
   const totalPages = data ? Math.ceil(data.totalAccounts / LEADERBOARD_PAGE_SIZE) : 0;
   const entries = data?.entries ?? [];
+  const reserveTenDigitScoreWidth = metric === 'totalscore';
 
   useEffect(() => {
     rankingsCache.set(cacheKey, { page, scrollTop: 0 });
@@ -273,6 +274,7 @@ export default function FullRankingsPage() {
               songsLabelPrimary={isFcRate}
               isPlayer={entry.accountId === player?.accountId}
               rankWidth={rankWidth}
+              reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
             />
           );
         }}
@@ -291,6 +293,7 @@ export default function FullRankingsPage() {
               songsLabelPrimary={metric === 'fcrate'}
               isPlayer
               rankWidth={playerRankWidth}
+              reserveTenDigitScoreWidth={reserveTenDigitScoreWidth && !(isMobile && hasFab)}
             />
           </Link>
         ) : undefined}

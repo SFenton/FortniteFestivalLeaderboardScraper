@@ -44,6 +44,7 @@ export default memo(function RankingCard({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const st = useRankingCardStyles();
+  const reserveTenDigitScoreWidth = metric === 'totalscore';
 
   const playerInTop = !!(playerAccountId && entries.some(e => e.accountId === playerAccountId));
 
@@ -129,6 +130,7 @@ export default memo(function RankingCard({
                 songsLabelPrimary={isFcRate}
                 isPlayer={isPlayer}
                 rankWidth={rankWidth}
+                reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
               />
             </Link>
           );
@@ -159,6 +161,7 @@ export default memo(function RankingCard({
                 songsLabelPrimary={isFcRate}
                 isPlayer
                 rankWidth={playerRankWidth}
+                reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
               />
             </Link>
           );

@@ -7,6 +7,8 @@ import { memo, useMemo } from 'react';
 import { Colors, Font, FontVariant, Layout, MetadataSize, TextAlign, Weight, truncate } from '@festival/theme';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 
+const TEN_DIGIT_SCORE_MIN_WIDTH = Math.ceil('1,000,000,000'.length * Layout.rankCharWidth) + Layout.rankColumnPadding;
+
 export interface RankingEntryProps {
   rank: number;
   displayName: string;
@@ -27,6 +29,8 @@ export interface RankingEntryProps {
   isPlayer?: boolean;
   /** Pixel width for the rank column. Computed from the longest rank in the list. */
   rankWidth?: number;
+  /** Reserve space for a formatted 10-digit score (e.g. 1,000,000,000). */
+  reserveTenDigitScoreWidth?: boolean;
 }
 
 export const RankingEntry = memo(function RankingEntry({
@@ -41,8 +45,9 @@ export const RankingEntry = memo(function RankingEntry({
   songsLabelPrimary,
   isPlayer,
   rankWidth,
+  reserveTenDigitScoreWidth,
 }: RankingEntryProps) {
-  const s = useStyles(isPlayer, rankWidth);
+  const s = useStyles(isPlayer, rankWidth, reserveTenDigitScoreWidth);
 
   return (
     <>
@@ -55,7 +60,7 @@ export const RankingEntry = memo(function RankingEntry({
   );
 });
 
-function useStyles(isPlayer?: boolean, rankWidth?: number) {
+function useStyles(isPlayer?: boolean, rankWidth?: number, reserveTenDigitScoreWidth?: boolean) {
   return useMemo(() => ({
     colRank: {
       width: rankWidth ?? Layout.rankColumnWidth,
@@ -92,7 +97,7 @@ function useStyles(isPlayer?: boolean, rankWidth?: number) {
       color: Colors.accentBlueBright,
       fontVariantNumeric: FontVariant.tabularNums,
       textAlign: TextAlign.right,
-      minWidth: '5ch',
+      minWidth: reserveTenDigitScoreWidth ? TEN_DIGIT_SCORE_MIN_WIDTH : '5ch',
     },
-  }), [isPlayer, rankWidth]);
+  }), [isPlayer, rankWidth, reserveTenDigitScoreWidth]);
 }
