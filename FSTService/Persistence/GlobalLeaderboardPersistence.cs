@@ -1333,7 +1333,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>
     /// Get grouped unique band summaries for one player, deduped by team members.
     /// </summary>
-    public PlayerBandsDto GetPlayerBands(string accountId, int previewCount = 5)
+    public PlayerBandsDto GetPlayerBands(string accountId, int previewCount = 6)
     {
         var allEntries = GetPlayerBandEntries(accountId);
 

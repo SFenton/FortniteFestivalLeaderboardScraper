@@ -1654,6 +1654,82 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiPlayerStats_ReturnsSixBandPreviewEntries_WhenMoreBandsExist()
+    {
+        var featureOptions = _factory.Services.GetRequiredService<IOptions<FeatureOptions>>().Value;
+        var originalPlayerBands = featureOptions.PlayerBands;
+        featureOptions.PlayerBands = true;
+
+        try
+        {
+            using var scope = _factory.Services.CreateScope();
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            metaDb.InsertAccountIds([
+                "bandsPreviewAcct",
+                "bandsPreviewMate1",
+                "bandsPreviewMate2",
+                "bandsPreviewMate3",
+                "bandsPreviewMate4",
+                "bandsPreviewMate5",
+                "bandsPreviewMate6",
+                "bandsPreviewMate7",
+            ]);
+            metaDb.InsertAccountNames([
+                ("bandsPreviewAcct", (string?)"Bands Preview Player"),
+                ("bandsPreviewMate1", (string?)"Bands Preview Mate 1"),
+                ("bandsPreviewMate2", (string?)"Bands Preview Mate 2"),
+                ("bandsPreviewMate3", (string?)"Bands Preview Mate 3"),
+                ("bandsPreviewMate4", (string?)"Bands Preview Mate 4"),
+                ("bandsPreviewMate5", (string?)"Bands Preview Mate 5"),
+                ("bandsPreviewMate6", (string?)"Bands Preview Mate 6"),
+                ("bandsPreviewMate7", (string?)"Bands Preview Mate 7"),
+            ]);
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries("bands_preview_seed", [
+                new LeaderboardEntry { AccountId = "bandsPreviewAcct", Score = 95_000, Rank = 1, Accuracy = 99, Stars = 6, Season = 5 },
+                new LeaderboardEntry { AccountId = "bandsPreviewOther", Score = 90_000, Rank = 2, Accuracy = 98, Stars = 6, Season = 5 },
+            ]);
+
+            metaDb.UpsertPlayerStatsTiers("bandsPreviewAcct", "Solo_Guitar", JsonSerializer.Serialize(new[]
+            {
+                new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
+            }));
+
+            for (var index = 1; index <= 7; index++)
+            {
+                SeedBandRows(
+                    dataSource,
+                    $"bands_preview_song_{index}",
+                    "Band_Duets",
+                    $"bandsPreviewAcct:bandsPreviewMate{index}",
+                    (0, "bandsPreviewAcct", index % 4),
+                    (1, $"bandsPreviewMate{index}", (index + 1) % 4));
+            }
+
+            var response = await _client.GetAsync("/api/player/bandsPreviewAcct/stats");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var bands = json.GetProperty("bands");
+            var allEntries = bands.GetProperty("all").GetProperty("entries");
+            var duoEntries = bands.GetProperty("duos").GetProperty("entries");
+
+            Assert.Equal(7, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
+            Assert.Equal(7, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
+            Assert.Equal(6, allEntries.GetArrayLength());
+            Assert.Equal(6, duoEntries.GetArrayLength());
+        }
+        finally
+        {
+            featureOptions.PlayerBands = originalPlayerBands;
+        }
+    }
+
+    [Fact]
     public async Task ApiPlayerStats_ReturnsBands_WhenFeatureDisabled()
     {
         var featureOptions = _factory.Services.GetRequiredService<IOptions<FeatureOptions>>().Value;
