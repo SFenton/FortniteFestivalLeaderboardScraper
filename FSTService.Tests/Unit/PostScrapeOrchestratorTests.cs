@@ -63,7 +63,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             new HttpClient(),
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<GlobalLeaderboardScraper>>(),
-            0);
+            0,
+            null);
 
         _firstSeenCalculator = Substitute.For<FirstSeenSeasonCalculator>(
             scraper, _persistence, new ScrapeProgressTracker(),
@@ -320,7 +321,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
-                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
+                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null),
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
                 Substitute.For<ILogger<BandScrapePhase>>()),
@@ -388,7 +389,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
-                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
+                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null),
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
                 Substitute.For<ILogger<BandScrapePhase>>()),            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),            opts, _log);
@@ -500,7 +501,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
-                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0),
+                Substitute.For<GlobalLeaderboardScraper>(new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null),
                 new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
                 _pathDataStore, _pool, _progress, opts,
                 Substitute.For<ILogger<BandScrapePhase>>()),

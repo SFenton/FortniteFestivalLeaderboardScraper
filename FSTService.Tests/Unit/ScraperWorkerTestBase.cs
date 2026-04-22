@@ -72,7 +72,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new HttpClient(),
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<GlobalLeaderboardScraper>>(),
-            0);
+            0,
+            null);
 
         _nameResolver = Substitute.For<AccountNameResolver>(
             new HttpClient(), _metaDb, _tokenManager,

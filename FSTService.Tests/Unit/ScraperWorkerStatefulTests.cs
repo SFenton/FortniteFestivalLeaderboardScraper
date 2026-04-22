@@ -458,6 +458,72 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
     }
 
+    [Fact]
+    public async Task RunScrapePass_CompletesScrapeLogAfterPassEnds()
+    {
+        var service = CreateServiceWithSongs(("s1", "Song One", "Artist"));
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+
+        var scrapedResults = new List<GlobalLeaderboardResult>
+        {
+            new()
+            {
+                SongId = "s1", Instrument = "Solo_Guitar", TotalPages = 1, PagesScraped = 1,
+                Requests = 1, BytesReceived = 300,
+                Entries = new List<FSTService.Scraping.LeaderboardEntry>
+                {
+                    new() { AccountId = "player1", Score = 2000, Accuracy = 95, Stars = 5, IsFullCombo = true, Rank = 1, Percentile = 1.0 }
+                }
+            }
+        };
+
+        _scraper.ScrapeManySongsAsync(
+            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
+            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
+            .Returns(async callInfo =>
+            {
+                var onSongComplete = callInfo.ArgAt<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(4);
+                if (onSongComplete is not null)
+                {
+                    await onSongComplete("s1", scrapedResults);
+                }
+
+                return new Dictionary<string, List<GlobalLeaderboardResult>>
+                {
+                    ["s1"] = scrapedResults,
+                };
+            });
+
+        _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(0));
+
+        var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
+        var worker = CreateWorker(opts);
+
+        await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
+
+        var lastRun = _metaDb.GetLastCompletedScrapeRun();
+        Assert.NotNull(lastRun);
+        Assert.NotNull(lastRun!.CompletedAt);
+
+        var progress = _progress.GetProgressResponse();
+        var pass = Assert.Single(progress.Passes);
+        Assert.Equal("Completed", pass.Status);
+        Assert.NotNull(pass.EndedAtUtc);
+
+        var completedAt = DateTimeOffset.Parse(lastRun.CompletedAt!);
+        Assert.True(completedAt.UtcDateTime >= pass.EndedAtUtc!.Value);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // TryGeneratePathsAsync (DB-mutating: writes to core.db)
     // ═══════════════════════════════════════════════════════════════

@@ -514,6 +514,16 @@ public sealed class ScraperWorker : BackgroundService
         _log.LogInformation("Scrape pass complete. (Process memory: {MemoryMB} MB)", endMemMb);
 
         _progress.EndPass();
+
+        if (result is not null)
+        {
+            _persistence.Meta.CompleteScrapeRun(
+                result.ScrapeId,
+                result.SongsScraped,
+                result.TotalEntries,
+                result.TotalRequests,
+                result.TotalBytes);
+        }
     }
 
     // ─── Path generation ──────────────────────────────────────

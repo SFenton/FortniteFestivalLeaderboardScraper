@@ -268,11 +268,8 @@ public sealed class ScrapeOrchestrator
         var currentOp = _progress.GetProgressResponse().Current;
         SaveCachedPageEstimate(opts, currentOp?.Pages?.DiscoveredTotal ?? 0);
 
-        // Complete scrape log
-        _persistence.Meta.CompleteScrapeRun(scrapeId, aggregates.SongsWithData, aggregates.TotalEntries, totalRequests, totalBytes);
-
         _log.LogInformation(
-            "Scrape run #{ScrapeId} complete. {Songs} songs with data, {Entries} entries, " +
+            "Scrape run #{ScrapeId} core checkpoint reached. {Songs} songs with data, {Entries} entries, " +
             "{Requests} HTTP requests, {Bytes} bytes, {Changes} score changes detected, elapsed={Elapsed:F1}s",
             scrapeId, aggregates.SongsWithData, aggregates.TotalEntries, totalRequests, totalBytes,
             aggregates.TotalChanges, sw.Elapsed.TotalSeconds);
@@ -343,6 +340,7 @@ public sealed class ScrapeOrchestrator
             ScrapeId = scrapeId,
             TotalRequests = totalRequests,
             TotalBytes = totalBytes,
+            TotalEntries = aggregates.TotalEntries,
             SongsScraped = aggregates.SongsWithData,
             ScrapeDuration = sw.Elapsed,
         };
