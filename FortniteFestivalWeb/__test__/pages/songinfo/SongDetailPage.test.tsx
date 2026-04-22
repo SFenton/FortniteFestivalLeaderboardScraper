@@ -466,6 +466,26 @@ describe('SongDetailPage', () => {
     });
   });
 
+  it('keeps the score history chart mounted long enough to collapse on deselect', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
+    renderSongDetail('/songs/song-1', 'test-player-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('Score History')).toBeTruthy();
+    });
+
+    act(() => {
+      localStorage.removeItem('fst:trackedPlayer');
+      window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
+    });
+
+    expect(screen.getByText('Score History')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.queryByText('Score History')).toBeNull();
+    });
+  });
+
   it('handles header collapse on scroll on non-mobile', async () => {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,

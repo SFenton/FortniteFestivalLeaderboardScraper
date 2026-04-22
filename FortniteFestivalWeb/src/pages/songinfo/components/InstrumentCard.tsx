@@ -13,6 +13,7 @@ import { CssProp } from '@festival/theme';
 import { parseApiError } from '../../../utils/apiError';
 import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
 import { resolveTopScoresColumns } from '../topScoresLayout';
+import CollapsePresence from '../../../components/common/CollapsePresence';
 
 interface InstrumentCardProps {
   songId: string;
@@ -67,6 +68,7 @@ export default memo(function InstrumentCard({
   const playerInTop = !!(playerAccountId && prefetchedEntries.some(
     (e) => e.accountId === playerAccountId,
   ));
+  const showPlayerRow = !!(playerName && playerScore && !playerInTop);
   const hasEntries = prefetchedEntries.length > 0 || (!!playerScore && !playerInTop);
 
   const rankWidth = useMemo(() => {
@@ -184,7 +186,8 @@ export default memo(function InstrumentCard({
             );
           })}
         {/* v8 ignore start — player score IIFE; conditionally rendered animation block */}
-        {playerName && playerScore && !playerInTop && (() => {
+        <CollapsePresence visible={showPlayerRow}>
+        {showPlayerRow && (() => {
           const playerDelay = baseDelay + STAGGER_ENTRY_OFFSET + prefetchedEntries.length * STAGGER_ROW_MS;
           const playerStagger = anim(playerDelay);
           const playerRowStyle = { ...st.playerEntryRow, ...(isCompactCard ? st.entryRowMobile : {}) };
@@ -214,6 +217,7 @@ export default memo(function InstrumentCard({
           </Link>
           );
         })()}
+        </CollapsePresence>
         {/* v8 ignore stop */}
         {/* v8 ignore start — view all IIFE; conditionally rendered animation block */}
         {!prefetchedError && prefetchedEntries.length > 0 && (() => {
@@ -262,7 +266,10 @@ function useInstrumentCardStyles() {
       borderRadius: Radius.md,
       textDecoration: CssValue.none,
       color: CssValue.inherit,
-      transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+      transition: [
+        transition(CssProp.backgroundColor, FAST_FADE_MS),
+        transition(CssProp.borderColor, FAST_FADE_MS),
+      ].join(', '),
       fontSize: Font.md,
     };
     return {

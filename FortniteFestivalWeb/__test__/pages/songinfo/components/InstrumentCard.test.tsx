@@ -3,7 +3,7 @@
  * error states, and responsive column widths.
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
 import { stubResizeObserver } from '../../../helpers/browserStubs';
 import InstrumentCard from '../../../../src/pages/songinfo/components/InstrumentCard';
@@ -224,6 +224,68 @@ describe('InstrumentCard', () => {
     });
     expect(screen.getByText('MyPlayer')).toBeTruthy();
     expect(screen.getByText('#50')).toBeTruthy();
+  });
+
+  it('keeps the extra player row mounted long enough to collapse on deselect', async () => {
+    const entries = [makeEntry(1)];
+    const playerScore: PlayerScore = {
+      songId: 'song-1', instrument: 'Solo_Guitar', score: 120000, rank: 50,
+      accuracy: 900000, isFullCombo: false, stars: 4, season: 5,
+    };
+    const view = renderCard({
+      prefetchedEntries: entries,
+      playerScore,
+      playerName: 'MyPlayer',
+      playerAccountId: 'my-player',
+    });
+
+    expect(screen.getByText('MyPlayer')).toBeTruthy();
+
+    view.rerender(
+      <TestProviders>
+        <InstrumentCard
+          {...baseProps}
+          prefetchedEntries={entries}
+          playerScore={undefined}
+          playerName={undefined}
+          playerAccountId={undefined}
+        />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('MyPlayer')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.queryByText('MyPlayer')).toBeNull();
+    });
+  });
+
+  it('keeps a top-10 row mounted and drops player styling on deselect', () => {
+    const entries = [makeEntry(1, { accountId: 'player-1' })];
+    const view = renderCard({
+      prefetchedEntries: entries,
+      playerAccountId: 'player-1',
+      playerName: 'MyPlayer',
+    });
+
+    expect(document.getElementById('player-score-Solo_Guitar')).toBeTruthy();
+    expect(screen.getByText('#1').style.fontWeight).toBe('700');
+
+    view.rerender(
+      <TestProviders>
+        <InstrumentCard
+          {...baseProps}
+          prefetchedEntries={entries}
+          playerAccountId={undefined}
+          playerName={undefined}
+          playerScore={undefined}
+        />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('Player 1')).toBeTruthy();
+    expect(document.getElementById('player-score-Solo_Guitar')).toBeNull();
+    expect(screen.getByText('#1').style.fontWeight).not.toBe('700');
   });
 
   it('uses accountId prefix when displayName is missing', () => {

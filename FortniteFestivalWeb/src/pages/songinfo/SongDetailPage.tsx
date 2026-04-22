@@ -28,6 +28,7 @@ import { LoadPhase } from '@festival/core';
 import { serverSongSupportsInstrument } from '@festival/core/api/serverTypes';
 import PathsModal from './components/path/PathsModal';
 import EmptyState from '../../components/common/EmptyState';
+import CollapsePresence from '../../components/common/CollapsePresence';
 import { parseApiError } from '../../utils/apiError';
 import InstrumentCard from './components/InstrumentCard';
 import IntensityCard from './components/IntensityCard';
@@ -218,6 +219,8 @@ export default function SongDetailPage() {
     return filterPlayerScores(playerScores);
   }, [playerScores, filterPlayerScores]);
 
+  const showScoreHistoryChart = !!player && scoreHistoryReady && filteredScoreHistory.length > 0;
+
   const allErrored = activeInstruments.length > 0
     && activeInstruments.every((k) => instrumentData[k].error && !instrumentData[k].loading);
 
@@ -391,21 +394,23 @@ export default function SongDetailPage() {
             style={{ ...stagger(100), marginBottom: Gap.section }}
             onAnimationEnd={clearAnim}
           />
-          {player && scoreHistoryReady && filteredScoreHistory.length > 0 && (
-            <div style={{ ...stagger(150), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
-              <ScoreHistoryChart
-                songId={songId}
-                accountId={player.accountId}
-                playerName={player.displayName}
-                defaultInstrument={resolvedDefaultInstrument}
-                history={filteredScoreHistory}
-                visibleInstruments={activeInstruments}
-                skipAnimation={skipAnim}
-                scoreWidth={globalScoreWidth}
-                sig={song?.sig}
-              />
-            </div>
-          )}
+          <CollapsePresence visible={showScoreHistoryChart} testId="song-detail-score-history-collapse">
+            {showScoreHistoryChart ? (
+              <div style={{ ...stagger(150), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
+                <ScoreHistoryChart
+                  songId={songId}
+                  accountId={player.accountId}
+                  playerName={player.displayName}
+                  defaultInstrument={resolvedDefaultInstrument}
+                  history={filteredScoreHistory}
+                  visibleInstruments={activeInstruments}
+                  skipAnimation={skipAnim}
+                  scoreWidth={globalScoreWidth}
+                  sig={song?.sig}
+                />
+              </div>
+            ) : null}
+          </CollapsePresence>
           <div style={styles.instrumentGrid}>
             {activeInstruments.map((inst, idx) => {
               const rowIndex = Math.floor(idx / 2);
