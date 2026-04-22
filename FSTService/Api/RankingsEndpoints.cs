@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
@@ -435,6 +436,38 @@ public static partial class ApiEndpoints
         .WithTags("Rankings")
         .RequireRateLimiting("public");
 
+        app.MapGet("/api/bands/{bandId}", (
+            HttpContext httpContext,
+            string bandId,
+            GlobalLeaderboardPersistence persistence,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            var band = persistence.GetBandById(bandId);
+            if (band is null)
+                return Results.NotFound(new { error = "Band not found." });
+
+            var ranking = metaDb.GetBandTeamRanking(band.BandType, band.TeamKey);
+            var names = ranking is null
+                ? new Dictionary<string, string>()
+                : metaDb.GetDisplayNames(ranking.TeamMembers);
+            var jsonOpts = new JsonSerializerOptions(httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions)
+            {
+                DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+            };
+
+            return Results.Json(new
+            {
+                band,
+                ranking = ranking is null ? null : MapBandRanking(ranking, names),
+            }, jsonOpts);
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
         // ─── Single band team ranking ─────────────────────────
 
         app.MapGet("/api/rankings/bands/{bandType}/{teamKey}", (
@@ -463,6 +496,7 @@ public static partial class ApiEndpoints
 
             return Results.Ok(new
             {
+                ranking.BandId,
                 bandType,
                 comboId = comboValidation.ComboId,
                 rankBy = metric,
@@ -731,6 +765,7 @@ public static partial class ApiEndpoints
 
     private static object MapBandRanking(BandTeamRankingDto ranking, IReadOnlyDictionary<string, string> names) => new
     {
+        ranking.BandId,
         ranking.TeamKey,
         teamMembers = ranking.TeamMembers.Select(accountId => new
         {

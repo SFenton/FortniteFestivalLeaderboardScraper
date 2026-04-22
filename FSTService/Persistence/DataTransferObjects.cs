@@ -245,6 +245,17 @@ public sealed class PlayerBandTypeResponseDto
 }
 
 /// <summary>
+/// Flat response for one player's bands list, optionally filtered to a specific group.
+/// </summary>
+public sealed class PlayerBandListResponseDto
+{
+    public string AccountId { get; init; } = "";
+    public string Group { get; init; } = "all";
+    public int TotalCount { get; init; }
+    public List<PlayerBandEntryDto> Entries { get; init; } = [];
+}
+
+/// <summary>
 /// One grouped band section (all/duos/trios/quads) with total count and preview entries.
 /// </summary>
 public sealed class PlayerBandGroupDto
@@ -258,8 +269,10 @@ public sealed class PlayerBandGroupDto
 /// </summary>
 public sealed class PlayerBandEntryDto
 {
+    public string BandId { get; init; } = "";
     public string TeamKey { get; init; } = "";
     public string BandType { get; init; } = "";
+    public int AppearanceCount { get; init; }
     public List<PlayerBandMemberDto> Members { get; init; } = [];
 }
 
@@ -271,6 +284,15 @@ public sealed class PlayerBandMemberDto
     public string AccountId { get; init; } = "";
     public string? DisplayName { get; init; }
     public List<string> Instruments { get; init; } = [];
+}
+
+/// <summary>
+/// Band detail payload returned for a stable band id.
+/// </summary>
+public sealed class BandDetailDto
+{
+    public PlayerBandEntryDto Band { get; init; } = new();
+    public BandTeamRankingDto? Ranking { get; init; }
 }
 
 /// <summary>Song reference in top/bottom song lists within a stats tier.</summary>
@@ -598,6 +620,7 @@ public sealed class ComboLeaderboardEntry
 /// </summary>
 public sealed class BandTeamRankingDto
 {
+    public string BandId { get; init; } = "";
     public string BandType { get; init; } = "";
     public string? ComboId { get; init; }
     public string TeamKey { get; init; } = "";

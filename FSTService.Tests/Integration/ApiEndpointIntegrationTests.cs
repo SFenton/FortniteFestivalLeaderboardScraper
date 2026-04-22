@@ -1629,13 +1629,28 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             var bands = json.GetProperty("bands");
+            var allEntries = bands.GetProperty("all").GetProperty("entries");
 
             Assert.Equal(2, bands.GetProperty("all").GetProperty("totalCount").GetInt32());
             Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
             Assert.Equal(1, bands.GetProperty("trios").GetProperty("totalCount").GetInt32());
             Assert.Equal(0, bands.GetProperty("quads").GetProperty("totalCount").GetInt32());
 
+            Assert.Equal("bandsAcct1:bandsMate1", allEntries[0].GetProperty("teamKey").GetString());
+            Assert.Equal(2, allEntries[0].GetProperty("appearanceCount").GetInt32());
+            Assert.Equal("bandsAcct1:bandsMate1:bandsMate2", allEntries[1].GetProperty("teamKey").GetString());
+            Assert.Equal(1, allEntries[1].GetProperty("appearanceCount").GetInt32());
+
             var duoEntry = bands.GetProperty("duos").GetProperty("entries")[0];
+            var trioEntry = bands.GetProperty("trios").GetProperty("entries")[0];
+            var duoBandId = duoEntry.GetProperty("bandId").GetString();
+
+            Assert.True(Guid.TryParse(duoBandId, out _));
+            Assert.Equal(duoBandId, allEntries[0].GetProperty("bandId").GetString());
+            Assert.Equal(2, duoEntry.GetProperty("appearanceCount").GetInt32());
+            Assert.True(Guid.TryParse(trioEntry.GetProperty("bandId").GetString(), out _));
+            Assert.Equal(1, trioEntry.GetProperty("appearanceCount").GetInt32());
+
             var playerMember = duoEntry.GetProperty("members")
                 .EnumerateArray()
                 .Single(member => string.Equals(member.GetProperty("accountId").GetString(), "bandsAcct1", StringComparison.Ordinal));
@@ -1810,7 +1825,92 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var entries = json.GetProperty("entries");
         Assert.Equal(2, entries.GetArrayLength());
-        Assert.All(entries.EnumerateArray(), entry => Assert.Equal("Band_Duets", entry.GetProperty("bandType").GetString()));
+        Assert.All(entries.EnumerateArray(), entry =>
+        {
+            Assert.Equal("Band_Duets", entry.GetProperty("bandType").GetString());
+            Assert.True(Guid.TryParse(entry.GetProperty("bandId").GetString(), out _));
+            Assert.Equal(1, entry.GetProperty("appearanceCount").GetInt32());
+        });
+    }
+
+    [Fact]
+    public async Task ApiPlayerBandsList_ReturnsFlatListForRequestedGroup()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+        metaDb.InsertAccountIds(["flatBandsAcct", "flatBandsMate1", "flatBandsMate2"]);
+        metaDb.InsertAccountNames([
+            ("flatBandsAcct", (string?)"Flat Bands Player"),
+            ("flatBandsMate1", (string?)"Flat Mate One"),
+            ("flatBandsMate2", (string?)"Flat Mate Two"),
+        ]);
+
+        SeedBandRows(dataSource, "flat_bands_song_1", "Band_Duets", "flatBandsAcct:flatBandsMate1", (0, "flatBandsAcct", 0), (1, "flatBandsMate1", 1));
+        SeedBandRows(dataSource, "flat_bands_song_2", "Band_Duets", "flatBandsAcct:flatBandsMate1", (0, "flatBandsAcct", 3), (1, "flatBandsMate1", 1));
+        SeedBandRows(dataSource, "flat_bands_song_3", "Band_Trios", "flatBandsAcct:flatBandsMate1:flatBandsMate2", (0, "flatBandsAcct", 0), (1, "flatBandsMate1", 1), (2, "flatBandsMate2", 3));
+
+        var response = await _client.GetAsync("/api/player/flatBandsAcct/bands?group=all");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var entries = json.GetProperty("entries");
+
+        Assert.Equal("flatBandsAcct", json.GetProperty("accountId").GetString());
+        Assert.Equal("all", json.GetProperty("group").GetString());
+        Assert.Equal(2, json.GetProperty("totalCount").GetInt32());
+        Assert.Equal("flatBandsAcct:flatBandsMate1", entries[0].GetProperty("teamKey").GetString());
+        Assert.Equal(2, entries[0].GetProperty("appearanceCount").GetInt32());
+        Assert.True(Guid.TryParse(entries[0].GetProperty("bandId").GetString(), out _));
+    }
+
+    [Fact]
+    public async Task ApiBandDetail_ReturnsBand_ForBandId()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+        metaDb.InsertAccountIds(["bandDetailAcct", "bandDetailMate"]);
+        metaDb.InsertAccountNames([
+            ("bandDetailAcct", (string?)"Band Detail Player"),
+            ("bandDetailMate", (string?)"Band Detail Mate"),
+        ]);
+
+        SeedBandRows(dataSource, "band_detail_song_1", "Band_Duets", "bandDetailAcct:bandDetailMate", "0:1", (0, "bandDetailAcct", 0), (1, "bandDetailMate", 1));
+        SeedBandRows(dataSource, "band_detail_song_2", "Band_Duets", "bandDetailAcct:bandDetailMate", "3:1", (0, "bandDetailAcct", 3), (1, "bandDetailMate", 1));
+        metaDb.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+
+        var listResponse = await _client.GetAsync("/api/player/bandDetailAcct/bands?group=duos");
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        var listJson = await listResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var bandId = listJson.GetProperty("entries")[0].GetProperty("bandId").GetString();
+
+        var response = await _client.GetAsync($"/api/bands/{bandId}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var band = json.GetProperty("band");
+        var ranking = json.GetProperty("ranking");
+
+        Assert.Equal(bandId, band.GetProperty("bandId").GetString());
+        Assert.Equal("bandDetailAcct:bandDetailMate", band.GetProperty("teamKey").GetString());
+        Assert.Equal(2, band.GetProperty("appearanceCount").GetInt32());
+
+        if (ranking.ValueKind == JsonValueKind.Object)
+        {
+            Assert.Equal(bandId, ranking.GetProperty("bandId").GetString());
+            Assert.Equal("Band_Duets", ranking.GetProperty("bandType").GetString());
+            Assert.Equal("bandDetailAcct:bandDetailMate", ranking.GetProperty("teamKey").GetString());
+            Assert.Equal(2, ranking.GetProperty("songsPlayed").GetInt32());
+        }
+        else
+        {
+            Assert.Equal(JsonValueKind.Null, ranking.ValueKind);
+        }
     }
 
     [Fact]

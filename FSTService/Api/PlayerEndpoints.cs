@@ -592,6 +592,39 @@ public static partial class ApiEndpoints
         .WithTags("Players")
         .RequireRateLimiting("public");
 
+        app.MapGet("/api/player/{accountId}/bands", (
+            HttpContext httpContext,
+            string accountId,
+            string? group,
+            GlobalLeaderboardPersistence persistence,
+            [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            var normalizedGroup = string.IsNullOrWhiteSpace(group) ? "all" : group.Trim().ToLowerInvariant();
+            if (normalizedGroup is not ("all" or "duos" or "trios" or "quads"))
+                return Results.BadRequest(new { error = $"Unknown band group: {group}" });
+
+            var cacheKey = $"playerbandslist:{accountId}:{normalizedGroup}";
+
+            {
+                var result = CacheHelper.ServeIfCached(httpContext, playerCache.Get(cacheKey));
+                if (result is not null) return result;
+            }
+
+            var payload = persistence.GetPlayerBandsList(accountId, normalizedGroup);
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = playerCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
+        })
+        .WithTags("Players")
+        .RequireRateLimiting("public");
+
         app.MapGet("/api/player/{accountId}/bands/{bandType}", (
             HttpContext httpContext,
             string accountId,
