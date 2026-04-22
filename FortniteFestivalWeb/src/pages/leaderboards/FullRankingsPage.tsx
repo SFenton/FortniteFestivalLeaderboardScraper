@@ -174,8 +174,11 @@ export default function FullRankingsPage() {
 
   const rankWidth = useMemo(() => {
     const allRanks = entries.map((entry) => getDisplayRank(entry, metric));
+    if (!isMobile && playerRanking) {
+      allRanks.push(getDisplayRank(playerRanking, metric));
+    }
     return computeRankWidth(allRanks);
-  }, [entries, metric]);
+  }, [entries, isMobile, metric, playerRanking]);
 
   const playerRankWidth = useMemo(() => {
     if (!playerRanking) return undefined;

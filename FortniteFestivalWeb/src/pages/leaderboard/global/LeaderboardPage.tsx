@@ -303,19 +303,26 @@ export default function LeaderboardPage() {
   /* v8 ignore stop */
 
   const scoreWidth = useMemo(() => {
+    const scoreLengths = entries.map((e) => e.score.toLocaleString().length);
+    if (!isMobile && effectivePlayerScore?.score != null) {
+      scoreLengths.push(effectivePlayerScore.score.toLocaleString().length);
+    }
     const maxLen = Math.max(
-      ...entries.map((e) => e.score.toLocaleString().length),
+      ...scoreLengths,
       1,
     );
     return `${maxLen}ch`;
-  }, [entries]);
+  }, [effectivePlayerScore?.score, entries, isMobile]);
 
-  // Compute rank column width from the longest rank across page entries (footer computes its own)
+  // On desktop, let the tracked player row influence the scroll-row rank width.
   const rankWidth = useMemo(() => {
     const base = page * PAGE_SIZE;
     const ranks = entries.map((e, i) => e.rank ?? base + i + 1);
+    if (!isMobile && effectivePlayerScore?.rank != null) {
+      ranks.push(effectivePlayerScore.rank);
+    }
     return computeRankWidth(ranks);
-  }, [entries, page]);
+  }, [effectivePlayerScore?.rank, entries, isMobile, page]);
 
   const playerRankWidth = useMemo(() => {
     if (!effectivePlayerScore?.rank) return undefined;

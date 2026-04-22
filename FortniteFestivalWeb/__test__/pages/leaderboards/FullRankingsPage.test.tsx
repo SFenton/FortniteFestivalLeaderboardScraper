@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankingHelpers';
-import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
+import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 
 const mockApi = vi.hoisted(() => ({
@@ -52,6 +52,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  stubMatchMedia(false);
   localStorage.clear();
   localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player', displayName: 'Test Player' }));
 
@@ -115,7 +116,39 @@ describe('FullRankingsPage', () => {
     expect(await screen.findByText('Lead + Drums Leaderboards')).toBeTruthy();
   });
 
-  it('keeps the fixed player footer width independent from the scrollable page rows', async () => {
+  it('includes the tracked player rank in desktop scroll-row width calculation', async () => {
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 12345,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
+    });
+    mockApi.getPlayerRanking.mockResolvedValue(
+      makeAccountRankingEntry(12345, { accountId: 'test-player', displayName: 'Test Player' }),
+    );
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const topRank = await screen.findByText('#1');
+    const playerRank = await screen.findByText('#12,345');
+    const expectedWidth = computeRankWidth([1, 12345]);
+
+    expect(topRank).toHaveStyle({ width: `${expectedWidth}px` });
+    expect(playerRank).toHaveStyle({ width: `${computeRankWidth([12345])}px` });
+    expect(topRank.style.width).toBe(playerRank.style.width);
+  });
+
+  it('keeps mobile scroll-row rank width scoped to page entries only', async () => {
+    stubMatchMedia(true);
+
     mockApi.getRankings.mockResolvedValue({
       instrument: 'Solo_Guitar',
       rankBy: 'totalscore',

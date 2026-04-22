@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
 import LeaderboardPage, { clearLeaderboardCache } from '../../../../src/pages/leaderboard/global/LeaderboardPage';
+import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { TestProviders } from '../../../helpers/TestProviders';
-import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../helpers/browserStubs';
+import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubMatchMedia } from '../../../helpers/browserStubs';
 
 const defaultEntries = [
   { accountId: 'acc-1', displayName: 'Player One', score: 145000, rank: 1, percentile: 99, accuracy: 99.5, isFullCombo: true, stars: 6, season: 5 },
@@ -52,6 +53,40 @@ beforeAll(() => {
   stubElementDimensions(800);
 });
 
+function stubViewportWidth(width: number) {
+  const matchMedia = vi.fn().mockImplementation((query: string) => {
+    const minWidth = query.match(/\(min-width:\s*(\d+)px\)/);
+    const maxWidth = query.match(/\(max-width:\s*(\d+)px\)/);
+    let matches = true;
+
+    if (minWidth) {
+      matches = matches && width >= Number(minWidth[1]);
+    }
+    if (maxWidth) {
+      matches = matches && width <= Number(maxWidth[1]);
+    }
+
+    return {
+      matches,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    };
+  });
+
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: matchMedia,
+  });
+
+  return matchMedia;
+}
+
 function resetMocks() {
   mockApi.getSongs.mockResolvedValue({ songs: [
     { songId: 'song-1', title: 'Test Song One', artist: 'Artist A', year: 2024, albumArt: 'https://example.com/art1.jpg' },
@@ -74,6 +109,7 @@ function resetMocks() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  stubMatchMedia(false);
   localStorage.clear();
   clearLeaderboardCache();
   resetMocks();
@@ -517,6 +553,60 @@ describe('LeaderboardPage — coverage: player footer with tracked score', () =>
       fireEvent.click(footer);
     }
     expect(document.body.innerHTML).toBeTruthy();
+  });
+
+  it('includes tracked player rank and score in desktop page-row width calculation', async () => {
+    stubViewportWidth(1024);
+
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 1, totalEntries: 12345, localEntries: 12345,
+      entries: [
+        { accountId: 'acc-1', displayName: 'Top Player', score: 500, rank: 1, accuracy: 99.5, isFullCombo: true, stars: 6, season: 5 },
+      ],
+    });
+    mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1, scores: [
+      { songId: 'song-1', instrument: 'Solo_Guitar', score: 1200000, rank: 12345, percentile: 10, accuracy: 80.1, isFullCombo: false, stars: 4, season: 5 },
+    ] });
+
+    renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
+
+    const topRank = await screen.findByText('#1');
+    const playerRank = await screen.findByText('#12,345');
+    const topScore = await screen.findByText('500');
+    const playerScore = await screen.findByText('1,200,000');
+
+    expect(topRank).toHaveStyle({ width: `${computeRankWidth([1, 12345])}px` });
+    expect(playerRank).toHaveStyle({ width: `${computeRankWidth([12345])}px` });
+    expect(topRank.style.width).toBe(playerRank.style.width);
+    expect(topScore.style.width).toBe('9ch');
+    expect(playerScore.style.width).toBe('9ch');
+  });
+
+  it('keeps mobile page-row rank and score widths scoped to page entries only', async () => {
+    stubViewportWidth(375);
+
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 1, totalEntries: 12345, localEntries: 12345,
+      entries: [
+        { accountId: 'acc-1', displayName: 'Top Player', score: 500, rank: 1, accuracy: 99.5, isFullCombo: true, stars: 6, season: 5 },
+      ],
+    });
+    mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1, scores: [
+      { songId: 'song-1', instrument: 'Solo_Guitar', score: 1200000, rank: 12345, percentile: 10, accuracy: 80.1, isFullCombo: false, stars: 4, season: 5 },
+    ] });
+
+    renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
+
+    const topRank = await screen.findByText('#1');
+    const playerRank = await screen.findByText('#12,345');
+    const topScore = await screen.findByText('500');
+    const playerScore = await screen.findByText('1,200,000');
+
+    expect(topRank).toHaveStyle({ width: `${computeRankWidth([1])}px` });
+    expect(playerRank).toHaveStyle({ width: `${computeRankWidth([12345])}px` });
+    expect(topRank.style.width).not.toBe(playerRank.style.width);
+    expect(topScore.style.width).toBe('3ch');
+    expect(playerScore.style.width).toBe('9ch');
   });
 });
 
