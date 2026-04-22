@@ -4,7 +4,7 @@ import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
 import { RadioRow } from '../../../components/common/RadioRow';
 import FirstRunCarousel from '../../../components/firstRun/FirstRunCarousel';
-import { RANKING_METRICS, EXPERIMENTAL_METRICS } from '../helpers/rankingHelpers';
+import { getEnabledRankingMetrics, isExperimentalRankingMetric } from '../helpers/rankingHelpers';
 import { getMetricInfoSlides } from '../firstRun/metricInfo';
 import type { RankingMetric } from '@festival/core/api/serverTypes';
 
@@ -15,9 +15,10 @@ type RankByModalProps = {
   onClose: () => void;
   onApply: () => void;
   onReset: () => void;
+  experimentalRanksEnabled: boolean;
 };
 
-export default function RankByModal({ visible, draft, onDraftChange, onClose, onApply, onReset }: RankByModalProps) {
+export default function RankByModal({ visible, draft, onDraftChange, onClose, onApply, onReset, experimentalRanksEnabled }: RankByModalProps) {
   const { t } = useTranslation();
   const [infoMetric, setInfoMetric] = useState<RankingMetric | null>(null);
 
@@ -33,14 +34,14 @@ export default function RankByModal({ visible, draft, onDraftChange, onClose, on
         resetHint={t('rankings.rankByResetHint')}
       >
         <ModalSection title={t('rankings.rankBy')} hint={t('rankings.rankByHint')}>
-          {RANKING_METRICS.map((m) => (
+          {getEnabledRankingMetrics(experimentalRanksEnabled).map((m) => (
             <RadioRow
               key={m}
               label={t(`rankings.metric.${m}`)}
               hint={t(`rankings.metric.${m}Desc`)}
               selected={draft === m}
               onSelect={() => onDraftChange(m)}
-              onInfo={EXPERIMENTAL_METRICS.includes(m) ? () => setInfoMetric(m) : undefined}
+              onInfo={isExperimentalRankingMetric(m) ? () => setInfoMetric(m) : undefined}
             />
           ))}
         </ModalSection>

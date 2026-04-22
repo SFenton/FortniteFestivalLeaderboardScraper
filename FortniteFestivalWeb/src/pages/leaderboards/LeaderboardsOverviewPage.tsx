@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router-dom';
 import { IoOptions } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
@@ -33,6 +34,7 @@ import {
   GridTemplate, Size, STAGGER_INTERVAL, FADE_DURATION,
 } from '@festival/theme';
 import { leaderboardsSlides } from './firstRun';
+import { coerceRankingMetric } from './helpers/rankingHelpers';
 
 /** Set to 1 to stagger the right column one slot (125 ms) after the left. */
 const COLUMN_STAGGER_OFFSET = 1;
@@ -40,19 +42,21 @@ const COLUMN_STAGGER_OFFSET = 1;
 export default function LeaderboardsOverviewPage() {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
   const { player } = useTrackedPlayer();
   const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const scrollContainerRef = useScrollContainer();
   const [searchParams, setSearchParams] = useSearchParams();
   const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
-  const metric = settings.enableExperimentalRanks ? rawMetric : 'totalscore' as RankingMetric;
+  const metric = coerceRankingMetric(rawMetric, experimentalRanksEnabled);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
 
   const openMetricModal = useCallback(() => {
+    if (!experimentalRanksEnabled) return;
     metricModal.open(metric);
-  }, [metricModal, metric]);
+  }, [experimentalRanksEnabled, metricModal, metric]);
 
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
   const resetRush = useCallback(() => staggerRushRef.current?.(), []);
@@ -67,9 +71,9 @@ export default function LeaderboardsOverviewPage() {
   }, [metricModal, setSearchParams, scrollContainerRef, resetRush]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: () => {} });
+    fabSearch.registerLeaderboardActions({ openMetric: experimentalRanksEnabled ? openMetricModal : () => {}, openInstrument: () => {} });
     return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
-  }, [fabSearch, openMetricModal]);
+  }, [experimentalRanksEnabled, fabSearch, openMetricModal]);
 
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
 
@@ -126,7 +130,7 @@ export default function LeaderboardsOverviewPage() {
   }, [loadPhase, shouldStagger, maxEntriesPerCard, cols, instruments.length, itemsPerCard]);
 
   const s = useLeaderboardsStyles();
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled: settings.enableExperimentalRanks }), [player, settings.enableExperimentalRanks]);
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled }), [experimentalRanksEnabled, player]);
 
   return (
     <Page
@@ -141,7 +145,7 @@ export default function LeaderboardsOverviewPage() {
         <PageHeader
           title={t('rankings.title')}
           actions={
-            !isMobile && !allErrored && settings.enableExperimentalRanks ? (
+            !isMobile && !allErrored && experimentalRanksEnabled ? (
               <ActionPill
                 icon={<IoOptions size={Size.iconAction} />}
                 label={t(`rankings.metric.${metric}`)}
@@ -155,12 +159,13 @@ export default function LeaderboardsOverviewPage() {
       }
       after={
         <RankByModal
-          visible={metricModal.visible}
+          visible={metricModal.visible && experimentalRanksEnabled}
           draft={metricModal.draft}
           onDraftChange={metricModal.setDraft}
           onClose={metricModal.close}
           onApply={applyMetric}
           onReset={metricModal.reset}
+          experimentalRanksEnabled={experimentalRanksEnabled}
         />
       }
     >

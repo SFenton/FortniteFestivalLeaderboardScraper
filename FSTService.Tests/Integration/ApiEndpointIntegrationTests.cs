@@ -84,6 +84,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.False(json.GetProperty("leaderboards").GetBoolean());
         Assert.False(json.GetProperty("difficulty").GetBoolean());
         Assert.False(json.GetProperty("playerBands").GetBoolean());
+        Assert.False(json.GetProperty("experimentalRanks").GetBoolean());
         Assert.False(json.TryGetProperty("rivals", out _));
         Assert.False(json.TryGetProperty("firstRun", out _));
     }

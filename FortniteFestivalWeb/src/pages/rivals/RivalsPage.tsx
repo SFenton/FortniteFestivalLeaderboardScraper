@@ -36,6 +36,7 @@ import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import RankByModal from '../leaderboards/modals/RankByModal';
+import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedInstrumentRivals: InstrumentRivals[] = [];
@@ -62,7 +63,10 @@ export default function RivalsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { settings } = useSettings();
-  const { leaderboards: leaderboardsEnabled } = useFeatureFlags();
+  const {
+    leaderboards: leaderboardsEnabled,
+    experimentalRanks: experimentalRanksEnabled = false,
+  } = useFeatureFlags();
   const { player } = useTrackedPlayer();
   const isMobile = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
@@ -71,23 +75,25 @@ export default function RivalsPage() {
   const fabSearch = useFabSearch();
 
   const activeTab = (searchParams.get('tab') === 'leaderboard' ? 'leaderboard' : 'song') as 'song' | 'leaderboard';
-  const rankBy = (searchParams.get('rankBy') as RankingMetric) || 'totalscore';
+  const rankBy = coerceRankingMetric(searchParams.get('rankBy'), experimentalRanksEnabled);
   const setTab = useCallback((tab: 'song' | 'leaderboard') => {
     const params: Record<string, string> = {};
     if (tab === 'leaderboard') { params.tab = 'leaderboard'; if (rankBy !== 'totalscore') params.rankBy = rankBy; }
     setSearchParams(params, { replace: true });
   }, [setSearchParams, rankBy]);
   const setRankBy = useCallback((metric: RankingMetric) => {
+    const nextMetric = coerceRankingMetric(metric, experimentalRanksEnabled);
     const params: Record<string, string> = { tab: 'leaderboard' };
-    if (metric !== 'totalscore') params.rankBy = metric;
+    if (nextMetric !== 'totalscore') params.rankBy = nextMetric;
     setSearchParams(params, { replace: true });
-  }, [setSearchParams]);
+  }, [experimentalRanksEnabled, setSearchParams]);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
 
   const openMetricModal = useCallback(() => {
+    if (!experimentalRanksEnabled) return;
     metricModal.open(rankBy);
-  }, [metricModal, rankBy]);
+  }, [experimentalRanksEnabled, metricModal, rankBy]);
 
   const applyMetric = useCallback(() => {
     setRankBy(metricModal.draft);
@@ -490,7 +496,7 @@ export default function RivalsPage() {
                 <>
                   {toggleTabAction}
                   {compactQuickLinksAction}
-                  {activeTab === 'leaderboard' && settings.enableExperimentalRanks && (
+                  {activeTab === 'leaderboard' && experimentalRanksEnabled && (
                     <ActionPill
                       icon={<IoOptions size={Size.iconAction} />}
                       label={t(`rankings.metric.${rankBy}`)}
@@ -508,12 +514,13 @@ export default function RivalsPage() {
       fabSpacer={phase === LoadPhase.ContentIn && !hasAnyRivals ? 'none' : 'end'}
       after={
         <RankByModal
-          visible={metricModal.visible}
+          visible={metricModal.visible && experimentalRanksEnabled}
           draft={metricModal.draft}
           onDraftChange={metricModal.setDraft}
           onClose={metricModal.close}
           onApply={applyMetric}
           onReset={metricModal.reset}
+          experimentalRanksEnabled={experimentalRanksEnabled}
         />
       }
     >

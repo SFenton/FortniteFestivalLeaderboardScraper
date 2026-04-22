@@ -99,6 +99,22 @@ beforeEach(() => {
 const { default: FullRankingsPage } = await import('../../../src/pages/leaderboards/FullRankingsPage');
 
 describe('FullRankingsPage', () => {
+  it('coerces experimental metric deep links to totalscore when the feature flag is off', async () => {
+    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ experimentalRanks: false }));
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'totalscore', 1, 25);
+    });
+  });
+
   it('loads combo ranking routes with combo leaderboard queries', async () => {
     render(
       <TestProviders route="/leaderboards/all?combo=05&rankBy=totalscore" accountId="test-player">

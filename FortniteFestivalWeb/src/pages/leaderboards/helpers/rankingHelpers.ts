@@ -57,11 +57,30 @@ export function formatRating(value: number, metric: RankingMetric): string {
 /** The default (non-experimental) metric. */
 export const DEFAULT_METRICS: RankingMetric[] = ['totalscore'];
 
-/** Experimental metrics gated behind the enableExperimentalRanks setting. */
+/** Experimental metrics gated behind the experimentalRanks feature flag. */
 export const EXPERIMENTAL_METRICS: RankingMetric[] = ['adjusted', 'weighted', 'fcrate', 'maxscore'];
 
 /** All available ranking metrics in display order. */
 export const RANKING_METRICS: RankingMetric[] = [...DEFAULT_METRICS, ...EXPERIMENTAL_METRICS];
+
+export function isExperimentalRankingMetric(metric: RankingMetric): boolean {
+  return EXPERIMENTAL_METRICS.includes(metric);
+}
+
+export function getEnabledRankingMetrics(experimentalRanksEnabled: boolean): RankingMetric[] {
+  return experimentalRanksEnabled ? RANKING_METRICS : DEFAULT_METRICS;
+}
+
+export function coerceRankingMetric(metric: string | RankingMetric | null | undefined, experimentalRanksEnabled: boolean): RankingMetric {
+  if (typeof metric !== 'string' || !RANKING_METRICS.includes(metric as RankingMetric)) {
+    return 'totalscore';
+  }
+
+  const parsedMetric = metric as RankingMetric;
+  return !experimentalRanksEnabled && isExperimentalRankingMetric(parsedMetric)
+    ? 'totalscore'
+    : parsedMetric;
+}
 
 /**
  * Compute a pixel-based width that fits the longest formatted rank in a list.

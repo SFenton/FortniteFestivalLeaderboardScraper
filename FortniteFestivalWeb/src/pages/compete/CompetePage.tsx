@@ -9,6 +9,7 @@ import { queryKeys } from '../../api/queryKeys';
 import { rankingsCache } from '../../api/pageCache';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import type {
   RankingsPageResponse,
@@ -64,6 +65,7 @@ export default function CompetePage() {
   const navigate = useNavigate();
   const { player } = useTrackedPlayer();
   const { settings } = useSettings();
+  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
   const isMobile = useIsMobileChrome();
 
   const accountId = player?.accountId ?? '';
@@ -143,8 +145,8 @@ export default function CompetePage() {
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
   const firstRunGateCtx = useMemo(
-    () => ({ hasPlayer: !!player, experimentalRanksEnabled: settings.enableExperimentalRanks }),
-    [player, settings.enableExperimentalRanks],
+    () => ({ hasPlayer: !!player, experimentalRanksEnabled }),
+    [experimentalRanksEnabled, player],
   );
 
   const navigateToLeaderboards = (scope: RankingScope) => {

@@ -770,15 +770,6 @@ export default function SettingsPage() {
                     </div>
                   </div>
                 </div>
-                {flags.leaderboards && (
-                <ToggleRow
-                  label={t('settings.experimentalRanks')}
-                  description={t('settings.experimentalRanksDesc')}
-                  checked={settings.enableExperimentalRanks}
-                  onToggle={() => updateSettings({ enableExperimentalRanks: !settings.enableExperimentalRanks })}
-                  large={isMobile}
-                />
-                )}
                 <ToggleRow
                   label={t('settings.lightTrails', 'Light Trails')}
                   description={t('settings.lightTrailsDesc', 'Show a soft glow that follows your cursor across cards. Only visible with a mouse — disabling may improve performance.')}

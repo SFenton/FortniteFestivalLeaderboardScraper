@@ -209,7 +209,11 @@ export default function PlayerContent({
 }: PlayerContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const { leaderboards: leaderboardsEnabled, playerBands: playerBandsEnabled } = useFeatureFlags();
+  const {
+    leaderboards: leaderboardsEnabled,
+    playerBands: playerBandsEnabled,
+    experimentalRanks: experimentalRanksEnabled = false,
+  } = useFeatureFlags();
   const scrollContainerRef = useScrollContainer();
   const location = useLocation();
   const navigate = useNavigate();
@@ -428,7 +432,7 @@ export default function PlayerContent({
   }
 
   // --- Overall summary stat boxes ---
-  const overallSummaryItems = buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, statsData?.compositeRanks, settings.enableExperimentalRanks, navigateToLeaderboard);
+  const overallSummaryItems = buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, statsData?.compositeRanks, experimentalRanksEnabled, navigateToLeaderboard);
   items.push(...overallSummaryItems);
 
   // --- Instrument Statistics heading ---
@@ -462,7 +466,7 @@ export default function PlayerContent({
     const totalRanked = hasRankTiers
       ? (statsData!.instrumentRanks as InstrumentRankEntry[])?.find(e => e.ins === comboIdFromInstruments([inst]))?.totalRanked
       : rankingDto?.totalRankedAccounts;
-    const instrumentItems = buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard, data.accountId, totalRanked, leaderboardsEnabled);
+    const instrumentItems = buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), experimentalRanksEnabled, navigateToLeaderboard, data.accountId, totalRanked, leaderboardsEnabled);
     if (instrumentItems.length > 0) {
       instrumentSectionFirstKeys.set(inst, instrumentItems[0]!.key);
     }

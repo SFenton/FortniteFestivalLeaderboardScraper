@@ -92,6 +92,7 @@ import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/PageQuickLinksContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visiblePathInstruments } from './contexts/SettingsContext';
+import { useFeatureFlags } from './contexts/FeatureFlagsContext';
 import { useProximityGlow } from './hooks/ui/useProximityGlow';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
@@ -245,6 +246,7 @@ function AppShell() {
   const { player, setPlayer, clearPlayer } = useTrackedPlayer();
   const { state: { songs } } = useFestival();
   const { settings } = useSettings();
+  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
 
   // Proximity glow for frosted cards — document-level for full coverage
   useProximityGlow(!settings.disableLightTrails);
@@ -564,7 +566,7 @@ function AppShell() {
       {isMobile && RoutePatterns.leaderboards.test(location.pathname) && (() => {
         const leaderboardActions = [
           ...(location.pathname === '/leaderboards/all' ? [{ label: t('rankings.changeInstrument'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
-          ...(settings.enableExperimentalRanks ? [{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
+          ...(experimentalRanksEnabled ? [{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
         ];
         return (
         <FloatingActionButton

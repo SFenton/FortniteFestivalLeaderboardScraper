@@ -6,6 +6,7 @@ import { IoOptions, IoMusicalNotes } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../contexts/SettingsContext';
 import { RankingEntry } from './components/RankingEntry';
@@ -40,6 +41,7 @@ import { Size, Colors, Font, Weight } from '@festival/theme';
 import InstrumentPickerModal from './modals/InstrumentPickerModal';
 import RankByModal from './modals/RankByModal';
 import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScopes';
+import { coerceRankingMetric } from './helpers/rankingHelpers';
 
 type FullRankingsData = RankingsPageResponse | ComboPageResponse;
 type FullPlayerRanking = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
@@ -48,13 +50,14 @@ export default function FullRankingsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const { settings } = useSettings();
+  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
 
   const rawComboId = searchParams.get('combo');
   const comboId = rawComboId && isRankingScopeComboId(rawComboId) ? rawComboId : null;
   const isCombo = comboId != null;
   const instrument = (searchParams.get('instrument') ?? 'Solo_Guitar') as InstrumentKey;
   const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
-  const metric = settings.enableExperimentalRanks ? rawMetric : 'totalscore' as RankingMetric;
+  const metric = coerceRankingMetric(rawMetric, experimentalRanksEnabled);
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
 
   const { player } = useTrackedPlayer();
@@ -67,15 +70,16 @@ export default function FullRankingsPage() {
   const instrumentModal = useModalState<InstrumentKey>(() => DEFAULT_INSTRUMENT);
 
   const openMetricModal = useCallback(() => {
+    if (!experimentalRanksEnabled) return;
     metricModal.open(metric);
-  }, [metricModal, metric]);
+  }, [experimentalRanksEnabled, metricModal, metric]);
 
   const openInstrumentModal = useCallback(() => {
     instrumentModal.open(instrument);
   }, [instrumentModal, instrument]);
 
   const applyMetric = useCallback(() => {
-    const nextMetric = metricModal.draft;
+    const nextMetric = coerceRankingMetric(metricModal.draft, experimentalRanksEnabled);
     metricModal.close();
     saveLeaderboardRankBy(nextMetric);
     scrollContainerRef.current?.scrollTo(0, 0);
@@ -86,7 +90,7 @@ export default function FullRankingsPage() {
         : { instrument, rankBy: nextMetric, page: '1' },
       { replace: true },
     );
-  }, [comboId, instrument, isCombo, metricModal, scrollContainerRef, setSearchParams]);
+  }, [comboId, experimentalRanksEnabled, instrument, isCombo, metricModal, scrollContainerRef, setSearchParams]);
 
   const applyInstrument = useCallback(() => {
     const nextInstrument = instrumentModal.draft;
@@ -97,9 +101,9 @@ export default function FullRankingsPage() {
   }, [instrumentModal, metric, scrollContainerRef, setSearchParams]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: isCombo ? () => {} : openInstrumentModal });
+    fabSearch.registerLeaderboardActions({ openMetric: experimentalRanksEnabled ? openMetricModal : () => {}, openInstrument: isCombo ? () => {} : openInstrumentModal });
     return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
-  }, [fabSearch, isCombo, openInstrumentModal, openMetricModal]);
+  }, [experimentalRanksEnabled, fabSearch, isCombo, openInstrumentModal, openMetricModal]);
 
   const cacheKey = isCombo ? `combo:${comboId}:${metric}` : `${instrument}:${metric}`;
   const cached = rankingsCache.get(cacheKey);
@@ -212,7 +216,7 @@ export default function FullRankingsPage() {
                     active={instrument !== DEFAULT_INSTRUMENT}
                   />
                 )}
-                {settings.enableExperimentalRanks && (
+                {experimentalRanksEnabled && (
                   <ActionPill
                     icon={<IoOptions size={Size.iconAction} />}
                     label={t(`rankings.metric.${metric}`)}
@@ -237,12 +241,13 @@ export default function FullRankingsPage() {
           />
         )}
         <RankByModal
-          visible={metricModal.visible}
+          visible={metricModal.visible && experimentalRanksEnabled}
           draft={metricModal.draft}
           onDraftChange={metricModal.setDraft}
           onClose={metricModal.close}
           onApply={applyMetric}
           onReset={metricModal.reset}
+          experimentalRanksEnabled={experimentalRanksEnabled}
         />
       </>}
     >

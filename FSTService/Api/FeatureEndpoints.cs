@@ -15,6 +15,7 @@ public static partial class ApiEndpoints
                 leaderboards = f.Leaderboards,
                 difficulty = f.Difficulty,
                 playerBands = f.PlayerBands,
+                experimentalRanks = f.ExperimentalRanks,
             });
         })
         .WithTags("Features")

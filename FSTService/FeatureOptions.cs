@@ -17,6 +17,9 @@ public sealed class FeatureOptions
     /// <summary>Player details page bands section.</summary>
     public bool PlayerBands { get; set; }
 
+    /// <summary>Experimental leaderboard ranking metrics and related UI.</summary>
+    public bool ExperimentalRanks { get; set; }
+
     /// <summary>
     /// When true, the scrape pipeline computes per-bucket ranking deltas for
     /// leeway-aware global rankings. When false, global rankings always use

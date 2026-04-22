@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
@@ -21,6 +22,7 @@ import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScopes';
+import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedAllRivalsKey: string | null = null;
@@ -40,7 +42,8 @@ export default function AllRivalsPage() {
   const [searchParams] = useSearchParams();
   const category = searchParams.get('category') ?? 'common';
   const mode = searchParams.get('mode');
-  const rankBy = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
+  const rankBy = coerceRankingMetric(searchParams.get('rankBy'), experimentalRanksEnabled);
   const isLeaderboard = mode === 'leaderboard';
   const navigate = useNavigate();
   const { settings } = useSettings();

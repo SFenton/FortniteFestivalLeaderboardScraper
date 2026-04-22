@@ -8,10 +8,11 @@ export type FeatureFlags = {
   leaderboards: boolean;
   difficulty: boolean;
   playerBands: boolean;
+  experimentalRanks: boolean;
 };
 
-const ALL_ON: FeatureFlags = { compete: true, leaderboards: true, difficulty: true, playerBands: true };
-const ALL_OFF: FeatureFlags = { compete: false, leaderboards: false, difficulty: false, playerBands: false };
+const ALL_ON: FeatureFlags = { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true };
+const ALL_OFF: FeatureFlags = { compete: false, leaderboards: false, difficulty: false, playerBands: false, experimentalRanks: false };
 
 function normalizeFeatureFlags(flags: FeatureFlags): FeatureFlags {
   return { ...flags, compete: flags.leaderboards };

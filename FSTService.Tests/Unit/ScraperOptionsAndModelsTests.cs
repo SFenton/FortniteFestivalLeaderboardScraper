@@ -64,6 +64,7 @@ public class ScraperOptionsAndModelsTests
 
         Assert.False(opts.Leaderboards);
         Assert.False(opts.Compete);
+        Assert.False(opts.ExperimentalRanks);
     }
 
     [Fact]
@@ -79,6 +80,16 @@ public class ScraperOptionsAndModelsTests
         Assert.True(opts.Compete);
 
         opts.Leaderboards = false;
+        Assert.False(opts.Compete);
+    }
+
+    [Fact]
+    public void FeatureOptions_ExperimentalRanks_IsIndependent_FromLeaderboards()
+    {
+        var opts = new FeatureOptions { ExperimentalRanks = true };
+
+        Assert.True(opts.ExperimentalRanks);
+        Assert.False(opts.Leaderboards);
         Assert.False(opts.Compete);
     }
 

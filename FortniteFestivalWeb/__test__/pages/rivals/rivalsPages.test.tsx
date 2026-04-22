@@ -169,6 +169,16 @@ async function advancePastSpinner() {
 /* ── RivalsPage ── */
 
 describe('RivalsPage', () => {
+  it('coerces experimental leaderboard rankBy to totalscore when the feature flag is off', async () => {
+    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ experimentalRanks: false }));
+
+    renderPage('/rivals?tab=leaderboard&rankBy=adjusted', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getLeaderboardRivals).toHaveBeenCalledWith('Solo_Guitar', 'test-1', 'totalscore');
+  });
+
   it('renders the page', async () => {
     const { container } = renderPage('/rivals', <RivalsPage />, '/rivals');
     await advancePastSpinner();
