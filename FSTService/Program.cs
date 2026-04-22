@@ -522,7 +522,10 @@ notificationService.SetFestivalService(festivalService);
 notificationService.SetSyncTracker(app.Services.GetRequiredService<UserSyncProgressTracker>());
 
 app.UseCors();
-app.UseWebSockets();
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30),
+});
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,

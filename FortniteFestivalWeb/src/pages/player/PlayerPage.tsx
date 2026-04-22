@@ -64,7 +64,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const qc = useQueryClient();
 
   const { isSyncing: localSyncing, phase: localPhase, backfillProgress: localBfProg, historyProgress: localHrProg, rivalsProgress: localRvProg, entriesFound: localEntriesFound, itemsCompleted: localItemsCompleted, totalItems: localTotalItems, currentSongName: localCurrentSong, seasonsQueried: localSeasonsQueried, rivalsFound: localRivalsFound, isThrottled: localIsThrottled, throttleStatusKey: localThrottleStatusKey, pendingRankUpdate: localPendingRankUpdate, estimatedRankUpdateMinutes: localEstimatedRankUpdateMinutes, probeStatusKey: localProbeStatusKey, nextRetrySeconds: localNextRetrySeconds, justCompleted: localJustCompleted, clearCompleted: localClearCompleted } =
-    useSyncStatus(!isTrackedPlayer ? accountId : undefined, { track: false });
+    useSyncStatus(!isTrackedPlayer ? accountId : undefined, { track: false, useWebSocket: false });
 
   // For tracked player, pull justCompleted from context
   const justCompleted = isTrackedPlayer ? ctx.justCompleted : localJustCompleted;

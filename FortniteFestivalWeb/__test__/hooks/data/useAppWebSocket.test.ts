@@ -11,6 +11,19 @@ import { renderHook, act } from '@testing-library/react';
 // ── Mock WebSocket ──
 
 let wsInstances: MockWebSocket[] = [];
+let documentHidden = false;
+
+function setDocumentHidden(hidden: boolean) {
+  documentHidden = hidden;
+  Object.defineProperty(document, 'hidden', {
+    configurable: true,
+    get: () => documentHidden,
+  });
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => (documentHidden ? 'hidden' : 'visible'),
+  });
+}
 
 class MockWebSocket {
   static readonly CONNECTING = 0;
@@ -67,6 +80,7 @@ describe('useAppWebSocket lifecycle', () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     wsInstances = [];
+    setDocumentHidden(false);
     origWebSocket = globalThis.WebSocket;
     (globalThis as any).WebSocket = MockWebSocket;
 
@@ -77,6 +91,7 @@ describe('useAppWebSocket lifecycle', () => {
   });
 
   afterEach(() => {
+    setDocumentHidden(false);
     vi.useRealTimers();
     globalThis.WebSocket = origWebSocket;
   });
@@ -255,6 +270,40 @@ describe('useAppWebSocket lifecycle', () => {
     // Should reconnect again at 1s (not 2s) because open reset the delay
     act(() => { vi.advanceTimersByTime(1_100); });
     expect(wsInstances).toHaveLength(3);
+  });
+
+  it('restarts the socket after returning from a long hidden period', () => {
+    renderHook(() => useAppWebSocket());
+    const ws1 = wsInstances[0];
+    act(() => { ws1.simulateOpen(); });
+
+    act(() => {
+      setDocumentHidden(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      vi.advanceTimersByTime(6_000);
+      setDocumentHidden(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(ws1.close).toHaveBeenCalled();
+    expect(wsInstances.length).toBeGreaterThan(1);
+  });
+
+  it('does not restart the socket after a brief hidden period', () => {
+    renderHook(() => useAppWebSocket());
+    const ws1 = wsInstances[0];
+    act(() => { ws1.simulateOpen(); });
+
+    act(() => {
+      setDocumentHidden(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      vi.advanceTimersByTime(500);
+      setDocumentHidden(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    expect(ws1.close).not.toHaveBeenCalled();
+    expect(wsInstances).toHaveLength(1);
   });
 
   // ── Error handling ──

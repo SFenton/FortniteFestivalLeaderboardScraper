@@ -47,8 +47,9 @@ import { SYNC_POLL_ACTIVE_MS, SYNC_POLL_IDLE_MS } from '@festival/theme';
 /** How long to wait without a WS message before falling back to HTTP polling */
 const WS_STALE_MS = 10_000;
 
-export function useSyncStatus(accountId: string | undefined, options?: { track?: boolean }) {
+export function useSyncStatus(accountId: string | undefined, options?: { track?: boolean; useWebSocket?: boolean }) {
   const track = options?.track ?? true;
+  const useWebSocket = options?.useWebSocket ?? true;
   const [syncState, setSyncState] = useState<SyncState>({
     isSyncing: false,
     phase: SyncPhase.Idle,
@@ -74,9 +75,11 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   const syncKickedRef = useRef(false);
   const mountedRef = useRef(true);
   const lastWsMsgRef = useRef(0);
+  const desiredAccountRef = useRef<string | null>(accountId ?? null);
+  const hasSyncSubscriptionRef = useRef(false);
   /** Timestamp (ms) until which probe status is locked to prevent blips */
   const probeLockedUntilRef = useRef(0);
-  const { subscribe, connected: wsConnected, send: wsSend } = useAppWebSocket();
+  const { subscribe, connected: wsConnected, send: wsSend, subscribeOpen } = useAppWebSocket();
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -167,41 +170,54 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   }, [accountId, stopPolling]);
 
   useEffect(() => {
+    if (!useWebSocket) return;
     return subscribe(handleWsMessage);
-  }, [subscribe, handleWsMessage]);
+  }, [useWebSocket, subscribe, handleWsMessage]);
 
   // ── WebSocket account subscription ──
   // Tell the server which accountId this client cares about so per-account
   // sync_progress messages are routed to this connection.
-  // Track what we last subscribed to so we don't re-send identical messages
-  // during transient remount cycles (StrictMode, route transitions).
-  const subscribedAccountRef = useRef<string | null>(null);
+  useEffect(() => {
+    desiredAccountRef.current = accountId ?? null;
+  }, [accountId]);
+
+  const replayAccountSubscription = useCallback(() => {
+    if (!useWebSocket) return;
+    const desiredAccount = desiredAccountRef.current;
+    if (!desiredAccount) return;
+    wsSend(JSON.stringify({ action: 'subscribe_sync', accountId: desiredAccount }));
+    hasSyncSubscriptionRef.current = true;
+  }, [useWebSocket, wsSend]);
 
   useEffect(() => {
-    if (!accountId || !wsConnected) return;
-    // Avoid duplicate subscribe if we already subscribed for this account
-    if (subscribedAccountRef.current !== accountId) {
-      subscribedAccountRef.current = accountId;
+    if (!useWebSocket) return;
+    return subscribeOpen(replayAccountSubscription);
+  }, [useWebSocket, subscribeOpen, replayAccountSubscription]);
+
+  useEffect(() => {
+    desiredAccountRef.current = accountId ?? null;
+    if (!useWebSocket || !wsConnected) return;
+
+    if (accountId) {
       wsSend(JSON.stringify({ action: 'subscribe_sync', accountId }));
+      hasSyncSubscriptionRef.current = true;
+      return;
     }
+
+    if (!hasSyncSubscriptionRef.current) return;
+
+    wsSend(JSON.stringify({ action: 'unsubscribe_sync' }));
+    hasSyncSubscriptionRef.current = false;
+  }, [accountId, useWebSocket, wsConnected, wsSend]);
+
+  useEffect(() => {
     return () => {
-      // Only unsubscribe if we actually subscribed and the component is
-      // genuinely tearing down (not a transient StrictMode remount).
-      // Use a micro-delay so an immediate remount can cancel the unsub.
-      const unsub = subscribedAccountRef.current;
-      subscribedAccountRef.current = null;
-      if (unsub) {
-        // Defer so transient unmount/remount from StrictMode skips unsubscribe
-        const timer = setTimeout(() => {
-          // If ref is still null after the microtask, no remount reclaimed it
-          if (subscribedAccountRef.current === null) {
-            wsSend(JSON.stringify({ action: 'unsubscribe_sync' }));
-          }
-        }, 50);
-        return () => clearTimeout(timer);
-      }
+      desiredAccountRef.current = null;
+      if (!useWebSocket || !hasSyncSubscriptionRef.current) return;
+      wsSend(JSON.stringify({ action: 'unsubscribe_sync' }));
+      hasSyncSubscriptionRef.current = false;
     };
-  }, [accountId, wsConnected, wsSend]);
+  }, [useWebSocket, wsSend]);
 
   // ── HTTP fallback polling ──
   /* v8 ignore start — async polling callback */
@@ -211,7 +227,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     /* v8 ignore stop */
 
     // Skip HTTP poll if we received a WS message recently AND the WS is still connected
-    if (wsConnected && Date.now() - lastWsMsgRef.current < WS_STALE_MS && lastWsMsgRef.current > 0) {
+    if (useWebSocket && wsConnected && Date.now() - lastWsMsgRef.current < WS_STALE_MS && lastWsMsgRef.current > 0) {
       if (mountedRef.current) {
         stopPolling();
         pollRef.current = setTimeout(checkStatus, SYNC_POLL_ACTIVE_MS);
@@ -298,7 +314,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       }
       /* v8 ignore stop */
     }
-  }, [accountId, stopPolling, wsConnected]);
+  }, [accountId, stopPolling, useWebSocket, wsConnected]);
 
   // Track player and start polling on mount; pause when tab is hidden
   useEffect(() => {

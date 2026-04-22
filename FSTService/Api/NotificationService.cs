@@ -16,6 +16,7 @@ namespace FSTService.Api;
 /// </summary>
 public sealed class NotificationService
 {
+    private const int MaxControlMessageBytes = 16 * 1024;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, WebSocket>> _connections = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<NotificationService> _log;
     private IShopProvider? _shopProvider;
@@ -50,7 +51,15 @@ public sealed class NotificationService
     public void AddConnection(string accountId, string deviceId, WebSocket ws)
     {
         var deviceMap = _connections.GetOrAdd(accountId, _ => new ConcurrentDictionary<string, WebSocket>(StringComparer.OrdinalIgnoreCase));
+        var replacedExisting = deviceMap.TryGetValue(deviceId, out var existingSocket) && !ReferenceEquals(existingSocket, ws);
         deviceMap[deviceId] = ws;
+        if (replacedExisting)
+        {
+            _log.LogInformation("WebSocket replaced: account={AccountId}, device={DeviceId}. Total connections for account: {Count}",
+                accountId, deviceId, deviceMap.Count);
+            return;
+        }
+
         _log.LogInformation("WebSocket connected: account={AccountId}, device={DeviceId}. Total connections for account: {Count}",
             accountId, deviceId, deviceMap.Count);
     }
@@ -58,15 +67,35 @@ public sealed class NotificationService
     /// <summary>
     /// Remove a WebSocket connection for the given account+device pair.
     /// </summary>
-    public void RemoveConnection(string accountId, string deviceId)
+    public void RemoveConnection(string accountId, string deviceId, WebSocket? expectedSocket = null)
     {
+        var removed = false;
         if (_connections.TryGetValue(accountId, out var deviceMap))
         {
-            deviceMap.TryRemove(deviceId, out _);
-            if (deviceMap.IsEmpty)
+            if (expectedSocket is null)
+            {
+                removed = deviceMap.TryRemove(deviceId, out _);
+            }
+            else if (deviceMap.TryGetValue(deviceId, out var currentSocket)
+                && ReferenceEquals(currentSocket, expectedSocket))
+            {
+                removed = deviceMap.TryRemove(deviceId, out _);
+            }
+
+            if (removed && deviceMap.IsEmpty)
+            {
                 _connections.TryRemove(accountId, out _);
+            }
         }
-        _log.LogInformation("WebSocket disconnected: account={AccountId}, device={DeviceId}", accountId, deviceId);
+
+        if (removed)
+        {
+            _log.LogInformation("WebSocket disconnected: account={AccountId}, device={DeviceId}", accountId, deviceId);
+        }
+        else if (expectedSocket is not null)
+        {
+            _log.LogDebug("Skipped stale WebSocket disconnect: account={AccountId}, device={DeviceId}", accountId, deviceId);
+        }
     }
 
     /// <summary>
@@ -80,7 +109,7 @@ public sealed class NotificationService
         var json = JsonSerializer.Serialize(message);
         var bytes = Encoding.UTF8.GetBytes(json);
         var segment = new ArraySegment<byte>(bytes);
-        var deadConnections = new List<string>();
+        var deadConnections = new List<(string DeviceId, WebSocket Socket)>();
 
         foreach (var (deviceId, ws) in deviceMap)
         {
@@ -93,20 +122,20 @@ public sealed class NotificationService
                 }
                 else
                 {
-                    deadConnections.Add(deviceId);
+                    deadConnections.Add((deviceId, ws));
                 }
             }
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Failed to send notification to {AccountId}/{DeviceId}", accountId, deviceId);
-                deadConnections.Add(deviceId);
+                deadConnections.Add((deviceId, ws));
             }
         }
 
         // Clean up dead connections
-        foreach (var deviceId in deadConnections)
+        foreach (var (deviceId, deadSocket) in deadConnections)
         {
-            RemoveConnection(accountId, deviceId);
+            RemoveConnection(accountId, deviceId, deadSocket);
         }
     }
 
@@ -122,7 +151,7 @@ public sealed class NotificationService
 
         foreach (var (accountId, deviceMap) in _connections)
         {
-            var deadConnections = new List<string>();
+            var deadConnections = new List<(string DeviceId, WebSocket Socket)>();
             foreach (var (deviceId, ws) in deviceMap)
             {
                 try
@@ -130,15 +159,15 @@ public sealed class NotificationService
                     if (ws.State == WebSocketState.Open)
                         await ws.SendAsync(segment, WebSocketMessageType.Text, true, CancellationToken.None);
                     else
-                        deadConnections.Add(deviceId);
+                        deadConnections.Add((deviceId, ws));
                 }
                 catch
                 {
-                    deadConnections.Add(deviceId);
+                    deadConnections.Add((deviceId, ws));
                 }
             }
-            foreach (var deviceId in deadConnections)
-                RemoveConnection(accountId, deviceId);
+            foreach (var (deviceId, deadSocket) in deadConnections)
+                RemoveConnection(accountId, deviceId, deadSocket);
         }
 
         _log.LogInformation("Broadcast to all clients: {Message}", json);
@@ -229,7 +258,7 @@ public sealed class NotificationService
         try
         {
             // Read loop — process control messages (subscribe/unsubscribe) and detect close frames.
-            var buffer = new byte[512];
+            var buffer = new byte[1024];
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
                 try
@@ -242,11 +271,22 @@ public sealed class NotificationService
                     }
 
                     // Process text frames for subscribe/unsubscribe control messages
-                    if (result.MessageType == WebSocketMessageType.Text && result.Count > 0)
+                    if (result.MessageType == WebSocketMessageType.Text)
                     {
+                        var (json, closeRequested) = await ReadTextMessageAsync(ws, result, buffer, deviceId, ct);
+                        if (closeRequested)
+                        {
+                            await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Goodbye", CancellationToken.None);
+                            break;
+                        }
+
+                        if (string.IsNullOrEmpty(json))
+                        {
+                            continue;
+                        }
+
                         try
                         {
-                            var json = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
                             using var doc = System.Text.Json.JsonDocument.Parse(json);
                             var action = doc.RootElement.TryGetProperty("action", out var actionProp)
                                 ? actionProp.GetString() : null;
@@ -308,7 +348,70 @@ public sealed class NotificationService
         }
         finally
         {
-            RemoveConnection(currentKey, deviceId);
+            RemoveConnection(currentKey, deviceId, ws);
+        }
+    }
+
+    private async Task<(string? MessageText, bool CloseRequested)> ReadTextMessageAsync(
+        WebSocket ws,
+        WebSocketReceiveResult initialResult,
+        byte[] buffer,
+        string deviceId,
+        CancellationToken ct)
+    {
+        using var messageBuffer = new MemoryStream();
+        var result = initialResult;
+
+        while (true)
+        {
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                return (null, true);
+            }
+
+            if (result.MessageType != WebSocketMessageType.Text)
+            {
+                return (null, false);
+            }
+
+            if (result.Count > 0)
+            {
+                if (messageBuffer.Length + result.Count > MaxControlMessageBytes)
+                {
+                    await DrainMessageAsync(ws, result, buffer, ct);
+                    _log.LogDebug("Ignoring oversized WebSocket control message for {DeviceId}.", deviceId);
+                    return (null, false);
+                }
+
+                messageBuffer.Write(buffer, 0, result.Count);
+            }
+
+            if (result.EndOfMessage)
+            {
+                break;
+            }
+
+            result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+        }
+
+        if (messageBuffer.Length == 0)
+        {
+            return (string.Empty, false);
+        }
+
+        return (Encoding.UTF8.GetString(messageBuffer.GetBuffer(), 0, checked((int)messageBuffer.Length)), false);
+    }
+
+    private static async Task DrainMessageAsync(
+        WebSocket ws,
+        WebSocketReceiveResult initialResult,
+        byte[] buffer,
+        CancellationToken ct)
+    {
+        var result = initialResult;
+        while (!result.EndOfMessage && result.MessageType != WebSocketMessageType.Close)
+        {
+            result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
         }
     }
 }

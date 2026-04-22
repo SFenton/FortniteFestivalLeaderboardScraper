@@ -15,15 +15,21 @@ vi.mock('../../../src/api/client', () => ({
 
 const mockSend = vi.fn();
 const wsHandlers = new Set<(msg: any) => void>();
+const wsOpenHandlers = new Set<() => void>();
 const mockSubscribe = vi.fn((handler: (msg: any) => void) => {
   wsHandlers.add(handler);
   return () => { wsHandlers.delete(handler); };
+});
+const mockSubscribeOpen = vi.fn((handler: () => void) => {
+  wsOpenHandlers.add(handler);
+  return () => { wsOpenHandlers.delete(handler); };
 });
 vi.mock('../../../src/hooks/data/useAppWebSocket', () => ({
   useAppWebSocket: () => ({
     connected: true,
     subscribe: mockSubscribe,
     send: mockSend,
+    subscribeOpen: mockSubscribeOpen,
   }),
 }));
 
@@ -42,7 +48,10 @@ describe('useSyncStatus', () => {
     mockTrackPlayer.mockReset();
     mockTrackPlayer.mockResolvedValue(undefined as any);
     mockSend.mockReset();
+    mockSubscribe.mockClear();
+    mockSubscribeOpen.mockClear();
     wsHandlers.clear();
+    wsOpenHandlers.clear();
   });
   afterEach(() => { vi.useRealTimers(); });
 
@@ -171,6 +180,40 @@ describe('useSyncStatus', () => {
     );
   });
 
+  it('replays subscribe_sync when the shared socket opens again', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    mockSend.mockReset();
+
+    act(() => {
+      wsOpenHandlers.forEach(handler => handler());
+    });
+
+    expect(mockSend).toHaveBeenCalledWith(
+      JSON.stringify({ action: 'subscribe_sync', accountId: 'acc1' }),
+    );
+  });
+
+  it('sends subscribe_sync again when the accountId changes', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    const { rerender } = renderHook(
+      ({ accountId }) => useSyncStatus(accountId, { track: false }),
+      { initialProps: { accountId: 'acc1' }, wrapper },
+    );
+    await flush();
+
+    mockSend.mockReset();
+
+    rerender({ accountId: 'acc2' });
+    await flush();
+
+    expect(mockSend).toHaveBeenCalledWith(
+      JSON.stringify({ action: 'subscribe_sync', accountId: 'acc2' }),
+    );
+  });
+
   it('does not send subscribe_sync when no accountId', async () => {
     renderHook(() => useSyncStatus(undefined), { wrapper });
     await flush();
@@ -183,11 +226,19 @@ describe('useSyncStatus', () => {
     await flush();
     mockSend.mockReset();
     unmount();
-    // Unsubscribe is deferred (50ms) to avoid chatter during transient remounts
-    await act(async () => { await vi.advanceTimersByTimeAsync(60); });
     expect(mockSend).toHaveBeenCalledWith(
       JSON.stringify({ action: 'unsubscribe_sync' }),
     );
+  });
+
+  it('does not use the shared WebSocket when useWebSocket is false', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    renderHook(() => useSyncStatus('acc1', { track: false, useWebSocket: false }));
+    await flush();
+
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockSubscribe).not.toHaveBeenCalled();
+    expect(mockSubscribeOpen).not.toHaveBeenCalled();
   });
 
   // ── PostScrape phase via WebSocket ──

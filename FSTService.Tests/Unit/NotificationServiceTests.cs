@@ -18,6 +18,12 @@ public sealed class NotificationServiceTests
 
     private NotificationService CreateService() => new(_log);
 
+    private static bool SegmentContains(ArraySegment<byte> segment, params string[] snippets)
+    {
+        var text = Encoding.UTF8.GetString(segment.Array!, segment.Offset, segment.Count);
+        return snippets.All(text.Contains);
+    }
+
     // ─── AddConnection / RemoveConnection ───────────────────────
 
     [Fact]
@@ -54,6 +60,33 @@ public sealed class NotificationServiceTests
             Arg.Any<ArraySegment<byte>>(),
             Arg.Any<WebSocketMessageType>(),
             Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RemoveConnection_StaleSocket_DoesNotRemoveReplacement()
+    {
+        var svc = CreateService();
+        var staleWs = Substitute.For<WebSocket>();
+        var replacementWs = Substitute.For<WebSocket>();
+        staleWs.State.Returns(WebSocketState.Open);
+        replacementWs.State.Returns(WebSocketState.Open);
+
+        svc.AddConnection("acct1", "dev1", staleWs);
+        svc.AddConnection("acct1", "dev1", replacementWs);
+
+        svc.RemoveConnection("acct1", "dev1", staleWs);
+        await svc.NotifyAccountAsync("acct1", new { type = "test" });
+
+        await staleWs.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<WebSocketMessageType>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+        await replacementWs.Received(1).SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            WebSocketMessageType.Text,
+            true,
             Arg.Any<CancellationToken>());
     }
 
@@ -504,6 +537,49 @@ public sealed class NotificationServiceTests
             Arg.Is<ArraySegment<byte>>(seg =>
                 Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("sync_progress")),
             WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_FragmentedSubscribeSync_SendsInitialSyncState()
+    {
+        var svc = CreateService();
+        var tracker = new UserSyncProgressTracker(svc, Substitute.For<ILogger<UserSyncProgressTracker>>());
+        svc.SetSyncTracker(tracker);
+        tracker.BeginBackfill("real-acct", 10);
+
+        var ws = Substitute.For<WebSocket>();
+        var firstFragment = Encoding.UTF8.GetBytes("{\"action\":\"subscribe_sync\",\"acco");
+        var secondFragment = Encoding.UTF8.GetBytes("untId\":\"real-acct\"}");
+
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 3 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                var buf = callInfo.ArgAt<ArraySegment<byte>>(0);
+                if (callCount == 1)
+                {
+                    Array.Copy(firstFragment, 0, buf.Array!, buf.Offset, firstFragment.Length);
+                    return new WebSocketReceiveResult(firstFragment.Length, WebSocketMessageType.Text, false);
+                }
+
+                if (callCount == 2)
+                {
+                    Array.Copy(secondFragment, 0, buf.Array!, buf.Offset, secondFragment.Length);
+                    return new WebSocketReceiveResult(secondFragment.Length, WebSocketMessageType.Text, true);
+                }
+
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+            });
+
+        await svc.HandleConnectionAsync("anon-123", "dev1", ws, CancellationToken.None);
+
+        await ws.Received().SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg => SegmentContains(seg, "\"type\":\"sync_progress\"", "\"accountId\":\"real-acct\"")),
+            WebSocketMessageType.Text,
+            true,
             Arg.Any<CancellationToken>());
     }
 
