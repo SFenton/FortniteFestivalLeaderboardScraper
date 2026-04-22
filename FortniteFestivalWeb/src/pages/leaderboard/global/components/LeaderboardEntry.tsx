@@ -7,7 +7,7 @@
  * columns (e.g. date strings in score history). Exactly one should be given.
  */
 import { memo, useMemo } from 'react';
-import { Align, Colors, Display, Font, FontVariant, Gap, Justify, Layout, StarSize, TextAlign, Weight, flexRow, truncate } from '@festival/theme';
+import { Align, Colors, Display, Font, FontVariant, Gap, Justify, Layout, StarSize, TextAlign, Weight, flexRow, transition, TRANSITION_MS, truncate } from '@festival/theme';
 import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import ScorePill from '../../../../components/songs/metadata/ScorePill';
@@ -110,6 +110,7 @@ function useStyles(isPlayer?: boolean, rankWidth?: number) {
       flexShrink: 0,
       color: Colors.textPrimary,
       fontSize: Font.md,
+      transition: transition('width', TRANSITION_MS),
       ...(isPlayer ? { fontWeight: Weight.bold } : undefined),
     },
     colName: {

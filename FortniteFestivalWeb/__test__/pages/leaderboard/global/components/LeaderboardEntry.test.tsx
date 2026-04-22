@@ -147,6 +147,7 @@ describe('LeaderboardEntry', () => {
     render(<W><LeaderboardEntry rank={12345} displayName="P1" score={100000} rankWidth={100} /></W>);
     const rankSpan = screen.getByText('#12,345');
     expect(rankSpan.style.width).toBe('100px');
+    expect(rankSpan.style.transition).toBe('width 300ms ease');
   });
 
   it('uses default rank column width when rankWidth is not provided', () => {

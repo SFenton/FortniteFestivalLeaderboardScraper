@@ -295,7 +295,7 @@ export default function FullRankingsPage() {
               ratingPillTier={metric === 'fcrate' ? ((getDisplayRating(playerRanking, metric) * 100) >= 99 ? 'top1' : (getDisplayRating(playerRanking, metric) * 100) >= 95 ? 'top5' : 'default') : undefined}
               songsLabelPrimary={metric === 'fcrate'}
               isPlayer
-              rankWidth={playerRankWidth}
+              rankWidth={isMobile ? playerRankWidth : rankWidth}
               reserveTenDigitScoreWidth={reserveTenDigitScoreWidth && !(isMobile && hasFab)}
             />
           </Link>

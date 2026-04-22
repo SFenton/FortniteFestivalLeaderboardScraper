@@ -176,4 +176,33 @@ describe('FullRankingsPage', () => {
     expect(playerRank).toHaveStyle({ width: `${computeRankWidth([12345])}px` });
     expect(topRank.style.width).not.toBe(playerRank.style.width);
   });
+
+  it('syncs desktop footer rank width to the shared page width when page rows are wider than the player rank', async () => {
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 12345,
+      entries: [makeAccountRankingEntry(12345, { accountId: 'top-player', displayName: 'Top Player' })],
+    });
+    mockApi.getPlayerRanking.mockResolvedValue(
+      makeAccountRankingEntry(42, { accountId: 'test-player', displayName: 'Test Player' }),
+    );
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const pageRank = await screen.findByText('#12,345');
+    const footerRank = await screen.findByText('#42');
+    const expectedWidth = computeRankWidth([12345, 42]);
+
+    expect(pageRank).toHaveStyle({ width: `${expectedWidth}px` });
+    expect(footerRank).toHaveStyle({ width: `${expectedWidth}px` });
+  });
 });

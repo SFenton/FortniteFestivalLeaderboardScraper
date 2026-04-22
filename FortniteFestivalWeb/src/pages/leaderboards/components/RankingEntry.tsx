@@ -4,7 +4,7 @@
  * Displays rank, player name, rating value, and songs played.
  */
 import { memo, useMemo } from 'react';
-import { Colors, Font, FontVariant, Layout, MetadataSize, TextAlign, Weight, truncate } from '@festival/theme';
+import { Colors, Font, FontVariant, Layout, MetadataSize, TextAlign, Weight, transition, TRANSITION_MS, truncate } from '@festival/theme';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 
 const TEN_DIGIT_SCORE_MIN_WIDTH = Math.ceil('1,000,000,000'.length * Layout.rankCharWidth) + Layout.rankColumnPadding;
@@ -68,6 +68,7 @@ function useStyles(isPlayer?: boolean, rankWidth?: number, reserveTenDigitScoreW
       color: Colors.textPrimary,
       fontSize: Font.md,
       fontVariantNumeric: FontVariant.tabularNums,
+      transition: transition('width', TRANSITION_MS),
       ...(isPlayer ? { fontWeight: Weight.bold } : undefined),
     },
     colName: {

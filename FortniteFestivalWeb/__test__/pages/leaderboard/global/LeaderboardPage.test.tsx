@@ -608,6 +608,29 @@ describe('LeaderboardPage — coverage: player footer with tracked score', () =>
     expect(topScore.style.width).toBe('3ch');
     expect(playerScore.style.width).toBe('9ch');
   });
+
+  it('syncs desktop footer rank width to the shared page width when page rows are wider than the player rank', async () => {
+    stubViewportWidth(1024);
+
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 1, totalEntries: 12345, localEntries: 12345,
+      entries: [
+        { accountId: 'acc-1', displayName: 'Top Player', score: 500, rank: 12345, accuracy: 99.5, isFullCombo: true, stars: 6, season: 5 },
+      ],
+    });
+    mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1, scores: [
+      { songId: 'song-1', instrument: 'Solo_Guitar', score: 1200000, rank: 42, percentile: 10, accuracy: 80.1, isFullCombo: false, stars: 4, season: 5 },
+    ] });
+
+    renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
+
+    const pageRank = await screen.findByText('#12,345');
+    const footerRank = await screen.findByText('#42');
+    const expectedWidth = computeRankWidth([12345, 42]);
+
+    expect(pageRank).toHaveStyle({ width: `${expectedWidth}px` });
+    expect(footerRank).toHaveStyle({ width: `${expectedWidth}px` });
+  });
 });
 
 // ---------------------------------------------------------------------------

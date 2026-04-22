@@ -428,7 +428,7 @@ export default function LeaderboardPage() {
                         showStars={showStars}
                         showScore={showFooterScore}
                         scoreWidth={playerScoreWidth}
-                        rankWidth={playerRankWidth}
+                        rankWidth={isMobile ? playerRankWidth : rankWidth}
                       />
                     </div>
                   </div>
