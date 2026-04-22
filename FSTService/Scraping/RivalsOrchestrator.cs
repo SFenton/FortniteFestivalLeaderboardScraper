@@ -181,8 +181,9 @@ public sealed class RivalsOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Rivals computation failed for {AccountId}. Will retry next pass.", accountId);
-            _persistence.Meta.FailRivals(accountId, ex.Message);
-            _syncTracker.Error(accountId, ex.Message);
+            var errorMessage = BuildErrorMessage(ex);
+            _persistence.Meta.FailRivals(accountId, errorMessage);
+            _syncTracker.Error(accountId, errorMessage);
             return new RivalsComputeOutcome(accountId, RivalsComputeOutcomeCode.Error, WasRecomputed: false, DirtySongCount: 0);
         }
     }
@@ -255,6 +256,21 @@ public sealed class RivalsOrchestrator
         return string.Join(", ",
             counts.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(pair => $"{pair.Key}={pair.Value}"));
+    }
+
+    private static string BuildErrorMessage(Exception ex)
+    {
+        var messages = new List<string>();
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (!string.IsNullOrWhiteSpace(current.Message) &&
+                !messages.Contains(current.Message, StringComparer.Ordinal))
+            {
+                messages.Add(current.Message);
+            }
+        }
+
+        return messages.Count == 0 ? ex.GetType().Name : string.Join(" | ", messages);
     }
 
     private readonly record struct DirtySongDecision(bool RequiresRecompute, string OutcomeCode)

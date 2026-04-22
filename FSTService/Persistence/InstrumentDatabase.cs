@@ -548,6 +548,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     {
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT account_id, rank, score FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND rank BETWEEN @lo AND @hi AND account_id != @exclude";
+        cmd.CommandTimeout = 0;
         cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument);
         cmd.Parameters.AddWithValue("lo", Math.Max(1, centerRank - rankRadius)); cmd.Parameters.AddWithValue("hi", centerRank + rankRadius); cmd.Parameters.AddWithValue("exclude", excludeAccountId);
         var list = new List<(string, int, int)>(); using var r = cmd.ExecuteReader();
@@ -585,6 +586,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         var pNames = new string[songIds.Count]; int i = 0;
         foreach (var sid in songIds) { pNames[i] = $"@s{i}"; cmd.Parameters.AddWithValue($"s{i}", sid); i++; }
         cmd.CommandText = $"SELECT song_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument AND song_id IN ({string.Join(",", pNames)}) ORDER BY song_id";
+        cmd.CommandTimeout = 0;
         cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("instrument", Instrument);
         var list = new List<PlayerScoreDto>(); using var r = cmd.ExecuteReader();
         while (r.Read()) list.Add(ReadPlayerScore(r));
@@ -596,6 +598,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
         var filter = songId is not null ? "AND song_id = @songId" : "";
         cmd.CommandText = $"SELECT song_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank FROM leaderboard_entries WHERE account_id = @accountId AND instrument = @instrument {filter} ORDER BY song_id";
+        cmd.CommandTimeout = 0;
         cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("instrument", Instrument);
         if (songId is not null) cmd.Parameters.AddWithValue("songId", songId);
         var list = new List<PlayerScoreDto>(); using var r = cmd.ExecuteReader();
