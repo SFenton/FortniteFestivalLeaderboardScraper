@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading.Channels;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
@@ -1333,7 +1331,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>
     /// Get grouped unique band summaries for one player, deduped by team members.
     /// </summary>
-    public PlayerBandsDto GetPlayerBands(string accountId, int previewCount = 5)
+    public PlayerBandsDto GetPlayerBands(string accountId, int previewCount = 6)
     {
         var allEntries = GetPlayerBandEntries(accountId);
 
@@ -1344,15 +1342,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         var duos = allEntries
             .Where(entry => string.Equals(entry.BandType, "Band_Duets", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var trios = allEntries
             .Where(entry => string.Equals(entry.BandType, "Band_Trios", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var quads = allEntries
             .Where(entry => string.Equals(entry.BandType, "Band_Quad", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         return new PlayerBandsDto
@@ -1381,6 +1376,56 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         };
     }
 
+    public PlayerBandListResponseDto GetPlayerBandsList(string accountId, string group = "all")
+    {
+        var bandTypeFilter = group switch
+        {
+            "all" => null,
+            "duos" => "Band_Duets",
+            "trios" => "Band_Trios",
+            "quads" => "Band_Quad",
+            _ => throw new ArgumentOutOfRangeException(nameof(group), group, "Unknown band group."),
+        };
+
+        var entries = GetPlayerBandEntries(accountId, bandTypeFilter);
+
+        return new PlayerBandListResponseDto
+        {
+            AccountId = accountId,
+            Group = group,
+            TotalCount = entries.Count,
+            Entries = entries,
+        };
+    }
+
+    public PlayerBandEntryDto? GetBandById(string bandId)
+    {
+        using var conn = _pgDataSource.OpenConnection();
+        var bandIdentity = ResolveBandIdentity(conn, bandId);
+        if (bandIdentity is null)
+            return null;
+
+        var memberAccountIds = SplitTeamKey(bandIdentity.TeamKey);
+        var displayNames = _metaDb.GetDisplayNames(memberAccountIds);
+        var instrumentsByMember = GetBandInstrumentsByMember(conn, bandIdentity.BandType, bandIdentity.TeamKey);
+
+        return new PlayerBandEntryDto
+        {
+            BandId = bandId,
+            TeamKey = bandIdentity.TeamKey,
+            BandType = bandIdentity.BandType,
+            AppearanceCount = GetBandAppearanceCount(conn, bandIdentity.BandType, bandIdentity.TeamKey),
+            Members = memberAccountIds
+                .Select(memberAccountId => new PlayerBandMemberDto
+                {
+                    AccountId = memberAccountId,
+                    DisplayName = displayNames.GetValueOrDefault(memberAccountId),
+                    Instruments = instrumentsByMember.GetValueOrDefault(memberAccountId, []),
+                })
+                .ToList(),
+        };
+    }
+
     private List<PlayerBandEntryDto> GetPlayerBandEntries(string accountId, string? bandTypeFilter = null, string? comboIdFilter = null)
     {
         using var conn = _pgDataSource.OpenConnection();
@@ -1400,8 +1445,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return teams
             .Select(team => new PlayerBandEntryDto
             {
+                BandId = BandIdentity.CreateBandId(team.BandType, team.TeamKey),
                 TeamKey = team.TeamKey,
                 BandType = team.BandType,
+                AppearanceCount = team.AppearanceCount,
                 Members = SplitTeamKey(team.TeamKey)
                     .Select(memberAccountId => new PlayerBandMemberDto
                     {
@@ -1411,33 +1458,33 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     })
                     .ToList(),
             })
-            .OrderBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(entry => entry.AppearanceCount)
+            .ThenBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private static List<(string BandType, string TeamKey)> GetPlayerBandTeams(
+    private static List<PlayerBandTeamSummary> GetPlayerBandTeams(
         NpgsqlConnection conn,
         string accountId,
         string? bandTypeFilter,
         string? comboIdFilter)
     {
-        var teams = new List<(string BandType, string TeamKey)>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var appearanceCounts = new Dictionary<(string BandType, string TeamKey), int>();
 
         using var teamCmd = conn.CreateCommand();
         teamCmd.CommandText = bandTypeFilter is null
             ? """
-                SELECT DISTINCT band_type, team_key, instrument_combo
+                SELECT DISTINCT band_type, team_key, song_id, instrument_combo
                 FROM band_members
                 WHERE account_id = @accountId
-                ORDER BY band_type, team_key, instrument_combo
+                ORDER BY band_type, team_key, song_id, instrument_combo
                 """
             : """
-                SELECT DISTINCT band_type, team_key, instrument_combo
+                SELECT DISTINCT band_type, team_key, song_id, instrument_combo
                 FROM band_members
                 WHERE account_id = @accountId
                   AND band_type = @bandType
-                ORDER BY band_type, team_key, instrument_combo
+                ORDER BY band_type, team_key, song_id, instrument_combo
                 """;
         teamCmd.Parameters.AddWithValue("accountId", accountId);
         if (bandTypeFilter is not null)
@@ -1448,7 +1495,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         {
             var bandType = reader.GetString(0);
             var teamKey = reader.GetString(1);
-            var rawCombo = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var rawCombo = reader.IsDBNull(3) ? null : reader.GetString(3);
 
             if (comboIdFilter is not null)
             {
@@ -1457,18 +1504,21 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     continue;
             }
 
-            var dedupeKey = $"{bandType}:{teamKey}";
-            if (seen.Add(dedupeKey))
-                teams.Add((bandType, teamKey));
+            var dedupeKey = (bandType, teamKey);
+            appearanceCounts[dedupeKey] = appearanceCounts.GetValueOrDefault(dedupeKey) + 1;
         }
 
-        return teams;
+        return appearanceCounts
+            .Select(kvp => new PlayerBandTeamSummary(kvp.Key.BandType, kvp.Key.TeamKey, kvp.Value))
+            .OrderByDescending(team => team.AppearanceCount)
+            .ThenBy(team => team.TeamKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static Dictionary<(string BandType, string TeamKey, string AccountId), List<string>> GetPlayerBandInstrumentsByMember(
         NpgsqlConnection conn,
         string accountId,
-        List<(string BandType, string TeamKey)> teams,
+        List<PlayerBandTeamSummary> teams,
         string? bandTypeFilter,
         string? comboIdFilter)
     {
@@ -1553,6 +1603,85 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return instrumentsByMember.ToDictionary(
             kvp => kvp.Key,
             kvp => BandComboIds.ToInstruments(BandComboIds.FromInstruments(kvp.Value)).ToList());
+    }
+
+    private static BandIdentityLookup? ResolveBandIdentity(NpgsqlConnection conn, string bandId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT band_type, team_key
+            FROM band_members
+            ORDER BY band_type, team_key
+            """;
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var bandType = reader.GetString(0);
+            var teamKey = reader.GetString(1);
+            if (string.Equals(BandIdentity.CreateBandId(bandType, teamKey), bandId, StringComparison.OrdinalIgnoreCase))
+                return new BandIdentityLookup(bandType, teamKey);
+        }
+
+        return null;
+    }
+
+    private static int GetBandAppearanceCount(NpgsqlConnection conn, string bandType, string teamKey)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*)
+            FROM (
+                SELECT DISTINCT song_id, instrument_combo
+                FROM band_members
+                WHERE band_type = @bandType
+                  AND team_key = @teamKey
+            ) band_appearances
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private static Dictionary<string, List<string>> GetBandInstrumentsByMember(NpgsqlConnection conn, string bandType, string teamKey)
+    {
+        var instrumentsByMember = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT account_id, instrument_id
+            FROM band_member_stats
+            WHERE band_type = @bandType
+              AND team_key = @teamKey
+            ORDER BY account_id, instrument_combo, instrument_id
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (reader.IsDBNull(1))
+                continue;
+
+            var instrument = BandInstrumentMapping.ToLeaderboardType(reader.GetInt32(1));
+            if (string.IsNullOrWhiteSpace(instrument))
+                continue;
+
+            var accountId = reader.GetString(0);
+            if (!instrumentsByMember.TryGetValue(accountId, out var instruments))
+            {
+                instruments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                instrumentsByMember[accountId] = instruments;
+            }
+
+            instruments.Add(instrument);
+        }
+
+        return instrumentsByMember.ToDictionary(
+            kvp => kvp.Key,
+            kvp => BandComboIds.ToInstruments(BandComboIds.FromInstruments(kvp.Value)).ToList(),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1857,21 +1986,11 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     private static PlayerBandGroupDto BuildAllBandGroup(string accountId, List<PlayerBandEntryDto> entries, int previewCount)
     {
-        var shuffled = entries
-            .OrderBy(entry => StableShuffleKey(accountId, entry))
-            .ToList();
-
         return new PlayerBandGroupDto
         {
             TotalCount = entries.Count,
-            Entries = shuffled.Take(previewCount).ToList(),
+            Entries = entries.Take(previewCount).ToList(),
         };
-    }
-
-    private static string StableShuffleKey(string accountId, PlayerBandEntryDto entry)
-    {
-        var seed = Encoding.UTF8.GetBytes($"{accountId}:{entry.BandType}:{entry.TeamKey}");
-        return Convert.ToHexString(SHA256.HashData(seed));
     }
 
     private static List<string> SplitTeamKey(string teamKey)
@@ -1880,6 +1999,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             .Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
     }
+
+    private sealed record BandIdentityLookup(string BandType, string TeamKey);
+    private sealed record PlayerBandTeamSummary(string BandType, string TeamKey, int AppearanceCount);
 
     private int? _cachedTotalSongCount;
 

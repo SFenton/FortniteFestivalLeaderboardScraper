@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { PlayerBandEntry, PlayerBandGroup, PlayerBandMember, PlayerBandsResponse } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap, Radius, Weight, frostedCard, flexColumn, flexRow } from '@festival/theme';
+import { Colors, Font, Gap, InstrumentSize, Layout, Radius, Weight, frostedCard, flexColumn, flexRow } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { PlayerItem } from '../helpers/playerPageTypes';
 import PlayerSectionHeading from '../sections/PlayerSectionHeading';
@@ -38,70 +38,99 @@ export function buildPlayerBandsItems(
   for (const group of BAND_GROUPS) {
     const value = bands[group.key];
     items.push({
-      key: `bands-${group.key}`,
-      span: false,
-      heightEstimate: estimateGroupHeight(value),
-      node: <BandGroupCard t={t} title={t(group.titleKey)} group={value} testId={`player-bands-${group.key}`} />,
+      key: `bands-header-${group.key}`,
+      span: true,
+      heightEstimate: BAND_GROUP_HEADER_HEIGHT,
+      node: <BandGroupHeader title={t(group.titleKey)} testId={`player-bands-header-${group.key}`} />,
     });
+
+    if (value.entries.length > 0) {
+      value.entries.forEach((entry, index) => {
+        items.push({
+          key: `bands-entry-${group.key}-${entry.teamKey}-${index}`,
+          span: false,
+          heightEstimate: estimateEntryHeight(entry),
+          style: bandStyles.entryCard,
+          node: <BandEntryCard entry={entry} testId={`player-bands-entry-${group.key}-${index}`} />,
+        });
+      });
+    } else {
+      items.push({
+        key: `bands-empty-${group.key}`,
+        span: true,
+        heightEstimate: EMPTY_GROUP_HEIGHT,
+        style: bandStyles.emptyCard,
+        node: <BandGroupEmptyState t={t} />,
+      });
+    }
+
+    if (value.totalCount > value.entries.length) {
+      items.push({
+        key: `bands-view-all-${group.key}`,
+        span: true,
+        heightEstimate: VIEW_ALL_CARD_HEIGHT,
+        style: bandStyles.viewAllCard,
+        node: <BandViewAllCard label={t('player.viewAllBands', { count: value.totalCount.toLocaleString() })} />,
+      });
+    }
   }
 
   return items;
 }
 
-function BandGroupCard({
-  group,
+const BAND_GROUP_HEADER_HEIGHT = InstrumentSize.md + Gap.md;
+const EMPTY_GROUP_HEIGHT = 150;
+const VIEW_ALL_CARD_HEIGHT = Layout.entryRowHeight;
+const MEMBER_ROW_HEIGHT = 32;
+const ENTRY_CARD_BASE_HEIGHT = 32;
+const BAND_MEMBER_ICON_SIZE = 32;
+
+function BandGroupHeader({
   title,
-  t,
   testId,
 }: {
-  group: PlayerBandGroup;
   title: string;
-  t: Translate;
   testId: string;
 }) {
-  const viewAllLabel = t('player.viewAllBands', { count: group.totalCount.toLocaleString() });
-
   return (
-    <section data-testid={testId} style={bandStyles.groupCard}>
-      <h3 style={bandStyles.groupTitle}>{title}</h3>
-      <div style={bandStyles.groupBody}>
-        {group.entries.length > 0
-          ? group.entries.map((entry) => <BandEntryRow key={`${entry.bandType}:${entry.teamKey}`} entry={entry} />)
-          : <BandGroupEmptyState t={t} />}
+    <div data-testid={testId} style={bandStyles.groupHeader}>
+      <div style={bandStyles.groupHeaderText}>
+        <span style={bandStyles.groupTitle}>{title}</span>
       </div>
-      {group.totalCount > group.entries.length && (
-        <div aria-disabled="true" style={bandStyles.viewAllButton}>
-          {viewAllLabel}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function BandEntryRow({ entry }: { entry: PlayerBandEntry }) {
-  return (
-    <div style={bandStyles.entryRow}>
-      {entry.members.map((member, index) => (
-        <div key={`${entry.teamKey}:${member.accountId}`} style={bandStyles.memberBlock}>
-          <BandMember member={member} />
-          {index < entry.members.length - 1 && <span style={bandStyles.memberSeparator}>•</span>}
-        </div>
-      ))}
     </div>
   );
 }
 
-function BandMember({ member }: { member: PlayerBandMember }) {
+function BandEntryCard({ entry, testId }: { entry: PlayerBandEntry; testId: string }) {
   return (
-    <div style={bandStyles.memberChip}>
-      <span style={bandStyles.memberName}>{member.displayName || member.accountId.slice(0, 8)}</span>
-      {member.instruments.length > 0 && (
+    <div data-testid={testId} style={bandStyles.entryCardBody}>
+      {entry.members.map((member) => <BandMemberRow key={`${entry.teamKey}:${member.accountId}`} member={member} />)}
+    </div>
+  );
+}
+
+function BandMemberRow({ member }: { member: PlayerBandMember }) {
+  const displayName = member.displayName || member.accountId.slice(0, 8);
+  const instruments = Array.from(new Set(member.instruments));
+
+  return (
+    <div style={bandStyles.memberRow}>
+      <span style={bandStyles.memberName}>{displayName}</span>
+      {instruments.length > 0 && (
         <div style={bandStyles.instrumentRow}>
-          {member.instruments.map((instrument) => (
-            <InstrumentIcon key={`${member.accountId}:${instrument}`} instrument={instrument} size={16} />
+          {instruments.map((instrument) => (
+            <InstrumentIcon key={`${member.accountId}:${instrument}`} instrument={instrument} size={BAND_MEMBER_ICON_SIZE} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function BandViewAllCard({ label }: { label: string }) {
+  return (
+    <div aria-disabled="true" style={bandStyles.viewAllCardBody}>
+      {label}
     </div>
   );
 }
@@ -116,66 +145,78 @@ function BandGroupEmptyState({ t }: { t: Translate }) {
 }
 
 function estimateGroupHeight(group: PlayerBandGroup): number {
-  const rowCount = Math.max(group.entries.length, 1);
-  const buttonHeight = group.totalCount > group.entries.length ? 48 : 0;
-  return 120 + rowCount * 82 + buttonHeight;
+  const entryHeights = group.entries.reduce((total, entry) => total + estimateEntryHeight(entry), 0);
+  const rowGapCount = Math.max(group.entries.length - 1, 0);
+  const emptyHeight = group.entries.length === 0 ? EMPTY_GROUP_HEIGHT : 0;
+  const buttonHeight = group.totalCount > group.entries.length ? VIEW_ALL_CARD_HEIGHT + Gap.md : 0;
+  return BAND_GROUP_HEADER_HEIGHT + emptyHeight + entryHeights + rowGapCount * Gap.md + buttonHeight;
+}
+
+function estimateEntryHeight(entry: PlayerBandEntry): number {
+  return ENTRY_CARD_BASE_HEIGHT + entry.members.length * MEMBER_ROW_HEIGHT;
 }
 
 const bandStyles = {
-  groupCard: {
-    ...frostedCard,
-    ...flexColumn,
+  groupHeader: {
+    ...flexRow,
+    alignItems: 'center',
     gap: Gap.md,
-    borderRadius: Radius.md,
-    padding: Gap.container,
-    height: '100%',
+    minHeight: InstrumentSize.md,
+    paddingTop: Gap.md,
+    paddingBottom: Gap.xs,
+  } as CSSProperties,
+  groupHeaderText: {
+    ...flexColumn,
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+    minHeight: InstrumentSize.md,
   } as CSSProperties,
   groupTitle: {
+    display: 'block',
     margin: 0,
     color: Colors.textPrimary,
-    fontSize: Font.lg,
-    fontWeight: Weight.heavy,
+    fontSize: Font.xl,
+    fontWeight: Weight.bold,
   } as CSSProperties,
-  groupBody: {
-    ...flexColumn,
-    gap: Gap.sm,
-    flex: 1,
-  } as CSSProperties,
-  entryRow: {
+  entryCard: {
     ...frostedCard,
-    ...flexRow,
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: Gap.sm,
     borderRadius: Radius.md,
+    height: '100%',
+  } as CSSProperties,
+  entryCardBody: {
+    ...flexColumn,
+    gap: Gap.md,
+    height: '100%',
     padding: Gap.md,
   } as CSSProperties,
-  memberBlock: {
+  memberRow: {
     ...flexRow,
     alignItems: 'center',
-    gap: Gap.sm,
-    flexWrap: 'wrap',
-  } as CSSProperties,
-  memberChip: {
-    ...flexRow,
-    alignItems: 'center',
-    gap: Gap.sm,
-    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: Gap.md,
+    minHeight: 24,
   } as CSSProperties,
   memberName: {
+    flex: 1,
+    minWidth: 0,
     color: Colors.textPrimary,
     fontSize: Font.md,
     fontWeight: Weight.semibold,
-  } as CSSProperties,
-  memberSeparator: {
-    color: Colors.textMuted,
-    fontSize: Font.md,
-    fontWeight: Weight.heavy,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   } as CSSProperties,
   instrumentRow: {
     ...flexRow,
     alignItems: 'center',
     gap: Gap.xs,
+    flexShrink: 0,
+  } as CSSProperties,
+  emptyCard: {
+    ...frostedCard,
+    borderRadius: Radius.md,
+    padding: Gap.container,
   } as CSSProperties,
   emptyState: {
     ...flexColumn,
@@ -194,16 +235,20 @@ const bandStyles = {
     color: Colors.textSecondary,
     fontSize: Font.sm,
   } as CSSProperties,
-  viewAllButton: {
+  viewAllCard: {
+    ...frostedCard,
+    borderRadius: Radius.md,
+    height: VIEW_ALL_CARD_HEIGHT,
+  } as CSSProperties,
+  viewAllCardBody: {
     ...flexRow,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 40,
-    borderRadius: Radius.md,
-    color: Colors.textSecondary,
-    fontSize: Font.sm,
+    minHeight: VIEW_ALL_CARD_HEIGHT,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
     fontWeight: Weight.semibold,
-    opacity: 0.75,
+    height: '100%',
     cursor: 'default',
   } as CSSProperties,
 };
