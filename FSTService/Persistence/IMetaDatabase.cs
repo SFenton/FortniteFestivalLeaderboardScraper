@@ -61,6 +61,8 @@ public interface IMetaDatabase : IDisposable
     HashSet<string> GetRegisteredAccountIds();
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);
+    void TouchWebRegistrationActivity(string accountId);
+    int PruneStaleWebRegistrations(DateTime staleBeforeUtc);
     string? GetAccountIdForUsername(string username);
 
     // ── Backfill ─────────────────────────────────────────────────────

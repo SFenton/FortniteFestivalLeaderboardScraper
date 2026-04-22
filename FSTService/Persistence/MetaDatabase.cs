@@ -15,6 +15,7 @@ public sealed class MetaDatabase : IMetaDatabase
     private readonly ILogger<MetaDatabase> _log;
 
     internal const int DataCollectionVersion = 3;
+    internal const string WebTrackerDeviceId = "web-tracker";
 
     public MetaDatabase(NpgsqlDataSource dataSource, ILogger<MetaDatabase> log)
     {
@@ -521,7 +522,16 @@ public sealed class MetaDatabase : IMetaDatabase
     // ── Registered users ─────────────────────────────────────────────
 
     public HashSet<string> GetRegisteredAccountIds() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT DISTINCT account_id FROM registered_users"; var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) ids.Add(r.GetString(0)); return ids; }
-    public bool RegisterUser(string deviceId, string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO registered_users (device_id, account_id, registered_at) VALUES (@deviceId, @accountId, @now) ON CONFLICT DO NOTHING"; cmd.Parameters.AddWithValue("deviceId", deviceId); cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); return cmd.ExecuteNonQuery() > 0; }
+    public bool RegisterUser(string deviceId, string accountId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT INTO registered_users (device_id, account_id, registered_at, last_activity_at) VALUES (@deviceId, @accountId, @now, @now) ON CONFLICT DO NOTHING";
+        cmd.Parameters.AddWithValue("deviceId", deviceId);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        return cmd.ExecuteNonQuery() > 0;
+    }
     public bool UnregisterUser(string deviceId, string accountId)
     {
         using var conn = _ds.OpenConnection();
@@ -551,6 +561,27 @@ public sealed class MetaDatabase : IMetaDatabase
         }
         tx.Commit();
         return removed;
+    }
+
+    public void TouchWebRegistrationActivity(string accountId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE registered_users SET last_activity_at = @now WHERE device_id = @deviceId AND account_id = @accountId";
+        cmd.Parameters.AddWithValue("deviceId", WebTrackerDeviceId);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    public int PruneStaleWebRegistrations(DateTime staleBeforeUtc)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM registered_users WHERE device_id = @deviceId AND COALESCE(last_activity_at, registered_at) < @staleBeforeUtc";
+        cmd.Parameters.AddWithValue("deviceId", WebTrackerDeviceId);
+        cmd.Parameters.AddWithValue("staleBeforeUtc", staleBeforeUtc);
+        return cmd.ExecuteNonQuery();
     }
 
     public string? GetAccountIdForUsername(string username) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id FROM account_names WHERE LOWER(display_name) = LOWER(@username) LIMIT 1"; cmd.Parameters.AddWithValue("username", username); var result = cmd.ExecuteScalar(); return result is DBNull or null ? null : (string)result; }

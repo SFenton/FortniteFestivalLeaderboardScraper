@@ -2,6 +2,7 @@ using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
+using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
@@ -9,6 +10,7 @@ public sealed class MetaDatabaseTests : IDisposable
 {
     private readonly InMemoryMetaDatabase _fixture = new();
     private Persistence.MetaDatabase Db => _fixture.Db;
+    private NpgsqlDataSource DataSource => _fixture.DataSource;
 
     public void Dispose() => _fixture.Dispose();
 
@@ -558,6 +560,61 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Single(Db.GetPlayerStats("acct1"));
         Assert.NotNull(Db.GetBackfillStatus("acct1"));
         Assert.Contains("acct1", Db.GetRegisteredAccountIds());
+    }
+
+    [Fact]
+    public void TouchWebRegistrationActivity_refreshes_stale_web_registration()
+    {
+        Db.RegisterUser("web-tracker", "acct1");
+        SetWebRegistrationActivity("acct1", DateTime.UtcNow.AddHours(-8));
+
+        Db.TouchWebRegistrationActivity("acct1");
+
+        var pruned = Db.PruneStaleWebRegistrations(DateTime.UtcNow.AddHours(-4));
+        Assert.Equal(0, pruned);
+        Assert.Contains("acct1", Db.GetRegisteredAccountIds());
+    }
+
+    [Fact]
+    public void PruneStaleWebRegistrations_removes_only_web_tracker_rows_non_destructively()
+    {
+        Db.RegisterUser("web-tracker", "acct1");
+        Db.UpsertPlayerStats(new PlayerStatsDto
+        {
+            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+        });
+        SetWebRegistrationActivity("acct1", DateTime.UtcNow.AddHours(-8));
+
+        var pruned = Db.PruneStaleWebRegistrations(DateTime.UtcNow.AddHours(-4));
+
+        Assert.Equal(1, pruned);
+        Assert.DoesNotContain("acct1", Db.GetRegisteredAccountIds());
+        Assert.Single(Db.GetPlayerStats("acct1"));
+    }
+
+    [Fact]
+    public void PruneStaleWebRegistrations_preserves_non_web_registrations_for_same_account()
+    {
+        Db.RegisterUser("web-tracker", "acct1");
+        Db.RegisterUser("mobile-device", "acct1");
+        SetWebRegistrationActivity("acct1", DateTime.UtcNow.AddHours(-8));
+
+        var pruned = Db.PruneStaleWebRegistrations(DateTime.UtcNow.AddHours(-4));
+
+        Assert.Equal(1, pruned);
+        Assert.Contains("acct1", Db.GetRegisteredAccountIds());
+    }
+
+    private void SetWebRegistrationActivity(string accountId, DateTime lastActivityAt)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE registered_users SET last_activity_at = @lastActivityAt, registered_at = @registeredAt WHERE device_id = @deviceId AND account_id = @accountId";
+        cmd.Parameters.AddWithValue("deviceId", "web-tracker");
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("lastActivityAt", lastActivityAt);
+        cmd.Parameters.AddWithValue("registeredAt", lastActivityAt);
+        cmd.ExecuteNonQuery();
     }
 
     // ═══ GetAllFirstSeenSeasons ═════════════════════════════════

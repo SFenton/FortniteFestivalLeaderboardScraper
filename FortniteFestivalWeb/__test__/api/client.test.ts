@@ -31,7 +31,7 @@ describe('api/client', () => {
       mockFetchOk(data);
       const result = await api.getSongs();
       expect(result).toEqual(data);
-        expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: {}, cache: 'no-cache' });
+      expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: {}, cache: 'no-cache' });
     });
 
     it('sends If-None-Match when cached ETag exists', async () => {
@@ -71,13 +71,13 @@ describe('api/client', () => {
       const data = { songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] };
       mockFetchOk(data);
       await api.getLeaderboard('s1', 'Solo_Guitar' as any, 50, 10);
-      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/Solo_Guitar?top=50&offset=10');
+      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/Solo_Guitar?top=50&offset=10', { headers: {} });
     });
 
     it('includes leeway param when provided', async () => {
       mockFetchOk({ songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] });
       await api.getLeaderboard('s1', 'Solo_Guitar' as any, 100, 0, 1.5);
-      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/Solo_Guitar?top=100&offset=0&leeway=1.5');
+      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/Solo_Guitar?top=100&offset=0&leeway=1.5', { headers: {} });
     });
   });
 
@@ -107,7 +107,35 @@ describe('api/client', () => {
     it('searches with query and limit', async () => {
       mockFetchOk({ results: [{ accountId: 'p1', displayName: 'Test' }] });
       await api.searchAccounts('test', 5);
-      expect(global.fetch).toHaveBeenCalledWith('/api/account/search?q=test&limit=5');
+      expect(global.fetch).toHaveBeenCalledWith('/api/account/search?q=test&limit=5', { headers: {} });
+    });
+  });
+
+  describe('selected-player header', () => {
+    it('includes selected-player header on GET requests when a tracked player is selected', async () => {
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-1', displayName: 'Tracked' }));
+      mockFetchOk({ version: '1.0.0' });
+
+      await api.getVersion();
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/version', {
+        headers: { 'X-FST-Selected-Player': 'tracked-1' },
+      });
+    });
+
+    it('includes selected-player header on POST requests when a tracked player is selected', async () => {
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-1', displayName: 'Tracked' }));
+      mockFetchOk({ accountId: 'p1', displayName: 'Player', trackingStarted: true, backfillStatus: 'queued' });
+
+      await api.trackPlayer('p1');
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/track', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-FST-Selected-Player': 'tracked-1',
+        },
+      });
     });
   });
 
@@ -130,7 +158,7 @@ describe('api/client', () => {
     it('fetches sync status', async () => {
       mockFetchOk({ accountId: 'p1', isTracked: false, backfill: null, historyRecon: null });
       await api.getSyncStatus('p1');
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/sync-status');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/sync-status', { headers: {} });
     });
   });
 
@@ -138,14 +166,20 @@ describe('api/client', () => {
     it('fetches history with optional songId and instrument', async () => {
       mockFetchOk({ accountId: 'p1', count: 0, history: [] });
       await api.getPlayerHistory('p1', 's1', 'Solo_Guitar');
-      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('songId=s1'));
-      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('instrument=Solo_Guitar'));
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('songId=s1'),
+        { headers: {} },
+      );
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('instrument=Solo_Guitar'),
+        { headers: {} },
+      );
     });
 
     it('fetches history without optional params', async () => {
       mockFetchOk({ accountId: 'p1', count: 0, history: [] });
       await api.getPlayerHistory('p1');
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/history');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/history', { headers: {} });
     });
   });
 
@@ -181,7 +215,7 @@ describe('api/client', () => {
         },
       });
       const result = await api.getPlayerStats('p1');
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/stats');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/stats', { headers: {} });
       expect(result.bands?.all.totalCount).toBe(1);
       expect(result.bands?.all.entries[0]?.members[0]?.displayName).toBe('Player One');
     });
@@ -192,6 +226,7 @@ describe('api/client', () => {
       mockFetchOk({ version: '1.0.0' });
       const result = await api.getVersion();
       expect(result).toEqual({ version: '1.0.0' });
+      expect(global.fetch).toHaveBeenCalledWith('/api/version', { headers: {} });
     });
   });
 
@@ -201,7 +236,7 @@ describe('api/client', () => {
       mockFetchOk(data);
       const result = await api.getRivalsOverview('acc-1');
       expect(result).toEqual(data);
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals', { headers: {} });
     });
   });
 
@@ -211,13 +246,13 @@ describe('api/client', () => {
       mockFetchOk(data);
       const result = await api.getRivalsList('acc-1', 'Solo_Guitar');
       expect(result).toEqual(data);
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar', { headers: {} });
     });
 
     it('encodes combo with special characters', async () => {
       mockFetchOk({ combo: 'Solo_Guitar+Solo_Bass', above: [], below: [] });
       await api.getRivalsList('acc-1', 'Solo_Guitar+Solo_Bass');
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar%2BSolo_Bass');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar%2BSolo_Bass', { headers: {} });
     });
   });
 
@@ -227,13 +262,13 @@ describe('api/client', () => {
       mockFetchOk(data);
       const result = await api.getRivalDetail('acc-1', 'Solo_Guitar', 'r1');
       expect(result).toEqual(data);
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=closest');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=closest', { headers: {} });
     });
 
     it('passes custom sort parameter', async () => {
       mockFetchOk({ rival: { accountId: 'r1', displayName: null }, combo: 'Solo_Guitar', totalSongs: 0, offset: 0, limit: 0, sort: 'they_lead', songs: [] });
       await api.getRivalDetail('acc-1', 'Solo_Guitar', 'r1', 'they_lead');
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=they_lead');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=they_lead', { headers: {} });
     });
   });
 

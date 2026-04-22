@@ -1370,6 +1370,46 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task SelectedPlayerHeader_TouchesWebRegistrationActivity()
+    {
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            metaDb.InsertAccountNames([("trackHeaderAcct", (string?)"Header Player")]);
+            metaDb.RegisterUser("web-tracker", "trackHeaderAcct");
+
+            using var conn = dataSource.OpenConnection();
+            using var seed = conn.CreateCommand();
+            seed.CommandText = "UPDATE registered_users SET last_activity_at = @lastActivityAt, registered_at = @registeredAt WHERE device_id = @deviceId AND account_id = @accountId";
+            seed.Parameters.AddWithValue("deviceId", "web-tracker");
+            seed.Parameters.AddWithValue("accountId", "trackHeaderAcct");
+            seed.Parameters.AddWithValue("lastActivityAt", DateTime.UtcNow.AddHours(-8));
+            seed.Parameters.AddWithValue("registeredAt", DateTime.UtcNow.AddHours(-8));
+            seed.ExecuteNonQuery();
+        }
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/version");
+        request.Headers.Add("X-FST-Selected-Player", "trackHeaderAcct");
+
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var verifyScope = _factory.Services.CreateScope();
+        var verifyDataSource = verifyScope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+        using var verifyConn = verifyDataSource.OpenConnection();
+        using var verify = verifyConn.CreateCommand();
+        verify.CommandText = "SELECT last_activity_at FROM registered_users WHERE device_id = @deviceId AND account_id = @accountId";
+        verify.Parameters.AddWithValue("deviceId", "web-tracker");
+        verify.Parameters.AddWithValue("accountId", "trackHeaderAcct");
+        var lastActivityAt = (DateTime?)verify.ExecuteScalar();
+
+        Assert.NotNull(lastActivityAt);
+        Assert.True(lastActivityAt!.Value > DateTime.UtcNow.AddHours(-1));
+    }
+
+    [Fact]
     public async Task TrackPlayer_EmptyAccountId_ReturnsBadRequest()
     {
         var response = await _authedClient.PostAsync("/api/player/%20/track", null);

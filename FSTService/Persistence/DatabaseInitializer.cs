@@ -335,11 +335,19 @@ public static class DatabaseInitializer
             last_login_at TIMESTAMPTZ,
             registered_at TIMESTAMPTZ NOT NULL,
             last_sync_at  TIMESTAMPTZ,
+            last_activity_at TIMESTAMPTZ,
             PRIMARY KEY (device_id, account_id)
         );
 
         CREATE INDEX IF NOT EXISTS ix_reg_account
             ON registered_users (account_id);
+
+        ALTER TABLE registered_users
+            ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ;
+
+        UPDATE registered_users
+        SET last_activity_at = COALESCE(last_activity_at, last_sync_at, last_login_at, registered_at)
+        WHERE last_activity_at IS NULL;
 
         -- =====================================================================
         -- USER SESSIONS (from fst-meta.db)

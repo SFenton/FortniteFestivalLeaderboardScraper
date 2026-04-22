@@ -45,6 +45,9 @@ public sealed class ScraperWorker : BackgroundService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
     private readonly System.Text.Json.JsonSerializerOptions _jsonOpts;
+    private DateTime _serviceStartedAtUtc = DateTime.UtcNow;
+
+    private static readonly TimeSpan WebRegistrationStartupProtection = TimeSpan.FromHours(4);
 
     /// <summary>Background song sync task — stored so we can observe failures.</summary>
     private Task? _backgroundSyncTask;
@@ -399,6 +402,8 @@ public sealed class ScraperWorker : BackgroundService
         if (resolvedPhases != ScrapePhase.All)
             _log.LogInformation("Phase-selective mode: {Phases}", ScrapePhaseResolver.Format(resolvedPhases));
 
+        PruneStaleWebRegistrationsIfEligible(opts);
+
         // Stale precomputed data (from last scrape) is served during the scrape pass.
         // PrecomputeAllAsync at post-scrape overwrites entries atomically, so we don't
         // need to invalidate here. This avoids an 8+ second cold-start penalty for the
@@ -523,6 +528,26 @@ public sealed class ScraperWorker : BackgroundService
                 result.TotalEntries,
                 result.TotalRequests,
                 result.TotalBytes);
+        }
+    }
+
+    private void PruneStaleWebRegistrationsIfEligible(ScraperOptions opts)
+    {
+        var now = DateTime.UtcNow;
+        if (now - _serviceStartedAtUtc < WebRegistrationStartupProtection)
+            return;
+
+        var activityWindow = opts.ScrapeInterval > TimeSpan.Zero
+            ? opts.ScrapeInterval
+            : WebRegistrationStartupProtection;
+        var staleBeforeUtc = now - activityWindow;
+        var pruned = _persistence.Meta.PruneStaleWebRegistrations(staleBeforeUtc);
+        if (pruned > 0)
+        {
+            _log.LogInformation(
+                "Pruned {Count} stale web registration(s) before scrape start. StaleBeforeUtc={StaleBeforeUtc:o}",
+                pruned,
+                staleBeforeUtc);
         }
     }
 

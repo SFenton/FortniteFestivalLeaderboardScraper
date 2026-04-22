@@ -37,9 +37,29 @@ import type {
 import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api/serverTypes';
 
 const BASE = '';
+const TRACKED_PLAYER_STORAGE_KEY = 'fst:trackedPlayer';
+const SELECTED_PLAYER_HEADER = 'X-FST-Selected-Player';
+
+function withSelectedPlayerHeader(headers: Record<string, string> = {}): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(TRACKED_PLAYER_STORAGE_KEY);
+    if (!raw) return headers;
+
+    const parsed = JSON.parse(raw) as { accountId?: string } | null;
+    const accountId = parsed?.accountId?.trim();
+    if (!accountId) return headers;
+
+    return {
+      ...headers,
+      [SELECTED_PLAYER_HEADER]: accountId,
+    };
+  } catch {
+    return headers;
+  }
+}
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: withSelectedPlayerHeader() });
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${res.statusText}`);
   }
@@ -49,7 +69,7 @@ async function get<T>(path: string): Promise<T> {
 async function post<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withSelectedPlayerHeader({ 'Content-Type': 'application/json' }),
   });
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -111,7 +131,7 @@ async function getWithETag<T>(path: string): Promise<T> {
   const headers: Record<string, string> = {};
   if (cached?.etag) headers['If-None-Match'] = cached.etag;
 
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers: withSelectedPlayerHeader(headers) });
 
   if (res.status === 304 && cached) return cached.data as T;
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -130,7 +150,7 @@ export const api = {
 
     // Bypass browser HTTP cache so our ETag check hits the server directly.
     // Without this, the browser's max-age (30 min) silently returns stale data.
-    const res = await fetch(`${BASE}/api/songs`, { headers, cache: 'no-cache' });
+    const res = await fetch(`${BASE}/api/songs`, { headers: withSelectedPlayerHeader(headers), cache: 'no-cache' });
 
     // 304 Not Modified — server confirms our cached data is still current
     if (res.status === 304 && cached) return cached.data;

@@ -5,6 +5,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
+using Npgsql;
 
 namespace FSTService.Tests.Unit;
 
@@ -522,6 +523,96 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         var completedAt = DateTimeOffset.Parse(lastRun.CompletedAt!);
         Assert.True(completedAt.UtcDateTime >= pass.EndedAtUtc!.Value);
+    }
+
+    [Fact]
+    public async Task RunScrapePass_WithinStartupProtection_PreservesStaleWebRegistrations()
+    {
+        var service = CreateServiceWithSongs(("s1", "Song One", "Artist"));
+
+        _metaDb.RegisterUser("web-tracker", "regAcct");
+        SetWebRegistrationActivity("regAcct", DateTime.UtcNow.AddHours(-8));
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+
+        _scraper.ScrapeManySongsAsync(
+            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
+            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
+            .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
+
+        var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2, ScrapeInterval = TimeSpan.FromHours(4) };
+        var worker = CreateWorker(opts);
+
+        SetWorkerStartedAtUtc(worker, DateTime.UtcNow.AddHours(-2));
+
+        await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
+
+        Assert.Contains("regAcct", _metaDb.GetRegisteredAccountIds());
+    }
+
+    [Fact]
+    public async Task RunScrapePass_AfterStartupProtection_PrunesStaleWebRegistrations()
+    {
+        var service = CreateServiceWithSongs(("s1", "Song One", "Artist"));
+
+        _metaDb.RegisterUser("web-tracker", "regAcct");
+        SetWebRegistrationActivity("regAcct", DateTime.UtcNow.AddHours(-8));
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+
+        _scraper.ScrapeManySongsAsync(
+            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
+            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
+            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
+            .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
+
+        var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2, ScrapeInterval = TimeSpan.FromHours(4) };
+        var worker = CreateWorker(opts);
+
+        SetWorkerStartedAtUtc(worker, DateTime.UtcNow.AddHours(-5));
+
+        await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
+
+        Assert.DoesNotContain("regAcct", _metaDb.GetRegisteredAccountIds());
+    }
+
+    private void SetWebRegistrationActivity(string accountId, DateTime lastActivityAt)
+    {
+        var dataSourceField = typeof(MetaDatabase).GetField("_ds", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("MetaDatabase data source field not found.");
+        var dataSource = dataSourceField.GetValue(_metaDb) as NpgsqlDataSource
+            ?? throw new InvalidOperationException("MetaDatabase data source was unavailable.");
+
+        using var conn = dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE registered_users SET last_activity_at = @lastActivityAt, registered_at = @registeredAt WHERE device_id = @deviceId AND account_id = @accountId";
+        cmd.Parameters.AddWithValue("deviceId", "web-tracker");
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("lastActivityAt", lastActivityAt);
+        cmd.Parameters.AddWithValue("registeredAt", lastActivityAt);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void SetWorkerStartedAtUtc(ScraperWorker worker, DateTime startedAtUtc)
+    {
+        var field = typeof(ScraperWorker).GetField("_serviceStartedAtUtc", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("ScraperWorker startup field not found.");
+        field.SetValue(worker, startedAtUtc);
     }
 
     // ═══════════════════════════════════════════════════════════════

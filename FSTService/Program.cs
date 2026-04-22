@@ -521,6 +521,8 @@ notificationService.SetShopProvider(shopService);
 notificationService.SetFestivalService(festivalService);
 notificationService.SetSyncTracker(app.Services.GetRequiredService<UserSyncProgressTracker>());
 
+const string selectedPlayerHeaderName = "X-FST-Selected-Player";
+
 app.UseCors();
 app.UseWebSockets(new WebSocketOptions
 {
@@ -533,6 +535,28 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.Use(async (context, next) =>
+{
+    await next();
+
+    if (context.WebSockets.IsWebSocketRequest
+        || !context.Request.Path.StartsWithSegments("/api")
+        || context.Response.StatusCode >= StatusCodes.Status500InternalServerError)
+    {
+        return;
+    }
+
+    if (!context.Request.Headers.TryGetValue(selectedPlayerHeaderName, out var values))
+        return;
+
+    var accountId = values.ToString().Trim();
+    if (string.IsNullOrWhiteSpace(accountId) || accountId.Length > 128)
+        return;
+
+    context.RequestServices
+        .GetRequiredService<IMetaDatabase>()
+        .TouchWebRegistrationActivity(accountId);
+});
 
 // Serve static files (wwwroot/) and fall back to index.html for non-API routes,
 // but only when the web app has been embedded (e.g. single-container deployment).
