@@ -131,16 +131,14 @@ public sealed class ScraperWorker : BackgroundService
         // track endpoint) can attach at any time.
         _cyclicalMachine.Start(stoppingToken);
 
-        // Pre-warm the rankings cache for registered users in the background so
-        // that the scrape loop starts immediately. The cache TTL is 5 min, so the
-        // worst case for API requests is a single on-demand CTE query. A 2-minute
-        // timeout prevents unbounded blocking on large user counts.
+        // Pre-warm the rankings cache for registered users before the scrape loop
+        // starts. The cache TTL is 5 min, so the worst case for API requests is a
+        // single on-demand CTE query.
         if (_persistence.GetInstrumentKeys().Count > 0)
         {
             var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
             if (registeredIds.Count > 0)
-                await _persistence.PreWarmRankingsCacheAsync(
-                    registeredIds, TimeSpan.FromMinutes(2), stoppingToken);
+                await _persistence.PreWarmRankingsCacheAsync(registeredIds, stoppingToken);
         }
 
         // Precomputed API responses are now served from PostgreSQL.
@@ -453,10 +451,9 @@ public sealed class ScraperWorker : BackgroundService
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 _log.LogWarning(
-                    "Scrape pass timed out after {TimeoutMinutes} minutes. " +
+                    "Scrape pass was canceled by an internal cancellation source. " +
                     "Partial data from this pass was already persisted. " +
-                    "Continuing to post-scrape phases on whatever data was captured.",
-                    opts.ScrapePassTimeoutMinutes);
+                    "Continuing to post-scrape phases on whatever data was captured.");
                 // Do NOT return — fall through so post-scrape still runs.
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

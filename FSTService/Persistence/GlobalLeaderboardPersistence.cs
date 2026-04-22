@@ -861,7 +861,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             {
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = def;
-                cmd.CommandTimeout = 300; // 5 min per index
+                cmd.CommandTimeout = 0;
                 cmd.ExecuteNonQuery();
                 created++;
                 _log.LogDebug("Created index: {Def}", def);
@@ -918,7 +918,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 using var conn = _pgDataSource.OpenConnection();
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = def;
-                cmd.CommandTimeout = 600;
+                cmd.CommandTimeout = 0;
                 cmd.ExecuteNonQuery();
                 Interlocked.Increment(ref created);
                 sw.Stop();
@@ -1132,7 +1132,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandTimeout = 300; // 5 min — each batch is ~100 songs (~1M rows)
+                cmd.CommandTimeout = 0;
                 cmd.CommandText = mergeSql;
                 cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
                 cmd.Parameters.AddWithValue("instrument", instrument);
@@ -1287,24 +1287,11 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public async Task PreWarmRankingsCacheAsync(
         IReadOnlyCollection<string> accountIds,
-        TimeSpan timeout,
         CancellationToken ct = default)
     {
         if (accountIds.Count == 0 || _instrumentDbs.Count == 0) return;
 
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(timeout);
-
-        try
-        {
-            await Task.Run(() => PreWarmRankingsCache(accountIds), cts.Token);
-        }
-        catch (OperationCanceledException) when (cts.Token.IsCancellationRequested && !ct.IsCancellationRequested)
-        {
-            _log.LogWarning(
-                "Rankings cache pre-warm timed out after {Timeout}. Cache will populate on demand.",
-                timeout);
-        }
+        await Task.Run(() => PreWarmRankingsCache(accountIds), ct);
     }
 
     /// <summary>

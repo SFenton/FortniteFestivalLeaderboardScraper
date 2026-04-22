@@ -167,6 +167,7 @@ public interface IMetaDatabase : IDisposable
     // ── Band team rankings ──────────────────────────────────────────
     void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
     BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
+    void SnapshotBandRankHistory(string bandType, int retentionDays = 365);
     (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null);
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);

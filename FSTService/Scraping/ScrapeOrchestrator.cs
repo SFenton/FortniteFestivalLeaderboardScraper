@@ -65,14 +65,7 @@ public sealed class ScrapeOrchestrator
         // pass doesn't leave us stuck at minDop for the next pass.
         _pool.ResetDop();
 
-        // Per-pass timeout as a safety net against infinite hangs
-        using var passCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        if (opts.ScrapePassTimeoutMinutes > 0)
-        {
-            passCts.CancelAfter(TimeSpan.FromMinutes(opts.ScrapePassTimeoutMinutes));
-            _log.LogDebug("Scrape pass timeout set to {Timeout} minutes.", opts.ScrapePassTimeoutMinutes);
-        }
-        var passCt = passCts.Token;
+        var passCt = ct;
 
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun();

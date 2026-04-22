@@ -635,7 +635,7 @@ public sealed class BandLeaderboardPersistence
         // — unless the team contains a registered user.
         using var deleteCmd = conn.CreateCommand();
         deleteCmd.Transaction = tx;
-        deleteCmd.CommandTimeout = 600;
+        deleteCmd.CommandTimeout = 0;
         deleteCmd.CommandText = """
             WITH ranked AS (
                 SELECT song_id, band_type, team_key, instrument_combo, is_over_threshold,
@@ -677,7 +677,7 @@ public sealed class BandLeaderboardPersistence
         {
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandTimeout = 600;
+            cmd.CommandTimeout = 0;
             cmd.CommandText = """
                 DELETE FROM band_member_stats bms
                 WHERE NOT EXISTS (
@@ -690,7 +690,7 @@ public sealed class BandLeaderboardPersistence
 
             using var cmd2 = conn.CreateCommand();
             cmd2.Transaction = tx;
-            cmd2.CommandTimeout = 600;
+            cmd2.CommandTimeout = 0;
             cmd2.CommandText = """
                 DELETE FROM band_members bm
                 WHERE NOT EXISTS (

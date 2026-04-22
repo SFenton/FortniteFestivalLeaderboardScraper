@@ -474,7 +474,11 @@ static int RunRivals(string[] args)
     using var dataSource = NpgsqlDataSource.Create(pg!);
     ValidateTablesExist(dataSource, PresetCatalog.RivalsExecutionTables, label: "rivals execution");
 
-    using var services = CreateHarnessServices(dataSource);
+    using var stageCollector = new BandRankingsStageLogCollector();
+    using var services = CreateHarnessServices(
+        dataSource,
+        additionalProvider: stageCollector,
+        minimumLogLevel: LogLevel.Information);
     var accountIds = ResolveTargetAccountIds(services.MetaDb, accountIdsArg);
     var scope = ResolveAccountScope(accountIdsArg);
 
@@ -915,7 +919,11 @@ static int RunBandRankings(string[] args)
     using var dataSource = NpgsqlDataSource.Create(pg!);
     ValidateTablesExist(dataSource, PresetCatalog.BandRankingsExecutionTables, label: "band rankings execution");
 
-    using var services = CreateHarnessServices(dataSource);
+    using var stageCollector = new BandRankingsStageLogCollector();
+    using var services = CreateHarnessServices(
+        dataSource,
+        additionalProvider: stageCollector,
+        minimumLogLevel: LogLevel.Information);
     var requestedBandTypes = ParseCsvListOrEmpty(bandTypesArg);
     var scope = requestedBandTypes.Count == 0 ? "all" : "explicit";
     var options = new BandTeamRankingRebuildOptions
@@ -975,6 +983,7 @@ static int RunBandRankings(string[] args)
         DisableSynchronousCommit = disableSynchronousCommit,
         TotalChartedSongs = results.FirstOrDefault()?.TotalChartedSongs ?? 0,
         TotalElapsedMs = Math.Round(sw.Elapsed.TotalMilliseconds, 3),
+        StageTimings = stageCollector.GetEntries(),
         Results = results,
         TableCounts = MergeTableCounts(beforeCounts, afterCounts),
     };
@@ -1429,18 +1438,22 @@ static object NormalizeValue(object value, NpgsqlDbType type)
 
 static void TruncateTables(NpgsqlDataSource dataSource, IReadOnlyList<string> tables)
 {
-    if (tables.Count == 0)
+    var existingTables = tables.Where(table => TableExists(dataSource, table)).ToArray();
+    if (existingTables.Length == 0)
         return;
 
     using var conn = dataSource.OpenConnection();
     using var cmd = conn.CreateCommand();
     cmd.CommandTimeout = 0;
-    cmd.CommandText = $"TRUNCATE TABLE {string.Join(", ", tables.Select(QualifiedTable))} RESTART IDENTITY CASCADE";
+    cmd.CommandText = $"TRUNCATE TABLE {string.Join(", ", existingTables.Select(QualifiedTable))} RESTART IDENTITY CASCADE";
     cmd.ExecuteNonQuery();
 }
 
 static long CountRows(NpgsqlDataSource dataSource, string table, TableQuerySpec? querySpec = null)
 {
+    if (!TableExists(dataSource, table))
+        return 0;
+
     using var conn = dataSource.OpenConnection();
     using var cmd = conn.CreateCommand();
     cmd.CommandTimeout = 0;
@@ -1448,6 +1461,16 @@ static long CountRows(NpgsqlDataSource dataSource, string table, TableQuerySpec?
     if (querySpec is not null)
         AddBindings(cmd, querySpec.Parameters);
     return Convert.ToInt64(cmd.ExecuteScalar());
+}
+
+static bool TableExists(NpgsqlDataSource dataSource, string table)
+{
+    using var conn = dataSource.OpenConnection();
+    using var cmd = conn.CreateCommand();
+    cmd.CommandTimeout = 0;
+    cmd.CommandText = "SELECT to_regclass(@tableName) IS NOT NULL";
+    cmd.Parameters.AddWithValue("tableName", QualifiedTable(table));
+    return Convert.ToBoolean(cmd.ExecuteScalar() ?? false);
 }
 
 static IReadOnlyList<TableRowCount> CaptureTableCounts(NpgsqlDataSource dataSource, IReadOnlyList<string> tables)
@@ -1570,7 +1593,8 @@ static BandTeamRankingWriteMode ParseBandTeamRankingWriteMode(string value, stri
     {
         "combo-batched" or "combo_batched" or "combobatched" => BandTeamRankingWriteMode.ComboBatched,
         "monolithic" => BandTeamRankingWriteMode.Monolithic,
-        _ => throw new ArgumentException($"{argumentName} must be one of: combo-batched, monolithic", argumentName),
+        "phased" => BandTeamRankingWriteMode.Phased,
+        _ => throw new ArgumentException($"{argumentName} must be one of: combo-batched, monolithic, phased", argumentName),
     };
 }
 
@@ -1781,7 +1805,7 @@ static void PrintUsage()
                     PostScrapeCloneHarness run-leaderboard-rivals --pg <connection-string> [--account-ids <csv>] [--max-degree-of-parallelism <int>] [--leaderboard-rival-radius <int>] [--out <path>]
                     PostScrapeCloneHarness run-player-stats --pg <connection-string> [--account-ids <csv>] [--max-degree-of-parallelism <int>] [--out <path>]
                     PostScrapeCloneHarness run-precompute --pg <connection-string> [--account-ids <csv>] [--player-bands <true|false>] [--out <path>]
-                    PostScrapeCloneHarness run-band-rankings --pg <connection-string> [--band-types <csv>] [--write-mode <combo-batched|monolithic>] [--command-timeout-seconds <int>] [--analyze-staging <true|false>] [--disable-synchronous-commit <true|false>] [--out <path>]
+                    PostScrapeCloneHarness run-band-rankings --pg <connection-string> [--band-types <csv>] [--write-mode <combo-batched|monolithic|phased>] [--command-timeout-seconds <int>] [--analyze-staging <true|false>] [--disable-synchronous-commit <true|false>] [--out <path>]
                     PostScrapeCloneHarness run-band-extraction --pg <connection-string> [--out <path>]
 
         Notes:
@@ -1870,6 +1894,7 @@ sealed class BandRankingsRunSummary
     public bool DisableSynchronousCommit { get; init; }
     public int TotalChartedSongs { get; init; }
     public double TotalElapsedMs { get; init; }
+    public IReadOnlyList<BandRankingsStageTiming> StageTimings { get; init; } = [];
     public IReadOnlyList<BandRankingRepairResult> Results { get; init; } = [];
     public IReadOnlyList<TableCountDelta> TableCounts { get; init; } = [];
 }
@@ -1997,6 +2022,17 @@ sealed class RankingsPhaseTiming
 {
     public string Phase { get; init; } = string.Empty;
     public string Instrument { get; init; } = string.Empty;
+    public long DurationMs { get; init; }
+    public long? RowCount { get; init; }
+}
+
+sealed class BandRankingsStageTiming
+{
+    public string BandType { get; init; } = string.Empty;
+    public string WriteMode { get; init; } = string.Empty;
+    public int TimeoutSeconds { get; init; }
+    public string Stage { get; init; } = string.Empty;
+    public string? ComboId { get; init; }
     public long DurationMs { get; init; }
     public long? RowCount { get; init; }
 }
@@ -2215,6 +2251,117 @@ sealed class PrecomputePhaseLogCollector : ILoggerProvider
     }
 }
 
+sealed class BandRankingsStageLogCollector : ILoggerProvider
+{
+    private readonly List<BandRankingsStageTiming> _entries = [];
+    private readonly object _sync = new();
+
+    public IReadOnlyList<BandRankingsStageTiming> GetEntries()
+    {
+        lock (_sync)
+            return _entries.ToArray();
+    }
+
+    public ILogger CreateLogger(string categoryName) => new BandRankingsStageLogger(categoryName, this);
+
+    public void Dispose()
+    {
+    }
+
+    private void Add(BandRankingsStageTiming timing)
+    {
+        lock (_sync)
+            _entries.Add(timing);
+    }
+
+    private sealed class BandRankingsStageLogger(string categoryName, BandRankingsStageLogCollector owner) : ILogger
+    {
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (!IsEnabled(logLevel))
+                return;
+
+            var message = formatter(state, exception);
+            if (string.IsNullOrWhiteSpace(message))
+                return;
+
+            if (message.StartsWith("[BandRankings.Stage] ", StringComparison.Ordinal))
+            {
+                if (TryParseTiming(message, out var timing))
+                    owner.Add(timing);
+                Console.WriteLine(message);
+                return;
+            }
+
+            if (logLevel >= LogLevel.Warning)
+                Console.Error.WriteLine($"[{categoryName}] {message}");
+        }
+
+        private static bool TryParseTiming(string message, out BandRankingsStageTiming timing)
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var token in message[21..].Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var split = token.Split('=', 2);
+                if (split.Length == 2)
+                    values[split[0]] = split[1];
+            }
+
+            if (!values.TryGetValue("band_type", out var bandType)
+                || !values.TryGetValue("write_mode", out var writeMode)
+                || !values.TryGetValue("timeout_seconds", out var timeoutRaw)
+                || !int.TryParse(timeoutRaw, out var timeoutSeconds)
+                || !values.TryGetValue("stage", out var stage)
+                || !values.TryGetValue("elapsed_ms", out var durationRaw)
+                || !double.TryParse(durationRaw, out var durationMsDouble))
+            {
+                timing = new BandRankingsStageTiming();
+                return false;
+            }
+
+            long? rowCount = null;
+            if (values.TryGetValue("row_count", out var rowCountRaw)
+                && !string.Equals(rowCountRaw, "-", StringComparison.Ordinal)
+                && long.TryParse(rowCountRaw, out var parsedRowCount))
+            {
+                rowCount = parsedRowCount;
+            }
+
+            string? comboId = null;
+            if (values.TryGetValue("combo_id", out var comboIdRaw)
+                && !string.Equals(comboIdRaw, "-", StringComparison.Ordinal))
+            {
+                comboId = comboIdRaw;
+            }
+
+            timing = new BandRankingsStageTiming
+            {
+                BandType = bandType,
+                WriteMode = writeMode,
+                TimeoutSeconds = timeoutSeconds,
+                Stage = stage,
+                ComboId = comboId,
+                DurationMs = (long)Math.Round(durationMsDouble),
+                RowCount = rowCount,
+            };
+            return true;
+        }
+    }
+
+    private sealed class NullScope : IDisposable
+    {
+        public static NullScope Instance { get; } = new();
+
+        public void Dispose()
+        {
+        }
+    }
+}
+
 sealed class HarnessServices : IDisposable
 {
     public ILoggerFactory LoggerFactory { get; init; } = null!;
@@ -2234,6 +2381,22 @@ sealed class HarnessServices : IDisposable
 
 static class PresetCatalog
 {
+    private static readonly string[] BandCurrentTables =
+    [
+        "band_team_rankings_current_band_duets",
+        "band_team_rankings_current_band_trios",
+        "band_team_rankings_current_band_quad",
+        "band_team_ranking_stats_current_band_duets",
+        "band_team_ranking_stats_current_band_trios",
+        "band_team_ranking_stats_current_band_quad",
+    ];
+
+    private static readonly string[] BandHistoryTables =
+    [
+        "band_team_rank_history",
+        "band_team_ranking_stats_history",
+    ];
+
     private static readonly string[] CoreInputs =
     [
         "songs",
@@ -2265,8 +2428,8 @@ static class PresetCatalog
 
     public static readonly IReadOnlyList<string> RankingsOutputTables = Unique([
         .. RankingsTables,
-        "band_team_rankings",
-        "band_team_ranking_stats",
+        .. BandCurrentTables,
+        .. BandHistoryTables,
     ]);
 
     public static readonly IReadOnlyList<string> RankingsExecutionTables = Unique([
@@ -2336,8 +2499,8 @@ static class PresetCatalog
         "band_entries",
         "band_member_stats",
         "band_members",
-        "band_team_rankings",
-        "band_team_ranking_stats",
+        .. BandCurrentTables,
+        .. BandHistoryTables,
         "backfill_status",
         "backfill_progress",
         "history_recon_status",
@@ -2348,13 +2511,13 @@ static class PresetCatalog
         "band_entries",
         "band_member_stats",
         "band_members",
-        "band_team_rankings",
-        "band_team_ranking_stats",
+        .. BandCurrentTables,
+        .. BandHistoryTables,
     ]);
 
     public static readonly IReadOnlyList<string> BandRankingsOutputTables = Unique([
-        "band_team_rankings",
-        "band_team_ranking_stats",
+        .. BandCurrentTables,
+        .. BandHistoryTables,
     ]);
 
     public static readonly IReadOnlyList<string> BandRankingsExecutionTables = Unique([
@@ -2366,11 +2529,7 @@ static class PresetCatalog
     public static readonly IReadOnlyList<string> BandExecutionTables = Unique([
         "songs",
         "leaderboard_entries",
-        "band_entries",
-        "band_member_stats",
-        "band_members",
-        "band_team_rankings",
-        "band_team_ranking_stats",
+        .. BandOutputTables,
     ]);
 
     private static readonly string[] RivalsTables =
@@ -2399,8 +2558,8 @@ static class PresetCatalog
         "band_entries",
         "band_member_stats",
         "band_members",
-        "band_team_rankings",
-        "band_team_ranking_stats",
+        .. BandCurrentTables,
+        .. BandHistoryTables,
     ];
 
     private static readonly string[] StatusTables =

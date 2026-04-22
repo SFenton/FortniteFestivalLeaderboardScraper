@@ -281,12 +281,9 @@ public sealed class ScraperOptions
     public int LeaderboardRivalRadius { get; set; } = 10;
 
     /// <summary>
-    /// Maximum time (in minutes) for a single scrape pass before it is cancelled.
-    /// Acts as a safety net against infinite hangs. The CDN slot-release mechanism
-    /// is the primary defence; this is a backstop.
-    /// Default 0 (disabled). Set to a positive value (e.g. 45) to enable.
-    /// When <see cref="FullCrawlEnabled"/> is true, consider 300+.
-    /// Override via environment variable: Scraper__ScrapePassTimeoutMinutes.
+    /// Retained for configuration compatibility.
+    /// Scrape passes no longer apply an internal timeout and instead run until
+    /// completion or external cancellation.
     /// </summary>
     public int ScrapePassTimeoutMinutes { get; set; }
 

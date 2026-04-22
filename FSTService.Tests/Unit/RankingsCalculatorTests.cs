@@ -771,6 +771,32 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.Equal("p1:p2:p3", trioEntries[0].TeamKey);
     }
 
+    [Fact]
+    public void ComputeBandRankings_BandHistorySnapshotFailure_DoesNotBlockLaterBandTypes()
+    {
+        var bandPersistence = new BandLeaderboardPersistence(_metaFixture.DataSource, Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000, isFullCombo: true),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+        ]);
+        bandPersistence.UpsertBandEntries("song_0", "Band_Trios",
+        [
+            MakeBandEntry(["p1", "p2", "p3"], "0:1:3", 1200, isFullCombo: true),
+            MakeBandEntry(["p4", "p5", "p6"], "0:2:3", 1100),
+        ]);
+
+        var sut = CreateSut(CreateBandHistorySnapshotFailingMetaDatabase(_metaFixture.Db, ["Band_Duets"]));
+
+        sut.ComputeBandRankings(BandInstrumentMapping.AllBandTypes, totalChartedSongs: 1);
+
+        Assert.Equal(2, _metaFixture.Db.GetBandTeamRankings("Band_Duets").TotalTeams);
+
+        var (trioEntries, trioTotalTeams) = _metaFixture.Db.GetBandTeamRankings("Band_Trios");
+        Assert.Equal(2, trioTotalTeams);
+        Assert.Equal("p1:p2:p3", trioEntries[0].TeamKey);
+    }
+
     private static IInstrumentDatabase CreateSnapshotFailingInstrumentDb(IInstrumentDatabase inner)
     {
         var proxy = Substitute.For<IInstrumentDatabase>();
@@ -838,6 +864,8 @@ public sealed class RankingsCalculatorTests : IDisposable
                 long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)>>()));
         proxy.When(x => x.SnapshotCompositeRankHistory(Arg.Any<int>()))
             .Do(call => inner.SnapshotCompositeRankHistory(call.Arg<int>()));
+        proxy.When(x => x.SnapshotBandRankHistory(Arg.Any<string>(), Arg.Any<int>()))
+            .Do(call => inner.SnapshotBandRankHistory(call.Arg<string>(), call.Arg<int>()));
         proxy.When(x => x.RebuildBandTeamRankings(
                 Arg.Any<string>(),
                 Arg.Any<int>(),
@@ -858,6 +886,24 @@ public sealed class RankingsCalculatorTests : IDisposable
                     call.ArgAt<int>(2),
                     call.ArgAt<double>(3),
                     call.ArgAt<BandTeamRankingRebuildOptions?>(4));
+            });
+
+        return proxy;
+    }
+
+    private static IMetaDatabase CreateBandHistorySnapshotFailingMetaDatabase(IMetaDatabase inner, IReadOnlyList<string> failingBandTypes)
+    {
+        var failingSet = new HashSet<string>(failingBandTypes, StringComparer.OrdinalIgnoreCase);
+        var proxy = CreateBandFailingMetaDatabase(inner, []);
+
+        proxy.When(x => x.SnapshotBandRankHistory(Arg.Any<string>(), Arg.Any<int>()))
+            .Do(call =>
+            {
+                var bandType = call.Arg<string>();
+                if (failingSet.Contains(bandType))
+                    throw new TimeoutException($"synthetic band history snapshot failure for {bandType}");
+
+                inner.SnapshotBandRankHistory(bandType, call.ArgAt<int>(1));
             });
 
         return proxy;

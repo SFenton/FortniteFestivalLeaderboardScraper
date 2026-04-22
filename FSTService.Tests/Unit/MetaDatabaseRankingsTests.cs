@@ -304,13 +304,15 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
-    public void RebuildBandTeamRankings_ComboBatchedMatchesMonolithic()
+    public void RebuildBandTeamRankings_AllWriteModesMatch()
     {
         using var monolithicFixture = new InMemoryMetaDatabase();
         using var comboBatchedFixture = new InMemoryMetaDatabase();
+        using var phasedFixture = new InMemoryMetaDatabase();
 
         SeedBandRankingsSource(monolithicFixture);
         SeedBandRankingsSource(comboBatchedFixture);
+        SeedBandRankingsSource(phasedFixture);
 
         var monolithicMetrics = monolithicFixture.Db.RebuildBandTeamRankingsMeasured(
             "Band_Duets",
@@ -330,9 +332,21 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
                 AnalyzeStagingTable = false,
             });
 
+        var phasedMetrics = phasedFixture.Db.RebuildBandTeamRankingsMeasured(
+            "Band_Duets",
+            totalChartedSongs: 2,
+            options: new BandTeamRankingRebuildOptions
+            {
+                WriteMode = BandTeamRankingWriteMode.Phased,
+                AnalyzeStagingTable = false,
+            });
+
         Assert.Equal(monolithicMetrics.ResultRowCount, comboBatchedMetrics.ResultRowCount);
         Assert.Equal(monolithicMetrics.StatsRowCount, comboBatchedMetrics.StatsRowCount);
         Assert.Equal(monolithicMetrics.DistinctComboCount, comboBatchedMetrics.DistinctComboCount);
+        Assert.Equal(monolithicMetrics.ResultRowCount, phasedMetrics.ResultRowCount);
+        Assert.Equal(monolithicMetrics.StatsRowCount, phasedMetrics.StatsRowCount);
+        Assert.Equal(monolithicMetrics.DistinctComboCount, phasedMetrics.DistinctComboCount);
 
         var monolithicOverall = monolithicFixture.Db.GetBandTeamRankings("Band_Duets", pageSize: 50).Entries
             .Select(SerializeBandTeamRanking)
@@ -340,7 +354,11 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         var comboBatchedOverall = comboBatchedFixture.Db.GetBandTeamRankings("Band_Duets", pageSize: 50).Entries
             .Select(SerializeBandTeamRanking)
             .ToList();
+        var phasedOverall = phasedFixture.Db.GetBandTeamRankings("Band_Duets", pageSize: 50).Entries
+            .Select(SerializeBandTeamRanking)
+            .ToList();
         Assert.Equal(monolithicOverall, comboBatchedOverall);
+        Assert.Equal(monolithicOverall, phasedOverall);
 
         var monolithicCombos = monolithicFixture.Db.GetBandRankingCombos("Band_Duets")
             .OrderBy(entry => entry.ComboId, StringComparer.OrdinalIgnoreCase)
@@ -350,7 +368,12 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             .OrderBy(entry => entry.ComboId, StringComparer.OrdinalIgnoreCase)
             .Select(entry => $"{entry.ComboId}:{entry.TeamCount}")
             .ToList();
+        var phasedCombos = phasedFixture.Db.GetBandRankingCombos("Band_Duets")
+            .OrderBy(entry => entry.ComboId, StringComparer.OrdinalIgnoreCase)
+            .Select(entry => $"{entry.ComboId}:{entry.TeamCount}")
+            .ToList();
         Assert.Equal(monolithicCombos, comboBatchedCombos);
+        Assert.Equal(monolithicCombos, phasedCombos);
 
         foreach (var comboId in monolithicFixture.Db.GetBandRankingCombos("Band_Duets").Select(entry => entry.ComboId))
         {
@@ -360,8 +383,86 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             var comboBatchedEntries = comboBatchedFixture.Db.GetBandTeamRankings("Band_Duets", comboId, pageSize: 50).Entries
                 .Select(SerializeBandTeamRanking)
                 .ToList();
+            var phasedEntries = phasedFixture.Db.GetBandTeamRankings("Band_Duets", comboId, pageSize: 50).Entries
+                .Select(SerializeBandTeamRanking)
+                .ToList();
             Assert.Equal(monolithicEntries, comboBatchedEntries);
+            Assert.Equal(monolithicEntries, phasedEntries);
         }
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_SameDayRerun_DoesNotDuplicateRows()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistory("Band_Duets");
+
+        var initialRankingRows = CountBandHistoryRows("band_team_rank_history", "Band_Duets");
+        var initialStatsRows = CountBandHistoryRows("band_team_ranking_stats_history", "Band_Duets");
+
+        Db.SnapshotBandRankHistory("Band_Duets");
+
+        Assert.Equal(initialRankingRows, CountBandHistoryRows("band_team_rank_history", "Band_Duets"));
+        Assert.Equal(initialStatsRows, CountBandHistoryRows("band_team_ranking_stats_history", "Band_Duets"));
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_ChangedRerun_AddsNewSnapshotRows()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistory("Band_Duets");
+
+        var yesterday = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-1);
+        BackdateBandHistory("Band_Duets", yesterday);
+        var baselineRows = CountBandHistoryRows("band_team_rank_history", "Band_Duets");
+
+        var persistence = new BandLeaderboardPersistence(_fixture.DataSource, Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+        persistence.UpsertBandEntries("song_1", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1500),
+            MakeBandEntry(["p3", "p4"], "0:3", 1300, isFullCombo: true),
+            MakeBandEntry(["p5", "p6"], "0:1", 800),
+        ]);
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistory("Band_Duets");
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        Assert.True(CountBandHistoryRows("band_team_rank_history", "Band_Duets") > baselineRows);
+        Assert.True(CountBandHistoryRows("band_team_rank_history", "Band_Duets", today) > 0);
+    }
+
+    private int CountBandHistoryRows(string tableName, string bandType, DateOnly? snapshotDate = null)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var dateFilter = snapshotDate.HasValue ? " AND snapshot_date = @snapshotDate" : string.Empty;
+        cmd.CommandText = $"SELECT COUNT(*) FROM {BandRankingStorageNames.QuoteIdentifier(tableName)} WHERE band_type = @bandType{dateFilter}";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        if (snapshotDate.HasValue)
+            cmd.Parameters.AddWithValue("snapshotDate", snapshotDate.Value);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private void BackdateBandHistory(string bandType, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE band_team_rank_history
+            SET snapshot_date = @snapshotDate
+            WHERE band_type = @bandType;
+
+            UPDATE band_team_ranking_stats_history
+            SET snapshot_date = @snapshotDate
+            WHERE band_type = @bandType;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.ExecuteNonQuery();
     }
 
     private static string SerializeBandTeamRanking(BandTeamRankingDto entry)

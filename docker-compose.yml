@@ -34,7 +34,7 @@ services:
     environment:
       - DOTNET_ENVIRONMENT=Production
       # ── Database ──
-      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:-fst_dev};Minimum Pool Size=2;Maximum Pool Size=15;Connection Idle Lifetime=30;Connection Pruning Interval=10;Command Timeout=30
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:-fst_dev};Minimum Pool Size=2;Maximum Pool Size=15;Connection Idle Lifetime=30;Connection Pruning Interval=10;Command Timeout=0
       # ── Required secrets (override defaults from appsettings.json) ──
       # Generate with: openssl rand -hex 32
       - Api__ApiKey=${API_KEY:?Set API_KEY in .env}

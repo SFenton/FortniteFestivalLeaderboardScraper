@@ -536,6 +536,22 @@ public sealed class RankingsCalculator
                 perBandSw.Stop();
                 LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
                 successfulBandTypes++;
+
+                var historySw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    _metaDb.SnapshotBandRankHistory(bandType);
+                    historySw.Stop();
+                    LogPhase("band_rankings.history_snapshot", bandType, historySw.Elapsed);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    historySw.Stop();
+                    _log.LogWarning(ex,
+                        "Band ranking history snapshot failed for {BandType}. Current rankings remain published.",
+                        bandType);
+                    LogPhase("band_rankings.history_snapshot.failed", bandType, historySw.Elapsed);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

@@ -176,7 +176,7 @@ public sealed class MetaDatabase : IMetaDatabase
             using (var c = conn.CreateCommand())
             {
                 c.Transaction = tx;
-                c.CommandTimeout = 120;
+                c.CommandTimeout = 0;
                 c.CommandText =
                     "INSERT INTO score_history (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at) " +
                     "SELECT song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at FROM _sh_staging " +
@@ -459,7 +459,7 @@ public sealed class MetaDatabase : IMetaDatabase
             using (var c = conn.CreateCommand())
             {
                 c.Transaction = tx;
-                c.CommandTimeout = 120;
+                c.CommandTimeout = 0;
                 c.CommandText = "INSERT INTO account_names (account_id) SELECT account_id FROM _acct_staging ON CONFLICT DO NOTHING";
                 inserted = c.ExecuteNonQuery();
             }
@@ -1277,10 +1277,212 @@ public sealed class MetaDatabase : IMetaDatabase
 
             currentStage = "materialize_results";
             var materializeSw = Stopwatch.StartNew();
+            var computedAt = DateTime.UtcNow;
+            switch (resolvedOptions.WriteMode)
+            {
+                case BandTeamRankingWriteMode.Monolithic:
+                case BandTeamRankingWriteMode.ComboBatched:
+                    MaterializeBandTeamRankingResultsMonolithic(
+                        conn,
+                        tx,
+                        resolvedOptions,
+                        bandType,
+                        totalChartedSongs,
+                        expectedMembers,
+                        credibilityThreshold,
+                        populationMedian,
+                        computedAt);
+                    currentStage = "materialize_results";
+                    break;
+                case BandTeamRankingWriteMode.Phased:
+                    MaterializeBandTeamRankingResultsPhased(
+                        conn,
+                        tx,
+                        resolvedOptions,
+                        bandType,
+                        totalChartedSongs,
+                        expectedMembers,
+                        credibilityThreshold,
+                        populationMedian,
+                        computedAt,
+                        ref currentStage);
+                    currentStage = "materialize_results";
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(resolvedOptions.WriteMode), resolvedOptions.WriteMode, "Unsupported band ranking materialization mode.");
+            }
+            materializeSw.Stop();
+            materializeMs = RoundElapsed(materializeSw);
+            LogBandRebuildStage(bandType, resolvedOptions, "materialize_results", materializeMs);
+            lastCompletedStage = "materialize_results";
+
+            if (resolvedOptions.AnalyzeStagingTable)
+            {
+                currentStage = "analyze_results";
+                var analyzeSw = Stopwatch.StartNew();
+                using var cmd = conn.CreateCommand();
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = "ANALYZE _band_rank_results";
+                cmd.ExecuteNonQuery();
+                analyzeSw.Stop();
+                analyzeMs = RoundElapsed(analyzeSw);
+                LogBandRebuildStage(bandType, resolvedOptions, "analyze_results", analyzeMs);
+                lastCompletedStage = "analyze_results";
+            }
+
+            currentStage = "count_distinct_combos";
             using (var cmd = conn.CreateCommand())
             {
                 ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
                 cmd.CommandText = @"
+                SELECT COUNT(*)::INT
+                FROM (
+                    SELECT combo_id
+                    FROM _band_rank_results
+                    WHERE ranking_scope = 'combo'
+                    GROUP BY combo_id
+                ) combos;";
+                distinctComboCount = Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
+            }
+            LogBandRebuildStage(bandType, resolvedOptions, "count_distinct_combos", 0d, distinctComboCount);
+            lastCompletedStage = "count_distinct_combos";
+
+            currentStage = "insert_rankings";
+            var insertRankingsSw = Stopwatch.StartNew();
+            var buildSuffix = Guid.NewGuid().ToString("N")[..8];
+            var buildRankingTable = CreateBandRankingBuildTable(conn, tx, resolvedOptions, bandType, buildSuffix);
+            resultRowCount = resolvedOptions.WriteMode switch
+            {
+                BandTeamRankingWriteMode.Monolithic => InsertBandTeamRankingRowsMonolithic(conn, tx, resolvedOptions, buildRankingTable),
+                BandTeamRankingWriteMode.ComboBatched => InsertBandTeamRankingRowsComboBatched(conn, tx, resolvedOptions, buildRankingTable),
+                BandTeamRankingWriteMode.Phased => InsertBandTeamRankingRowsMonolithic(conn, tx, resolvedOptions, buildRankingTable),
+                _ => throw new ArgumentOutOfRangeException(nameof(resolvedOptions.WriteMode), resolvedOptions.WriteMode, "Unsupported band ranking write mode."),
+            };
+            CreateBandRankingIndexes(conn, tx, resolvedOptions, buildRankingTable);
+            insertRankingsSw.Stop();
+            insertRankingsMs = RoundElapsed(insertRankingsSw);
+            LogBandRebuildStage(bandType, resolvedOptions, "insert_rankings", insertRankingsMs, rowCount: resultRowCount);
+            lastCompletedStage = "insert_rankings";
+
+            currentStage = "insert_stats";
+            var insertStatsSw = Stopwatch.StartNew();
+            var buildStatsTable = CreateBandRankingStatsBuildTable(conn, tx, resolvedOptions, bandType, buildSuffix);
+            statsRowCount = InsertBandTeamRankingStatsRows(conn, tx, resolvedOptions, buildStatsTable);
+            CreateBandRankingStatsIndexes(conn, tx, resolvedOptions, buildStatsTable);
+            insertStatsSw.Stop();
+            insertStatsMs = RoundElapsed(insertStatsSw);
+            LogBandRebuildStage(bandType, resolvedOptions, "insert_stats", insertStatsMs, rowCount: statsRowCount);
+            lastCompletedStage = "insert_stats";
+
+            currentStage = "swap_current";
+            var swapSw = Stopwatch.StartNew();
+            SwapBandCurrentTables(conn, tx, resolvedOptions, bandType, buildRankingTable, buildStatsTable, buildSuffix);
+            swapSw.Stop();
+            deleteExistingMs = RoundElapsed(swapSw);
+            LogBandRebuildStage(bandType, resolvedOptions, "swap_current", deleteExistingMs);
+            lastCompletedStage = "swap_current";
+
+            currentStage = "commit";
+            tx.Commit();
+            LogBandRebuildStage(bandType, resolvedOptions, "commit", 0d);
+            lastCompletedStage = "commit";
+
+            totalSw.Stop();
+            var metrics = new BandTeamRankingRebuildMetrics(
+                bandType,
+                resolvedOptions.WriteMode,
+                resultRowCount,
+                statsRowCount,
+                distinctComboCount,
+                materializeMs,
+                analyzeMs,
+                deleteExistingMs,
+                insertRankingsMs,
+                insertStatsMs,
+                RoundElapsed(totalSw));
+
+            _log.LogInformation(
+                "Rebuilt band team rankings for {BandType} using {WriteMode}: rows={ResultRowCount}, stats={StatsRowCount}, combos={DistinctComboCount}, materializeMs={MaterializeResultsMs}, analyzeMs={AnalyzeResultsMs}, deleteMs={DeleteExistingMs}, insertMs={InsertRankingsMs}, statsMs={InsertStatsMs}, totalMs={TotalElapsedMs}",
+                metrics.BandType,
+                metrics.WriteMode,
+                metrics.ResultRowCount,
+                metrics.StatsRowCount,
+                metrics.DistinctComboCount,
+                metrics.MaterializeResultsMs,
+                metrics.AnalyzeResultsMs,
+                metrics.DeleteExistingMs,
+                metrics.InsertRankingsMs,
+                metrics.InsertStatsMs,
+                metrics.TotalElapsedMs);
+
+            return metrics;
+        }
+        catch
+        {
+            totalSw.Stop();
+            _log.LogWarning(
+                "Band team ranking rebuild failed for {BandType} using {WriteMode}: timeoutSeconds={CommandTimeoutSeconds}, lastCompletedStage={LastCompletedStage}, failingStage={FailingStage}, syncCommitMs={SyncCommitMs}, materializeMs={MaterializeResultsMs}, analyzeMs={AnalyzeResultsMs}, deleteMs={DeleteExistingMs}, insertMs={InsertRankingsMs}, statsMs={InsertStatsMs}, distinctCombos={DistinctComboCount}, resultRows={ResultRowCount}, statsRows={StatsRowCount}, totalMs={TotalElapsedMs}",
+                bandType,
+                resolvedOptions.WriteMode,
+                resolvedOptions.CommandTimeoutSeconds,
+                lastCompletedStage,
+                currentStage,
+                syncCommitMs,
+                materializeMs,
+                analyzeMs,
+                deleteExistingMs,
+                insertRankingsMs,
+                insertStatsMs,
+                distinctComboCount,
+                resultRowCount,
+                statsRowCount,
+                RoundElapsed(totalSw));
+            throw;
+        }
+    }
+
+    private void LogBandRebuildStage(string bandType, BandTeamRankingRebuildOptions options, string stage, double elapsedMs, int? rowCount = null, string? comboId = null)
+    {
+        _log.LogInformation(
+            "[BandRankings.Stage] band_type={BandType} write_mode={WriteMode} timeout_seconds={CommandTimeoutSeconds} stage={Stage} combo_id={ComboId} elapsed_ms={ElapsedMs} row_count={RowCount}",
+            bandType,
+            options.WriteMode,
+            options.CommandTimeoutSeconds,
+            stage,
+            comboId ?? "-",
+            elapsedMs,
+            rowCount?.ToString() ?? "-");
+    }
+
+    private static BandTeamRankingRebuildOptions ResolveBandTeamRankingRebuildOptions(BandTeamRankingRebuildOptions? options)
+    {
+        var resolved = options ?? BandTeamRankingRebuildOptions.Default;
+        if (resolved.CommandTimeoutSeconds < 0)
+            throw new ArgumentOutOfRangeException(nameof(options), "CommandTimeoutSeconds must be zero or greater.");
+
+        return resolved;
+    }
+
+    private static void ConfigureBandRebuildCommand(NpgsqlCommand cmd, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options)
+    {
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = options.CommandTimeoutSeconds;
+    }
+
+    private static void MaterializeBandTeamRankingResultsMonolithic(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        BandTeamRankingRebuildOptions options,
+        string bandType,
+        int totalChartedSongs,
+        int expectedMembers,
+        int credibilityThreshold,
+        double populationMedian,
+        DateTime computedAt)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = @"
                 CREATE TEMP TABLE _band_rank_results ON COMMIT DROP AS
                 WITH NormalizedEntries AS (
                     SELECT
@@ -1504,182 +1706,393 @@ public sealed class MetaDatabase : IMetaDatabase
                     raw_weighted_rating,
                     @now AS computed_at
                 FROM ComboRanked;";
-                cmd.Parameters.AddWithValue("bandType", bandType);
-                cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs);
-                cmd.Parameters.AddWithValue("expectedMembers", expectedMembers);
-                cmd.Parameters.AddWithValue("m", credibilityThreshold);
-                cmd.Parameters.AddWithValue("c", populationMedian);
-                cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
-                cmd.ExecuteNonQuery();
-            }
-            materializeSw.Stop();
-            materializeMs = RoundElapsed(materializeSw);
-            LogBandRebuildStage(bandType, resolvedOptions, "materialize_results", materializeMs);
-            lastCompletedStage = "materialize_results";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs);
+        cmd.Parameters.AddWithValue("expectedMembers", expectedMembers);
+        cmd.Parameters.AddWithValue("m", credibilityThreshold);
+        cmd.Parameters.AddWithValue("c", populationMedian);
+        cmd.Parameters.AddWithValue("now", computedAt);
+        cmd.ExecuteNonQuery();
+    }
 
-            if (resolvedOptions.AnalyzeStagingTable)
-            {
-                currentStage = "analyze_results";
-                var analyzeSw = Stopwatch.StartNew();
-                using var cmd = conn.CreateCommand();
-                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-                cmd.CommandText = "ANALYZE _band_rank_results";
-                cmd.ExecuteNonQuery();
-                analyzeSw.Stop();
-                analyzeMs = RoundElapsed(analyzeSw);
-                LogBandRebuildStage(bandType, resolvedOptions, "analyze_results", analyzeMs);
-                lastCompletedStage = "analyze_results";
-            }
-
-            currentStage = "count_distinct_combos";
-            using (var cmd = conn.CreateCommand())
-            {
-                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-                cmd.CommandText = @"
-                SELECT COUNT(*)::INT
-                FROM (
-                    SELECT combo_id
-                    FROM _band_rank_results
-                    WHERE ranking_scope = 'combo'
-                    GROUP BY combo_id
-                ) combos;";
-                distinctComboCount = Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
-            }
-            LogBandRebuildStage(bandType, resolvedOptions, "count_distinct_combos", 0d, distinctComboCount);
-            lastCompletedStage = "count_distinct_combos";
-
-            currentStage = "delete_existing";
-            var deleteSw = Stopwatch.StartNew();
-            using (var cmd = conn.CreateCommand())
-            {
-                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-                cmd.CommandText = "DELETE FROM band_team_ranking_stats WHERE band_type = @bandType; DELETE FROM band_team_rankings WHERE band_type = @bandType;";
-                cmd.Parameters.AddWithValue("bandType", bandType);
-                cmd.ExecuteNonQuery();
-            }
-            deleteSw.Stop();
-            deleteExistingMs = RoundElapsed(deleteSw);
-            LogBandRebuildStage(bandType, resolvedOptions, "delete_existing", deleteExistingMs);
-            lastCompletedStage = "delete_existing";
-
-            currentStage = "insert_rankings";
-            var insertRankingsSw = Stopwatch.StartNew();
-            resultRowCount = resolvedOptions.WriteMode switch
-            {
-                BandTeamRankingWriteMode.Monolithic => InsertBandTeamRankingRowsMonolithic(conn, tx, resolvedOptions),
-                BandTeamRankingWriteMode.ComboBatched => InsertBandTeamRankingRowsComboBatched(conn, tx, resolvedOptions),
-                _ => throw new ArgumentOutOfRangeException(nameof(resolvedOptions.WriteMode), resolvedOptions.WriteMode, "Unsupported band ranking write mode."),
-            };
-            insertRankingsSw.Stop();
-            insertRankingsMs = RoundElapsed(insertRankingsSw);
-            LogBandRebuildStage(bandType, resolvedOptions, "insert_rankings", insertRankingsMs, rowCount: resultRowCount);
-            lastCompletedStage = "insert_rankings";
-
-            currentStage = "insert_stats";
-            var insertStatsSw = Stopwatch.StartNew();
-            using (var cmd = conn.CreateCommand())
-            {
-                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
-                cmd.CommandText = @"
-                INSERT INTO band_team_ranking_stats (band_type, ranking_scope, combo_id, total_teams, computed_at)
-                SELECT band_type, ranking_scope, combo_id, COUNT(*), MAX(computed_at)
-                FROM _band_rank_results
-                GROUP BY band_type, ranking_scope, combo_id;";
-                statsRowCount = cmd.ExecuteNonQuery();
-            }
-            insertStatsSw.Stop();
-            insertStatsMs = RoundElapsed(insertStatsSw);
-            LogBandRebuildStage(bandType, resolvedOptions, "insert_stats", insertStatsMs, rowCount: statsRowCount);
-            lastCompletedStage = "insert_stats";
-
-            currentStage = "commit";
-            tx.Commit();
-            LogBandRebuildStage(bandType, resolvedOptions, "commit", 0d);
-            lastCompletedStage = "commit";
-
-            totalSw.Stop();
-            var metrics = new BandTeamRankingRebuildMetrics(
-                bandType,
-                resolvedOptions.WriteMode,
-                resultRowCount,
-                statsRowCount,
-                distinctComboCount,
-                materializeMs,
-                analyzeMs,
-                deleteExistingMs,
-                insertRankingsMs,
-                insertStatsMs,
-                RoundElapsed(totalSw));
-
-            _log.LogInformation(
-                "Rebuilt band team rankings for {BandType} using {WriteMode}: rows={ResultRowCount}, stats={StatsRowCount}, combos={DistinctComboCount}, materializeMs={MaterializeResultsMs}, analyzeMs={AnalyzeResultsMs}, deleteMs={DeleteExistingMs}, insertMs={InsertRankingsMs}, statsMs={InsertStatsMs}, totalMs={TotalElapsedMs}",
-                metrics.BandType,
-                metrics.WriteMode,
-                metrics.ResultRowCount,
-                metrics.StatsRowCount,
-                metrics.DistinctComboCount,
-                metrics.MaterializeResultsMs,
-                metrics.AnalyzeResultsMs,
-                metrics.DeleteExistingMs,
-                metrics.InsertRankingsMs,
-                metrics.InsertStatsMs,
-                metrics.TotalElapsedMs);
-
-            return metrics;
-        }
-        catch
+    private void MaterializeBandTeamRankingResultsPhased(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        BandTeamRankingRebuildOptions options,
+        string bandType,
+        int totalChartedSongs,
+        int expectedMembers,
+        int credibilityThreshold,
+        double populationMedian,
+        DateTime computedAt,
+        ref string currentStage)
+    {
+        currentStage = "materialize_source";
+        var sourceSw = Stopwatch.StartNew();
+        using (var cmd = conn.CreateCommand())
         {
-            totalSw.Stop();
-            _log.LogWarning(
-                "Band team ranking rebuild failed for {BandType} using {WriteMode}: timeoutSeconds={CommandTimeoutSeconds}, lastCompletedStage={LastCompletedStage}, failingStage={FailingStage}, syncCommitMs={SyncCommitMs}, materializeMs={MaterializeResultsMs}, analyzeMs={AnalyzeResultsMs}, deleteMs={DeleteExistingMs}, insertMs={InsertRankingsMs}, statsMs={InsertStatsMs}, distinctCombos={DistinctComboCount}, resultRows={ResultRowCount}, statsRows={StatsRowCount}, totalMs={TotalElapsedMs}",
-                bandType,
-                resolvedOptions.WriteMode,
-                resolvedOptions.CommandTimeoutSeconds,
-                lastCompletedStage,
-                currentStage,
-                syncCommitMs,
-                materializeMs,
-                analyzeMs,
-                deleteExistingMs,
-                insertRankingsMs,
-                insertStatsMs,
-                distinctComboCount,
-                resultRowCount,
-                statsRowCount,
-                RoundElapsed(totalSw));
-            throw;
+            ConfigureBandRebuildCommand(cmd, tx, options);
+            cmd.CommandText = @"
+                CREATE TEMP TABLE _band_rank_source ON COMMIT DROP AS
+                SELECT
+                    be.song_id,
+                    be.team_key,
+                    be.score,
+                    COALESCE(be.accuracy, 0) AS accuracy,
+                    COALESCE(be.is_full_combo, FALSE) AS is_full_combo,
+                    COALESCE(be.stars, 0) AS stars,
+                    COALESCE(be.end_time, '') AS end_time,
+                    COALESCE((
+                        SELECT string_agg(mapped.instrument, '+' ORDER BY mapped.sort_order, mapped.instrument)
+                        FROM (
+                            SELECT
+                                CASE part::INT
+                                    WHEN 0 THEN 'Solo_Guitar'
+                                    WHEN 1 THEN 'Solo_Bass'
+                                    WHEN 3 THEN 'Solo_Drums'
+                                    WHEN 2 THEN 'Solo_Vocals'
+                                    WHEN 4 THEN 'Solo_PeripheralGuitar'
+                                    WHEN 5 THEN 'Solo_PeripheralBass'
+                                    WHEN 7 THEN 'Solo_PeripheralVocals'
+                                    WHEN 8 THEN 'Solo_PeripheralCymbals'
+                                    WHEN 6 THEN 'Solo_PeripheralDrums'
+                                    ELSE NULL
+                                END AS instrument,
+                                CASE part::INT
+                                    WHEN 0 THEN 0
+                                    WHEN 1 THEN 1
+                                    WHEN 3 THEN 2
+                                    WHEN 2 THEN 3
+                                    WHEN 4 THEN 4
+                                    WHEN 5 THEN 5
+                                    WHEN 7 THEN 6
+                                    WHEN 8 THEN 7
+                                    WHEN 6 THEN 8
+                                    ELSE 999
+                                END AS sort_order
+                            FROM unnest(string_to_array(be.instrument_combo, ':')) AS parts(part)
+                        ) mapped
+                        WHERE mapped.instrument IS NOT NULL
+                    ), '') AS combo_id
+                FROM band_entries be
+                WHERE be.band_type = @bandType
+                  AND NOT be.is_over_threshold;";
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.ExecuteNonQuery();
         }
+        sourceSw.Stop();
+        LogBandRebuildStage(bandType, options, "materialize_source", RoundElapsed(sourceSw));
+
+        currentStage = "index_source";
+        var indexSw = Stopwatch.StartNew();
+        using (var cmd = conn.CreateCommand())
+        {
+            ConfigureBandRebuildCommand(cmd, tx, options);
+            cmd.CommandText = @"
+                CREATE INDEX _band_rank_source_overall_idx ON _band_rank_source (song_id, team_key, score DESC, end_time ASC, combo_id ASC);
+                CREATE INDEX _band_rank_source_combo_idx ON _band_rank_source (combo_id, song_id, score DESC, end_time ASC, team_key ASC);
+                ANALYZE _band_rank_source;";
+            cmd.ExecuteNonQuery();
+        }
+        indexSw.Stop();
+        LogBandRebuildStage(bandType, options, "index_source", RoundElapsed(indexSw));
+
+        currentStage = "create_results_stage";
+        var createResultsSw = Stopwatch.StartNew();
+        CreateEmptyBandRankResultsTable(conn, tx, options);
+        createResultsSw.Stop();
+        LogBandRebuildStage(bandType, options, "create_results_stage", RoundElapsed(createResultsSw));
+
+        currentStage = "materialize_overall_phase";
+        var overallSw = Stopwatch.StartNew();
+        var overallRows = InsertBandRankOverallPhase(conn, tx, options, bandType, totalChartedSongs, credibilityThreshold, populationMedian, computedAt);
+        overallSw.Stop();
+        LogBandRebuildStage(bandType, options, "materialize_overall_phase", RoundElapsed(overallSw), overallRows);
+
+        currentStage = "load_combo_catalog";
+        var comboCatalogSw = Stopwatch.StartNew();
+        var comboIds = LoadBandRankSourceComboIds(conn, tx, options, expectedMembers);
+        comboCatalogSw.Stop();
+        LogBandRebuildStage(bandType, options, "load_combo_catalog", RoundElapsed(comboCatalogSw), comboIds.Count);
+
+        currentStage = "materialize_combo_phases";
+        var comboSw = Stopwatch.StartNew();
+        var comboRows = 0;
+        foreach (var comboId in comboIds)
+        {
+            currentStage = $"materialize_combo_phase:{comboId}";
+            var comboPhaseSw = Stopwatch.StartNew();
+            var comboPhaseRows = InsertBandRankComboPhase(conn, tx, options, bandType, comboId, totalChartedSongs, credibilityThreshold, populationMedian, computedAt);
+            comboPhaseSw.Stop();
+            comboRows += comboPhaseRows;
+            LogBandRebuildStage(bandType, options, "materialize_combo_phase", RoundElapsed(comboPhaseSw), comboPhaseRows, comboId);
+        }
+        comboSw.Stop();
+        currentStage = "materialize_combo_phases";
+        LogBandRebuildStage(bandType, options, "materialize_combo_phases", RoundElapsed(comboSw), comboRows);
     }
 
-    private void LogBandRebuildStage(string bandType, BandTeamRankingRebuildOptions options, string stage, double elapsedMs, int? rowCount = null)
+    private static void CreateEmptyBandRankResultsTable(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options)
     {
-        _log.LogInformation(
-            "[BandRankings.Stage] band_type={BandType} write_mode={WriteMode} timeout_seconds={CommandTimeoutSeconds} stage={Stage} elapsed_ms={ElapsedMs} row_count={RowCount}",
-            bandType,
-            options.WriteMode,
-            options.CommandTimeoutSeconds,
-            stage,
-            elapsedMs,
-            rowCount?.ToString() ?? "-");
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = BandRankingStorageNames.GetCreateRankingTableSql(
+            "_band_rank_results",
+            includePrimaryKey: false,
+            temporary: true,
+            onCommitDrop: true);
+        cmd.ExecuteNonQuery();
     }
 
-    private static BandTeamRankingRebuildOptions ResolveBandTeamRankingRebuildOptions(BandTeamRankingRebuildOptions? options)
+    private static int InsertBandRankOverallPhase(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        BandTeamRankingRebuildOptions options,
+        string bandType,
+        int totalChartedSongs,
+        int credibilityThreshold,
+        double populationMedian,
+        DateTime computedAt)
     {
-        var resolved = options ?? BandTeamRankingRebuildOptions.Default;
-        if (resolved.CommandTimeoutSeconds < 0)
-            throw new ArgumentOutOfRangeException(nameof(options), "CommandTimeoutSeconds must be zero or greater.");
-
-        return resolved;
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = @"
+            INSERT INTO _band_rank_results (
+                band_type, ranking_scope, combo_id, team_key, team_members,
+                songs_played, total_charted_songs, coverage, raw_skill_rating,
+                adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating, computed_at)
+            WITH OverallChoice AS (
+                SELECT *
+                FROM (
+                    SELECT
+                        src.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY src.song_id, src.team_key
+                            ORDER BY src.score DESC, src.end_time ASC, src.combo_id ASC, src.team_key ASC
+                        ) AS choice_rank
+                    FROM _band_rank_source src
+                ) ranked
+                WHERE choice_rank = 1
+            ),
+            OverallValidEntries AS (
+                SELECT
+                    oc.song_id,
+                    oc.team_key,
+                    oc.score,
+                    oc.accuracy,
+                    oc.is_full_combo,
+                    oc.stars,
+                    COUNT(*) OVER (PARTITION BY oc.song_id) AS entry_count,
+                    CASE
+                        WHEN COUNT(*) OVER (PARTITION BY oc.song_id) > 0
+                            THEN LN(COUNT(*) OVER (PARTITION BY oc.song_id)::DOUBLE PRECISION) / LN(2.0)
+                        ELSE 0.0
+                    END AS log_weight,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY oc.song_id
+                        ORDER BY oc.score DESC, oc.end_time ASC, oc.team_key ASC
+                    ) AS effective_rank
+                FROM OverallChoice oc
+            ),
+            OverallAggregated AS (
+                SELECT
+                    team_key,
+                    COUNT(*) AS songs_played,
+                    @totalCharted AS total_charted_songs,
+                    COUNT(*)::DOUBLE PRECISION / @totalCharted AS coverage,
+                    AVG(effective_rank::DOUBLE PRECISION / entry_count) AS raw_skill_rating,
+                    SUM((effective_rank::DOUBLE PRECISION / entry_count) * log_weight) / NULLIF(SUM(log_weight), 0) AS raw_weighted_rating,
+                    SUM(CASE WHEN is_full_combo THEN 1 ELSE 0 END)::DOUBLE PRECISION / @totalCharted AS fc_rate,
+                    SUM(score)::BIGINT AS total_score,
+                    COALESCE(AVG(accuracy::DOUBLE PRECISION), 0.0) AS avg_accuracy,
+                    SUM(CASE WHEN is_full_combo THEN 1 ELSE 0 END) AS full_combo_count,
+                    COALESCE(AVG(stars::DOUBLE PRECISION), 0.0) AS avg_stars,
+                    MIN(effective_rank) AS best_rank,
+                    AVG(effective_rank::DOUBLE PRECISION) AS avg_rank
+                FROM OverallValidEntries
+                GROUP BY team_key
+            ),
+            OverallWithBayesian AS (
+                SELECT *,
+                    (songs_played * raw_skill_rating + @m * @c) / (songs_played + @m) AS adjusted_skill_rating,
+                    (songs_played * COALESCE(raw_weighted_rating, 1.0) + @m * @c) / (songs_played + @m) AS adjusted_weighted_rating
+                FROM OverallAggregated
+            ),
+            OverallRanked AS (
+                SELECT *,
+                    ROW_NUMBER() OVER (ORDER BY adjusted_skill_rating ASC, songs_played DESC, total_score DESC, full_combo_count DESC, team_key ASC) AS adjusted_skill_rank,
+                    ROW_NUMBER() OVER (ORDER BY adjusted_weighted_rating ASC, songs_played DESC, total_score DESC, full_combo_count DESC, team_key ASC) AS weighted_rank,
+                    ROW_NUMBER() OVER (ORDER BY fc_rate DESC, total_score DESC, songs_played DESC, adjusted_skill_rating ASC, team_key ASC) AS fc_rate_rank,
+                    ROW_NUMBER() OVER (ORDER BY total_score DESC, songs_played DESC, adjusted_skill_rating ASC, team_key ASC) AS total_score_rank
+                FROM OverallWithBayesian
+            )
+            SELECT
+                @bandType AS band_type,
+                'overall'::TEXT AS ranking_scope,
+                ''::TEXT AS combo_id,
+                team_key,
+                string_to_array(team_key, ':') AS team_members,
+                songs_played,
+                total_charted_songs,
+                coverage,
+                raw_skill_rating,
+                adjusted_skill_rating,
+                adjusted_skill_rank,
+                adjusted_weighted_rating AS weighted_rating,
+                weighted_rank,
+                fc_rate,
+                fc_rate_rank,
+                total_score,
+                total_score_rank,
+                avg_accuracy,
+                full_combo_count,
+                avg_stars,
+                best_rank,
+                avg_rank,
+                raw_weighted_rating,
+                @now AS computed_at
+            FROM OverallRanked;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs);
+        cmd.Parameters.AddWithValue("m", credibilityThreshold);
+        cmd.Parameters.AddWithValue("c", populationMedian);
+        cmd.Parameters.AddWithValue("now", computedAt);
+        return cmd.ExecuteNonQuery();
     }
 
-    private static void ConfigureBandRebuildCommand(NpgsqlCommand cmd, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options)
+    private static List<string> LoadBandRankSourceComboIds(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, int expectedMembers)
     {
-        cmd.Transaction = tx;
-        cmd.CommandTimeout = options.CommandTimeoutSeconds;
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = @"
+            SELECT combo_id
+            FROM _band_rank_source
+            WHERE combo_id <> ''
+              AND array_length(string_to_array(combo_id, '+'), 1) = @expectedMembers
+            GROUP BY combo_id
+            ORDER BY combo_id;";
+        cmd.Parameters.AddWithValue("expectedMembers", expectedMembers);
+
+        var comboIds = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            comboIds.Add(reader.GetString(0));
+
+        return comboIds;
     }
 
-    private static string BuildBandTeamRankingInsertSql(string whereClause, string orderByClause) => $@"
-                INSERT INTO band_team_rankings (
+    private static int InsertBandRankComboPhase(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        BandTeamRankingRebuildOptions options,
+        string bandType,
+        string comboId,
+        int totalChartedSongs,
+        int credibilityThreshold,
+        double populationMedian,
+        DateTime computedAt)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = @"
+            INSERT INTO _band_rank_results (
+                band_type, ranking_scope, combo_id, team_key, team_members,
+                songs_played, total_charted_songs, coverage, raw_skill_rating,
+                adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating, computed_at)
+            WITH ComboValidEntries AS (
+                SELECT
+                    src.song_id,
+                    src.team_key,
+                    src.score,
+                    src.accuracy,
+                    src.is_full_combo,
+                    src.stars,
+                    COUNT(*) OVER (PARTITION BY src.song_id) AS entry_count,
+                    CASE
+                        WHEN COUNT(*) OVER (PARTITION BY src.song_id) > 0
+                            THEN LN(COUNT(*) OVER (PARTITION BY src.song_id)::DOUBLE PRECISION) / LN(2.0)
+                        ELSE 0.0
+                    END AS log_weight,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY src.song_id
+                        ORDER BY src.score DESC, src.end_time ASC, src.team_key ASC
+                    ) AS effective_rank
+                FROM _band_rank_source src
+                WHERE src.combo_id = @comboId
+            ),
+            ComboAggregated AS (
+                SELECT
+                    team_key,
+                    COUNT(*) AS songs_played,
+                    @totalCharted AS total_charted_songs,
+                    COUNT(*)::DOUBLE PRECISION / @totalCharted AS coverage,
+                    AVG(effective_rank::DOUBLE PRECISION / entry_count) AS raw_skill_rating,
+                    SUM((effective_rank::DOUBLE PRECISION / entry_count) * log_weight) / NULLIF(SUM(log_weight), 0) AS raw_weighted_rating,
+                    SUM(CASE WHEN is_full_combo THEN 1 ELSE 0 END)::DOUBLE PRECISION / @totalCharted AS fc_rate,
+                    SUM(score)::BIGINT AS total_score,
+                    COALESCE(AVG(accuracy::DOUBLE PRECISION), 0.0) AS avg_accuracy,
+                    SUM(CASE WHEN is_full_combo THEN 1 ELSE 0 END) AS full_combo_count,
+                    COALESCE(AVG(stars::DOUBLE PRECISION), 0.0) AS avg_stars,
+                    MIN(effective_rank) AS best_rank,
+                    AVG(effective_rank::DOUBLE PRECISION) AS avg_rank
+                FROM ComboValidEntries
+                GROUP BY team_key
+            ),
+            ComboWithBayesian AS (
+                SELECT *,
+                    (songs_played * raw_skill_rating + @m * @c) / (songs_played + @m) AS adjusted_skill_rating,
+                    (songs_played * COALESCE(raw_weighted_rating, 1.0) + @m * @c) / (songs_played + @m) AS adjusted_weighted_rating
+                FROM ComboAggregated
+            ),
+            ComboRanked AS (
+                SELECT *,
+                    ROW_NUMBER() OVER (ORDER BY adjusted_skill_rating ASC, songs_played DESC, total_score DESC, full_combo_count DESC, team_key ASC) AS adjusted_skill_rank,
+                    ROW_NUMBER() OVER (ORDER BY adjusted_weighted_rating ASC, songs_played DESC, total_score DESC, full_combo_count DESC, team_key ASC) AS weighted_rank,
+                    ROW_NUMBER() OVER (ORDER BY fc_rate DESC, total_score DESC, songs_played DESC, adjusted_skill_rating ASC, team_key ASC) AS fc_rate_rank,
+                    ROW_NUMBER() OVER (ORDER BY total_score DESC, songs_played DESC, adjusted_skill_rating ASC, team_key ASC) AS total_score_rank
+                FROM ComboWithBayesian
+            )
+            SELECT
+                @bandType AS band_type,
+                'combo'::TEXT AS ranking_scope,
+                @comboId AS combo_id,
+                team_key,
+                string_to_array(team_key, ':') AS team_members,
+                songs_played,
+                total_charted_songs,
+                coverage,
+                raw_skill_rating,
+                adjusted_skill_rating,
+                adjusted_skill_rank,
+                adjusted_weighted_rating AS weighted_rating,
+                weighted_rank,
+                fc_rate,
+                fc_rate_rank,
+                total_score,
+                total_score_rank,
+                avg_accuracy,
+                full_combo_count,
+                avg_stars,
+                best_rank,
+                avg_rank,
+                raw_weighted_rating,
+                @now AS computed_at
+            FROM ComboRanked;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("comboId", comboId);
+        cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs);
+        cmd.Parameters.AddWithValue("m", credibilityThreshold);
+        cmd.Parameters.AddWithValue("c", populationMedian);
+        cmd.Parameters.AddWithValue("now", computedAt);
+        return cmd.ExecuteNonQuery();
+    }
+
+    private static string BuildBandTeamRankingInsertSql(string targetTable, string whereClause, string orderByClause) => $@"
+                INSERT INTO {BandRankingStorageNames.QuoteIdentifier(targetTable)} (
                     band_type, ranking_scope, combo_id, team_key, team_members,
                     songs_played, total_charted_songs, coverage, raw_skill_rating,
                     adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
@@ -1695,22 +2108,22 @@ public sealed class MetaDatabase : IMetaDatabase
                 {whereClause}
                 {orderByClause};";
 
-    private static int InsertBandTeamRankingRowsMonolithic(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options)
+    private static int InsertBandTeamRankingRowsMonolithic(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string targetTable)
     {
         using var cmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(cmd, tx, options);
-        cmd.CommandText = BuildBandTeamRankingInsertSql(string.Empty, "ORDER BY ranking_scope, combo_id, team_key");
+        cmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, string.Empty, "ORDER BY ranking_scope, combo_id, team_key");
         return cmd.ExecuteNonQuery();
     }
 
-    private static int InsertBandTeamRankingRowsComboBatched(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options)
+    private static int InsertBandTeamRankingRowsComboBatched(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string targetTable)
     {
         var insertedRows = 0;
 
         using (var cmd = conn.CreateCommand())
         {
             ConfigureBandRebuildCommand(cmd, tx, options);
-            cmd.CommandText = BuildBandTeamRankingInsertSql("WHERE ranking_scope = 'overall'", "ORDER BY team_key");
+            cmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'overall'", "ORDER BY team_key");
             insertedRows += cmd.ExecuteNonQuery();
         }
 
@@ -1735,7 +2148,7 @@ public sealed class MetaDatabase : IMetaDatabase
 
         using var insertCmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(insertCmd, tx, options);
-        insertCmd.CommandText = BuildBandTeamRankingInsertSql("WHERE ranking_scope = 'combo' AND combo_id = @comboId", "ORDER BY team_key");
+    insertCmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'combo' AND combo_id = @comboId", "ORDER BY team_key");
         var comboIdParam = insertCmd.Parameters.Add("comboId", NpgsqlDbType.Text);
 
         foreach (var comboId in comboIds)
@@ -1747,7 +2160,306 @@ public sealed class MetaDatabase : IMetaDatabase
         return insertedRows;
     }
 
+    private static int InsertBandTeamRankingStatsRows(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string targetTable)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = $@"
+                INSERT INTO {BandRankingStorageNames.QuoteIdentifier(targetTable)} (band_type, ranking_scope, combo_id, total_teams, computed_at)
+                SELECT band_type, ranking_scope, combo_id, COUNT(*), MAX(computed_at)
+                FROM _band_rank_results
+                GROUP BY band_type, ranking_scope, combo_id;";
+        return cmd.ExecuteNonQuery();
+    }
+
+    private static string CreateBandRankingBuildTable(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string bandType, string buildSuffix)
+    {
+        var tableName = $"band_team_rankings_build_{bandType.ToLowerInvariant()}_{buildSuffix}".Replace('-', '_');
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = BandRankingStorageNames.GetCreateRankingTableSql(tableName, includePrimaryKey: false);
+        cmd.ExecuteNonQuery();
+        return tableName;
+    }
+
+    private static string CreateBandRankingStatsBuildTable(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string bandType, string buildSuffix)
+    {
+        var tableName = $"band_team_ranking_stats_build_{bandType.ToLowerInvariant()}_{buildSuffix}".Replace('-', '_');
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = BandRankingStorageNames.GetCreateStatsTableSql(tableName, includePrimaryKey: false);
+        cmd.ExecuteNonQuery();
+        return tableName;
+    }
+
+    private static void CreateBandRankingIndexes(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string tableName)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        var quotedTable = BandRankingStorageNames.QuoteIdentifier(tableName);
+        cmd.CommandText = $@"
+                CREATE UNIQUE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_pkey")} ON {quotedTable} (band_type, ranking_scope, combo_id, team_key);
+                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_adjusted")} ON {quotedTable} (band_type, ranking_scope, combo_id, adjusted_skill_rank);
+                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_weighted")} ON {quotedTable} (band_type, ranking_scope, combo_id, weighted_rank);
+                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_fcrate")} ON {quotedTable} (band_type, ranking_scope, combo_id, fc_rate_rank);
+                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_totalscore")} ON {quotedTable} (band_type, ranking_scope, combo_id, total_score_rank);";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void CreateBandRankingStatsIndexes(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string tableName)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = $"CREATE UNIQUE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_pkey")} ON {BandRankingStorageNames.QuoteIdentifier(tableName)} (band_type, ranking_scope, combo_id);";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void SwapBandCurrentTables(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string bandType, string buildRankingTable, string buildStatsTable, string buildSuffix)
+    {
+        var currentRankingTable = BandRankingStorageNames.GetCurrentRankingTable(bandType);
+        var currentStatsTable = BandRankingStorageNames.GetCurrentStatsTable(bandType);
+        var backupRankingTable = $"{currentRankingTable}_old_{buildSuffix}";
+        var backupStatsTable = $"{currentStatsTable}_old_{buildSuffix}";
+        var statements = new List<string>();
+
+        if (TableExists(conn, tx, currentRankingTable))
+            statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(currentRankingTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(backupRankingTable)}");
+
+        if (TableExists(conn, tx, currentStatsTable))
+            statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(currentStatsTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(backupStatsTable)}");
+
+        statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(buildRankingTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(currentRankingTable)}");
+        statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(buildStatsTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(currentStatsTable)}");
+
+        if (TableExists(conn, tx, backupRankingTable))
+            statements.Add($"DROP TABLE {BandRankingStorageNames.QuoteIdentifier(backupRankingTable)}");
+
+        if (TableExists(conn, tx, backupStatsTable))
+            statements.Add($"DROP TABLE {BandRankingStorageNames.QuoteIdentifier(backupStatsTable)}");
+
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = string.Join(";\n", statements) + ";";
+        cmd.ExecuteNonQuery();
+    }
+
     private static double RoundElapsed(Stopwatch sw) => Math.Round(sw.Elapsed.TotalMilliseconds, 3);
+
+    public void SnapshotBandRankHistory(string bandType, int retentionDays = 365)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var cutoff = today.AddDays(-retentionDays);
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+
+        EnsureBandRankHistoryTables(conn, tx);
+
+        var rankingsTable = ResolveBandRankingReadTable(conn, bandType);
+        var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = $@"
+                CREATE TEMP TABLE _latest_band_rank_history ON COMMIT DROP AS
+                SELECT DISTINCT ON (ranking_scope, combo_id, team_key)
+                    ranking_scope,
+                    combo_id,
+                    team_key,
+                    team_members,
+                    songs_played,
+                    total_charted_songs,
+                    coverage,
+                    raw_skill_rating,
+                    adjusted_skill_rating,
+                    adjusted_skill_rank,
+                    weighted_rating,
+                    weighted_rank,
+                    fc_rate,
+                    fc_rate_rank,
+                    total_score,
+                    total_score_rank,
+                    avg_accuracy,
+                    full_combo_count,
+                    avg_stars,
+                    best_rank,
+                    avg_rank,
+                    raw_weighted_rating
+                FROM band_team_rank_history
+                WHERE band_type = @bandType
+                ORDER BY ranking_scope, combo_id, team_key, snapshot_date DESC;
+
+                CREATE TEMP TABLE _latest_band_rank_stats_history ON COMMIT DROP AS
+                SELECT DISTINCT ON (ranking_scope, combo_id)
+                    ranking_scope,
+                    combo_id,
+                    total_teams
+                FROM band_team_ranking_stats_history
+                WHERE band_type = @bandType
+                ORDER BY ranking_scope, combo_id, snapshot_date DESC;";
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = $@"
+                INSERT INTO band_team_rank_history (
+                    band_type, ranking_scope, combo_id, team_key, team_members,
+                    songs_played, total_charted_songs, coverage, raw_skill_rating,
+                    adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                    fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                    full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating,
+                    computed_at, snapshot_date)
+                SELECT
+                    src.band_type,
+                    src.ranking_scope,
+                    src.combo_id,
+                    src.team_key,
+                    src.team_members,
+                    src.songs_played,
+                    src.total_charted_songs,
+                    src.coverage,
+                    src.raw_skill_rating,
+                    src.adjusted_skill_rating,
+                    src.adjusted_skill_rank,
+                    src.weighted_rating,
+                    src.weighted_rank,
+                    src.fc_rate,
+                    src.fc_rate_rank,
+                    src.total_score,
+                    src.total_score_rank,
+                    src.avg_accuracy,
+                    src.full_combo_count,
+                    src.avg_stars,
+                    src.best_rank,
+                    src.avg_rank,
+                    src.raw_weighted_rating,
+                    src.computed_at,
+                    @today
+                FROM {BandRankingStorageNames.QuoteIdentifier(rankingsTable)} src
+                LEFT JOIN _latest_band_rank_history latest
+                    ON latest.ranking_scope = src.ranking_scope
+                   AND latest.combo_id = src.combo_id
+                   AND latest.team_key = src.team_key
+                WHERE src.band_type = @bandType
+                  AND (
+                    latest.team_key IS NULL
+                    OR latest.team_members IS DISTINCT FROM src.team_members
+                    OR latest.songs_played IS DISTINCT FROM src.songs_played
+                    OR latest.total_charted_songs IS DISTINCT FROM src.total_charted_songs
+                    OR latest.coverage IS DISTINCT FROM src.coverage
+                    OR latest.raw_skill_rating IS DISTINCT FROM src.raw_skill_rating
+                    OR latest.adjusted_skill_rating IS DISTINCT FROM src.adjusted_skill_rating
+                    OR latest.adjusted_skill_rank IS DISTINCT FROM src.adjusted_skill_rank
+                    OR latest.weighted_rating IS DISTINCT FROM src.weighted_rating
+                    OR latest.weighted_rank IS DISTINCT FROM src.weighted_rank
+                    OR latest.fc_rate IS DISTINCT FROM src.fc_rate
+                    OR latest.fc_rate_rank IS DISTINCT FROM src.fc_rate_rank
+                    OR latest.total_score IS DISTINCT FROM src.total_score
+                    OR latest.total_score_rank IS DISTINCT FROM src.total_score_rank
+                    OR latest.avg_accuracy IS DISTINCT FROM src.avg_accuracy
+                    OR latest.full_combo_count IS DISTINCT FROM src.full_combo_count
+                    OR latest.avg_stars IS DISTINCT FROM src.avg_stars
+                    OR latest.best_rank IS DISTINCT FROM src.best_rank
+                    OR latest.avg_rank IS DISTINCT FROM src.avg_rank
+                    OR latest.raw_weighted_rating IS DISTINCT FROM src.raw_weighted_rating
+                  )
+                ON CONFLICT (band_type, ranking_scope, combo_id, team_key, snapshot_date) DO UPDATE SET
+                    team_members = EXCLUDED.team_members,
+                    songs_played = EXCLUDED.songs_played,
+                    total_charted_songs = EXCLUDED.total_charted_songs,
+                    coverage = EXCLUDED.coverage,
+                    raw_skill_rating = EXCLUDED.raw_skill_rating,
+                    adjusted_skill_rating = EXCLUDED.adjusted_skill_rating,
+                    adjusted_skill_rank = EXCLUDED.adjusted_skill_rank,
+                    weighted_rating = EXCLUDED.weighted_rating,
+                    weighted_rank = EXCLUDED.weighted_rank,
+                    fc_rate = EXCLUDED.fc_rate,
+                    fc_rate_rank = EXCLUDED.fc_rate_rank,
+                    total_score = EXCLUDED.total_score,
+                    total_score_rank = EXCLUDED.total_score_rank,
+                    avg_accuracy = EXCLUDED.avg_accuracy,
+                    full_combo_count = EXCLUDED.full_combo_count,
+                    avg_stars = EXCLUDED.avg_stars,
+                    best_rank = EXCLUDED.best_rank,
+                    avg_rank = EXCLUDED.avg_rank,
+                    raw_weighted_rating = EXCLUDED.raw_weighted_rating,
+                    computed_at = EXCLUDED.computed_at;";
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.Parameters.AddWithValue("today", today);
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = $@"
+                INSERT INTO band_team_ranking_stats_history (
+                    band_type, ranking_scope, combo_id, total_teams, computed_at, snapshot_date)
+                SELECT
+                    src.band_type,
+                    src.ranking_scope,
+                    src.combo_id,
+                    src.total_teams,
+                    src.computed_at,
+                    @today
+                FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)} src
+                LEFT JOIN _latest_band_rank_stats_history latest
+                    ON latest.ranking_scope = src.ranking_scope
+                   AND latest.combo_id = src.combo_id
+                WHERE src.band_type = @bandType
+                  AND (
+                    latest.combo_id IS NULL
+                    OR latest.total_teams IS DISTINCT FROM src.total_teams
+                  )
+                ON CONFLICT (band_type, ranking_scope, combo_id, snapshot_date) DO UPDATE SET
+                    total_teams = EXCLUDED.total_teams,
+                    computed_at = EXCLUDED.computed_at;";
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.Parameters.AddWithValue("today", today);
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = @"
+                DELETE FROM band_team_rank_history history
+                WHERE history.band_type = @bandType
+                  AND history.snapshot_date < @cutoff
+                  AND EXISTS (
+                    SELECT 1
+                    FROM band_team_rank_history newer
+                    WHERE newer.band_type = history.band_type
+                      AND newer.ranking_scope = history.ranking_scope
+                      AND newer.combo_id = history.combo_id
+                      AND newer.team_key = history.team_key
+                      AND newer.snapshot_date > history.snapshot_date
+                      AND newer.snapshot_date <= @cutoff
+                  );
+
+                DELETE FROM band_team_ranking_stats_history history
+                WHERE history.band_type = @bandType
+                  AND history.snapshot_date < @cutoff
+                  AND EXISTS (
+                    SELECT 1
+                    FROM band_team_ranking_stats_history newer
+                    WHERE newer.band_type = history.band_type
+                      AND newer.ranking_scope = history.ranking_scope
+                      AND newer.combo_id = history.combo_id
+                      AND newer.snapshot_date > history.snapshot_date
+                      AND newer.snapshot_date <= @cutoff
+                  );";
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.Parameters.AddWithValue("cutoff", cutoff);
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+    }
 
     public (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50)
     {
@@ -1757,6 +2469,7 @@ public sealed class MetaDatabase : IMetaDatabase
         var rankColumn = BandRankColumn(rankBy);
 
         using var conn = _ds.OpenConnection();
+        var rankingsTable = ResolveBandRankingReadTable(conn, bandType);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT
@@ -1765,7 +2478,7 @@ public sealed class MetaDatabase : IMetaDatabase
                 weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score,
                 total_score_rank, avg_accuracy, full_combo_count, avg_stars, best_rank,
                 avg_rank, raw_weighted_rating, computed_at
-            FROM band_team_rankings
+            FROM {BandRankingStorageNames.QuoteIdentifier(rankingsTable)}
             WHERE band_type = @bandType AND ranking_scope = @scope AND combo_id = @comboId
             ORDER BY {rankColumn} ASC
             LIMIT @limit OFFSET @offset";
@@ -1790,15 +2503,16 @@ public sealed class MetaDatabase : IMetaDatabase
         var totalTeams = GetBandRankingTotalTeams(bandType, rankingScope, normalizedComboId);
 
         using var conn = _ds.OpenConnection();
+        var rankingsTable = ResolveBandRankingReadTable(conn, bandType);
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
+        cmd.CommandText = $@"
             SELECT
                 band_type, combo_id, team_key, team_members, songs_played, total_charted_songs,
                 coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank,
                 weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score,
                 total_score_rank, avg_accuracy, full_combo_count, avg_stars, best_rank,
                 avg_rank, raw_weighted_rating, computed_at
-            FROM band_team_rankings
+            FROM {BandRankingStorageNames.QuoteIdentifier(rankingsTable)}
             WHERE band_type = @bandType AND ranking_scope = @scope AND combo_id = @comboId AND team_key = @teamKey";
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("scope", rankingScope);
@@ -1811,10 +2525,11 @@ public sealed class MetaDatabase : IMetaDatabase
     public List<BandComboCatalogEntry> GetBandRankingCombos(string bandType)
     {
         using var conn = _ds.OpenConnection();
+        var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
+        cmd.CommandText = $@"
             SELECT combo_id, total_teams
-            FROM band_team_ranking_stats
+            FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)}
             WHERE band_type = @bandType AND ranking_scope = 'combo'
             ORDER BY total_teams DESC, combo_id ASC";
         cmd.Parameters.AddWithValue("bandType", bandType);
@@ -2207,7 +2922,7 @@ public sealed class MetaDatabase : IMetaDatabase
             using var tx = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandTimeout = 300; // 5 min per batch
+            cmd.CommandTimeout = 0;
             cmd.CommandText =
                 "DELETE FROM leaderboard_staging WHERE ctid = ANY(" +
                 "ARRAY(SELECT ctid FROM leaderboard_staging WHERE scrape_id < @id LIMIT @limit))";
@@ -2287,16 +3002,84 @@ public sealed class MetaDatabase : IMetaDatabase
     private int GetBandRankingTotalTeams(string bandType, string rankingScope, string comboId)
     {
         using var conn = _ds.OpenConnection();
+        var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
+        cmd.CommandText = $@"
             SELECT total_teams
-            FROM band_team_ranking_stats
+            FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)}
             WHERE band_type = @bandType AND ranking_scope = @scope AND combo_id = @comboId";
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("scope", rankingScope);
         cmd.Parameters.AddWithValue("comboId", comboId);
         var result = cmd.ExecuteScalar();
         return result is DBNull or null ? 0 : Convert.ToInt32(result);
+    }
+
+    private static void EnsureBandRankHistoryTables(NpgsqlConnection conn, NpgsqlTransaction tx)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = @"
+            CREATE TABLE IF NOT EXISTS band_team_rank_history (
+                band_type             TEXT             NOT NULL,
+                ranking_scope         TEXT             NOT NULL,
+                combo_id              TEXT             NOT NULL DEFAULT '',
+                team_key              TEXT             NOT NULL,
+                team_members          TEXT[]           NOT NULL,
+                songs_played          INT              NOT NULL,
+                total_charted_songs   INT              NOT NULL,
+                coverage              DOUBLE PRECISION NOT NULL,
+                raw_skill_rating      DOUBLE PRECISION NOT NULL,
+                adjusted_skill_rating DOUBLE PRECISION NOT NULL,
+                adjusted_skill_rank   INT              NOT NULL,
+                weighted_rating       DOUBLE PRECISION NOT NULL,
+                weighted_rank         INT              NOT NULL,
+                fc_rate               DOUBLE PRECISION NOT NULL,
+                fc_rate_rank          INT              NOT NULL,
+                total_score           BIGINT           NOT NULL,
+                total_score_rank      INT              NOT NULL,
+                avg_accuracy          DOUBLE PRECISION NOT NULL,
+                full_combo_count      INT              NOT NULL,
+                avg_stars             DOUBLE PRECISION NOT NULL,
+                best_rank             INT              NOT NULL,
+                avg_rank              DOUBLE PRECISION NOT NULL,
+                raw_weighted_rating   DOUBLE PRECISION,
+                computed_at           TIMESTAMPTZ      NOT NULL,
+                snapshot_date         DATE             NOT NULL,
+                PRIMARY KEY (band_type, ranking_scope, combo_id, team_key, snapshot_date)
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_btrh_latest
+                ON band_team_rank_history (band_type, ranking_scope, combo_id, team_key, snapshot_date DESC);
+
+            CREATE TABLE IF NOT EXISTS band_team_ranking_stats_history (
+                band_type      TEXT        NOT NULL,
+                ranking_scope  TEXT        NOT NULL,
+                combo_id       TEXT        NOT NULL DEFAULT '',
+                total_teams    INT         NOT NULL,
+                computed_at    TIMESTAMPTZ NOT NULL,
+                snapshot_date  DATE        NOT NULL,
+                PRIMARY KEY (band_type, ranking_scope, combo_id, snapshot_date)
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_btrsh_latest
+                ON band_team_ranking_stats_history (band_type, ranking_scope, combo_id, snapshot_date DESC);";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static string ResolveBandRankingReadTable(NpgsqlConnection conn, string bandType)
+        => BandRankingStorageNames.GetCurrentRankingTable(bandType);
+
+    private static string ResolveBandRankingStatsReadTable(NpgsqlConnection conn, string bandType)
+        => BandRankingStorageNames.GetCurrentStatsTable(bandType);
+
+    private static bool TableExists(NpgsqlConnection conn, NpgsqlTransaction? transaction, string tableName)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = "SELECT to_regclass(@tableName) IS NOT NULL";
+        cmd.Parameters.AddWithValue("tableName", $"public.{tableName}");
+        return Convert.ToBoolean(cmd.ExecuteScalar() ?? false);
     }
 
     // ── Private helpers ──────────────────────────────────────────────

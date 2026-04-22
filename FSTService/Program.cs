@@ -165,7 +165,8 @@ var apiSettings = builder.Configuration
 
 // ─── HTTP clients ───────────────────────────────────────────
 
-builder.Services.AddHttpClient<EpicAuthService>();
+builder.Services.AddHttpClient<EpicAuthService>()
+    .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan);
 
 Func<SocketsHttpHandler> leaderboardHandlerFactory = () => new SocketsHttpHandler
 {
@@ -185,7 +186,7 @@ Func<SocketsHttpHandler> leaderboardHandlerFactory = () => new SocketsHttpHandle
 }
 
 builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
-    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(sp =>
     {
         var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
@@ -212,7 +213,7 @@ builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
 builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
 
 builder.Services.AddHttpClient<AccountNameResolver>()
-    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         MaxConnectionsPerServer = 32,
@@ -321,6 +322,7 @@ builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
 });
 
 builder.Services.AddHttpClient<ItemShopService>()
+    .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         AutomaticDecompression = System.Net.DecompressionMethods.All,
@@ -338,7 +340,7 @@ builder.Services.AddSingleton<ItemShopService>(sp =>
 
 
 builder.Services.AddHttpClient<HistoryReconstructor>()
-    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         MaxConnectionsPerServer = 32,
@@ -350,7 +352,7 @@ builder.Services.AddHttpClient<HistoryReconstructor>()
 // ─── Path Generation ────────────────────────────────────────
 
 builder.Services.AddHttpClient<PathGenerator>()
-    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         MaxConnectionsPerServer = 8,

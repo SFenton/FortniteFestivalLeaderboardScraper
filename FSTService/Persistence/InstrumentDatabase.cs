@@ -529,7 +529,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     }
 
     public int GetLeaderboardCount(string songId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument"; cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument); return Convert.ToInt32(cmd.ExecuteScalar()); }
-    public Dictionary<string, int> GetAllSongCounts() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, COUNT(*) FROM leaderboard_entries WHERE instrument = @instrument GROUP BY song_id"; cmd.Parameters.AddWithValue("instrument", Instrument); var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) dict[r.GetString(0)] = r.GetInt32(1); return dict; }
+    public Dictionary<string, int> GetAllSongCounts() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, COUNT(*) FROM leaderboard_entries WHERE instrument = @instrument GROUP BY song_id"; cmd.CommandTimeout = 0; cmd.Parameters.AddWithValue("instrument", Instrument); var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) dict[r.GetString(0)] = r.GetInt32(1); return dict; }
 
     public (List<LeaderboardEntryDto> Entries, int TotalCount) GetLeaderboardWithCount(string songId, int? top = null, int offset = 0, int? maxScore = null)
     {
@@ -666,7 +666,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandTimeout = 300;
+        cmd.CommandTimeout = 0;
         cmd.CommandText =
             "UPDATE leaderboard_entries le SET rank = sub.rn FROM " +
             "(SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn " +
@@ -691,7 +691,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandTimeout = 300;
+        cmd.CommandTimeout = 0;
         cmd.CommandText =
             "UPDATE leaderboard_entries le SET rank = sub.rn FROM " +
             "(SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn " +
@@ -828,7 +828,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         // TRUNCATE the partition directly — instant, no dead tuples, no vacuum needed
         using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = $"TRUNCATE {GetPartitionName("account_rankings")}"; c.ExecuteNonQuery(); }
         using var cmd = conn.CreateCommand(); cmd.Transaction = tx;
-        cmd.CommandTimeout = 300; // 4-CTE ranking query is expensive; default 30s too short
+        cmd.CommandTimeout = 0;
         cmd.CommandText =
             "WITH ValidEntries AS (" +
             "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument WHERE le.instrument = @instrument AND le.score <= COALESCE(CAST(ss.max_score * @threshold AS INTEGER), le.score + 1) AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 " +
@@ -975,7 +975,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             using var tx = conn.BeginTransaction();
             using var c = conn.CreateCommand();
             c.Transaction = tx;
-            c.CommandTimeout = 120;
+            c.CommandTimeout = 0;
             c.CommandText = @"
                 WITH doomed AS (
                     SELECT account_id, snapshot_date
@@ -1476,7 +1476,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         if (accountIds.Count == 0) return new();
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 120;
+        cmd.CommandTimeout = 0;
         // Same CTE as ComputeAccountRankings but filtered to specific accounts,
         // no INSERT, no ROW_NUMBER ranking, just returns aggregate metrics.
         cmd.CommandText =
@@ -1552,7 +1552,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         if (accountIds.Count == 0) return new();
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 120;
+        cmd.CommandTimeout = 0;
         cmd.CommandText =
             "WITH ValidEntries AS (" +
             "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, " +
@@ -2066,7 +2066,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         // done once and reused for everything downstream.
         using (var c = conn.CreateCommand())
         {
-            c.CommandTimeout = 300;
+            c.CommandTimeout = 0;
             c.CommandText = @"
                 CREATE TEMP TABLE _valid_entries AS
                 SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars,
@@ -2084,7 +2084,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         // Create indexes for downstream queries
         using (var c = conn.CreateCommand())
         {
-            c.CommandTimeout = 120;
+            c.CommandTimeout = 0;
             c.CommandText = @"
                 CREATE INDEX ON _valid_entries (account_id);
                 CREATE INDEX ON _valid_entries (max_score, score) WHERE max_score IS NOT NULL AND max_score > 0";
@@ -2110,7 +2110,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using (var c = conn.CreateCommand())
         {
-            c.CommandTimeout = 120;
+            c.CommandTimeout = 0;
             c.CommandText = "ANALYZE _valid_entries; ANALYZE _valid_entries_overrides";
             c.ExecuteNonQuery();
         }
@@ -2134,7 +2134,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandTimeout = 300;
+        cmd.CommandTimeout = 0;
         cmd.CommandText =
             "WITH ValidEntries AS (" +
             "SELECT song_id, account_id, score, accuracy, is_full_combo, stars, effective_rank, entry_count, log_weight, max_score " +
@@ -2249,7 +2249,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         // Single SQL pass: generate buckets, join cumulative accounts,
         // filter entries by threshold, aggregate + Bayesian, return all results.
         using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 300;
+        cmd.CommandTimeout = 0;
         cmd.CommandText = @"
             WITH buckets AS (
                 SELECT ROUND(generate_series(-49, 50)::numeric / 10, 1) AS bucket

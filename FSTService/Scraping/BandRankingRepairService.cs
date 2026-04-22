@@ -67,8 +67,10 @@ public sealed class BandRankingRepairService
     private BandRankingCounts GetCounts(string bandType)
     {
         using var conn = _dataSource.OpenConnection();
+        var rankingsTable = ResolveBandRankingTable(conn, bandType);
+        var statsTable = ResolveBandRankingStatsTable(conn, bandType);
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
+        cmd.CommandText = $@"
             SELECT
                 src.source_rows,
                 src.rankable_rows,
@@ -84,14 +86,14 @@ public sealed class BandRankingRepairService
             ) src
             CROSS JOIN (
                 SELECT COUNT(*)::INT AS ranking_rows
-                FROM band_team_rankings
+                FROM {BandRankingStorageNames.QuoteIdentifier(rankingsTable)}
                 WHERE band_type = @bandType
             ) ranked
             CROSS JOIN (
                 SELECT
                     COALESCE(MAX(total_teams) FILTER (WHERE ranking_scope = 'overall' AND combo_id = ''), 0)::INT AS overall_teams,
                     COUNT(*) FILTER (WHERE ranking_scope = 'combo')::INT AS combo_catalog_entries
-                FROM band_team_ranking_stats
+                FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)}
                 WHERE band_type = @bandType
             ) stats";
         cmd.Parameters.AddWithValue("bandType", bandType);
@@ -108,6 +110,12 @@ public sealed class BandRankingRepairService
             reader.GetInt32(3),
             reader.GetInt32(4));
     }
+
+    private static string ResolveBandRankingTable(NpgsqlConnection conn, string bandType)
+        => BandRankingStorageNames.GetCurrentRankingTable(bandType);
+
+    private static string ResolveBandRankingStatsTable(NpgsqlConnection conn, string bandType)
+        => BandRankingStorageNames.GetCurrentStatsTable(bandType);
 
     private static List<string> ResolveBandTypes(IReadOnlyList<string>? bandTypes)
     {

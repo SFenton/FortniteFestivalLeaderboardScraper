@@ -13,7 +13,7 @@ public static class DatabaseInitializer
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandTimeout = 0; // No timeout — schema init must complete before the service can start
-        cmd.CommandText = Schema;
+        cmd.CommandText = $"{Schema}{Environment.NewLine}{Environment.NewLine}{BandRankingStorageNames.GetCurrentSchemaSql()}";
         await cmd.ExecuteNonQueryAsync(ct);
 
         // Reset SERIAL sequences to max(id)+1 — needed after COPY migration inserts explicit IDs
@@ -1184,52 +1184,7 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_bm_song_type
             ON band_members (song_id, band_type);
 
-        -- Aggregate band-team rankings (overall roster and per normalized combo).
-        CREATE TABLE IF NOT EXISTS band_team_rankings (
-            band_type             TEXT             NOT NULL,
-            ranking_scope         TEXT             NOT NULL,
-            combo_id              TEXT             NOT NULL DEFAULT '',
-            team_key              TEXT             NOT NULL,
-            team_members          TEXT[]           NOT NULL,
-            songs_played          INT              NOT NULL,
-            total_charted_songs   INT              NOT NULL,
-            coverage              DOUBLE PRECISION NOT NULL,
-            raw_skill_rating      DOUBLE PRECISION NOT NULL,
-            adjusted_skill_rating DOUBLE PRECISION NOT NULL,
-            adjusted_skill_rank   INT              NOT NULL,
-            weighted_rating       DOUBLE PRECISION NOT NULL,
-            weighted_rank         INT              NOT NULL,
-            fc_rate               DOUBLE PRECISION NOT NULL,
-            fc_rate_rank          INT              NOT NULL,
-            total_score           BIGINT           NOT NULL,
-            total_score_rank      INT              NOT NULL,
-            avg_accuracy          DOUBLE PRECISION NOT NULL,
-            full_combo_count      INT              NOT NULL,
-            avg_stars             DOUBLE PRECISION NOT NULL,
-            best_rank             INT              NOT NULL,
-            avg_rank              DOUBLE PRECISION NOT NULL,
-            raw_weighted_rating   DOUBLE PRECISION,
-            computed_at           TIMESTAMPTZ      NOT NULL DEFAULT now(),
-            PRIMARY KEY (band_type, ranking_scope, combo_id, team_key)
-        );
-
-        CREATE INDEX IF NOT EXISTS ix_btr_adjusted
-            ON band_team_rankings (band_type, ranking_scope, combo_id, adjusted_skill_rank);
-        CREATE INDEX IF NOT EXISTS ix_btr_weighted
-            ON band_team_rankings (band_type, ranking_scope, combo_id, weighted_rank);
-        CREATE INDEX IF NOT EXISTS ix_btr_fcrate
-            ON band_team_rankings (band_type, ranking_scope, combo_id, fc_rate_rank);
-        CREATE INDEX IF NOT EXISTS ix_btr_totalscore
-            ON band_team_rankings (band_type, ranking_scope, combo_id, total_score_rank);
-
-        CREATE TABLE IF NOT EXISTS band_team_ranking_stats (
-            band_type      TEXT        NOT NULL,
-            ranking_scope  TEXT        NOT NULL,
-            combo_id       TEXT        NOT NULL DEFAULT '',
-            total_teams    INT         NOT NULL,
-            computed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-            PRIMARY KEY (band_type, ranking_scope, combo_id)
-        );
+        -- Aggregate band-team rankings are stored in per-band current tables.
 
         -- ── Migration: add instrument_combo column to existing band tables ──
         -- CREATE TABLE IF NOT EXISTS won't alter existing tables, so we add the
