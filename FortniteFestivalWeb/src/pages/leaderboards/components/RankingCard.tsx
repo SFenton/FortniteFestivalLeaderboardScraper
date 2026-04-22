@@ -48,16 +48,14 @@ export default memo(function RankingCard({
 
   const playerInTop = !!(playerAccountId && entries.some(e => e.accountId === playerAccountId));
 
-  // Compute rank column width from the longest rank across list entries (footer computes its own)
+  // Use one shared rank width across the instrument card, including the player row.
   const rankWidth = useMemo(() => {
     const allRanks = entries.map(e => getRankForMetric(e, metric));
+    if (playerRanking) {
+      allRanks.push(getRankForMetric(playerRanking, metric));
+    }
     return computeRankWidth(allRanks);
-  }, [entries, metric]);
-
-  const playerRankWidth = useMemo(() => {
-    if (!playerRanking) return undefined;
-    return computeRankWidth([getRankForMetric(playerRanking, metric)]);
-  }, [playerRanking, metric]);
+  }, [entries, metric, playerRanking]);
 
   const hasPlayerFooter = !!(playerRanking && !playerInTop);
   const extraItems = hasPlayerFooter ? 3 : 2; // header + (player footer?) + button
@@ -160,7 +158,7 @@ export default memo(function RankingCard({
                 ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
                 songsLabelPrimary={isFcRate}
                 isPlayer
-                rankWidth={playerRankWidth}
+                rankWidth={rankWidth}
                 reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
               />
             </Link>

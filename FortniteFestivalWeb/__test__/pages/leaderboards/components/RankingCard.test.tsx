@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import RankingCard from '../../../../src/pages/leaderboards/components/RankingCard';
+import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { TestProviders } from '../../../helpers/TestProviders';
 
 const instrument: ServerInstrumentKey = 'Solo_Guitar';
@@ -80,5 +81,22 @@ describe('RankingCard', () => {
 
     expect(screen.queryByText('View all rankings (10,030)')).toBeNull();
     expect(screen.queryByText('View all rankings')).toBeNull();
+  });
+
+  it('shares one rank width between top rows and the player row for the same instrument card', () => {
+    const expectedWidth = computeRankWidth([1, 2, 12345]);
+
+    renderCard({
+      entries: [makeEntry(1), makeEntry(2)],
+      totalAccounts: 12345,
+      playerAccountId: 'tracked-player',
+      playerRanking: makeEntry(12345, {
+        accountId: 'tracked-player',
+        displayName: 'Tracked Player',
+      }),
+    });
+
+    expect(screen.getByText('#1')).toHaveStyle({ width: `${expectedWidth}px` });
+    expect(screen.getByText('#12,345')).toHaveStyle({ width: `${expectedWidth}px` });
   });
 });
