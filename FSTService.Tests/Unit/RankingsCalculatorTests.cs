@@ -618,7 +618,7 @@ public sealed class RankingsCalculatorTests : IDisposable
     // ═══════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task ComputeAllAsync_IncludesDeltas()
+    public async Task ComputeAllAsync_ProducesCanonicalOutputsWithoutDeltas()
     {
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         guitarDb.UpsertEntries("song_0", [
@@ -641,14 +641,14 @@ public sealed class RankingsCalculatorTests : IDisposable
         // Verify rank history snapshotted (base + deltas)
         var history = guitarDb.GetRankHistory("p1", 1);
         Assert.Single(history);
+        Assert.Empty(guitarDb.GetAllRankingDeltas());
     }
 
     [Fact]
-    public async Task ComputeAllAsync_BandEntries_ProducesDeltasWithoutException()
+    public async Task ComputeAllAsync_BandEntries_SkipsDeltaWritesWithoutException()
     {
         // Score 1020 on max_score 1000 → 102% → inside the 95%-105% band.
-        // This exercises ComputeRankingDeltasFromMaterialized →
-        // ComputeAllBucketDeltas on a real PostgreSQL connection.
+        // This previously exercised the delta pipeline on a real PostgreSQL connection.
         _pathStore.UpdateMaxScores("song_0", new SongMaxScores { MaxLeadScore = 1000 }, "hash_band");
 
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -667,10 +667,8 @@ public sealed class RankingsCalculatorTests : IDisposable
         // Base rankings should exist
         var r1 = guitarDb.GetAccountRanking("p1");
         Assert.NotNull(r1);
-
-        // The primary assertion is that we didn't throw
-        // NpgsqlOperationInProgressException. Deltas may or may not be
-        // written depending on whether metrics actually changed vs base.
+        Assert.Empty(guitarDb.GetAllRankingDeltas());
+        Assert.Empty(guitarDb.GetTodayRankDeltas("p1"));
     }
 
     [Fact]

@@ -1168,256 +1168,25 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     }
 
     /// <summary>
-    /// Paginated ranking query with leeway-aware metrics.
-    /// Routes to interval-tier resolution when <see cref="UseTiers"/> is true,
-    /// otherwise falls back to exact-bucket dense delta lookup.
+    /// Compatibility wrapper for legacy leeway-aware callers.
+    /// Global rankings no longer vary by leeway and always return canonical results.
     /// </summary>
     public (List<AccountRankingDto> Entries, int TotalCount) GetRankingsAtLeeway(
         double leewayBucket, string rankBy = "adjusted", int page = 1, int pageSize = 50)
     {
-        using var conn = _ds.OpenConnection();
-        int total;
-        using (var c = conn.CreateCommand())
-        {
-            c.CommandText = "SELECT COUNT(*) FROM account_rankings WHERE instrument = @instrument";
-            c.Parameters.AddWithValue("instrument", Instrument);
-            total = Convert.ToInt32(c.ExecuteScalar());
-        }
-
-        string joinClause;
-        string alias;
-        using var cmd = conn.CreateCommand();
-        if (UseTiers)
-        {
-            var (effectiveCol, dir) = EffectiveTierRankByColumn(rankBy);
-            alias = "rdt";
-            int idx = BucketToIndex(leewayBucket);
-            joinClause =
-                "LEFT JOIN ranking_delta_tiers rdt ON rdt.account_id = ar.account_id " +
-                "AND rdt.instrument = ar.instrument AND rdt.start_bucket_idx <= @idx AND rdt.end_bucket_idx > @idx ";
-            cmd.Parameters.AddWithValue("idx", (short)idx);
-            cmd.CommandText =
-                "SELECT ar.account_id, " +
-                $"COALESCE({alias}.songs_played, ar.songs_played), " +
-                "ar.total_charted_songs, " +
-                $"COALESCE({alias}.coverage, ar.coverage), " +
-                "ar.raw_skill_rating, " +
-                $"COALESCE({alias}.adjusted_skill, ar.adjusted_skill_rating), " +
-                "ar.adjusted_skill_rank, " +
-                $"COALESCE({alias}.weighted, ar.weighted_rating), " +
-                "ar.weighted_rank, " +
-                $"COALESCE({alias}.fc_rate, ar.fc_rate), " +
-                "ar.fc_rate_rank, " +
-                $"COALESCE({alias}.total_score, ar.total_score), " +
-                "ar.total_score_rank, " +
-                $"COALESCE({alias}.max_score_pct, ar.max_score_percent), " +
-                "ar.max_score_percent_rank, " +
-                $"COALESCE({alias}.avg_accuracy, ar.avg_accuracy), " +
-                $"COALESCE({alias}.full_combo_count, ar.full_combo_count), " +
-                "ar.avg_stars, " +
-                $"COALESCE({alias}.best_rank, ar.best_rank), " +
-                "ar.avg_rank, " +
-                "ar.computed_at, " +
-                "ar.raw_max_score_percent, " +
-                "ar.raw_weighted_rating " +
-                "FROM account_rankings ar " +
-                joinClause +
-                $"WHERE ar.instrument = @instrument ORDER BY {effectiveCol} {dir} " +
-                "LIMIT @limit OFFSET @offset";
-        }
-        else
-        {
-            var (effectiveCol, dir) = EffectiveRankByColumn(rankBy);
-            cmd.CommandText =
-                "SELECT ar.account_id, " +
-                "COALESCE(rd.songs_played, ar.songs_played), " +
-                "ar.total_charted_songs, " +
-                "COALESCE(rd.coverage, ar.coverage), " +
-                "ar.raw_skill_rating, " +
-                "COALESCE(rd.adjusted_skill, ar.adjusted_skill_rating), " +
-                "ar.adjusted_skill_rank, " +
-                "COALESCE(rd.weighted, ar.weighted_rating), " +
-                "ar.weighted_rank, " +
-                "COALESCE(rd.fc_rate, ar.fc_rate), " +
-                "ar.fc_rate_rank, " +
-                "COALESCE(rd.total_score, ar.total_score), " +
-                "ar.total_score_rank, " +
-                "COALESCE(rd.max_score_pct, ar.max_score_percent), " +
-                "ar.max_score_percent_rank, " +
-                "COALESCE(rd.avg_accuracy, ar.avg_accuracy), " +
-                "COALESCE(rd.full_combo_count, ar.full_combo_count), " +
-                "ar.avg_stars, " +
-                "COALESCE(rd.best_rank, ar.best_rank), " +
-                "ar.avg_rank, " +
-                "ar.computed_at, " +
-                "ar.raw_max_score_percent, " +
-                "ar.raw_weighted_rating " +
-                "FROM account_rankings ar " +
-                "LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id " +
-                "AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket " +
-                $"WHERE ar.instrument = @instrument ORDER BY {effectiveCol} {dir} " +
-                "LIMIT @limit OFFSET @offset";
-            cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
-        }
-
-        cmd.Parameters.AddWithValue("instrument", Instrument);
-        cmd.Parameters.AddWithValue("limit", pageSize);
-        cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize);
-        var list = new List<AccountRankingDto>();
-        int rank = (page - 1) * pageSize + 1;
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
-        {
-            list.Add(new AccountRankingDto
-            {
-                AccountId = r.GetString(0),
-                SongsPlayed = r.GetInt32(1),
-                TotalChartedSongs = r.GetInt32(2),
-                Coverage = r.GetDouble(3),
-                RawSkillRating = r.GetDouble(4),
-                AdjustedSkillRating = r.GetDouble(5),
-                AdjustedSkillRank = rankBy is "adjusted" ? rank : r.GetInt32(6),
-                WeightedRating = r.GetDouble(7),
-                WeightedRank = rankBy == "weighted" ? rank : r.GetInt32(8),
-                FcRate = r.GetDouble(9),
-                FcRateRank = rankBy == "fcrate" ? rank : r.GetInt32(10),
-                TotalScore = r.GetInt64(11),
-                TotalScoreRank = rankBy == "totalscore" ? rank : r.GetInt32(12),
-                MaxScorePercent = r.GetDouble(13),
-                MaxScorePercentRank = rankBy == "maxscore" ? rank : r.GetInt32(14),
-                AvgAccuracy = r.GetDouble(15),
-                FullComboCount = r.GetInt32(16),
-                AvgStars = r.GetDouble(17),
-                BestRank = r.GetInt32(18),
-                AvgRank = r.GetDouble(19),
-                ComputedAt = r.GetDateTime(20).ToString("o"),
-                RawMaxScorePercent = r.IsDBNull(21) ? null : r.GetDouble(21),
-                RawWeightedRating = r.IsDBNull(22) ? null : r.GetDouble(22),
-            });
-            rank++;
-        }
-        return (list, total);
+        _ = leewayBucket;
+        return GetAccountRankings(rankBy, page, pageSize);
     }
 
     /// <summary>
-    /// Single account ranking with leeway-aware metrics and positional rank for the requested metric.
-    /// Routes to interval-tier or dense delta path based on <see cref="UseTiers"/>.
+    /// Compatibility wrapper for legacy leeway-aware callers.
+    /// Global rankings no longer vary by leeway and always return canonical results.
     /// </summary>
     public AccountRankingDto? GetAccountRankingAtLeeway(string accountId, double leewayBucket, string rankBy = "adjusted")
     {
-        using var conn = _ds.OpenConnection();
-
-        // 1. Fetch the account's full ranking row with leeway-aware metrics.
-        AccountRankingDto? dto;
-        double playerMetricValue;
-        string effectiveCol, dir;
-        using (var cmd = conn.CreateCommand())
-        {
-            string joinClause;
-            string alias;
-            if (UseTiers)
-            {
-                (effectiveCol, dir) = EffectiveTierRankByColumn(rankBy);
-                alias = "rdt";
-                int idx = BucketToIndex(leewayBucket);
-                joinClause =
-                    "LEFT JOIN ranking_delta_tiers rdt ON rdt.account_id = ar.account_id " +
-                    "AND rdt.instrument = ar.instrument AND rdt.start_bucket_idx <= @idx AND rdt.end_bucket_idx > @idx ";
-                cmd.Parameters.AddWithValue("idx", (short)idx);
-            }
-            else
-            {
-                (effectiveCol, dir) = EffectiveRankByColumn(rankBy);
-                alias = "rd";
-                joinClause =
-                    "LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id " +
-                    "AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket ";
-                cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
-            }
-
-            cmd.CommandText =
-                "SELECT ar.account_id, " +
-                $"COALESCE({alias}.songs_played, ar.songs_played), " +
-                "ar.total_charted_songs, " +
-                $"COALESCE({alias}.coverage, ar.coverage), " +
-                "ar.raw_skill_rating, " +
-                $"COALESCE({alias}.adjusted_skill, ar.adjusted_skill_rating), " +
-                "ar.adjusted_skill_rank, " +
-                $"COALESCE({alias}.weighted, ar.weighted_rating), " +
-                "ar.weighted_rank, " +
-                $"COALESCE({alias}.fc_rate, ar.fc_rate), " +
-                "ar.fc_rate_rank, " +
-                $"COALESCE({alias}.total_score, ar.total_score), " +
-                "ar.total_score_rank, " +
-                $"COALESCE({alias}.max_score_pct, ar.max_score_percent), " +
-                "ar.max_score_percent_rank, " +
-                $"COALESCE({alias}.avg_accuracy, ar.avg_accuracy), " +
-                $"COALESCE({alias}.full_combo_count, ar.full_combo_count), " +
-                "ar.avg_stars, " +
-                $"COALESCE({alias}.best_rank, ar.best_rank), " +
-                "ar.avg_rank, " +
-                "ar.computed_at, " +
-                "ar.raw_max_score_percent, " +
-                "ar.raw_weighted_rating " +
-                "FROM account_rankings ar " +
-                joinClause +
-                "WHERE ar.instrument = @instrument AND ar.account_id = @accountId";
-            cmd.Parameters.AddWithValue("instrument", Instrument);
-            cmd.Parameters.AddWithValue("accountId", accountId);
-            using var r = cmd.ExecuteReader();
-            if (!r.Read()) return null;
-            dto = ReadAccountRanking(r);
-            playerMetricValue = rankBy switch
-            {
-                "weighted" => dto.WeightedRating,
-                "fcrate" => dto.FcRate,
-                "totalscore" => (double)dto.TotalScore,
-                "maxscore" => dto.MaxScorePercent,
-                _ => dto.AdjustedSkillRating,
-            };
-        }
-
-        // 2. Compute exact positional rank: count accounts that sort above this player.
-        string comparison = dir == "ASC" ? "<" : ">";
-        using (var cmd = conn.CreateCommand())
-        {
-            string rankJoin;
-            if (UseTiers)
-            {
-                int idx = BucketToIndex(leewayBucket);
-                rankJoin =
-                    "LEFT JOIN ranking_delta_tiers rdt ON rdt.account_id = ar.account_id " +
-                    "AND rdt.instrument = ar.instrument AND rdt.start_bucket_idx <= @idx AND rdt.end_bucket_idx > @idx ";
-                cmd.Parameters.AddWithValue("idx", (short)idx);
-            }
-            else
-            {
-                rankJoin =
-                    "LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id " +
-                    "AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket ";
-                cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
-            }
-
-            cmd.CommandText =
-                "SELECT COUNT(*) FROM account_rankings ar " +
-                rankJoin +
-                $"WHERE ar.instrument = @instrument AND {effectiveCol} {comparison} @playerValue";
-            cmd.Parameters.AddWithValue("instrument", Instrument);
-            cmd.Parameters.AddWithValue("playerValue", playerMetricValue);
-            int aboveCount = Convert.ToInt32(cmd.ExecuteScalar());
-            int positionalRank = aboveCount + 1;
-
-            switch (rankBy)
-            {
-                case "weighted": dto.WeightedRank = positionalRank; break;
-                case "fcrate": dto.FcRateRank = positionalRank; break;
-                case "totalscore": dto.TotalScoreRank = positionalRank; break;
-                case "maxscore": dto.MaxScorePercentRank = positionalRank; break;
-                default: dto.AdjustedSkillRank = positionalRank; break;
-            }
-        }
-
-        return dto;
+        _ = leewayBucket;
+        _ = rankBy;
+        return GetAccountRanking(accountId);
     }
 
     // ── Ranking deltas ───────────────────────────────────────────────
@@ -1812,65 +1581,14 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         tx.Commit();
     }
 
-    /// <summary>Returns rank history with leeway-adjusted ranks merged from rank_history_deltas.</summary>
+    /// <summary>
+    /// Compatibility wrapper for legacy leeway-aware callers.
+    /// Rank history no longer varies by leeway and always returns canonical snapshots.
+    /// </summary>
     public List<RankHistoryDto> GetRankHistoryAtLeeway(string accountId, double leewayBucket, int days = 30)
     {
-        using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            SELECT rh.snapshot_date,
-                rh.snapshot_taken_at,
-                rh.adjusted_skill_rank + COALESCE(rhd.rank_adjusted, 0),
-                rh.weighted_rank + COALESCE(rhd.rank_weighted, 0),
-                rh.fc_rate_rank + COALESCE(rhd.rank_fcrate, 0),
-                rh.total_score_rank + COALESCE(rhd.rank_totalscore, 0),
-                rh.max_score_percent_rank + COALESCE(rhd.rank_maxscore, 0),
-                rh.adjusted_skill_rating, rh.weighted_rating, rh.fc_rate,
-                rh.total_score, rh.max_score_percent, rh.songs_played,
-                rh.coverage, rh.full_combo_count, rh.raw_max_score_percent,
-                rh.raw_weighted_rating, rh.raw_skill_rating
-            FROM (
-                SELECT DISTINCT ON (snapshot_date) *
-                FROM rank_history
-                WHERE instrument = @instrument AND account_id = @accountId
-                    AND snapshot_date >= @cutoff
-                ORDER BY snapshot_date DESC
-            ) rh
-            LEFT JOIN rank_history_deltas rhd
-                ON rhd.account_id = rh.account_id
-                AND rhd.instrument = rh.instrument
-                AND rhd.snapshot_date = rh.snapshot_date
-                AND rhd.leeway_bucket = @bucket
-            ORDER BY rh.snapshot_date";
-        cmd.Parameters.AddWithValue("instrument", Instrument);
-        cmd.Parameters.AddWithValue("accountId", accountId);
-        cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
-        cmd.Parameters.AddWithValue("cutoff", DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-days)));
-        var list = new List<RankHistoryDto>();
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
-            list.Add(new RankHistoryDto
-            {
-                SnapshotDate = r.GetDateTime(0).ToString("yyyy-MM-dd"),
-                SnapshotTakenAt = r.IsDBNull(1) ? null : r.GetFieldValue<DateTime>(1).ToString("o"),
-                AdjustedSkillRank = r.GetInt32(2),
-                WeightedRank = r.GetInt32(3),
-                FcRateRank = r.GetInt32(4),
-                TotalScoreRank = r.GetInt32(5),
-                MaxScorePercentRank = r.GetInt32(6),
-                AdjustedSkillRating = r.IsDBNull(7) ? null : r.GetDouble(7),
-                WeightedRating = r.IsDBNull(8) ? null : r.GetDouble(8),
-                FcRate = r.IsDBNull(9) ? null : r.GetDouble(9),
-                TotalScore = r.IsDBNull(10) ? null : r.GetInt64(10),
-                MaxScorePercent = r.IsDBNull(11) ? null : r.GetDouble(11),
-                SongsPlayed = r.IsDBNull(12) ? null : r.GetInt32(12),
-                Coverage = r.IsDBNull(13) ? null : r.GetDouble(13),
-                FullComboCount = r.IsDBNull(14) ? null : r.GetInt32(14),
-                RawMaxScorePercent = r.IsDBNull(15) ? null : r.GetDouble(15),
-                RawWeightedRating = r.IsDBNull(16) ? null : r.GetDouble(16),
-                RawSkillRating = r.IsDBNull(17) ? null : r.GetDouble(17),
-            });
-        return list;
+        _ = leewayBucket;
+        return GetRankHistory(accountId, days);
     }
 
     // ── Ranking delta tiers (interval-compressed deltas) ─────────────

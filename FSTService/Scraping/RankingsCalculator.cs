@@ -208,18 +208,7 @@ public sealed class RankingsCalculator
             LogPhase("per_instrument.compute_account_rankings", instrument, arSw.Elapsed);
             _progress.ReportPhaseItemComplete();
 
-            // Phase 2.5: Ranking deltas — uses the same materialized temp table
-            if (_features.ComputeRankingDeltas)
-            {
-                var deltaSw = System.Diagnostics.Stopwatch.StartNew();
-                var deltaCount = ComputeRankingDeltasFromMaterialized(instrument, conn, db, totalCharted);
-                deltaSw.Stop();
-                LogPhase("per_instrument.compute_ranking_deltas", instrument, deltaSw.Elapsed, deltaCount);
-            }
-            else
-            {
-                _log.LogDebug("{Instrument}: skipping ranking delta computation (ComputeRankingDeltas=false).", instrument);
-            }
+            _log.LogDebug("{Instrument}: skipping ranking delta computation; canonical leaderboard path is active.", instrument);
 
             instrumentSw.Stop();
             LogPhase("per_instrument.total", instrument, instrumentSw.Elapsed);
@@ -265,33 +254,7 @@ public sealed class RankingsCalculator
         _log.LogInformation("Composite rankings complete in {Elapsed}.", compositeSw.Elapsed);
         LogPhase("composite_rankings", instrument: null, compositeSw.Elapsed);
 
-        // ── Phase 3.5: Composite + combo deltas ──
-        _progress.SetSubOperation("composite_combo_deltas");
-        var crossDeltaSw = System.Diagnostics.Stopwatch.StartNew();
-        var heapBeforeDeltas = GC.GetTotalMemory(false);
-
-        // Load per-instrument deltas ONCE, shared by composite and combo delta passes
-        var deltaLoadSw = System.Diagnostics.Stopwatch.StartNew();
-        var sharedDeltas = LoadPerInstrumentDeltas(instruments);
-        deltaLoadSw.Stop();
-        LogPhase("cross_deltas.load_deltas", instrument: null, deltaLoadSw.Elapsed,
-            sharedDeltas.DeltasPerInstrument.Values.Sum(d => (long)d.Values.Sum(b => b.Count)));
-
-        var compositeDeltaSw = System.Diagnostics.Stopwatch.StartNew();
-        var compositeDeltaCount = ComputeCompositeDeltas(instruments, rankingDataFull, preloadedDeltas: sharedDeltas);
-        compositeDeltaSw.Stop();
-        LogPhase("cross_deltas.composite", instrument: null, compositeDeltaSw.Elapsed, compositeDeltaCount);
-
-        var comboDeltaSw = System.Diagnostics.Stopwatch.StartNew();
-        var comboDeltaCount = ComputeComboDeltas(instruments, rankingDataFull, preloadedDeltas: sharedDeltas);
-        comboDeltaSw.Stop();
-        LogPhase("cross_deltas.combo", instrument: null, comboDeltaSw.Elapsed, comboDeltaCount);
-
-        crossDeltaSw.Stop();
-        var heapAfterDeltas = GC.GetTotalMemory(false);
-        _log.LogInformation("Composite + combo deltas complete in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
-            crossDeltaSw.Elapsed, heapBeforeDeltas, heapAfterDeltas, heapAfterDeltas - heapBeforeDeltas);
-        LogPhase("cross_deltas.total", instrument: null, crossDeltaSw.Elapsed);
+        _log.LogInformation("Skipping composite and combo delta computation; canonical leaderboard path is active.");
 
         // ── Phase 4: All-combo rankings ──
         _progress.SetSubOperation("combo_rankings");
@@ -584,17 +547,6 @@ public sealed class RankingsCalculator
             {
                 var db = _persistence.GetOrCreateInstrumentDb(instrument);
                 db.SnapshotRankHistory(cleanupRetention: false);
-
-                try
-                {
-                    db.SnapshotRankHistoryDeltas();
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogWarning(ex,
-                        "Rank history delta snapshot maintenance failed for {Instrument}. Continuing without blocking core rankings.",
-                        instrument);
-                }
 
                 try
                 {

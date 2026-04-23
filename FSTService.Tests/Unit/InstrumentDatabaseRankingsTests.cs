@@ -661,6 +661,55 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Assert.Equal(dates.Distinct().Count(), dates.Count);
     }
 
+    [Fact]
+    public void GetRankingsAtLeeway_ReturnsCanonicalRankings()
+    {
+        Db.UpsertEntries("song1", [
+            MakeEntry("p1", 1000, rank: 1),
+            MakeEntry("p2", 900, rank: 2),
+        ]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+        Db.TruncateRankingDeltas();
+        Db.WriteRankingDeltas([
+            ("p2", -3.0, 10, 0.01, 0.06, 0.8, 50000, 0.95, 8, 95.5, 1, 0.5),
+        ]);
+
+        var canonical = Db.GetAccountRankings("adjusted", 1, 50);
+        var compatibility = Db.GetRankingsAtLeeway(-3.0, "adjusted", 1, 50);
+
+        Assert.Equal(canonical.TotalCount, compatibility.TotalCount);
+        Assert.Equal(
+            canonical.Entries.Select(entry => entry.AccountId),
+            compatibility.Entries.Select(entry => entry.AccountId));
+    }
+
+    [Fact]
+    public void GetAccountRankingAtLeeway_ReturnsCanonicalRanking()
+    {
+        Db.UpsertEntries("song1", [
+            MakeEntry("p1", 1000, rank: 1),
+            MakeEntry("p2", 900, rank: 2),
+        ]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+        Db.TruncateRankingDeltas();
+        Db.WriteRankingDeltas([
+            ("p1", -3.0, 10, 0.01, 0.06, 0.8, 50000, 0.95, 8, 95.5, 1, 0.5),
+        ]);
+
+        var canonical = Db.GetAccountRanking("p1");
+        var compatibility = Db.GetAccountRankingAtLeeway("p1", -3.0, "adjusted");
+
+        Assert.NotNull(canonical);
+        Assert.NotNull(compatibility);
+        Assert.Equal(canonical.AdjustedSkillRank, compatibility.AdjustedSkillRank);
+        Assert.Equal(canonical.WeightedRank, compatibility.WeightedRank);
+        Assert.Equal(canonical.TotalScoreRank, compatibility.TotalScoreRank);
+    }
+
     // ═══════════════════════════════════════════════════════════
     // GetAllRankingSummaries (for composite computation)
     // ═══════════════════════════════════════════════════════════
@@ -1031,11 +1080,11 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
-    // GetRankHistoryAtLeeway — Merged query
+    // GetRankHistoryAtLeeway — Canonical compatibility
     // ═══════════════════════════════════════════════════════════
 
     [Fact]
-    public void GetRankHistoryAtLeeway_MergesBaseAndDeltas()
+    public void GetRankHistoryAtLeeway_MatchesBaseHistory_WhenDeltaExists()
     {
         // Seed base rankings and snapshot history
         Db.UpsertEntries("song1", [
@@ -1054,10 +1103,11 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         ]);
         Db.SnapshotRankHistoryDeltas();
 
-        // Query merged history at bucket -3.0
-        var history = Db.GetRankHistoryAtLeeway("p1", -3.0, days: 1);
-        Assert.Single(history);
-        // The merged result should have base rank + delta offset
+        var baseHistory = Db.GetRankHistory("p1", days: 1);
+        var compatibilityHistory = Db.GetRankHistoryAtLeeway("p1", -3.0, days: 1);
+
+        Assert.Equal(baseHistory.Select(point => point.SnapshotDate), compatibilityHistory.Select(point => point.SnapshotDate));
+        Assert.Equal(baseHistory.Select(point => point.AdjustedSkillRank), compatibilityHistory.Select(point => point.AdjustedSkillRank));
     }
 
     [Fact]
@@ -1070,10 +1120,10 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Db.SnapshotRankHistory();
 
         // No ranking_deltas at this bucket
+        var baseHistory = Db.GetRankHistory("p1", days: 1);
         var history = Db.GetRankHistoryAtLeeway("p1", -3.0, days: 1);
         Assert.Single(history);
-        // Should return base ranks (COALESCE with 0 delta)
-        Assert.Equal(1, history[0].AdjustedSkillRank);
+        Assert.Equal(baseHistory[0].AdjustedSkillRank, history[0].AdjustedSkillRank);
     }
 
     [Fact]

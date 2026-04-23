@@ -778,7 +778,7 @@ public sealed class ScrapeTimePrecomputer
             maxScore = composite.CompositeRankMaxScore,
         };
 
-        // Build per-instrument rank tiers from rank_history_deltas
+        // Expose canonical per-instrument ranks; alternate leeway tiers are retired.
         var instrumentRanks = BuildInstrumentRankTiers(accountId);
         var bands = _persistence.GetPlayerBands(accountId);
 
@@ -800,8 +800,8 @@ public sealed class ScrapeTimePrecomputer
     }
 
     /// <summary>
-    /// Build per-instrument rank tiers from base ranks + rank_history_deltas.
-    /// Returns an array of { ins, base: {ranks}, tiers: [sparse leeway breakpoints] }.
+    /// Build canonical per-instrument rank data.
+    /// Returns an array of { ins, base: {ranks}, tiers: [] }.
     /// </summary>
     private List<object>? BuildInstrumentRankTiers(string accountId)
     {
@@ -820,48 +820,12 @@ public sealed class ScrapeTimePrecomputer
             var baseTs = baseRanking.TotalScoreRank;
             var baseMs = baseRanking.MaxScorePercentRank;
 
-            var deltas = db.GetTodayRankDeltas(accountId);
-
-            var tiers = new List<object>();
-            int prevAdj = baseAdj, prevWgt = baseWgt, prevFc = baseFc, prevTs = baseTs, prevMs = baseMs;
-
-            foreach (var (bucket, dAdj, dWgt, dFc, dTs, dMs) in deltas)
-            {
-                int effAdj = baseAdj + dAdj;
-                int effWgt = baseWgt + dWgt;
-                int effFc = baseFc + dFc;
-                int effTs = baseTs + dTs;
-                int effMs = baseMs + dMs;
-
-                if (effAdj == prevAdj && effWgt == prevWgt && effFc == prevFc &&
-                    effTs == prevTs && effMs == prevMs)
-                    continue;
-
-                // Build sparse tier (only changed fields)
-                var tier = new Dictionary<string, object?>();
-                tier["l"] = bucket >= 90.0 ? null : (object)Math.Round(bucket, 1);
-
-                if (effAdj != prevAdj) tier["adjusted"] = effAdj;
-                if (effWgt != prevWgt) tier["weighted"] = effWgt;
-                if (effFc != prevFc) tier["fcRate"] = effFc;
-                if (effTs != prevTs) tier["totalScore"] = effTs;
-                if (effMs != prevMs) tier["maxScore"] = effMs;
-
-                tiers.Add(tier);
-
-                prevAdj = effAdj;
-                prevWgt = effWgt;
-                prevFc = effFc;
-                prevTs = effTs;
-                prevMs = effMs;
-            }
-
             result.Add(new
             {
                 ins = ComboIds.FromInstruments(new[] { instrument }),
                 totalRanked = db.GetRankedAccountCount(),
                 @base = new { adjusted = baseAdj, weighted = baseWgt, fcRate = baseFc, totalScore = baseTs, maxScore = baseMs },
-                tiers,
+                tiers = Array.Empty<object>(),
             });
         }
 

@@ -163,6 +163,9 @@ public sealed class PrecomputeSubResourceTests : IDisposable
     {
         RegisterUser("u1");
         SeedSong("s1", "Solo_Guitar", 100000, ("u1", 95000), ("p2", 90000));
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
 
         // Seed stats tiers directly
         _metaDb.UpsertPlayerStatsTiers("u1", "Solo_Guitar", "[{\"leeway\":0,\"rank\":1}]");
@@ -175,6 +178,11 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         var json = JsonDocument.Parse(result.Value.Json);
         Assert.Equal("u1", json.RootElement.GetProperty("accountId").GetString());
         Assert.True(json.RootElement.GetProperty("totalSongs").GetInt32() > 0);
+
+        var instrumentRanks = json.RootElement.GetProperty("instrumentRanks");
+        Assert.True(instrumentRanks.GetArrayLength() > 0);
+        Assert.Equal(0, instrumentRanks[0].GetProperty("tiers").GetArrayLength());
+        Assert.True(instrumentRanks[0].GetProperty("base").GetProperty("adjusted").GetInt32() > 0);
     }
 
     [Fact]
