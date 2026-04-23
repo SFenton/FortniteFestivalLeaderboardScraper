@@ -469,6 +469,26 @@ public sealed partial class RoundRobinProxyHandler : DelegatingHandler
         return best;
     }
 
+    /// <summary>Snapshot of a single proxy slot's state, exposed for diagnostics.</summary>
+    public sealed record ProxySlotSnapshot(
+        string Url,
+        bool IsInCooldown,
+        DateTimeOffset CooldownUntil,
+        bool IsReconnecting);
+
+    /// <summary>Snapshot all proxy slots' state for the diagnostic endpoint.</summary>
+    public IReadOnlyList<ProxySlotSnapshot> GetSlotSnapshots()
+    {
+        var list = new List<ProxySlotSnapshot>(_slots.Length);
+        foreach (var slot in _slots)
+            list.Add(new ProxySlotSnapshot(
+                slot.Url,
+                slot.IsInCooldown,
+                slot.CooldownUntil,
+                slot.ReconnectTask is not null));
+        return list;
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)

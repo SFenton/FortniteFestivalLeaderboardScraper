@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using FSTService.Auth;
+using FSTService.Scraping;
 
 namespace FSTService.Api;
 
@@ -7,6 +8,69 @@ public static partial class ApiEndpoints
 {
     public static void MapDiagEndpoints(this WebApplication app)
     {
+        // ─── Diagnostic: snapshot in-flight HTTP operations + proxy slots ────────────
+        // Used to diagnose scrape stalls where the leaderboard count is stuck a few
+        // short of total. Returns every in-flight SendAsync call with its current
+        // state (waiting_for_cdn_clear / backoff_delay / acquiring_rate_token /
+        // sending / reading_body), attempt number, age, and per-proxy slot health.
+        //
+        // Ops stuck with state=sending for > 30s after a VPN recycle are the prime
+        // suspects: they're pinned to a zombie TCP socket that survived CancelInflight()
+        // + ResetConnectionPool because the request had already returned response
+        // headers and was awaiting body bytes on a silently-dead connection.
+
+        app.MapGet("/api/diag/inflight", (
+            GlobalLeaderboardScraper scraper,
+            ProxyHandlerAccessor proxyAccessor) =>
+        {
+            var now = DateTimeOffset.UtcNow;
+            var ops = scraper.Executor.InflightOperations
+                .Select(o => new
+                {
+                    operationId = o.OperationId,
+                    label = o.Label,
+                    state = o.State.ToString(),
+                    attempt = o.Attempt,
+                    statusAttempts = o.StatusAttempts,
+                    networkErrors = o.NetworkErrors,
+                    startedAtUtc = o.StartedAt,
+                    stateEnteredAtUtc = o.StateEnteredAt,
+                    ageSeconds = (now - o.StartedAt).TotalSeconds,
+                    stateAgeSeconds = (now - o.StateEnteredAt).TotalSeconds,
+                })
+                .ToList();
+
+            var proxySlots = proxyAccessor.Handler?.GetSlotSnapshots()
+                .Select(s => new
+                {
+                    url = s.Url,
+                    isInCooldown = s.IsInCooldown,
+                    cooldownUntilUtc = s.CooldownUntil,
+                    cooldownRemainingSeconds = s.IsInCooldown
+                        ? (s.CooldownUntil - now).TotalSeconds
+                        : 0,
+                    isReconnecting = s.IsReconnecting,
+                })
+                .ToList<object>();
+
+            return Results.Ok(new
+            {
+                timestampUtc = now,
+                totalInflight = ops.Count,
+                oldestAgeSeconds = ops.Count > 0 ? ops.Max(o => o.ageSeconds) : 0,
+                stuckCount = ops.Count(o => o.stateAgeSeconds > 30),
+                cdnBlocked = scraper.Executor.IsCdnBlocked,
+                cdnProbeAttempts = scraper.Executor.CdnProbeAttempts,
+                cdnProbeSuccesses = scraper.Executor.CdnProbeSuccesses,
+                cdnBlocksDetected = scraper.Executor.CdnBlocksDetected,
+                totalHttpSends = scraper.Executor.TotalHttpSends,
+                proxySlots,
+                inflightOperations = ops,
+            });
+        })
+        .WithTags("Diagnostic")
+        .RequireRateLimiting("public");
+
         // ─── Diagnostic: query FNFestival events ────────────
 
         app.MapGet("/api/diag/events", async (

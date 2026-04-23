@@ -1104,4 +1104,94 @@ public sealed class ResilientHttpExecutorTests
             await Task.Delay(10);
         }
     }
+
+    // ─── In-flight operation tracking (diagnostic endpoint) ────────
+
+    [Fact]
+    public async Task InflightOperations_Empty_WhenNoRequestsActive()
+    {
+        var (executor, _) = CreateExecutor();
+        Assert.Empty(executor.InflightOperations);
+    }
+
+    [Fact]
+    public async Task InflightOperations_TracksActiveSend_WithLabelAndState()
+    {
+        // Use EnqueueHang so SendAsync is stuck in the Sending state.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithProbeTimeout(handler, TimeSpan.FromSeconds(5));
+        handler.EnqueueHang();
+
+        using var cts = new CancellationTokenSource();
+        var sendTask = executor.SendAsync(() => MakeRequest(), label: "inflight-test", ct: cts.Token);
+
+        // Wait for the op to register and reach Sending state
+        await WaitForConditionAsync(
+            () => executor.InflightOperations.Any(o => o.State == InflightState.Sending),
+            TimeSpan.FromSeconds(2));
+
+        var ops = executor.InflightOperations;
+        Assert.Single(ops);
+        Assert.Equal("inflight-test", ops[0].Label);
+        Assert.Equal(InflightState.Sending, ops[0].State);
+        Assert.Equal(0, ops[0].Attempt);
+
+        // Cancel to clean up
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+
+        // After cancellation, the op must be removed
+        await WaitForConditionAsync(() => executor.InflightOperations.Count == 0, TimeSpan.FromSeconds(2));
+        Assert.Empty(executor.InflightOperations);
+    }
+
+    [Fact]
+    public async Task InflightOperations_RemovedOnSuccess()
+    {
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var response = await executor.SendAsync(() => MakeRequest(), label: "remove-on-success");
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty(executor.InflightOperations);
+    }
+
+    [Fact]
+    public async Task InflightOperations_RemovedOnException()
+    {
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueException(new InvalidOperationException("boom"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "remove-on-exception"));
+        Assert.Empty(executor.InflightOperations);
+    }
+
+    [Fact]
+    public async Task InflightOperations_TracksRetryAttempt_AcrossNetworkErrors()
+    {
+        var (executor, handler) = CreateExecutor();
+        // 2 network errors, then a hang so we can snapshot mid-flight with attempt > 0
+        handler.EnqueueException(new HttpRequestException("err1"));
+        handler.EnqueueException(new HttpRequestException("err2"));
+        handler.EnqueueHang();
+
+        using var cts = new CancellationTokenSource();
+        var sendTask = executor.SendAsync(() => MakeRequest(), label: "retry-track", ct: cts.Token);
+
+        await WaitForConditionAsync(
+            () => executor.InflightOperations.Any(o => o.NetworkErrors >= 2),
+            TimeSpan.FromSeconds(3));
+
+        var ops = executor.InflightOperations;
+        Assert.Single(ops);
+        Assert.True(ops[0].NetworkErrors >= 2,
+            $"Expected NetworkErrors >= 2, got {ops[0].NetworkErrors}");
+        Assert.True(ops[0].Attempt >= 2,
+            $"Expected Attempt >= 2, got {ops[0].Attempt}");
+
+        cts.Cancel();
+        try { await sendTask; } catch { /* cancellation expected */ }
+        await WaitForConditionAsync(() => executor.InflightOperations.Count == 0, TimeSpan.FromSeconds(2));
+    }
 }

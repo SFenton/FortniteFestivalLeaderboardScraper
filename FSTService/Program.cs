@@ -197,7 +197,7 @@ builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
             var recycler = opts.ContainerNames.Count > 0
                 ? sp.GetService<GluetunContainerRecycler>()
                 : null;
-            return new RoundRobinProxyHandler(
+            var handler = new RoundRobinProxyHandler(
                 opts.ProxyUrls,
                 accounts: null,
                 leaderboardHandlerFactory,
@@ -206,9 +206,16 @@ builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
                 opts.ContainerNames.Count > 0 ? opts.ContainerNames : null,
                 recycler,
                 activeStandby: opts.ProxyActiveStandby);
+            // Publish the handler to DI so diagnostic endpoints can snapshot slot state.
+            sp.GetRequiredService<ProxyHandlerAccessor>().Set(handler);
+            return handler;
         }
         return leaderboardHandlerFactory();
     });
+
+// Accessor that lets endpoints reach the active RoundRobinProxyHandler without a full DI
+// refactor. Null when proxy rotation is disabled (e.g. tests, single-proxy configs).
+builder.Services.AddSingleton<ProxyHandlerAccessor>();
 
 builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
 

@@ -28,6 +28,78 @@ public enum CdnProbeState
 /// <summary>Event fired during CDN probe lifecycle.</summary>
 public readonly record struct CdnProbeEvent(CdnProbeState State, int Attempt, int MaxRetries, double NextRetrySeconds);
 
+/// <summary>Coarse-grained state of an in-flight <see cref="ResilientHttpExecutor.SendAsync"/> call.
+/// Used by the <c>/api/diag/inflight</c> endpoint to diagnose stuck scrapes.</summary>
+public enum InflightState
+{
+    /// <summary>Awaiting <see cref="ResilientHttpExecutor.WaitForCdnClearAsync"/> (CDN block active).</summary>
+    WaitingForCdnClear,
+    /// <summary>Between retries: sleeping for exponential backoff or post-error settle delay.</summary>
+    BackoffDelay,
+    /// <summary>Awaiting a rate-limiter token (queued).</summary>
+    AcquiringRateToken,
+    /// <summary>HTTP send in progress (includes TCP connect + TLS + response headers).</summary>
+    Sending,
+    /// <summary>Reading/parsing the response body (e.g. for CDN-block detection).</summary>
+    ReadingBody,
+}
+
+/// <summary>Snapshot of a single in-flight operation.</summary>
+public sealed record InflightOperationSnapshot(
+    Guid OperationId,
+    string Label,
+    InflightState State,
+    int Attempt,
+    int StatusAttempts,
+    int NetworkErrors,
+    DateTimeOffset StartedAt,
+    DateTimeOffset StateEnteredAt);
+
+/// <summary>
+/// Mutable per-op tracking record, kept in a <see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey, TValue}"/>.
+/// State transitions are marked via <see cref="SetState"/>.
+/// </summary>
+internal sealed class InflightOperation
+{
+    public Guid OperationId { get; } = Guid.NewGuid();
+    public string Label { get; }
+    public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
+    private long _stateEnteredTicks;
+    private int _state;
+    private int _attempt;
+    private int _statusAttempts;
+    private int _networkErrors;
+
+    public InflightOperation(string label)
+    {
+        Label = label;
+        _stateEnteredTicks = StartedAt.UtcTicks;
+    }
+
+    public void SetState(InflightState state)
+    {
+        Interlocked.Exchange(ref _state, (int)state);
+        Interlocked.Exchange(ref _stateEnteredTicks, DateTimeOffset.UtcNow.UtcTicks);
+    }
+
+    public void SetAttempt(int attempt, int statusAttempts, int networkErrors)
+    {
+        Volatile.Write(ref _attempt, attempt);
+        Volatile.Write(ref _statusAttempts, statusAttempts);
+        Volatile.Write(ref _networkErrors, networkErrors);
+    }
+
+    public InflightOperationSnapshot Snapshot() => new(
+        OperationId,
+        Label,
+        (InflightState)Volatile.Read(ref _state),
+        Volatile.Read(ref _attempt),
+        Volatile.Read(ref _statusAttempts),
+        Volatile.Read(ref _networkErrors),
+        StartedAt,
+        new DateTimeOffset(Volatile.Read(ref _stateEnteredTicks), TimeSpan.Zero));
+}
+
 /// <summary>
 /// Sends HTTP requests with automatic retry on transient failures
 /// (429 rate-limit, 5xx server errors, network errors, timeouts)
@@ -100,6 +172,24 @@ public sealed class ResilientHttpExecutor
 
     private readonly HttpClient _http;
     private readonly ILogger _log;
+
+    // ── In-flight operation tracking (for /api/diag/inflight) ──────────
+    // Keyed by Guid so removal is O(1) and independent of label collisions.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, InflightOperation> _inflight = new();
+
+    /// <summary>Snapshot of all in-flight SendAsync operations, oldest first.
+    /// Used by the diagnostic endpoint to identify stuck requests.</summary>
+    public IReadOnlyList<InflightOperationSnapshot> InflightOperations
+    {
+        get
+        {
+            var list = new List<InflightOperationSnapshot>(_inflight.Count);
+            foreach (var op in _inflight.Values)
+                list.Add(op.Snapshot());
+            list.Sort((a, b) => a.StartedAt.CompareTo(b.StartedAt));
+            return list;
+        }
+    }
 
     // ── CDN wire diagnostics ──────────────────────────────────
     private long _cdnBlocksDetected;
@@ -210,8 +300,14 @@ public sealed class ResilientHttpExecutor
         int statusAttempt = 0; // counts only HTTP status-code retries (429, 5xx)
         int networkErrors = 0; // counts transient network errors (not counted toward retries)
 
+        var op = new InflightOperation(label ?? "request");
+        _inflight[op.OperationId] = op;
+        try
+        {
         for (int attempt = 0; ; attempt++)
         {
+            op.SetAttempt(attempt, statusAttempt, networkErrors);
+
             // If CDN is blocked, throw immediately — don't waste a wire send.
             // The caller (SongMachine) will release its DOP slot and wait for the probe.
             if (IsCdnBlocked)
@@ -225,23 +321,29 @@ public sealed class ResilientHttpExecutor
                 var baseMs = BaseDelay.TotalMilliseconds * Math.Pow(2, statusAttempt - 1);
                 if (baseMs > MaxBackoff.TotalMilliseconds) baseMs = MaxBackoff.TotalMilliseconds;
                 var jitter = baseMs * (0.7 + Random.Shared.NextDouble() * 0.6); // [0.7, 1.3]
+                op.SetState(InflightState.BackoffDelay);
                 await Task.Delay(TimeSpan.FromMilliseconds(jitter), ct);
             }
             else if (networkErrors > 0)
             {
                 // Short fixed delay for network errors (proxy reconnecting)
+                op.SetState(InflightState.BackoffDelay);
                 await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
             }
 
             // ── Consume a rate token for retries ──
             // The caller's initial WaitAsync consumed a rate token for attempt 0.
             if (attempt > 0)
+            {
+                op.SetState(InflightState.AcquiringRateToken);
                 await (limiter?.AcquireRateTokenAsync(ct) ?? Task.CompletedTask);
+            }
 
             HttpResponseMessage res;
             try
             {
                 Interlocked.Increment(ref _totalHttpSends);
+                op.SetState(InflightState.Sending);
                 res = await _http.SendAsync(requestFactory(), ct);
             }
             catch (HttpRequestException ex)
@@ -285,6 +387,7 @@ public sealed class ResilientHttpExecutor
             // for releasing its DOP slot, waiting for WaitForCdnClearAsync(), and retrying.
             if (statusCode == 403)
             {
+                op.SetState(InflightState.ReadingBody);
                 var body = await res.Content.ReadAsStringAsync(ct);
                 bool isCdnBlock = !body.TrimStart().StartsWith('{');
 
@@ -343,6 +446,11 @@ public sealed class ResilientHttpExecutor
                 limiter?.ReportFailure();
 
             return res;
+        }
+        }
+        finally
+        {
+            _inflight.TryRemove(op.OperationId, out _);
         }
     }
 
