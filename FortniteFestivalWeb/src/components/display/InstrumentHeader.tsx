@@ -5,6 +5,18 @@ import { serverInstrumentLabel as instrumentLabel, type ServerInstrumentKey as I
 import { InstrumentSize, IconSize, Gap, Font, Weight, Colors, Display, Align, flexColumn } from '@festival/theme';
 import { InstrumentIcon } from './InstrumentIcons';
 
+const INSTRUMENT_HEADER_CONFIG = {
+  [InstrumentHeaderSize.XS]: { icon: IconSize.tab,       gap: Gap.xs, fontSize: Font.xs, fontWeight: Weight.semibold, color: Colors.textSecondary },
+  [InstrumentHeaderSize.SM]: { icon: InstrumentSize.sm,   gap: Gap.md, fontSize: Font.md, fontWeight: Weight.bold,     color: Colors.textPrimary },
+  [InstrumentHeaderSize.MD]: { icon: InstrumentSize.md,   gap: Gap.lg, fontSize: Font.xl, fontWeight: Weight.bold,     color: Colors.textPrimary },
+  [InstrumentHeaderSize.LG]: { icon: InstrumentSize.lg,   gap: Gap.lg, fontSize: Font.lg, fontWeight: Weight.bold,     color: Colors.textSecondary },
+  [InstrumentHeaderSize.XL]: { icon: InstrumentSize.lg,   gap: Gap.xl, fontSize: Font.xl, fontWeight: Weight.bold,     color: Colors.textPrimary },
+} as const;
+
+export function getInstrumentHeaderConfig(size: InstrumentHeaderSize) {
+  return INSTRUMENT_HEADER_CONFIG[size];
+}
+
 export interface InstrumentHeaderProps {
   instrument: InstrumentKey;
   size: InstrumentHeaderSize;
@@ -50,13 +62,7 @@ export default InstrumentHeader;
 
 function useStyles(size: InstrumentHeaderSize) {
   return useMemo(() => {
-    const config = {
-      [InstrumentHeaderSize.XS]: { icon: IconSize.tab,       gap: Gap.xs, fontSize: Font.xs, fontWeight: Weight.semibold, color: Colors.textSecondary },
-      [InstrumentHeaderSize.SM]: { icon: InstrumentSize.sm,   gap: Gap.md, fontSize: Font.md, fontWeight: Weight.bold,     color: Colors.textPrimary },
-      [InstrumentHeaderSize.MD]: { icon: InstrumentSize.md,   gap: Gap.lg, fontSize: Font.xl, fontWeight: Weight.bold,     color: Colors.textPrimary },
-      [InstrumentHeaderSize.LG]: { icon: InstrumentSize.lg,   gap: Gap.lg, fontSize: Font.lg, fontWeight: Weight.bold,     color: Colors.textSecondary },
-      [InstrumentHeaderSize.XL]: { icon: InstrumentSize.lg,   gap: Gap.xl, fontSize: Font.xl, fontWeight: Weight.bold,     color: Colors.textPrimary },
-    }[size];
+    const config = getInstrumentHeaderConfig(size);
     return {
       iconSize: config.icon,
       header: {

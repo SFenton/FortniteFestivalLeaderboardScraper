@@ -157,6 +157,11 @@ describe('combos', () => {
       expect(isWithinGroupCombo(0x31)).toBe(false); // Lead + Pro Strings
     });
 
+    test('peripheral multi-instrument combos are rejected', () => {
+      expect(isWithinGroupCombo(0xc0)).toBe(false);
+      expect(isWithinGroupCombo(0x1c0)).toBe(false);
+    });
+
     test('single instrument is not a combo', () => {
       expect(isWithinGroupCombo(0x01)).toBe(false);
       expect(isWithinGroupCombo(0x10)).toBe(false);

@@ -43,15 +43,13 @@ public static class ComboIds
     {
         0x0F,  // OG Band: Lead(0) + Bass(1) + Drums(2) + Vocals(3) = bits 0-3
         0x30,  // Pro Strings: Pro Lead(4) + Pro Bass(5) = bits 4-5
-        0x1C0, // Peripherals: Pro Vocals(6) + Pro Cymbals(7) + Pro Drums(8) = bits 6-8
     };
 
     /// <summary>
     /// All valid within-group combo bitmasks (2+ instruments, all from same group).
     /// OG Band: C(4,2)+C(4,3)+C(4,4) = 6+4+1 = 11 combos.
     /// Pro Strings: C(2,2) = 1 combo.
-    /// Peripherals: C(3,2)+C(3,3) = 3+1 = 4 combos.
-    /// Total: 16 combos.
+    /// Total: 12 combos.
     /// </summary>
     public static readonly IReadOnlyList<int> WithinGroupComboMasks = BuildWithinGroupMasks();
 
@@ -196,6 +194,22 @@ public static class ComboIds
         }
 
         return FromInstruments(parts);
+    }
+
+    /// <summary>
+    /// Normalize a rival combo parameter to a supported stored form.
+    /// Supported rival combos are single instruments plus valid within-group combos.
+    /// Returns null for unsupported multi-instrument combinations.
+    /// </summary>
+    public static string? NormalizeSupportedRivalComboParam(string? param)
+    {
+        var normalized = NormalizeAnyComboParam(param);
+        if (normalized is null) return null;
+
+        int mask = Convert.ToInt32(normalized, 16);
+        return BitCount(mask) == 1 || IsWithinGroupCombo(mask)
+            ? normalized
+            : null;
     }
 
     private static int IndexOf(string instrument)

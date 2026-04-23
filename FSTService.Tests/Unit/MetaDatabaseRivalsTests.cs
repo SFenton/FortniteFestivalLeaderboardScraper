@@ -267,6 +267,28 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         Assert.Equal(1, guitar.BelowCount);
     }
 
+    [Fact]
+    public void GetRivalCombos_and_GetUserRivals_filter_unsupported_multi_instrument_rows()
+    {
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "u1", RivalAccountId = "r1", InstrumentCombo = "03",
+                     Direction = "above", RivalScore = 10, AvgSignedDelta = -1,
+                     SharedSongCount = 20, AheadCount = 15, BehindCount = 5, ComputedAt = "2026-01-01T00:00:00Z" },
+            new() { UserId = "u1", RivalAccountId = "r2", InstrumentCombo = "c0",
+                     Direction = "above", RivalScore = 8, AvgSignedDelta = -2,
+                     SharedSongCount = 10, AheadCount = 7, BehindCount = 3, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        Db.ReplaceRivalsData("u1", rivals, Array.Empty<RivalSongSampleRow>());
+
+        var combos = Db.GetRivalCombos("u1");
+        Assert.Single(combos);
+        Assert.Equal("03", combos[0].InstrumentCombo);
+
+        Assert.Single(Db.GetUserRivals("u1", "03"));
+        Assert.Empty(Db.GetUserRivals("u1", "c0"));
+    }
+
     // ═══ GetRivalSongSamples filters ════════════════════════════
 
     [Fact]

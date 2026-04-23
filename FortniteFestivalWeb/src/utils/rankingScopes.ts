@@ -23,18 +23,22 @@ export type RankingScope =
 
 const SCOPE_FAMILIES: ReadonlyArray<{
   family: RankingScopeFamily;
+  supportsCombo: boolean;
   instruments: readonly ServerInstrumentKey[];
 }> = [
   {
     family: 'og-band',
+    supportsCombo: true,
     instruments: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'],
   },
   {
     family: 'pro-strings',
+    supportsCombo: true,
     instruments: ['Solo_PeripheralGuitar', 'Solo_PeripheralBass'],
   },
   {
     family: 'peripherals',
+    supportsCombo: false,
     instruments: ['Solo_PeripheralVocals', 'Solo_PeripheralCymbals', 'Solo_PeripheralDrums'],
   },
 ];
@@ -44,23 +48,24 @@ export function resolveSupportedRankingScopes(
 ): RankingScope[] {
   const selectedSet = new Set(selectedInstruments);
 
-  return SCOPE_FAMILIES.flatMap(({ family, instruments }) => {
+  return SCOPE_FAMILIES.flatMap(({ family, instruments, supportsCombo }) => {
     const familySelections = instruments.filter((instrument) => selectedSet.has(instrument));
 
     if (familySelections.length === 0) {
       return [];
     }
 
-    if (familySelections.length === 1) {
-      const instrument = familySelections[0]!;
-      return [{
-        kind: 'instrument',
-        family,
-        instruments: [instrument],
-        instrument,
-        queryValue: instrument,
-        scopeKey: instrument,
-      }];
+    const instrumentScopes = familySelections.map((instrument) => ({
+      kind: 'instrument' as const,
+      family,
+      instruments: [instrument] as const,
+      instrument,
+      queryValue: instrument,
+      scopeKey: instrument,
+    }));
+
+    if (familySelections.length === 1 || !supportsCombo) {
+      return instrumentScopes;
     }
 
     const comboId = comboIdFromInstruments(familySelections);
@@ -71,7 +76,7 @@ export function resolveSupportedRankingScopes(
       comboId,
       queryValue: comboId,
       scopeKey: comboId,
-    }];
+    }, ...instrumentScopes];
   });
 }
 

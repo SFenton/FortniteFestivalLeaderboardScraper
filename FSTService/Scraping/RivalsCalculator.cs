@@ -112,7 +112,7 @@ public sealed class RivalsCalculator
     public int CountValidCombos(string userId, IReadOnlySet<string>? dirtyInstruments = null)
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
-        int validCount = 0;
+        var validInstruments = new List<string>();
 
         foreach (var instrument in instrumentKeys)
         {
@@ -122,10 +122,10 @@ public sealed class RivalsCalculator
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             var scores = db.GetPlayerScores(userId);
             if (scores.Count >= MinUserSongsPerInstrument)
-                validCount++;
+                validInstruments.Add(instrument);
         }
 
-        return validCount > 0 ? (1 << validCount) - 1 : 0; // 2^N - 1
+        return GenerateCombos(validInstruments).Count;
     }
 
     /// <summary>
@@ -527,7 +527,10 @@ public sealed class RivalsCalculator
         }
     }
 
-    /// <summary>Generate all non-empty subsets of the sorted instrument list.</summary>
+    /// <summary>
+    /// Generate all supported rivals scopes from the sorted instrument list.
+    /// Singles are always included; multi-instrument scopes must be valid within-group combos.
+    /// </summary>
     internal static List<List<string>> GenerateCombos(List<string> sortedInstruments)
     {
         var combos = new List<List<string>>();
@@ -542,7 +545,16 @@ public sealed class RivalsCalculator
                 if ((mask & (1 << i)) != 0)
                     combo.Add(sortedInstruments[i]);
             }
-            combos.Add(combo);
+
+            if (combo.Count == 1)
+            {
+                combos.Add(combo);
+                continue;
+            }
+
+            var comboId = ComboIds.FromInstruments(combo);
+            if (ComboIds.IsWithinGroupCombo(comboId))
+                combos.Add(combo);
         }
         return combos;
     }

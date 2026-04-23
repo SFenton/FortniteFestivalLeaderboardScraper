@@ -137,22 +137,33 @@ public sealed class RivalsCalculatorTests : IDisposable
     // ═══ Combo generation ════════════════════════════════════════
 
     [Fact]
-    public void GenerateCombos_produces_all_subsets()
+    public void GenerateCombos_keeps_singles_and_supported_multi_instrument_combos()
     {
-        var instruments = new List<string> { "A", "B", "C" };
+        var instruments = new List<string> { "Solo_Guitar", "Solo_Bass", "Solo_PeripheralGuitar" };
         var combos = RivalsCalculator.GenerateCombos(instruments);
-        Assert.Equal(7, combos.Count); // 2^3 - 1
+        Assert.Equal(4, combos.Count);
 
         // Check singles
-        Assert.Contains(combos, c => c.Count == 1 && c[0] == "A");
-        Assert.Contains(combos, c => c.Count == 1 && c[0] == "B");
-        Assert.Contains(combos, c => c.Count == 1 && c[0] == "C");
+        Assert.Contains(combos, c => c.Count == 1 && c[0] == "Solo_Guitar");
+        Assert.Contains(combos, c => c.Count == 1 && c[0] == "Solo_Bass");
+        Assert.Contains(combos, c => c.Count == 1 && c[0] == "Solo_PeripheralGuitar");
 
-        // Check pairs
-        Assert.Contains(combos, c => c.Count == 2 && c.Contains("A") && c.Contains("B"));
+        // Check supported within-group pair
+        Assert.Contains(combos, c => c.Count == 2 && c.Contains("Solo_Guitar") && c.Contains("Solo_Bass"));
 
-        // Check triple
-        Assert.Contains(combos, c => c.Count == 3);
+        // Unsupported cross-group combos are excluded
+        Assert.DoesNotContain(combos, c => c.Count == 2 && c.Contains("Solo_Guitar") && c.Contains("Solo_PeripheralGuitar"));
+        Assert.DoesNotContain(combos, c => c.Count == 3);
+    }
+
+    [Fact]
+    public void GenerateCombos_excludes_multi_instrument_peripheral_combos()
+    {
+        var instruments = new List<string> { "Solo_PeripheralVocals", "Solo_PeripheralCymbals", "Solo_PeripheralDrums" };
+        var combos = RivalsCalculator.GenerateCombos(instruments);
+
+        Assert.Equal(3, combos.Count);
+        Assert.All(combos, combo => Assert.Single(combo));
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 import type { AppSettings } from '../../../contexts/SettingsContext';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import { comboIdFromInstruments } from '@festival/core/combos';
+import { comboIdFromInstruments, isWithinGroupComboId } from '@festival/core/combos';
 
 /** Maps AppSettings show-keys to server instrument keys. */
 const SETTING_TO_KEY: [keyof AppSettings, ServerInstrumentKey][] = [
@@ -21,11 +21,14 @@ export function getEnabledInstruments(settings: AppSettings): ServerInstrumentKe
 }
 
 /**
- * Derives the combo ID (hex bitmask) from enabled instruments.
- * Returns null if 0 or 1 instruments are enabled (combo needs 2+).
+ * Derives a supported combo ID (hex bitmask) from enabled instruments.
+ * Returns null when 0 or 1 instruments are enabled or when the selection does
+ * not map to a supported within-group combo.
  */
 export function deriveComboFromSettings(settings: AppSettings): string | null {
   const instruments = getEnabledInstruments(settings);
   if (instruments.length < 2) return null;
-  return comboIdFromInstruments(instruments);
+
+  const comboId = comboIdFromInstruments(instruments);
+  return isWithinGroupComboId(comboId) ? comboId : null;
 }

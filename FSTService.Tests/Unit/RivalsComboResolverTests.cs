@@ -5,13 +5,9 @@ namespace FSTService.Tests.Unit;
 public sealed class RivalsComboResolverTests
 {
     [Fact]
-    public void TryResolveRivalCombo_WithThreeDigitHexCombo_ReturnsCanonicalComboAndInstruments()
+    public void TryResolveRivalCombo_WithUnsupportedMultiInstrumentHexCombo_ReturnsNull()
     {
-        var resolved = ApiEndpoints.TryResolveRivalCombo("1ff");
-
-        Assert.NotNull(resolved);
-        Assert.Equal("1ff", resolved.Value.CanonicalCombo);
-        Assert.Equal(ComboIds.ToInstruments("1ff"), resolved.Value.Instruments);
+        Assert.Null(ApiEndpoints.TryResolveRivalCombo("1ff"));
     }
 
     [Fact]
@@ -40,6 +36,8 @@ public sealed class RivalsComboResolverTests
     [InlineData("  ")]
     [InlineData("InvalidInstrument")]
     [InlineData("00")]
+    [InlineData("c0")]
+    [InlineData("1c0")]
     public void TryResolveRivalCombo_WithInvalidInput_ReturnsNull(string? combo)
     {
         Assert.Null(ApiEndpoints.TryResolveRivalCombo(combo));

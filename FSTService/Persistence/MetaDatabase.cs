@@ -956,8 +956,80 @@ public sealed class MetaDatabase : IMetaDatabase
         tx.Commit();
     }
 
-    public List<UserRivalRow> GetUserRivals(string userId, string? instrumentCombo = null, string? direction = null) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); var where = "WHERE user_id = @uid"; cmd.Parameters.AddWithValue("uid", userId); if (instrumentCombo is not null) { where += " AND instrument_combo = @combo"; cmd.Parameters.AddWithValue("combo", instrumentCombo); } if (direction is not null) { where += " AND direction = @dir"; cmd.Parameters.AddWithValue("dir", direction); } cmd.CommandText = $"SELECT user_id, rival_account_id, instrument_combo, direction, rival_score, avg_signed_delta, shared_song_count, ahead_count, behind_count, computed_at FROM user_rivals {where} ORDER BY rival_score DESC"; var list = new List<UserRivalRow>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new UserRivalRow { UserId = r.GetString(0), RivalAccountId = r.GetString(1), InstrumentCombo = r.GetString(2), Direction = r.GetString(3), RivalScore = r.GetDouble(4), AvgSignedDelta = r.GetDouble(5), SharedSongCount = r.GetInt32(6), AheadCount = r.GetInt32(7), BehindCount = r.GetInt32(8), ComputedAt = r.GetDateTime(9).ToString("o") }); return list; }
-    public List<RivalComboSummary> GetRivalCombos(string userId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT instrument_combo, SUM(CASE WHEN direction = 'above' THEN 1 ELSE 0 END), SUM(CASE WHEN direction = 'below' THEN 1 ELSE 0 END) FROM user_rivals WHERE user_id = @uid GROUP BY instrument_combo ORDER BY instrument_combo"; cmd.Parameters.AddWithValue("uid", userId); var list = new List<RivalComboSummary>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new RivalComboSummary { InstrumentCombo = r.GetString(0), AboveCount = (int)r.GetInt64(1), BelowCount = (int)r.GetInt64(2) }); return list; }
+    public List<UserRivalRow> GetUserRivals(string userId, string? instrumentCombo = null, string? direction = null)
+    {
+        var normalizedRequestedCombo = instrumentCombo is null
+            ? null
+            : ComboIds.NormalizeSupportedRivalComboParam(instrumentCombo);
+        if (instrumentCombo is not null && normalizedRequestedCombo is null)
+            return new List<UserRivalRow>();
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var where = "WHERE user_id = @uid";
+        cmd.Parameters.AddWithValue("uid", userId);
+        if (direction is not null)
+        {
+            where += " AND direction = @dir";
+            cmd.Parameters.AddWithValue("dir", direction);
+        }
+
+        cmd.CommandText = $"SELECT user_id, rival_account_id, instrument_combo, direction, rival_score, avg_signed_delta, shared_song_count, ahead_count, behind_count, computed_at FROM user_rivals {where} ORDER BY rival_score DESC";
+
+        var list = new List<UserRivalRow>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var rawCombo = r.GetString(2);
+            var normalizedStoredCombo = ComboIds.NormalizeSupportedRivalComboParam(rawCombo);
+            if (normalizedStoredCombo is null)
+                continue;
+            if (normalizedRequestedCombo is not null && !normalizedStoredCombo.Equals(normalizedRequestedCombo, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            list.Add(new UserRivalRow
+            {
+                UserId = r.GetString(0),
+                RivalAccountId = r.GetString(1),
+                InstrumentCombo = rawCombo,
+                Direction = r.GetString(3),
+                RivalScore = r.GetDouble(4),
+                AvgSignedDelta = r.GetDouble(5),
+                SharedSongCount = r.GetInt32(6),
+                AheadCount = r.GetInt32(7),
+                BehindCount = r.GetInt32(8),
+                ComputedAt = r.GetDateTime(9).ToString("o"),
+            });
+        }
+
+        return list;
+    }
+
+    public List<RivalComboSummary> GetRivalCombos(string userId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT instrument_combo, SUM(CASE WHEN direction = 'above' THEN 1 ELSE 0 END), SUM(CASE WHEN direction = 'below' THEN 1 ELSE 0 END) FROM user_rivals WHERE user_id = @uid GROUP BY instrument_combo ORDER BY instrument_combo";
+        cmd.Parameters.AddWithValue("uid", userId);
+
+        var list = new List<RivalComboSummary>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var combo = r.GetString(0);
+            if (ComboIds.NormalizeSupportedRivalComboParam(combo) is null)
+                continue;
+
+            list.Add(new RivalComboSummary
+            {
+                InstrumentCombo = combo,
+                AboveCount = (int)r.GetInt64(1),
+                BelowCount = (int)r.GetInt64(2),
+            });
+        }
+
+        return list;
+    }
     public List<RivalSongSampleRow> GetRivalSongSamples(string userId, string rivalAccountId, string? instrument = null) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); var where = "WHERE user_id = @uid AND rival_account_id = @rid"; cmd.Parameters.AddWithValue("uid", userId); cmd.Parameters.AddWithValue("rid", rivalAccountId); if (instrument is not null) { where += " AND instrument = @inst"; cmd.Parameters.AddWithValue("inst", instrument); } cmd.CommandText = $"SELECT user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score FROM rival_song_samples {where} ORDER BY ABS(rank_delta) ASC"; return ReadRivalSamples(cmd); }
     public Dictionary<string, List<RivalSongSampleRow>> GetAllRivalSongSamplesForUser(string userId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score FROM rival_song_samples WHERE user_id = @uid ORDER BY rival_account_id, ABS(rank_delta) ASC"; cmd.Parameters.AddWithValue("uid", userId); var dict = new Dictionary<string, List<RivalSongSampleRow>>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) { var sample = ReadRivalSample(r); if (!dict.TryGetValue(sample.RivalAccountId, out var list)) { list = new(); dict[sample.RivalAccountId] = list; } list.Add(sample); } return dict; }
 

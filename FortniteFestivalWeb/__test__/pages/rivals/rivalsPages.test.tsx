@@ -200,6 +200,28 @@ describe('RivalsPage', () => {
     expect(container.querySelector('div')).toBeTruthy();
   });
 
+  it('does not request an unsupported peripheral combo section', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: false,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: true,
+      showPeripheralCymbals: true,
+      showPeripheralDrums: false,
+    }));
+
+    renderPage('/rivals', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralVocals');
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralCymbals');
+    expect(mockApi.getRivalsList).not.toHaveBeenCalledWith('test-1', 'c0');
+  });
+
   it('renders a single-instrument empty-state subtitle when no song rivals exist', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-empty-single', displayName: 'TestPlayer' }));
     localStorage.setItem('fst:appSettings', JSON.stringify({
@@ -341,10 +363,10 @@ describe('RivalsPage quick links', () => {
     const items = within(list).getAllByRole('button');
 
     expect(screen.getByTestId('rivals-quick-link-common')).toBeTruthy();
-    expect(screen.getByTestId('rivals-quick-link-combo')).toBeTruthy();
+    expect(screen.queryByTestId('rivals-quick-link-combo')).toBeNull();
     expect(screen.getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();
     expect(items[0]).toHaveTextContent('Common Rivals');
-    expect(items[1]).toHaveTextContent('Combined Rivals');
+    expect(items[1]).toHaveTextContent('Lead Rivals');
 
     const guitarIcon = screen.getByTestId('rivals-quick-link-solo-guitar').querySelector('img');
     expect(guitarIcon?.getAttribute('src')).toContain('guitar.png');
@@ -372,7 +394,7 @@ describe('RivalsPage quick links', () => {
 
     const list = await screen.findByTestId('rivals-quick-links-modal-list');
     expect(within(list).getByTestId('rivals-quick-link-common')).toBeTruthy();
-    expect(within(list).getByTestId('rivals-quick-link-combo')).toBeTruthy();
+    expect(within(list).queryByTestId('rivals-quick-link-combo')).toBeNull();
   });
 
   it('shows only the quick links pill on mobile when leaderboards are disabled', async () => {
@@ -445,7 +467,7 @@ describe('RivalsPage quick links', () => {
 
     expect(nav).toBeTruthy();
     expect(within(nav).getByTestId('rivals-quick-link-common')).toBeTruthy();
-    expect(within(nav).getByTestId('rivals-quick-link-combo')).toBeTruthy();
+    expect(within(nav).queryByTestId('rivals-quick-link-combo')).toBeNull();
     expect(within(nav).getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();
 
     const guitarLink = within(nav).getByTestId('rivals-quick-link-solo-guitar');
@@ -530,12 +552,12 @@ describe('AllRivalsPage', () => {
     expect(container.innerHTML.length).toBeGreaterThan(0);
   });
 
-  it('fetches exact combo categories directly when the route carries a combo id', async () => {
-    renderPage('/rivals/all?category=c0', <AllRivalsPage />, '/rivals/all');
+  it('fetches exact combo categories directly when the route carries a valid combo id', async () => {
+    renderPage('/rivals/all?category=05', <AllRivalsPage />, '/rivals/all');
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'c0');
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', '05');
   });
 
   it('renders the page with instrument category', async () => {

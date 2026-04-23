@@ -638,7 +638,7 @@ public static partial class ApiEndpoints
 
     internal static ResolvedRivalCombo? TryResolveRivalCombo(string? combo)
     {
-        var normalizedCombo = ComboIds.NormalizeAnyComboParam(combo);
+        var normalizedCombo = ComboIds.NormalizeSupportedRivalComboParam(combo);
         if (normalizedCombo is null)
             return null;
 
