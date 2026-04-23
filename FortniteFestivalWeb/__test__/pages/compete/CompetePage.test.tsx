@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
+import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankingHelpers';
 import type { ComboPageResponse, RankingsPageResponse, RivalsListResponse } from '@festival/core/api/serverTypes';
 import { contentHash } from '../../../src/firstRun/types';
 import { competeSlides } from '../../../src/pages/compete/firstRun';
@@ -337,6 +338,91 @@ describe('CompetePage', () => {
     expect(screen.queryByText('See All')).not.toBeInTheDocument();
     expect(screen.queryByText('View full leaderboards')).not.toBeInTheDocument();
     expect(screen.queryByText('View all rivals')).not.toBeInTheDocument();
+  });
+
+  it('uses a shared computed rank width for leaderboard rows within a compete section', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    mockApi.getRankings.mockResolvedValueOnce({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 10,
+      totalAccounts: 1000000,
+      entries: [{
+        accountId: 'top-wide-rank',
+        displayName: 'Top Wide Rank',
+        adjustedSkillRating: 0.9,
+        adjustedSkillRank: 1,
+        weightedRank: 1,
+        fcRateRank: 1,
+        totalScoreRank: 12345,
+        maxScorePercentRank: 1,
+        rawSkillRating: 0.9,
+        weightedRating: 0.8,
+        rawWeightedRating: 0.8,
+        totalChartedSongs: 25,
+        songsPlayed: 25,
+        totalScore: 5555555,
+        maxScorePercent: 0.9,
+        rawMaxScorePercent: 0.9,
+        fullComboCount: 20,
+        fcRate: 0.8,
+        avgAccuracy: 95,
+        avgStars: 5,
+        bestRank: 1,
+        avgRank: 1,
+        coverage: 1,
+        computedAt: '2026-01-01T00:00:00Z',
+      }],
+    } satisfies RankingsPageResponse);
+
+    mockApi.getPlayerRanking.mockResolvedValueOnce({
+      instrument: 'Solo_Guitar',
+      totalRankedAccounts: 1000000,
+      accountId: 'test-player',
+      displayName: 'Test Player',
+      adjustedSkillRating: 0.6,
+      adjustedSkillRank: 10,
+      weightedRank: 10,
+      fcRateRank: 10,
+      totalScoreRank: 987654,
+      maxScorePercentRank: 10,
+      rawSkillRating: 0.6,
+      weightedRating: 0.5,
+      rawWeightedRating: 0.5,
+      totalChartedSongs: 25,
+      songsPlayed: 20,
+      totalScore: 4444444,
+      maxScorePercent: 0.7,
+      rawMaxScorePercent: 0.7,
+      fullComboCount: 12,
+      fcRate: 0.48,
+      avgAccuracy: 90,
+      avgStars: 5,
+      bestRank: 10,
+      avgRank: 10,
+      coverage: 0.8,
+      computedAt: '2026-01-01T00:00:00Z',
+    });
+
+    renderCompete();
+    await advancePastPageTransition();
+
+    const expectedWidth = computeRankWidth([12345, 987654]);
+
+    expect(await screen.findByText('#12,345')).toHaveStyle({ width: `${expectedWidth}px` });
+    expect(await screen.findByText('#987,654')).toHaveStyle({ width: `${expectedWidth}px` });
   });
 
   it('shows quick links only for the two top-level sections', async () => {

@@ -30,7 +30,7 @@ import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { RankingEntry } from '../leaderboards/components/RankingEntry';
-import { formatRating } from '../leaderboards/helpers/rankingHelpers';
+import { computeRankWidth, formatRating } from '../leaderboards/helpers/rankingHelpers';
 import { Routes } from '../../routes';
 import RivalRow from '../rivals/components/RivalRow';
 import { ActionPill } from '../../components/common/ActionPill';
@@ -68,6 +68,7 @@ type CompeteScopeViewModel = {
   leaderboardEntries: NormalizedRankingEntry[];
   playerEntry: NormalizedRankingEntry | null;
   playerInTop: boolean;
+  leaderboardRankWidth: number;
   hasLeaderboardNavigation: boolean;
   leaderboardError: unknown;
   rivalsAbove: RivalSummary[];
@@ -151,6 +152,10 @@ export default function CompetePage() {
         leaderboardEntries,
         playerEntry,
         playerInTop: !!(accountId && leaderboardEntries.some((entry) => entry.accountId === accountId)),
+        leaderboardRankWidth: computeRankWidth([
+          ...leaderboardEntries.map((entry) => entry.rank),
+          ...(playerEntry ? [playerEntry.rank] : []),
+        ]),
         hasLeaderboardNavigation: leaderboardEntries.length > 0 || !!playerEntry,
         leaderboardError: leaderboardQueries[index]?.error,
         rivalsAbove: rivalsData?.above.slice(0, 3) ?? [],
@@ -176,6 +181,7 @@ export default function CompetePage() {
   const { phase, shouldStagger } = usePageTransition(`compete:${competeViewKey}`, isReady, hasCachedData);
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
+  const reserveTenDigitScoreWidth = true;
   const headerIconSize = getInstrumentHeaderConfig(InstrumentHeaderSize.SM).icon;
   const quickLinkItems = useMemo<CompeteQuickLink[]>(() => [
     {
@@ -346,6 +352,8 @@ export default function CompetePage() {
                           displayName={entry.displayName ?? entry.accountId.slice(0, 8)}
                           ratingLabel={entry.ratingLabel}
                           isPlayer={entry.accountId === accountId}
+                          rankWidth={section.leaderboardRankWidth}
+                          reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
                         />
                       </Link>
                     ))}
@@ -356,6 +364,8 @@ export default function CompetePage() {
                           displayName={section.playerEntry.displayName ?? section.playerEntry.accountId.slice(0, 8)}
                           ratingLabel={section.playerEntry.ratingLabel}
                           isPlayer
+                          rankWidth={section.leaderboardRankWidth}
+                          reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
                         />
                       </Link>
                     )}
