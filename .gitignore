@@ -320,3 +320,4 @@ FSTService.Harnesses/harness-output/
 harness-output/
 FSTService.Harnesses/SongMachineHarness/accounts.txt
 FSTService.Harnesses/SongMachineHarness/songs.txt
+noop.txt
