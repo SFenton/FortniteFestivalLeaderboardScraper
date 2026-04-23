@@ -421,6 +421,55 @@ describe('SettingsPage', () => {
     expect(screen.getByText(new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString())).toBeDefined();
   });
 
+  it('renders purple arc spinners on Status and Step rows when update is in progress', async () => {
+    const updatingServiceInfo = {
+      ...defaultServiceInfo,
+      currentUpdate: {
+        status: 'updating',
+        startedAt: '2026-04-20T12:45:00Z',
+        phase: 'ScoreExtraction',
+        subOperation: null,
+      },
+    };
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(updatingServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/sync-status')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+
+    const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
+    const stepRow = await screen.findByTestId('settings-service-info-row-update-sub-status');
+    await waitFor(() => {
+      expect(within(statusRow).getByTestId('arc-spinner')).toBeDefined();
+      expect(within(stepRow).getByTestId('arc-spinner')).toBeDefined();
+    });
+
+    // Non-status/step rows must never show a spinner.
+    expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).queryByTestId('arc-spinner')).toBeNull();
+  });
+
+  it('does not render spinners on Status/Step rows when update is idle', async () => {
+    renderSettings();
+
+    const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
+    const stepRow = await screen.findByTestId('settings-service-info-row-update-sub-status');
+    await waitFor(() => {
+      expect(within(statusRow).getByText('Idle')).toBeDefined();
+    });
+    expect(within(statusRow).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(stepRow).queryByTestId('arc-spinner')).toBeNull();
+  });
+
   it('shows tracked player rows when a player is selected', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
     renderSettings();

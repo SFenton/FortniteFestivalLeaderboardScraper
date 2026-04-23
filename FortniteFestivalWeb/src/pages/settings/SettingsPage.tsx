@@ -23,6 +23,8 @@ import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overfl
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
 import { FrostedCard } from '../../components/common/FrostedCard';
+import ArcSpinner, { SpinnerSize } from '../../components/common/ArcSpinner';
+import { Spinner } from '@festival/theme';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { statisticsSlides } from '../player/firstRun';
 import { suggestionsSlides } from '../suggestions/firstRun';
@@ -61,7 +63,11 @@ type ServiceInfoRowItem = {
   id: string;
   label: string;
   value: string;
+  showSpinner?: boolean;
 };
+
+/** Width contribution of the inline spinner adornment (spinner diameter + leading gap). */
+const SERVICE_INFO_SPINNER_WIDTH = Spinner[SpinnerSize.SM].size + Gap.md;
 
 function FadeInDiv({ delay, children, style }: { delay?: number; children: React.ReactNode; style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -289,7 +295,8 @@ function ServiceInfoRows({ rows, styles }: { rows: ServiceInfoRowItem[]; styles:
 
     const nextStackAllRows = rows.some((row) => {
       const keyWidth = measureSingleLineTextWidth(keyMeasureRefs.current[row.id] ?? null, row.label);
-      const valueWidth = measureSingleLineTextWidth(valueMeasureRefs.current[row.id] ?? null, row.value);
+      const valueWidth = measureSingleLineTextWidth(valueMeasureRefs.current[row.id] ?? null, row.value)
+        + (row.showSpinner ? SERVICE_INFO_SPINNER_WIDTH : 0);
       return Math.max(keyWidth, SERVICE_INFO_INLINE_KEY_MIN_WIDTH) + valueWidth + Gap.md > listWidth;
     });
 
@@ -317,12 +324,26 @@ function ServiceInfoRows({ rows, styles }: { rows: ServiceInfoRowItem[]; styles:
           {stackAllRows ? (
             <>
               <span style={styles.serviceInfoKeyStacked}>{row.label}</span>
-              <MarqueeText text={row.value} as="span" style={styles.serviceInfoValueStacked} />
+              {row.showSpinner ? (
+                <span style={styles.serviceInfoValueStackedWithSpinner}>
+                  <MarqueeText text={row.value} as="span" style={styles.serviceInfoValueStackedText} />
+                  <ArcSpinner size={SpinnerSize.SM} style={styles.serviceInfoSpinner} />
+                </span>
+              ) : (
+                <MarqueeText text={row.value} as="span" style={styles.serviceInfoValueStacked} />
+              )}
             </>
           ) : (
             <>
               <span style={styles.serviceInfoKeyInline}>{row.label}</span>
-              <span style={styles.serviceInfoValueInline}>{row.value}</span>
+              {row.showSpinner ? (
+                <span style={styles.serviceInfoValueInlineWithSpinner}>
+                  <span style={styles.serviceInfoValueInline}>{row.value}</span>
+                  <ArcSpinner size={SpinnerSize.SM} style={styles.serviceInfoSpinner} />
+                </span>
+              ) : (
+                <span style={styles.serviceInfoValueInline}>{row.value}</span>
+              )}
             </>
           )}
         </div>
@@ -485,11 +506,12 @@ export default function SettingsPage() {
     : null;
 
   const serviceInfoRows = useMemo<ServiceInfoRowItem[]>(() => {
+    const isUpdating = serviceInfo?.currentUpdate.status === 'updating';
     const rows: ServiceInfoRowItem[] = [
       { id: 'last-update-start', label: t('settings.serviceInfo.lastUpdateStart'), value: lastLeaderboardUpdateStart },
       { id: 'last-update-complete', label: t('settings.serviceInfo.lastUpdateComplete'), value: lastLeaderboardUpdateComplete },
-      { id: 'update-status', label: t('settings.serviceInfo.updateStatus'), value: leaderboardUpdateStatus },
-      { id: 'update-sub-status', label: t('settings.serviceInfo.updateSubStatus'), value: leaderboardUpdateSubStatus },
+      { id: 'update-status', label: t('settings.serviceInfo.updateStatus'), value: leaderboardUpdateStatus, showSpinner: isUpdating },
+      { id: 'update-sub-status', label: t('settings.serviceInfo.updateSubStatus'), value: leaderboardUpdateSubStatus, showSpinner: isUpdating },
       { id: 'next-scheduled-update', label: t('settings.serviceInfo.nextScheduledUpdate'), value: nextLeaderboardScheduledUpdate },
     ];
 
@@ -507,6 +529,7 @@ export default function SettingsPage() {
     leaderboardUpdateStatus,
     leaderboardUpdateSubStatus,
     nextLeaderboardScheduledUpdate,
+    serviceInfo,
     t,
     trackedPlayer,
     trackedPlayerFallback,
@@ -1126,6 +1149,28 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
       minWidth: 0,
       color: Colors.textSecondary,
       textAlign: TextAlign.left,
+    } as CSSProperties,
+    serviceInfoValueInlineWithSpinner: {
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.md,
+      flexShrink: 0,
+    } as CSSProperties,
+    serviceInfoValueStackedWithSpinner: {
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.md,
+      width: CssValue.full,
+      minWidth: 0,
+    } as CSSProperties,
+    serviceInfoValueStackedText: {
+      flex: '1 1 auto',
+      minWidth: 0,
+      color: Colors.textSecondary,
+      textAlign: TextAlign.left,
+    } as CSSProperties,
+    serviceInfoSpinner: {
+      flexShrink: 0,
     } as CSSProperties,
     resetRow: {
       ...flexBetween,
