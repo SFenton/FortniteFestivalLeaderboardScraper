@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { useCallback, useMemo, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
@@ -76,6 +76,9 @@ type CompeteScopeViewModel = {
   rivalsError: unknown;
 };
 
+let _cachedCompeteViewKey: string | null = null;
+let _cachedCompeteSections: CompeteScopeViewModel[] = [];
+
 export default function CompetePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -89,6 +92,10 @@ export default function CompetePage() {
   const accountId = player?.accountId ?? '';
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
   const scopes = useMemo(() => resolveSupportedRankingScopes(instruments), [instruments]);
+  const competeViewKey = useMemo(
+    () => `${accountId}:${scopes.map((scope) => scope.scopeKey).join(',')}`,
+    [accountId, scopes],
+  );
 
   const leaderboardQueries = useQueries({
     queries: scopes.map((scope) => (
@@ -129,7 +136,7 @@ export default function CompetePage() {
       : [],
   });
 
-  const scopeSections = useMemo<CompeteScopeViewModel[]>(() => (
+  const liveScopeSections = useMemo<CompeteScopeViewModel[]>(() => (
     scopes.map((scope, index) => {
       const leaderboardData = leaderboardQueries[index]?.data as RankingsPageResponse | ComboPageResponse | undefined;
       const playerRanking = playerQueries[index]?.data as PlayerRankingResult | undefined;
@@ -158,10 +165,15 @@ export default function CompetePage() {
   const firstLeaderboardError = leaderboardQueries.find((query) => query.error)?.error;
   const leaderboardReady = leaderboardQueries.every((query) => !query.isLoading);
   const rivalsReady = !accountId || rivalsQueries.every((query) => !query.isLoading);
+  const liveReady = (leaderboardReady && rivalsReady) || allLeaderboardsErrored;
+  const hasCachedData = competeViewKey === _cachedCompeteViewKey && _cachedCompeteSections.length > 0;
+  const scopeSections = hasCachedData && !liveReady
+    ? _cachedCompeteSections
+    : liveScopeSections;
 
-  const isReady = (leaderboardReady && rivalsReady) || allLeaderboardsErrored;
+  const isReady = hasCachedData || liveReady;
   const hasError = allLeaderboardsErrored;
-  const { phase, shouldStagger } = usePageTransition('compete', isReady, isReady);
+  const { phase, shouldStagger } = usePageTransition(`compete:${competeViewKey}`, isReady, hasCachedData);
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
   const headerIconSize = getInstrumentHeaderConfig(InstrumentHeaderSize.SM).icon;
@@ -181,6 +193,15 @@ export default function CompetePage() {
     () => ({ hasPlayer: !!player, experimentalRanksEnabled }),
     [experimentalRanksEnabled, player],
   );
+
+  useEffect(() => {
+    if (!liveReady || allLeaderboardsErrored) {
+      return;
+    }
+
+    _cachedCompeteViewKey = competeViewKey;
+    _cachedCompeteSections = liveScopeSections;
+  }, [allLeaderboardsErrored, competeViewKey, liveReady, liveScopeSections]);
 
   const navigateToLeaderboards = (scope: RankingScope) => {
     const navTarget = scope.kind === 'combo'

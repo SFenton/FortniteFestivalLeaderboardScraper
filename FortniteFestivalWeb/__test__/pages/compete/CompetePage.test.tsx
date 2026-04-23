@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import type { ComboPageResponse, RankingsPageResponse, RivalsListResponse } from '@festival/core/api/serverTypes';
@@ -75,6 +75,7 @@ beforeEach(() => {
     entries: [{
       accountId: `top-${instrument}`,
       displayName: `Top ${instrument}`,
+      adjustedSkillRating: 0.9,
       adjustedSkillRank: 1,
       weightedRank: 1,
       fcRateRank: 1,
@@ -94,6 +95,7 @@ beforeEach(() => {
       avgStars: 5,
       bestRank: 1,
       avgRank: 1,
+      coverage: 1,
       computedAt: '2026-01-01T00:00:00Z',
     }],
   } satisfies RankingsPageResponse));
@@ -102,6 +104,7 @@ beforeEach(() => {
     totalRankedAccounts: 100,
     accountId: 'test-player',
     displayName: 'Test Player',
+    adjustedSkillRating: 0.6,
     adjustedSkillRank: 10,
     weightedRank: 10,
     fcRateRank: 10,
@@ -121,6 +124,7 @@ beforeEach(() => {
     avgStars: 5,
     bestRank: 10,
     avgRank: 10,
+    coverage: 0.8,
     computedAt: '2026-01-01T00:00:00Z',
   }));
   mockApi.getRivalsList.mockImplementation(async (_accountId: string, scope: string) => ({
@@ -141,6 +145,20 @@ function LocationEcho() {
   return <div data-testid="location-search">{location.pathname}{location.search}</div>;
 }
 
+function RivalDetailEcho() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  return (
+    <>
+      <div data-testid="location-search">{location.pathname}{location.search}</div>
+      <button type="button" data-testid="back-to-compete" onClick={() => navigate(-1)}>
+        Back
+      </button>
+    </>
+  );
+}
+
 async function advancePastPageTransition() {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1200);
@@ -153,6 +171,7 @@ function renderCompete(route = '/compete') {
       <Routes>
         <Route path="/compete" element={<CompetePage />} />
         <Route path="/leaderboards/all" element={<LocationEcho />} />
+        <Route path="/rivals/:rivalId" element={<RivalDetailEcho />} />
       </Routes>
     </TestProviders>,
   );
@@ -273,7 +292,7 @@ describe('CompetePage', () => {
     renderCompete();
     await advancePastPageTransition();
 
-    const [leaderboardsHeader] = await screen.findAllByRole('button', { name: /Lead \+ Drums/i });
+    const leaderboardsHeader = (await screen.findAllByRole('button', { name: /Lead \+ Drums/i }))[0]!;
 
     fireEvent.click(leaderboardsHeader);
 
@@ -344,5 +363,49 @@ describe('CompetePage', () => {
     expect(list.querySelectorAll('button')).toHaveLength(2);
     expect(screen.queryByTestId('compete-quick-link-solo-guitar')).not.toBeInTheDocument();
     expect(screen.queryByTestId('compete-quick-link-05')).not.toBeInTheDocument();
+  });
+
+  it('restores compete immediately when returning from rival detail', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: false,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: false,
+    }));
+
+    renderCompete();
+    await advancePastPageTransition();
+
+    const scrollContainer = screen.getByTestId('test-scroll-container') as HTMLDivElement & {
+      scrollTo: ReturnType<typeof vi.fn>;
+    };
+    const scrollToSpy = vi.fn((x?: number, y?: number) => {
+      scrollContainer.scrollTop = typeof y === 'number' ? y : (x ?? 0);
+    });
+    scrollContainer.scrollTo = scrollToSpy;
+
+    scrollContainer.scrollTop = 420;
+    fireEvent.scroll(scrollContainer);
+
+    fireEvent.click(await screen.findByText('Above Solo_Guitar'));
+    expect(await screen.findByTestId('back-to-compete')).toBeInTheDocument();
+
+    scrollContainer.scrollTop = 0;
+    fireEvent.click(screen.getByTestId('back-to-compete'));
+
+    expect(screen.getByText('Leaderboards')).toBeInTheDocument();
+    expect(screen.getByText('Above Solo_Guitar')).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+
+    expect(scrollToSpy).toHaveBeenCalledWith(0, 420);
+    expect(scrollContainer.scrollTop).toBe(420);
   });
 });
