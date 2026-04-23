@@ -66,7 +66,16 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
         _responses.Enqueue(response);
     }
 
-    protected override Task<HttpResponseMessage> SendAsync(
+    /// <summary>Sentinel used to represent a "hang forever" response.</summary>
+    private sealed class HangSentinel { public static readonly HangSentinel Instance = new(); }
+
+    /// <summary>Enqueue a request that hangs until its CancellationToken fires.
+    /// Simulates an infinite-timeout proxy-routed send that never returns on its own
+    /// (the production CDN-probe wedge). The handler throws
+    /// <see cref="OperationCanceledException"/> when the request's token cancels.</summary>
+    public void EnqueueHang() => _responses.Enqueue(HangSentinel.Instance);
+
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
         _requests.Add(request);
@@ -78,6 +87,15 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
         var entry = _responses.Dequeue();
         if (entry is Exception ex)
             throw ex;
-        return Task.FromResult((HttpResponseMessage)entry);
+        if (entry is HangSentinel)
+        {
+            // Block until the request's token cancels, then throw like a real
+            // HttpClient would when its per-request CTS fires.
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var reg = cancellationToken.Register(() => tcs.TrySetResult(true));
+            await tcs.Task.ConfigureAwait(false);
+            throw new TaskCanceledException("simulated hang cancelled", innerException: null, cancellationToken);
+        }
+        return (HttpResponseMessage)entry;
     }
 }

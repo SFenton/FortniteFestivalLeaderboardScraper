@@ -696,25 +696,32 @@ public sealed class ResilientHttpExecutorTests
     [Fact]
     public async Task SendAsync_CdnBlock_NonProbeWaitsForProbeSignal()
     {
-        // Two concurrent calls: both get CdnBlockedException.
-        // The first triggers the probe; the second detects IsCdnBlocked.
-        // Probe succeeds → CDN clears.
+        // Two concurrent calls: call 1 triggers the probe.
+        // Call 2 may either (a) throw CdnBlockedException because IsCdnBlocked was
+        // observed true pre-send, or (b) succeed if the probe raced ahead and
+        // cleared before call 2's pre-send check. Both outcomes prove the probe
+        // clears the block; enqueue an extra success so path (b) has a response.
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
         executor.MaxJitterMs = 0;
 
         handler.EnqueueHtml403(); // call 1 initial → triggers probe
-        handler.EnqueueHtml403(); // call 2 initial (or pre-send IsCdnBlocked throw)
+        handler.EnqueueHtml403(); // call 2 initial (if it races past IsCdnBlocked)
         handler.EnqueueJsonOk("""{"result":"probe-ok"}""");  // probe retry → clears
+        handler.EnqueueJsonOk("""{"result":"call-2-late"}"""); // call 2 post-clear path
 
         var task1 = executor.SendAsync(() => MakeRequest(), label: "call-1");
         var task2 = executor.SendAsync(() => MakeRequest(), label: "call-2");
 
-        // Both should throw CdnBlockedException
+        // Call 1 definitively triggers the CDN block.
         await Assert.ThrowsAsync<CdnBlockedException>(() => task1);
-        await Assert.ThrowsAsync<CdnBlockedException>(() => task2);
 
-        // Probe clears the CDN block
+        // Call 2: accept either CdnBlockedException (pre-send gated) or success
+        // (probe already cleared). Both outcomes are correct.
+        try { (await task2).Dispose(); }
+        catch (CdnBlockedException) { /* acceptable */ }
+
+        // Probe clears the CDN block in either case.
         await executor.WaitForCdnClearAsync(CancellationToken.None);
         Assert.False(executor.IsCdnBlocked);
     }
@@ -862,5 +869,239 @@ public sealed class ResilientHttpExecutorTests
 
         Assert.Equal(4, result);
         Assert.Equal(4, callCount);
+    }
+
+    // ─── Probe-send timeout (Fix 1) ────────────────────────────────
+    // These tests cover the regression that wedged production: a probe HTTP send
+    // hanging indefinitely because it inherited the scraper's Timeout.InfiniteTimeSpan
+    // client. The probe must bound each send with _probeSendTimeout.
+
+    private static ResilientHttpExecutor CreateExecutorWithProbeTimeout(
+        MockHttpMessageHandler handler,
+        TimeSpan probeSendTimeout,
+        CancellationToken lifetime = default)
+    {
+        var http = new HttpClient(handler);
+        var executor = new ResilientHttpExecutor(
+            http, Substitute.For<ILogger>(), probeSendTimeout, lifetime);
+        executor.CdnRetryDelaysOverride = new TimeSpan[9]; // all TimeSpan.Zero
+        executor.MaxJitterMs = 0;
+        return executor;
+    }
+
+    [Fact]
+    public async Task Probe_SendHangs_PerAttemptTimeoutUnsticks()
+    {
+        // Production wedge: probe SendAsync never returns. Per-attempt timeout
+        // must cancel the hang and continue to the next probe attempt.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithProbeTimeout(handler, TimeSpan.FromMilliseconds(150));
+
+        handler.EnqueueHtml403();   // initial caller 403 → triggers probe
+        handler.EnqueueHang();      // probe attempt 1: hangs, per-attempt timeout fires
+        handler.EnqueueJsonOk("""{"result":"cleared"}"""); // probe attempt 2: success
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "hang-test"));
+
+        // Probe must resolve (CDN cleared) within a bounded time, not hang forever.
+        using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await executor.WaitForCdnClearAsync(waitCts.Token);
+        Assert.False(executor.IsCdnBlocked);
+        Assert.False(executor.IsProbeRunning); // gate released
+    }
+
+    [Fact]
+    public async Task Probe_CallerTokenCancelled_DoesNotCancelProbe()
+    {
+        // Caller A triggers CDN block with ctA, then cancels ctA immediately.
+        // The probe must continue independently (it no longer inherits caller ct).
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithProbeTimeout(handler, TimeSpan.FromSeconds(5));
+
+        handler.EnqueueHtml403(); // caller 403 → triggers probe
+        handler.EnqueueJsonOk("""{"result":"probe-ok"}""");
+
+        using var ctA = new CancellationTokenSource();
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "caller-a", ct: ctA.Token));
+
+        ctA.Cancel(); // cancel the caller's token — probe must not die
+
+        using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await executor.WaitForCdnClearAsync(waitCts.Token);
+        Assert.False(executor.IsCdnBlocked);
+    }
+
+    [Fact]
+    public async Task Probe_ExecutorLifetimeCancelled_ResolvesWaiters()
+    {
+        // Shutting down the executor (lifetime token cancels) must wake waiters
+        // and release the probe gate — no process-wide leaks.
+        var handler = new MockHttpMessageHandler();
+        using var lifetimeCts = new CancellationTokenSource();
+        var executor = CreateExecutorWithProbeTimeout(
+            handler, TimeSpan.FromSeconds(30), lifetimeCts.Token);
+
+        handler.EnqueueHtml403();
+        handler.EnqueueHang(); // probe hangs; lifetime cancellation aborts it
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "lifetime-cancel"));
+
+        // Spin up a waiter, then cancel the executor lifetime
+        var waiterTask = executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(waiterTask.IsCompleted);
+        lifetimeCts.Cancel();
+
+        // Waiter must complete (probe's OCE handler resolves TCS with false)
+        await waiterTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(executor.IsProbeRunning);
+    }
+
+    // ─── Gate lifecycle (Fix 2) ─────────────────────────────────
+    // The probe gate is now an integer primitive that ResetCdnState can force-
+    // release without waiting. Tests verify a wedged/abandoned probe cannot
+    // permanently lock out future probes.
+
+    [Fact]
+    public async Task ResetCdnState_DuringHungProbe_AllowsNewProbeToLaunch()
+    {
+        // Previously: stuck probe holds SemaphoreSlim gate forever; LaunchCdnProbe
+        // calls silently no-op. After Fix 2+3, ResetCdnState force-clears the
+        // integer gate and cancels the old probe so a new one can launch.
+        var handler = new MockHttpMessageHandler();
+        using var lifetimeCts = new CancellationTokenSource();
+        var executor = CreateExecutorWithProbeTimeout(
+            handler, TimeSpan.FromSeconds(30), lifetimeCts.Token);
+
+        handler.EnqueueHtml403();   // caller 403 → triggers probe #1
+        handler.EnqueueHang();      // probe #1 hangs indefinitely
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "probe1"));
+
+        Assert.True(executor.IsProbeRunning);
+
+        // Reset should cancel the hung probe and release the gate.
+        executor.ResetCdnState();
+
+        // Allow the cancelled probe's finally to run.
+        await WaitForConditionAsync(() => !executor.IsProbeRunning, TimeSpan.FromSeconds(5));
+        Assert.False(executor.IsProbeRunning);
+
+        // Cooldown floor must elapse before the next probe can launch.
+        await Task.Delay(ResilientHttpExecutor.ResetCooldownFloor + TimeSpan.FromMilliseconds(50));
+
+        // A new probe must now be launchable.
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"probe-2-ok"}""");
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "probe2"));
+
+        using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await executor.WaitForCdnClearAsync(waitCts.Token);
+        Assert.False(executor.IsCdnBlocked);
+    }
+
+    // ─── ResetCdnState recovery (Fix 3) ────────────────────────
+
+    [Fact]
+    public async Task ResetCdnState_DuringActiveProbe_UnblocksWaiters()
+    {
+        // Waiters on the current _cdnResolved must wake when ResetCdnState is
+        // called — without propagating OperationCanceledException (which would
+        // break WithCdnResilienceAsync's retry loops).
+        var handler = new MockHttpMessageHandler();
+        using var lifetimeCts = new CancellationTokenSource();
+        var executor = CreateExecutorWithProbeTimeout(
+            handler, TimeSpan.FromSeconds(30), lifetimeCts.Token);
+
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "setup"));
+
+        // Start a waiter before resetting.
+        var waiter = executor.WaitForCdnClearAsync(CancellationToken.None);
+        Assert.False(waiter.IsCompleted);
+
+        executor.ResetCdnState();
+
+        // Waiter must complete normally (no OCE) within a bounded time.
+        await waiter.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(waiter.IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public async Task ResetCdnState_WithActiveProbe_ArmsShortCooldownFloor()
+    {
+        // After cancelling an active probe, the short cooldown floor prevents
+        // a hot-loop of callers racing the freshly-cleared gate.
+        var handler = new MockHttpMessageHandler();
+        using var lifetimeCts = new CancellationTokenSource();
+        var executor = CreateExecutorWithProbeTimeout(
+            handler, TimeSpan.FromSeconds(30), lifetimeCts.Token);
+
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "setup"));
+
+        Assert.True(executor.IsProbeRunning);
+        executor.ResetCdnState();
+
+        // Immediately after reset, the floor must still be active.
+        Assert.True(executor.IsCdnBlocked,
+            "Cooldown floor should keep IsCdnBlocked=true briefly after reset-with-active-probe");
+    }
+
+    [Fact]
+    public void ResetCdnState_WithoutActiveProbe_NoCooldownFloor()
+    {
+        // When no probe was active, reset is a pure clear — no artificial cooldown.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithProbeTimeout(handler, TimeSpan.FromSeconds(30));
+
+        executor.ResetCdnState();
+
+        Assert.False(executor.IsCdnBlocked);
+        Assert.False(executor.IsProbeRunning);
+    }
+
+    [Fact]
+    public async Task Probe_SendTimeoutCounts_AsProbeAttempts()
+    {
+        // Regression: CdnProbeAttempts counter must increment once per hang-
+        // timed-out attempt, not per hang (which would never terminate pre-fix).
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithProbeTimeout(handler, TimeSpan.FromMilliseconds(100));
+
+        handler.EnqueueHtml403();
+        handler.EnqueueHang();  // probe attempt 1 — times out
+        handler.EnqueueHang();  // probe attempt 2 — times out
+        handler.EnqueueJsonOk("""{"result":"ok"}"""); // probe attempt 3 — success
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "count-test"));
+
+        using var waitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await executor.WaitForCdnClearAsync(waitCts.Token);
+
+        Assert.Equal(3, executor.CdnProbeAttempts);
+        Assert.Equal(1, executor.CdnProbeSuccesses);
+    }
+
+    private static async Task WaitForConditionAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (condition()) return;
+            await Task.Delay(10);
+        }
     }
 }

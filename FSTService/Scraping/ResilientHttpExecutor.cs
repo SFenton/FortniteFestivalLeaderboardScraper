@@ -126,17 +126,45 @@ public sealed class ResilientHttpExecutor
     // ── Shared CDN cooldown state ─────────────────────────────
     // When a CDN block is detected, the probe walks a backoff schedule.
     // Non-probes wait on _cdnResolved (a TCS) for the probe to signal success/failure.
-    // The _cdnGate semaphore ensures only one request probes the CDN at a time.
+    // The _probeRunning int (0/1) ensures only one probe runs at a time; it is an
+    // integer primitive (not a SemaphoreSlim) so ResetCdnState can forcibly clear it
+    // if a probe is abandoned/cancelled without deadlocking future probe launches.
     private DateTimeOffset _cdnCooldownUntil;
-    private readonly SemaphoreSlim _cdnGate = new(1, 1);
+    private int _probeRunning; // 0 = no probe, 1 = probe in flight
     private int _cdnRetryIndex; // current position in the delay schedule
     private volatile TaskCompletionSource<bool>? _cdnResolved; // true=CDN clear, false=gave up
     private Task? _probeTask; // background probe task (fire-and-forget with TCS signal)
+    private volatile CancellationTokenSource? _probeCts; // scoped to in-flight probe; null when idle
+
+    // ── Probe bounds & lifetime (Fix 1) ───────────────────────
+    /// <summary>Default per-attempt timeout for probe HTTP sends. Prevents a single
+    /// probe send from hanging indefinitely (e.g. on a wedged proxy connection).</summary>
+    public static readonly TimeSpan DefaultProbeSendTimeout = TimeSpan.FromSeconds(30);
+
+    private readonly TimeSpan _probeSendTimeout;
+    private readonly CancellationToken _executorLifetime;
 
     public ResilientHttpExecutor(HttpClient http, ILogger log)
+        : this(http, log, probeSendTimeout: null, executorLifetime: default) { }
+
+    /// <param name="probeSendTimeout">Per-attempt timeout for the background CDN probe
+    /// send. Defaults to <see cref="DefaultProbeSendTimeout"/>. A single probe
+    /// <c>HttpClient.SendAsync</c> call will not block longer than this, regardless of
+    /// the underlying client's <c>Timeout</c>.</param>
+    /// <param name="executorLifetime">Token tied to the executor's owner (typically
+    /// <c>IHostApplicationLifetime.ApplicationStopping</c>). The background probe uses
+    /// this token for outer delays and as the base of its per-attempt send token, so
+    /// the probe is decoupled from any individual caller's cancellation token.</param>
+    public ResilientHttpExecutor(
+        HttpClient http,
+        ILogger log,
+        TimeSpan? probeSendTimeout,
+        CancellationToken executorLifetime)
     {
         _http = http;
         _log = log;
+        _probeSendTimeout = probeSendTimeout ?? DefaultProbeSendTimeout;
+        _executorLifetime = executorLifetime;
     }
 
     /// <summary>
@@ -331,12 +359,23 @@ public sealed class ResilientHttpExecutor
         string? label,
         CancellationToken ct)
     {
-        // Only one probe at a time — if _cdnGate is already held, probe is running
-        if (!_cdnGate.Wait(0))
+        // Only one probe at a time — integer CAS gate (Fix 2).
+        // Use an integer primitive rather than SemaphoreSlim so ResetCdnState can
+        // force-release it without risking deadlock if the prior probe is
+        // wedged/abandoned. _ = ct suppresses unused-parameter warning: the caller
+        // token intentionally does NOT flow into the probe (Fix 1 — decoupling).
+        _ = ct;
+        if (Interlocked.CompareExchange(ref _probeRunning, 1, 0) != 0)
             return; // probe already running
 
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _cdnResolved = tcs;
+
+        // Probe-scoped CTS linked to the executor lifetime only — NOT the caller's ct.
+        // ResetCdnState cancels this CTS to abort a wedged probe.
+        var probeCts = CancellationTokenSource.CreateLinkedTokenSource(_executorLifetime);
+        _probeCts = probeCts;
+        var probeToken = probeCts.Token;
 
         _probeTask = Task.Run(async () =>
         {
@@ -356,28 +395,37 @@ public sealed class ResilientHttpExecutor
 
                     OnCdnProbeEvent?.Invoke(new CdnProbeEvent(CdnProbeState.Waiting, i + 1, MaxCdnRetries, delay.TotalSeconds));
 
-                    await Task.Delay(delay, ct);
+                    await Task.Delay(delay, probeToken);
 
                     // Only acquire a rate token — NOT a DOP slot
-                    await (limiter?.AcquireRateTokenAsync(ct) ?? Task.CompletedTask);
+                    await (limiter?.AcquireRateTokenAsync(probeToken) ?? Task.CompletedTask);
 
                     OnCdnProbeEvent?.Invoke(new CdnProbeEvent(CdnProbeState.Probing, i + 1, MaxCdnRetries, 0));
+
+                    // Per-attempt send timeout (Fix 1). Even if _http has
+                    // Timeout.InfiniteTimeSpan and routes through a wedged proxy,
+                    // this bounds one probe attempt to _probeSendTimeout.
+                    using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
+                    sendCts.CancelAfter(_probeSendTimeout);
 
                     HttpResponseMessage res;
                     try
                     {
                         Interlocked.Increment(ref _cdnProbeAttempts);
                         Interlocked.Increment(ref _totalHttpSends);
-                        res = await _http.SendAsync(requestFactory(), ct);
+                        res = await _http.SendAsync(requestFactory(), sendCts.Token);
                     }
                     catch (HttpRequestException ex)
                     {
                         _log.LogWarning("CDN probe HTTP error (attempt {CdnAttempt}): {Error}", i + 1, ex.Message);
                         continue;
                     }
-                    catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                    catch (OperationCanceledException) when (!probeToken.IsCancellationRequested)
                     {
-                        _log.LogWarning("CDN probe timed out (attempt {CdnAttempt})", i + 1);
+                        // Per-attempt send timeout fired; probe itself is healthy.
+                        _log.LogWarning(
+                            "CDN probe send timed out after {Timeout:F1}s (attempt {CdnAttempt})",
+                            _probeSendTimeout.TotalSeconds, i + 1);
                         continue;
                     }
 
@@ -385,7 +433,7 @@ public sealed class ResilientHttpExecutor
                     bool isCdnBlock = false;
                     if ((int)res.StatusCode == 403)
                     {
-                        var body = await res.Content.ReadAsStringAsync(ct);
+                        var body = await res.Content.ReadAsStringAsync(probeToken);
                         isCdnBlock = !body.TrimStart().StartsWith('{');
                         if (!isCdnBlock)
                             res.Dispose(); // JSON 403 — CDN is clear
@@ -419,7 +467,12 @@ public sealed class ResilientHttpExecutor
             }
             catch (OperationCanceledException)
             {
-                tcs.TrySetCanceled(ct);
+                // Probe was cancelled (ResetCdnState or executor shutdown).
+                // Resolve the TCS with `false` rather than TrySetCanceled so waiters
+                // in WaitForCdnClearAsync wake normally instead of propagating OCE
+                // up through WithCdnResilienceAsync (which would break resilience
+                // loops even though the caller's own ct was never cancelled).
+                tcs.TrySetResult(false);
             }
             catch (Exception ex)
             {
@@ -428,21 +481,73 @@ public sealed class ResilientHttpExecutor
             }
             finally
             {
-                _cdnGate.Release();
+                // Release the gate and clear the CTS ref before disposal so a
+                // concurrent ResetCdnState doesn't touch a disposed object.
+                _probeCts = null;
+                Interlocked.Exchange(ref _probeRunning, 0);
+                probeCts.Dispose();
             }
-        }, ct);
+        }, probeToken);
     }
 
     /// <summary>
     /// Reset CDN cooldown state. Call at the start of each scrape pass to prevent
     /// stale state from a previous pass imposing unnecessarily long cooldowns.
+    ///
+    /// <para>If a probe is currently in flight (including one wedged on an
+    /// indefinite HTTP send), this method cancels the probe's scoped CTS, releases
+    /// the probe gate, resolves any outstanding waiters with a non-cancelled
+    /// completion, and arms a short cooldown floor (<see cref="ResetCooldownFloor"/>)
+    /// to prevent a hot-loop of callers racing to send requests before the CDN
+    /// state has fully cleared.</para>
     /// </summary>
     public void ResetCdnState()
     {
-        _cdnCooldownUntil = default;
+        // Snapshot before mutating so concurrent probe finally-block doesn't
+        // double-dispose or see a stale reference.
+        var cts = _probeCts;
+        var prevResolved = _cdnResolved;
+        bool hadActiveProbe = Volatile.Read(ref _probeRunning) == 1;
+
         _cdnRetryIndex = 0;
         _cdnResolved = null;
+
+        // Arm a short cooldown floor when abandoning an active probe (Fix 4).
+        // Without this, callers racing between ResetCdnState and the first
+        // post-reset 403 would see IsCdnBlocked==false, send, get CDN-blocked,
+        // and (because the gate was just released) launch a probe — but the
+        // window is still a hot-loop hazard. A 1s floor keeps it cool.
+        _cdnCooldownUntil = hadActiveProbe
+            ? DateTimeOffset.UtcNow + ResetCooldownFloor
+            : default;
+
+        // Cancel the in-flight probe. The probe's OCE handler will resolve the
+        // old TCS with `false` (not TrySetCanceled) so waiters wake normally.
+        if (cts is not null)
+        {
+            try { cts.Cancel(); }
+            catch (ObjectDisposedException) { /* probe already completed */ }
+        }
+
+        // Belt-and-braces: if the prior TCS somehow never gets resolved by the
+        // probe (e.g. probe task crashed before its finally), resolve it here so
+        // waiters don't hang. TrySetResult is a no-op if already completed.
+        prevResolved?.TrySetResult(false);
+
+        // Force-release the gate. If the probe's finally runs later and calls
+        // Interlocked.Exchange(ref _probeRunning, 0) again, that's a harmless
+        // no-op — the value is already 0.
+        Interlocked.Exchange(ref _probeRunning, 0);
     }
+
+    /// <summary>Short cooldown armed after <see cref="ResetCdnState"/> when an
+    /// active probe is being abandoned, to avoid a hot-loop of CDN-blocked
+    /// requests racing through the freshly-cleared gate.</summary>
+    internal static readonly TimeSpan ResetCooldownFloor = TimeSpan.FromSeconds(1);
+
+    /// <summary>True iff a background CDN probe is currently in flight.
+    /// Test-only visibility for verifying gate lifecycle.</summary>
+    internal bool IsProbeRunning => Volatile.Read(ref _probeRunning) == 1;
 
     /// <summary>
     /// True when a CDN block is currently active (probe in progress or cooldown pending).
