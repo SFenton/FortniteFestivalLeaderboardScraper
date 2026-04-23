@@ -181,6 +181,163 @@ public sealed class ScrapeProgressTracker
     /// <summary>Set the current sub-operation within the active phase. Pass null to clear.</summary>
     public void SetSubOperation(string? id) { _subOperation = id; Interlocked.Increment(ref _changeSequence); }
 
+    // ─── Branch tracking (parallel branches inside a phase) ──
+    // Each branch is a named, independently-tracked unit of work that runs
+    // alongside other branches in the same phase (e.g. rank_recompute,
+    // first_seen, name_resolution, pruning during PostScrapeEnrichment).
+    // Branches are reset on every SetPhase call. Their snapshot is included
+    // in the phase OperationSnapshot and contributes to ProgressPercent.
+
+    private sealed class BranchEntry
+    {
+        public string Id { get; }
+        public string Status; // "pending" | "running" | "complete" | "skipped" | "failed"
+        public DateTime? StartedAtUtc;
+        public DateTime? CompletedAtUtc;
+        public int Completed;
+        public int Total;
+        public bool HasCounters;
+        public string? Message;
+
+        public BranchEntry(string id) { Id = id; Status = "pending"; }
+    }
+
+    private readonly List<BranchEntry> _branches = new();
+
+    /// <summary>
+    /// Declare the set of branches for the current phase. Clears any prior branches.
+    /// Order is preserved in the snapshot. Each branch starts in "pending" status.
+    /// </summary>
+    public void RegisterBranches(IEnumerable<string> branchIds)
+    {
+        lock (_branches)
+        {
+            _branches.Clear();
+            foreach (var id in branchIds)
+                _branches.Add(new BranchEntry(id));
+        }
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Mark a branch as running and record its start time. No-op if branch not registered.</summary>
+    public void StartBranch(string branchId)
+    {
+        lock (_branches)
+        {
+            var b = _branches.FirstOrDefault(x => x.Id == branchId);
+            if (b is null) return;
+            b.Status = "running";
+            b.StartedAtUtc ??= DateTime.UtcNow;
+        }
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Set the total work-item count for a branch, enabling per-branch progress fraction.</summary>
+    public void SetBranchTotal(string branchId, int total)
+    {
+        lock (_branches)
+        {
+            var b = _branches.FirstOrDefault(x => x.Id == branchId);
+            if (b is null) return;
+            b.Total = total;
+            b.HasCounters = true;
+        }
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Set the absolute completed count for a branch (replaces, does not add).</summary>
+    public void ReportBranchProgress(string branchId, int completed, int? total = null)
+    {
+        lock (_branches)
+        {
+            var b = _branches.FirstOrDefault(x => x.Id == branchId);
+            if (b is null) return;
+            b.Completed = completed;
+            if (total.HasValue) { b.Total = total.Value; }
+            b.HasCounters = true;
+        }
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Increment the completed count for a branch by the given amount.</summary>
+    public void IncrementBranchProgress(string branchId, int by = 1)
+    {
+        lock (_branches)
+        {
+            var b = _branches.FirstOrDefault(x => x.Id == branchId);
+            if (b is null) return;
+            b.Completed += by;
+            b.HasCounters = true;
+        }
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Mark a branch as terminal. Status should be "complete", "skipped", or "failed".</summary>
+    public void CompleteBranch(string branchId, string status = "complete", string? message = null)
+    {
+        lock (_branches)
+        {
+            var b = _branches.FirstOrDefault(x => x.Id == branchId);
+            if (b is null) return;
+            b.Status = status;
+            b.CompletedAtUtc = DateTime.UtcNow;
+            if (message is not null) b.Message = message;
+        }
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    private List<BranchProgress>? BuildBranches()
+    {
+        lock (_branches)
+        {
+            if (_branches.Count == 0) return null;
+            var list = new List<BranchProgress>(_branches.Count);
+            foreach (var b in _branches)
+            {
+                list.Add(new BranchProgress
+                {
+                    Id = b.Id,
+                    Status = b.Status,
+                    StartedAtUtc = b.StartedAtUtc,
+                    CompletedAtUtc = b.CompletedAtUtc,
+                    Completed = b.HasCounters ? b.Completed : null,
+                    Total = b.HasCounters ? b.Total : null,
+                    Message = b.Message,
+                });
+            }
+            return list;
+        }
+    }
+
+    /// <summary>
+    /// Compute an aggregate progress percent from registered branches.
+    /// Terminal branches (complete/skipped/failed) contribute 1.0; running
+    /// branches with counters contribute completed/total; running branches
+    /// without counters contribute 0.0; pending contributes 0.0.
+    /// Returns null when no branches are registered.
+    /// </summary>
+    private double? ComputeBranchPercent()
+    {
+        lock (_branches)
+        {
+            if (_branches.Count == 0) return null;
+            double sum = 0;
+            foreach (var b in _branches)
+            {
+                if (b.Status is "complete" or "skipped" or "failed")
+                    sum += 1.0;
+                else if (b.Status == "running" && b.HasCounters && b.Total > 0)
+                    sum += Math.Min(1.0, (double)b.Completed / b.Total);
+            }
+            return Math.Round(Math.Min(100.0, sum / _branches.Count * 100.0), 1);
+        }
+    }
+
+    private void ResetBranches()
+    {
+        lock (_branches) { _branches.Clear(); }
+    }
+
     // ─── Sub-operation detail tracking ──────────────────────
 
     // Spool flush progress
@@ -324,6 +481,7 @@ public sealed class ScrapeProgressTracker
         _nameResFailed = 0;
         ResetGenericCounters();
         ResetSubOperationDetail();
+        ResetBranches();
         _startedAtUtc = DateTime.UtcNow;
         _phaseStartedAtUtc = _startedAtUtc;
         _passStopwatch.Restart();
@@ -477,6 +635,7 @@ public sealed class ScrapeProgressTracker
         }
 
         ResetGenericCounters();
+        ResetBranches();
         _subOperation = null;
         _phaseStartedAtUtc = DateTime.UtcNow;
         _phaseStopwatch.Restart();
@@ -785,6 +944,11 @@ public sealed class ScrapeProgressTracker
         {
             progressPercent = Math.Min(100.0, (double)accountsCompleted / accountsTotal * 100.0);
         }
+        else
+        {
+            // Fall back to branch-based percent (e.g. Finalizing's checkpoint + cache-warm).
+            progressPercent = ComputeBranchPercent();
+        }
 
         if (progressPercent is > 0 and < 100)
         {
@@ -815,6 +979,7 @@ public sealed class ScrapeProgressTracker
             RequestsPerSecond = requests > 0 && elapsed.TotalSeconds > 0
                 ? Math.Round(requests / elapsed.TotalSeconds, 1) : null,
             Attachments = BuildAttachmentsList(),
+            Branches = BuildBranches(),
         };
     }
 
@@ -858,15 +1023,30 @@ public sealed class ScrapeProgressTracker
         var total = _nameResTotal;
         var completed = _nameResCompleted;
 
+        var branchPercent = ComputeBranchPercent();
+
+        TimeSpan? estimatedRemaining = null;
+        if (branchPercent is > 0 and < 100)
+        {
+            var totalEstimatedTime = elapsed / (branchPercent.Value / 100.0);
+            estimatedRemaining = totalEstimatedTime - elapsed;
+            if (estimatedRemaining < TimeSpan.Zero)
+                estimatedRemaining = TimeSpan.Zero;
+        }
+
         return new OperationSnapshot
         {
             Operation = "PostScrapeEnrichment",
             SubOperation = _subOperation,
             StartedAtUtc = _phaseStartedAtUtc,
             ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
+            EstimatedRemainingSeconds = estimatedRemaining.HasValue
+                ? Math.Round(estimatedRemaining.Value.TotalSeconds, 0) : null,
+            ProgressPercent = branchPercent,
             Batches = total > 0 ? new ProgressCounter { Completed = completed, Total = total } : null,
             AccountsResolved = _nameResResolved > 0 ? _nameResResolved : null,
             FailedBatches = _nameResFailed > 0 ? _nameResFailed : null,
+            Branches = BuildBranches(),
         };
     }
 
@@ -977,6 +1157,30 @@ public sealed class OperationSnapshot
 
     // ── Attachment progress ──
     public List<AttachmentSummary>? Attachments { get; init; }
+
+    // ── Branch progress (parallel branches inside one phase) ──
+    public List<BranchProgress>? Branches { get; init; }
+}
+
+/// <summary>
+/// Snapshot of a single named branch within a phase. Branches run in parallel
+/// (e.g. rank_recompute, first_seen, name_resolution, pruning during
+/// PostScrapeEnrichment; final_checkpoint, pre_warming_cache during Finalizing).
+/// </summary>
+public sealed class BranchProgress
+{
+    /// <summary>Stable snake_case branch identifier.</summary>
+    public string Id { get; init; } = "";
+    /// <summary>"pending" | "running" | "complete" | "skipped" | "failed".</summary>
+    public string Status { get; init; } = "pending";
+    public DateTime? StartedAtUtc { get; init; }
+    public DateTime? CompletedAtUtc { get; init; }
+    /// <summary>Items completed so far. Null when the branch does not report counters.</summary>
+    public int? Completed { get; init; }
+    /// <summary>Total items planned. Null when the branch does not report counters.</summary>
+    public int? Total { get; init; }
+    /// <summary>Optional human-readable summary (e.g. "12,345 entries updated").</summary>
+    public string? Message { get; init; }
 }
 
 public sealed class ProgressCounter

@@ -381,8 +381,32 @@ export type ServiceInfoResponse = {
     startedAt: string | null;
     phase: string | null;
     subOperation: string | null;
+    /** Aggregate phase percent (0-100). Null when not yet determinable. */
+    progressPercent?: number | null;
+    /** Wall-clock seconds since the current phase began. */
+    elapsedSeconds?: number | null;
+    /** Estimated remaining seconds for the current phase. Null when no estimate. */
+    estimatedRemainingSeconds?: number | null;
+    /** Parallel branches inside the current phase (e.g. enrichment, finalize). */
+    branches?: ServiceInfoBranch[] | null;
   };
   nextScheduledUpdateAt: string | null;
+};
+
+/** A single named branch within a phase. Multiple branches run in parallel. */
+export type ServiceInfoBranch = {
+  /** Stable snake_case branch identifier (e.g. "rank_recompute"). */
+  id: string;
+  /** Lifecycle status. */
+  status: 'pending' | 'running' | 'complete' | 'skipped' | 'failed';
+  startedAtUtc: string | null;
+  completedAtUtc: string | null;
+  /** Items completed; null when the branch reports no counters. */
+  completed: number | null;
+  /** Total items planned; null when the branch reports no counters. */
+  total: number | null;
+  /** Optional human-readable summary. */
+  message: string | null;
 };
 
 /** Score history entry as returned by /api/player/{id}/history. */

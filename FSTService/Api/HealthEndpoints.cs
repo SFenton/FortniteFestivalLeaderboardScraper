@@ -80,6 +80,10 @@ public static partial class ApiEndpoints
                     startedAt = current?.StartedAtUtc,
                     phase = current?.Operation,
                     subOperation = current?.SubOperation,
+                    progressPercent = current?.ProgressPercent,
+                    elapsedSeconds = current?.ElapsedSeconds,
+                    estimatedRemainingSeconds = current?.EstimatedRemainingSeconds,
+                    branches = current?.Branches,
                 },
                 nextScheduledUpdateAt,
             });

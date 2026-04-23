@@ -157,6 +157,45 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
     }
 
+    [Fact]
+    public async Task ApiServiceInfo_ExposesBranchesAndProgressPercent_DuringEnrichment()
+    {
+        var tracker = _factory.Services.GetRequiredService<ScrapeProgressTracker>();
+        tracker.EndPass();
+
+        try
+        {
+            tracker.BeginPass(totalLeaderboards: 0, totalSongs: 0, cachedTotalPages: 0);
+            tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+            tracker.RegisterBranches(new[] { "rank_recompute", "first_seen", "name_resolution", "pruning" });
+            tracker.StartBranch("rank_recompute");
+            tracker.CompleteBranch("rank_recompute", "complete", "42 entries updated");
+            tracker.SetSubOperation("enriching_parallel_tail");
+
+            var response = await _client.GetAsync("/api/service-info");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var currentUpdate = json.GetProperty("currentUpdate");
+
+            Assert.Equal("updating", currentUpdate.GetProperty("status").GetString());
+            Assert.Equal("PostScrapeEnrichment", currentUpdate.GetProperty("phase").GetString());
+            Assert.Equal("enriching_parallel_tail", currentUpdate.GetProperty("subOperation").GetString());
+            Assert.Equal(25.0, currentUpdate.GetProperty("progressPercent").GetDouble());
+
+            var branches = currentUpdate.GetProperty("branches");
+            Assert.Equal(JsonValueKind.Array, branches.ValueKind);
+            Assert.Equal(4, branches.GetArrayLength());
+            var rankBranch = branches.EnumerateArray().Single(b => b.GetProperty("id").GetString() == "rank_recompute");
+            Assert.Equal("complete", rankBranch.GetProperty("status").GetString());
+            Assert.Equal("42 entries updated", rankBranch.GetProperty("message").GetString());
+        }
+        finally
+        {
+            tracker.EndPass();
+        }
+    }
+
     // ─── Songs ──────────────────────────────────────────────────
 
     [Fact]

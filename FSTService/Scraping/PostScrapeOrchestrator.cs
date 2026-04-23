@@ -151,16 +151,37 @@ public sealed class PostScrapeOrchestrator
         if (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
+            _progress.RegisterBranches(new[] { "final_checkpoint", "pre_warming_cache" });
             await RunPhaseAsync("Checkpoint+CacheWarm", () => Task.WhenAll(
                 Task.Run(() =>
                 {
+                    _progress.StartBranch("final_checkpoint");
                     _progress.SetSubOperation("final_checkpoint");
-                    _persistence.CheckpointAll();
+                    try
+                    {
+                        _persistence.CheckpointAll();
+                        _progress.CompleteBranch("final_checkpoint", "complete");
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _progress.CompleteBranch("final_checkpoint", "failed", ex.Message);
+                        throw;
+                    }
                 }, ct),
                 Task.Run(() =>
                 {
+                    _progress.StartBranch("pre_warming_cache");
                     _progress.SetSubOperation("pre_warming_cache");
-                    _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
+                    try
+                    {
+                        _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
+                        _progress.CompleteBranch("pre_warming_cache", "complete");
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _progress.CompleteBranch("pre_warming_cache", "failed", ex.Message);
+                        throw;
+                    }
                 }, ct)));
         }
 
@@ -238,33 +259,41 @@ public sealed class PostScrapeOrchestrator
     internal async Task RunEnrichmentAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
     {
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
-        _progress.SetSubOperation("enriching_parallel");
+        _progress.RegisterBranches(new[] { "rank_recompute", "first_seen", "name_resolution", "pruning" });
+        _progress.SetSubOperation("enriching_parallel_rank_recompute");
 
         var rankTask = Task.Run(() =>
         {
+            _progress.StartBranch("rank_recompute");
             try
             {
                 var rankChangedSongs = ctx.Aggregates?.RankChangedSongIds;
                 if (rankChangedSongs is { Count: > 0 })
                 {
+                    _progress.SetBranchTotal("rank_recompute", rankChangedSongs.Count);
                     _log.LogInformation("Recomputing ranks for {Count:N0} changed song(s) (of {Total:N0} total).",
                         rankChangedSongs.Count, ctx.ScrapeRequests.Count);
                     var rankUpdated = _persistence.RecomputeRanksForSongs(rankChangedSongs);
+                    _progress.ReportBranchProgress("rank_recompute", rankChangedSongs.Count);
                     _log.LogInformation("Recomputed ranks across all instruments: {Count:N0} entries updated.", rankUpdated);
+                    _progress.CompleteBranch("rank_recompute", "complete", $"{rankUpdated:N0} entries updated");
                 }
                 else
                 {
                     _log.LogInformation("No songs with rank-affecting changes. Skipping rank recomputation.");
+                    _progress.CompleteBranch("rank_recompute", "skipped", "no rank-affecting changes");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _log.LogWarning(ex, "Rank recomputation failed. Stored ranks may be stale.");
+                _progress.CompleteBranch("rank_recompute", "failed", ex.Message);
             }
         }, ct);
 
         var firstSeenTask = Task.Run(async () =>
         {
+            _progress.StartBranch("first_seen");
             try
             {
                 var firstSeenToken = await _tokenManager.GetAccessTokenAsync(ct);
@@ -275,39 +304,56 @@ public sealed class PostScrapeOrchestrator
                         _pool, ct);
                     if (firstSeenCount > 0)
                         _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
+                    _progress.CompleteBranch("first_seen", "complete",
+                        firstSeenCount > 0 ? $"{firstSeenCount:N0} song(s) calculated" : "no songs needed calculation");
                 }
                 else
                 {
                     _log.LogWarning("No access token for FirstSeenSeason calculation. Will retry next pass.");
+                    _progress.CompleteBranch("first_seen", "skipped", "no access token");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _log.LogWarning(ex, "FirstSeenSeason calculation failed. Will retry next pass.");
+                _progress.CompleteBranch("first_seen", "failed", ex.Message);
             }
         }, ct);
 
         var nameResTask = Task.Run(async () =>
         {
+            _progress.StartBranch("name_resolution");
             try
             {
                 await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: _options.Value.PageConcurrency, ct);
+                _progress.CompleteBranch("name_resolution", "complete");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _log.LogWarning(ex, "Account name resolution failed. Will retry next pass.");
+                _progress.CompleteBranch("name_resolution", "failed", ex.Message);
             }
         }, ct);
 
         // Wait for ranks first — pruning needs fresh ranks in the DB, but does not
         // need firstSeen or account names.  Fire pruning in parallel with the tail.
         await rankTask;
+        _progress.SetSubOperation("enriching_parallel_tail");
 
         var pruneTask = Task.Run(() =>
         {
             _progress.SetSubOperation("pruning_excess_entries");
-            PruneExcessEntries(ctx);
-            PruneBandEntries(ctx);
+            _progress.StartBranch("pruning");
+            try
+            {
+                PruneExcessEntries(ctx);
+                PruneBandEntries(ctx);
+                _progress.CompleteBranch("pruning", "complete");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _progress.CompleteBranch("pruning", "failed", ex.Message);
+            }
         }, ct);
 
         await Task.WhenAll(firstSeenTask, nameResTask, pruneTask);

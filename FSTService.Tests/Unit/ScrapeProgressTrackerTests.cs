@@ -1008,4 +1008,137 @@ public class ScrapeProgressTrackerTests
 
         Assert.False(syncTracker.IsActiveHigherPriority("nobody"));
     }
+
+    // ─── Branch tracking ────────────────────────────────
+
+    [Fact]
+    public void RegisterBranches_AppearInPostScrapeEnrichmentSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+        _tracker.RegisterBranches(new[] { "rank_recompute", "first_seen", "name_resolution", "pruning" });
+
+        var current = _tracker.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.NotNull(current!.Branches);
+        Assert.Equal(4, current.Branches!.Count);
+        Assert.Equal(new[] { "rank_recompute", "first_seen", "name_resolution", "pruning" },
+            current.Branches.Select(b => b.Id));
+        Assert.All(current.Branches, b => Assert.Equal("pending", b.Status));
+        // All pending → 0% but ProgressPercent populated (not null).
+        Assert.Equal(0.0, current.ProgressPercent);
+    }
+
+    [Fact]
+    public void Branches_ContributeToPostScrapeEnrichmentProgressPercent()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+        _tracker.RegisterBranches(new[] { "a", "b", "c", "d" });
+
+        _tracker.StartBranch("a");
+        _tracker.CompleteBranch("a", "complete");
+
+        // 1 of 4 branches done → 25%
+        Assert.Equal(25.0, _tracker.GetProgressResponse().Current?.ProgressPercent);
+
+        _tracker.StartBranch("b");
+        _tracker.SetBranchTotal("b", 10);
+        _tracker.ReportBranchProgress("b", 5);
+
+        // a=1.0 + b=0.5 + c=0 + d=0 → 1.5 / 4 = 37.5%
+        Assert.Equal(37.5, _tracker.GetProgressResponse().Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public void Branches_TerminalStatusesAllCountAsDone()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+        _tracker.RegisterBranches(new[] { "ok", "skipped_one", "failed_one", "still_pending" });
+
+        _tracker.StartBranch("ok"); _tracker.CompleteBranch("ok", "complete");
+        _tracker.StartBranch("skipped_one"); _tracker.CompleteBranch("skipped_one", "skipped");
+        _tracker.StartBranch("failed_one"); _tracker.CompleteBranch("failed_one", "failed", "boom");
+
+        var current = _tracker.GetProgressResponse().Current!;
+        Assert.Equal(75.0, current.ProgressPercent);
+        var failed = current.Branches!.Single(b => b.Id == "failed_one");
+        Assert.Equal("failed", failed.Status);
+        Assert.Equal("boom", failed.Message);
+    }
+
+    [Fact]
+    public void Branches_FinalizingPhaseExposesProgressPercent()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
+        _tracker.RegisterBranches(new[] { "final_checkpoint", "pre_warming_cache" });
+
+        _tracker.StartBranch("final_checkpoint");
+        _tracker.CompleteBranch("final_checkpoint", "complete");
+
+        var current = _tracker.GetProgressResponse().Current!;
+        Assert.Equal("Finalizing", current.Operation);
+        Assert.Equal(50.0, current.ProgressPercent);
+        Assert.Equal(2, current.Branches!.Count);
+    }
+
+    [Fact]
+    public void Branches_ResetOnSetPhase()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+        _tracker.RegisterBranches(new[] { "a", "b" });
+        _tracker.StartBranch("a");
+        _tracker.CompleteBranch("a", "complete");
+
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
+
+        var current = _tracker.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.Null(current!.Branches);
+        Assert.Null(current.ProgressPercent);
+    }
+
+    [Fact]
+    public void Branches_PreservedInCompletedOperationSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+        _tracker.RegisterBranches(new[] { "rank_recompute" });
+        _tracker.StartBranch("rank_recompute");
+        _tracker.CompleteBranch("rank_recompute", "complete", "1 entry updated");
+
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+
+        var enrichment = _tracker.GetProgressResponse()
+            .CompletedOperations.Single(o => o.Operation == "PostScrapeEnrichment");
+        Assert.NotNull(enrichment.Branches);
+        var branch = enrichment.Branches!.Single();
+        Assert.Equal("rank_recompute", branch.Id);
+        Assert.Equal("complete", branch.Status);
+        Assert.Equal("1 entry updated", branch.Message);
+        Assert.Equal(100.0, enrichment.ProgressPercent);
+    }
+
+    [Fact]
+    public void Branches_UnknownIdIsNoOp()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+        _tracker.RegisterBranches(new[] { "known" });
+
+        // None of these should throw or affect anything.
+        _tracker.StartBranch("ghost");
+        _tracker.SetBranchTotal("ghost", 5);
+        _tracker.ReportBranchProgress("ghost", 3);
+        _tracker.IncrementBranchProgress("ghost");
+        _tracker.CompleteBranch("ghost");
+
+        var current = _tracker.GetProgressResponse().Current!;
+        Assert.Single(current.Branches!);
+        Assert.Equal("known", current.Branches![0].Id);
+        Assert.Equal("pending", current.Branches[0].Status);
+    }
 }
