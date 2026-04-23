@@ -21,6 +21,103 @@ const mockApi = vi.hoisted(() => {
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'p1', count: 0, history: [] }),
     getLeaderboard: fn().mockResolvedValue({ songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 's1', instruments: [] }),
+    getComboRankings: fn().mockImplementation(async (comboId: string) => ({
+      comboId,
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 10,
+      totalAccounts: 100,
+      entries: [{
+        rank: 1,
+        accountId: `top-${comboId}`,
+        displayName: `Top ${comboId}`,
+        adjustedRating: 0.9,
+        weightedRating: 0.8,
+        fcRate: 0.7,
+        totalScore: 123456,
+        maxScorePercent: 0.88,
+        songsPlayed: 25,
+        fullComboCount: 20,
+        computedAt: '2026-01-01T00:00:00Z',
+      }],
+    })),
+    getPlayerComboRanking: fn().mockImplementation(async (_accountId: string, comboId: string) => ({
+      comboId,
+      rankBy: 'totalscore',
+      totalAccounts: 100,
+      rank: 42,
+      accountId: 'p1',
+      displayName: 'TrackedP',
+      adjustedRating: 0.5,
+      weightedRating: 0.4,
+      fcRate: 0.3,
+      totalScore: 654321,
+      maxScorePercent: 0.76,
+      songsPlayed: 20,
+      fullComboCount: 12,
+      computedAt: '2026-01-01T00:00:00Z',
+    })),
+    getRankings: fn().mockImplementation(async (instrument: string) => ({
+      instrument,
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 10,
+      totalAccounts: 100,
+      entries: [{
+        accountId: `top-${instrument}`,
+        displayName: `Top ${instrument}`,
+        adjustedSkillRating: 0.9,
+        adjustedSkillRank: 1,
+        weightedRank: 1,
+        fcRateRank: 1,
+        totalScoreRank: 1,
+        maxScorePercentRank: 1,
+        rawSkillRating: 0.9,
+        weightedRating: 0.8,
+        rawWeightedRating: 0.8,
+        totalChartedSongs: 25,
+        songsPlayed: 25,
+        totalScore: 555555,
+        maxScorePercent: 0.9,
+        rawMaxScorePercent: 0.9,
+        fullComboCount: 20,
+        fcRate: 0.8,
+        avgAccuracy: 95,
+        avgStars: 5,
+        bestRank: 1,
+        avgRank: 1,
+        coverage: 1,
+        computedAt: '2026-01-01T00:00:00Z',
+      }],
+    })),
+    getPlayerRanking: fn().mockImplementation(async (instrument: string) => ({
+      instrument,
+      totalRankedAccounts: 100,
+      accountId: 'p1',
+      displayName: 'TrackedP',
+      adjustedSkillRating: 0.6,
+      adjustedSkillRank: 10,
+      weightedRank: 10,
+      fcRateRank: 10,
+      totalScoreRank: 10,
+      maxScorePercentRank: 10,
+      rawSkillRating: 0.6,
+      weightedRating: 0.5,
+      rawWeightedRating: 0.5,
+      totalChartedSongs: 25,
+      songsPlayed: 20,
+      totalScore: 444444,
+      maxScorePercent: 0.7,
+      rawMaxScorePercent: 0.7,
+      fullComboCount: 12,
+      fcRate: 0.48,
+      avgAccuracy: 90,
+      avgStars: 5,
+      bestRank: 10,
+      avgRank: 10,
+      coverage: 0.8,
+      computedAt: '2026-01-01T00:00:00Z',
+    })),
     getRivalsOverview: fn().mockResolvedValue({ computedAt: '2024-01-01T00:00:00Z' }),
     getRivalsList: fn().mockResolvedValue({
       combo: 'Solo_Guitar',
@@ -253,6 +350,71 @@ describe('App — mobile FAB branches', () => {
       expect(within(menu).getByText('Leaderboard Rivals')).toBeDefined();
     });
     expect(within(menu).getAllByTestId('fab-menu-divider')).toHaveLength(1);
+
+    window.location.hash = '';
+  });
+
+  it('keeps Compete quick links in the same FAB section as the direct top-level section actions on mobile', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/compete';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Quick Links').length).toBeGreaterThan(0);
+    }, { timeout: 5000 });
+
+    fireEvent.click(screen.getByLabelText('Actions'));
+
+    const menu = await screen.findByTestId('fab-menu');
+    await waitFor(() => {
+      expect(within(menu).getByText('Quick Links')).toBeDefined();
+      expect(within(menu).getByText('Leaderboards')).toBeDefined();
+      expect(within(menu).getByText('Rivals')).toBeDefined();
+    });
+    expect(within(menu).getAllByTestId('fab-menu-divider')).toHaveLength(1);
+
+    window.location.hash = '';
+  });
+
+  it('navigates to the top-level Leaderboards page from the Compete FAB', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/compete';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Quick Links').length).toBeGreaterThan(0);
+    }, { timeout: 5000 });
+
+    fireEvent.click(screen.getByLabelText('Actions'));
+    const menu = await screen.findByTestId('fab-menu');
+    fireEvent.click(within(menu).getByText('Leaderboards'));
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/leaderboards');
+    });
+
+    window.location.hash = '';
+  });
+
+  it('navigates to the top-level Rivals page from the Compete FAB', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/compete';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Quick Links').length).toBeGreaterThan(0);
+    }, { timeout: 5000 });
+
+    fireEvent.click(screen.getByLabelText('Actions'));
+    const menu = await screen.findByTestId('fab-menu');
+    fireEvent.click(within(menu).getByText('Rivals'));
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/rivals');
+    });
 
     window.location.hash = '';
   });

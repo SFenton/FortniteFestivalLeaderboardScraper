@@ -593,6 +593,19 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
+      {isMobile && location.pathname === AppRoutes.compete && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={withPageQuickLinks(
+            [
+              { label: t('compete.leaderboards'), icon: <IoTrophy size={Size.iconFab} />, onPress: () => navigate(AppRoutes.leaderboards) },
+              { label: t('compete.rivals'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => navigate(AppRoutes.rivals) },
+            ],
+            playerActions(),
+          )}
+          onPress={() => {}}
+        />
+      )}
       {isMobile && RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.allRivals.test(location.pathname) && (() => {
         const rivalIdMatch = location.pathname.match(/^\/rivals\/([^/]+)$/);
         const currentRivalId = rivalIdMatch?.[1];
@@ -625,7 +638,7 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && (
+      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
