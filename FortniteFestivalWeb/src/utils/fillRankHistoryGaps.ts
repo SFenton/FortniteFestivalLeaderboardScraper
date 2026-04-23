@@ -29,7 +29,7 @@ export function fillRankHistoryGaps(sparse: RankHistoryEntry[], now = new Date()
   const result: RankHistoryEntry[] = [];
   for (let i = 0; i < sparse.length; i++) {
     const current = sparse[i]!;
-    result.push(current);
+    result.push({ ...current, isSynthetic: current.isSynthetic ?? false });
 
     if (i < sparse.length - 1) {
       const nextDate = parseSnapshotDate(sparse[i + 1]!.snapshotDate);
@@ -37,7 +37,7 @@ export function fillRankHistoryGaps(sparse: RankHistoryEntry[], now = new Date()
       // Fill gap days with carried-forward values
       curDate.setDate(curDate.getDate() + 1);
       while (curDate < nextDate) {
-        result.push({ ...current, snapshotDate: formatDate(curDate) });
+        result.push({ ...current, snapshotDate: formatDate(curDate), snapshotTakenAt: null, isSynthetic: true });
         curDate.setDate(curDate.getDate() + 1);
       }
     }
@@ -49,7 +49,7 @@ export function fillRankHistoryGaps(sparse: RankHistoryEntry[], now = new Date()
 
   trailingDate.setDate(trailingDate.getDate() + 1);
   while (trailingDate <= today) {
-    result.push({ ...lastEntry, snapshotDate: formatDate(trailingDate) });
+    result.push({ ...lastEntry, snapshotDate: formatDate(trailingDate), snapshotTakenAt: null, isSynthetic: true });
     trailingDate.setDate(trailingDate.getDate() + 1);
   }
 

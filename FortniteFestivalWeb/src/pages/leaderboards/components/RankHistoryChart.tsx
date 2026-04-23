@@ -18,6 +18,7 @@ import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@fest
 import GraphCard from '../../../components/common/GraphCard';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
+import { parseSnapshotDate } from '../../../utils/fillRankHistoryGaps';
 import { computeRankWidth } from '../helpers/rankingHelpers';
 import {
   Colors, Font, FontVariant, Gap, Size, Layout, MetadataSize, Radius, Weight,
@@ -36,6 +37,9 @@ const RANK_GRADIENT = 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113)
 /** Identity function for matching RankHistoryChartPoints across pagination. */
 const RANK_POINT_IDENTITY = (a: RankHistoryChartPoint, b: RankHistoryChartPoint) =>
   a.date === b.date && a.rank === b.rank && a.value === b.value;
+
+const formatSnapshotDisplayDate = (snapshotDate: string) =>
+  parseSnapshotDate(snapshotDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
 /* ── List card styles ── */
 const listCardBase: React.CSSProperties = {
@@ -250,7 +254,7 @@ export default memo(function RankHistoryChart({
   ), [t, st, totalAccounts, metricLabel, rankDomain, valueTickFormatter]);
 
   const renderDetailCard = useCallback((point: RankHistoryChartPoint) => {
-    const dateStr = new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const dateStr = formatSnapshotDisplayDate(point.date);
     const percentileStr = usePercentile ? formatLeaderboardPercentile(point.rank, totalAccounts) : undefined;
     const isPctMetric = metric === 'fcrate' || metric === 'maxscore';
     const pct = isPctMetric ? point.value * 100 : 0;
@@ -283,7 +287,7 @@ export default memo(function RankHistoryChart({
       };
     }
     /* v8 ignore stop */
-    const dateStr = new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const dateStr = formatSnapshotDisplayDate(point.date);
     const percentileStr = usePercentile ? formatLeaderboardPercentile(point.rank, totalAccounts) : undefined;
     const isPctMetric = metric === 'fcrate' || metric === 'maxscore';
     const pct = isPctMetric ? point.value * 100 : 0;

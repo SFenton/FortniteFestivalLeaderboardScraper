@@ -201,6 +201,7 @@ public static class DatabaseInitializer
             account_id              TEXT        NOT NULL,
             instrument              TEXT        NOT NULL,
             snapshot_date           DATE        NOT NULL,
+            snapshot_taken_at       TIMESTAMPTZ,
             adjusted_skill_rank     INTEGER     NOT NULL,
             weighted_rank           INTEGER     NOT NULL,
             fc_rate_rank            INTEGER     NOT NULL,
@@ -829,6 +830,7 @@ public static class DatabaseInitializer
 
         ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS raw_max_score_percent REAL;
         ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS schema_version SMALLINT NOT NULL DEFAULT 1;
+        ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS snapshot_taken_at TIMESTAMPTZ;
 
         ALTER TABLE account_rankings DROP COLUMN IF EXISTS raw_fc_rate;
         ALTER TABLE rank_history DROP COLUMN IF EXISTS raw_fc_rate;

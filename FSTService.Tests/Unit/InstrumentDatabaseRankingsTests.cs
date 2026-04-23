@@ -34,12 +34,14 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         cmd.CommandText = @"
             INSERT INTO rank_history (
                 account_id, instrument, snapshot_date,
+                snapshot_taken_at,
                 adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank, max_score_percent_rank,
                 adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent,
                 songs_played, coverage, full_combo_count, raw_max_score_percent,
                 raw_weighted_rating, raw_skill_rating, schema_version)
             VALUES (
                 @accountId, @instrument, @snapshotDate,
+                NULL,
                 @rank, @rank, @rank, @rank, @rank,
                 0.1, 0.1, 0.5, @totalScore, 0.9,
                 10, 0.5, 5, 0.9,
@@ -493,7 +495,24 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Assert.NotNull(history[0].Coverage);
         Assert.NotNull(history[0].FcRate);
         Assert.NotNull(history[0].FullComboCount);
+        Assert.NotNull(history[0].SnapshotTakenAt);
         // RawMaxScorePercent is null when song_stats has no max_score
+    }
+
+    [Fact]
+    public void SnapshotRankHistory_PopulatesSnapshotTakenAt()
+    {
+        Db.UpsertEntries("song1", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 1);
+
+        Db.SnapshotRankHistory();
+
+        var history = Db.GetRankHistory("p1", days: 1);
+        Assert.Single(history);
+        Assert.NotNull(history[0].SnapshotTakenAt);
+        Assert.True(DateTime.TryParse(history[0].SnapshotTakenAt, out _));
     }
 
     [Fact]

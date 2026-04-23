@@ -9,6 +9,8 @@ export type RankHistoryChartPoint = {
   date: string;
   dateLabel: string;
   timestamp: number;
+  snapshotTakenAt: string | null;
+  isSynthetic: boolean;
   value: number;
   rank: number;
   songsPlayed: number | null;
@@ -111,6 +113,8 @@ export function useRankHistory(
         date: entry.snapshotDate,
         dateLabel: formatDay(d),
         timestamp: d.getTime(),
+        snapshotTakenAt: entry.snapshotTakenAt ?? null,
+        isSynthetic: entry.isSynthetic ?? false,
         value: getValueField(entry, metric),
         rank: getRankField(entry, metric),
         songsPlayed: entry.songsPlayed,
@@ -156,6 +160,8 @@ export function useRankHistoryAll(
               date: entry.snapshotDate,
               dateLabel: formatDay(d),
               timestamp: d.getTime(),
+              snapshotTakenAt: entry.snapshotTakenAt ?? null,
+              isSynthetic: entry.isSynthetic ?? false,
               value: getValueField(entry, metric),
               rank: getRankField(entry, metric),
               songsPlayed: entry.songsPlayed,

@@ -12,6 +12,7 @@ vi.mock('../../../src/api/client', () => ({
       accountId: 'test-player-1',
       history: [{
         snapshotDate: '2026-04-22',
+        snapshotTakenAt: '2026-04-22T06:30:00.0000000Z',
         adjustedSkillRank: 1,
         weightedRank: 2,
         fcRateRank: 3,
@@ -43,6 +44,7 @@ function createWrapper() {
 function rankHistoryEntry(snapshotDate: string) {
   return {
     snapshotDate,
+    snapshotTakenAt: `${snapshotDate}T12:00:00.000Z`,
     adjustedSkillRank: 1,
     weightedRank: 2,
     fcRateRank: 3,
@@ -88,6 +90,9 @@ describe('fillRankHistoryGaps', () => {
       '2026-04-23',
       '2026-04-24',
     ]);
+    expect(filled[0]!.isSynthetic).toBe(false);
+    expect(filled[1]!.isSynthetic).toBe(true);
+    expect(filled[1]!.snapshotTakenAt).toBeNull();
     expect(filled[1]!.totalScore).toBe(filled[0]!.totalScore);
     expect(filled[2]!.weightedRank).toBe(filled[0]!.weightedRank);
   });
@@ -117,5 +122,7 @@ describe('useRankHistory', () => {
 
     expect(result.current.chartData[0]!.dateLabel).toBe('4/22/26');
     expect(result.current.chartData[0]!.timestamp).toBe(parseSnapshotDate('2026-04-22').getTime());
+    expect(result.current.chartData[0]!.snapshotTakenAt).toBe('2026-04-22T06:30:00.0000000Z');
+    expect(result.current.chartData[0]!.isSynthetic).toBe(false);
   });
 });

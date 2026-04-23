@@ -566,6 +566,7 @@ public sealed class CompositeRankingDto
 public sealed class RankHistoryDto
 {
     public string SnapshotDate { get; init; } = "";
+    public string? SnapshotTakenAt { get; init; }
     public int AdjustedSkillRank { get; init; }
     public int WeightedRank { get; init; }
     public int FcRateRank { get; init; }

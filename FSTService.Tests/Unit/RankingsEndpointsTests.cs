@@ -182,6 +182,7 @@ public sealed class RankingsEndpointsTests : IDisposable
         var history = db.GetRankHistory("p0", days: 7);
         Assert.Single(history);
         Assert.True(history[0].AdjustedSkillRank > 0);
+        Assert.NotNull(history[0].SnapshotTakenAt);
     }
 
     // ═══════════════════════════════════════════════════════════

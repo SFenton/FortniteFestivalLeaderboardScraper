@@ -659,6 +659,8 @@ export type BandComboCatalogResponse = {
 /** Daily rank history snapshot as returned by /api/rankings/{instrument}/{accountId}/history. */
 export type RankHistoryEntry = {
   snapshotDate: string;
+  snapshotTakenAt?: string | null;
+  isSynthetic?: boolean;
   adjustedSkillRank: number;
   weightedRank: number;
   fcRateRank: number;
