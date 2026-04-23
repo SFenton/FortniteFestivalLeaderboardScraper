@@ -219,6 +219,20 @@ builder.Services.AddSingleton<ProxyHandlerAccessor>();
 
 builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
 
+// Promote GlobalLeaderboardScraper to singleton so the diagnostic endpoint
+// (/api/diag/inflight) and scrape orchestrator resolve the SAME instance —
+// otherwise AddHttpClient<T>'s default transient registration yields a fresh
+// scraper per resolution and the endpoint's in-flight dictionary is empty.
+builder.Services.AddSingleton<GlobalLeaderboardScraper>(sp =>
+{
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    var http = factory.CreateClient(nameof(GlobalLeaderboardScraper));
+    var progress = sp.GetRequiredService<FSTService.Scraping.ScrapeProgressTracker>();
+    var log = sp.GetRequiredService<ILogger<GlobalLeaderboardScraper>>();
+    var festival = sp.GetService<FortniteFestival.Core.Services.FestivalService>();
+    return new GlobalLeaderboardScraper(http, progress, log, festivalService: festival);
+});
+
 builder.Services.AddHttpClient<AccountNameResolver>()
     .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
