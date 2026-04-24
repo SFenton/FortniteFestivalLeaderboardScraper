@@ -15,7 +15,8 @@ const ALL_ON: FeatureFlags = { compete: true, leaderboards: true, difficulty: tr
 const ALL_OFF: FeatureFlags = { compete: false, leaderboards: false, difficulty: false, playerBands: false, experimentalRanks: false };
 
 function normalizeFeatureFlags(flags: FeatureFlags): FeatureFlags {
-  return { ...flags, compete: flags.leaderboards };
+  // Compete is always enabled; the flag is retained only for API shape compatibility.
+  return { ...flags, compete: true };
 }
 
 /* ── Context ── */

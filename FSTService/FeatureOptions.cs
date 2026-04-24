@@ -8,7 +8,11 @@ public sealed class FeatureOptions
 {
     public const string Section = "Features";
 
-    /// <summary>Leaderboards overview and full rankings pages.</summary>
+    /// <summary>
+    /// Rank history charts on the leaderboards overview page and player details pages.
+    /// The /leaderboards and /leaderboards/all pages themselves are always available;
+    /// this flag only gates the rank-history chart rendering and associated queries.
+    /// </summary>
     public bool Leaderboards { get; set; }
 
     /// <summary>Difficulty pill on leaderboard and score history rows.</summary>
@@ -36,8 +40,8 @@ public sealed class FeatureOptions
     public bool UseRankingDeltaTiers { get; set; } = true;
 
     /// <summary>
-    /// Compete page — derived from <see cref="Leaderboards"/>.
-    /// Rivals are always available; Compete stays gated by the leaderboards rollout.
+    /// Compete page. Always enabled; the flag derivation is retained only for API
+    /// shape compatibility and is expected to be removed alongside this property.
     /// </summary>
-    public bool Compete => Leaderboards;
+    public bool Compete => true;
 }

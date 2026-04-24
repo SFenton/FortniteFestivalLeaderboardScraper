@@ -3,7 +3,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../contexts/SettingsContext';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
@@ -356,7 +355,6 @@ export default function SettingsPage() {
   const { t } = useTranslation();
   const { settings, updateSettings, resetSettings } = useSettings();
   const { player: trackedPlayer } = useTrackedPlayer();
-  const flags = useFeatureFlags();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
@@ -943,22 +941,18 @@ export default function SettingsPage() {
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
                 </button>
-                {flags.leaderboards && (
                 <button style={modalCss.toggleRowSmallerGap} onClick={leaderboardsReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.leaderboards')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
                 </button>
-                )}
-                {flags.compete && (
                 <button style={modalCss.toggleRowSmallerGap} onClick={competeReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.compete')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
                 </button>
-                )}
                 <button style={modalCss.toggleRowSmallerGap} onClick={rivalsReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('rivals.title')}</div>

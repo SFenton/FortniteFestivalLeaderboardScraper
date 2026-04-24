@@ -72,10 +72,10 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
         <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
       <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
-      <Route path="/leaderboards" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary></FeatureGate>} />
-      <Route path="/leaderboards/all" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary></FeatureGate>} />
+      <Route path="/leaderboards" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary>} />
+      <Route path="/leaderboards/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary>} />
       {player ? (
-        <Route path="/compete" element={<FeatureGate flag="compete"><ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary></FeatureGate>} />
+        <Route path="/compete" element={<ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary>} />
       ) : (
         <Route path="/compete" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
@@ -120,7 +120,6 @@ import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext
 import { useShopState } from './hooks/data/useShopState';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
-import FeatureGate from './components/routing/FeatureGate';
 
 export default function App() {
   return (

@@ -86,9 +86,9 @@ describe('FeatureFlagsContext', () => {
       expect(fetch).toHaveBeenCalledWith('/api/features');
     });
 
-    it('derives compete from leaderboards when the response is inconsistent', async () => {
+    it('keeps compete enabled regardless of leaderboards response', async () => {
       flagValues.leaderboards = false;
-      flagValues.compete = true;
+      flagValues.compete = false;
 
       const wrapper = makeWrapper();
       const { result } = renderHook(() => useFeatureFlags(), { wrapper });
@@ -97,13 +97,13 @@ describe('FeatureFlagsContext', () => {
         expect(result.current.playerBands).toBe(true);
       });
 
-      expect(result.current.compete).toBe(false);
+      expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(false);
       expect(result.current.playerBands).toBe(true);
       expect(result.current.experimentalRanks).toBe(true);
     });
 
-    it('returns all flags OFF when fetch fails', async () => {
+    it('returns all flags OFF when fetch fails (except compete, which is always on)', async () => {
       fetchShouldFail.value = true;
 
       const wrapper = makeWrapper();
@@ -113,7 +113,7 @@ describe('FeatureFlagsContext', () => {
         expect(fetch).toHaveBeenCalled();
       });
 
-      expect(result.current.compete).toBe(false);
+      expect(result.current.compete).toBe(true);
       expect(result.current.leaderboards).toBe(false);
       expect(result.current.difficulty).toBe(false);
       expect(result.current.playerBands).toBe(false);

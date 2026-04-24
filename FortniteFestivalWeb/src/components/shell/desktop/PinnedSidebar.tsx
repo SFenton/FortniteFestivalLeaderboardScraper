@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../../contexts/SettingsContext';
-import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import MarqueeText from '../../common/MarqueeText';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import {
@@ -24,7 +23,6 @@ interface PinnedSidebarProps {
 export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: PinnedSidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const flags = useFeatureFlags();
   const scrollRef = useScrollContainer();
   const s = useStyles();
 
@@ -57,12 +55,10 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
           </NavLink>
         )}
         {/* v8 ignore stop */}
-        {flags.leaderboards && (
         <NavLink to="/leaderboards" style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoTrophy size={20} /></span>
           {t('nav.leaderboards')}
         </NavLink>
-        )}
         {/* v8 ignore start -- shop-visibility link */}
         {!settings.hideItemShop && (
           <NavLink to="/shop" style={({ isActive }) => linkClass(isActive)}>

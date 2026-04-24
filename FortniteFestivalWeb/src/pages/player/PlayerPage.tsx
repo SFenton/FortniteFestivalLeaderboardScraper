@@ -20,6 +20,7 @@ import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
 import { useRankHistoryAll } from '../../hooks/chart/useRankHistory';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
@@ -150,10 +151,12 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
       : [],
   });
 
-  // Hoist rank-history loading so stagger waits for chart data (same pattern as LeaderboardsOverviewPage)
-  const allHistory = useRankHistoryAll(visibleKeys, accountId, 'totalscore');
-  const historyLoading = accountId ? visibleKeys.some(inst => allHistory[inst]?.loading) : false;
-  const historyAllCached = !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
+  // Hoist rank-history loading so stagger waits for chart data (same pattern as LeaderboardsOverviewPage).
+  // When the rank-history flag is off, pass [] so no queries are issued.
+  const { leaderboards: rankHistoryEnabled = false } = useFeatureFlags();
+  const allHistory = useRankHistoryAll(rankHistoryEnabled ? visibleKeys : [], accountId, 'totalscore');
+  const historyLoading = rankHistoryEnabled && accountId ? visibleKeys.some(inst => allHistory[inst]?.loading) : false;
+  const historyAllCached = !rankHistoryEnabled || !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
 
   // Skip stagger if we've rendered this account before.
   const hasRendered = isTrackedPlayer

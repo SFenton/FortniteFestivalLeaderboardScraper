@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../../contexts/SettingsContext';
-import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import MarqueeText from '../../common/MarqueeText';
 import { sidebarStyles as s } from './sidebarStyles';
 
@@ -22,7 +21,6 @@ interface SidebarProps {
 export default function Sidebar({ player, open, onClose, onDeselect, onSelectPlayer }: SidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const flags = useFeatureFlags();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -96,12 +94,10 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
             </NavLink>
           )}
           {/* v8 ignore stop */}
-          {flags.leaderboards && (
           <NavLink to="/leaderboards" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
             <span style={s.sidebarLinkIcon}><IoTrophy size={20} /></span>
             {t('nav.leaderboards')}
           </NavLink>
-          )}
           {/* v8 ignore start -- shop-visibility link */}
           {!settings.hideItemShop && (
             <NavLink to="/shop" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
