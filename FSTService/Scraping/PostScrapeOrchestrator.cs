@@ -183,6 +183,15 @@ public sealed class PostScrapeOrchestrator
                         throw;
                     }
                 }, ct)));
+
+            if (ctx.ScrapeId > 0)
+            {
+                await RunPhaseAsync("ActivateShadowSnapshots", () =>
+                {
+                    _persistence.FinalizeShadowSnapshots(ctx.ScrapeId);
+                    return Task.CompletedTask;
+                });
+            }
         }
 
         // ── Await background band scrape for exception observation ──
@@ -767,7 +776,7 @@ public sealed class PostScrapeOrchestrator
         Dictionary<(string SongId, string Instrument), long> population,
         IMetaDatabase metaDb)
     {
-        var allScores = _persistence.GetPlayerProfile(accountId);
+        var allScores = _persistence.GetCurrentStatePlayerProfile(accountId);
         if (allScores.Count == 0) return;
 
         // Group scores by instrument

@@ -100,6 +100,38 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Null(id);
     }
 
+    [Fact]
+    public void SearchAccountNames_is_case_insensitive_for_substring_matches()
+    {
+        Db.InsertAccountNames([
+            ("acct_1", "AlphaSearchBeta"),
+            ("acct_2", "CompletelyDifferent"),
+        ]);
+
+        var results = Db.SearchAccountNames("search");
+
+        Assert.Single(results);
+        Assert.Equal("acct_1", results[0].AccountId);
+        Assert.Equal("AlphaSearchBeta", results[0].DisplayName);
+    }
+
+    [Fact]
+    public void SearchAccountNames_prioritizes_prefix_matches_then_shorter_names()
+    {
+        Db.InsertAccountNames([
+            ("acct_1", "Search"),
+            ("acct_2", "SearchLonger"),
+            ("acct_3", "AlphaSearch"),
+        ]);
+
+        var results = Db.SearchAccountNames("Search", limit: 3);
+
+        Assert.Equal(3, results.Count);
+        Assert.Equal("acct_1", results[0].AccountId);
+        Assert.Equal("acct_2", results[1].AccountId);
+        Assert.Equal("acct_3", results[2].AccountId);
+    }
+
     // ═══ RegisteredUsers ════════════════════════════════════════
 
     [Fact]

@@ -457,6 +457,36 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     [Fact]
+    public async Task ComputeAllAsync_FinalizedSnapshotStateWinsOverLiveRows_ForRankings()
+    {
+        _pathStore.UpdateMaxScores("song_snapshot_rankings", new SongMaxScores { MaxLeadScore = 100_000 }, "hash_snapshot_rankings");
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_snapshot_rankings", [
+            MakeEntry("live_only", 110_000, rank: 1),
+        ]);
+        guitarDb.RecomputeAllRanks();
+
+        InsertSnapshotEntry(77, "song_snapshot_rankings", "Solo_Guitar", "snapshot_only", 99_000, rank: 1);
+        InsertSnapshotState("song_snapshot_rankings", "Solo_Guitar", 77);
+
+        _metaFixture.Db.InsertScoreChange("song_snapshot_rankings", "Solo_Guitar", "live_only",
+            null, 95_000, null, 2,
+            accuracy: 98, isFullCombo: true, stars: 6,
+            scoreAchievedAt: "2025-01-01T00:00:00Z");
+
+        await _sut.ComputeAllAsync(CreateFestivalServiceWithSongs(1), CancellationToken.None);
+
+        var snapshotRanking = guitarDb.GetAccountRanking("snapshot_only");
+        var liveRanking = guitarDb.GetAccountRanking("live_only");
+
+        Assert.NotNull(snapshotRanking);
+        Assert.Null(liveRanking);
+        Assert.Equal(1.0, snapshotRanking.RawSkillRating, 5);
+        Assert.Equal(0, CountValidScoreOverrides("live_only"));
+    }
+
+    [Fact]
     public async Task ComputeAllAsync_NoChartedSongsForInstrument_SkipsRankings()
     {
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -795,18 +825,71 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.Equal("p1:p2:p3", trioEntries[0].TeamKey);
     }
 
+    private void InsertSnapshotEntry(long snapshotId, string songId, string instrument, string accountId, int score, int rank)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_entries_snapshot
+            (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+             season, percentile, rank, source, difficulty, api_rank, end_time, first_seen_at, last_updated_at)
+            VALUES
+            (@snapshotId, @songId, @instrument, @accountId, @score, 95, false, 5,
+             3, 99.0, @rank, 'scrape', 3, @rank, '2025-01-15T12:00:00Z', @now, @now)
+            """;
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("rank", rank);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertSnapshotState(string songId, string instrument, long snapshotId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_snapshot_state
+            (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, updated_at)
+            VALUES (@songId, @instrument, @snapshotId, 1, TRUE, @updatedAt)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                active_snapshot_id = EXCLUDED.active_snapshot_id,
+                scrape_id = EXCLUDED.scrape_id,
+                is_finalized = EXCLUDED.is_finalized,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("updatedAt", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private int CountValidScoreOverrides(string accountId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM valid_score_overrides WHERE instrument = @instrument AND account_id = @accountId";
+        cmd.Parameters.AddWithValue("instrument", "Solo_Guitar");
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     private static IInstrumentDatabase CreateSnapshotFailingInstrumentDb(IInstrumentDatabase inner)
     {
         var proxy = Substitute.For<IInstrumentDatabase>();
         proxy.Instrument.Returns(inner.Instrument);
-        proxy.GetOverThresholdEntries().Returns(_ => inner.GetOverThresholdEntries());
-        proxy.ComputeSongStats(Arg.Any<Dictionary<string, int?>?>(), Arg.Any<Dictionary<string, long>?>())
-            .Returns(call => inner.ComputeSongStats(call.Arg<Dictionary<string, int?>?>(), call.Arg<Dictionary<string, long>?>()));
+        proxy.GetCurrentStateOverThresholdEntries().Returns(_ => inner.GetCurrentStateOverThresholdEntries());
+        proxy.ComputeCurrentStateSongStats(Arg.Any<Dictionary<string, int?>?>(), Arg.Any<Dictionary<string, long>?>())
+            .Returns(call => inner.ComputeCurrentStateSongStats(call.Arg<Dictionary<string, int?>?>(), call.Arg<Dictionary<string, long>?>()));
         proxy.When(x => x.PopulateValidScoreOverrides(Arg.Any<IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)>>()))
             .Do(call => inner.PopulateValidScoreOverrides(call.Arg<IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)>>()));
         proxy.OpenConnection().Returns(_ => inner.OpenConnection());
-        proxy.When(x => x.MaterializeValidEntries(Arg.Any<NpgsqlConnection>(), Arg.Any<double>()))
-            .Do(call => inner.MaterializeValidEntries(call.Arg<NpgsqlConnection>(), call.Arg<double>()));
+        proxy.When(x => x.MaterializeCurrentStateValidEntries(Arg.Any<NpgsqlConnection>(), Arg.Any<double>()))
+            .Do(call => inner.MaterializeCurrentStateValidEntries(call.Arg<NpgsqlConnection>(), call.Arg<double>()));
         proxy.ComputeAccountRankingsFromMaterialized(Arg.Any<NpgsqlConnection>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<double>(), Arg.Any<double>())
             .Returns(call => inner.ComputeAccountRankingsFromMaterialized(
                 call.ArgAt<NpgsqlConnection>(0),

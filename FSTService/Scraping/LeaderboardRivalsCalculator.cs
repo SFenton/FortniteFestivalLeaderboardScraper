@@ -86,7 +86,7 @@ public sealed class LeaderboardRivalsCalculator
     {
         var db = _persistence.GetOrCreateInstrumentDb(instrument);
 
-        var userScores = db.GetPlayerScores(userId);
+        var userScores = db.GetCurrentStatePlayerScores(userId);
         if (userScores.Count == 0)
         {
             return new LeaderboardInstrumentRivalsResult

@@ -161,6 +161,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     {
         return new ScrapePassContext
         {
+            ScrapeId = 0,
             AccessToken = "test-token",
             CallerAccountId = "caller-001",
             RegisteredIds = registeredIds ?? new HashSet<string>(),

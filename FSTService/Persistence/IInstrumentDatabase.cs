@@ -25,18 +25,29 @@ public interface IInstrumentDatabase : IDisposable
     List<LeaderboardEntryDto> GetLeaderboard(string songId, int? top = null, int offset = 0);
     int GetLeaderboardCount(string songId);
     Dictionary<string, int> GetAllSongCounts();
+    Dictionary<string, int> GetCurrentStateAllSongCounts();
     (List<LeaderboardEntryDto> Entries, int TotalCount) GetLeaderboardWithCount(string songId, int? top = null, int offset = 0, int? maxScore = null);
+    List<LeaderboardEntryDto> GetCurrentStateLeaderboard(string songId, int? top = null, int offset = 0);
+    (List<LeaderboardEntryDto> Entries, int TotalCount) GetCurrentStateLeaderboardWithCount(string songId, int? top = null, int offset = 0, int? maxScore = null);
     List<(string AccountId, int Rank, int Score)> GetNeighborhood(string songId, int centerRank, int rankRadius, string excludeAccountId);
+    List<(string AccountId, int Rank, int Score)> GetCurrentStateNeighborhood(string songId, int centerRank, int rankRadius, string excludeAccountId);
     List<string> GetAccountsInRankRange(string songId, int minRank, int maxRank);
 
     // ── Player queries ───────────────────────────────────────────────
     HashSet<string> GetSongIdsForAccount(string accountId);
+    HashSet<string> GetCurrentStateSongIdsForAccount(string accountId);
     List<PlayerScoreDto> GetPlayerScoresForSongs(string accountId, IReadOnlyCollection<string> songIds);
+    List<PlayerScoreDto> GetCurrentStatePlayerScoresForSongs(string accountId, IReadOnlyCollection<string> songIds);
     List<PlayerScoreDto> GetPlayerScores(string accountId, string? songId = null);
+    List<PlayerScoreDto> GetCurrentStatePlayerScores(string accountId, string? songId = null);
     Dictionary<string, int> GetPlayerRankings(string accountId, string? songId = null);
+    Dictionary<string, int> GetCurrentStatePlayerRankings(string accountId, string? songId = null);
     Dictionary<string, int> GetPlayerRankingsFiltered(string accountId, Dictionary<string, int> maxScores, string? songId = null);
+    Dictionary<string, int> GetCurrentStatePlayerRankingsFiltered(string accountId, Dictionary<string, int> maxScores, string? songId = null);
     int GetRankForScore(string songId, int score, int? maxScore = null);
+    int GetCurrentStateRankForScore(string songId, int score, int? maxScore = null);
     Dictionary<string, int> GetFilteredEntryCounts(Dictionary<string, int> maxScores);
+    Dictionary<string, int> GetCurrentStateFilteredEntryCounts(Dictionary<string, int> maxScores);
     Dictionary<string, (int Rank, int Total)> GetPlayerStoredRankings(string accountId, string? songId = null);
 
     // ── Rank computation ─────────────────────────────────────────────
@@ -60,9 +71,15 @@ public interface IInstrumentDatabase : IDisposable
     /// </summary>
     int GetPopulationAtOrBelow(string songId, int threshold);
 
+    List<int> GetCurrentStateScoresInBand(string songId, int lowerBound, int upperBound);
+
+    int GetCurrentStatePopulationAtOrBelow(string songId, int threshold);
+
     // ── Song stats ───────────────────────────────────────────────────
     int ComputeSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null);
+    int ComputeCurrentStateSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null);
     List<(string AccountId, string SongId)> GetOverThresholdEntries();
+    List<(string AccountId, string SongId)> GetCurrentStateOverThresholdEntries();
     void PopulateValidScoreOverrides(IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides);
 
     // ── Account rankings ─────────────────────────────────────────────
@@ -109,6 +126,7 @@ public interface IInstrumentDatabase : IDisposable
 
     // ── Materialized ranking pipeline ────────────────────────────────
     void MaterializeValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
+    void MaterializeCurrentStateValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
     int ComputeAccountRankingsFromMaterialized(Npgsql.NpgsqlConnection conn, int totalChartedSongs,
         int credibilityThreshold, double populationMedian, double thresholdMultiplier);
     List<(string AccountId, double ActivationLeeway)> GetBandEntriesFromMaterialized(

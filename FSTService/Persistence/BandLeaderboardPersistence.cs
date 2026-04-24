@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Threading.Channels;
 using FSTService.Scraping;
 using Npgsql;
@@ -14,6 +15,9 @@ public sealed class BandLeaderboardPersistence
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<BandLeaderboardPersistence> _log;
+
+    internal const string BandTeamMembershipTable = "band_team_membership";
+    internal const string BandTeamMembershipStateTable = "band_team_membership_state";
 
     /// <summary>Exposes the data source for batched spool consumer transactions.</summary>
     internal NpgsqlDataSource DataSource => _dataSource;
@@ -131,6 +135,12 @@ public sealed class BandLeaderboardPersistence
     {
         if (entries.Count == 0)
             return 0;
+
+        var impactedTeamKeys = entries
+            .Select(static entry => entry.TeamKey)
+            .Where(static teamKey => !string.IsNullOrWhiteSpace(teamKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         var now = DateTimeOffset.UtcNow;
         using var conn = _dataSource.OpenConnection();
@@ -338,6 +348,8 @@ public sealed class BandLeaderboardPersistence
                 }
             }
 
+            RebuildBandTeamMembershipForTeams(conn, tx, bandType, impactedTeamKeys);
+
             tx.Commit();
             return merged;
         }
@@ -365,6 +377,12 @@ public sealed class BandLeaderboardPersistence
     {
         if (entries.Count == 0)
             return (0, 0, 0);
+
+        var impactedTeamKeys = entries
+            .Select(static entry => entry.TeamKey)
+            .Where(static teamKey => !string.IsNullOrWhiteSpace(teamKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         var now = DateTimeOffset.UtcNow;
 
@@ -595,6 +613,8 @@ public sealed class BandLeaderboardPersistence
 
         using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _be_staging"; cmd.ExecuteNonQuery(); }
 
+        RebuildBandTeamMembershipForTeams(conn, tx, bandType, impactedTeamKeys);
+
         return (merged, memberStatsCount, lookupCount);
     }
 
@@ -633,6 +653,7 @@ public sealed class BandLeaderboardPersistence
         // finds the first valid entry (is_over_threshold = false), then marks
         // everything beyond (over_threshold_count + maxValidEntries) for deletion
         // — unless the team contains a registered user.
+        var affectedTeamsByBandType = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         using var deleteCmd = conn.CreateCommand();
         deleteCmd.Transaction = tx;
         deleteCmd.CommandTimeout = 0;
@@ -667,9 +688,26 @@ public sealed class BandLeaderboardPersistence
             USING to_delete td
             WHERE be.song_id = td.song_id AND be.band_type = td.band_type
               AND be.team_key = td.team_key AND be.instrument_combo = td.instrument_combo
+            RETURNING be.band_type, be.team_key
             """;
         deleteCmd.Parameters.AddWithValue("maxValid", maxValidEntries);
-        int deleted = deleteCmd.ExecuteNonQuery();
+        int deleted = 0;
+        using (var reader = deleteCmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                deleted++;
+                var bandType = reader.GetString(0);
+                var teamKey = reader.GetString(1);
+                if (!affectedTeamsByBandType.TryGetValue(bandType, out var teamKeys))
+                {
+                    teamKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    affectedTeamsByBandType[bandType] = teamKeys;
+                }
+
+                teamKeys.Add(teamKey);
+            }
+        }
 
         // Cascade: remove orphaned band_member_stats rows
         int statsDeleted = 0;
@@ -701,6 +739,11 @@ public sealed class BandLeaderboardPersistence
                 """;
             int lookupsDeleted = cmd2.ExecuteNonQuery();
 
+            foreach (var (bandType, teamKeys) in affectedTeamsByBandType)
+            {
+                RebuildBandTeamMembershipForTeams(conn, tx, bandType, teamKeys.ToArray());
+            }
+
             _log.LogInformation("Pruned {Entries:N0} band entries, {Stats:N0} member stats, {Lookups:N0} member lookups.",
                 deleted, statsDeleted, lookupsDeleted);
         }
@@ -708,4 +751,337 @@ public sealed class BandLeaderboardPersistence
         tx.Commit();
         return deleted;
     }
+
+    internal static void RebuildBandTeamMembershipForAccount(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string accountId)
+    {
+        DeleteBandTeamMembershipForAccount(conn, tx, accountId);
+
+        var countRows = new List<BandTeamMembershipCountRow>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                SELECT account_id, band_type, team_key, instrument_combo, COUNT(*)
+                FROM band_members
+                WHERE account_id = @accountId
+                GROUP BY account_id, band_type, team_key, instrument_combo
+                ORDER BY account_id, band_type, team_key, instrument_combo
+                """;
+            cmd.Parameters.AddWithValue("accountId", accountId);
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                countRows.Add(new BandTeamMembershipCountRow(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                    reader.GetInt32(4)));
+            }
+        }
+
+        UpsertBandTeamMembershipRows(conn, tx, BuildBandTeamMembershipWriteRows(conn, tx, countRows));
+    }
+
+    internal static void RebuildBandTeamMembershipForTeams(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string bandType,
+        IReadOnlyCollection<string> teamKeys)
+    {
+        if (teamKeys.Count == 0)
+            return;
+
+        DeleteBandTeamMembershipForTeams(conn, tx, bandType, teamKeys);
+
+        var countRows = new List<BandTeamMembershipCountRow>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                SELECT account_id, band_type, team_key, instrument_combo, COUNT(*)
+                FROM band_members
+                WHERE band_type = @bandType
+                  AND team_key = ANY(@teamKeys)
+                GROUP BY account_id, band_type, team_key, instrument_combo
+                ORDER BY account_id, band_type, team_key, instrument_combo
+                """;
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.Parameters.AddWithValue("teamKeys", teamKeys.ToArray());
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                countRows.Add(new BandTeamMembershipCountRow(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                    reader.GetInt32(4)));
+            }
+        }
+
+        UpsertBandTeamMembershipRows(conn, tx, BuildBandTeamMembershipWriteRows(conn, tx, countRows));
+    }
+
+    private static void DeleteBandTeamMembershipForAccount(NpgsqlConnection conn, NpgsqlTransaction tx, string accountId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"DELETE FROM {BandTeamMembershipTable} WHERE account_id = @accountId";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void DeleteBandTeamMembershipForTeams(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string bandType,
+        IReadOnlyCollection<string> teamKeys)
+    {
+        if (teamKeys.Count == 0)
+            return;
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"DELETE FROM {BandTeamMembershipTable} WHERE band_type = @bandType AND team_key = ANY(@teamKeys)";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKeys", teamKeys.ToArray());
+        cmd.ExecuteNonQuery();
+    }
+
+    private static List<BandTeamMembershipWriteRow> BuildBandTeamMembershipWriteRows(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        IReadOnlyList<BandTeamMembershipCountRow> countRows)
+    {
+        if (countRows.Count == 0)
+            return [];
+
+        var comboKeys = countRows
+            .Select(static row => new BandTeamMembershipComboKey(row.BandType, row.TeamKey, row.InstrumentCombo))
+            .Distinct()
+            .ToArray();
+
+        using (var dropCmd = conn.CreateCommand())
+        {
+            dropCmd.Transaction = tx;
+            dropCmd.CommandText = "DROP TABLE IF EXISTS _btm_summary_keys";
+            dropCmd.ExecuteNonQuery();
+        }
+
+        using (var createCmd = conn.CreateCommand())
+        {
+            createCmd.Transaction = tx;
+            createCmd.CommandText = """
+                CREATE TEMP TABLE _btm_summary_keys (
+                    band_type TEXT,
+                    team_key TEXT,
+                    instrument_combo TEXT
+                ) ON COMMIT DROP
+                """;
+            createCmd.ExecuteNonQuery();
+        }
+
+        using (var writer = conn.BeginBinaryImport(
+            "COPY _btm_summary_keys (band_type, team_key, instrument_combo) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var key in comboKeys)
+            {
+                writer.StartRow();
+                writer.Write(key.BandType, NpgsqlDbType.Text);
+                writer.Write(key.TeamKey, NpgsqlDbType.Text);
+                writer.Write(key.InstrumentCombo, NpgsqlDbType.Text);
+            }
+
+            writer.Complete();
+        }
+
+        var memberInstrumentsByCombo = new Dictionary<BandTeamMembershipComboKey, Dictionary<string, HashSet<string>>>();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                SELECT bms.band_type,
+                       bms.team_key,
+                       bms.instrument_combo,
+                       bms.account_id,
+                       bms.instrument_id
+                FROM band_member_stats bms
+                JOIN _btm_summary_keys keys
+                  ON keys.band_type = bms.band_type
+                 AND keys.team_key = bms.team_key
+                 AND keys.instrument_combo = bms.instrument_combo
+                ORDER BY bms.band_type, bms.team_key, bms.instrument_combo, bms.account_id, bms.instrument_id
+                """;
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                if (reader.IsDBNull(4))
+                    continue;
+
+                var instrument = BandInstrumentMapping.ToLeaderboardType(reader.GetInt32(4));
+                if (string.IsNullOrWhiteSpace(instrument))
+                    continue;
+
+                var comboKey = new BandTeamMembershipComboKey(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.IsDBNull(2) ? string.Empty : reader.GetString(2));
+
+                if (!memberInstrumentsByCombo.TryGetValue(comboKey, out var memberLookup))
+                {
+                    memberLookup = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                    memberInstrumentsByCombo[comboKey] = memberLookup;
+                }
+
+                var memberAccountId = reader.GetString(3);
+                if (!memberLookup.TryGetValue(memberAccountId, out var instruments))
+                {
+                    instruments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    memberLookup[memberAccountId] = instruments;
+                }
+
+                instruments.Add(instrument);
+            }
+        }
+
+        var now = DateTime.UtcNow;
+        var rows = new List<BandTeamMembershipWriteRow>(countRows.Count);
+        foreach (var countRow in countRows)
+        {
+            var comboKey = new BandTeamMembershipComboKey(countRow.BandType, countRow.TeamKey, countRow.InstrumentCombo);
+            var memberLookup = SplitTeamKey(countRow.TeamKey)
+                .ToDictionary(
+                    static accountId => accountId,
+                    static _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase);
+
+            if (memberInstrumentsByCombo.TryGetValue(comboKey, out var sourceLookup))
+            {
+                foreach (var (memberAccountId, instruments) in sourceLookup)
+                {
+                    if (!memberLookup.TryGetValue(memberAccountId, out var memberInstruments))
+                    {
+                        memberInstruments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        memberLookup[memberAccountId] = memberInstruments;
+                    }
+
+                    memberInstruments.UnionWith(instruments);
+                }
+            }
+
+            var memberInstrumentsJson = JsonSerializer.Serialize(memberLookup.ToDictionary(
+                static kvp => kvp.Key,
+                static kvp => NormalizeBandInstruments(kvp.Value)));
+
+            rows.Add(new BandTeamMembershipWriteRow(
+                countRow.AccountId,
+                countRow.BandType,
+                countRow.TeamKey,
+                countRow.InstrumentCombo,
+                countRow.AppearanceCount,
+                memberInstrumentsJson,
+                now));
+        }
+
+        return rows;
+    }
+
+    private static void UpsertBandTeamMembershipRows(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        IReadOnlyList<BandTeamMembershipWriteRow> rows)
+    {
+        if (rows.Count == 0)
+            return;
+
+        using (var dropCmd = conn.CreateCommand())
+        {
+            dropCmd.Transaction = tx;
+            dropCmd.CommandText = "DROP TABLE IF EXISTS _btm_summary_staging";
+            dropCmd.ExecuteNonQuery();
+        }
+
+        using (var createCmd = conn.CreateCommand())
+        {
+            createCmd.Transaction = tx;
+            createCmd.CommandText = """
+                CREATE TEMP TABLE _btm_summary_staging (
+                    account_id TEXT,
+                    band_type TEXT,
+                    team_key TEXT,
+                    instrument_combo TEXT,
+                    appearance_count INT,
+                    member_instruments_json JSONB,
+                    updated_at TIMESTAMPTZ
+                ) ON COMMIT DROP
+                """;
+            createCmd.ExecuteNonQuery();
+        }
+
+        using (var writer = conn.BeginBinaryImport(
+            "COPY _btm_summary_staging (account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json, updated_at) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var row in rows)
+            {
+                writer.StartRow();
+                writer.Write(row.AccountId, NpgsqlDbType.Text);
+                writer.Write(row.BandType, NpgsqlDbType.Text);
+                writer.Write(row.TeamKey, NpgsqlDbType.Text);
+                writer.Write(row.InstrumentCombo, NpgsqlDbType.Text);
+                writer.Write(row.AppearanceCount, NpgsqlDbType.Integer);
+                writer.Write(row.MemberInstrumentsJson, NpgsqlDbType.Jsonb);
+                writer.Write(row.UpdatedAt, NpgsqlDbType.TimestampTz);
+            }
+
+            writer.Complete();
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"""
+            INSERT INTO {BandTeamMembershipTable} (account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json, updated_at)
+            SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json, updated_at
+            FROM _btm_summary_staging
+            ON CONFLICT (account_id, band_type, team_key, instrument_combo) DO UPDATE SET
+                appearance_count = EXCLUDED.appearance_count,
+                member_instruments_json = EXCLUDED.member_instruments_json,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.ExecuteNonQuery();
+    }
+
+    private static List<string> NormalizeBandInstruments(IEnumerable<string> instruments) =>
+        BandComboIds.ToInstruments(BandComboIds.FromInstruments(instruments)).ToList();
+
+    private static List<string> SplitTeamKey(string teamKey) =>
+        teamKey
+            .Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private sealed record BandTeamMembershipCountRow(
+        string AccountId,
+        string BandType,
+        string TeamKey,
+        string InstrumentCombo,
+        int AppearanceCount);
+
+    private sealed record BandTeamMembershipWriteRow(
+        string AccountId,
+        string BandType,
+        string TeamKey,
+        string InstrumentCombo,
+        int AppearanceCount,
+        string MemberInstrumentsJson,
+        DateTime UpdatedAt);
+
+    private sealed record BandTeamMembershipComboKey(string BandType, string TeamKey, string InstrumentCombo);
 }

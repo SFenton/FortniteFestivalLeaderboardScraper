@@ -82,6 +82,49 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
             null, score, null, 1, accuracy: 90, isFullCombo: false, stars: 4);
     }
 
+    private void InsertSnapshotEntry(long snapshotId, string songId, string instrument, string accountId, int score)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_entries_snapshot
+            (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+             season, percentile, rank, source, difficulty, api_rank, end_time, first_seen_at, last_updated_at)
+            VALUES
+            (@snapshotId, @songId, @instrument, @accountId, @score, 95, false, 5,
+             3, 99.0, 1, 'scrape', 3, 1, '2025-01-15T12:00:00Z', @now, @now)
+            """;
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertSnapshotState(string songId, string instrument, long snapshotId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_snapshot_state
+            (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, wave1_finalized_at, updated_at)
+            VALUES (@songId, @instrument, @snapshotId, @snapshotId, TRUE, @now, @now)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                active_snapshot_id = EXCLUDED.active_snapshot_id,
+                scrape_id = EXCLUDED.scrape_id,
+                is_finalized = EXCLUDED.is_finalized,
+                wave1_finalized_at = EXCLUDED.wave1_finalized_at,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
     // ── Tests ────────────────────────────────────────────────────
 
     [Fact]
@@ -181,6 +224,29 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
     }
 
     [Fact]
+    public async Task PrecomputeAllAsync_LeaderboardAll_prefers_current_state_snapshot_rows()
+    {
+        SeedSong("s1", "Solo_Guitar", 100000,
+            ("live_only", 80000));
+        InsertSnapshotEntry(77, "s1", "Solo_Guitar", "snap_top", 99000);
+        InsertSnapshotState("s1", "Solo_Guitar", 77);
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var result = _sut.TryGet("lb:s1:10:");
+        Assert.NotNull(result);
+
+        var json = JsonDocument.Parse(result.Value.Json);
+        var instrument = json.RootElement.GetProperty("instruments")
+            .EnumerateArray()
+            .Single(x => x.GetProperty("instrument").GetString() == "Solo_Guitar");
+        var topEntry = instrument.GetProperty("entries")[0];
+
+        Assert.Equal("snap_top", topEntry.GetProperty("accountId").GetString());
+        Assert.Equal(99000, topEntry.GetProperty("score").GetInt32());
+    }
+
+    [Fact]
     public async Task PrecomputeAllAsync_ProducesPopulationTiers()
     {
         SeedSong("s1", "Solo_Guitar", 100000,
@@ -197,6 +263,26 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         Assert.Equal(1, tierData.BaseCount);
         // tiers should have changepoints for the scores in the band
         Assert.True(tierData.Tiers.Count > 0);
+    }
+
+    [Fact]
+    public async Task PrecomputeAllAsync_PopulationTiers_UseCurrentStateThresholdBandRows()
+    {
+        SeedSong("s1", "Solo_Guitar", 100000,
+            ("live_low", 90000), ("live_band", 97000));
+        InsertSnapshotEntry(77, "s1", "Solo_Guitar", "snap_band", 99000);
+        InsertSnapshotState("s1", "Solo_Guitar", 77);
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var tiers = _sut.GetPopulationTiers();
+        Assert.NotNull(tiers);
+
+        var tierData = tiers![("s1", "Solo_Guitar")];
+        Assert.Equal(0, tierData.BaseCount);
+        Assert.Single(tierData.Tiers);
+        Assert.Equal(-1.0, tierData.Tiers[0].Leeway);
+        Assert.Equal(1, tierData.Tiers[0].Total);
     }
 
     [Fact]
@@ -281,6 +367,36 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         var firstTier = rankTiers[0];
         Assert.True(firstTier.TryGetProperty("l", out _));
         Assert.True(firstTier.TryGetProperty("r", out _));
+    }
+
+    [Fact]
+    public async Task PrecomputeAllAsync_RankTiers_UseCurrentStateThresholdBandRows()
+    {
+        RegisterUser("user1");
+        SeedSong("s1", "Solo_Guitar", 100000,
+            ("user1", 106000),
+            ("live_only_above", 103000),
+            ("live_only_below", 90000));
+        InsertSnapshotEntry(77, "s1", "Solo_Guitar", "user1", 106000);
+        InsertSnapshotEntry(77, "s1", "Solo_Guitar", "snap_band", 101000);
+        InsertSnapshotState("s1", "Solo_Guitar", 77);
+        InsertScoreHistory("user1", "s1", "Solo_Guitar", 98000);
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var result = _sut.TryGet("player:user1:::");
+        Assert.NotNull(result);
+
+        var json = JsonDocument.Parse(result.Value.Json);
+        var rankTiers = json.RootElement
+            .GetProperty("scores")[0]
+            .GetProperty("vs")[0]
+            .GetProperty("rt");
+
+        Assert.Equal(-5.0, rankTiers[0].GetProperty("l").GetDouble());
+        Assert.Equal(1, rankTiers[0].GetProperty("r").GetInt32());
+        Assert.Equal(1.0, rankTiers[1].GetProperty("l").GetDouble());
+        Assert.Equal(2, rankTiers[1].GetProperty("r").GetInt32());
     }
 
     [Fact]

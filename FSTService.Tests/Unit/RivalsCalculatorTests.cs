@@ -113,6 +113,50 @@ public sealed class RivalsCalculatorTests : IDisposable
         }
     }
 
+    private void InsertSnapshotEntry(long snapshotId, string songId, string instrument, string accountId, int score, int rank)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_entries_snapshot
+            (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+             season, percentile, rank, source, difficulty, api_rank, end_time, first_seen_at, last_updated_at)
+            VALUES
+            (@snapshotId, @songId, @instrument, @accountId, @score, 95, false, 5,
+             3, 99.0, @rank, 'scrape', 3, @rank, '2025-01-15T12:00:00Z', @now, @now)
+            """;
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("rank", rank);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertSnapshotState(string songId, string instrument, long snapshotId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_snapshot_state
+            (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, wave1_finalized_at, updated_at)
+            VALUES (@songId, @instrument, @snapshotId, @snapshotId, TRUE, @now, @now)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                active_snapshot_id = EXCLUDED.active_snapshot_id,
+                scrape_id = EXCLUDED.scrape_id,
+                is_finalized = EXCLUDED.is_finalized,
+                wave1_finalized_at = EXCLUDED.wave1_finalized_at,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
     // ═══ Scoring formula ═════════════════════════════════════════
 
     [Fact]
@@ -493,6 +537,30 @@ public sealed class RivalsCalculatorTests : IDisposable
 
         // With the fix, effectiveRank uses dense Rank (~1) instead of
         // ApiRank (~100K), so neighbors are found and rivals produced.
+        Assert.NotEmpty(result.Rivals);
+        var guitarComboId = ComboIds.FromInstruments(["Solo_Guitar"]);
+        var guitarRivals = result.Rivals.Where(r => r.InstrumentCombo == guitarComboId).ToList();
+        Assert.Contains(guitarRivals, r => r.RivalAccountId == "rival1");
+    }
+
+    [Fact]
+    public void ComputeRivals_prefers_finalized_snapshot_state_over_live_rows()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        for (int i = 0; i < 15; i++)
+        {
+            var songId = $"song_{i}";
+            SeedEntries(db, songId, ("user1", 10_000 - i * 100));
+            InsertSnapshotEntry(77, songId, "Solo_Guitar", "user1", 10_000 - i * 100, 1);
+            InsertSnapshotEntry(77, songId, "Solo_Guitar", "rival1", 9_995 - i * 100, 2);
+            InsertSnapshotState(songId, "Solo_Guitar", 77);
+        }
+
+        var calc = CreateCalculator(persistence);
+        var result = calc.ComputeRivals("user1");
+
         Assert.NotEmpty(result.Rivals);
         var guitarComboId = ComboIds.FromInstruments(["Solo_Guitar"]);
         var guitarRivals = result.Rivals.Where(r => r.InstrumentCombo == guitarComboId).ToList();

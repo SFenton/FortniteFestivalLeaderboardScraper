@@ -16,6 +16,9 @@ public sealed class MetaDatabase : IMetaDatabase
 
     internal const int DataCollectionVersion = 3;
     internal const string WebTrackerDeviceId = "web-tracker";
+    internal const string LegacyLeaderboardStagingTable = "leaderboard_staging";
+    internal const string LeaderboardStagingTable = "leaderboard_staging_v2";
+    private const string LeaderboardStagingReadColumns = "scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at";
 
     public MetaDatabase(NpgsqlDataSource dataSource, ILogger<MetaDatabase> log)
     {
@@ -24,6 +27,10 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     public void EnsureSchema() { } // Created by DatabaseInitializer
+
+    internal static string GetLeaderboardStagingReadSource(string alias) =>
+        $"(SELECT {LeaderboardStagingReadColumns} FROM {LeaderboardStagingTable} " +
+        $"UNION ALL SELECT {LeaderboardStagingReadColumns} FROM {LegacyLeaderboardStagingTable}) AS {alias}";
 
     // ── Scrape log ───────────────────────────────────────────────────
 
@@ -499,7 +506,21 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     public string? GetDisplayName(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT display_name FROM account_names WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); var result = cmd.ExecuteScalar(); return result is DBNull or null ? null : (string)result; }
-    public List<(string AccountId, string DisplayName)> SearchAccountNames(string query, int limit = 10) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, display_name FROM account_names WHERE display_name IS NOT NULL AND display_name ILIKE @pattern ORDER BY CASE WHEN display_name ILIKE @prefix THEN 0 ELSE 1 END, LENGTH(display_name), display_name LIMIT @limit"; cmd.Parameters.AddWithValue("pattern", $"%{query}%"); cmd.Parameters.AddWithValue("prefix", $"{query}%"); cmd.Parameters.AddWithValue("limit", limit); var list = new List<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add((r.GetString(0), r.GetString(1))); return list; }
+    public List<(string AccountId, string DisplayName)> SearchAccountNames(string query, int limit = 10)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var normalizedQuery = query.Trim().ToLowerInvariant();
+        cmd.CommandText = "SELECT account_id, display_name FROM account_names WHERE display_name IS NOT NULL AND LOWER(display_name) LIKE @pattern ORDER BY CASE WHEN LOWER(display_name) LIKE @prefix THEN 0 ELSE 1 END, LENGTH(display_name), display_name LIMIT @limit";
+        cmd.Parameters.AddWithValue("pattern", $"%{normalizedQuery}%");
+        cmd.Parameters.AddWithValue("prefix", $"{normalizedQuery}%");
+        cmd.Parameters.AddWithValue("limit", limit);
+        var list = new List<(string, string)>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetString(0), r.GetString(1)));
+        return list;
+    }
 
     public Dictionary<string, string> GetDisplayNames(IEnumerable<string> accountIds)
     {
@@ -2805,6 +2826,20 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── Private helpers ──────────────────────────────────────────────
 
+    private static string? GetLeaderboardStagingPartitionName(string instrument) => instrument switch
+    {
+        "Solo_Guitar" => "leaderboard_staging_v2_solo_guitar",
+        "Solo_Bass" => "leaderboard_staging_v2_solo_bass",
+        "Solo_Drums" => "leaderboard_staging_v2_solo_drums",
+        "Solo_Vocals" => "leaderboard_staging_v2_solo_vocals",
+        "Solo_PeripheralGuitar" => "leaderboard_staging_v2_pro_guitar",
+        "Solo_PeripheralBass" => "leaderboard_staging_v2_pro_bass",
+        "Solo_PeripheralVocals" => "leaderboard_staging_v2_pro_vocals",
+        "Solo_PeripheralCymbals" => "leaderboard_staging_v2_pro_cymbals",
+        "Solo_PeripheralDrums" => "leaderboard_staging_v2_pro_drums",
+        _ => null,
+    };
+
     // ── Leaderboard staging ──────────────────────────────────────────
 
     public void StageChunk(long scrapeId, string songId, string instrument,
@@ -2817,7 +2852,7 @@ public sealed class MetaDatabase : IMetaDatabase
         using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
 
         using (var writer = conn.BeginBinaryImport(
-            "COPY leaderboard_staging (scrape_id, song_id, instrument, page_num, account_id, score, accuracy, " +
+            $"COPY {LeaderboardStagingTable} (scrape_id, song_id, instrument, page_num, account_id, score, accuracy, " +
             "is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at) " +
             "FROM STDIN (FORMAT BINARY)"))
         {
@@ -3017,26 +3052,8 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         int total = 0;
 
-        // Delete staging rows in batches to avoid a single massive DELETE that
-        // generates excessive WAL and exceeds command timeouts. Each batch
-        // runs in its own transaction so progress is incremental.
-        const int batchSize = 500_000;
-        int deleted;
-        do
-        {
-            using var tx = conn.BeginTransaction();
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandTimeout = 0;
-            cmd.CommandText =
-                "DELETE FROM leaderboard_staging WHERE ctid = ANY(" +
-                "ARRAY(SELECT ctid FROM leaderboard_staging WHERE scrape_id < @id LIMIT @limit))";
-            cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
-            cmd.Parameters.AddWithValue("limit", batchSize);
-            deleted = cmd.ExecuteNonQuery();
-            tx.Commit();
-            total += deleted;
-        } while (deleted >= batchSize);
+        total += CleanupAbandonedStagingTable(conn, LeaderboardStagingTable, currentScrapeId);
+        total += CleanupAbandonedStagingTable(conn, LegacyLeaderboardStagingTable, currentScrapeId);
 
         // staging_meta and deep_scrape_queue are tiny — single deletes are fine
         using (var tx = conn.BeginTransaction())
@@ -3060,11 +3077,70 @@ public sealed class MetaDatabase : IMetaDatabase
         return total;
     }
 
+    private static int CleanupAbandonedStagingTable(NpgsqlConnection conn, string tableName, long currentScrapeId)
+    {
+        int total = 0;
+
+        int staleRows;
+        bool hasCurrentRows;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText =
+                $"SELECT COUNT(*) FILTER (WHERE scrape_id < @id), COUNT(*) FILTER (WHERE scrape_id >= @id) FROM {tableName}";
+            cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
+            using var reader = cmd.ExecuteReader();
+            reader.Read();
+            staleRows = reader.GetInt32(0);
+            hasCurrentRows = reader.GetInt32(1) > 0;
+        }
+
+        // Delete staging rows in batches to avoid a single massive DELETE that
+        // generates excessive WAL and exceeds command timeouts. Each batch
+        // runs in its own transaction so progress is incremental.
+        if (staleRows > 0 && !hasCurrentRows)
+        {
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = $"TRUNCATE {tableName}";
+            cmd.ExecuteNonQuery();
+            tx.Commit();
+            total += staleRows;
+        }
+        else
+        {
+            const int batchSize = 500_000;
+            int deleted;
+            do
+            {
+                using var tx = conn.BeginTransaction();
+                using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandTimeout = 0;
+                cmd.CommandText =
+                    $"DELETE FROM {tableName} WHERE ctid = ANY(" +
+                    $"ARRAY(SELECT ctid FROM {tableName} WHERE scrape_id < @id LIMIT @limit))";
+                cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
+                cmd.Parameters.AddWithValue("limit", batchSize);
+                deleted = cmd.ExecuteNonQuery();
+                tx.Commit();
+                total += deleted;
+            } while (deleted >= batchSize);
+        }
+        return total;
+    }
+
     public int DeleteStagedEntries(long scrapeId, string songId, string instrument)
     {
         using var conn = _ds.OpenConnection();
+        return DeleteStagedEntries(conn, LeaderboardStagingTable, scrapeId, songId, instrument)
+            + DeleteStagedEntries(conn, LegacyLeaderboardStagingTable, scrapeId, songId, instrument);
+    }
+
+    private static int DeleteStagedEntries(NpgsqlConnection conn, string tableName, long scrapeId, string songId, string instrument)
+    {
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM leaderboard_staging WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
+        cmd.CommandText = $"DELETE FROM {tableName} WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
         cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", instrument);
@@ -3074,8 +3150,79 @@ public sealed class MetaDatabase : IMetaDatabase
     public int DeleteStagedEntriesForInstrument(long scrapeId, string instrument)
     {
         using var conn = _ds.OpenConnection();
+        var partitionName = GetLeaderboardStagingPartitionName(instrument);
+        var deleted = 0;
+
+        using (var countCmd = conn.CreateCommand())
+        {
+            countCmd.CommandText = $"SELECT COUNT(*) FROM {LeaderboardStagingTable} WHERE scrape_id = @scrapeId AND instrument = @instrument";
+            countCmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+            countCmd.Parameters.AddWithValue("instrument", instrument);
+            var stagedRows = Convert.ToInt32(countCmd.ExecuteScalar());
+            if (stagedRows > 0 && partitionName is not null)
+            {
+                using var probeCmd = conn.CreateCommand();
+                probeCmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {partitionName} WHERE scrape_id <> @scrapeId)";
+                probeCmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+                var hasOtherScrapeRows = Convert.ToBoolean(probeCmd.ExecuteScalar());
+                if (!hasOtherScrapeRows)
+                {
+                    using var tx = conn.BeginTransaction();
+                    using var truncateCmd = conn.CreateCommand();
+                    truncateCmd.Transaction = tx;
+                    truncateCmd.CommandText = $"TRUNCATE {partitionName}";
+                    truncateCmd.ExecuteNonQuery();
+                    tx.Commit();
+                    deleted += stagedRows;
+                }
+                else
+                {
+                    deleted += DeleteStagedEntriesForInstrument(conn, LeaderboardStagingTable, scrapeId, instrument);
+                }
+            }
+            else if (stagedRows > 0)
+            {
+                deleted += DeleteStagedEntriesForInstrument(conn, LeaderboardStagingTable, scrapeId, instrument);
+            }
+        }
+
+        using (var legacyCountCmd = conn.CreateCommand())
+        {
+            legacyCountCmd.CommandText = $"SELECT COUNT(*) FROM {LegacyLeaderboardStagingTable} WHERE scrape_id = @scrapeId AND instrument = @instrument";
+            legacyCountCmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+            legacyCountCmd.Parameters.AddWithValue("instrument", instrument);
+            var legacyRows = Convert.ToInt32(legacyCountCmd.ExecuteScalar());
+            if (legacyRows > 0)
+            {
+                using var legacyProbeCmd = conn.CreateCommand();
+                legacyProbeCmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {LegacyLeaderboardStagingTable} WHERE scrape_id <> @scrapeId OR instrument <> @instrument)";
+                legacyProbeCmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+                legacyProbeCmd.Parameters.AddWithValue("instrument", instrument);
+                var hasOtherLegacyRows = Convert.ToBoolean(legacyProbeCmd.ExecuteScalar());
+                if (!hasOtherLegacyRows)
+                {
+                    using var tx = conn.BeginTransaction();
+                    using var truncateCmd = conn.CreateCommand();
+                    truncateCmd.Transaction = tx;
+                    truncateCmd.CommandText = $"TRUNCATE {LegacyLeaderboardStagingTable}";
+                    truncateCmd.ExecuteNonQuery();
+                    tx.Commit();
+                    deleted += legacyRows;
+                }
+                else
+                {
+                    deleted += DeleteStagedEntriesForInstrument(conn, LegacyLeaderboardStagingTable, scrapeId, instrument);
+                }
+            }
+        }
+
+        return deleted;
+    }
+
+    private static int DeleteStagedEntriesForInstrument(NpgsqlConnection conn, string tableName, long scrapeId, string instrument)
+    {
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM leaderboard_staging WHERE scrape_id = @scrapeId AND instrument = @instrument";
+        cmd.CommandText = $"DELETE FROM {tableName} WHERE scrape_id = @scrapeId AND instrument = @instrument";
         cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
         cmd.Parameters.AddWithValue("instrument", instrument);
         return cmd.ExecuteNonQuery();
@@ -3096,8 +3243,14 @@ public sealed class MetaDatabase : IMetaDatabase
     public int GetStagedEntryCount(long scrapeId, string songId, string instrument)
     {
         using var conn = _ds.OpenConnection();
+        return GetStagedEntryCount(conn, LeaderboardStagingTable, scrapeId, songId, instrument)
+            + GetStagedEntryCount(conn, LegacyLeaderboardStagingTable, scrapeId, songId, instrument);
+    }
+
+    private static int GetStagedEntryCount(NpgsqlConnection conn, string tableName, long scrapeId, string songId, string instrument)
+    {
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_staging WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
+        cmd.CommandText = $"SELECT COUNT(*) FROM {tableName} WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
         cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", instrument);

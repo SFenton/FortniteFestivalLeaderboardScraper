@@ -34,7 +34,7 @@ public static partial class ApiEndpoints
                         maxScore = (int)(raw.Value * (1.0 + leeway.Value / 100.0));
                 }
             }
-            var result = persistence.GetLeaderboardWithCount(songId, instrument, top, offset ?? 0, maxScore);
+            var result = persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, top, offset ?? 0, maxScore);
             if (result is null)
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
@@ -111,7 +111,7 @@ public static partial class ApiEndpoints
                     if (raw.HasValue)
                         maxScore = (int)(raw.Value * (1.0 + leeway!.Value / 100.0));
                 }
-                var result = persistence.GetLeaderboardWithCount(songId, instrument, top ?? 10, maxScore: maxScore);
+                var result = persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, top ?? 10, maxScore: maxScore);
                 if (result is null) return;
 
                 var (entries, dbCount) = result.Value;

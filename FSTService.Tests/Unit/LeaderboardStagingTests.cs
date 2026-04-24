@@ -199,6 +199,21 @@ public class LeaderboardStagingTests : IDisposable
         Assert.Empty(_metaFixture.Db.GetDeepScrapeJobs(oldScrapeId));
     }
 
+    [Fact]
+    public void CleanupAbandonedStaging_DeletesLegacyStagingRows()
+    {
+        var oldScrapeId = _metaFixture.Db.StartScrapeRun();
+        InsertLegacyStagedEntries(oldScrapeId, "song1", TestInstrument,
+            MakeEntries(page: 0, count: 3));
+
+        var newScrapeId = _metaFixture.Db.StartScrapeRun();
+
+        var deleted = _metaFixture.Db.CleanupAbandonedStaging(newScrapeId);
+
+        Assert.True(deleted > 0);
+        Assert.Equal(0, _metaFixture.Db.GetStagedEntryCount(oldScrapeId, "song1", TestInstrument));
+    }
+
     // ── FinalizeInstrumentFromStaging ───────────────────────────────
 
     [Fact]
@@ -228,6 +243,32 @@ public class LeaderboardStagingTests : IDisposable
         var meta = _metaFixture.Db.GetStagingMeta(scrapeId);
         Assert.Single(meta);
         Assert.NotNull(meta[0].Wave1FinalizedAt);
+    }
+
+    [Fact]
+    public void FinalizeLeaderboard_MergesLegacyStagingRowsAfterCutover()
+    {
+        var scrapeId = _metaFixture.Db.StartScrapeRun();
+        var entries = MakeEntries(page: 0, count: 4, baseScore: 50000);
+
+        InsertLegacyStagedEntries(scrapeId, "song1", TestInstrument, entries);
+        _metaFixture.Db.UpsertStagingMeta(scrapeId, "song1", TestInstrument, new StagingMetaUpdate
+        {
+            ReportedPages = 1, PagesScraped = 1, EntriesStaged = 4,
+            Requests = 1, BytesReceived = 2000,
+        });
+
+        var (rowsMerged, scoreChanges, affectedSongs) = _persistence.FinalizeInstrumentFromStaging(
+            scrapeId, TestInstrument);
+
+        Assert.Equal(4, rowsMerged);
+        Assert.Equal(0, scoreChanges);
+        Assert.Equal(1, affectedSongs.Count);
+        Assert.Equal(0, _metaFixture.Db.GetStagedEntryCount(scrapeId, "song1", TestInstrument));
+
+        var db = _persistence.GetOrCreateInstrumentDb(TestInstrument);
+        var leaderboard = db.GetLeaderboard("song1");
+        Assert.Equal(4, leaderboard.Count);
     }
 
     [Fact]
@@ -431,5 +472,39 @@ public class LeaderboardStagingTests : IDisposable
             }));
         }
         return entries;
+    }
+
+    private void InsertLegacyStagedEntries(
+        long scrapeId,
+        string songId,
+        string instrument,
+        IReadOnlyList<(int PageNum, LeaderboardEntry Entry)> entries)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        foreach (var (pageNum, entry) in entries)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText =
+                $"INSERT INTO {MetaDatabase.LegacyLeaderboardStagingTable} (scrape_id, song_id, instrument, page_num, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at) " +
+                "VALUES (@scrapeId, @songId, @instrument, @pageNum, @accountId, @score, @accuracy, @isFullCombo, @stars, @season, @difficulty, @percentile, @rank, @endTime, @apiRank, @source, @stagedAt)";
+            cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+            cmd.Parameters.AddWithValue("songId", songId);
+            cmd.Parameters.AddWithValue("instrument", instrument);
+            cmd.Parameters.AddWithValue("pageNum", pageNum);
+            cmd.Parameters.AddWithValue("accountId", entry.AccountId);
+            cmd.Parameters.AddWithValue("score", entry.Score);
+            cmd.Parameters.AddWithValue("accuracy", (object?)entry.Accuracy ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("isFullCombo", (object?)entry.IsFullCombo ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("stars", (object?)entry.Stars ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("season", entry.Season);
+            cmd.Parameters.AddWithValue("difficulty", entry.Difficulty);
+            cmd.Parameters.AddWithValue("percentile", entry.Percentile);
+            cmd.Parameters.AddWithValue("rank", entry.Rank);
+            cmd.Parameters.AddWithValue("endTime", (object?)entry.EndTime ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("apiRank", entry.ApiRank > 0 ? entry.ApiRank : DBNull.Value);
+            cmd.Parameters.AddWithValue("source", (object?)entry.Source ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("stagedAt", DateTime.UtcNow);
+            cmd.ExecuteNonQuery();
+        }
     }
 }

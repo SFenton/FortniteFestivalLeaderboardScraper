@@ -478,6 +478,7 @@ public sealed class ScraperWorker : BackgroundService
         // still need registered IDs, scrape requests, etc.)
         var ctx = result?.Context ?? new ScrapePassContext
         {
+            ScrapeId = result?.ScrapeId ?? 0,
             AccessToken = accessToken,
             CallerAccountId = _tokenManager.AccountId!,
             RegisteredIds = _persistence.Meta.GetRegisteredAccountIds(),

@@ -48,7 +48,7 @@ public static partial class ApiEndpoints
             if (!string.IsNullOrWhiteSpace(instruments))
                 instrumentFilter = new HashSet<string>(instruments.Split(','), StringComparer.OrdinalIgnoreCase);
 
-            var scores = persistence.GetPlayerProfile(accountId, songId, instrumentFilter);
+            var scores = persistence.GetCurrentStatePlayerProfile(accountId, songId, instrumentFilter);
             var displayName = metaDb.GetDisplayName(accountId);
 
             // ── Build per-song max-score thresholds when leeway is provided ──
@@ -79,17 +79,16 @@ public static partial class ApiEndpoints
                 }
             }
 
-            // When leeway is null, skip expensive CTE window-function ranking queries;
-            // use stored rank from leaderboard_entries instead (~500ms → ~0ms).
-            // When leeway is provided but max scores aren't built yet, fall back to unfiltered.
+            // Without leeway, reuse the current-state profile rows and avoid extra ranking queries.
+            // When leeway is provided but max scores aren't built yet, fall back to unfiltered current-state ranks.
             var rankings = maxScoresByInstrument is not null
-                ? persistence.GetPlayerRankingsFiltered(accountId, maxScoresByInstrument, songId, instrumentFilter)
+                ? persistence.GetCurrentStatePlayerRankingsFiltered(accountId, maxScoresByInstrument, songId, instrumentFilter)
                 : leeway.HasValue
-                    ? persistence.GetPlayerRankings(accountId, songId, instrumentFilter)
+                    ? persistence.GetCurrentStatePlayerRankings(accountId, songId, instrumentFilter)
                     : new Dictionary<(string SongId, string Instrument), int>();
 
             var population = maxScoresByInstrument is not null
-                ? persistence.GetFilteredPopulation(maxScoresByInstrument, instrumentFilter)
+                ? persistence.GetCurrentStateFilteredPopulation(maxScoresByInstrument, instrumentFilter)
                 : null;
             var unfilteredPopulation = metaDb.GetAllLeaderboardPopulation();
 
@@ -156,7 +155,7 @@ public static partial class ApiEndpoints
                         validStars = fallback.Stars;
                         // Compute what rank this valid score would have on the filtered leaderboard
                         var maxForSong = flatThresholds.GetValueOrDefault(key, 0);
-                        validRank = persistence.GetRankForScore(s.Instrument, s.SongId, fallback.Score, maxForSong > 0 ? maxForSong : null);
+                        validRank = persistence.GetCurrentStateRankForScore(s.Instrument, s.SongId, fallback.Score, maxForSong > 0 ? maxForSong : null);
                     }
                     // else: invalid with no fallback — validScore stays null
 
@@ -474,7 +473,7 @@ public static partial class ApiEndpoints
             var tierRows = metaDb.GetPlayerStatsTiers(accountId);
             if (tierRows.Count == 0)
             {
-                var allScores = persistence.GetPlayerProfile(accountId);
+                var allScores = persistence.GetCurrentStatePlayerProfile(accountId);
                 if (allScores.Count > 0)
                 {
                     ComputeAndStorePlayerStats(accountId, allScores, pathStore, persistence, metaDb);

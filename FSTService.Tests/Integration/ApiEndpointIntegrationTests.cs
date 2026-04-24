@@ -491,6 +491,60 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiPlayer_PrefersCurrentStateRows_AndMixedLiveFallback()
+    {
+        const string accountId = "playerCurrentStateAcct";
+        const string guitarSong = "playerCurrentStateSong";
+        const string bassSong = "playerLiveFallbackSong";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            var guitarDb = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            guitarDb.UpsertEntries(guitarSong, new[]
+            {
+                new LeaderboardEntry { AccountId = accountId, Score = 100_000, Rank = 1, ApiRank = 1 },
+            });
+            InsertSnapshotEntry(dataSource, 1201, guitarSong, "Solo_Guitar", accountId, 95_000, rank: 1);
+            InsertSnapshotState(dataSource, guitarSong, "Solo_Guitar", 1201);
+            InsertOverlayEntry(dataSource, guitarSong, "Solo_Guitar", accountId, 97_000, sourcePriority: 200, overlayReason: "refresh");
+
+            var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
+            bassDb.UpsertEntries(bassSong, new[]
+            {
+                new LeaderboardEntry { AccountId = accountId, Score = 88_000, Rank = 1, ApiRank = 1 },
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/player/{accountId}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(2, json.GetProperty("totalScores").GetInt32());
+        var scores = json.GetProperty("scores");
+
+        JsonElement guitarScore = default;
+        JsonElement bassScore = default;
+        foreach (var score in scores.EnumerateArray())
+        {
+            switch (score.GetProperty("si").GetString())
+            {
+                case guitarSong:
+                    guitarScore = score;
+                    break;
+                case bassSong:
+                    bassScore = score;
+                    break;
+            }
+        }
+
+        Assert.Equal(97_000, guitarScore.GetProperty("sc").GetInt32());
+        Assert.Equal(88_000, bassScore.GetProperty("sc").GetInt32());
+    }
+
+    [Fact]
     public async Task ApiPlayer_Rank_UsesComputedRank_OverStoredRank()
     {
         // Arrange: insert entries where the stored rank (from Epic) is stale
@@ -691,6 +745,36 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var score = json.GetProperty("scores")[0];
         // ApiRank=0, so computed rank (2) is used — NOT stale stored rank (99)
         Assert.Equal(2, score.GetProperty("rk").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiPlayer_Leeway_Rank_UsesCurrentStateMembership()
+    {
+        const string accountId = "playerCurrentStateRankAcct";
+        const string song = "playerCurrentStateRankSong";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = accountId, Score = 200_000, Rank = 1, ApiRank = 1 },
+                new LeaderboardEntry { AccountId = "playerCurrentStateRankLiveOther", Score = 100_000, Rank = 2, ApiRank = 2 },
+            });
+
+            InsertSnapshotEntry(dataSource, 1202, song, "Solo_Guitar", "playerCurrentStateRankSnapOther", 300_000, rank: 1);
+            InsertSnapshotEntry(dataSource, 1202, song, "Solo_Guitar", accountId, 200_000, rank: 2);
+            InsertSnapshotState(dataSource, song, "Solo_Guitar", 1202);
+        }
+
+        var response = await _client.GetAsync($"/api/player/{accountId}?songId={song}&leeway=0");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(2, json.GetProperty("scores")[0].GetProperty("rk").GetInt32());
     }
 
 
@@ -1063,6 +1147,78 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         // Without LeaderboardPopulation, localEntries == totalEntries == dbCount
         Assert.Equal(3, json.GetProperty("localEntries").GetInt32());
         Assert.Equal(3, json.GetProperty("totalEntries").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiLeaderboard_PrefersFinalizedSnapshotState_OverLiveRows()
+    {
+        const string song = "snapshotEndpointSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "live_only", Score = 500000, Rank = 1, ApiRank = 1 },
+            });
+
+            InsertSnapshotEntry(dataSource, 77, song, inst, "snapshot_only", 490000, rank: 1);
+            InsertSnapshotState(dataSource, song, inst, 77);
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{song}/{inst}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("localEntries").GetInt32());
+        Assert.Equal(1, json.GetProperty("count").GetInt32());
+
+        var entries = json.GetProperty("entries");
+        Assert.Equal(1, entries.GetArrayLength());
+        Assert.Equal("snapshot_only", entries[0].GetProperty("accountId").GetString());
+        Assert.Equal(490000, entries[0].GetProperty("score").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiLeaderboard_PrefersOverlay_OverFinalizedSnapshotAndLiveRows()
+    {
+        const string song = "overlayEndpointSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "shared_acct", Score = 400000, Rank = 1, ApiRank = 1 },
+                new LeaderboardEntry { AccountId = "live_other", Score = 350000, Rank = 2, ApiRank = 2 },
+            });
+
+            InsertSnapshotEntry(dataSource, 88, song, inst, "shared_acct", 450000, rank: 1);
+            InsertSnapshotEntry(dataSource, 88, song, inst, "snapshot_other", 440000, rank: 2);
+            InsertSnapshotState(dataSource, song, inst, 88);
+            InsertOverlayEntry(dataSource, song, inst, "shared_acct", 470000, sourcePriority: 200, overlayReason: "refresh");
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{song}/{inst}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, json.GetProperty("localEntries").GetInt32());
+
+        var entries = json.GetProperty("entries");
+        Assert.Equal(2, entries.GetArrayLength());
+        Assert.Equal("shared_acct", entries[0].GetProperty("accountId").GetString());
+        Assert.Equal(470000, entries[0].GetProperty("score").GetInt32());
+        Assert.Equal("refresh", entries[0].GetProperty("source").GetString());
+        Assert.Equal("snapshot_other", entries[1].GetProperty("accountId").GetString());
     }
 
     // ─── Sync status ────────────────────────────────────────
@@ -1507,6 +1663,73 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiLeaderboardAll_MixesCurrentStateAndLiveFallbackPerInstrument()
+    {
+        const string songId = "allSongCurrentStateMix";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+
+            var guitarDb = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            guitarDb.UpsertEntries(songId, new[]
+            {
+                new LeaderboardEntry { AccountId = "g_live_only", Score = 100_000, Rank = 1, ApiRank = 1 },
+            });
+
+            InsertSnapshotEntry(dataSource, 901, songId, "Solo_Guitar", "g_snapshot", 99_000, rank: 1);
+            InsertSnapshotState(dataSource, songId, "Solo_Guitar", 901);
+            InsertOverlayEntry(dataSource, songId, "Solo_Guitar", "g_snapshot", 101_000, sourcePriority: 200, overlayReason: "refresh");
+
+            var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
+            bassDb.UpsertEntries(songId, new[]
+            {
+                new LeaderboardEntry { AccountId = "b_live", Score = 88_000, Rank = 1, ApiRank = 1 },
+            });
+
+            metaDb.UpsertLeaderboardPopulation(new[]
+            {
+                (songId, "Solo_Guitar", 200L),
+                (songId, "Solo_Bass", 50L),
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/all?top=10");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var instruments = json.GetProperty("instruments");
+
+        JsonElement guitar = default;
+        JsonElement bass = default;
+        foreach (var instrument in instruments.EnumerateArray())
+        {
+            switch (instrument.GetProperty("instrument").GetString())
+            {
+                case "Solo_Guitar":
+                    guitar = instrument;
+                    break;
+                case "Solo_Bass":
+                    bass = instrument;
+                    break;
+            }
+        }
+
+        Assert.Equal(1, guitar.GetProperty("count").GetInt32());
+        Assert.Equal(1, guitar.GetProperty("localEntries").GetInt32());
+        Assert.Equal(200, guitar.GetProperty("totalEntries").GetInt32());
+        Assert.Equal("g_snapshot", guitar.GetProperty("entries")[0].GetProperty("accountId").GetString());
+        Assert.Equal(101000, guitar.GetProperty("entries")[0].GetProperty("score").GetInt32());
+
+        Assert.Equal(1, bass.GetProperty("count").GetInt32());
+        Assert.Equal(1, bass.GetProperty("localEntries").GetInt32());
+        Assert.Equal(50, bass.GetProperty("totalEntries").GetInt32());
+        Assert.Equal("b_live", bass.GetProperty("entries")[0].GetProperty("accountId").GetString());
+    }
+
+    [Fact]
     public async Task ApiLeaderboardAll_EmptySong_ReturnsEmptyInstruments()
     {
         var response = await _client.GetAsync("/api/leaderboard/nonexistentSong/all");
@@ -1622,6 +1845,35 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("unknownAcct", json.GetProperty("accountId").GetString());
+        Assert.Equal(0, json.GetProperty("stats").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task ApiPlayerStats_OnDemand_UsesCurrentStateScores()
+    {
+        const string accountId = "playerStatsCurrentStateAcct";
+        const string song = "playerStatsCurrentStateSong";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = accountId, Score = 100_000, Rank = 1, ApiRank = 1 },
+            });
+
+            InsertSnapshotEntry(dataSource, 1203, song, "Solo_Guitar", "playerStatsSnapshotOther", 99_000, rank: 1);
+            InsertSnapshotState(dataSource, song, "Solo_Guitar", 1203);
+        }
+
+        var response = await _client.GetAsync($"/api/player/{accountId}/stats");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(accountId, json.GetProperty("accountId").GetString());
         Assert.Equal(0, json.GetProperty("stats").GetArrayLength());
     }
 
@@ -2113,6 +2365,88 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "INSERT INTO songs (song_id, title) VALUES (@songId, 'Test Song') ON CONFLICT DO NOTHING";
         cmd.Parameters.AddWithValue("songId", songId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void InsertSnapshotState(NpgsqlDataSource dataSource, string songId, string instrument, long snapshotId)
+    {
+        using var conn = dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_snapshot_state
+            (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, updated_at)
+            VALUES (@songId, @instrument, @snapshotId, 1, TRUE, @updatedAt)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                active_snapshot_id = EXCLUDED.active_snapshot_id,
+                scrape_id = EXCLUDED.scrape_id,
+                is_finalized = EXCLUDED.is_finalized,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("updatedAt", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void InsertSnapshotEntry(NpgsqlDataSource dataSource, long snapshotId, string songId, string instrument, string accountId, int score, int rank)
+    {
+        using var conn = dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_entries_snapshot
+            (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+             season, percentile, rank, source, difficulty, api_rank, end_time, first_seen_at, last_updated_at)
+            VALUES
+            (@snapshotId, @songId, @instrument, @accountId, @score, 95, false, 5,
+             3, 99.0, @rank, 'scrape', 3, @rank, '2025-01-15T12:00:00Z', @now, @now)
+            """;
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("rank", rank);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void InsertOverlayEntry(NpgsqlDataSource dataSource, string songId, string instrument, string accountId, int score, int sourcePriority, string overlayReason)
+    {
+        using var conn = dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_entries_overlay
+            (song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+             season, percentile, rank, source, difficulty, api_rank, end_time,
+             first_seen_at, last_updated_at, source_priority, overlay_reason)
+            VALUES
+            (@songId, @instrument, @accountId, @score, 95, false, 5,
+             3, 99.0, 1, @overlayReason, 3, 1, '2025-01-15T12:00:00Z',
+             @now, @now, @sourcePriority, @overlayReason)
+            ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+                score = EXCLUDED.score,
+                accuracy = EXCLUDED.accuracy,
+                is_full_combo = EXCLUDED.is_full_combo,
+                stars = EXCLUDED.stars,
+                season = EXCLUDED.season,
+                percentile = EXCLUDED.percentile,
+                rank = EXCLUDED.rank,
+                source = EXCLUDED.source,
+                difficulty = EXCLUDED.difficulty,
+                api_rank = EXCLUDED.api_rank,
+                end_time = EXCLUDED.end_time,
+                last_updated_at = EXCLUDED.last_updated_at,
+                source_priority = EXCLUDED.source_priority,
+                overlay_reason = EXCLUDED.overlay_reason
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("overlayReason", overlayReason);
+        cmd.Parameters.AddWithValue("sourcePriority", sourcePriority);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }
 

@@ -8,6 +8,7 @@ namespace FSTService.Scraping;
 /// </summary>
 public sealed class ScrapePassContext
 {
+    public required long ScrapeId { get; init; }
     public required string AccessToken { get; init; }
     public required string CallerAccountId { get; init; }
     public required HashSet<string> RegisteredIds { get; init; }

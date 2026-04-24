@@ -62,6 +62,31 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         };
     }
 
+    private int GetSnapshotRowCount(long snapshotId, string songId, string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries_snapshot WHERE snapshot_id = @snapshotId AND song_id = @songId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private (long ActiveSnapshotId, long ScrapeId, bool IsFinalized)? GetSnapshotState(string songId, string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT active_snapshot_id, scrape_id, is_finalized FROM leaderboard_snapshot_state WHERE song_id = @songId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return (reader.GetInt64(0), reader.GetInt64(1), reader.GetBoolean(2));
+    }
+
     // ═══ Basic Persistence ══════════════════════════════════════
 
     [Fact]
@@ -94,6 +119,70 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
 
         var unresolved = _metaFixture.Db.GetUnresolvedAccountIds();
         Assert.Contains("acct_new", unresolved);
+    }
+
+    [Fact]
+    public async Task FlushSpoolAsync_shadow_writes_snapshot_rows_for_scrape_run()
+    {
+        using var glp = CreatePersistence();
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+                EndTime = "2025-01-15T12:00:00Z",
+            }
+        ]);
+
+        await glp.FlushSpoolAsync();
+
+        Assert.Equal(1, GetSnapshotRowCount(42, "song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task FinalizeShadowSnapshots_marks_snapshot_state_for_scrape_run()
+    {
+        using var glp = CreatePersistence();
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+                EndTime = "2025-01-15T12:00:00Z",
+            }
+        ]);
+
+        await glp.FlushSpoolAsync();
+        var activated = glp.FinalizeShadowSnapshots(42);
+
+        Assert.Equal(1, activated);
+        var state = GetSnapshotState("song_1", "Solo_Guitar");
+        Assert.NotNull(state);
+        Assert.Equal(42, state?.ActiveSnapshotId);
+        Assert.Equal(42, state?.ScrapeId);
+        Assert.True(state?.IsFinalized);
     }
 
     // ═══ Score Change Detection ═════════════════════════════════

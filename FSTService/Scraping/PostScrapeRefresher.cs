@@ -207,6 +207,7 @@ public class PostScrapeRefresher
         }
 
         entry.ApiRank = entry.Rank;
+        entry.Source = "refresh";
         instrumentDb.UpsertEntries(songId, [entry]);
 
         if (entry.Rank > 0)

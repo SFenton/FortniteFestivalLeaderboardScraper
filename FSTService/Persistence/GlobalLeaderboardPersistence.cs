@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using System.Threading.Channels;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,7 @@ namespace FSTService.Persistence;
 /// </summary>
 public sealed class GlobalLeaderboardPersistence : IDisposable
 {
+    private const string LeaderboardStagingTable = MetaDatabase.LeaderboardStagingTable;
     private readonly Dictionary<string, IInstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
@@ -732,9 +734,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// files on disk.  No consumers run during fetch — data is flushed in bulk
     /// after the network phase completes via <see cref="FlushSpoolAsync"/>.
     /// </summary>
-    public SpoolWriter<LeaderboardEntry> StartSpoolWriter(string? spoolDirectory = null)
+    public SpoolWriter<LeaderboardEntry> StartSpoolWriter(long scrapeId, string? spoolDirectory = null)
     {
-        _spoolWriter = LeaderboardSpoolWriterFactory.Create(_log, this, spoolDirectory);
+        _spoolWriter = LeaderboardSpoolWriterFactory.Create(_log, this, scrapeId, spoolDirectory);
         _log.LogInformation("Started disk-spool writer (post-fetch flush mode).");
         return _spoolWriter;
     }
@@ -767,6 +769,39 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         await _spoolWriter.DisposeAsync();
         _spoolWriter = null;
+    }
+
+    public int FinalizeShadowSnapshots(long scrapeId, int wave = 1)
+    {
+        if (scrapeId <= 0)
+            return 0;
+
+        var finalizedColumn = wave == 2 ? "wave2_finalized_at" : "wave1_finalized_at";
+        using var conn = _pgDataSource!.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH snapshot_pairs AS (
+                SELECT DISTINCT song_id, instrument
+                FROM leaderboard_entries_snapshot
+                WHERE snapshot_id = @scrapeId
+            ), upserted AS (
+                INSERT INTO leaderboard_snapshot_state
+                (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, {finalizedColumn}, updated_at)
+                SELECT song_id, instrument, @scrapeId, @scrapeId, TRUE, @now, @now
+                FROM snapshot_pairs
+                ON CONFLICT (song_id, instrument) DO UPDATE SET
+                    active_snapshot_id = EXCLUDED.active_snapshot_id,
+                    scrape_id = EXCLUDED.scrape_id,
+                    is_finalized = EXCLUDED.is_finalized,
+                    {finalizedColumn} = EXCLUDED.{finalizedColumn},
+                    updated_at = EXCLUDED.updated_at
+                RETURNING 1
+            )
+            SELECT COUNT(*) FROM upserted
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
     // ─── Scrape-time index management ──────────────────────────────
@@ -1035,6 +1070,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         var db = GetOrCreateInstrumentDb(instrument);
         var pgDb = (InstrumentDatabase)db;
+        var stagingReadSource = MetaDatabase.GetLeaderboardStagingReadSource("staging");
 
         // ── Pre-merge: snapshot registered users across ALL songs for this instrument ──
         Dictionary<(string SongId, string AccountId), LeaderboardEntry>? previousState = null;
@@ -1055,7 +1091,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     i++;
                 }
                 cmd.CommandText =
-                    $"SELECT DISTINCT account_id FROM leaderboard_staging " +
+                    $"SELECT DISTINCT account_id FROM {stagingReadSource} " +
                     $"WHERE scrape_id = @scrapeId AND instrument = @instrument " +
                     $"AND account_id IN ({string.Join(",", paramNames)})";
                 cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
@@ -1082,7 +1118,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText =
-                "SELECT DISTINCT song_id FROM leaderboard_staging " +
+                $"SELECT DISTINCT song_id FROM {stagingReadSource} " +
                 "WHERE scrape_id = @scrapeId AND instrument = @instrument";
             cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
             cmd.Parameters.AddWithValue("instrument", instrument);
@@ -1091,12 +1127,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             while (r.Read()) stagedSongIds.Add(r.GetString(0));
         }
 
-        const string mergeSql =
+        var mergeSql =
             "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
             "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at, staged_at " +
-            "FROM leaderboard_staging " +
+            $"FROM {stagingReadSource} " +
             "WHERE scrape_id = @scrapeId AND instrument = @instrument AND song_id = ANY(@songIds) " +
-            "ORDER BY song_id, instrument, account_id, score DESC " +
+            "ORDER BY song_id, instrument, account_id, score DESC, staged_at DESC " +
             "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
             "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
             "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
@@ -1316,6 +1352,27 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Get a player's scores across all instruments using finalized snapshot plus overlay current state.
+    /// </summary>
+    public List<PlayerScoreDto> GetCurrentStatePlayerProfile(string accountId, string? songId = null, HashSet<string>? instruments = null)
+    {
+        var dbs = instruments is null
+            ? _instrumentDbs.Values.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).Select(kv => kv.Value).ToArray();
+
+        var results = new List<PlayerScoreDto>[dbs.Length];
+        Parallel.For(0, dbs.Length, i =>
+        {
+            results[i] = dbs[i].GetCurrentStatePlayerScores(accountId, songId);
+        });
+
+        var allScores = new List<PlayerScoreDto>();
+        foreach (var result in results)
+            allScores.AddRange(result);
+        return allScores;
+    }
+
+    /// <summary>
     /// Get grouped unique band summaries for one player, deduped by team members.
     /// </summary>
     public PlayerBandsDto GetPlayerBands(string accountId, int previewCount = 6)
@@ -1417,37 +1474,171 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         using var conn = _pgDataSource.OpenConnection();
 
-        var teams = GetPlayerBandTeams(conn, accountId, bandTypeFilter, comboIdFilter);
-        if (teams.Count == 0)
+        EnsureBandTeamMembershipSummary(conn, accountId);
+
+        var membershipRows = GetPlayerBandMembershipRows(conn, accountId, bandTypeFilter);
+        if (comboIdFilter is not null)
+        {
+            membershipRows = membershipRows
+                .Where(row => string.Equals(
+                    BandComboIds.FromEpicRawCombo(row.InstrumentCombo),
+                    comboIdFilter,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        if (membershipRows.Count == 0)
             return [];
 
-        var instrumentsByMember = GetPlayerBandInstrumentsByMember(conn, accountId, teams, bandTypeFilter, comboIdFilter);
-
-        var allMemberAccountIds = teams
-            .SelectMany(team => SplitTeamKey(team.TeamKey))
+        var allMemberAccountIds = membershipRows
+            .SelectMany(row => SplitTeamKey(row.TeamKey))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var displayNames = _metaDb.GetDisplayNames(allMemberAccountIds);
 
-        return teams
-            .Select(team => new PlayerBandEntryDto
+        return membershipRows
+            .GroupBy(static row => (row.BandType, row.TeamKey))
+            .Select(group =>
             {
-                BandId = BandIdentity.CreateBandId(team.BandType, team.TeamKey),
-                TeamKey = team.TeamKey,
-                BandType = team.BandType,
-                AppearanceCount = team.AppearanceCount,
-                Members = SplitTeamKey(team.TeamKey)
-                    .Select(memberAccountId => new PlayerBandMemberDto
-                    {
-                        AccountId = memberAccountId,
-                        DisplayName = displayNames.GetValueOrDefault(memberAccountId),
-                        Instruments = instrumentsByMember.GetValueOrDefault((team.BandType, team.TeamKey, memberAccountId), []),
-                    })
-                    .ToList(),
+                var memberInstruments = BuildMemberInstrumentsForSummaryGroup(group);
+                return new PlayerBandEntryDto
+                {
+                    BandId = BandIdentity.CreateBandId(group.Key.BandType, group.Key.TeamKey),
+                    TeamKey = group.Key.TeamKey,
+                    BandType = group.Key.BandType,
+                    AppearanceCount = group.Sum(static row => row.AppearanceCount),
+                    Members = SplitTeamKey(group.Key.TeamKey)
+                        .Select(memberAccountId => new PlayerBandMemberDto
+                        {
+                            AccountId = memberAccountId,
+                            DisplayName = displayNames.GetValueOrDefault(memberAccountId),
+                            Instruments = memberInstruments.GetValueOrDefault(memberAccountId, []),
+                        })
+                        .ToList(),
+                };
             })
             .OrderByDescending(entry => entry.AppearanceCount)
             .ThenBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private void EnsureBandTeamMembershipSummary(NpgsqlConnection conn, string accountId)
+    {
+        if (HasBandTeamMembershipState(conn, accountId))
+            return;
+
+        using var tx = conn.BeginTransaction();
+        BandLeaderboardPersistence.RebuildBandTeamMembershipForAccount(conn, tx, accountId);
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"""
+            INSERT INTO {BandLeaderboardPersistence.BandTeamMembershipStateTable} (account_id, rebuilt_at)
+            VALUES (@accountId, @rebuiltAt)
+            ON CONFLICT (account_id) DO UPDATE SET rebuilt_at = EXCLUDED.rebuilt_at
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("rebuiltAt", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+
+        tx.Commit();
+    }
+
+    private static bool HasBandTeamMembershipState(NpgsqlConnection conn, string accountId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {BandLeaderboardPersistence.BandTeamMembershipStateTable} WHERE account_id = @accountId)";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        return Convert.ToBoolean(cmd.ExecuteScalar());
+    }
+
+    private static List<PlayerBandMembershipSummaryRow> GetPlayerBandMembershipRows(
+        NpgsqlConnection conn,
+        string accountId,
+        string? bandTypeFilter)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = bandTypeFilter is null
+            ? $"""
+                SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json
+                FROM {BandLeaderboardPersistence.BandTeamMembershipTable}
+                WHERE account_id = @accountId
+                ORDER BY band_type, team_key, instrument_combo
+                """
+            : $"""
+                SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json
+                FROM {BandLeaderboardPersistence.BandTeamMembershipTable}
+                WHERE account_id = @accountId
+                  AND band_type = @bandType
+                ORDER BY band_type, team_key, instrument_combo
+                """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        if (bandTypeFilter is not null)
+            cmd.Parameters.AddWithValue("bandType", bandTypeFilter);
+
+        var rows = new List<PlayerBandMembershipSummaryRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new PlayerBandMembershipSummaryRow(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                reader.GetInt32(4),
+                ParseMemberInstrumentsJson(reader.IsDBNull(5) ? "{}" : reader.GetString(5))));
+        }
+
+        return rows;
+    }
+
+    private static Dictionary<string, List<string>> BuildMemberInstrumentsForSummaryGroup(
+        IEnumerable<PlayerBandMembershipSummaryRow> rows)
+    {
+        var instrumentsByMember = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in rows)
+        {
+            foreach (var (memberAccountId, instruments) in row.MemberInstruments)
+            {
+                if (!instrumentsByMember.TryGetValue(memberAccountId, out var memberInstruments))
+                {
+                    memberInstruments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    instrumentsByMember[memberAccountId] = memberInstruments;
+                }
+
+                memberInstruments.UnionWith(instruments);
+            }
+        }
+
+        return instrumentsByMember.ToDictionary(
+            static kvp => kvp.Key,
+            static kvp => BandComboIds.ToInstruments(BandComboIds.FromInstruments(kvp.Value)).ToList(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static Dictionary<string, List<string>> ParseMemberInstrumentsJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        using var document = JsonDocument.Parse(json);
+        var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            var instruments = property.Value.ValueKind == JsonValueKind.Array
+                ? property.Value.EnumerateArray()
+                    .Where(static item => item.ValueKind == JsonValueKind.String)
+                    .Select(static item => item.GetString())
+                    .Where(static instrument => !string.IsNullOrWhiteSpace(instrument))
+                    .Select(static instrument => instrument!)
+                    .ToList()
+                : [];
+
+            result[property.Name] = instruments;
+        }
+
+        return result;
     }
 
     private static List<PlayerBandTeamSummary> GetPlayerBandTeams(
@@ -1726,6 +1917,30 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return result;
     }
 
+    public Dictionary<(string SongId, string Instrument), int> GetCurrentStatePlayerRankings(string accountId, string? songId = null, HashSet<string>? instruments = null)
+    {
+        var kvps = instruments is null
+            ? _instrumentDbs.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).ToArray();
+
+        var perInstrument = new Dictionary<string, int>[kvps.Length];
+        var instrumentKeys = new string[kvps.Length];
+        Parallel.For(0, kvps.Length, i =>
+        {
+            instrumentKeys[i] = kvps[i].Key;
+            perInstrument[i] = kvps[i].Value.GetCurrentStatePlayerRankings(accountId, songId);
+        });
+
+        var result = new Dictionary<(string, string), int>();
+        for (int i = 0; i < kvps.Length; i++)
+        {
+            var instrument = instrumentKeys[i];
+            foreach (var (sid, rank) in perInstrument[i])
+                result[(sid, instrument)] = rank;
+        }
+        return result;
+    }
+
     /// <summary>
     /// Like <see cref="GetPlayerRankings"/> but filters out entries above per-song max-score thresholds.
     /// <paramref name="maxScoresByInstrument"/> maps instrument DB name → (songId → threshold).
@@ -1750,6 +1965,38 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 perInstrument[i] = kvps[i].Value.GetPlayerRankingsFiltered(accountId, thresholds, songId);
             else
                 perInstrument[i] = kvps[i].Value.GetPlayerRankings(accountId, songId);
+        });
+
+        var result = new Dictionary<(string, string), int>();
+        for (int i = 0; i < kvps.Length; i++)
+        {
+            var instrument = instrumentKeys[i];
+            foreach (var (sid, rank) in perInstrument[i])
+                result[(sid, instrument)] = rank;
+        }
+        return result;
+    }
+
+    public Dictionary<(string SongId, string Instrument), int> GetCurrentStatePlayerRankingsFiltered(
+        string accountId,
+        Dictionary<string, Dictionary<string, int>> maxScoresByInstrument,
+        string? songId = null,
+        HashSet<string>? instruments = null)
+    {
+        var kvps = instruments is null
+            ? _instrumentDbs.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).ToArray();
+
+        var perInstrument = new Dictionary<string, int>[kvps.Length];
+        var instrumentKeys = new string[kvps.Length];
+        Parallel.For(0, kvps.Length, i =>
+        {
+            var inst = kvps[i].Key;
+            instrumentKeys[i] = inst;
+            if (maxScoresByInstrument.TryGetValue(inst, out var thresholds) && thresholds.Count > 0)
+                perInstrument[i] = kvps[i].Value.GetCurrentStatePlayerRankingsFiltered(accountId, thresholds, songId);
+            else
+                perInstrument[i] = kvps[i].Value.GetCurrentStatePlayerRankings(accountId, songId);
         });
 
         var result = new Dictionary<(string, string), int>();
@@ -1803,6 +2050,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return db.GetRankForScore(songId, score, maxScore);
     }
 
+    public int GetCurrentStateRankForScore(string instrument, string songId, int score, int? maxScore = null)
+    {
+        if (!_instrumentDbs.TryGetValue(instrument, out var db))
+            return 0;
+        return db.GetCurrentStateRankForScore(songId, score, maxScore);
+    }
+
     /// <summary>
     /// Count valid (below-threshold) entries per song for each instrument.
     /// <paramref name="maxScoresByInstrument"/> maps instrument DB name → (songId → threshold).
@@ -1837,6 +2091,36 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return result;
     }
 
+    public Dictionary<(string SongId, string Instrument), int> GetCurrentStateFilteredPopulation(
+        Dictionary<string, Dictionary<string, int>> maxScoresByInstrument,
+        HashSet<string>? instruments = null)
+    {
+        var kvps = instruments is null
+            ? _instrumentDbs.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).ToArray();
+
+        var perInstrument = new Dictionary<string, int>[kvps.Length];
+        var instrumentKeys = new string[kvps.Length];
+        Parallel.For(0, kvps.Length, i =>
+        {
+            var inst = kvps[i].Key;
+            instrumentKeys[i] = inst;
+            if (maxScoresByInstrument.TryGetValue(inst, out var thresholds) && thresholds.Count > 0)
+                perInstrument[i] = kvps[i].Value.GetCurrentStateFilteredEntryCounts(thresholds);
+            else
+                perInstrument[i] = kvps[i].Value.GetCurrentStateAllSongCounts();
+        });
+
+        var result = new Dictionary<(string, string), int>();
+        for (int i = 0; i < kvps.Length; i++)
+        {
+            var instrument = instrumentKeys[i];
+            foreach (var (sid, count) in perInstrument[i])
+                result[(sid, instrument)] = count;
+        }
+        return result;
+    }
+
     /// <summary>
     /// Get the leaderboard for a specific song + instrument.
     /// </summary>
@@ -1857,6 +2141,30 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (!_instrumentDbs.TryGetValue(instrument, out var db))
             return null;
         return db.GetLeaderboardWithCount(songId, top, offset, maxScore);
+    }
+
+    /// <summary>
+    /// Get the current-state leaderboard for a specific song + instrument,
+    /// resolving snapshot + overlay precedence when a finalized snapshot exists.
+    /// Returns null if the instrument is unknown.
+    /// </summary>
+    public List<LeaderboardEntryDto>? GetCurrentStateLeaderboard(string songId, string instrument, int? top = null, int offset = 0)
+    {
+        if (!_instrumentDbs.TryGetValue(instrument, out var db))
+            return null;
+        return db.GetCurrentStateLeaderboard(songId, top, offset);
+    }
+
+    /// <summary>
+    /// Get the current-state leaderboard with count in a single query.
+    /// Returns null if the instrument is unknown.
+    /// </summary>
+    public (List<LeaderboardEntryDto> Entries, int TotalCount)? GetCurrentStateLeaderboardWithCount(
+        string songId, string instrument, int? top = null, int offset = 0, int? maxScore = null)
+    {
+        if (!_instrumentDbs.TryGetValue(instrument, out var db))
+            return null;
+        return db.GetCurrentStateLeaderboardWithCount(songId, top, offset, maxScore);
     }
 
     /// <summary>
@@ -1988,6 +2296,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     private sealed record BandIdentityLookup(string BandType, string TeamKey);
+    private sealed record PlayerBandMembershipSummaryRow(
+        string AccountId,
+        string BandType,
+        string TeamKey,
+        string InstrumentCombo,
+        int AppearanceCount,
+        Dictionary<string, List<string>> MemberInstruments);
     private sealed record PlayerBandTeamSummary(string BandType, string TeamKey, int AppearanceCount);
 
     private int? _cachedTotalSongCount;

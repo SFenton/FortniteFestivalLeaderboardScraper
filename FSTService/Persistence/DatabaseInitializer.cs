@@ -30,6 +30,8 @@ public static class DatabaseInitializer
 
     private const string Schema = """
 
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
         -- =====================================================================
         -- SONGS (from fst-service.db)
         -- =====================================================================
@@ -142,6 +144,110 @@ public static class DatabaseInitializer
         -- (ix_le_song_score), which supports the actual access pattern.
         -- Saves ~3.9 GB.
 
+        CREATE TABLE IF NOT EXISTS instrument_scrape_state (
+            instrument         TEXT        PRIMARY KEY,
+            max_observed_season INTEGER    NOT NULL,
+            last_scrape_id     BIGINT,
+            updated_at         TIMESTAMPTZ NOT NULL
+        );
+
+        -- =====================================================================
+        -- OPTION B SCAFFOLDING (snapshot + overlay current-state model)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot (
+            snapshot_id        BIGINT      NOT NULL,
+            song_id            TEXT        NOT NULL,
+            instrument         TEXT        NOT NULL,
+            account_id         TEXT        NOT NULL,
+            score              INTEGER     NOT NULL,
+            accuracy           INTEGER,
+            is_full_combo      BOOLEAN,
+            stars              INTEGER,
+            season             INTEGER,
+            percentile         REAL,
+            rank               INTEGER     DEFAULT 0,
+            source             TEXT        NOT NULL DEFAULT 'scrape',
+            difficulty         INTEGER     DEFAULT -1,
+            api_rank           INTEGER,
+            end_time           TEXT,
+            band_members_json  JSONB,
+            band_score         INTEGER,
+            base_score         INTEGER,
+            instrument_bonus   INTEGER,
+            overdrive_bonus    INTEGER,
+            instrument_combo   TEXT,
+            first_seen_at      TIMESTAMPTZ NOT NULL,
+            last_updated_at    TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (snapshot_id, song_id, instrument, account_id)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_guitar    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_bass      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_drums     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_solo_vocals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_guitar     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_bass       PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_vocals     PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_cymbals    PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_snapshot_pro_drums      PARTITION OF leaderboard_entries_snapshot FOR VALUES IN ('Solo_PeripheralDrums');
+
+        CREATE INDEX IF NOT EXISTS ix_les_snapshot_song_score
+            ON leaderboard_entries_snapshot (snapshot_id, song_id, instrument, score DESC);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_snapshot_state (
+            song_id             TEXT        NOT NULL,
+            instrument          TEXT        NOT NULL,
+            active_snapshot_id  BIGINT,
+            scrape_id           BIGINT,
+            is_finalized        BOOLEAN     NOT NULL DEFAULT FALSE,
+            wave1_finalized_at  TIMESTAMPTZ,
+            wave2_finalized_at  TIMESTAMPTZ,
+            updated_at          TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (song_id, instrument)
+        );
+
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay (
+            song_id            TEXT        NOT NULL,
+            instrument         TEXT        NOT NULL,
+            account_id         TEXT        NOT NULL,
+            score              INTEGER     NOT NULL,
+            accuracy           INTEGER,
+            is_full_combo      BOOLEAN,
+            stars              INTEGER,
+            season             INTEGER,
+            percentile         REAL,
+            rank               INTEGER     DEFAULT 0,
+            source             TEXT        NOT NULL DEFAULT 'overlay',
+            difficulty         INTEGER     DEFAULT -1,
+            api_rank           INTEGER,
+            end_time           TEXT,
+            band_members_json  JSONB,
+            band_score         INTEGER,
+            base_score         INTEGER,
+            instrument_bonus   INTEGER,
+            overdrive_bonus    INTEGER,
+            instrument_combo   TEXT,
+            first_seen_at      TIMESTAMPTZ NOT NULL,
+            last_updated_at    TIMESTAMPTZ NOT NULL,
+            source_priority    INTEGER     NOT NULL DEFAULT 0,
+            overlay_reason     TEXT,
+            PRIMARY KEY (song_id, instrument, account_id)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_solo_guitar    PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_solo_bass      PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_solo_drums     PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_solo_vocals    PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_pro_guitar     PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_pro_bass       PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_pro_vocals     PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_pro_cymbals    PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay_pro_drums      PARTITION OF leaderboard_entries_overlay FOR VALUES IN ('Solo_PeripheralDrums');
+
+        CREATE INDEX IF NOT EXISTS ix_leo_song_priority_score
+            ON leaderboard_entries_overlay (song_id, instrument, source_priority DESC, score DESC);
+
         -- =====================================================================
         -- SONG STATS (partitioned by instrument)
         -- =====================================================================
@@ -217,6 +323,12 @@ public static class DatabaseInitializer
             ON account_rankings (instrument, total_score_rank);
         CREATE UNIQUE INDEX IF NOT EXISTS ix_ar_max_score_pct
             ON account_rankings (instrument, max_score_percent_rank);
+
+        CREATE TABLE IF NOT EXISTS account_ranking_stats (
+            instrument           TEXT        PRIMARY KEY,
+            ranked_account_count INTEGER     NOT NULL,
+            computed_at          TIMESTAMPTZ NOT NULL
+        );
 
         -- =====================================================================
         -- RANK HISTORY (partitioned by instrument)
@@ -354,6 +466,9 @@ public static class DatabaseInitializer
         -- being 458 MB. The expression form matches the query.
         CREATE INDEX IF NOT EXISTS ix_an_name_lower
             ON account_names (LOWER(display_name)) WHERE display_name IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS ix_an_name_lower_trgm
+            ON account_names USING GIN (LOWER(display_name) gin_trgm_ops)
+            WHERE display_name IS NOT NULL;
 
         -- =====================================================================
         -- REGISTERED USERS (from fst-meta.db — kept for backfill/rivals)
@@ -1100,6 +1215,48 @@ public static class DatabaseInitializer
         -- scrape_id at a time, so indexes keyed on scrape_id add no selectivity
         -- beyond the existing PRIMARY KEY. Saves ~1.9 GB of index storage.
 
+        -- Active staging table (v2): partitioned by instrument so finalized
+        -- instruments can be truncated instead of row-deleted.
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2 (
+            scrape_id    INT              NOT NULL,
+            song_id      TEXT             NOT NULL,
+            instrument   TEXT             NOT NULL,
+            page_num     INT              NOT NULL,
+            account_id   TEXT             NOT NULL,
+            score        INT              NOT NULL,
+            accuracy     INT,
+            is_full_combo BOOLEAN,
+            stars        INT,
+            season       INT,
+            difficulty   INT,
+            percentile   DOUBLE PRECISION,
+            rank         INT,
+            end_time     TEXT,
+            api_rank     INT,
+            source       TEXT,
+            staged_at    TIMESTAMPTZ      NOT NULL DEFAULT now(),
+            PRIMARY KEY (scrape_id, song_id, instrument, account_id)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_solo_guitar
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_solo_bass
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_solo_drums
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_solo_vocals
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_pro_guitar
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_pro_bass
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_pro_vocals
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_pro_cymbals
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_v2_pro_drums
+            PARTITION OF leaderboard_staging_v2 FOR VALUES IN ('Solo_PeripheralDrums');
+
         -- =====================================================================
         -- LEADERBOARD STAGING METADATA (per-combo finalization state)
         -- =====================================================================
@@ -1231,6 +1388,32 @@ public static class DatabaseInitializer
         -- The lookup pattern "all members in song X of band_type Y" isn't
         -- exercised; the PK serves the account-first path used in practice.
         -- Saves ~393 MB.
+
+        -- Player-band summary rows. One row per account × team × raw combo.
+        -- This replaces repeated per-request grouping over band_members.
+        CREATE TABLE IF NOT EXISTS band_team_membership (
+            account_id              TEXT        NOT NULL,
+            band_type               TEXT        NOT NULL,
+            team_key                TEXT        NOT NULL,
+            instrument_combo        TEXT        NOT NULL DEFAULT '',
+            appearance_count        INTEGER     NOT NULL,
+            member_instruments_json JSONB       NOT NULL DEFAULT '{}'::jsonb,
+            updated_at              TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (account_id, band_type, team_key, instrument_combo)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_btm_account_band_type
+            ON band_team_membership (account_id, band_type);
+
+        CREATE INDEX IF NOT EXISTS ix_btm_band_team
+            ON band_team_membership (band_type, team_key);
+
+        -- Rollout safety: only accounts with a state row are allowed to read the
+        -- summary directly. Existing accounts are backfilled once on first read.
+        CREATE TABLE IF NOT EXISTS band_team_membership_state (
+            account_id   TEXT        PRIMARY KEY,
+            rebuilt_at   TIMESTAMPTZ NOT NULL
+        );
 
         -- Aggregate band-team rankings are stored in per-band current tables.
 

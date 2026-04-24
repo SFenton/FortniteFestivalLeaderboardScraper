@@ -121,7 +121,7 @@ public sealed class RankingsCalculator
 
             // Phase 1: SongStats (uses MAX of local count, previous, real population)
             var songStatsSw = System.Diagnostics.Stopwatch.StartNew();
-            db.ComputeSongStats(maxScoresForInstrument, populationForInstrument);
+            db.ComputeCurrentStateSongStats(maxScoresForInstrument, populationForInstrument);
             songStatsSw.Stop();
             LogPhase("per_instrument.song_stats", instrument, songStatsSw.Elapsed, maxScoresForInstrument.Count);
 
@@ -129,7 +129,7 @@ public sealed class RankingsCalculator
             // Finds entries whose current score exceeds 1.05× CHOpt max, then looks up
             // the best valid historical score from ScoreHistory to use in rankings.
             var overridesSw = System.Diagnostics.Stopwatch.StartNew();
-            var overThreshold = db.GetOverThresholdEntries();
+            var overThreshold = db.GetCurrentStateOverThresholdEntries();
             long overrideRows = 0;
             if (overThreshold.Count > 0)
             {
@@ -196,7 +196,7 @@ public sealed class RankingsCalculator
 
             // Materialize leaderboard_entries × song_stats once
             var matSw = System.Diagnostics.Stopwatch.StartNew();
-            db.MaterializeValidEntries(conn, BaseThresholdMultiplier);
+            db.MaterializeCurrentStateValidEntries(conn, BaseThresholdMultiplier);
             matSw.Stop();
             _log.LogDebug("{Instrument}: materialized valid entries in {Elapsed}.", instrument, matSw.Elapsed);
             LogPhase("per_instrument.materialize_valid_entries", instrument, matSw.Elapsed);

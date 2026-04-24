@@ -300,8 +300,8 @@ public sealed class ScrapeTimePrecomputer
             var lowerBound = (int)(maxScore * 0.95);
             var upperBound = (int)(maxScore * 1.05);
 
-            var baseCount = db.GetPopulationAtOrBelow(songId, lowerBound);
-            var bandScores = db.GetScoresInBand(songId, lowerBound, upperBound);
+            var baseCount = db.GetCurrentStatePopulationAtOrBelow(songId, lowerBound);
+            var bandScores = db.GetCurrentStateScoresInBand(songId, lowerBound, upperBound);
 
             // Build changepoints: each score maps to a leeway percentage
             var tiers = new List<PopulationTier>();
@@ -360,7 +360,7 @@ public sealed class ScrapeTimePrecomputer
             var db = _persistence.GetOrCreateInstrumentDb(item.Instrument);
             var lo = (int)(item.MaxScore * 0.95);
             var hi = (int)(item.MaxScore * 1.05);
-            var scores = db.GetScoresInBand(item.SongId, lo, hi);
+            var scores = db.GetCurrentStateScoresInBand(item.SongId, lo, hi);
             cache[(item.SongId, item.Instrument)] = scores.ToArray();
         });
 
@@ -409,7 +409,7 @@ public sealed class ScrapeTimePrecomputer
         Dictionary<string, string>? displayNames = null,
         List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
-        var scores = _persistence.GetPlayerProfile(accountId);
+        var scores = _persistence.GetCurrentStatePlayerProfile(accountId);
         if (scores.Count == 0) return;
 
         displayNames ??= _metaDb.GetDisplayNames(new[] { accountId });
@@ -527,7 +527,7 @@ public sealed class ScrapeTimePrecomputer
         {
             // No scores in the threshold band — rank is just basePopulation-based
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var baseRank = db.GetRankForScore(key.SongId, fallbackScore);
+            var baseRank = db.GetCurrentStateRankForScore(key.SongId, fallbackScore);
             return [new RankTier { Leeway = -50, Rank = baseRank }];
         }
 
@@ -541,13 +541,13 @@ public sealed class ScrapeTimePrecomputer
         if (fallbackScore <= lowerBound)
         {
             // fallbackScore is in the always-valid zone
-            alwaysAbove = db2.GetRankForScore(key.SongId, fallbackScore) - 1;
+            alwaysAbove = db2.GetCurrentStateRankForScore(key.SongId, fallbackScore) - 1;
         }
         else
         {
             // Count entries above fallbackScore but at or below lowerBound
-            alwaysAbove = db2.GetPopulationAtOrBelow(key.SongId, lowerBound) -
-                          db2.GetPopulationAtOrBelow(key.SongId, fallbackScore);
+            alwaysAbove = db2.GetCurrentStatePopulationAtOrBelow(key.SongId, lowerBound) -
+                          db2.GetCurrentStatePopulationAtOrBelow(key.SongId, fallbackScore);
             if (alwaysAbove < 0) alwaysAbove = 0;
         }
 
@@ -642,7 +642,7 @@ public sealed class ScrapeTimePrecomputer
                 var raw = ms.GetByInstrument(instrument);
                 if (raw.HasValue) maxScore = (int)(raw.Value * (1.0 + leeway.Value / 100.0));
             }
-            var result = _persistence.GetLeaderboardWithCount(songId, instrument, 10, maxScore: maxScore);
+            var result = _persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, 10, maxScore: maxScore);
             if (result is null) return;
 
             var (entries, dbCount) = result.Value;

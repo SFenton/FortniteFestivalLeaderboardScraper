@@ -113,7 +113,7 @@ public sealed class ScrapeOrchestrator
         int totalRequests = 0;
         long totalBytes = 0;
 
-        _persistence.StartSpoolWriter(spoolDir);
+        _persistence.StartSpoolWriter(scrapeId, spoolDir);
 
         // Band spool — separate files for band_entries tables
         SpoolWriter<BandLeaderboardEntry>? bandSpool = null;
@@ -326,6 +326,7 @@ public sealed class ScrapeOrchestrator
         // Build the explicit output contract
         var ctx = new ScrapePassContext
         {
+            ScrapeId = scrapeId,
             AccessToken = accessToken,
             CallerAccountId = callerAccountId,
             RegisteredIds = registeredIds,

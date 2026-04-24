@@ -74,7 +74,7 @@ public sealed class RivalsCalculator
                 continue;
 
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var userScores = db.GetPlayerScores(userId);
+            var userScores = db.GetCurrentStatePlayerScores(userId);
 
             instrumentStates.Add(new RivalInstrumentStateRow
             {
@@ -120,7 +120,7 @@ public sealed class RivalsCalculator
                 continue;
 
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var scores = db.GetPlayerScores(userId);
+            var scores = db.GetCurrentStatePlayerScores(userId);
             if (scores.Count >= MinUserSongsPerInstrument)
                 validInstruments.Add(instrument);
         }
@@ -146,7 +146,7 @@ public sealed class RivalsCalculator
                 continue;
 
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var userScores = db.GetPlayerScores(userId);
+            var userScores = db.GetCurrentStatePlayerScores(userId);
             var scan = ScanInstrumentCandidates(db, userId, userScores);
             if (scan.UserSongCount < MinUserSongsPerInstrument)
             {
@@ -222,7 +222,7 @@ public sealed class RivalsCalculator
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
 
             // Load user scores once for this instrument
-            var userScores = db.GetPlayerScores(userId);
+            var userScores = db.GetCurrentStatePlayerScores(userId);
             var userScoreMap = userScores.ToDictionary(s => s.SongId, StringComparer.OrdinalIgnoreCase);
 
             foreach (var rivalId in selectedRivalIds)
@@ -234,7 +234,7 @@ public sealed class RivalsCalculator
                 var sharedSongIds = candidate.SongIds.Where(userScoreMap.ContainsKey).ToList();
                 if (sharedSongIds.Count == 0) continue;
 
-                var rivalScores = db.GetPlayerScoresForSongs(rivalId, sharedSongIds);
+                var rivalScores = db.GetCurrentStatePlayerScoresForSongs(rivalId, sharedSongIds);
                 var rivalScoreMap = rivalScores.ToDictionary(s => s.SongId, StringComparer.OrdinalIgnoreCase);
 
                 var details = new List<(int AbsDelta, RivalSongSampleRow Row)>();
@@ -299,7 +299,7 @@ public sealed class RivalsCalculator
             };
         }
 
-        var songCounts = db.GetAllSongCounts();
+        var songCounts = db.GetCurrentStateAllSongCounts();
         foreach (var entry in userScores)
         {
             // Prefer dense Rank (set by RecomputeAllRanks for scrape entries) because
@@ -319,7 +319,7 @@ public sealed class RivalsCalculator
             }
 
             songsScanned++;
-            var neighbors = db.GetNeighborhood(entry.SongId, effectiveRank, NeighborhoodRadius, userId);
+            var neighbors = db.GetCurrentStateNeighborhood(entry.SongId, effectiveRank, NeighborhoodRadius, userId);
             totalNeighborsFound += neighbors.Count;
             var logWeight = Math.Log2(entryCount);
 
@@ -662,8 +662,8 @@ public sealed class RivalsCalculator
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
 
-            var userSongIds = db.GetSongIdsForAccount(userId);
-            var rivalSongIds = db.GetSongIdsForAccount(rivalId);
+            var userSongIds = db.GetCurrentStateSongIdsForAccount(userId);
+            var rivalSongIds = db.GetCurrentStateSongIdsForAccount(rivalId);
 
             // Songs the rival has that the user hasn't played
             var rivalOnly = new List<string>();
@@ -675,7 +675,7 @@ public sealed class RivalsCalculator
 
             if (rivalOnly.Count > 0)
             {
-                var rivalScores = db.GetPlayerScoresForSongs(rivalId, rivalOnly);
+                var rivalScores = db.GetCurrentStatePlayerScoresForSongs(rivalId, rivalOnly);
                 foreach (var s in rivalScores)
                 {
                     songsToCompete.Add(new SongGapEntry
@@ -698,7 +698,7 @@ public sealed class RivalsCalculator
 
             if (userOnly.Count > 0)
             {
-                var userScores = db.GetPlayerScoresForSongs(userId, userOnly);
+                var userScores = db.GetCurrentStatePlayerScoresForSongs(userId, userOnly);
                 foreach (var s in userScores)
                 {
                     yourExclusives.Add(new SongGapEntry
@@ -773,7 +773,7 @@ public sealed class RivalsCalculator
         foreach (var instrument in instrumentKeys)
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var userScores = db.GetPlayerScores(userId);
+            var userScores = db.GetCurrentStatePlayerScores(userId);
 
             if (userScores.Count == 0)
                 continue;
@@ -825,7 +825,7 @@ public sealed class RivalsCalculator
             {
                 rankedEntries.Sort((a, b) => a.EffectiveRank.CompareTo(b.EffectiveRank));
                 var median = rankedEntries[rankedEntries.Count / 2];
-                var neighbors = db.GetNeighborhood(
+                var neighbors = db.GetCurrentStateNeighborhood(
                     median.Entry.SongId, median.EffectiveRank, NeighborhoodRadius, userId);
                 probe = new NeighborhoodProbe
                 {
@@ -933,7 +933,7 @@ public sealed class RivalsCalculator
         if (effectiveRank <= 0)
             return "UNRANKED";
 
-        var neighbors = db.GetNeighborhood(songId, effectiveRank, NeighborhoodRadius, userId)
+        var neighbors = db.GetCurrentStateNeighborhood(songId, effectiveRank, NeighborhoodRadius, userId)
             .OrderBy(n => n.Rank)
             .ThenBy(n => n.AccountId, StringComparer.OrdinalIgnoreCase);
 

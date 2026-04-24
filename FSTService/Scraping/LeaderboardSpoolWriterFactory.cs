@@ -10,17 +10,17 @@ namespace FSTService.Scraping;
 /// </summary>
 public static class LeaderboardSpoolWriterFactory
 {
-    public static SpoolWriter<LeaderboardEntry> Create(ILogger log, GlobalLeaderboardPersistence persistence, string? baseDirectory = null)
+    public static SpoolWriter<LeaderboardEntry> Create(ILogger log, GlobalLeaderboardPersistence persistence, long scrapeId, string? baseDirectory = null)
     {
         return new SpoolWriter<LeaderboardEntry>(
             log, "solo",
             serialize: SerializeSoloPage,
             deserialize: DeserializeSoloPage,
-            flush: (instrument, batch) => FlushSoloBatch(log, persistence, instrument, batch),
+            flush: (instrument, batch) => FlushSoloBatch(log, persistence, scrapeId, instrument, batch),
             baseDirectory: baseDirectory);
     }
 
-    private static void FlushSoloBatch(ILogger log, GlobalLeaderboardPersistence persistence, string instrument,
+    private static void FlushSoloBatch(ILogger log, GlobalLeaderboardPersistence persistence, long scrapeId, string instrument,
                                         List<(string SongId, IReadOnlyList<LeaderboardEntry> Entries)> batch)
     {
         var db = (InstrumentDatabase)persistence.GetOrCreateInstrumentDb(instrument);
@@ -103,6 +103,21 @@ public static class LeaderboardSpoolWriterFactory
                     }
                 }
                 writer.Complete();
+            }
+
+            if (scrapeId > 0)
+            {
+                using var snapshotCmd = conn.CreateCommand();
+                snapshotCmd.Transaction = tx;
+                snapshotCmd.CommandTimeout = 0;
+                snapshotCmd.CommandText =
+                    "INSERT INTO leaderboard_entries_snapshot (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
+                    "SELECT @snapshotId, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts " +
+                    "FROM (SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, source, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts FROM _le_staging ORDER BY song_id, instrument, account_id, score DESC, ts DESC) snapshot_rows " +
+                    "ON CONFLICT (snapshot_id, song_id, instrument, account_id) DO UPDATE SET " +
+                    "score = EXCLUDED.score, accuracy = EXCLUDED.accuracy, is_full_combo = EXCLUDED.is_full_combo, stars = EXCLUDED.stars, season = EXCLUDED.season, percentile = EXCLUDED.percentile, rank = EXCLUDED.rank, source = EXCLUDED.source, difficulty = EXCLUDED.difficulty, api_rank = EXCLUDED.api_rank, end_time = EXCLUDED.end_time, band_members_json = EXCLUDED.band_members_json, band_score = EXCLUDED.band_score, base_score = EXCLUDED.base_score, instrument_bonus = EXCLUDED.instrument_bonus, overdrive_bonus = EXCLUDED.overdrive_bonus, instrument_combo = EXCLUDED.instrument_combo, last_updated_at = EXCLUDED.last_updated_at";
+                snapshotCmd.Parameters.AddWithValue("snapshotId", scrapeId);
+                snapshotCmd.ExecuteNonQuery();
             }
 
             // ── Statement 1: Score-gated ON CONFLICT ──
