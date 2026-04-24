@@ -108,14 +108,20 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_le_song_score
             ON leaderboard_entries (song_id, instrument, score DESC);
-        CREATE INDEX IF NOT EXISTS ix_le_account
-            ON leaderboard_entries (account_id, instrument);
+        -- ix_le_account removed 2026-04-23 (Phase 2): total 3-3-0-3-3-0 scans
+        -- across partitions over the lifetime of the database, vs. ~2 GB of
+        -- storage. The composite ix_le_account_song index (account_id, song_id,
+        -- instrument) covers the (account_id, instrument) prefix for any query
+        -- that could benefit.
         CREATE INDEX IF NOT EXISTS ix_le_account_song
             ON leaderboard_entries (account_id, song_id, instrument);
         CREATE INDEX IF NOT EXISTS ix_le_song_source
             ON leaderboard_entries (song_id, instrument, source);
-        CREATE INDEX IF NOT EXISTS ix_le_song_rank
-            ON leaderboard_entries (song_id, instrument, rank);
+        -- ix_le_song_rank removed 2026-04-23 (Phase 2): idx_scan=0 across all
+        -- 9 partitions for the life of the database. Per-song rank ordering is
+        -- provided instead by the (song_id, instrument, score DESC) index
+        -- (ix_le_song_score), which supports the actual access pattern.
+        -- Saves ~3.9 GB.
 
         -- =====================================================================
         -- SONG STATS (partitioned by instrument)
@@ -321,8 +327,14 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_an_unresolved
             ON account_names (last_resolved) WHERE last_resolved IS NULL;
-        CREATE INDEX IF NOT EXISTS ix_an_name
-            ON account_names (display_name) WHERE display_name IS NOT NULL;
+        -- 2026-04-23 (Phase 2): replaced `ix_an_name ON account_names (display_name)`
+        -- with an expression index on LOWER(display_name). The only query that
+        -- hit this column was `GetAccountIdForUsername` using
+        -- `WHERE LOWER(display_name) = LOWER(@username)`, which the raw btree
+        -- could never satisfy, so the old index had idx_scan=0 forever despite
+        -- being 458 MB. The expression form matches the query.
+        CREATE INDEX IF NOT EXISTS ix_an_name_lower
+            ON account_names (LOWER(display_name)) WHERE display_name IS NOT NULL;
 
         -- =====================================================================
         -- REGISTERED USERS (from fst-meta.db — kept for backfill/rivals)
@@ -714,12 +726,9 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_cr_rank_weighted
             ON composite_rankings (composite_rank_weighted);
-        CREATE INDEX IF NOT EXISTS ix_cr_rank_fcrate
-            ON composite_rankings (composite_rank_fcrate);
-        CREATE INDEX IF NOT EXISTS ix_cr_rank_totalscore
-            ON composite_rankings (composite_rank_totalscore);
-        CREATE INDEX IF NOT EXISTS ix_cr_rank_maxscore
-            ON composite_rankings (composite_rank_maxscore);
+        -- ix_cr_rank_fcrate, ix_cr_rank_totalscore, ix_cr_rank_maxscore removed
+        -- 2026-04-23 (Phase 2): idx_scan=0 over the life of the database; the
+        -- endpoints that would use them use ix_cr_rank instead. Saves ~334 MB.
 
         -- =====================================================================
         -- LEADERBOARD RIVALS (from fst-meta.db)
@@ -803,8 +812,8 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_combo_adjusted
             ON combo_leaderboard (combo_id, adjusted_rating ASC);
-        CREATE INDEX IF NOT EXISTS ix_combo_weighted
-            ON combo_leaderboard (combo_id, weighted_rating ASC);
+        -- ix_combo_weighted removed 2026-04-23 (Phase 2): idx_scan=0 forever.
+        -- Other combo_* indexes (fc_rate, total_score, max_score) are in use.
         CREATE INDEX IF NOT EXISTS ix_combo_fc_rate
             ON combo_leaderboard (combo_id, fc_rate DESC);
         CREATE INDEX IF NOT EXISTS ix_combo_total_score
@@ -1067,12 +1076,10 @@ public static class DatabaseInitializer
             PRIMARY KEY (scrape_id, song_id, instrument, account_id)
         );
 
-        CREATE INDEX IF NOT EXISTS ix_staging_scrape
-            ON leaderboard_staging (scrape_id);
-        CREATE INDEX IF NOT EXISTS ix_staging_instrument
-            ON leaderboard_staging (scrape_id, instrument);
-        CREATE INDEX IF NOT EXISTS ix_staging_combo
-            ON leaderboard_staging (scrape_id, song_id, instrument);
+        -- Staging indexes removed 2026-04-23 (Phase 2): idx_scan=0 forever.
+        -- leaderboard_staging is truncated each scrape and only contains one
+        -- scrape_id at a time, so indexes keyed on scrape_id add no selectivity
+        -- beyond the existing PRIMARY KEY. Saves ~1.9 GB of index storage.
 
         -- =====================================================================
         -- LEADERBOARD STAGING METADATA (per-combo finalization state)
@@ -1154,10 +1161,10 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS band_entries_trios  PARTITION OF band_entries FOR VALUES IN ('Band_Trios');
         CREATE TABLE IF NOT EXISTS band_entries_quad   PARTITION OF band_entries FOR VALUES IN ('Band_Quad');
 
-        CREATE INDEX IF NOT EXISTS ix_be_song_score
-            ON band_entries (song_id, band_type, score DESC);
-        CREATE INDEX IF NOT EXISTS ix_be_song_rank
-            ON band_entries (song_id, band_type, rank);
+        -- ix_be_song_score + ix_be_song_rank removed 2026-04-23 (Phase 2):
+        -- idx_scan=0 across all three band partitions forever. The per-song
+        -- ordering queries read from band_team_rankings_current_band_* instead.
+        -- Saves ~2.1 GB (score idx) + ~1.1 GB (rank idx).
 
         -- Per-member stats for each band entry.
         -- Populated from trackedStats M_{i}_* fields during V1 parsing or V2 enrichment.
@@ -1177,8 +1184,9 @@ public static class DatabaseInitializer
             PRIMARY KEY (song_id, band_type, team_key, instrument_combo, member_index)
         );
 
-        CREATE INDEX IF NOT EXISTS ix_bms_account
-            ON band_member_stats (account_id);
+        -- ix_bms_account removed 2026-04-23 (Phase 2): idx_scan=0 forever.
+        -- Reverse lookup "get stats for all bands player X played" is not in use;
+        -- the PK (song_id, band_type, ...) serves the forward direction. Saves ~650 MB.
 
         -- Denormalized lookup: all bands a player appears in.
         -- Enables "find all bands for player X" queries without scanning band_member_stats.
@@ -1191,8 +1199,10 @@ public static class DatabaseInitializer
             PRIMARY KEY (account_id, song_id, band_type, team_key, instrument_combo)
         );
 
-        CREATE INDEX IF NOT EXISTS ix_bm_song_type
-            ON band_members (song_id, band_type);
+        -- ix_bm_song_type removed 2026-04-23 (Phase 2): idx_scan=0 forever.
+        -- The lookup pattern "all members in song X of band_type Y" isn't
+        -- exercised; the PK serves the account-first path used in practice.
+        -- Saves ~393 MB.
 
         -- Aggregate band-team rankings are stored in per-band current tables.
 
@@ -1233,8 +1243,9 @@ public static class DatabaseInitializer
             END IF;
         END $$;
 
-        CREATE INDEX IF NOT EXISTS ix_be_combo
-            ON band_entries (song_id, band_type, instrument_combo);
+        -- ix_be_combo removed 2026-04-23 (Phase 2): idx_scan=0 across all three
+        -- band partitions forever. Combo lookups go through band_team_rankings_current.
+        -- Saves ~1.1 GB.
 
         -- ── Migration: add band context columns to leaderboard_entries ──
         DO $$ BEGIN
