@@ -1139,26 +1139,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             return hasPrimaryKey;
         }
 
-    /// <summary>Maps rankBy to the COALESCE expression for leeway-aware queries.</summary>
-    private static (string EffectiveCol, string Direction) EffectiveRankByColumn(string rankBy) => rankBy switch
-    {
-        "weighted" => ("COALESCE(rd.weighted, ar.weighted_rating)", "ASC"),
-        "fcrate" => ("COALESCE(rd.fc_rate, ar.fc_rate)", "DESC"),
-        "totalscore" => ("COALESCE(rd.total_score, ar.total_score)", "DESC"),
-        "maxscore" => ("COALESCE(rd.max_score_pct, ar.max_score_percent)", "DESC"),
-        _ => ("COALESCE(rd.adjusted_skill, ar.adjusted_skill_rating)", "ASC"),
-    };
-
-    /// <summary>Maps rankBy to the COALESCE expression for tier-based leeway queries.</summary>
-    private static (string EffectiveCol, string Direction) EffectiveTierRankByColumn(string rankBy) => rankBy switch
-    {
-        "weighted" => ("COALESCE(rdt.weighted, ar.weighted_rating)", "ASC"),
-        "fcrate" => ("COALESCE(rdt.fc_rate, ar.fc_rate)", "DESC"),
-        "totalscore" => ("COALESCE(rdt.total_score, ar.total_score)", "DESC"),
-        "maxscore" => ("COALESCE(rdt.max_score_pct, ar.max_score_percent)", "DESC"),
-        _ => ("COALESCE(rdt.adjusted_skill, ar.adjusted_skill_rating)", "ASC"),
-    };
-
     /// <summary>Quantizes a leeway value to the nearest 0.1 bucket (floor). Returns 99.0 for null (unfiltered).</summary>
     public static double QuantizeBucket(double? leeway)
     {
