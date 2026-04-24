@@ -96,15 +96,34 @@ public static class DatabaseInitializer
             PRIMARY KEY (song_id, instrument, account_id)
         ) PARTITION BY LIST (instrument);
 
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_guitar    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Guitar');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_bass      PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Bass');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_drums     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Drums');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_vocals    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Vocals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_guitar     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralGuitar');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_bass       PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralBass');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_vocals     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralVocals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_cymbals    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralCymbals');
-        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_drums      PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralDrums');
+        -- FILLFACTOR=85 leaves 15% free space per page for HOT updates (updates
+        -- that don't touch indexed columns can be performed in-page without
+        -- re-inserting into every index). leaderboard_entries sees ~25× more
+        -- UPDATEs than INSERTs (score/rank rewrites during scrape), so HOT
+        -- significantly reduces index bloat and WAL volume.
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_guitar    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Guitar')            WITH (fillfactor=85);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_bass      PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Bass')              WITH (fillfactor=85);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_drums     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Drums')             WITH (fillfactor=85);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_vocals    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Vocals')            WITH (fillfactor=85);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_guitar     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralGuitar')  WITH (fillfactor=85);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_bass       PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralBass')    WITH (fillfactor=85);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_vocals     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralVocals')  WITH (fillfactor=85);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_cymbals    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralCymbals') WITH (fillfactor=85);
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_drums      PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralDrums')   WITH (fillfactor=85);
+
+        -- Idempotent migration: ensure fillfactor is applied on pre-existing
+        -- partitions from databases created before the FILLFACTOR change.
+        -- ALTER TABLE SET (fillfactor=...) is metadata-only and cheap; new
+        -- pages (and pages rewritten by VACUUM FULL / pg_repack) honour it.
+        ALTER TABLE leaderboard_entries_solo_guitar    SET (fillfactor=85);
+        ALTER TABLE leaderboard_entries_solo_bass      SET (fillfactor=85);
+        ALTER TABLE leaderboard_entries_solo_drums     SET (fillfactor=85);
+        ALTER TABLE leaderboard_entries_solo_vocals    SET (fillfactor=85);
+        ALTER TABLE leaderboard_entries_pro_guitar     SET (fillfactor=85);
+        ALTER TABLE leaderboard_entries_pro_bass       SET (fillfactor=85);
+        ALTER TABLE leaderboard_entries_pro_vocals     SET (fillfactor=85);
+        ALTER TABLE leaderboard_entries_pro_cymbals    SET (fillfactor=85);
+        ALTER TABLE leaderboard_entries_pro_drums      SET (fillfactor=85);
 
         CREATE INDEX IF NOT EXISTS ix_le_song_score
             ON leaderboard_entries (song_id, instrument, score DESC);
@@ -1157,9 +1176,18 @@ public static class DatabaseInitializer
             PRIMARY KEY (song_id, band_type, team_key, instrument_combo)
         ) PARTITION BY LIST (band_type);
 
-        CREATE TABLE IF NOT EXISTS band_entries_duets  PARTITION OF band_entries FOR VALUES IN ('Band_Duets');
-        CREATE TABLE IF NOT EXISTS band_entries_trios  PARTITION OF band_entries FOR VALUES IN ('Band_Trios');
-        CREATE TABLE IF NOT EXISTS band_entries_quad   PARTITION OF band_entries FOR VALUES IN ('Band_Quad');
+        -- FILLFACTOR=80 — band_entries sees both heavy UPDATEs (team-key
+        -- reassignment) and DELETEs (partition churn), so leaving 20% free
+        -- page space gives more room for HOT updates and avoids immediate
+        -- page splits when dead tuples get vacuumed.
+        CREATE TABLE IF NOT EXISTS band_entries_duets  PARTITION OF band_entries FOR VALUES IN ('Band_Duets') WITH (fillfactor=80);
+        CREATE TABLE IF NOT EXISTS band_entries_trios  PARTITION OF band_entries FOR VALUES IN ('Band_Trios') WITH (fillfactor=80);
+        CREATE TABLE IF NOT EXISTS band_entries_quad   PARTITION OF band_entries FOR VALUES IN ('Band_Quad')  WITH (fillfactor=80);
+
+        -- Idempotent fillfactor migration for pre-existing partitions.
+        ALTER TABLE band_entries_duets SET (fillfactor=80);
+        ALTER TABLE band_entries_trios SET (fillfactor=80);
+        ALTER TABLE band_entries_quad  SET (fillfactor=80);
 
         -- ix_be_song_score + ix_be_song_rank removed 2026-04-23 (Phase 2):
         -- idx_scan=0 across all three band partitions forever. The per-song
