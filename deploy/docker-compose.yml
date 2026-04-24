@@ -11,7 +11,9 @@
 
 services:
   postgres:
-    image: postgres:17-alpine
+    # Custom image: postgres:17-alpine + pg_repack built from source.
+    # Build with: docker build -f deploy/postgres.Dockerfile -t fst-postgres:17-repack deploy
+    image: fst-postgres:17-repack
     container_name: fst-postgres
     restart: unless-stopped
     volumes:

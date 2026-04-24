@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    image: fst-postgres:17-repack
+    build:
+      context: ./deploy
+      dockerfile: postgres.Dockerfile
     container_name: fst-postgres
     restart: unless-stopped
     volumes:
