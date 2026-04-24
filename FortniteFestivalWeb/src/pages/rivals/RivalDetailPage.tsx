@@ -134,7 +134,9 @@ export default function RivalDetailPage() {
       before={<PageHeader title={`${playerName} vs. ${displayName}`} actions={!isMobile && phase === LoadPhase.ContentIn ? (
         <button style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onClick={() => navigate(Routes.player(rivalId!))}>
           <IoPerson size={IconSize.action} />
-          {t('common.viewProfile')}
+          {(rivalName || searchParams.get('name'))
+            ? t('common.viewNameProfile', { name: rivalName ?? searchParams.get('name') })
+            : t('common.viewProfile')}
         </button>
       ) : undefined} />}
     >
