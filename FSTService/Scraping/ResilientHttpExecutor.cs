@@ -231,16 +231,31 @@ public sealed class ResilientHttpExecutor
     /// probe send from hanging indefinitely (e.g. on a wedged proxy connection).</summary>
     public static readonly TimeSpan DefaultProbeSendTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>Default per-attempt wall-clock timeout for caller <see cref="SendAsync"/>
+    /// invocations. Since <c>HttpClient.Timeout</c> is typically set to
+    /// <see cref="Timeout.InfiniteTimeSpan"/> (to let this executor govern retries),
+    /// this bound prevents a single wedged TCP connection (e.g. zombie socket after
+    /// a proxy VPN recycle) from hanging a request indefinitely. On timeout the send
+    /// is treated as a transient network error and retried indefinitely — callers see
+    /// real service errors or success, never a timeout.</summary>
+    public static readonly TimeSpan DefaultSendWallClockTimeout = TimeSpan.FromSeconds(120);
+
     private readonly TimeSpan _probeSendTimeout;
+    private readonly TimeSpan _sendWallClockTimeout;
     private readonly CancellationToken _executorLifetime;
 
     public ResilientHttpExecutor(HttpClient http, ILogger log)
-        : this(http, log, probeSendTimeout: null, executorLifetime: default) { }
+        : this(http, log, probeSendTimeout: null, sendWallClockTimeout: null, executorLifetime: default) { }
 
     /// <param name="probeSendTimeout">Per-attempt timeout for the background CDN probe
     /// send. Defaults to <see cref="DefaultProbeSendTimeout"/>. A single probe
     /// <c>HttpClient.SendAsync</c> call will not block longer than this, regardless of
     /// the underlying client's <c>Timeout</c>.</param>
+    /// <param name="sendWallClockTimeout">Per-attempt wall-clock timeout for caller
+    /// <see cref="SendAsync"/> invocations. Defaults to
+    /// <see cref="DefaultSendWallClockTimeout"/>. On timeout the send is counted as a
+    /// transient network error and the retry loop continues — the caller will not
+    /// observe a timeout unless they cancel themselves.</param>
     /// <param name="executorLifetime">Token tied to the executor's owner (typically
     /// <c>IHostApplicationLifetime.ApplicationStopping</c>). The background probe uses
     /// this token for outer delays and as the base of its per-attempt send token, so
@@ -249,11 +264,13 @@ public sealed class ResilientHttpExecutor
         HttpClient http,
         ILogger log,
         TimeSpan? probeSendTimeout,
+        TimeSpan? sendWallClockTimeout,
         CancellationToken executorLifetime)
     {
         _http = http;
         _log = log;
         _probeSendTimeout = probeSendTimeout ?? DefaultProbeSendTimeout;
+        _sendWallClockTimeout = sendWallClockTimeout ?? DefaultSendWallClockTimeout;
         _executorLifetime = executorLifetime;
     }
 
@@ -340,11 +357,18 @@ public sealed class ResilientHttpExecutor
             }
 
             HttpResponseMessage res;
+            // Per-attempt wall-clock deadline: HttpClient.Timeout is typically Infinite
+            // so a wedged connection (zombie TCP after proxy recycle) can hang forever.
+            // Linked CTS fires at _sendWallClockTimeout; the resulting TaskCanceledException
+            // is caught below (ct.IsCancellationRequested is false) and counted as a transient
+            // network error, so the retry loop continues until real success or service error.
+            using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            sendCts.CancelAfter(_sendWallClockTimeout);
             try
             {
                 Interlocked.Increment(ref _totalHttpSends);
                 op.SetState(InflightState.Sending);
-                res = await _http.SendAsync(requestFactory(), ct);
+                res = await _http.SendAsync(requestFactory(), sendCts.Token);
             }
             catch (HttpRequestException ex)
             {
@@ -359,16 +383,35 @@ public sealed class ResilientHttpExecutor
                 limiter?.ReportFailure();
                 continue; // transient — retry indefinitely
             }
+            catch (ObjectDisposedException ex) when (!ct.IsCancellationRequested)
+            {
+                // SocketsHttpHandler connection pool reset mid-send (e.g. proxy rotation
+                // forcing ResetConnectionPool) can surface as ObjectDisposedException.
+                // Treat as transient and retry indefinitely.
+                if (IsCdnBlocked)
+                    throw new CdnBlockedException(
+                        $"CDN block on {label ?? "request"} (disposed during CDN block: {ex.Message})");
+
+                networkErrors++;
+                _log.LogWarning(
+                    "Connection disposed for {Operation} (networkError {NetErr}, DOP {Dop}): {Error}",
+                    label ?? "request", networkErrors, limiter?.CurrentDop ?? -1, ex.Message);
+                limiter?.ReportFailure();
+                continue; // transient — retry indefinitely
+            }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
                 if (IsCdnBlocked)
                     throw new CdnBlockedException(
                         $"CDN block on {label ?? "request"} (timeout during CDN block)");
 
+                // This covers both the legacy HttpClient.Timeout fire AND our per-attempt
+                // wall-clock deadline (sendCts.CancelAfter). Either way the caller's ct
+                // was not cancelled, so we treat as transient and retry indefinitely.
                 networkErrors++;
                 _log.LogWarning(
-                    "Timeout for {Operation} (networkError {NetErr}, DOP {Dop})",
-                    label ?? "request", networkErrors, limiter?.CurrentDop ?? -1);
+                    "Timeout for {Operation} (networkError {NetErr}, DOP {Dop}, wall-clock {WallClockMs}ms)",
+                    label ?? "request", networkErrors, limiter?.CurrentDop ?? -1, _sendWallClockTimeout.TotalMilliseconds);
                 limiter?.ReportFailure();
                 continue; // transient timeout — retry indefinitely
             }

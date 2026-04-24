@@ -883,7 +883,7 @@ public sealed class ResilientHttpExecutorTests
     {
         var http = new HttpClient(handler);
         var executor = new ResilientHttpExecutor(
-            http, Substitute.For<ILogger>(), probeSendTimeout, lifetime);
+            http, Substitute.For<ILogger>(), probeSendTimeout, sendWallClockTimeout: null, lifetime);
         executor.CdnRetryDelaysOverride = new TimeSpan[9]; // all TimeSpan.Zero
         executor.MaxJitterMs = 0;
         return executor;
@@ -1193,5 +1193,103 @@ public sealed class ResilientHttpExecutorTests
         cts.Cancel();
         try { await sendTask; } catch { /* cancellation expected */ }
         await WaitForConditionAsync(() => executor.InflightOperations.Count == 0, TimeSpan.FromSeconds(2));
+    }
+
+    // ─── Per-send wall-clock deadline (zombie socket fix) ─────────────
+    // Production stall: proxy-routed sends wedged for 65 minutes because
+    // HttpClient.Timeout=Infinite + no per-attempt deadline in SendAsync.
+    // Fix adds a linked CTS + CancelAfter(sendWallClockTimeout) around the
+    // send call. On timeout the existing catch retries indefinitely.
+
+    private static ResilientHttpExecutor CreateExecutorWithSendTimeout(
+        MockHttpMessageHandler handler,
+        TimeSpan sendWallClockTimeout)
+    {
+        var http = new HttpClient(handler);
+        var executor = new ResilientHttpExecutor(
+            http, Substitute.For<ILogger>(),
+            probeSendTimeout: null,
+            sendWallClockTimeout: sendWallClockTimeout,
+            executorLifetime: default);
+        return executor;
+    }
+
+    [Fact]
+    public async Task SendAsync_HangingSocket_TimesOutAndRetries_UntilSuccess()
+    {
+        // Two hung sends should be treated as transient and retried; third returns 200.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithSendTimeout(handler, TimeSpan.FromMilliseconds(150));
+
+        handler.EnqueueHang();
+        handler.EnqueueHang();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var response = await executor.SendAsync(
+            () => MakeRequest(), label: "hang-retry", ct: cts.Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task SendAsync_HangingSocket_CallerCancelled_PropagatesCancellation()
+    {
+        // Caller CT cancellation must win over wall-clock timeout and propagate OCE.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithSendTimeout(handler, TimeSpan.FromSeconds(30));
+
+        handler.EnqueueHang();
+
+        using var cts = new CancellationTokenSource();
+        var sendTask = executor.SendAsync(() => MakeRequest(), label: "caller-cancel", ct: cts.Token);
+
+        await Task.Delay(50);
+        cts.Cancel();
+
+        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
+        Assert.True(cts.Token.IsCancellationRequested);
+        // Only one send attempted — no retry after caller cancel.
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_ObjectDisposedException_RetriesAsTransient()
+    {
+        // ObjectDisposedException from SocketsHttpHandler pool reset must be
+        // treated as a transient network error and retried indefinitely.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithSendTimeout(handler, TimeSpan.FromSeconds(10));
+
+        handler.EnqueueException(new ObjectDisposedException("SocketsHttpHandler"));
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var response = await executor.SendAsync(() => MakeRequest(), label: "ode-retry");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task SendAsync_WallClockTimeout_HonoursConfiguredValue()
+    {
+        // Short timeout should cause retry within the configured window.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithSendTimeout(handler, TimeSpan.FromMilliseconds(100));
+
+        handler.EnqueueHang();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var response = await executor.SendAsync(
+            () => MakeRequest(), label: "short-timeout", ct: cts.Token);
+        sw.Stop();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        // Hang (~100 ms) + 500ms post-error settle delay + success should land well under 3s.
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3),
+            $"Expected elapsed < 3s but was {sw.Elapsed.TotalMilliseconds:F0}ms");
     }
 }
