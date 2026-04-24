@@ -273,6 +273,8 @@ builder.Services.AddSingleton<IPathDataStore>(sp =>
         sp.GetRequiredService<ILogger<FSTService.Scraping.PathDataStore>>()));
 builder.Services.AddSingleton(sp => (FSTService.Scraping.PathDataStore)sp.GetRequiredService<IPathDataStore>());
 
+builder.Services.AddSingleton<FSTService.Api.DbStatsService>();
+
 // ─── Shared services ────────────────────────────────────────
 
 builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>

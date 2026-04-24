@@ -2801,6 +2801,40 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Admin_DbStats_Queries_RequiresAuth()
+    {
+        var response = await _client.GetAsync("/api/admin/dbstats/queries");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_DbStats_Bloat_RequiresAuth()
+    {
+        var response = await _client.GetAsync("/api/admin/dbstats/bloat");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_DbStats_Bloat_ReturnsTables()
+    {
+        var response = await _authedClient.GetAsync("/api/admin/dbstats/bloat?limit=5");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("count", out _));
+        Assert.True(json.TryGetProperty("tables", out var tables));
+        Assert.Equal(JsonValueKind.Array, tables.ValueKind);
+    }
+
+    [Fact]
+    public async Task Admin_DbStats_Queries_ReturnsServiceUnavailableWhenExtensionMissing()
+    {
+        // pg_stat_statements is not installed in the test postgres (no shared_preload_libraries).
+        // Endpoint should respond 503 with a clear message rather than 500.
+        var response = await _authedClient.GetAsync("/api/admin/dbstats/queries");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Admin_FirstSeen_ReturnsData()
     {
         var response = await _client.GetAsync("/api/firstseen");

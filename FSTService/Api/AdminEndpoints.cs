@@ -3,6 +3,7 @@ using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace FSTService.Api;
 
@@ -399,6 +400,50 @@ public static partial class ApiEndpoints
             return Results.Ok(result);
         })
         .WithTags("Leaderboard")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
+        // ─── Database observability (pg_stat_statements, pg_stat_user_tables) ───
+
+        app.MapGet("/api/admin/dbstats/queries", async (
+            DbStatsService stats,
+            string? orderBy,
+            int? limit,
+            ILogger<DbStatsService> log,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var results = await stats.GetTopQueriesAsync(
+                    orderBy: orderBy ?? "total",
+                    limit: Math.Clamp(limit ?? 20, 1, 100),
+                    ct);
+                return Results.Ok(new { orderBy = orderBy ?? "total", count = results.Count, queries = results });
+            }
+            catch (PostgresException ex) when (ex.SqlState == "42P01")
+            {
+                // pg_stat_statements view not available
+                log.LogWarning(ex, "pg_stat_statements not installed");
+                return Results.Problem(
+                    detail: "pg_stat_statements extension is not installed. Enable it in postgres configuration.",
+                    statusCode: 503);
+            }
+        })
+        .WithTags("Admin")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
+        app.MapGet("/api/admin/dbstats/bloat", async (
+            DbStatsService stats,
+            int? limit,
+            CancellationToken ct) =>
+        {
+            var results = await stats.GetTableBloatAsync(
+                limit: Math.Clamp(limit ?? 30, 1, 200),
+                ct);
+            return Results.Ok(new { count = results.Count, tables = results });
+        })
+        .WithTags("Admin")
         .RequireAuthorization()
         .RequireRateLimiting("protected");
     }

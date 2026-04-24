@@ -2334,11 +2334,13 @@ public sealed class MetaDatabase : IMetaDatabase
         statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(buildRankingTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(currentRankingTable)}");
         statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(buildStatsTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(currentStatsTable)}");
 
-        if (TableExists(conn, tx, backupRankingTable))
-            statements.Add($"DROP TABLE {BandRankingStorageNames.QuoteIdentifier(backupRankingTable)}");
-
-        if (TableExists(conn, tx, backupStatsTable))
-            statements.Add($"DROP TABLE {BandRankingStorageNames.QuoteIdentifier(backupStatsTable)}");
+        // The backup tables were just created by the RENAMEs above in this same
+        // batch, so TableExists() executed before the batch cannot see them.
+        // Use IF EXISTS so Postgres evaluates existence at statement time and
+        // drops the backup regardless of whether the first RENAME ran (no-op on
+        // first-ever build when currentRankingTable did not exist).
+        statements.Add($"DROP TABLE IF EXISTS {BandRankingStorageNames.QuoteIdentifier(backupRankingTable)}");
+        statements.Add($"DROP TABLE IF EXISTS {BandRankingStorageNames.QuoteIdentifier(backupStatsTable)}");
 
         using var cmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(cmd, tx, options);

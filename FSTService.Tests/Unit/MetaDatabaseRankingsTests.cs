@@ -304,6 +304,39 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void RebuildBandTeamRankings_DoesNotLeakOldBackupTables()
+    {
+        // Regression test: SwapBandCurrentTables previously checked backup
+        // table existence before the batched RENAMEs executed, so the DROP
+        // for the just-created backup was never queued. This caused one
+        // `band_team_rankings_current_band_*_old_<suffix>` pair to leak per
+        // rebuild, accumulating tens of GB of orphaned tables in production.
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT tablename
+            FROM pg_tables
+            WHERE schemaname = 'public'
+              AND (tablename LIKE 'band_team_rankings_current_band_duets_old_%'
+                   OR tablename LIKE 'band_team_ranking_stats_current_band_duets_old_%')
+            ORDER BY tablename;";
+        var orphans = new List<string>();
+        using (var reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+                orphans.Add(reader.GetString(0));
+        }
+
+        Assert.Empty(orphans);
+    }
+
+    [Fact]
     public void RebuildBandTeamRankings_AllWriteModesMatch()
     {
         using var monolithicFixture = new InMemoryMetaDatabase();
