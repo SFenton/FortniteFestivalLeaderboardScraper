@@ -185,6 +185,24 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.True(state?.IsFinalized);
     }
 
+    [Fact]
+    public void FinalizeShadowSnapshots_activates_expected_pairs_without_snapshot_rows()
+    {
+        using var glp = CreatePersistence();
+
+        var activated = glp.FinalizeShadowSnapshots(
+            42,
+            expectedPairs: [("song_empty", "Solo_Guitar")]);
+
+        Assert.Equal(1, activated);
+        Assert.Equal(0, GetSnapshotRowCount(42, "song_empty", "Solo_Guitar"));
+        var state = GetSnapshotState("song_empty", "Solo_Guitar");
+        Assert.NotNull(state);
+        Assert.Equal(42, state?.ActiveSnapshotId);
+        Assert.Equal(42, state?.ScrapeId);
+        Assert.True(state?.IsFinalized);
+    }
+
     // ═══ Score Change Detection ═════════════════════════════════
 
     [Fact]

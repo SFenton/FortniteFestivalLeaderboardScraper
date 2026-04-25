@@ -771,24 +771,40 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         _spoolWriter = null;
     }
 
-    public int FinalizeShadowSnapshots(long scrapeId, int wave = 1)
+    public int FinalizeShadowSnapshots(
+        long scrapeId,
+        int wave = 1,
+        IEnumerable<(string SongId, string Instrument)>? expectedPairs = null)
     {
         if (scrapeId <= 0)
             return 0;
+
+        var expectedPairArray = expectedPairs?
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.SongId) && !string.IsNullOrWhiteSpace(pair.Instrument))
+            .Distinct()
+            .ToArray()
+            ?? [];
 
         var finalizedColumn = wave == 2 ? "wave2_finalized_at" : "wave1_finalized_at";
         using var conn = _pgDataSource!.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
-            WITH snapshot_pairs AS (
+            WITH expected_pairs AS (
+                SELECT DISTINCT pair.song_id, pair.instrument
+                FROM unnest(@expectedSongIds::text[], @expectedInstruments::text[]) AS pair(song_id, instrument)
+            ), snapshot_pairs AS (
                 SELECT DISTINCT song_id, instrument
                 FROM leaderboard_entries_snapshot
                 WHERE snapshot_id = @scrapeId
+            ), activation_pairs AS (
+                SELECT song_id, instrument FROM snapshot_pairs
+                UNION
+                SELECT song_id, instrument FROM expected_pairs
             ), upserted AS (
                 INSERT INTO leaderboard_snapshot_state
                 (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, {finalizedColumn}, updated_at)
                 SELECT song_id, instrument, @scrapeId, @scrapeId, TRUE, @now, @now
-                FROM snapshot_pairs
+                FROM activation_pairs
                 ON CONFLICT (song_id, instrument) DO UPDATE SET
                     active_snapshot_id = EXCLUDED.active_snapshot_id,
                     scrape_id = EXCLUDED.scrape_id,
@@ -801,6 +817,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             """;
         cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("expectedSongIds", expectedPairArray.Select(pair => pair.SongId).ToArray());
+        cmd.Parameters.AddWithValue("expectedInstruments", expectedPairArray.Select(pair => pair.Instrument).ToArray());
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
