@@ -24,6 +24,7 @@ public static class LeaderboardSpoolWriterFactory
                                         List<(string SongId, IReadOnlyList<LeaderboardEntry> Entries)> batch)
     {
         var db = (InstrumentDatabase)persistence.GetOrCreateInstrumentDb(instrument);
+        var activeInstrument = db.Instrument;
 
         try
         {
@@ -71,7 +72,7 @@ public static class LeaderboardSpoolWriterFactory
                     {
                         writer.StartRow();
                         writer.Write(songId, NpgsqlTypes.NpgsqlDbType.Text);
-                        writer.Write(db.Instrument, NpgsqlTypes.NpgsqlDbType.Text);
+                        writer.Write(activeInstrument, NpgsqlTypes.NpgsqlDbType.Text);
                         writer.Write(e.AccountId, NpgsqlTypes.NpgsqlDbType.Text);
                         writer.Write(e.Score, NpgsqlTypes.NpgsqlDbType.Integer);
                         writer.Write(e.Accuracy, NpgsqlTypes.NpgsqlDbType.Integer);
@@ -110,13 +111,9 @@ public static class LeaderboardSpoolWriterFactory
                 using var snapshotCmd = conn.CreateCommand();
                 snapshotCmd.Transaction = tx;
                 snapshotCmd.CommandTimeout = 0;
-                snapshotCmd.CommandText =
-                    "INSERT INTO leaderboard_entries_snapshot (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
-                    "SELECT @snapshotId, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts " +
-                    "FROM (SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, source, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts FROM _le_staging ORDER BY song_id, instrument, account_id, score DESC, ts DESC) snapshot_rows " +
-                    "ON CONFLICT (snapshot_id, song_id, instrument, account_id) DO UPDATE SET " +
-                    "score = EXCLUDED.score, accuracy = EXCLUDED.accuracy, is_full_combo = EXCLUDED.is_full_combo, stars = EXCLUDED.stars, season = EXCLUDED.season, percentile = EXCLUDED.percentile, rank = EXCLUDED.rank, source = EXCLUDED.source, difficulty = EXCLUDED.difficulty, api_rank = EXCLUDED.api_rank, end_time = EXCLUDED.end_time, band_members_json = EXCLUDED.band_members_json, band_score = EXCLUDED.band_score, base_score = EXCLUDED.base_score, instrument_bonus = EXCLUDED.instrument_bonus, overdrive_bonus = EXCLUDED.overdrive_bonus, instrument_combo = EXCLUDED.instrument_combo, last_updated_at = EXCLUDED.last_updated_at";
+                snapshotCmd.CommandText = BuildSnapshotInsertSql();
                 snapshotCmd.Parameters.AddWithValue("snapshotId", scrapeId);
+                snapshotCmd.Parameters.AddWithValue("instrument", activeInstrument);
                 snapshotCmd.ExecuteNonQuery();
             }
 
@@ -128,36 +125,8 @@ public static class LeaderboardSpoolWriterFactory
             {
                 cmd.Transaction = tx;
                 cmd.CommandTimeout = 0; // Unlimited — bulk merge of millions of rows
-                cmd.CommandText =
-                    "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
-                    "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts FROM _le_staging " +
-                    "ORDER BY song_id, instrument, account_id, score DESC " +
-                    "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
-                    "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
-                    "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
-                    "is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.is_full_combo ELSE leaderboard_entries.is_full_combo END, " +
-                    "stars = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.stars ELSE leaderboard_entries.stars END, " +
-                    "season = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.season ELSE leaderboard_entries.season END, " +
-                    "difficulty = CASE WHEN EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0 THEN EXCLUDED.difficulty WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.difficulty ELSE leaderboard_entries.difficulty END, " +
-                    "percentile = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.percentile WHEN EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0 THEN EXCLUDED.percentile ELSE leaderboard_entries.percentile END, " +
-                    "rank = CASE WHEN EXCLUDED.rank > 0 THEN EXCLUDED.rank ELSE leaderboard_entries.rank END, " +
-                    "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
-                    "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
-                    "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
-                    "band_members_json = COALESCE(EXCLUDED.band_members_json, leaderboard_entries.band_members_json), " +
-                    "band_score = COALESCE(EXCLUDED.band_score, leaderboard_entries.band_score), " +
-                    "base_score = COALESCE(EXCLUDED.base_score, leaderboard_entries.base_score), " +
-                    "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
-                    "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
-                    "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
-                    "last_updated_at = EXCLUDED.last_updated_at " +
-                    "WHERE EXCLUDED.score != leaderboard_entries.score " +
-                    "OR (EXCLUDED.source = 'scrape' AND leaderboard_entries.source != 'scrape') " +
-                    "OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) " +
-                    "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
-                    "OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_entries.band_members_json IS NULL) " +
-                    "OR COALESCE(EXCLUDED.base_score, -1) != COALESCE(leaderboard_entries.base_score, -1) " +
-                    "OR COALESCE(EXCLUDED.overdrive_bonus, -1) != COALESCE(leaderboard_entries.overdrive_bonus, -1)";
+                cmd.CommandText = BuildScoreMergeSql();
+                cmd.Parameters.AddWithValue("instrument", activeInstrument);
                 cmd.ExecuteNonQuery();
             }
 
@@ -169,14 +138,8 @@ public static class LeaderboardSpoolWriterFactory
             {
                 cmd.Transaction = tx;
                 cmd.CommandTimeout = 0;
-                cmd.CommandText =
-                    "UPDATE leaderboard_entries le " +
-                    "SET api_rank = s.api_rank, rank = s.rank, last_updated_at = s.ts " +
-                    "FROM (SELECT DISTINCT ON (song_id, instrument, account_id) " +
-                    "song_id, instrument, account_id, api_rank, rank, ts " +
-                    "FROM _le_staging ORDER BY song_id, instrument, account_id, score DESC) s " +
-                    "WHERE le.song_id = s.song_id AND le.instrument = s.instrument AND le.account_id = s.account_id " +
-                    "AND (le.api_rank IS DISTINCT FROM s.api_rank OR (s.rank > 0 AND le.rank IS DISTINCT FROM s.rank))";
+                cmd.CommandText = BuildRankUpdateSql();
+                cmd.Parameters.AddWithValue("instrument", activeInstrument);
                 cmd.ExecuteNonQuery();
             }
 
@@ -198,6 +161,54 @@ public static class LeaderboardSpoolWriterFactory
                 instrument, batch.Count, batch.Sum(b => b.Entries.Count));
         }
     }
+
+    internal static string BuildSnapshotInsertSql() =>
+        "INSERT INTO leaderboard_entries_snapshot (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
+        "SELECT @snapshotId, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts " +
+        "FROM (SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, source, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts FROM _le_staging WHERE instrument = @instrument ORDER BY song_id, instrument, account_id, score DESC, ts DESC) snapshot_rows " +
+        "ON CONFLICT (snapshot_id, song_id, instrument, account_id) DO UPDATE SET " +
+        "score = EXCLUDED.score, accuracy = EXCLUDED.accuracy, is_full_combo = EXCLUDED.is_full_combo, stars = EXCLUDED.stars, season = EXCLUDED.season, percentile = EXCLUDED.percentile, rank = EXCLUDED.rank, source = EXCLUDED.source, difficulty = EXCLUDED.difficulty, api_rank = EXCLUDED.api_rank, end_time = EXCLUDED.end_time, band_members_json = EXCLUDED.band_members_json, band_score = EXCLUDED.band_score, base_score = EXCLUDED.base_score, instrument_bonus = EXCLUDED.instrument_bonus, overdrive_bonus = EXCLUDED.overdrive_bonus, instrument_combo = EXCLUDED.instrument_combo, last_updated_at = EXCLUDED.last_updated_at";
+
+    internal static string BuildScoreMergeSql() =>
+        "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
+        "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts FROM _le_staging WHERE instrument = @instrument " +
+        "ORDER BY song_id, instrument, account_id, score DESC " +
+        "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
+        "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
+        "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
+        "is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.is_full_combo ELSE leaderboard_entries.is_full_combo END, " +
+        "stars = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.stars ELSE leaderboard_entries.stars END, " +
+        "season = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.season ELSE leaderboard_entries.season END, " +
+        "difficulty = CASE WHEN EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0 THEN EXCLUDED.difficulty WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.difficulty ELSE leaderboard_entries.difficulty END, " +
+        "percentile = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.percentile WHEN EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0 THEN EXCLUDED.percentile ELSE leaderboard_entries.percentile END, " +
+        "rank = CASE WHEN EXCLUDED.rank > 0 THEN EXCLUDED.rank ELSE leaderboard_entries.rank END, " +
+        "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
+        "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
+        "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+        "band_members_json = COALESCE(EXCLUDED.band_members_json, leaderboard_entries.band_members_json), " +
+        "band_score = COALESCE(EXCLUDED.band_score, leaderboard_entries.band_score), " +
+        "base_score = COALESCE(EXCLUDED.base_score, leaderboard_entries.base_score), " +
+        "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
+        "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
+        "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
+        "last_updated_at = EXCLUDED.last_updated_at " +
+        "WHERE leaderboard_entries.instrument = @instrument AND (" +
+        "EXCLUDED.score != leaderboard_entries.score " +
+        "OR (EXCLUDED.source = 'scrape' AND leaderboard_entries.source != 'scrape') " +
+        "OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) " +
+        "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
+        "OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_entries.band_members_json IS NULL) " +
+        "OR COALESCE(EXCLUDED.base_score, -1) != COALESCE(leaderboard_entries.base_score, -1) " +
+        "OR COALESCE(EXCLUDED.overdrive_bonus, -1) != COALESCE(leaderboard_entries.overdrive_bonus, -1))";
+
+    internal static string BuildRankUpdateSql() =>
+        "UPDATE leaderboard_entries le " +
+        "SET api_rank = s.api_rank, rank = s.rank, last_updated_at = s.ts " +
+        "FROM (SELECT DISTINCT ON (song_id, instrument, account_id) " +
+        "song_id, instrument, account_id, api_rank, rank, ts " +
+        "FROM _le_staging WHERE instrument = @instrument ORDER BY song_id, instrument, account_id, score DESC) s " +
+        "WHERE le.instrument = @instrument AND le.song_id = s.song_id AND le.instrument = s.instrument AND le.account_id = s.account_id " +
+        "AND (le.api_rank IS DISTINCT FROM s.api_rank OR (s.rank > 0 AND le.rank IS DISTINCT FROM s.rank))";
 
     private static string? SerializeBandMembers(LeaderboardEntry e)
     {
