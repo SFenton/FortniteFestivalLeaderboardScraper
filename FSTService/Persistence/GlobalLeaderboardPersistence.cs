@@ -757,7 +757,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// all spool data to PG in bulk. Index management is handled externally
     /// by the orchestrator to coordinate with the band spool.
     /// </summary>
-    public async Task FlushSpoolAsync()
+    public async Task FlushSpoolAsync(ScrapeProgressTracker? progress = null)
     {
         if (_spoolWriter is null) return;
 
@@ -765,10 +765,38 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         _log.LogInformation("Flushing solo spool: {Records:N0} pages, {Entries:N0} entries...",
             _spoolWriter.RecordCount, _spoolWriter.EntryCount);
-        await Task.Run(() => _spoolWriter.FlushAll());
+        await Task.Run(() => _spoolWriter.FlushAll(
+            maxBatchPages: 64,
+            onProgress: p => ReportSpoolFlushProgress(progress, p)));
 
         await _spoolWriter.DisposeAsync();
         _spoolWriter = null;
+    }
+
+    private static void ReportSpoolFlushProgress(
+        ScrapeProgressTracker? progress,
+        SpoolWriter<LeaderboardEntry>.FlushProgress flushProgress)
+    {
+        progress?.ReportFlushProgress(
+            flushProgress.Label,
+            flushProgress.Instrument,
+            flushProgress.InstrumentsCompleted,
+            flushProgress.InstrumentsTotal,
+            flushProgress.PagesFlushed,
+            flushProgress.PagesTotal,
+            flushProgress.EntriesFlushed,
+            flushProgress.EntriesTotal,
+            flushProgress.InstrumentPagesFlushed,
+            flushProgress.InstrumentPagesTotal,
+            flushProgress.InstrumentEntriesFlushed,
+            flushProgress.InstrumentEntriesTotal,
+            flushProgress.ChunkIndex,
+            flushProgress.ChunkTotal,
+            flushProgress.ChunkPages,
+            flushProgress.ChunkEntries,
+            flushProgress.State,
+            flushProgress.ActiveChunkElapsedSeconds,
+            flushProgress.UpdatedAtUtc);
     }
 
     public int FinalizeShadowSnapshots(

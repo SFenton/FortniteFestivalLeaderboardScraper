@@ -231,7 +231,7 @@ public sealed class ScrapeOrchestrator
             _persistence.DropSoloIndexes();
 
             _progress.SetSubOperation("flushing_solo");
-            await _persistence.FlushSpoolAsync();
+            await _persistence.FlushSpoolAsync(_progress);
 
             _progress.SetSubOperation("creating_solo_indexes");
             _persistence.CreateSoloIndexes();
@@ -314,7 +314,9 @@ public sealed class ScrapeOrchestrator
             bandSpool.Complete();
             _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
                 bandSpool.RecordCount, bandSpool.EntryCount);
-            await Task.Run(() => bandSpool.FlushAll());
+            await Task.Run(() => bandSpool.FlushAll(
+                maxBatchPages: 64,
+                onProgress: ReportBandSpoolFlushProgress));
             await bandSpool.DisposeAsync();
 
             _progress.SetSubOperation("creating_band_indexes");
@@ -364,6 +366,30 @@ public sealed class ScrapeOrchestrator
         // Band types are scraped via BandPageFetcher (flat parallel) — not
         // included here to avoid double-scraping through ScrapeManySongsAsync.
         return instruments;
+    }
+
+    private void ReportBandSpoolFlushProgress(SpoolWriter<BandLeaderboardEntry>.FlushProgress flushProgress)
+    {
+        _progress.ReportFlushProgress(
+            flushProgress.Label,
+            flushProgress.Instrument,
+            flushProgress.InstrumentsCompleted,
+            flushProgress.InstrumentsTotal,
+            flushProgress.PagesFlushed,
+            flushProgress.PagesTotal,
+            flushProgress.EntriesFlushed,
+            flushProgress.EntriesTotal,
+            flushProgress.InstrumentPagesFlushed,
+            flushProgress.InstrumentPagesTotal,
+            flushProgress.InstrumentEntriesFlushed,
+            flushProgress.InstrumentEntriesTotal,
+            flushProgress.ChunkIndex,
+            flushProgress.ChunkTotal,
+            flushProgress.ChunkPages,
+            flushProgress.ChunkEntries,
+            flushProgress.State,
+            flushProgress.ActiveChunkElapsedSeconds,
+            flushProgress.UpdatedAtUtc);
     }
 
     /// <summary>Returns true if the instrument key is a band type (Duets/Trios/Quad).</summary>

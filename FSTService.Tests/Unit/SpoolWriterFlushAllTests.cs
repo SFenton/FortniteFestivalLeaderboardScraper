@@ -491,4 +491,73 @@ public class SpoolWriterFlushAllTests
         Assert.Single(drumsCalls);
         Assert.Equal(2, drumsCalls[0].Pages);
     }
+
+    [Fact]
+    public async Task FlushAll_ReportsChunkProgressAndHeartbeat()
+    {
+        var flushCalls = new List<int>();
+        var progress = new List<SpoolWriter<TestEntry>.FlushProgress>();
+        var progressLock = new object();
+        var heartbeatSeen = new ManualResetEventSlim(false);
+        var runningCallbacks = 0;
+        var firstFlush = 1;
+
+        await using var spool = new SpoolWriter<TestEntry>(
+            _log, "test-chunk-progress",
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var e in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, e.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, e.Value);
+                }
+            },
+            deserialize: (stream, header) =>
+            {
+                var songId = SpoolWriter<TestEntry>.ReadString(stream, header);
+                int count = SpoolWriter<TestEntry>.ReadInt32(stream, header);
+                var entries = new TestEntry[count];
+                for (int i = 0; i < count; i++)
+                    entries[i] = new TestEntry
+                    {
+                        Id = SpoolWriter<TestEntry>.ReadString(stream, header),
+                        Value = SpoolWriter<TestEntry>.ReadInt32(stream, header),
+                    };
+                return (songId, entries);
+            },
+            flush: (_, batch) =>
+            {
+                flushCalls.Add(batch.Count);
+                if (Interlocked.Exchange(ref firstFlush, 0) == 1)
+                    Assert.True(heartbeatSeen.Wait(TimeSpan.FromSeconds(2)), "Expected a heartbeat while the first chunk flush was in-flight.");
+            });
+
+        for (int i = 0; i < 5; i++)
+            spool.Enqueue($"song{i}", "Guitar", new[] { new TestEntry { Id = $"e{i}", Value = i } });
+
+        spool.Complete();
+        spool.FlushAll(
+            maxBatchPages: 2,
+            onProgress: snapshot =>
+            {
+                lock (progressLock)
+                    progress.Add(snapshot);
+                if (snapshot.State == "running" && Interlocked.Increment(ref runningCallbacks) >= 2)
+                    heartbeatSeen.Set();
+            },
+            heartbeatInterval: TimeSpan.FromMilliseconds(10));
+
+        List<SpoolWriter<TestEntry>.FlushProgress> progressSnapshot;
+        lock (progressLock)
+            progressSnapshot = progress.ToList();
+
+        Assert.Equal(new[] { 2, 2, 1 }, flushCalls);
+        Assert.Contains(progressSnapshot, p => p.State == "instrument_started" && p.PagesTotal == 5 && p.EntriesTotal == 5);
+        Assert.Contains(progressSnapshot, p => p.State == "running" && p.ChunkIndex == 1 && p.ChunkTotal == 3 && p.ChunkPages == 2);
+        Assert.Contains(progressSnapshot, p => p.State == "completed" && p.ChunkIndex == 3 && p.PagesFlushed == 5 && p.EntriesFlushed == 5);
+        Assert.Contains(progressSnapshot, p => p.State == "instrument_completed" && p.InstrumentsCompleted == 1);
+        Assert.True(runningCallbacks >= 2);
+    }
 }
