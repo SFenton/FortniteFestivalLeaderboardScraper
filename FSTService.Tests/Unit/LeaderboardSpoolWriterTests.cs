@@ -209,4 +209,18 @@ public class LeaderboardSpoolWriterTests
         Assert.Equal(0, spool.RecordCount);
         Assert.Equal(0, spool.EntryCount);
     }
+
+    [Fact]
+    public void SoloFlushSql_UsesConstantInstrumentPredicates_ForPartitionPruning()
+    {
+        var snapshotSql = LeaderboardSpoolWriterFactory.BuildSnapshotInsertSql();
+        var scoreMergeSql = LeaderboardSpoolWriterFactory.BuildScoreMergeSql();
+        var rankUpdateSql = LeaderboardSpoolWriterFactory.BuildRankUpdateSql();
+
+        Assert.Contains("FROM _le_staging WHERE instrument = @instrument", snapshotSql);
+        Assert.Contains("FROM _le_staging WHERE instrument = @instrument", scoreMergeSql);
+        Assert.Contains("WHERE leaderboard_entries.instrument = @instrument", scoreMergeSql);
+        Assert.Contains("FROM _le_staging WHERE instrument = @instrument", rankUpdateSql);
+        Assert.Contains("WHERE le.instrument = @instrument", rankUpdateSql);
+    }
 }
