@@ -150,7 +150,7 @@ public sealed class BackfillOrchestrator
             _progress.SetSubOperation("processing_songs");
             var result = await _cyclicalMachine.AttachAsync(
                 users, chartedSongIds, seasonWindows,
-                SongMachineSource.Backfill, isHighPriority: false, ct);
+                SongMachineSource.Backfill, isHighPriority: false, ct: ct);
 
             _log.LogInformation(
                 "Backfill complete: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",

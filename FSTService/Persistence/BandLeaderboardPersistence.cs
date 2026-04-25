@@ -373,7 +373,8 @@ public sealed class BandLeaderboardPersistence
     /// </summary>
     public (int Bands, int Members, int Lookups) UpsertBandEntriesDirect(
         string songId, string bandType, IReadOnlyList<BandLeaderboardEntry> entries,
-        NpgsqlConnection conn, NpgsqlTransaction tx)
+        NpgsqlConnection conn, NpgsqlTransaction tx,
+        bool rebuildTeamMembership = true)
     {
         if (entries.Count == 0)
             return (0, 0, 0);
@@ -613,7 +614,8 @@ public sealed class BandLeaderboardPersistence
 
         using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _be_staging"; cmd.ExecuteNonQuery(); }
 
-        RebuildBandTeamMembershipForTeams(conn, tx, bandType, impactedTeamKeys);
+        if (rebuildTeamMembership)
+            RebuildBandTeamMembershipForTeams(conn, tx, bandType, impactedTeamKeys);
 
         return (merged, memberStatsCount, lookupCount);
     }
@@ -757,6 +759,7 @@ public sealed class BandLeaderboardPersistence
         NpgsqlTransaction tx,
         string accountId)
     {
+        LockBandTeamMembershipRebuild(conn, tx);
         DeleteBandTeamMembershipForAccount(conn, tx, accountId);
 
         var countRows = new List<BandTeamMembershipCountRow>();
@@ -787,15 +790,43 @@ public sealed class BandLeaderboardPersistence
         UpsertBandTeamMembershipRows(conn, tx, BuildBandTeamMembershipWriteRows(conn, tx, countRows));
     }
 
-    internal static void RebuildBandTeamMembershipForTeams(
+    public int RebuildBandTeamMembershipForTeams(
+        string bandType,
+        IReadOnlyCollection<string> teamKeys,
+        int maxDeadlockRetries = 3)
+    {
+        if (teamKeys.Count == 0)
+            return 0;
+
+        var sortedTeamKeys = teamKeys
+            .Where(static teamKey => !string.IsNullOrWhiteSpace(teamKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static teamKey => teamKey, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (sortedTeamKeys.Length == 0)
+            return 0;
+
+        return ExecuteWithDeadlockRetry(() =>
+        {
+            using var conn = _dataSource.OpenConnection();
+            using var tx = conn.BeginTransaction();
+            var rebuilt = RebuildBandTeamMembershipForTeams(conn, tx, bandType, sortedTeamKeys);
+            tx.Commit();
+            return rebuilt;
+        }, maxDeadlockRetries);
+    }
+
+    internal static int RebuildBandTeamMembershipForTeams(
         NpgsqlConnection conn,
         NpgsqlTransaction tx,
         string bandType,
         IReadOnlyCollection<string> teamKeys)
     {
         if (teamKeys.Count == 0)
-            return;
+            return 0;
 
+        LockBandTeamMembershipRebuild(conn, tx);
         DeleteBandTeamMembershipForTeams(conn, tx, bandType, teamKeys);
 
         var countRows = new List<BandTeamMembershipCountRow>();
@@ -825,7 +856,34 @@ public sealed class BandLeaderboardPersistence
             }
         }
 
-        UpsertBandTeamMembershipRows(conn, tx, BuildBandTeamMembershipWriteRows(conn, tx, countRows));
+        var rows = BuildBandTeamMembershipWriteRows(conn, tx, countRows);
+        UpsertBandTeamMembershipRows(conn, tx, rows);
+        return rows.Count;
+    }
+
+    private static T ExecuteWithDeadlockRetry<T>(Func<T> action, int maxDeadlockRetries)
+    {
+        var attempt = 0;
+        while (true)
+        {
+            try
+            {
+                return action();
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.DeadlockDetected && attempt < maxDeadlockRetries)
+            {
+                attempt++;
+                System.Threading.Thread.Sleep(TimeSpan.FromMilliseconds(100 * attempt));
+            }
+        }
+    }
+
+    private static void LockBandTeamMembershipRebuild(NpgsqlConnection conn, NpgsqlTransaction tx)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT pg_advisory_xact_lock(hashtextextended('band_team_membership_rebuild', 0))";
+        cmd.ExecuteNonQuery();
     }
 
     private static void DeleteBandTeamMembershipForAccount(NpgsqlConnection conn, NpgsqlTransaction tx, string accountId)

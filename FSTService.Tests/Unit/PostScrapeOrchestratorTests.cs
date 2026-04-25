@@ -149,7 +149,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>())
             .Returns(new SongProcessingMachine.MachineResult());
         return mock;
     }
@@ -205,7 +206,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            preserveProgressPhaseOnIdle: true);
     }
 
     [Fact]
@@ -235,7 +237,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>())
             .ThrowsAsync(new InvalidOperationException("API error"));
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });

@@ -181,9 +181,30 @@ public class CyclicalSongMachineTests
         Assert.True(attachment.IsCompleted);
     }
 
+    [Fact]
+    public void ShouldClearProgressWhenIdle_PreservesPostScrapeOwnedPhase()
+    {
+        var preserve = CreateAttachment(["song-1"], preserveProgressPhaseOnIdle: true);
+        var normal = CreateAttachment(["song-1"]);
+
+        Assert.False(CyclicalSongMachine.ShouldClearProgressWhenIdle(
+            ScrapeProgressTracker.ScrapePhase.SongMachine,
+            [preserve]));
+
+        Assert.True(CyclicalSongMachine.ShouldClearProgressWhenIdle(
+            ScrapeProgressTracker.ScrapePhase.SongMachine,
+            [normal]));
+
+        Assert.False(CyclicalSongMachine.ShouldClearProgressWhenIdle(
+            ScrapeProgressTracker.ScrapePhase.BandScraping,
+            [normal]));
+    }
+
     // ── Helper: invoke private static DeduplicateUsers via reflection ──
 
-    private static CyclicalSongMachine.MachineAttachment CreateAttachment(IReadOnlyList<string> songIds)
+    private static CyclicalSongMachine.MachineAttachment CreateAttachment(
+        IReadOnlyList<string> songIds,
+        bool preserveProgressPhaseOnIdle = false)
     {
         return new CyclicalSongMachine.MachineAttachment(
             callerId: "test-caller",
@@ -201,6 +222,7 @@ public class CyclicalSongMachineTests
             seasonWindows: Array.Empty<SeasonWindowInfo>(),
             source: SongMachineSource.PostScrape,
             isHighPriority: true,
+                preserveProgressPhaseOnIdle: preserveProgressPhaseOnIdle,
             callerCt: CancellationToken.None);
     }
 

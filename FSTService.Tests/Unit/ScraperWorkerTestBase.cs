@@ -285,7 +285,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>())
             .Returns(new SongProcessingMachine.MachineResult());
         return mock;
     }

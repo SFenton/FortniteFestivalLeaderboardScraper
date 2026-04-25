@@ -101,7 +101,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -169,7 +170,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>());
     }
 
     [Fact]
@@ -245,7 +247,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>())
             .ThrowsAsync(new InvalidOperationException("machine error"));
 
         var orchestrator = CreateBackfillOrchestrator();
@@ -347,7 +350,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<FSTService.Persistence.SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>());
     }
 
     [Fact]
