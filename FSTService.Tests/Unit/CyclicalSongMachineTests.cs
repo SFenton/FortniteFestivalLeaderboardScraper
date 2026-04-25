@@ -1,3 +1,4 @@
+using FSTService.Persistence;
 using FSTService.Scraping;
 
 namespace FSTService.Tests.Unit;
@@ -140,7 +141,68 @@ public class CyclicalSongMachineTests
         Assert.Equal(2, result.Count);
     }
 
+    [Fact]
+    public async Task MachineAttachment_RecordSongResult_AllowsConcurrentUpdates()
+    {
+        var attachment = CreateAttachment(
+            Enumerable.Range(0, 1_000).Select(i => $"song-{i}").ToArray());
+
+        var result = new SongProcessingMachine.SongStepResult
+        {
+            EntriesUpdated = 1,
+            SessionsInserted = 2,
+            ApiCalls = 3,
+        };
+
+        await Task.WhenAll(Enumerable.Range(0, 5_000)
+            .Select(i => Task.Run(() => attachment.RecordSongResult(i % 1_000, result))));
+
+        Assert.Equal(5_000, attachment.TotalEntriesUpdated);
+        Assert.Equal(10_000, attachment.TotalSessionsInserted);
+        Assert.Equal(15_000, attachment.TotalApiCalls);
+
+        attachment.StampJoinIndex(0);
+        attachment.MarkCyclePassComplete();
+
+        Assert.True(attachment.IsFullyComplete);
+        Assert.Empty(attachment.GetMissingSongIndices(1_000));
+    }
+
+    [Fact]
+    public async Task MachineAttachment_TryFault_CompletesAwaiterWithException()
+    {
+        var attachment = CreateAttachment(["song-1"]);
+        var expected = new InvalidOperationException("cycle failed");
+
+        attachment.TryFault(expected);
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(() => attachment.Completion.Task);
+        Assert.Same(expected, actual);
+        Assert.True(attachment.IsCompleted);
+    }
+
     // ── Helper: invoke private static DeduplicateUsers via reflection ──
+
+    private static CyclicalSongMachine.MachineAttachment CreateAttachment(IReadOnlyList<string> songIds)
+    {
+        return new CyclicalSongMachine.MachineAttachment(
+            callerId: "test-caller",
+            users:
+            [
+                new UserWorkItem
+                {
+                    AccountId = "user1",
+                    Purposes = WorkPurpose.PostScrape,
+                    AllTimeNeeded = true,
+                    SeasonsNeeded = [],
+                },
+            ],
+            songIds: songIds,
+            seasonWindows: Array.Empty<SeasonWindowInfo>(),
+            source: SongMachineSource.PostScrape,
+            isHighPriority: true,
+            callerCt: CancellationToken.None);
+    }
 
     private static List<UserWorkItem> InvokeDeduplicateUsers(List<UserWorkItem> users)
     {

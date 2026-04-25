@@ -215,6 +215,9 @@ public class CyclicalSongMachine
     /// </summary>
     private async Task RunCycleLoopAsync(CancellationToken ct)
     {
+        Exception? cycleFailure = null;
+        var cycleCancelled = false;
+
         try
         {
             while (!ct.IsCancellationRequested && _attachments.Count > 0)
@@ -247,10 +250,12 @@ public class CyclicalSongMachine
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            cycleCancelled = true;
             _log.LogInformation("CyclicalSongMachine cycle cancelled.");
         }
         catch (Exception ex)
         {
+            cycleFailure = ex;
             _log.LogError(ex, "CyclicalSongMachine cycle failed unexpectedly.");
         }
         finally
@@ -259,8 +264,12 @@ public class CyclicalSongMachine
             _cycleSongList = null;
             _cycleSeasonWindows = null;
 
-            // Complete any stragglers with what we have
-            CompleteFinishedAttachments();
+            if (cycleFailure is not null)
+                FaultRemainingAttachments(cycleFailure);
+            else if (cycleCancelled)
+                CancelRemainingAttachments();
+            else
+                CompleteFinishedAttachments();
 
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Idle);
 
@@ -799,6 +808,37 @@ public class CyclicalSongMachine
     }
 
     /// <summary>
+    /// Fault all active attachments after an unexpected cycle failure so callers do not await forever.
+    /// </summary>
+    private void FaultRemainingAttachments(Exception exception)
+    {
+        foreach (var (callerId, att) in _attachments)
+        {
+            att.TryFault(exception);
+            _attachments.TryRemove(callerId, out _);
+            _progress.UnregisterAttachment(callerId);
+
+            _log.LogWarning(
+                exception,
+                "Attachment {CallerId} faulted because the CyclicalSongMachine cycle failed.",
+                callerId);
+        }
+    }
+
+    /// <summary>
+    /// Cancel all active attachments when the cycle loop is cancelled.
+    /// </summary>
+    private void CancelRemainingAttachments()
+    {
+        foreach (var (callerId, att) in _attachments)
+        {
+            att.TryCancel();
+            _attachments.TryRemove(callerId, out _);
+            _progress.UnregisterAttachment(callerId);
+        }
+    }
+
+    /// <summary>
     /// After the core pass, complete attachments whose users only need alltime + current season.
     /// These are typically post-scrape attachments that don't need historical seasons.
     /// </summary>
@@ -960,7 +1000,7 @@ public class CyclicalSongMachine
         public int TotalSessionsInserted;
         public int TotalApiCalls;
 
-        private readonly HashSet<int> _processedSongIndices = [];
+        private readonly ConcurrentDictionary<int, byte> _processedSongIndices = [];
         private readonly CancellationToken _callerCt;
         private readonly HashSet<string> _songIdSet;
 
@@ -1018,7 +1058,7 @@ public class CyclicalSongMachine
                 // First pass: all songs (joined at 0) or from joinIndex onward
                 for (int i = JoinedAtSongIndex; i < totalSongs; i++)
                 {
-                    if (!_processedSongIndices.Contains(i))
+                    if (!_processedSongIndices.ContainsKey(i))
                         yield return i;
                 }
             }
@@ -1027,7 +1067,7 @@ public class CyclicalSongMachine
                 // Loop-back: songs before join index
                 for (int i = 0; i < JoinedAtSongIndex; i++)
                 {
-                    if (!_processedSongIndices.Contains(i))
+                    if (!_processedSongIndices.ContainsKey(i))
                         yield return i;
                 }
             }
@@ -1035,7 +1075,7 @@ public class CyclicalSongMachine
 
         public void RecordSongResult(int songIndex, SongProcessingMachine.SongStepResult result)
         {
-            _processedSongIndices.Add(songIndex);
+            _processedSongIndices.TryAdd(songIndex, 0);
             Interlocked.Add(ref TotalEntriesUpdated, result.EntriesUpdated);
             Interlocked.Add(ref TotalSessionsInserted, result.SessionsInserted);
             Interlocked.Add(ref TotalApiCalls, result.ApiCalls);
@@ -1063,6 +1103,11 @@ public class CyclicalSongMachine
         public void TryCancel()
         {
             Completion.TrySetCanceled();
+        }
+
+        public void TryFault(Exception exception)
+        {
+            Completion.TrySetException(exception);
         }
     }
 }
