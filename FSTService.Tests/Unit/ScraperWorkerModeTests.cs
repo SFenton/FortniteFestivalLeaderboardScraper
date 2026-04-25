@@ -172,7 +172,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>());
     }
 
     [Fact]
@@ -195,7 +196,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>());
     }
 
     [Fact]
@@ -218,7 +220,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>());
     }
 
     [Fact]
@@ -236,7 +239,8 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<SongMachineSource>(),
             Arg.Any<bool>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>())
             .ThrowsAsync(new InvalidOperationException("machine failure"));
 
         var orchestrator = CreateBackfillOrchestrator();

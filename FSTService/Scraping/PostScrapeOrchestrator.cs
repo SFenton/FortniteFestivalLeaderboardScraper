@@ -101,6 +101,9 @@ public sealed class PostScrapeOrchestrator
         var expectedSnapshotPairs = BuildExpectedSnapshotPairs(ctx);
         if (ShouldActivateShadowSnapshotsBeforeDerived(ctx, resolvedPhases))
         {
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+            _progress.SetSubOperation("activating_shadow_snapshots_early");
+            _progress.BeginPhaseProgress(1);
             await RunPhaseAsync("ActivateShadowSnapshotsEarly", () =>
             {
                 var activated = _persistence.FinalizeShadowSnapshots(ctx.ScrapeId, expectedPairs: expectedSnapshotPairs);
@@ -109,6 +112,7 @@ public sealed class PostScrapeOrchestrator
                     ctx.ScrapeId,
                     activated,
                     expectedSnapshotPairs.Count);
+                _progress.ReportPhaseItemComplete();
                 return Task.CompletedTask;
             });
         }
@@ -139,7 +143,11 @@ public sealed class PostScrapeOrchestrator
 
         // ── Band extraction (SQL-only) ──
         if (resolvedPhases.HasFlag(ScrapePhase.BandExtraction))
+        {
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
+            _progress.SetSubOperation("extracting_band_context");
             await RunPhaseAsync("BandExtraction", () => _bandExtractor.RunAsync(ct));
+        }
 
         // ── Solo rankings ──
         var rankingsSucceeded = false;
@@ -568,7 +576,10 @@ public sealed class PostScrapeOrchestrator
             _progress.SetSubOperation("processing_songs");
             var result = await _cyclicalMachine.AttachAsync(
                 users, chartedSongIds, seasonWindows,
-                SongMachineSource.PostScrape, isHighPriority: true, ct: ct);
+                SongMachineSource.PostScrape,
+                isHighPriority: true,
+                ct: ct,
+                preserveProgressPhaseOnIdle: true);
 
             if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
                 _log.LogInformation("Song machine updated {Entries} entries, {Sessions} sessions for {Users} users.",

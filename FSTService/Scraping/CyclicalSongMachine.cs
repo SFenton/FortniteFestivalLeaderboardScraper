@@ -64,6 +64,14 @@ public class CyclicalSongMachine
     /// </summary>
     private bool OwnsProgress => _progress.Phase == ScrapeProgressTracker.ScrapePhase.SongMachine;
 
+    internal static bool ShouldClearProgressWhenIdle(
+        ScrapeProgressTracker.ScrapePhase phase,
+        IEnumerable<MachineAttachment> attachments)
+    {
+        return phase == ScrapeProgressTracker.ScrapePhase.SongMachine
+            && !attachments.Any(static attachment => attachment.PreserveProgressPhaseOnIdle);
+    }
+
     public CyclicalSongMachine(
         SongProcessingMachine inner,
         HistoryReconstructor historyReconstructor,
@@ -113,13 +121,14 @@ public class CyclicalSongMachine
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
         SongMachineSource source,
         bool isHighPriority,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool preserveProgressPhaseOnIdle = false)
     {
         if (users.Count == 0)
             return Task.FromResult(new SongProcessingMachine.MachineResult());
 
         var callerId = $"attach-{Interlocked.Increment(ref _attachmentCounter)}";
-        var attachment = new MachineAttachment(callerId, users, songIds, seasonWindows, source, isHighPriority, ct);
+        var attachment = new MachineAttachment(callerId, users, songIds, seasonWindows, source, isHighPriority, preserveProgressPhaseOnIdle, ct);
 
         _attachments[callerId] = attachment;
         _progress.RegisterAttachment(callerId, source, users, songIds.Count);
@@ -260,6 +269,8 @@ public class CyclicalSongMachine
         }
         finally
         {
+            var clearProgressWhenIdle = ShouldClearProgressWhenIdle(_progress.Phase, _attachments.Values);
+
             _cycleSongIndex = -1;
             _cycleSongList = null;
             _cycleSeasonWindows = null;
@@ -271,7 +282,8 @@ public class CyclicalSongMachine
             else
                 CompleteFinishedAttachments();
 
-            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Idle);
+            if (clearProgressWhenIdle && OwnsProgress)
+                _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Idle);
 
             _log.LogInformation("CyclicalSongMachine going idle. {Remaining} attachments remain.",
                 _attachments.Count);
@@ -981,6 +993,7 @@ public class CyclicalSongMachine
         public IReadOnlyList<SeasonWindowInfo> SeasonWindows { get; }
         public SongMachineSource Source { get; }
         public bool IsHighPriority { get; }
+        public bool PreserveProgressPhaseOnIdle { get; }
         public TaskCompletionSource<SongProcessingMachine.MachineResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>The song index at which this attachment joined the cycle. -1 = not yet stamped.</summary>
@@ -1011,6 +1024,7 @@ public class CyclicalSongMachine
             IReadOnlyList<SeasonWindowInfo> seasonWindows,
             SongMachineSource source,
             bool isHighPriority,
+            bool preserveProgressPhaseOnIdle,
             CancellationToken callerCt)
         {
             CallerId = callerId;
@@ -1019,6 +1033,7 @@ public class CyclicalSongMachine
             SeasonWindows = seasonWindows;
             Source = source;
             IsHighPriority = isHighPriority;
+            PreserveProgressPhaseOnIdle = preserveProgressPhaseOnIdle;
             _callerCt = callerCt;
             _songIdSet = new HashSet<string>(songIds, StringComparer.Ordinal);
         }

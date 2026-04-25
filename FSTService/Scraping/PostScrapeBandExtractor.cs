@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using FSTService.Persistence;
@@ -19,15 +20,18 @@ public sealed class PostScrapeBandExtractor
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IPathDataStore _pathDataStore;
+    private readonly ScrapeProgressTracker? _progress;
     private readonly ILogger<PostScrapeBandExtractor> _log;
 
     public PostScrapeBandExtractor(
         NpgsqlDataSource dataSource,
         IPathDataStore pathDataStore,
-        ILogger<PostScrapeBandExtractor> log)
+        ILogger<PostScrapeBandExtractor> log,
+        ScrapeProgressTracker? progress = null)
     {
         _dataSource = dataSource;
         _pathDataStore = pathDataStore;
+        _progress = progress;
         _log = log;
     }
 
@@ -73,12 +77,15 @@ public sealed class PostScrapeBandExtractor
 
         _log.LogInformation("Extracting band data from {SongCount} songs with up to {Parallelism} concurrent workers.",
             songIds.Count, maxDegreeOfParallelism);
+        _progress?.SetSubOperation("extracting_band_context");
+        _progress?.BeginPhaseProgress(songIds.Count);
 
         // Load CHOpt max scores for validation
         var allMaxScores = _pathDataStore.GetAllMaxScores();
         var persistence = new BandLeaderboardPersistence(
             _dataSource,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<BandLeaderboardPersistence>.Instance);
+        var impactedTeamsByBandType = new ConcurrentDictionary<string, ConcurrentDictionary<string, byte>>(StringComparer.OrdinalIgnoreCase);
 
         await Parallel.ForEachAsync(songIds,
             new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
@@ -86,16 +93,29 @@ public sealed class PostScrapeBandExtractor
             {
                 try
                 {
-                    var (bands, members, lookups) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, innerCt);
+                    var (bands, members, lookups, impactedTeams) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, innerCt);
                     Interlocked.Add(ref totalBandRows, bands);
                     Interlocked.Add(ref totalMemberStats, members);
                     Interlocked.Add(ref totalMemberLookups, lookups);
+                    foreach (var (bandType, teamKey) in impactedTeams)
+                    {
+                        var teams = impactedTeamsByBandType.GetOrAdd(
+                            bandType,
+                            static _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
+                        teams.TryAdd(teamKey, 0);
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _log.LogWarning(ex, "Band extraction failed for song {SongId}. Will retry next pass.", songId);
                 }
+                finally
+                {
+                    _progress?.ReportPhaseItemComplete();
+                }
             });
+
+        RebuildImpactedMembershipSummaries(persistence, impactedTeamsByBandType, ct);
 
         sw.Stop();
         _log.LogInformation(
@@ -104,7 +124,7 @@ public sealed class PostScrapeBandExtractor
             sw.Elapsed, totalBandRows, totalMemberStats, totalMemberLookups);
     }
 
-    private async Task<(int Bands, int Members, int Lookups)> ExtractSongBandDataAsync(
+    private async Task<(int Bands, int Members, int Lookups, List<(string BandType, string TeamKey)> ImpactedTeams)> ExtractSongBandDataAsync(
         string songId,
         IReadOnlyDictionary<string, SongMaxScores> allMaxScores,
         BandLeaderboardPersistence persistence,
@@ -149,7 +169,7 @@ public sealed class PostScrapeBandExtractor
             }
         }
 
-        if (entries.Count == 0) return (0, 0, 0);
+        if (entries.Count == 0) return (0, 0, 0, []);
 
         // Build band entries from the stored data
         var bandEntries = new Dictionary<(string BandType, string TeamKey, string Combo), BandLeaderboardEntry>();
@@ -219,21 +239,27 @@ public sealed class PostScrapeBandExtractor
             bandEntries[key] = bandEntry;
         }
 
-        if (bandEntries.Count == 0) return (0, 0, 0);
+        if (bandEntries.Count == 0) return (0, 0, 0, []);
 
         // Group by band type and upsert
         int totalBands = 0, totalMembers = 0, totalLookups = 0;
+        var impactedTeams = new List<(string BandType, string TeamKey)>();
 
         foreach (var group in bandEntries.GroupBy(kv => kv.Key.BandType))
         {
             var bandType = group.Key;
             var batchEntries = group.Select(kv => kv.Value).ToList();
+            impactedTeams.AddRange(batchEntries
+                .Select(static entry => entry.TeamKey)
+                .Where(static teamKey => !string.IsNullOrWhiteSpace(teamKey))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(teamKey => (bandType, teamKey)));
 
             await using var tx = await conn.BeginTransactionAsync(ct);
             try
             {
                 var (bands, members, lookups) = persistence.UpsertBandEntriesDirect(
-                    songId, bandType, batchEntries, conn, tx);
+                    songId, bandType, batchEntries, conn, tx, rebuildTeamMembership: false);
                 await tx.CommitAsync(ct);
 
                 totalBands += bands;
@@ -247,7 +273,39 @@ public sealed class PostScrapeBandExtractor
             }
         }
 
-        return (totalBands, totalMembers, totalLookups);
+        return (totalBands, totalMembers, totalLookups, impactedTeams);
+    }
+
+    private void RebuildImpactedMembershipSummaries(
+        BandLeaderboardPersistence persistence,
+        ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> impactedTeamsByBandType,
+        CancellationToken ct)
+    {
+        var rebuildBatches = impactedTeamsByBandType
+            .OrderBy(static kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(static kvp => kvp.Value.Keys
+                .OrderBy(static teamKey => teamKey, StringComparer.OrdinalIgnoreCase)
+                .Chunk(500)
+                .Select(teamKeys => (BandType: kvp.Key, TeamKeys: (IReadOnlyCollection<string>)teamKeys)))
+            .ToList();
+
+        if (rebuildBatches.Count == 0)
+            return;
+
+        _log.LogInformation(
+            "Rebuilding band-team membership summaries for {TeamCount:N0} impacted team(s) in {BatchCount:N0} batch(es).",
+            impactedTeamsByBandType.Sum(static kvp => kvp.Value.Count),
+            rebuildBatches.Count);
+
+        _progress?.SetSubOperation("rebuilding_band_membership_summary");
+        _progress?.BeginPhaseProgress(rebuildBatches.Count);
+
+        foreach (var (bandType, teamKeys) in rebuildBatches)
+        {
+            ct.ThrowIfCancellationRequested();
+            persistence.RebuildBandTeamMembershipForTeams(bandType, teamKeys);
+            _progress?.ReportPhaseItemComplete();
+        }
     }
 
     private sealed class BandExtractRow
