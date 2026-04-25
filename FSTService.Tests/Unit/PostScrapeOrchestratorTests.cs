@@ -155,13 +155,14 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     private ScrapePassContext CreateContext(
+        long scrapeId = 0,
         HashSet<string>? registeredIds = null,
         GlobalLeaderboardPersistence.PipelineAggregates? aggregates = null,
         IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>? scrapeRequests = null)
     {
         return new ScrapePassContext
         {
-            ScrapeId = 0,
+            ScrapeId = scrapeId,
             AccessToken = "test-token",
             CallerAccountId = "caller-001",
             RegisteredIds = registeredIds ?? new HashSet<string>(),
@@ -427,6 +428,43 @@ public class PostScrapeOrchestratorTests : IDisposable
         await _sut.ComputeRankingsAsync(service, CancellationToken.None);
 
         Assert.Equal(ScrapeProgressTracker.ScrapePhase.ComputingRankings, _progress.Phase);
+    }
+
+    [Fact]
+    public async Task RunAsync_ActivatesShadowSnapshotsBeforeRankings()
+    {
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var ctx = CreateContext(
+            scrapeId: 42,
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song_empty",
+                    Instruments = ["Solo_Guitar"],
+                    Label = "Song Empty",
+                },
+            ]);
+
+        await _sut.RunAsync(ctx, service, ScrapePhase.SoloRankings, CancellationToken.None);
+
+        var earlyIndex = _log.Entries.ToList().FindIndex(e => e.Message.Contains("[ActivateShadowSnapshotsEarly]"));
+        var rankingsIndex = _log.Entries.ToList().FindIndex(e => e.Message.Contains("[ComputeRankings]"));
+        Assert.True(earlyIndex >= 0, "Expected early snapshot activation phase to be logged.");
+        Assert.True(rankingsIndex > earlyIndex, "Expected rankings to run after early snapshot activation.");
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT active_snapshot_id, scrape_id, is_finalized
+            FROM leaderboard_snapshot_state
+            WHERE song_id = 'song_empty' AND instrument = 'Solo_Guitar'
+            """;
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(42, reader.GetInt64(0));
+        Assert.Equal(42, reader.GetInt64(1));
+        Assert.True(reader.GetBoolean(2));
     }
 
     [Fact]

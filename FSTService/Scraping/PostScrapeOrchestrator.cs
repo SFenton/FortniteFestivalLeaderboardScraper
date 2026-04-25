@@ -98,6 +98,21 @@ public sealed class PostScrapeOrchestrator
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
             await RunPhaseAsync("RefreshRegisteredUsers", () => RefreshRegisteredUsersAsync(ctx, ct));
 
+        var expectedSnapshotPairs = BuildExpectedSnapshotPairs(ctx);
+        if (ShouldActivateShadowSnapshotsBeforeDerived(ctx, resolvedPhases))
+        {
+            await RunPhaseAsync("ActivateShadowSnapshotsEarly", () =>
+            {
+                var activated = _persistence.FinalizeShadowSnapshots(ctx.ScrapeId, expectedPairs: expectedSnapshotPairs);
+                _log.LogInformation(
+                    "Activated shadow snapshot {ScrapeId} before derived readers ({Pairs} pair(s), {ExpectedPairs} expected).",
+                    ctx.ScrapeId,
+                    activated,
+                    expectedSnapshotPairs.Count);
+                return Task.CompletedTask;
+            });
+        }
+
         // ── Band data collection (fire-and-forget background) ──
         // Skip if band data was already fetched via BandPageFetcher during the scrape pass.
         // BandScrape (new) uses the shared DOP pool inside ScrapeOrchestrator;
@@ -188,7 +203,7 @@ public sealed class PostScrapeOrchestrator
             {
                 await RunPhaseAsync("ActivateShadowSnapshots", () =>
                 {
-                    _persistence.FinalizeShadowSnapshots(ctx.ScrapeId);
+                    _persistence.FinalizeShadowSnapshots(ctx.ScrapeId, wave: 2, expectedPairs: expectedSnapshotPairs);
                     return Task.CompletedTask;
                 });
             }
@@ -208,6 +223,38 @@ public sealed class PostScrapeOrchestrator
                 _log.LogWarning(ex, "Background band scrape failed. Band data may be incomplete this cycle.");
             }
         }
+    }
+
+    private static bool ShouldActivateShadowSnapshotsBeforeDerived(ScrapePassContext ctx, ScrapePhase resolvedPhases)
+    {
+        if (ctx.ScrapeId <= 0)
+            return false;
+
+        return resolvedPhases.HasFlag(ScrapePhase.SoloRankings)
+            || resolvedPhases.HasFlag(ScrapePhase.SoloRivals)
+            || resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats)
+            || resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute);
+    }
+
+    private static IReadOnlyList<(string SongId, string Instrument)> BuildExpectedSnapshotPairs(ScrapePassContext ctx)
+    {
+        var pairs = new HashSet<(string SongId, string Instrument)>();
+
+        foreach (var request in ctx.ScrapeRequests)
+        {
+            if (string.IsNullOrWhiteSpace(request.SongId))
+                continue;
+
+            foreach (var instrument in request.Instruments)
+            {
+                if (string.IsNullOrWhiteSpace(instrument) || ScrapeOrchestrator.IsBandInstrument(instrument))
+                    continue;
+
+                pairs.Add((request.SongId, instrument));
+            }
+        }
+
+        return pairs.ToArray();
     }
 
     /// <summary>

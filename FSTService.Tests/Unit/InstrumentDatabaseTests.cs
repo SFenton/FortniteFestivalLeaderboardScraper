@@ -243,6 +243,30 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void GetCurrentStateLeaderboardWithCount_active_empty_snapshot_suppresses_live_and_keeps_overlay()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("acct_live_only", 90_000),
+        ]);
+        InsertSnapshotState("song_1", 42, isFinalized: true);
+
+        var (emptyBoard, emptyTotal) = Db.GetCurrentStateLeaderboardWithCount("song_1");
+
+        Assert.Equal(0, emptyTotal);
+        Assert.Empty(emptyBoard);
+
+        InsertOverlayEntry("song_1", "acct_overlay", 110_000, source: "backfill", sourcePriority: 200, overlayReason: "preserved-backfill");
+
+        var (overlayBoard, overlayTotal) = Db.GetCurrentStateLeaderboardWithCount("song_1");
+
+        Assert.Equal(1, overlayTotal);
+        Assert.Single(overlayBoard);
+        Assert.Equal("acct_overlay", overlayBoard[0].AccountId);
+        Assert.Equal(110_000, overlayBoard[0].Score);
+    }
+
+    [Fact]
     public void GetCurrentStateScoresInBand_prefers_overlay_then_snapshot_and_excludes_live_only_rows()
     {
         Db.UpsertEntries("song_1",
