@@ -341,9 +341,25 @@ public sealed class ScrapeProgressTracker
     // ─── Sub-operation detail tracking ──────────────────────
 
     // Spool flush progress
+    private volatile string? _flushLabel;
     private volatile string? _flushingInstrument;
+    private volatile string? _flushState;
     private int _instrumentsFlushCompleted;
     private int _instrumentsFlushTotal;
+    private long _flushPagesCompleted;
+    private long _flushPagesTotal;
+    private long _flushEntriesCompleted;
+    private long _flushEntriesTotal;
+    private long _flushInstrumentPagesCompleted;
+    private long _flushInstrumentPagesTotal;
+    private long _flushInstrumentEntriesCompleted;
+    private long _flushInstrumentEntriesTotal;
+    private int _flushChunkIndex;
+    private int _flushChunkTotal;
+    private int _flushChunkPages;
+    private long _flushChunkEntries;
+    private long _flushChunkElapsedMilliseconds;
+    private long _flushUpdatedAtUtcTicks;
 
     // Index management progress
     private volatile string? _indexOperation;   // "dropping" | "creating" | null
@@ -365,9 +381,55 @@ public sealed class ScrapeProgressTracker
     /// <summary>Report spool flush progress for one instrument.</summary>
     public void ReportFlushProgress(string instrument, int completed, int total)
     {
+        _flushLabel = null;
         _flushingInstrument = instrument;
+        _flushState = null;
         _instrumentsFlushCompleted = completed;
         _instrumentsFlushTotal = total;
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Report detailed spool flush progress for chunked post-fetch flushes.</summary>
+    public void ReportFlushProgress(
+        string label,
+        string instrument,
+        int instrumentsCompleted,
+        int instrumentsTotal,
+        long pagesCompleted,
+        long pagesTotal,
+        long entriesCompleted,
+        long entriesTotal,
+        long instrumentPagesCompleted,
+        long instrumentPagesTotal,
+        long instrumentEntriesCompleted,
+        long instrumentEntriesTotal,
+        int chunkIndex,
+        int chunkTotal,
+        int chunkPages,
+        long chunkEntries,
+        string state,
+        double activeChunkElapsedSeconds,
+        DateTime updatedAtUtc)
+    {
+        _flushLabel = label;
+        _flushingInstrument = instrument;
+        _flushState = state;
+        _instrumentsFlushCompleted = instrumentsCompleted;
+        _instrumentsFlushTotal = instrumentsTotal;
+        Interlocked.Exchange(ref _flushPagesCompleted, pagesCompleted);
+        Interlocked.Exchange(ref _flushPagesTotal, pagesTotal);
+        Interlocked.Exchange(ref _flushEntriesCompleted, entriesCompleted);
+        Interlocked.Exchange(ref _flushEntriesTotal, entriesTotal);
+        Interlocked.Exchange(ref _flushInstrumentPagesCompleted, instrumentPagesCompleted);
+        Interlocked.Exchange(ref _flushInstrumentPagesTotal, instrumentPagesTotal);
+        Interlocked.Exchange(ref _flushInstrumentEntriesCompleted, instrumentEntriesCompleted);
+        Interlocked.Exchange(ref _flushInstrumentEntriesTotal, instrumentEntriesTotal);
+        _flushChunkIndex = chunkIndex;
+        _flushChunkTotal = chunkTotal;
+        _flushChunkPages = chunkPages;
+        Interlocked.Exchange(ref _flushChunkEntries, chunkEntries);
+        Interlocked.Exchange(ref _flushChunkElapsedMilliseconds, (long)Math.Round(activeChunkElapsedSeconds * 1000.0));
+        Interlocked.Exchange(ref _flushUpdatedAtUtcTicks, updatedAtUtc.Ticks);
         Interlocked.Increment(ref _changeSequence);
     }
 
@@ -400,9 +462,25 @@ public sealed class ScrapeProgressTracker
 
     private void ResetSubOperationDetail()
     {
+        _flushLabel = null;
         _flushingInstrument = null;
+        _flushState = null;
         _instrumentsFlushCompleted = 0;
         _instrumentsFlushTotal = 0;
+        Interlocked.Exchange(ref _flushPagesCompleted, 0);
+        Interlocked.Exchange(ref _flushPagesTotal, 0);
+        Interlocked.Exchange(ref _flushEntriesCompleted, 0);
+        Interlocked.Exchange(ref _flushEntriesTotal, 0);
+        Interlocked.Exchange(ref _flushInstrumentPagesCompleted, 0);
+        Interlocked.Exchange(ref _flushInstrumentPagesTotal, 0);
+        Interlocked.Exchange(ref _flushInstrumentEntriesCompleted, 0);
+        Interlocked.Exchange(ref _flushInstrumentEntriesTotal, 0);
+        _flushChunkIndex = 0;
+        _flushChunkTotal = 0;
+        _flushChunkPages = 0;
+        Interlocked.Exchange(ref _flushChunkEntries, 0);
+        Interlocked.Exchange(ref _flushChunkElapsedMilliseconds, 0);
+        Interlocked.Exchange(ref _flushUpdatedAtUtcTicks, 0);
         _indexOperation = null;
         _currentIndex = null;
         _indexesCompleted = 0;
@@ -431,9 +509,30 @@ public sealed class ScrapeProgressTracker
 
         return new SubOperationDetail
         {
+            FlushLabel = flushInst is not null ? _flushLabel : null,
             FlushingInstrument = flushInst,
+            FlushState = flushInst is not null ? _flushState : null,
             InstrumentsFlushCompleted = flushInst is not null ? _instrumentsFlushCompleted : null,
             InstrumentsFlushTotal = flushInst is not null ? _instrumentsFlushTotal : null,
+            FlushPagesCompleted = flushInst is not null ? Interlocked.Read(ref _flushPagesCompleted) : null,
+            FlushPagesTotal = flushInst is not null ? Interlocked.Read(ref _flushPagesTotal) : null,
+            FlushEntriesCompleted = flushInst is not null ? Interlocked.Read(ref _flushEntriesCompleted) : null,
+            FlushEntriesTotal = flushInst is not null ? Interlocked.Read(ref _flushEntriesTotal) : null,
+            FlushInstrumentPagesCompleted = flushInst is not null ? Interlocked.Read(ref _flushInstrumentPagesCompleted) : null,
+            FlushInstrumentPagesTotal = flushInst is not null ? Interlocked.Read(ref _flushInstrumentPagesTotal) : null,
+            FlushInstrumentEntriesCompleted = flushInst is not null ? Interlocked.Read(ref _flushInstrumentEntriesCompleted) : null,
+            FlushInstrumentEntriesTotal = flushInst is not null ? Interlocked.Read(ref _flushInstrumentEntriesTotal) : null,
+            FlushChunkIndex = flushInst is not null ? _flushChunkIndex : null,
+            FlushChunkTotal = flushInst is not null ? _flushChunkTotal : null,
+            FlushChunkPages = flushInst is not null ? _flushChunkPages : null,
+            FlushChunkEntries = flushInst is not null ? Interlocked.Read(ref _flushChunkEntries) : null,
+            FlushChunkElapsedSeconds = flushInst is not null ? Math.Round(Interlocked.Read(ref _flushChunkElapsedMilliseconds) / 1000.0, 1) : null,
+            FlushUpdatedAtUtc = flushInst is not null && Interlocked.Read(ref _flushUpdatedAtUtcTicks) > 0
+                ? new DateTime(Interlocked.Read(ref _flushUpdatedAtUtcTicks), DateTimeKind.Utc)
+                : null,
+            FlushProgressPercent = flushInst is not null && Interlocked.Read(ref _flushPagesTotal) > 0
+                ? Math.Round(Math.Min(100.0, (double)Interlocked.Read(ref _flushPagesCompleted) / Interlocked.Read(ref _flushPagesTotal) * 100.0), 1)
+                : null,
             IndexOperation = indexOp,
             IndexesCompleted = indexOp is not null ? _indexesCompleted : null,
             IndexesTotal = indexOp is not null ? _indexesTotal : null,
@@ -1205,9 +1304,26 @@ public sealed class PageProgress
 public sealed class SubOperationDetail
 {
     // Spool flush
+    public string? FlushLabel { get; init; }
     public string? FlushingInstrument { get; init; }
+    public string? FlushState { get; init; }
     public int? InstrumentsFlushCompleted { get; init; }
     public int? InstrumentsFlushTotal { get; init; }
+    public long? FlushPagesCompleted { get; init; }
+    public long? FlushPagesTotal { get; init; }
+    public long? FlushEntriesCompleted { get; init; }
+    public long? FlushEntriesTotal { get; init; }
+    public long? FlushInstrumentPagesCompleted { get; init; }
+    public long? FlushInstrumentPagesTotal { get; init; }
+    public long? FlushInstrumentEntriesCompleted { get; init; }
+    public long? FlushInstrumentEntriesTotal { get; init; }
+    public int? FlushChunkIndex { get; init; }
+    public int? FlushChunkTotal { get; init; }
+    public int? FlushChunkPages { get; init; }
+    public long? FlushChunkEntries { get; init; }
+    public double? FlushChunkElapsedSeconds { get; init; }
+    public DateTime? FlushUpdatedAtUtc { get; init; }
+    public double? FlushProgressPercent { get; init; }
 
     // Index management
     public string? IndexOperation { get; init; }

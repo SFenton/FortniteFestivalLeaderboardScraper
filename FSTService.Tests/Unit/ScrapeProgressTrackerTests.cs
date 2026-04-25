@@ -154,6 +154,59 @@ public class ScrapeProgressTrackerTests
         Assert.Equal(2, progress.Current?.Songs?.Total);
     }
 
+    [Fact]
+    public void ReportFlushProgress_EmitsDetailedChunkState()
+    {
+        var updatedAt = new DateTime(2026, 4, 25, 12, 0, 0, DateTimeKind.Utc);
+        _tracker.BeginPass(10, 5, 0);
+        _tracker.SetSubOperation("flushing_solo");
+
+        _tracker.ReportFlushProgress(
+            label: "solo",
+            instrument: "Solo_Guitar",
+            instrumentsCompleted: 6,
+            instrumentsTotal: 9,
+            pagesCompleted: 128,
+            pagesTotal: 5812,
+            entriesCompleted: 1_000_000,
+            entriesTotal: 36_570_828,
+            instrumentPagesCompleted: 64,
+            instrumentPagesTotal: 652,
+            instrumentEntriesCompleted: 500_000,
+            instrumentEntriesTotal: 6_425_538,
+            chunkIndex: 2,
+            chunkTotal: 11,
+            chunkPages: 64,
+            chunkEntries: 500_000,
+            state: "running",
+            activeChunkElapsedSeconds: 1.2,
+            updatedAtUtc: updatedAt);
+
+        var detail = _tracker.GetProgressResponse().Current?.Detail;
+
+        Assert.NotNull(detail);
+        Assert.Equal("solo", detail!.FlushLabel);
+        Assert.Equal("Solo_Guitar", detail.FlushingInstrument);
+        Assert.Equal("running", detail.FlushState);
+        Assert.Equal(6, detail.InstrumentsFlushCompleted);
+        Assert.Equal(9, detail.InstrumentsFlushTotal);
+        Assert.Equal(128, detail.FlushPagesCompleted);
+        Assert.Equal(5812, detail.FlushPagesTotal);
+        Assert.Equal(1_000_000, detail.FlushEntriesCompleted);
+        Assert.Equal(36_570_828, detail.FlushEntriesTotal);
+        Assert.Equal(64, detail.FlushInstrumentPagesCompleted);
+        Assert.Equal(652, detail.FlushInstrumentPagesTotal);
+        Assert.Equal(500_000, detail.FlushInstrumentEntriesCompleted);
+        Assert.Equal(6_425_538, detail.FlushInstrumentEntriesTotal);
+        Assert.Equal(2, detail.FlushChunkIndex);
+        Assert.Equal(11, detail.FlushChunkTotal);
+        Assert.Equal(64, detail.FlushChunkPages);
+        Assert.Equal(500_000, detail.FlushChunkEntries);
+        Assert.Equal(1.2, detail.FlushChunkElapsedSeconds);
+        Assert.Equal(updatedAt, detail.FlushUpdatedAtUtc);
+        Assert.Equal(2.2, detail.FlushProgressPercent);
+    }
+
     // ─── Scraping snapshot: progress estimation ─────────
 
     [Fact]

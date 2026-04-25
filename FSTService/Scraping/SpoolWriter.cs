@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Text;
 
 namespace FSTService.Scraping;
@@ -25,6 +26,31 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
 
     /// <summary>Flush a batch of pages for one instrument to the database.</summary>
     public delegate void FlushBatch(string instrument, List<(string SongId, IReadOnlyList<T> Entries)> batch);
+
+    /// <summary>Progress snapshot emitted before, during, and after chunk flushes.</summary>
+    public sealed class FlushProgress
+    {
+        public string Label { get; init; } = "";
+        public string Instrument { get; init; } = "";
+        public int InstrumentIndex { get; init; }
+        public int InstrumentsCompleted { get; init; }
+        public int InstrumentsTotal { get; init; }
+        public long PagesFlushed { get; init; }
+        public long PagesTotal { get; init; }
+        public long EntriesFlushed { get; init; }
+        public long EntriesTotal { get; init; }
+        public long InstrumentPagesFlushed { get; init; }
+        public long InstrumentPagesTotal { get; init; }
+        public long InstrumentEntriesFlushed { get; init; }
+        public long InstrumentEntriesTotal { get; init; }
+        public int ChunkIndex { get; init; }
+        public int ChunkTotal { get; init; }
+        public int ChunkPages { get; init; }
+        public long ChunkEntries { get; init; }
+        public string State { get; init; } = "";
+        public double ActiveChunkElapsedSeconds { get; init; }
+        public DateTime UpdatedAtUtc { get; init; }
+    }
 
     private readonly string _spoolDir;
     private readonly string _label;
@@ -68,6 +94,8 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
         public readonly string Path;
         public readonly object WriteLock = new();
         public long FlushedPosition;
+        public long RecordCount;
+        public long EntryCount;
 
         public InstrumentSpool(string path)
         {
@@ -137,6 +165,8 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
             Interlocked.Exchange(ref spool.FlushedPosition, spool.WriteStream.Position);
         }
 
+        Interlocked.Increment(ref spool.RecordCount);
+        Interlocked.Add(ref spool.EntryCount, entries.Count);
         Interlocked.Increment(ref _recordCount);
         Interlocked.Add(ref _entryCount, entries.Count);
     }
@@ -166,13 +196,22 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     /// When &gt; 0, pages are accumulated up to the limit, flushed, then the next chunk begins.
     /// Each chunk results in an independent flush delegate call (and therefore its own DB transaction).</param>
     /// <param name="onInstrumentFlush">Optional callback invoked before each instrument flush with (instrument, completedSoFar, totalInstruments).</param>
-    public void FlushAll(int maxBatchPages = 0, Action<string, int, int>? onInstrumentFlush = null)
+    /// <param name="onProgress">Optional callback invoked at instrument/chunk boundaries and every heartbeat interval while a chunk is being flushed.</param>
+    /// <param name="heartbeatInterval">How often to invoke <paramref name="onProgress"/> while a chunk flush is in-flight. Defaults to one second.</param>
+    public void FlushAll(
+        int maxBatchPages = 0,
+        Action<string, int, int>? onInstrumentFlush = null,
+        Action<FlushProgress>? onProgress = null,
+        TimeSpan? heartbeatInterval = null)
     {
         if (!_completed)
             throw new InvalidOperationException("Call Complete() before FlushAll().");
 
-        long totalPages = 0;
-        long totalEntries = 0;
+        var heartbeatEvery = heartbeatInterval ?? TimeSpan.FromSeconds(1);
+        long flushedPages = 0;
+        long flushedEntries = 0;
+        var totalPages = RecordCount;
+        var totalEntries = EntryCount;
 
         lock (_spoolsLock)
         {
@@ -192,6 +231,34 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                 _log.LogInformation("Spool [{Label}] flushing {Instrument}: {Size:N0} bytes...",
                     _label, instrument, spool.FlushedPosition);
 
+                var instrumentTotalPages = Interlocked.Read(ref spool.RecordCount);
+                var instrumentTotalEntries = Interlocked.Read(ref spool.EntryCount);
+                var chunkTotal = maxBatchPages > 0
+                    ? (int)Math.Ceiling((double)instrumentTotalPages / maxBatchPages)
+                    : instrumentTotalPages > 0 ? 1 : 0;
+                long instrumentPagesFlushed = 0;
+                long instrumentEntriesFlushed = 0;
+
+                EmitFlushProgress(
+                    onProgress,
+                    instrument,
+                    instrumentIndex,
+                    instrumentCount,
+                    flushedPages,
+                    totalPages,
+                    flushedEntries,
+                    totalEntries,
+                    instrumentPagesFlushed,
+                    instrumentTotalPages,
+                    instrumentEntriesFlushed,
+                    instrumentTotalEntries,
+                    chunkIndex: 0,
+                    chunkTotal,
+                    chunkPages: 0,
+                    chunkEntries: 0,
+                    state: "instrument_started",
+                    activeChunkElapsed: TimeSpan.Zero);
+
                 using var readStream = new FileStream(spool.Path, FileMode.Open, FileAccess.Read,
                     FileShare.None, bufferSize: 4 * 1024 * 1024, useAsync: false);
 
@@ -205,20 +272,14 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                 {
                     var (songId, entries) = _deserialize(readStream, header);
                     batch.Add((songId, entries));
-                    totalEntries += entries.Count;
                     instrumentEntries += entries.Count;
-                    totalPages++;
                     instrumentPages++;
 
                     // Flush chunk when we hit the page limit
                     if (maxBatchPages > 0 && batch.Count >= maxBatchPages)
                     {
                         chunkIndex++;
-                        long chunkEntries = batch.Sum(b => b.Entries.Count);
-                        _log.LogInformation(
-                            "Spool [{Label}/{Instrument}] chunk {Chunk}: {Pages:N0} pages, {Entries:N0} entries...",
-                            _label, instrument, chunkIndex, batch.Count, chunkEntries);
-                        _flush(instrument, batch);
+                        FlushChunk(instrument, batch, chunkIndex, chunkTotal, isFinalChunk: false);
                         batch = new List<(string SongId, IReadOnlyList<T> Entries)>();
                     }
                 }
@@ -229,24 +290,205 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
                     if (chunkIndex > 0)
                     {
                         chunkIndex++;
-                        long chunkEntries = batch.Sum(b => b.Entries.Count);
-                        _log.LogInformation(
-                            "Spool [{Label}/{Instrument}] chunk {Chunk} (final): {Pages:N0} pages, {Entries:N0} entries...",
-                            _label, instrument, chunkIndex, batch.Count, chunkEntries);
                     }
-                    _flush(instrument, batch);
+                    else
+                    {
+                        chunkIndex = 1;
+                    }
+
+                    FlushChunk(instrument, batch, chunkIndex, chunkTotal, isFinalChunk: maxBatchPages > 0 && chunkIndex == chunkTotal);
                 }
 
                 _log.LogInformation("Spool [{Label}/{Instrument}] flushed: {Pages:N0} pages, {Entries:N0} entries{Chunks}.",
                     _label, instrument, instrumentPages, instrumentEntries,
                     chunkIndex > 0 ? $" in {chunkIndex} chunks" : "");
 
+                EmitFlushProgress(
+                    onProgress,
+                    instrument,
+                    instrumentIndex + 1,
+                    instrumentCount,
+                    flushedPages,
+                    totalPages,
+                    flushedEntries,
+                    totalEntries,
+                    instrumentPagesFlushed,
+                    instrumentTotalPages,
+                    instrumentEntriesFlushed,
+                    instrumentTotalEntries,
+                    chunkIndex,
+                    chunkTotal,
+                    chunkPages: 0,
+                    chunkEntries: 0,
+                    state: "instrument_completed",
+                    activeChunkElapsed: TimeSpan.Zero);
+
                 instrumentIndex++;
+
+                void FlushChunk(
+                    string currentInstrument,
+                    List<(string SongId, IReadOnlyList<T> Entries)> currentBatch,
+                    int currentChunkIndex,
+                    int currentChunkTotal,
+                    bool isFinalChunk)
+                {
+                    var chunkPages = currentBatch.Count;
+                    var chunkEntries = currentBatch.Sum(static b => b.Entries.Count);
+                    var chunkLabel = isFinalChunk ? " (final)" : string.Empty;
+
+                    if (maxBatchPages > 0)
+                    {
+                        _log.LogInformation(
+                            "Spool [{Label}/{Instrument}] chunk {Chunk}/{ChunkTotal}{Final}: {Pages:N0} pages, {Entries:N0} entries...",
+                            _label, currentInstrument, currentChunkIndex, currentChunkTotal, chunkLabel, chunkPages, chunkEntries);
+                    }
+
+                    var chunkStopwatch = Stopwatch.StartNew();
+                    ReportChunkProgress("running", chunkStopwatch.Elapsed);
+                    FlushWithHeartbeat(
+                        () => _flush(currentInstrument, currentBatch),
+                        () => ReportChunkProgress("running", chunkStopwatch.Elapsed),
+                        heartbeatEvery,
+                        onProgress is not null);
+                    chunkStopwatch.Stop();
+
+                    flushedPages += chunkPages;
+                    flushedEntries += chunkEntries;
+                    instrumentPagesFlushed += chunkPages;
+                    instrumentEntriesFlushed += chunkEntries;
+                    ReportChunkProgress("completed", chunkStopwatch.Elapsed);
+
+                    void ReportChunkProgress(string state, TimeSpan elapsed)
+                    {
+                        EmitFlushProgress(
+                            onProgress,
+                            currentInstrument,
+                            instrumentIndex,
+                            instrumentCount,
+                            flushedPages,
+                            totalPages,
+                            flushedEntries,
+                            totalEntries,
+                            instrumentPagesFlushed,
+                            instrumentTotalPages,
+                            instrumentEntriesFlushed,
+                            instrumentTotalEntries,
+                            currentChunkIndex,
+                            currentChunkTotal,
+                            chunkPages,
+                            chunkEntries,
+                            state,
+                            elapsed);
+                    }
+                }
             }
         }
 
         _log.LogInformation("Spool [{Label}] FlushAll complete: {Pages:N0} pages, {Entries:N0} entries across {Instruments} instruments.",
-            _label, totalPages, totalEntries, _spools.Count);
+            _label, flushedPages, flushedEntries, _spools.Count);
+    }
+
+    private void EmitFlushProgress(
+        Action<FlushProgress>? onProgress,
+        string instrument,
+        int instrumentsCompleted,
+        int instrumentsTotal,
+        long pagesFlushed,
+        long pagesTotal,
+        long entriesFlushed,
+        long entriesTotal,
+        long instrumentPagesFlushed,
+        long instrumentPagesTotal,
+        long instrumentEntriesFlushed,
+        long instrumentEntriesTotal,
+        int chunkIndex,
+        int chunkTotal,
+        int chunkPages,
+        long chunkEntries,
+        string state,
+        TimeSpan activeChunkElapsed)
+    {
+        if (onProgress is null)
+            return;
+
+        try
+        {
+            onProgress(new FlushProgress
+            {
+                Label = _label,
+                Instrument = instrument,
+                InstrumentIndex = Math.Min(instrumentsTotal, instrumentsCompleted + 1),
+                InstrumentsCompleted = instrumentsCompleted,
+                InstrumentsTotal = instrumentsTotal,
+                PagesFlushed = pagesFlushed,
+                PagesTotal = pagesTotal,
+                EntriesFlushed = entriesFlushed,
+                EntriesTotal = entriesTotal,
+                InstrumentPagesFlushed = instrumentPagesFlushed,
+                InstrumentPagesTotal = instrumentPagesTotal,
+                InstrumentEntriesFlushed = instrumentEntriesFlushed,
+                InstrumentEntriesTotal = instrumentEntriesTotal,
+                ChunkIndex = chunkIndex,
+                ChunkTotal = chunkTotal,
+                ChunkPages = chunkPages,
+                ChunkEntries = chunkEntries,
+                State = state,
+                ActiveChunkElapsedSeconds = Math.Round(activeChunkElapsed.TotalSeconds, 1),
+                UpdatedAtUtc = DateTime.UtcNow,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Spool [{Label}] progress callback failed.", _label);
+        }
+    }
+
+    private void FlushWithHeartbeat(Action flush, Action heartbeat, TimeSpan heartbeatInterval, bool enabled)
+    {
+        if (!enabled || heartbeatInterval <= TimeSpan.Zero)
+        {
+            flush();
+            return;
+        }
+
+        using var cts = new CancellationTokenSource();
+        var heartbeatTask = Task.Run(async () =>
+        {
+            try
+            {
+                using var timer = new PeriodicTimer(heartbeatInterval);
+                while (await timer.WaitForNextTickAsync(cts.Token))
+                {
+                    try
+                    {
+                        heartbeat();
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogDebug(ex, "Spool [{Label}] heartbeat callback failed.", _label);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        });
+
+        try
+        {
+            flush();
+        }
+        finally
+        {
+            cts.Cancel();
+            try
+            {
+                heartbeatTask.GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
     }
 
     /// <summary>
