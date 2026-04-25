@@ -850,7 +850,7 @@ public static class DatabaseInitializer
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rating_maxscore REAL;
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rank_maxscore INTEGER;
 
-        -- Peripheral instrument columns (Mic Mode, Pro Drums + Cymbals, Pro Drums)
+        -- Peripheral instrument columns (Karaoke, Pro Drums + Cymbals, Pro Drums)
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_vocals_adjusted_skill REAL;
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_vocals_skill_rank INTEGER;
         ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS pro_cymbals_adjusted_skill REAL;

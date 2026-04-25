@@ -420,7 +420,7 @@
     "vocals": "Tap Vocals",
     "proLead": "Pro Lead",
     "proBass": "Pro Bass",
-    "peripheralVocals": "Mic Mode",
+    "peripheralVocals": "Karaoke",
     "peripheralCymbals": "Pro Drums + Cymbals",
     "peripheralDrums": "Pro Drums"
   },
@@ -613,7 +613,7 @@
     "notAvailable": "Paths not available",
     "title": "Paths",
     "unavailableTitle": "Some Instruments Unavailable",
-    "unavailableMessage": "Mic Mode, Pro Drums, and Pro Drums + Cymbals are not available for path visualization yet.",
+    "unavailableMessage": "Karaoke, Pro Drums, and Pro Drums + Cymbals are not available for path visualization yet.",
     "permanentlyDismiss": "Permanently Dismiss",
     "easy": "Easy",
     "medium": "Medium",

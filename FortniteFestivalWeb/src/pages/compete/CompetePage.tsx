@@ -242,7 +242,6 @@ export default function CompetePage() {
     items: quickLinkItems,
     scrollContainerRef,
     isDesktopRailEnabled: isWideDesktop,
-    scrollOffset: Gap.md,
   });
 
   const handleModalQuickLinkSelect = useCallback((item: CompeteQuickLink) => {

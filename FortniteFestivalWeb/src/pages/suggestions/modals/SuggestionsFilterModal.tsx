@@ -74,7 +74,7 @@ const INSTRUMENTS: { key: InstrumentKey; label: string; filterKey: keyof Suggest
   { key: 'vocals',             label: 'Tap Vocals',          filterKey: 'suggestionsVocalsFilter',            showKey: 'showVocals' },
   { key: 'pro_guitar',         label: 'Pro Lead',            filterKey: 'suggestionsProLeadFilter',           showKey: 'showProLead' },
   { key: 'pro_bass',           label: 'Pro Bass',            filterKey: 'suggestionsProBassFilter',           showKey: 'showProBass' },
-  { key: 'peripheral_vocals',  label: 'Mic Mode',            filterKey: 'suggestionsPeripheralVocalsFilter',  showKey: 'showPeripheralVocals' },
+  { key: 'peripheral_vocals',  label: 'Karaoke',            filterKey: 'suggestionsPeripheralVocalsFilter',  showKey: 'showPeripheralVocals' },
   { key: 'peripheral_cymbals', label: 'Pro Drums + Cymbals', filterKey: 'suggestionsPeripheralCymbalsFilter', showKey: 'showPeripheralCymbals' },
   { key: 'peripheral_drums',   label: 'Pro Drums',           filterKey: 'suggestionsPeripheralDrumsFilter',   showKey: 'showPeripheralDrums' },
 ];

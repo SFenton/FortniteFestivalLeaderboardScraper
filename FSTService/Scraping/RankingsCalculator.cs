@@ -615,7 +615,7 @@ public sealed class RankingsCalculator
 
     /// <summary>
     /// Count how many songs are charted for a given instrument.
-    /// Negative legacy sentinels and Spark's 99 Mic Mode sentinel indicate that
+    /// Negative legacy sentinels and Spark's 99 Karaoke sentinel indicate that
     /// the song has no chart for that instrument and are excluded.
     /// </summary>
     internal static int CountChartedSongs(FestivalService festivalService, string instrument)

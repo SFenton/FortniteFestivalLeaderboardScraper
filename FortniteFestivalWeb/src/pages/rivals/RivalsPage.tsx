@@ -407,7 +407,6 @@ export default function RivalsPage() {
     items: quickLinkItems,
     scrollContainerRef,
     isDesktopRailEnabled: isWideDesktop,
-    scrollOffset: Gap.md,
   });
 
   const handleModalQuickLinkSelect = useCallback((link: RivalQuickLink) => {

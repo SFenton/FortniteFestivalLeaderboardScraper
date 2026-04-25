@@ -12,7 +12,7 @@ const mkSong = (bd?: number): Song => ({
 });
 
 describe('songAvailability', () => {
-  test('treats 99 as an absent Mic Mode chart', () => {
+  test('treats 99 as an absent Karaoke chart', () => {
     const song = mkSong(99);
 
     expect(isChartedDifficulty(99)).toBe(false);
@@ -20,7 +20,7 @@ describe('songAvailability', () => {
     expect(getSongInstrumentDifficulty(song, 'peripheral_vocals')).toBeUndefined();
   });
 
-  test('keeps valid Mic Mode difficulties available', () => {
+  test('keeps valid Karaoke difficulties available', () => {
     const song = mkSong(0);
 
     expect(isChartedDifficulty(0)).toBe(true);

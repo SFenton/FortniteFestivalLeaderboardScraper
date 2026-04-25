@@ -62,7 +62,6 @@ interface PlayerQuickLink extends PageQuickLinkItem {
 
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 const QUICK_LINK_INSTRUMENT_ICON_SCALE = 1.15;
-const QUICK_LINK_SCROLL_OFFSET = Gap.md;
 const QUICK_LINK_SCROLL_COMPLETE_THRESHOLD = 2;
 const QUICK_LINK_SCROLL_SETTLE_DELAY_MS = 80;
 const QUICK_LINK_PILL_ICON_SIZE = IconSize.action;
@@ -573,7 +572,6 @@ export default function PlayerContent({
     items: quickLinks,
     scrollContainerRef,
     isDesktopRailEnabled: isWideDesktop,
-    scrollOffset: QUICK_LINK_SCROLL_OFFSET,
     scrollCompleteThreshold: QUICK_LINK_SCROLL_COMPLETE_THRESHOLD,
     scrollSettleDelayMs: QUICK_LINK_SCROLL_SETTLE_DELAY_MS,
   });

@@ -73,7 +73,7 @@ describe('SuggestionGenerator', () => {
     expect(out[0].key).toBe('first_plays_mixed');
   });
 
-  test('does not treat absent Mic Mode charts as unplayed Mic Mode suggestions', () => {
+  test('does not treat absent Karaoke charts as unplayed Karaoke suggestions', () => {
     const song: Song = {
       track: { su: 'a', tt: 'Song A', an: 'Artist 1', in: { gr: 3, bd: 99 } },
     };

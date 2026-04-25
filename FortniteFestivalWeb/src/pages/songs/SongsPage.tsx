@@ -22,7 +22,7 @@ import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { accuracyBgColor, maxScoreColor, LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Layout, MaxWidth, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, FADE_DURATION, STAGGER_INTERVAL, border, flexCenter, padding } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, FADE_DURATION, STAGGER_INTERVAL, border, flexCenter, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -37,7 +37,7 @@ import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { SongRow } from './components/SongRow';
 import { SongsToolbar } from './components/SongsToolbar';
 import { visibleInstruments } from '../../contexts/SettingsContext';
-import { getPageQuickLinkTestId, usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
+import { DEFAULT_SONGS_SCROLL_OFFSET, getPageQuickLinkTestId, usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import SortModal from './modals/SortModal';
 import type { SortDraft } from './modals/SortModal';
@@ -872,7 +872,6 @@ export default function SongsPage() {
     scrollContainerRef,
     isDesktopRailEnabled: isWideDesktop,
     getItemTop: getQuickLinkItemTop,
-    scrollOffset: Gap.md,
   });
 
   const virtualizer = useVirtualizer({
@@ -882,6 +881,7 @@ export default function SongsPage() {
     gap: VIRTUAL_ROW_GAP,
     getScrollElement: () => scrollContainerRef.current,
     scrollMargin: listScrollMargin,
+    scrollPaddingStart: DEFAULT_SONGS_SCROLL_OFFSET,
   });
 
   const handleSongQuickLinkSelect = useCallback((link: SongQuickLink) => {
@@ -1149,7 +1149,6 @@ function useSongsStyles() {
     sectionDivider: {
       width: '100%',
       height: 1,
-      backgroundColor: Colors.white10,
     } as CSSProperties,
     sectionLabelRow: {
       display: 'flex',

@@ -51,7 +51,7 @@ vi.mock('../../models', () => ({
     Solo_Vocals: 'Vocals',
     Solo_PeripheralGuitar: 'Pro Lead',
     Solo_PeripheralBass: 'Pro Bass',
-    Solo_PeripheralVocals: 'Mic Mode',
+    Solo_PeripheralVocals: 'Karaoke',
     Solo_PeripheralDrums: 'Pro Drums',
     Solo_PeripheralCymbals: 'Pro Drums + Cymbals',
   } as Record<string, string>,
@@ -371,7 +371,7 @@ describe('PathsModal', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
       expect(screen.getByText('Some Instruments Unavailable')).toBeDefined();
-      expect(screen.getByText('Mic Mode, Pro Drums, and Pro Drums + Cymbals are not available for path visualization yet.')).toBeDefined();
+      expect(screen.getByText('Karaoke, Pro Drums, and Pro Drums + Cymbals are not available for path visualization yet.')).toBeDefined();
       expect(screen.getByText('OK')).toBeDefined();
       expect(screen.getByText('Permanently Dismiss')).toBeDefined();
     });

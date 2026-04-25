@@ -179,7 +179,7 @@ describe('SongRow', () => {
     expect(screen.getByTestId('instrument-Solo_Bass')).toBeTruthy();
   });
 
-  it('renders Mic Mode as an unavailable gray chip when the song has no Mic Mode chart', () => {
+  it('renders Karaoke as an unavailable gray chip when the song has no Karaoke chart', () => {
     const { container } = renderSongRow({
       song: { ...baseSong, difficulty: { guitar: 3 } } as Song,
       showInstrumentIcons: true,

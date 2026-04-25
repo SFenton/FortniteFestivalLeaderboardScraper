@@ -4,6 +4,7 @@ import { Routes, Route } from 'react-router-dom';
 import { Colors, Gap, Layout, FADE_DURATION } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../src/hooks/ui/usePageQuickLinks';
 import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
 import { clearPageTransitionCache } from '../../../src/hooks/ui/usePageTransition';
 import { TestProviders } from '../../helpers/TestProviders';
@@ -544,7 +545,7 @@ describe('SongsPage quick links', () => {
     const scrollContainer = screen.getByTestId('test-scroll-container') as HTMLElement;
     const virtualList = screen.getByTestId('songs-virtual-list') as HTMLElement;
     const listTop = 180;
-    const mikeTargetScrollTop = listTop + (12 * ((52 + 2) + (68 + 2)));
+    const mikeTargetScrollTop = listTop + (12 * ((52 + 2) + (68 + 2))) - DEFAULT_QUICK_LINK_SCROLL_OFFSET;
 
     Object.defineProperty(scrollContainer, 'getBoundingClientRect', {
       configurable: true,

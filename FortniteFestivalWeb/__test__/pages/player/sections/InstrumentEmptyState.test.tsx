@@ -17,7 +17,7 @@ describe('InstrumentEmptyState', () => {
 
   it('renders the subtitle with the canonical instrument label', () => {
     const cases: Array<[InstrumentKey, string]> = [
-      ['Solo_PeripheralVocals', 'Mic Mode'],
+      ['Solo_PeripheralVocals', 'Karaoke'],
       ['Solo_PeripheralDrums', 'Pro Drums'],
       ['Solo_PeripheralCymbals', 'Pro Drums + Cymbals'],
     ];

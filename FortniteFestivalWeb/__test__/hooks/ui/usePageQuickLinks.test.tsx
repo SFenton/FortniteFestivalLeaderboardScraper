@@ -1,6 +1,6 @@
 import { act, fireEvent, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { usePageQuickLinks, type PageQuickLinkItem } from '../../../src/hooks/ui/usePageQuickLinks';
+import { DEFAULT_QUICK_LINK_SCROLL_OFFSET, usePageQuickLinks, type PageQuickLinkItem } from '../../../src/hooks/ui/usePageQuickLinks';
 
 function createScrollContainer({ clientHeight, scrollHeight }: { clientHeight: number; scrollHeight: number; }) {
   const scrollEl = document.createElement('div');
@@ -150,7 +150,7 @@ describe('usePageQuickLinks', () => {
       result.current.handleQuickLinkSelect(items[1]!);
     });
 
-    expect(scrollEl.scrollTop).toBe(972);
+    expect(scrollEl.scrollTop).toBe(980 - DEFAULT_QUICK_LINK_SCROLL_OFFSET);
 
     act(() => {
       fireEvent.scroll(scrollEl);
@@ -163,7 +163,7 @@ describe('usePageQuickLinks', () => {
     expect(result.current.activeItemId).toBe('top-songs');
 
     act(() => {
-      dispatchScroll(scrollEl, 968);
+      dispatchScroll(scrollEl, 980 - DEFAULT_QUICK_LINK_SCROLL_OFFSET - 4);
     });
 
     expect(result.current.activeItemId).toBe('top-songs');
@@ -239,7 +239,7 @@ describe('usePageQuickLinks', () => {
     expect(result.current.activeItemId).toBe('z');
 
     act(() => {
-      dispatchScroll(scrollEl, 392);
+      dispatchScroll(scrollEl, 400 - DEFAULT_QUICK_LINK_SCROLL_OFFSET);
     });
 
     await act(async () => {
@@ -250,7 +250,7 @@ describe('usePageQuickLinks', () => {
     expect(result.current.activeItemId).not.toBe('b');
 
     act(() => {
-      dispatchScroll(scrollEl, 388);
+      dispatchScroll(scrollEl, 400 - DEFAULT_QUICK_LINK_SCROLL_OFFSET - 4);
     });
 
     expect(result.current.activeItemId).toBe('c');
@@ -260,7 +260,7 @@ describe('usePageQuickLinks', () => {
     });
 
     act(() => {
-      dispatchScroll(scrollEl, 280);
+      dispatchScroll(scrollEl, 240);
     });
 
     await waitFor(() => {
@@ -316,7 +316,7 @@ describe('usePageQuickLinks', () => {
     expect(result.current.activeItemId).toBe('v');
 
     act(() => {
-      dispatchScroll(scrollEl, 392);
+      dispatchScroll(scrollEl, 400 - DEFAULT_QUICK_LINK_SCROLL_OFFSET);
     });
 
     await act(async () => {
@@ -375,7 +375,7 @@ describe('usePageQuickLinks', () => {
     });
 
     act(() => {
-      scrollEl.scrollTop = 992;
+      scrollEl.scrollTop = 1000 - DEFAULT_QUICK_LINK_SCROLL_OFFSET;
       result.current.handleQuickLinkSelect(items[2]!);
     });
 
@@ -439,7 +439,7 @@ describe('usePageQuickLinks', () => {
     });
 
     expect(result.current.activeItemId).toBe('c');
-    expect(scrollEl.scrollTop).toBe(972);
+    expect(scrollEl.scrollTop).toBe(980 - DEFAULT_QUICK_LINK_SCROLL_OFFSET);
 
     act(() => {
       fireEvent.scroll(scrollEl);
@@ -513,7 +513,7 @@ describe('usePageQuickLinks', () => {
     expect(scrollEl.scrollTo).not.toHaveBeenCalled();
 
     act(() => {
-      dispatchScroll(scrollEl, 1112);
+      dispatchScroll(scrollEl, 1120 - DEFAULT_QUICK_LINK_SCROLL_OFFSET);
     });
 
     expect(result.current.activeItemId).toBe('i');
@@ -571,7 +571,7 @@ describe('usePageQuickLinks', () => {
     expect(result.current.activeItemId).not.toBe('a');
 
     act(() => {
-      dispatchScroll(scrollEl, 2620);
+      dispatchScroll(scrollEl, 2628 - DEFAULT_QUICK_LINK_SCROLL_OFFSET);
     });
 
     await act(async () => {
@@ -581,7 +581,7 @@ describe('usePageQuickLinks', () => {
     expect(result.current.activeItemId).toBe('b');
 
     act(() => {
-      dispatchScroll(scrollEl, 2500);
+      dispatchScroll(scrollEl, 2470);
     });
 
     await waitFor(() => {
@@ -621,7 +621,7 @@ describe('usePageQuickLinks', () => {
       result.current.handleQuickLinkSelect(items[1]!);
     });
 
-    expect(scrollEl.scrollTop).toBe(972);
+    expect(scrollEl.scrollTop).toBe(980 - DEFAULT_QUICK_LINK_SCROLL_OFFSET);
     expect(result.current.quickLinksOpen).toBe(false);
     expect(result.current.activeItemId).toBe('top-songs');
 

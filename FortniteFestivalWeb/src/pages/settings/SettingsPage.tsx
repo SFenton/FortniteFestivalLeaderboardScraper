@@ -616,7 +616,6 @@ export default function SettingsPage() {
     items: quickLinkItems,
     scrollContainerRef,
     isDesktopRailEnabled: isWideDesktop,
-    scrollOffset: Gap.md,
   });
 
   const handleModalQuickLinkSelect = useCallback((link: SettingsQuickLink) => {

@@ -240,7 +240,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(6, diff.GetProperty("proGuitar").GetInt32());
         Assert.Equal(5, diff.GetProperty("proBass").GetInt32());
 
-        // New fields: proDrums and proCymbals share @in.pd; proVocals is mic mode (@in.bd).
+        // New fields: proDrums and proCymbals share @in.pd; proVocals is Karaoke (@in.bd).
         Assert.Equal(7, diff.GetProperty("proDrums").GetInt32());
         Assert.Equal(7, diff.GetProperty("proCymbals").GetInt32());
         Assert.Equal(
@@ -4302,7 +4302,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 track = new Track
                 {
                     su = "testSongNoMic",
-                    tt = "Integration Test Song Without Mic Mode",
+                    tt = "Integration Test Song Without Karaoke",
                     an = "Test Artist",
                     dn = 240,
                     @in = new In { gr = 4, ba = 2, vl = 5, ds = 3, pg = 5, pb = 4, pd = 6, bd = 99 },

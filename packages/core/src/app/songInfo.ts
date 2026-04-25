@@ -37,7 +37,7 @@ const keyToDisplayName = (key: InstrumentKey): string => {
     case 'pro_bass':
       return 'Pro Bass';
     case 'peripheral_vocals':
-      return 'Mic Mode';
+      return 'Karaoke';
     case 'peripheral_cymbals':
       return 'Pro Drums + Cymbals';
     case 'peripheral_drums':

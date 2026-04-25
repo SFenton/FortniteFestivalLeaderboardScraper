@@ -179,7 +179,7 @@ describe('SongDetailPage', () => {
     });
   });
 
-  it('hides Mic Mode intensity and leaderboard sections when the song has no Mic Mode chart', async () => {
+  it('hides Karaoke intensity and leaderboard sections when the song has no Karaoke chart', async () => {
     localStorage.setItem('fst:appSettings', JSON.stringify({
       showLead: false,
       showBass: false,
@@ -198,7 +198,7 @@ describe('SongDetailPage', () => {
       expect(screen.getByText('Test Song')).toBeDefined();
     });
 
-    expect(screen.queryByText('Mic Mode')).toBeNull();
+    expect(screen.queryByText('Karaoke')).toBeNull();
     expect(document.getElementById('instrument-card-Solo_PeripheralVocals')).toBeNull();
   });
 

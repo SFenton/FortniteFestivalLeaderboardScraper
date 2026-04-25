@@ -63,6 +63,6 @@ describe('rankingScopes', () => {
 
     expect(rankingScopeLabel(comboScope)).toBe('Lead + Drums');
     expect(rankingScopeLabel(singleScope!)).toBe('Pro Drums');
-    expect(comboScopeLabel('c0')).toBe('Mic Mode + Pro Drums + Cymbals');
+    expect(comboScopeLabel('c0')).toBe('Karaoke + Pro Drums + Cymbals');
   });
 });

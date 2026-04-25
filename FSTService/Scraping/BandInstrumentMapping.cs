@@ -9,7 +9,7 @@ namespace FSTService.Scraping;
 ///   0 = Solo_Guitar, 1 = Solo_Bass, 2 = Solo_Vocals, 3 = Solo_Drums,
 ///   4 = Solo_PeripheralGuitar, 5 = Solo_PeripheralBass,
 ///   6 = Solo_PeripheralDrums (Pro Drums),
-///   7 = Solo_PeripheralVocals (Mic Mode),
+///   7 = Solo_PeripheralVocals (Karaoke),
 ///   8 = Solo_PeripheralCymbals (Pro Drums + Cymbals).
 ///
 /// WARNING: This does NOT match the C# InstrumentType enum ordering
@@ -29,7 +29,7 @@ public static class BandInstrumentMapping
         "Solo_PeripheralGuitar",  // 4
         "Solo_PeripheralBass",    // 5
         "Solo_PeripheralDrums",   // 6 - Pro Drums
-        "Solo_PeripheralVocals",  // 7 - Mic Mode
+        "Solo_PeripheralVocals",  // 7 - Karaoke
         "Solo_PeripheralCymbals", // 8 - Pro Drums + Cymbals
     ];
 

@@ -124,7 +124,7 @@ export const defaultPrimaryInstrumentOrder = (): InstrumentOrderItem[] => [
   {key: 'bass', displayName: 'Bass'},
   {key: 'pro_guitar', displayName: 'Pro Lead'},
   {key: 'pro_bass', displayName: 'Pro Bass'},
-  {key: 'peripheral_vocals', displayName: 'Mic Mode'},
+  {key: 'peripheral_vocals', displayName: 'Karaoke'},
   {key: 'peripheral_cymbals', displayName: 'Pro Drums + Cymbals'},
   {key: 'peripheral_drums', displayName: 'Pro Drums'},
 ];

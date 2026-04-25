@@ -137,7 +137,7 @@ public sealed class SongsCacheService
                     genres     = s.track.ge,
                     // Difficulty per instrument. proDrums and proCymbals share the same
                     // spark-track value (@in.pd) — Epic stores a single plastic-drums difficulty.
-                    // proVocals is mic-mode difficulty (@in.bd); 99 means the song has no Mic Mode chart.
+                    // proVocals is mic-mode difficulty (@in.bd); 99 means the song has no Karaoke chart.
                     difficulty = s.track.@in is null ? null : new
                     {
                         guitar     = (int?)s.track.@in.gr,

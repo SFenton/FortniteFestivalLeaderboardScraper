@@ -629,7 +629,7 @@ describe('useFilteredSongs — additional sort modes', () => {
     expect(result.current.map(s => s.songId)).toEqual(['s2', 's3', 's1']);
   });
 
-  it('hides songs without Mic Mode when Mic Mode is selected', () => {
+  it('hides songs without Karaoke when Karaoke is selected', () => {
     const songsWithMicMode = [
       { ...songs[0], difficulty: { proVocals: 4 } },
       { ...songs[1], difficulty: { proVocals: null } },

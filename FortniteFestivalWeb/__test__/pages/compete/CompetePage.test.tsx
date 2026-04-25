@@ -230,9 +230,9 @@ describe('CompetePage', () => {
     expect((await screen.findAllByRole('button', { name: /Lead \+ Drums/i })).length).toBe(2);
     expect((await screen.findAllByText(/^Lead$/i)).length).toBe(2);
     expect((await screen.findAllByText(/^Drums$/i)).length).toBe(2);
-    expect((await screen.findAllByText(/^Mic Mode$/i)).length).toBe(2);
+    expect((await screen.findAllByText(/^Karaoke$/i)).length).toBe(2);
     expect((await screen.findAllByText(/^Pro Drums \+ Cymbals$/i)).length).toBe(2);
-    expect(screen.queryByRole('button', { name: /Mic Mode \+ Pro Drums \+ Cymbals/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Karaoke \+ Pro Drums \+ Cymbals/i })).not.toBeInTheDocument();
 
     const leadDrumsButtons = await screen.findAllByRole('button', { name: /Lead \+ Drums/i });
     expect(Array.from(leadDrumsButtons[0]?.querySelectorAll('img') ?? [])).toHaveLength(2);

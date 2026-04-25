@@ -12,6 +12,7 @@ import { PlayerDataProvider } from '../../../../../src/contexts/PlayerDataContex
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { stubMatchMedia, stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../../helpers/browserStubs';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
+import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../../../src/hooks/ui/usePageQuickLinks';
 import PlayerContentBase from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
 import { SyncPhase } from '@festival/core';
 import { IconSize, Layout } from '@festival/theme';
@@ -875,7 +876,7 @@ describe('PlayerContent', () => {
 
     fireEvent.click(screen.getByTestId('player-quick-link-top-songs'));
 
-    expect(scrollToSpy).toHaveBeenCalledWith({ top: 632, behavior: 'smooth' });
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 640 - DEFAULT_QUICK_LINK_SCROLL_OFFSET, behavior: 'smooth' });
   });
 
   it('opens the quick links modal from the header trigger and closes after selection', async () => {
@@ -910,7 +911,7 @@ describe('PlayerContent', () => {
     fireEvent.click(screen.getByTestId('player-quick-link-top-songs'));
     fireEvent.transitionEnd(dialog!);
 
-    expect(scrollToSpy).toHaveBeenCalledWith({ top: 632, behavior: 'smooth' });
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 640 - DEFAULT_QUICK_LINK_SCROLL_OFFSET, behavior: 'smooth' });
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Quick Links' })).toBeNull();
     });

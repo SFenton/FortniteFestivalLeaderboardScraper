@@ -55,6 +55,10 @@ type QuickLinkTransitionState =
   };
 
 const REACHABLE_TARGET_OWNERSHIP_PX = 96;
+// Land quick-link targets with enough breathing room to avoid the tight top edge
+// while keeping nearby section handoff behavior predictable.
+export const DEFAULT_QUICK_LINK_SCROLL_OFFSET = 32;
+export const DEFAULT_SONGS_SCROLL_OFFSET = 16;
 const QUICK_LINK_TRACE_STORAGE_KEY = 'fst:debugQuickLinks';
 const MAX_QUICK_LINK_TRACE_ENTRIES = 400;
 
@@ -93,11 +97,7 @@ function getSectionScrollTop(scrollEl: HTMLElement, sectionEl: HTMLElement): num
   return scrollEl.scrollTop + sectionRect.top - scrollRect.top;
 }
 
-function getQuickLinkTargetTop(scrollEl: HTMLElement, sectionEl: HTMLElement, scrollOffset: number): number {
-  return Math.max(0, getSectionScrollTop(scrollEl, sectionEl) - scrollOffset);
-}
-
-function clampQuickLinkTargetTop(scrollEl: HTMLElement, itemTop: number, scrollOffset: number): number {
+export function getQuickLinkScrollTargetTop(scrollEl: HTMLElement, itemTop: number, scrollOffset = DEFAULT_QUICK_LINK_SCROLL_OFFSET): number {
   const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
   return Math.min(Math.max(0, itemTop - scrollOffset), maxScrollTop);
 }
@@ -193,7 +193,7 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
   scrollContainerRef,
   isDesktopRailEnabled,
   getItemTop,
-  scrollOffset = 8,
+  scrollOffset = DEFAULT_QUICK_LINK_SCROLL_OFFSET,
   scrollCompleteThreshold = 8,
   scrollSettleDelayMs = 120,
 }: UsePageQuickLinksOptions<T>): UsePageQuickLinksResult<T> {
@@ -316,7 +316,7 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
           return;
         }
 
-        const targetTop = clampQuickLinkTargetTop(scrollEl, targetItemTop, scrollOffset);
+        const targetTop = getQuickLinkScrollTargetTop(scrollEl, targetItemTop, scrollOffset);
         const targetReached = Math.abs(scrollEl.scrollTop - targetTop) <= scrollCompleteThreshold
           || (targetVisible && isQuickLinkTargetReachable(scrollEl, targetItemTop, scrollOffset));
 
@@ -337,7 +337,7 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
               return;
             }
 
-            const settledTargetTop = clampQuickLinkTargetTop(scrollEl, settledItemTop, scrollOffset);
+            const settledTargetTop = getQuickLinkScrollTargetTop(scrollEl, settledItemTop, scrollOffset);
             const settledTargetVisible = isQuickLinkItemVisible(currentTransitionState.targetId, items, sectionRefs.current, scrollEl, getItemTop);
             const settledTargetReached = Math.abs(scrollEl.scrollTop - settledTargetTop) <= scrollCompleteThreshold
               || (settledTargetVisible && isQuickLinkTargetReachable(scrollEl, settledItemTop, scrollOffset));
@@ -413,9 +413,9 @@ export function usePageQuickLinks<T extends PageQuickLinkItem>({
       : null;
     if (!scrollEl || itemTop == null) return;
 
-    const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
     const rawTargetTop = Math.max(0, itemTop - scrollOffset);
-    const nextTop = Math.min(rawTargetTop, maxScrollTop);
+    const nextTop = getQuickLinkScrollTargetTop(scrollEl, itemTop, scrollOffset);
+    const maxScrollTop = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
     const lockWhileVisible = rawTargetTop > maxScrollTop;
 
     emitQuickLinkDebug('click-intent', {
