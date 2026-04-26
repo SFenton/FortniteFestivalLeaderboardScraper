@@ -29,8 +29,10 @@
     "selectPlayer": "Select Player",
     "sortSongs": "Sort Songs",
     "filterSongs": "Filter Songs",
+    "filterBands": "Filter Bands",
     "filterSuggestions": "Filter Suggestions",
     "sortPlayerScores": "Sort Player Scores",
+    "viewAll": "View All",
     "viewPaths": "View Paths",
     "viewInItemShop": "View in Item Shop",
     "viewProfile": "View Profile",
@@ -204,8 +206,8 @@
     "bestSongRank": "Best Song Rank",
     "bestInstSongRank": "Best {{instrument}} Song Rank",
     "totalScoreRank": "Total Score Rank",
-    "adjustedRank": "Adjusted Skill Rank",
-    "weightedRank": "Weighted Rank",
+    "adjustedRank": "Adjusted Percentile Rank",
+    "weightedRank": "Weighted Percentile Rank",
     "fcRateRank": "FC Rate Rank",
     "maxScoreRank": "Max Score % Rank",
     "percentile": "Percentile",
@@ -236,6 +238,71 @@
     "bottomSongsDesc": "{{name}}'s lowest-ranked competitive songs on {{instrument}}, sorted by percentile.",
     "switchTo": "Switch to {{name}}",
     "switchConfirmMessage": "In order to see {{name}}'s scores, you will have to set them as your selected profile. Would you like to continue?"
+  },
+  "band": {
+    "title": "Band",
+    "subtitle": "{{type}} • {{count}} appearances",
+    "summary": "Band Summary",
+    "type": "Type",
+    "appearances": "Appearances",
+    "members": "Members",
+    "ranking": "Band Statistics",
+    "statistics": "Band Statistics",
+    "noRanking": "No ranking calculated yet.",
+    "rankHistory": "Band Rank History",
+    "rankHistoryHint": "Any-combo ranking progression over the past {{days}} days.",
+    "noRankHistory": "No band rank history yet.",
+    "songs": "Band Songs",
+    "bestSongs": "Five Best Songs",
+    "bestSongsDesc": "{{name}}'s highest-ranked band songs, sorted by percentile.",
+    "worstSongs": "Five Worst Songs",
+    "worstSongsDesc": "{{name}}'s lowest-ranked band songs, sorted by percentile.",
+    "noBestSongs": "No ranked band songs yet.",
+    "noWorstSongs": "No additional ranked band songs yet.",
+    "unknownSong": "Unknown Song",
+    "adjustedRank": "Adjusted Percentile Rank",
+    "weightedRank": "Weighted Percentile Rank",
+    "fcRateRank": "FC Rate Rank",
+    "totalScoreRank": "Total Score Rank",
+    "songsPlayed": "Songs Played",
+    "totalScore": "Total Score",
+    "fcRate": "FC Rate",
+    "avgAccuracy": "Avg Accuracy",
+    "notFound": "Band not found",
+    "notFoundSubtitle": "This band may not have been indexed yet.",
+    "missingId": "This band link is missing an ID and cannot be resolved.",
+    "lookupFailed": "The service could not resolve this older band link. Try refreshing the player page."
+  },
+  "bandList": {
+    "title": "Player Bands",
+    "titleForName": "{{name}}'s Bands",
+    "subtitle": "{{group}} • {{formattedCount}} bands",
+    "filterTitle": "Filter Bands",
+    "filterReset": "Show all band types",
+    "filterResetHint": "Reset the page to All Bands.",
+    "cancelTitle": "Discard changes?",
+    "cancelMessage": "You have unsaved changes to the band filter. Discard them?",
+    "groupTitle": "Band Type",
+    "groupHint": "Choose which band lineups to show.",
+    "groups": {
+      "all": "All Bands",
+      "duos": "Duos",
+      "trios": "Trios",
+      "quads": "Quads"
+    },
+    "groupHints": {
+      "all": "Every lineup this player appears in.",
+      "duos": "Two-player band lineups.",
+      "trios": "Three-player band lineups.",
+      "quads": "Four-player band lineups."
+    },
+    "appearanceLabel": "appearance",
+    "appearanceLabel_other": "appearances",
+    "viewBand": "View band {{names}}",
+    "emptyTitle": "No bands found",
+    "emptySubtitle": "No {{group}} have been recorded for this player yet.",
+    "failedToLoad": "Failed to load bands",
+    "failedToLoadSubtitle": "The band list could not be loaded. Try refreshing."
   },
   "suggestions": {
     "title": "Suggestions",
@@ -786,7 +853,7 @@
       },
       "experimentalMetrics": {
         "title": "Experimental Ranking Metrics",
-        "description": "Sort by Adjusted Skill, Weighted Rating, FC Rate, or Max Score %. These metrics use statistical formulas and may not perfectly reflect skill — tap the ? icon on any metric for details."
+        "description": "Sort by Adjusted Percentile, Popularity-Weighted Percentile, FC Rate, or Max Score %. These experimental metrics estimate performance from rank percentiles, score counts, and population weighting — tap the ? icon on any metric for details."
       },
       "yourRank": {
         "title": "Your Rank",
@@ -795,38 +862,38 @@
       "metricInfo": {
         "adjusted": {
           "how": {
-            "title": "How Adjusted Skill Works",
-            "description": "Your rank on each song becomes a percentile. Your rating is the average across all songs — lower is better."
+            "title": "How Adjusted Percentile Works",
+            "description": "Your rank on each song becomes a rank percentile. Your rating averages those percentiles and factors in how many scores you have on that instrument, so players with only a few scores do not rank too highly. Lower is better."
           },
           "experience": {
-            "title": "Why Playing More Songs Helps",
-            "description": "With few songs, you're unproven. Play more to let your true skill shine through."
+            "title": "Why Score Count Matters",
+            "description": "A few scores on an instrument are only a small sample. As you add more scores, your actual rank percentiles drive the rating more directly."
           },
           "hood": {
             "title": "Under the Hood",
-            "description": "The formula blends your real average with a 50% starting point. More songs = more weight on your actual performance."
+            "description": "The formula factors in the number of scores on the instrument. More scores means the player's actual percentile average determines more of the rating."
           },
           "experimental": {
             "title": "Why It's Experimental",
-            "description": "All songs count equally regardless of difficulty, and the experience threshold is a tuning choice."
+            "description": "All songs count equally regardless of chart difficulty, and how strongly score count affects early rankings is a tuning choice."
           }
         },
         "weighted": {
           "how": {
-            "title": "How Weighted Rating Works",
-            "description": "Like Adjusted Skill, but songs with more players carry more weight."
+            "title": "How Popularity-Weighted Percentile Works",
+            "description": "Like Adjusted Percentile, but songs with larger leaderboard populations have more influence on the average."
           },
           "experience": {
-            "title": "Why Playing More Songs Helps",
-            "description": "Same experience boost — new players start near 50% and converge toward their true rating."
+            "title": "Why Score Count Matters",
+            "description": "A few scores on an instrument are only a small sample. As you add more scores, your weighted percentile average drives the rating more directly."
           },
           "hood": {
             "title": "Under the Hood",
-            "description": "Each song is weighted by its player count before averaging. Then the same experience adjustment applies."
+            "description": "Each song's rank percentile is multiplied by a log₂ player-count weight before averaging, then the number of scores on the instrument is factored in so players with only a few scores do not rank too highly."
           },
           "experimental": {
             "title": "Why It's Experimental",
-            "description": "More players doesn't mean harder. The logarithmic weighting is a subjective choice."
+            "description": "More players does not always mean a harder chart. Popularity is only a weighting signal, and the log scale is a tuning choice."
           }
         },
         "fcrate": {
@@ -836,11 +903,11 @@
           },
           "experience": {
             "title": "Why Playing More Songs Helps",
-            "description": "A perfect record on 2 songs isn't as trustworthy as consistent FCs across 100."
+            "description": "A perfect record on 2 songs is only a small sample; consistent FCs across 100 songs carry more weight."
           },
           "hood": {
             "title": "Under the Hood",
-            "description": "Same experience formula — your real FC rate blended with the 50% starting point."
+            "description": "Same score-count rule — your real FC rate counts more as you add more scores on the instrument."
           },
           "experimental": {
             "title": "Why It's Experimental",
@@ -854,7 +921,7 @@
           },
           "experience": {
             "title": "Why Playing More Songs Helps",
-            "description": "A few near-perfect scores aren't as proven as consistent accuracy across many songs."
+            "description": "A few near-perfect scores across only a couple songs carry less weight than consistent accuracy across many songs."
           },
           "hood": {
             "title": "Under the Hood",
@@ -973,7 +1040,7 @@
     "title": "Leaderboards",
     "combined": "Combined Rankings",
     "viewAllRankings": "View all rankings",
-    "viewAllRankingsWithCount": "View all rankings ({{count}})",
+    "viewAllRankingsWithCount": "View all rankings ({{formattedCount}})",
     "page": "Page {{current}} of {{total}}",
     "noRankings": "No rankings available yet.",
     "noRankingsSubtitle": "When leaderboard ranks are recomputed for {{instrument}}, they will show up here on the next update.",
@@ -991,16 +1058,16 @@
     "instrumentCancelTitle": "Discard changes?",
     "instrumentCancelMessage": "You have unsaved changes to the instrument selection. Discard them?",
     "metric": {
-      "adjusted": "Adjusted Skill",
-      "adjustedDesc": "Average percentile across all songs, adjusted for credibility.",
-      "weighted": "Weighted",
-      "weightedDesc": "Percentile weighted by number of leaderboard entries per song, adjusted for credibility.",
+      "adjusted": "Adjusted Percentile",
+      "adjustedDesc": "Average rank percentile across songs, factoring in the number of scores on the selected instrument so players with only a few scores do not rank too highly. Lower is better.",
+      "weighted": "Popularity-Weighted Percentile",
+      "weightedDesc": "Rank percentile weighted by each song's leaderboard population, factoring in the number of scores on the selected instrument so players with only a few scores do not rank too highly. Lower is better.",
       "fcrate": "FC Rate",
-      "fcrateDesc": "Percentage of played songs with a full combo, adjusted for credibility.",
+      "fcrateDesc": "Percentage of played songs with a full combo, factoring in the number of scores on the selected instrument so a short perfect streak does not rank too highly.",
       "totalscore": "Total Score",
       "totalscoreDesc": "Sum of all scores across every played song.",
       "maxscore": "Max Score %",
-      "maxscoreDesc": "Percentage of the maximum possible score achieved, adjusted for credibility."
+      "maxscoreDesc": "Percentage of the maximum possible score achieved, factoring in the number of scores on the selected instrument so a few near-perfect scores do not rank too highly."
     },
     "column": {
       "rank": "#",

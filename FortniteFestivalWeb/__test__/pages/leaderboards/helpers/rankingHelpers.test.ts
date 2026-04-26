@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LEADERBOARD_PAGE_SIZE, computeRankWidth, formatRating, getLeaderboardPageForRank, getRatingForMetric, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { LEADERBOARD_PAGE_SIZE, computePillMinWidth, computeRankWidth, formatBayesianRatingDisplay, formatRating, formatRankingValueDisplay, getBayesianRatingForMetric, getLeaderboardPageForRank, getRatingForMetric, getRatingPillTier, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import type { AccountRankingEntry } from '@festival/core/api/serverTypes';
 import type { RankingMetric } from '@festival/core/api/serverTypes';
 import { Layout } from '@festival/theme';
@@ -79,6 +79,54 @@ describe('formatRating', () => {
   });
 });
 
+describe('formatRankingValueDisplay', () => {
+  it('formats adjusted and weighted raw percentile ratings as Top percent labels', () => {
+    expect(formatRankingValueDisplay(0.0056, 'adjusted')).toBe('Top 0.56%');
+    expect(formatRankingValueDisplay(0.042, 'weighted')).toBe('Top 4%');
+  });
+
+  it('returns undefined for non-percentile ranking metrics', () => {
+    expect(formatRankingValueDisplay(0.98, 'fcrate')).toBeUndefined();
+    expect(formatRankingValueDisplay(0.98, 'maxscore')).toBeUndefined();
+    expect(formatRankingValueDisplay(123456, 'totalscore')).toBeUndefined();
+  });
+});
+
+describe('formatBayesianRatingDisplay', () => {
+  it('formats adjusted and weighted Bayesian values as raw value labels', () => {
+    expect(formatBayesianRatingDisplay(0.0409, 'adjusted')).toBe('0.0409');
+    expect(formatBayesianRatingDisplay(0.9123, 'weighted')).toBe('0.91');
+  });
+
+  it('returns undefined for non-percentile ranking metrics', () => {
+    expect(formatBayesianRatingDisplay(0.98, 'fcrate')).toBeUndefined();
+    expect(formatBayesianRatingDisplay(undefined, 'adjusted')).toBeUndefined();
+  });
+});
+
+describe('computePillMinWidth', () => {
+  it('uses the widest label for a shared pill width', () => {
+    const width = computePillMinWidth(['Top 2%', 'Top 0.56%']);
+    expect(width).toBe(Math.ceil('Top 0.56%'.length * Layout.rankCharWidth) + Layout.rankColumnPadding);
+  });
+
+  it('returns undefined when no labels are present', () => {
+    expect(computePillMinWidth([undefined, null])).toBeUndefined();
+  });
+});
+
+describe('getRatingPillTier', () => {
+  it.each<RankingMetric>(['fcrate', 'maxscore'])('tiers %s percentage metrics', (metric) => {
+    expect(getRatingPillTier(0.99, metric)).toBe('top1');
+    expect(getRatingPillTier(0.95, metric)).toBe('top5');
+    expect(getRatingPillTier(0.94, metric)).toBe('default');
+  });
+
+  it.each<RankingMetric>(['adjusted', 'weighted', 'totalscore'])('does not tier %s', (metric) => {
+    expect(getRatingPillTier(0.99, metric)).toBeUndefined();
+  });
+});
+
 describe('getRatingForMetric – adjusted/weighted use raw values', () => {
   const entry = {
     rawSkillRating: 0.005,
@@ -95,8 +143,16 @@ describe('getRatingForMetric – adjusted/weighted use raw values', () => {
     expect(getRatingForMetric(entry, 'adjusted')).toBe(0.005);
   });
 
+  it('returns adjustedSkillRating for adjusted Bayesian display', () => {
+    expect(getBayesianRatingForMetric(entry, 'adjusted')).toBe(0.042);
+  });
+
   it('returns rawWeightedRating for weighted metric', () => {
     expect(getRatingForMetric(entry, 'weighted')).toBe(0.004);
+  });
+
+  it('returns weightedRating for weighted Bayesian display', () => {
+    expect(getBayesianRatingForMetric(entry, 'weighted')).toBe(0.041);
   });
 
   it('falls back to weightedRating when rawWeightedRating is null', () => {

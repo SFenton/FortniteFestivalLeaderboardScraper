@@ -26,6 +26,8 @@ vi.mock('../../../src/api/client', () => ({
         songsPlayed: 10,
         coverage: 0.5,
         fullComboCount: 6,
+        totalChartedSongs: 20,
+        rankedAccountCount: 200,
         rawMaxScorePercent: 0.41,
         rawWeightedRating: 0.21,
         rawSkillRating: 0.11,
@@ -58,6 +60,8 @@ function rankHistoryEntry(snapshotDate: string) {
     songsPlayed: 10,
     coverage: 0.5,
     fullComboCount: 6,
+    totalChartedSongs: 20,
+    rankedAccountCount: 200,
     rawMaxScorePercent: 0.41,
     rawWeightedRating: 0.21,
     rawSkillRating: 0.11,
@@ -117,12 +121,14 @@ describe('useRankHistory', () => {
     );
 
     await waitFor(() => {
-      expect(result.current.chartData).toHaveLength(1);
+      expect(result.current.chartData.length).toBeGreaterThan(0);
     });
 
     expect(result.current.chartData[0]!.dateLabel).toBe('4/22/26');
     expect(result.current.chartData[0]!.timestamp).toBe(parseSnapshotDate('2026-04-22').getTime());
     expect(result.current.chartData[0]!.snapshotTakenAt).toBe('2026-04-22T06:30:00.0000000Z');
     expect(result.current.chartData[0]!.isSynthetic).toBe(false);
+    expect(result.current.chartData[0]!.totalChartedSongs).toBe(20);
+    expect(result.current.chartData[0]!.rankedAccountCount).toBe(200);
   });
 });

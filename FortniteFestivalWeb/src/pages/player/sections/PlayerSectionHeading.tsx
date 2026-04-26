@@ -1,8 +1,10 @@
 import { memo, useMemo, type CSSProperties } from 'react';
+import { Link } from 'react-router-dom';
+import { IoChevronForward } from 'react-icons/io5';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
-  Colors, Font, Weight, Gap, InstrumentSize, WordBreak,
-  flexRow, flexColumn,
+  Colors, Font, Weight, Gap, InstrumentSize, Layout, Radius, WordBreak,
+  frostedCard, flexRow, flexColumn,
 } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 
@@ -13,6 +15,9 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
   description,
   instrument,
   compact,
+  actionLabel,
+  actionTo,
+  actionTestId,
 }: {
   title: string;
   description?: string;
@@ -20,6 +25,12 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
   instrument?: InstrumentKey;
   /** Use tighter top margin (Gap.md instead of Gap.section). */
   compact?: boolean;
+  /** Optional header action link label. */
+  actionLabel?: string;
+  /** Optional header action link target. */
+  actionTo?: string;
+  /** Optional test id for the action link. */
+  actionTestId?: string;
 }) {
   const s = useStyles(compact);
 
@@ -30,6 +41,23 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
         <div style={s.instTitleCol}>
           <span style={s.instCardTitle}>{title}</span>
           {description && <span style={s.instDesc}>{description}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  if (actionLabel && actionTo) {
+    return (
+      <div style={s.sectionWrapper}>
+        <div style={s.sectionHeaderRow}>
+          <div style={s.sectionTitleCol}>
+            <h2 style={s.sectionTitle}>{title}</h2>
+            {description && <p style={s.sectionDesc}>{description}</p>}
+          </div>
+          <Link to={actionTo} data-testid={actionTestId} aria-label={actionLabel} style={s.sectionActionLink}>
+            <span>{actionLabel}</span>
+            <IoChevronForward aria-hidden="true" size={16} style={s.sectionActionIcon} />
+          </Link>
         </div>
       </div>
     );
@@ -57,6 +85,18 @@ function useStyles(compact?: boolean) {
     sectionWrapper: {
       marginTop: Gap.section,
     } as CSSProperties,
+    sectionHeaderRow: {
+      ...flexRow,
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: Gap.md,
+      minWidth: 0,
+    } as CSSProperties,
+    sectionTitleCol: {
+      ...flexColumn,
+      minWidth: 0,
+      flex: 1,
+    } as CSSProperties,
     sectionTitle: {
       fontSize: Font.xl,
       fontWeight: Weight.heavy,
@@ -70,6 +110,25 @@ function useStyles(compact?: boolean) {
       marginBottom: Gap.xl,
       marginTop: Gap.none,
       wordWrap: WordBreak.breakWord,
+    } as CSSProperties,
+    sectionActionLink: {
+      ...frostedCard,
+      ...flexRow,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: Gap.xs,
+      flexShrink: 0,
+      minHeight: Layout.pillButtonHeight,
+      padding: `0 ${Gap.md}px`,
+      borderRadius: Radius.full,
+      color: Colors.textPrimary,
+      fontSize: Font.sm,
+      fontWeight: Weight.semibold,
+      textDecoration: 'none',
+    } as CSSProperties,
+    sectionActionIcon: {
+      flexShrink: 0,
+      color: Colors.textSubtle,
     } as CSSProperties,
     instCardHeader: {
       ...instCardHeaderStyle,

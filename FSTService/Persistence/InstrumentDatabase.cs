@@ -23,6 +23,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     private const int OverlayPriorityPreservedCurrent = 200;
     private const string InstrumentScrapeStateTable = "instrument_scrape_state";
     private const string AccountRankingStatsTable = "account_ranking_stats";
+    private const string RankHistorySnapshotStatsTable = "rank_history_snapshot_stats";
     public string Instrument { get; }
 
     /// <summary>When true, leeway reads resolve from interval tiers instead of dense deltas.</summary>
@@ -166,6 +167,32 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.Parameters.AddWithValue("instrument", Instrument);
         cmd.Parameters.AddWithValue("rankedAccountCount", rankedAccountCount);
         cmd.Parameters.AddWithValue("computedAt", computedAt);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void UpsertRankHistorySnapshotStats(NpgsqlConnection conn, NpgsqlTransaction tx, DateOnly snapshotDate)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $@"
+            INSERT INTO {RankHistorySnapshotStatsTable} (
+                instrument, snapshot_date, snapshot_taken_at, total_charted_songs, ranked_account_count)
+            SELECT
+                @instrument,
+                @snapshotDate,
+                COALESCE(MAX(ars.computed_at), MAX(ar.computed_at)) AS snapshot_taken_at,
+                MAX(ar.total_charted_songs) AS total_charted_songs,
+                COALESCE(MAX(ars.ranked_account_count), COUNT(ar.account_id)::INTEGER) AS ranked_account_count
+            FROM account_rankings ar
+            LEFT JOIN {AccountRankingStatsTable} ars ON ars.instrument = ar.instrument
+            WHERE ar.instrument = @instrument
+            HAVING COUNT(ar.account_id) > 0
+            ON CONFLICT (instrument, snapshot_date) DO UPDATE SET
+                snapshot_taken_at = EXCLUDED.snapshot_taken_at,
+                total_charted_songs = EXCLUDED.total_charted_songs,
+                ranked_account_count = EXCLUDED.ranked_account_count";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
         cmd.ExecuteNonQuery();
     }
 
@@ -1486,6 +1513,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             c.ExecuteNonQuery();
         }
 
+        UpsertRankHistorySnapshotStats(conn, tx, today);
+
         int rows;
         using (var c = conn.CreateCommand())
         {
@@ -1595,7 +1624,91 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return (above, self, below);
     }
 
-    public List<RankHistoryDto> GetRankHistory(string accountId, int days = 30) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT snapshot_date, snapshot_taken_at, adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank, max_score_percent_rank, adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, coverage, full_combo_count, raw_max_score_percent, raw_weighted_rating, raw_skill_rating FROM (SELECT DISTINCT ON (snapshot_date) snapshot_date, snapshot_taken_at, adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank, max_score_percent_rank, adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, coverage, full_combo_count, raw_max_score_percent, raw_weighted_rating, raw_skill_rating FROM rank_history WHERE instrument = @instrument AND account_id = @accountId AND snapshot_date >= @cutoff ORDER BY snapshot_date DESC) sub ORDER BY snapshot_date"; cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("cutoff", DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-days))); var list = new List<RankHistoryDto>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new RankHistoryDto { SnapshotDate = r.GetDateTime(0).ToString("yyyy-MM-dd"), SnapshotTakenAt = r.IsDBNull(1) ? null : r.GetFieldValue<DateTime>(1).ToString("o"), AdjustedSkillRank = r.GetInt32(2), WeightedRank = r.GetInt32(3), FcRateRank = r.GetInt32(4), TotalScoreRank = r.GetInt32(5), MaxScorePercentRank = r.GetInt32(6), AdjustedSkillRating = r.IsDBNull(7) ? null : r.GetDouble(7), WeightedRating = r.IsDBNull(8) ? null : r.GetDouble(8), FcRate = r.IsDBNull(9) ? null : r.GetDouble(9), TotalScore = r.IsDBNull(10) ? null : r.GetInt64(10), MaxScorePercent = r.IsDBNull(11) ? null : r.GetDouble(11), SongsPlayed = r.IsDBNull(12) ? null : r.GetInt32(12), Coverage = r.IsDBNull(13) ? null : r.GetDouble(13), FullComboCount = r.IsDBNull(14) ? null : r.GetInt32(14), RawMaxScorePercent = r.IsDBNull(15) ? null : r.GetDouble(15), RawWeightedRating = r.IsDBNull(16) ? null : r.GetDouble(16), RawSkillRating = r.IsDBNull(17) ? null : r.GetDouble(17) }); return list; }
+    public List<RankHistoryDto> GetRankHistory(string accountId, int days = 30)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT
+                h.snapshot_date,
+                h.snapshot_taken_at,
+                h.adjusted_skill_rank,
+                h.weighted_rank,
+                h.fc_rate_rank,
+                h.total_score_rank,
+                h.max_score_percent_rank,
+                h.adjusted_skill_rating,
+                h.weighted_rating,
+                h.fc_rate,
+                h.total_score,
+                h.max_score_percent,
+                h.songs_played,
+                h.coverage,
+                h.full_combo_count,
+                h.raw_max_score_percent,
+                h.raw_weighted_rating,
+                h.raw_skill_rating,
+                rhs.total_charted_songs,
+                rhs.ranked_account_count
+            FROM (
+                SELECT DISTINCT ON (snapshot_date)
+                    snapshot_date,
+                    snapshot_taken_at,
+                    adjusted_skill_rank,
+                    weighted_rank,
+                    fc_rate_rank,
+                    total_score_rank,
+                    max_score_percent_rank,
+                    adjusted_skill_rating,
+                    weighted_rating,
+                    fc_rate,
+                    total_score,
+                    max_score_percent,
+                    songs_played,
+                    coverage,
+                    full_combo_count,
+                    raw_max_score_percent,
+                    raw_weighted_rating,
+                    raw_skill_rating
+                FROM rank_history
+                WHERE instrument = @instrument AND account_id = @accountId AND snapshot_date >= @cutoff
+                ORDER BY snapshot_date DESC
+            ) h
+            LEFT JOIN {RankHistorySnapshotStatsTable} rhs
+                ON rhs.instrument = @instrument AND rhs.snapshot_date = h.snapshot_date
+            ORDER BY h.snapshot_date";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("cutoff", DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-days)));
+
+        var list = new List<RankHistoryDto>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new RankHistoryDto
+            {
+                SnapshotDate = r.GetDateTime(0).ToString("yyyy-MM-dd"),
+                SnapshotTakenAt = r.IsDBNull(1) ? null : r.GetFieldValue<DateTime>(1).ToString("o"),
+                AdjustedSkillRank = r.GetInt32(2),
+                WeightedRank = r.GetInt32(3),
+                FcRateRank = r.GetInt32(4),
+                TotalScoreRank = r.GetInt32(5),
+                MaxScorePercentRank = r.GetInt32(6),
+                AdjustedSkillRating = r.IsDBNull(7) ? null : r.GetDouble(7),
+                WeightedRating = r.IsDBNull(8) ? null : r.GetDouble(8),
+                FcRate = r.IsDBNull(9) ? null : r.GetDouble(9),
+                TotalScore = r.IsDBNull(10) ? null : r.GetInt64(10),
+                MaxScorePercent = r.IsDBNull(11) ? null : r.GetDouble(11),
+                SongsPlayed = r.IsDBNull(12) ? null : r.GetInt32(12),
+                Coverage = r.IsDBNull(13) ? null : r.GetDouble(13),
+                FullComboCount = r.IsDBNull(14) ? null : r.GetInt32(14),
+                RawMaxScorePercent = r.IsDBNull(15) ? null : r.GetDouble(15),
+                RawWeightedRating = r.IsDBNull(16) ? null : r.GetDouble(16),
+                RawSkillRating = r.IsDBNull(17) ? null : r.GetDouble(17),
+                TotalChartedSongs = r.IsDBNull(18) ? null : r.GetInt32(18),
+                RankedAccountCount = r.IsDBNull(19) ? null : r.GetInt32(19),
+            });
+        return list;
+    }
 
     /// <summary>Returns rank history deltas for a specific leeway bucket over a date range.</summary>
     public List<RankHistoryDeltaDto> GetRankHistoryDeltas(string accountId, double leewayBucket, int days = 30)

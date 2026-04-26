@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { memo, useMemo, type CSSProperties } from 'react';
+import { memo, useMemo, useRef, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
@@ -9,14 +9,19 @@ import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, Account
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
-import { getRankForMetric, formatRating, getRatingForMetric, computeRankWidth, getSongsLabel } from '../helpers/rankingHelpers';
-import { formatRatingValue, rankColor } from '@festival/core';
+import { getRankForMetric, formatRating, getRatingForMetric, getBayesianRatingForMetric, computeRankWidth, computePillMinWidth, getSongsLabel, formatBayesianRatingDisplay, formatRankingValueDisplay, getRatingPillTier, usesPercentileValueDisplay } from '../helpers/rankingHelpers';
+import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
+import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { rankColor } from '@festival/core';
 import { staggerDelay } from '@festival/ui-utils';
 import {
   Colors, Font, Weight, Gap, Radius, Layout,
   Display, Align, Justify, Overflow, Cursor, CssValue, CssProp,
   FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, frostedCard, flexColumn, flexRow, transition, padding, border, Border,
 } from '@festival/theme';
+
+const PERCENTILE_TWO_ROW_WIDTH_THRESHOLD = 680;
+const PERCENTILE_TWO_ROW_HEIGHT = Layout.entryRowHeight + 28;
 
 interface RankingCardProps {
   instrument: InstrumentKey;
@@ -44,7 +49,17 @@ export default memo(function RankingCard({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const st = useRankingCardStyles();
+  const cardBodyRef = useRef<HTMLDivElement>(null);
+  const cardBodyWidth = useContainerWidth(cardBodyRef);
+  const isMobile = useIsMobile();
   const reserveTenDigitScoreWidth = metric === 'totalscore';
+  const usePercentileMetric = usesPercentileValueDisplay(metric);
+  const isNarrowPercentileCard = cardBodyWidth > 0 && cardBodyWidth < PERCENTILE_TWO_ROW_WIDTH_THRESHOLD;
+  const useTwoRowPercentile = usePercentileMetric && (isMobile || isNarrowPercentileCard);
+  const percentileRowHeight = useTwoRowPercentile ? PERCENTILE_TWO_ROW_HEIGHT : Layout.entryRowHeight;
+  const twoRowStyle: CSSProperties | undefined = useTwoRowPercentile
+    ? { height: percentileRowHeight, boxSizing: 'border-box' }
+    : undefined;
 
   const playerInTop = !!(playerAccountId && entries.some(e => e.accountId === playerAccountId));
 
@@ -58,6 +73,21 @@ export default memo(function RankingCard({
   }, [entries, metric, playerRanking]);
 
   const hasPlayerFooter = !!(playerRanking && !playerInTop);
+
+  const percentileValueMinWidth = useMemo(() => {
+    if (!usePercentileMetric) return undefined;
+    const labels = entries.map(e => formatRankingValueDisplay(getRatingForMetric(e, metric), metric));
+    if (playerRanking) labels.push(formatRankingValueDisplay(getRatingForMetric(playerRanking, metric), metric));
+    return computePillMinWidth(labels);
+  }, [entries, metric, playerRanking, usePercentileMetric]);
+
+  const bayesianRankMinWidth = useMemo(() => {
+    if (!usePercentileMetric) return undefined;
+    const labels = entries.map(e => formatBayesianRatingDisplay(getBayesianRatingForMetric(e, metric), metric));
+    if (playerRanking) labels.push(formatBayesianRatingDisplay(getBayesianRatingForMetric(playerRanking, metric), metric));
+    return computePillMinWidth(labels);
+  }, [entries, metric, playerRanking, usePercentileMetric]);
+
   const extraItems = hasPlayerFooter ? 3 : 2; // header + (player footer?) + button
   const totalStaggerItems = entries.length + extraItems + staggerOffset;
   const headerDelay = shouldStagger ? staggerDelay(0 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
@@ -75,7 +105,7 @@ export default memo(function RankingCard({
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${buttonDelay}ms forwards` }
     : undefined;
   const viewAllLabel = totalAccounts > 0
-    ? t('rankings.viewAllRankingsWithCount', { count: totalAccounts.toLocaleString() })
+    ? t('rankings.viewAllRankingsWithCount', { count: totalAccounts, formattedCount: totalAccounts.toLocaleString() })
     : t('rankings.viewAllRankings');
 
   return (
@@ -90,7 +120,7 @@ export default memo(function RankingCard({
       >
         <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} />
       </div>
-      <div style={st.cardBody}>
+      <div ref={cardBodyRef} style={st.cardBody}>
         {error && <span style={st.cardError}>{parseApiError(error).title}</span>}
         {!error && entries.length === 0 && (
           <InstrumentEmptyState instrument={instrument} t={t} noMargin titleKey="rankings.noRankings" subtitleKey="rankings.noRankingsSubtitle" />
@@ -98,9 +128,10 @@ export default memo(function RankingCard({
         {!error && entries.map((e, i) => {
           const rank = getRankForMetric(e, metric);
           const isPlayer = e.accountId === playerAccountId;
-          const usePercentile = metric === 'adjusted' || metric === 'weighted';
+          const usePercentile = usePercentileMetric;
           const isFcRate = metric === 'fcrate';
-          const fcPct = isFcRate ? getRatingForMetric(e, metric) * 100 : 0;
+          const rating = getRatingForMetric(e, metric);
+          const bayesianRating = getBayesianRatingForMetric(e, metric);
           const rowStyle = isPlayer ? st.playerEntryRow : st.entryRow;
           const delay = shouldStagger ? staggerDelay(i + 1 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
           const staggerStyle: CSSProperties | undefined = delay != null
@@ -110,7 +141,7 @@ export default memo(function RankingCard({
             <Link
               key={e.accountId}
               to={`/player/${e.accountId}`}
-              style={{ ...rowStyle, ...staggerStyle }}
+              style={{ ...rowStyle, ...twoRowStyle, ...staggerStyle }}
               onAnimationEnd={(ev) => {
                 const el = ev.currentTarget;
                 el.style.opacity = '';
@@ -120,12 +151,17 @@ export default memo(function RankingCard({
               <RankingEntry
                 rank={rank}
                 displayName={e.displayName ?? e.accountId.slice(0, 8)}
-                ratingLabel={formatRating(getRatingForMetric(e, metric), metric)}
+                ratingLabel={formatRating(rating, metric)}
                 songsLabel={getSongsLabel(e, metric)}
-                valueDisplay={usePercentile ? formatRatingValue(getRatingForMetric(e, metric)) : undefined}
-                valueColor={usePercentile ? rankColor(rank, totalAccounts) : undefined}
-                ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
+                percentileValueDisplay={usePercentile ? formatRankingValueDisplay(rating, metric) : undefined}
+                percentileValueMinWidth={percentileValueMinWidth}
+                bayesianRankDisplay={usePercentile ? formatBayesianRatingDisplay(bayesianRating, metric) : undefined}
+                bayesianRankColor={usePercentile ? rankColor(rank, totalAccounts) : undefined}
+                bayesianRankMinWidth={bayesianRankMinWidth}
+                twoRowPercentileMetadata={useTwoRowPercentile}
+                ratingPillTier={getRatingPillTier(rating, metric)}
                 songsLabelPrimary={isFcRate}
+                songsLabelGoldPrefix={isFcRate}
                 isPlayer={isPlayer}
                 rankWidth={rankWidth}
                 reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
@@ -135,13 +171,14 @@ export default memo(function RankingCard({
         })}
         {playerRanking && !playerInTop && (() => {
           const rank = getRankForMetric(playerRanking, metric);
-          const usePercentile = metric === 'adjusted' || metric === 'weighted';
+          const usePercentile = usePercentileMetric;
           const isFcRate = metric === 'fcrate';
-          const fcPct = isFcRate ? getRatingForMetric(playerRanking, metric) * 100 : 0;
+          const rating = getRatingForMetric(playerRanking, metric);
+          const bayesianRating = getBayesianRatingForMetric(playerRanking, metric);
           return (
             <Link
               to={`/player/${playerRanking.accountId}`}
-              style={{ ...st.playerEntryRow, ...playerFooterStaggerStyle }}
+              style={{ ...st.playerEntryRow, ...twoRowStyle, ...playerFooterStaggerStyle }}
               onAnimationEnd={(ev) => {
                 const el = ev.currentTarget;
                 el.style.opacity = '';
@@ -151,12 +188,17 @@ export default memo(function RankingCard({
               <RankingEntry
                 rank={rank}
                 displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}
-                ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
+                ratingLabel={formatRating(rating, metric)}
                 songsLabel={getSongsLabel(playerRanking, metric)}
-                valueDisplay={usePercentile ? formatRatingValue(getRatingForMetric(playerRanking, metric)) : undefined}
-                valueColor={usePercentile ? rankColor(rank, totalAccounts) : undefined}
-                ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
+                percentileValueDisplay={usePercentile ? formatRankingValueDisplay(rating, metric) : undefined}
+                percentileValueMinWidth={percentileValueMinWidth}
+                bayesianRankDisplay={usePercentile ? formatBayesianRatingDisplay(bayesianRating, metric) : undefined}
+                bayesianRankColor={usePercentile ? rankColor(rank, totalAccounts) : undefined}
+                bayesianRankMinWidth={bayesianRankMinWidth}
+                twoRowPercentileMetadata={useTwoRowPercentile}
+                ratingPillTier={getRatingPillTier(rating, metric)}
                 songsLabelPrimary={isFcRate}
+                songsLabelGoldPrefix={isFcRate}
                 isPlayer
                 rankWidth={rankWidth}
                 reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}

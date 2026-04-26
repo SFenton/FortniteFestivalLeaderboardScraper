@@ -18,8 +18,9 @@ import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@fest
 import GraphCard from '../../../components/common/GraphCard';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
+import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { parseSnapshotDate } from '../../../utils/fillRankHistoryGaps';
-import { computeRankWidth } from '../helpers/rankingHelpers';
+import { computePillMinWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankingValueDisplay } from '../helpers/rankingHelpers';
 import {
   Colors, Font, FontVariant, Gap, Size, Layout, MetadataSize, Radius, Weight,
   frostedCard, padding, border, transition,
@@ -40,6 +41,29 @@ const RANK_POINT_IDENTITY = (a: RankHistoryChartPoint, b: RankHistoryChartPoint)
 
 const formatSnapshotDisplayDate = (snapshotDate: string) =>
   parseSnapshotDate(snapshotDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+const formatCountPart = (value: number | null) => value == null ? '—' : value.toLocaleString();
+
+function getTotalSongCount(point: RankHistoryChartPoint): number | null {
+  if (point.totalChartedSongs != null) return point.totalChartedSongs;
+  if (point.songsPlayed == null) return null;
+  if (point.coverage == null || point.coverage <= 0) return point.songsPlayed;
+
+  const totalSongs = Math.round(point.songsPlayed / point.coverage);
+  return Number.isFinite(totalSongs) && totalSongs > 0 ? totalSongs : point.songsPlayed;
+}
+
+const formatFcFraction = (point: RankHistoryChartPoint) => `${formatCountPart(point.fullComboCount)} / ${formatCountPart(getTotalSongCount(point))}`;
+const formatSongsFraction = (point: RankHistoryChartPoint) => `${formatCountPart(point.songsPlayed)} / ${formatCountPart(getTotalSongCount(point))}`;
+
+function renderFcFraction(point: RankHistoryChartPoint, width: number | undefined, bold = false) {
+  return (
+    <span style={{ color: Colors.textPrimary, ...(bold ? { fontWeight: Weight.bold } : undefined), ...(width ? { width, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>
+      <span style={{ color: Colors.gold }}>{formatCountPart(point.fullComboCount)}</span>
+      {` / ${formatCountPart(getTotalSongCount(point))}`}
+    </span>
+  );
+}
 
 /* ── List card styles ── */
 const listCardBase: React.CSSProperties = {
@@ -74,6 +98,7 @@ export default memo(function RankHistoryChart({
 }: RankHistoryChartProps) {
   const { t } = useTranslation();
   const st = useRankHistoryChartStyles();
+  const isMobile = useIsMobile();
   const [selected, setSelected] = useState<InstrumentKey>(() => defaultInstrument ?? instruments[0] ?? 'Solo_Guitar' as InstrumentKey);
 
   const allHistory = useRankHistoryAll(instruments, accountId, metric, days);
@@ -111,7 +136,8 @@ export default memo(function RankHistoryChart({
     if (chartData.length === 0) return undefined;
     let maxLen = 1;
     for (const p of chartData) {
-      maxLen = Math.max(maxLen, formatDetailValue(p.value, metric).length);
+      const label = metric === 'fcrate' ? formatFcFraction(p) : formatDetailValue(p.value, metric);
+      maxLen = Math.max(maxLen, label.length);
     }
     return Math.ceil(maxLen * Layout.rankCharWidth) + Layout.rankColumnPadding;
   }, [chartData, metric]);
@@ -130,6 +156,18 @@ export default memo(function RankHistoryChart({
 
   const usePercentile = metric === 'adjusted' || metric === 'weighted';
   const totalAccounts = totalAccountsByInstrument?.[selected] ?? 0;
+  const showMobilePercentileDetails = isMobile && usePercentile;
+  const historyTwoRowHeight = Layout.entryRowHeight + 28;
+
+  const percentileValueWidth = useMemo(() => {
+    if (!usePercentile) return undefined;
+    return computePillMinWidth(chartData.map(point => formatRankingValueDisplay(point.value, metric)));
+  }, [chartData, metric, usePercentile]);
+
+  const bayesianValueWidth = useMemo(() => {
+    if (!usePercentile) return undefined;
+    return computePillMinWidth(chartData.map(point => formatBayesianRatingDisplay(point.bayesianValue ?? point.value, metric)));
+  }, [chartData, metric, usePercentile]);
 
   const renderChart = useCallback(({ visibleData, animating, selectedPoint, setSelectedPoint }: {
     visibleData: RankHistoryChartPoint[];
@@ -258,18 +296,33 @@ export default memo(function RankHistoryChart({
     const percentileStr = usePercentile ? formatLeaderboardPercentile(point.rank, totalAccounts) : undefined;
     const isPctMetric = metric === 'fcrate' || metric === 'maxscore';
     const pct = isPctMetric ? point.value * 100 : 0;
+    if (showMobilePercentileDetails) {
+      return (
+        <div style={st.mobileHistoryLayout}>
+          <div style={st.mobileHistoryPrimary}>
+            <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
+            <span style={{ fontWeight: Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
+          </div>
+          <div style={st.mobileHistoryMetadata}>
+            {renderPercentileHistoryMetadata(point, metric, totalAccounts, percentileValueWidth, bayesianValueWidth)}
+          </div>
+        </div>
+      );
+    }
     return (
       <>
         <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
         <span style={{ fontWeight: Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
         {percentileStr
           ? <PercentilePill display={formatRatingValue(point.value)} color={rankColor(point.rank, totalAccounts)} minWidth={MetadataSize.valuePillMinWidth} />
-          : isPctMetric
+          : metric === 'fcrate'
+            ? renderFcFraction(point, valueWidth)
+            : isPctMetric
             ? <PercentilePill display={formatDetailValue(point.value, metric)} tier={pct >= 99 ? 'top1' : pct >= 95 ? 'top5' : 'default'} />
             : <span style={{ color: Colors.textPrimary, ...(valueWidth ? { width: valueWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>{formatDetailValue(point.value, metric)}</span>}
       </>
     );
-  }, [metric, usePercentile, totalAccounts, rankWidth, valueWidth]);
+  }, [bayesianValueWidth, metric, percentileValueWidth, rankWidth, showMobilePercentileDetails, st.mobileHistoryLayout, st.mobileHistoryMetadata, st.mobileHistoryPrimary, totalAccounts, usePercentile, valueWidth]);
 
   const renderListItem = useCallback((point: RankHistoryChartPoint, i: number, phase: 'idle' | 'in' | 'out') => {
     let animStyle: React.CSSProperties = {};
@@ -291,18 +344,33 @@ export default memo(function RankHistoryChart({
     const percentileStr = usePercentile ? formatLeaderboardPercentile(point.rank, totalAccounts) : undefined;
     const isPctMetric = metric === 'fcrate' || metric === 'maxscore';
     const pct = isPctMetric ? point.value * 100 : 0;
+    if (showMobilePercentileDetails) {
+      return (
+        <div key={`${point.date}:${point.rank}:${point.value}:${i}`} style={{ ...(i === 0 ? listCardBest : listCardBase), ...st.mobileHistoryListCard, ...animStyle }}>
+          <div style={st.mobileHistoryPrimary}>
+            <span style={{ flex: 1, color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{dateStr}</span>
+            <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
+          </div>
+          <div style={st.mobileHistoryMetadata}>
+            {renderPercentileHistoryMetadata(point, metric, totalAccounts, percentileValueWidth, bayesianValueWidth, i === 0)}
+          </div>
+        </div>
+      );
+    }
     return (
       <div key={`${point.date}:${point.rank}:${point.value}:${i}`} style={{ ...(i === 0 ? listCardBest : listCardBase), ...animStyle }}>
         <span style={{ flex: 1, color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{dateStr}</span>
         <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
         {percentileStr
           ? <PercentilePill display={formatRatingValue(point.value)} color={rankColor(point.rank, totalAccounts)} minWidth={MetadataSize.valuePillMinWidth} />
-          : isPctMetric
+          : metric === 'fcrate'
+            ? renderFcFraction(point, valueWidth, i === 0)
+            : isPctMetric
             ? <PercentilePill display={formatDetailValue(point.value, metric)} tier={pct >= 99 ? 'top1' : pct >= 95 ? 'top5' : 'default'} />
             : <span style={{ color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined), ...(valueWidth ? { width: valueWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>{formatDetailValue(point.value, metric)}</span>}
       </div>
     );
-  }, [metric, usePercentile, totalAccounts, rankWidth, valueWidth]);
+  }, [bayesianValueWidth, metric, percentileValueWidth, rankWidth, showMobilePercentileDetails, st.mobileHistoryListCard, st.mobileHistoryMetadata, st.mobileHistoryPrimary, totalAccounts, usePercentile, valueWidth]);
 
   if (!accountId) return null;
 
@@ -323,10 +391,29 @@ export default memo(function RankHistoryChart({
       listData={listData}
       listIdentity={RANK_POINT_IDENTITY}
       renderListItem={renderListItem}
+      listCardHeight={showMobilePercentileDetails ? historyTwoRowHeight : undefined}
       skipAnimation={skipAnimation}
     />
   );
 });
+
+function renderPercentileHistoryMetadata(
+  point: RankHistoryChartPoint,
+  metric: RankingMetric,
+  totalAccounts: number,
+  percentileValueWidth: number | undefined,
+  bayesianValueWidth: number | undefined,
+  bold = false,
+) {
+  return (
+    <>
+      <span style={{ flexShrink: 0, fontSize: Font.sm, color: Colors.textSecondary, fontVariantNumeric: FontVariant.tabularNums, ...(bold ? { fontWeight: Weight.bold } : undefined) }}>{formatSongsFraction(point)}</span>
+      <PercentilePill display={formatRankingValueDisplay(point.value, metric)} minWidth={percentileValueWidth} bold={bold} />
+      <span style={{ flexShrink: 0, fontSize: Font.sm, color: Colors.textSecondary, fontWeight: bold ? Weight.bold : Weight.semibold }}>Bayesian-Calculated Rank:</span>
+      <PercentilePill display={formatBayesianRatingDisplay(point.bayesianValue ?? point.value, metric)} color={rankColor(point.rank, totalAccounts)} minWidth={bayesianValueWidth ?? MetadataSize.valuePillMinWidth} bold={bold} />
+    </>
+  );
+}
 
 function useRankHistoryChartStyles() {
   return useMemo(() => ({
@@ -337,6 +424,39 @@ function useRankHistoryChartStyles() {
     legendItem: { display: 'inline-flex', alignItems: 'center', gap: Gap.sm } as React.CSSProperties,
     legendSwatch: {
       display: 'inline-block', width: Size.iconXs, height: 12, borderRadius: 2,
+    } as React.CSSProperties,
+    mobileHistoryLayout: {
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      gap: Gap.xl,
+      width: '100%',
+      minWidth: 0,
+    } as React.CSSProperties,
+    mobileHistoryPrimary: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: Gap.xl,
+      width: '100%',
+      minWidth: 0,
+    } as React.CSSProperties,
+    mobileHistoryMetadata: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: Gap.md,
+      width: '100%',
+      minWidth: 0,
+    } as React.CSSProperties,
+    mobileHistoryListCard: {
+      height: 'auto',
+      minHeight: Layout.entryRowHeight + 28,
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      justifyContent: 'center',
+      gap: Gap.xl,
+      padding: padding(Gap.sm, Gap.xl),
+      boxSizing: 'border-box',
     } as React.CSSProperties,
   }), []);
 }

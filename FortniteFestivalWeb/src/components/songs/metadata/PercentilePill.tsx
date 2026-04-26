@@ -10,9 +10,11 @@ export interface PercentilePillProps {
   tier?: 'top1' | 'top5' | 'default';
   /** Override the default minWidth. */
   minWidth?: string | number;
+  /** Force bold text for emphasized/player rows. */
+  bold?: boolean;
 }
 
-const PercentilePill = memo(function PercentilePill({ display, color, tier, minWidth }: PercentilePillProps) {
+const PercentilePill = memo(function PercentilePill({ display, color, tier, minWidth, bold }: PercentilePillProps) {
   const s = useStyles();
   if (!display) return null;
 
@@ -21,11 +23,12 @@ const PercentilePill = memo(function PercentilePill({ display, color, tier, minW
     style = s[tier];
   } else {
     const match = display.match(/^Top\s+([\d.]+)%$/);
-    const pct = match ? parseFloat(match[1]) : NaN;
+    const pct = match ? parseFloat(match[1] ?? '') : NaN;
     style = !isNaN(pct) && pct <= 1 ? s.top1 : !isNaN(pct) && pct <= 5 ? s.top5 : color ? { ...s.default, backgroundColor: color, color: Colors.textPrimary } : s.default;
   }
 
   if (minWidth != null) style = { ...style, minWidth };
+  if (bold) style = { ...style, fontWeight: Weight.bold };
 
   return <span style={style}>{display}</span>;
 });

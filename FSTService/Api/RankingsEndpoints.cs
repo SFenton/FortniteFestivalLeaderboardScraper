@@ -468,6 +468,89 @@ public static partial class ApiEndpoints
         .WithTags("Rankings")
         .RequireRateLimiting("public");
 
+        // ─── Band team rank history ───────────────────────────
+
+        app.MapGet("/api/rankings/bands/{bandType}/{teamKey}/history", (
+            HttpContext httpContext,
+            string bandType,
+            string teamKey,
+            string? combo,
+            int? days,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            if (!BandComboIds.IsValidBandType(bandType))
+                return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
+
+            var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
+            if (comboValidation.Error is not null)
+                return Results.BadRequest(new { error = comboValidation.Error });
+
+            var effectiveDays = Math.Clamp(days ?? 30, 1, 3650);
+            var history = metaDb.GetBandRankHistory(bandType, teamKey, comboValidation.ComboId, effectiveDays);
+
+            return Results.Ok(new
+            {
+                bandType,
+                teamKey,
+                comboId = comboValidation.ComboId,
+                days = effectiveDays,
+                history,
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
+        // ─── Band team best/worst songs ───────────────────────
+
+        app.MapGet("/api/rankings/bands/{bandType}/{teamKey}/songs", (
+            HttpContext httpContext,
+            string bandType,
+            string teamKey,
+            string? combo,
+            int? limit,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            if (!BandComboIds.IsValidBandType(bandType))
+                return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
+
+            var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
+            if (comboValidation.Error is not null)
+                return Results.BadRequest(new { error = comboValidation.Error });
+
+            var effectiveLimit = Math.Clamp(limit ?? 5, 1, 20);
+            var performances = metaDb.GetBandSongPerformances(bandType, teamKey, comboValidation.ComboId);
+            var best = performances
+                .OrderBy(song => song.Percentile)
+                .ThenBy(song => song.Rank)
+                .ThenByDescending(song => song.Score)
+                .Take(effectiveLimit)
+                .ToList();
+            var worst = performances.Count > effectiveLimit
+                ? performances
+                    .OrderByDescending(song => song.Percentile)
+                    .ThenByDescending(song => song.Rank)
+                    .ThenBy(song => song.Score)
+                    .Take(effectiveLimit)
+                    .ToList()
+                : new List<BandSongPerformanceDto>();
+
+            return Results.Ok(new
+            {
+                bandType,
+                teamKey,
+                comboId = comboValidation.ComboId,
+                limit = effectiveLimit,
+                best,
+                worst,
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
         // ─── Single band team ranking ─────────────────────────
 
         app.MapGet("/api/rankings/bands/{bandType}/{teamKey}", (

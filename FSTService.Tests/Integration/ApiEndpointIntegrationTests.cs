@@ -2077,6 +2077,54 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiPlayerStats_IgnoresCachedBandPayloadsWithoutBandIds()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+        metaDb.InsertAccountIds(new[] { "staleBandCacheAcct", "staleBandCacheMate" });
+        metaDb.InsertAccountNames(new[]
+        {
+            ("staleBandCacheAcct", (string?)"Stale Band Cache Player"),
+            ("staleBandCacheMate", (string?)"Stale Band Cache Mate"),
+        });
+
+        metaDb.UpsertPlayerStatsTiers("staleBandCacheAcct", "Solo_Guitar", JsonSerializer.Serialize(new[]
+        {
+            new PlayerStatsTier { SongsPlayed = 1, TotalScore = 95_000, CompletionPercent = 100, BestRank = 1 }
+        }));
+
+        SeedBandRows(dataSource, "stale_band_cache_song", "Band_Duets", "staleBandCacheAcct:staleBandCacheMate", (0, "staleBandCacheAcct", 0), (1, "staleBandCacheMate", 1));
+
+        var stalePayload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            accountId = "staleBandCacheAcct",
+            totalSongs = 999,
+            instruments = Array.Empty<object>(),
+            bands = new
+            {
+                all = new { totalCount = 1, entries = new object[] { new { teamKey = "staleBandCacheAcct:staleBandCacheMate", bandType = "Band_Duets", members = Array.Empty<object>() } } },
+                duos = new { totalCount = 1, entries = new object[] { new { teamKey = "staleBandCacheAcct:staleBandCacheMate", bandType = "Band_Duets", members = Array.Empty<object>() } } },
+                trios = new { totalCount = 0, entries = Array.Empty<object>() },
+                quads = new { totalCount = 0, entries = Array.Empty<object>() },
+            },
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        metaDb.BulkSetCachedResponses(new[]
+        {
+            ("playerstats:staleBandCacheAcct", stalePayload, ResponseCacheService.ComputeETag(stalePayload))
+        });
+
+        var response = await _client.GetAsync("/api/player/staleBandCacheAcct/stats");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var entry = json.GetProperty("bands").GetProperty("duos").GetProperty("entries")[0];
+        Assert.True(Guid.TryParse(entry.GetProperty("bandId").GetString(), out _));
+        Assert.Equal(1, entry.GetProperty("appearanceCount").GetInt32());
+    }
+
+    [Fact]
     public async Task ApiPlayerStats_ReturnsBands_WhenFeatureDisabled()
     {
         var featureOptions = _factory.Services.GetRequiredService<IOptions<FeatureOptions>>().Value;
@@ -2196,6 +2244,57 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal("flatBandsAcct:flatBandsMate1", entries[0].GetProperty("teamKey").GetString());
         Assert.Equal(2, entries[0].GetProperty("appearanceCount").GetInt32());
         Assert.True(Guid.TryParse(entries[0].GetProperty("bandId").GetString(), out _));
+    }
+
+    [Fact]
+    public async Task ApiPlayerBandsList_PaginatesSortedFlatListForRequestedGroup()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+        var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+        var accountId = "pagedBandsAcct";
+        var mates = Enumerable.Range(1, 4).Select(i => $"pagedBandsMate{i}").ToArray();
+        metaDb.InsertAccountIds([accountId, ..mates]);
+        metaDb.InsertAccountNames([
+            (accountId, (string?)"Paged Bands Player"),
+            (mates[0], (string?)"Paged Mate One"),
+            (mates[1], (string?)"Paged Mate Two"),
+            (mates[2], (string?)"Paged Mate Three"),
+            (mates[3], (string?)"Paged Mate Four"),
+        ]);
+
+        for (var teamIndex = 0; teamIndex < mates.Length; teamIndex++)
+        {
+            var appearances = mates.Length - teamIndex;
+            var mate = mates[teamIndex];
+            for (var songIndex = 0; songIndex < appearances; songIndex++)
+            {
+                SeedBandRows(
+                    dataSource,
+                    $"paged_bands_song_{teamIndex}_{songIndex}",
+                    "Band_Duets",
+                    $"{accountId}:{mate}",
+                    (0, accountId, 0),
+                    (1, mate, 1));
+            }
+        }
+
+        var response = await _client.GetAsync($"/api/player/{accountId}/bands?group=duos&page=2&pageSize=2");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var entries = json.GetProperty("entries");
+
+        Assert.Equal(accountId, json.GetProperty("accountId").GetString());
+        Assert.Equal("duos", json.GetProperty("group").GetString());
+        Assert.Equal(4, json.GetProperty("totalCount").GetInt32());
+        Assert.Equal(2, entries.GetArrayLength());
+        Assert.Equal($"{accountId}:{mates[2]}", entries[0].GetProperty("teamKey").GetString());
+        Assert.Equal(2, entries[0].GetProperty("appearanceCount").GetInt32());
+        Assert.Equal($"{accountId}:{mates[3]}", entries[1].GetProperty("teamKey").GetString());
+        Assert.Equal(1, entries[1].GetProperty("appearanceCount").GetInt32());
     }
 
     [Fact]

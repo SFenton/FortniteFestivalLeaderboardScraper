@@ -1352,8 +1352,8 @@ public sealed class MetaDatabase : IMetaDatabase
         tx.Commit();
     }
 
-    public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50) { using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT total_accounts FROM combo_stats WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); var r2 = c.ExecuteScalar(); total = r2 is DBNull or null ? 0 : Convert.ToInt32(r2); } var (col, dir) = RankByColumn(rankBy); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT ROW_NUMBER() OVER (ORDER BY {col} {dir}, songs_played DESC, account_id ASC) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id ORDER BY {col} {dir}, songs_played DESC, account_id ASC LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<ComboLeaderboardEntry>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadComboEntry(r)); return (list, total); }
-    public ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted") { var (col, dir) = RankByColumn(rankBy); using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM (SELECT ROW_NUMBER() OVER (ORDER BY {col} {dir}, songs_played DESC, account_id ASC) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id) sub WHERE account_id = @aid"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("aid", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadComboEntry(r) : null; }
+    public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50) { using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT total_accounts FROM combo_stats WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); var r2 = c.ExecuteScalar(); total = r2 is DBNull or null ? 0 : Convert.ToInt32(r2); } var orderBy = ComboRankOrderBy(rankBy); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT ROW_NUMBER() OVER (ORDER BY {orderBy}) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id ORDER BY {orderBy} LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<ComboLeaderboardEntry>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadComboEntry(r)); return (list, total); }
+    public ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted") { var orderBy = ComboRankOrderBy(rankBy); using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM (SELECT ROW_NUMBER() OVER (ORDER BY {orderBy}) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id) sub WHERE account_id = @aid"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("aid", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadComboEntry(r) : null; }
     public int GetComboTotalAccounts(string comboId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT total_accounts FROM combo_stats WHERE combo_id = @id"; cmd.Parameters.AddWithValue("id", comboId); var result = cmd.ExecuteScalar(); return result is DBNull or null ? 0 : Convert.ToInt32(result); }
 
     // ── Band team rankings ──────────────────────────────────────────
@@ -2648,6 +2648,225 @@ public sealed class MetaDatabase : IMetaDatabase
         return reader.Read() ? ReadBandTeamRanking(reader, totalTeams) : null;
     }
 
+    public List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30)
+    {
+        var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
+        var normalizedComboId = comboId ?? string.Empty;
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-Math.Max(days, 1)));
+
+        using var conn = _ds.OpenConnection();
+        if (!TableExists(conn, null, "band_team_rank_history") || !TableExists(conn, null, "band_team_ranking_stats_history"))
+            return [];
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT
+                h.snapshot_date,
+                h.computed_at,
+                h.adjusted_skill_rank,
+                h.weighted_rank,
+                h.fc_rate_rank,
+                h.total_score_rank,
+                h.adjusted_skill_rating,
+                h.weighted_rating,
+                h.fc_rate,
+                h.total_score,
+                h.songs_played,
+                h.coverage,
+                h.full_combo_count,
+                h.raw_weighted_rating,
+                h.raw_skill_rating,
+                h.total_charted_songs,
+                stats.total_teams
+            FROM (
+                SELECT DISTINCT ON (snapshot_date)
+                    snapshot_date,
+                    computed_at,
+                    adjusted_skill_rank,
+                    weighted_rank,
+                    fc_rate_rank,
+                    total_score_rank,
+                    adjusted_skill_rating,
+                    weighted_rating,
+                    fc_rate,
+                    total_score,
+                    songs_played,
+                    coverage,
+                    full_combo_count,
+                    raw_weighted_rating,
+                    raw_skill_rating,
+                    total_charted_songs
+                FROM band_team_rank_history
+                WHERE band_type = @bandType
+                  AND ranking_scope = @scope
+                  AND combo_id = @comboId
+                  AND team_key = @teamKey
+                  AND snapshot_date >= @cutoff
+                ORDER BY snapshot_date DESC
+            ) h
+            LEFT JOIN band_team_ranking_stats_history stats
+                ON stats.band_type = @bandType
+               AND stats.ranking_scope = @scope
+               AND stats.combo_id = @comboId
+               AND stats.snapshot_date = h.snapshot_date
+            ORDER BY h.snapshot_date;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("cutoff", cutoff);
+
+        var history = new List<BandRankHistoryDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            history.Add(new BandRankHistoryDto
+            {
+                SnapshotDate = reader.GetDateTime(0).ToString("yyyy-MM-dd"),
+                SnapshotTakenAt = reader.GetDateTime(1).ToString("o"),
+                AdjustedSkillRank = reader.GetInt32(2),
+                WeightedRank = reader.GetInt32(3),
+                FcRateRank = reader.GetInt32(4),
+                TotalScoreRank = reader.GetInt32(5),
+                AdjustedSkillRating = reader.GetDouble(6),
+                WeightedRating = reader.GetDouble(7),
+                FcRate = reader.GetDouble(8),
+                TotalScore = reader.GetInt64(9),
+                SongsPlayed = reader.GetInt32(10),
+                Coverage = reader.GetDouble(11),
+                FullComboCount = reader.GetInt32(12),
+                RawWeightedRating = reader.IsDBNull(13) ? null : reader.GetDouble(13),
+                RawSkillRating = reader.GetDouble(14),
+                TotalChartedSongs = reader.GetInt32(15),
+                TotalRankedTeams = reader.IsDBNull(16) ? null : reader.GetInt32(16),
+            });
+        }
+
+        return history;
+    }
+
+    public List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null)
+    {
+        var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
+        var normalizedComboId = comboId ?? string.Empty;
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            WITH NormalizedEntries AS (
+                SELECT
+                    be.song_id,
+                    be.team_key,
+                    be.score,
+                    be.accuracy,
+                    be.is_full_combo,
+                    be.stars,
+                    COALESCE(be.end_time, '') AS end_time,
+                    COALESCE((
+                        SELECT string_agg(mapped.instrument, '+' ORDER BY mapped.sort_order, mapped.instrument)
+                        FROM (
+                            SELECT
+                                CASE part::INT
+                                    WHEN 0 THEN 'Solo_Guitar'
+                                    WHEN 1 THEN 'Solo_Bass'
+                                    WHEN 3 THEN 'Solo_Drums'
+                                    WHEN 2 THEN 'Solo_Vocals'
+                                    WHEN 4 THEN 'Solo_PeripheralGuitar'
+                                    WHEN 5 THEN 'Solo_PeripheralBass'
+                                    WHEN 7 THEN 'Solo_PeripheralVocals'
+                                    WHEN 8 THEN 'Solo_PeripheralCymbals'
+                                    WHEN 6 THEN 'Solo_PeripheralDrums'
+                                    ELSE NULL
+                                END AS instrument,
+                                CASE part::INT
+                                    WHEN 0 THEN 0
+                                    WHEN 1 THEN 1
+                                    WHEN 3 THEN 2
+                                    WHEN 2 THEN 3
+                                    WHEN 4 THEN 4
+                                    WHEN 5 THEN 5
+                                    WHEN 7 THEN 6
+                                    WHEN 8 THEN 7
+                                    WHEN 6 THEN 8
+                                    ELSE 999
+                                END AS sort_order
+                            FROM unnest(string_to_array(be.instrument_combo, ':')) AS parts(part)
+                        ) mapped
+                        WHERE mapped.instrument IS NOT NULL
+                    ), '') AS combo_id
+                FROM band_entries be
+                WHERE be.band_type = @bandType
+                  AND NOT be.is_over_threshold
+            ),
+            ScopedEntries AS (
+                SELECT *
+                FROM NormalizedEntries
+                WHERE @scope = 'overall' OR combo_id = @comboId
+            ),
+            ChosenEntries AS (
+                SELECT *
+                FROM (
+                    SELECT
+                        se.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY se.song_id, se.team_key
+                            ORDER BY se.score DESC, se.end_time ASC, se.combo_id ASC, se.team_key ASC
+                        ) AS choice_rank
+                    FROM ScopedEntries se
+                ) ranked
+                WHERE @scope = 'combo' OR choice_rank = 1
+            ),
+            RankedEntries AS (
+                SELECT
+                    ce.*,
+                    (COUNT(*) OVER (PARTITION BY ce.song_id))::INT AS total_entries,
+                    (ROW_NUMBER() OVER (
+                        PARTITION BY ce.song_id
+                        ORDER BY ce.score DESC, ce.end_time ASC, ce.team_key ASC
+                    ))::INT AS effective_rank
+                FROM ChosenEntries ce
+            )
+            SELECT
+                song_id,
+                NULLIF(combo_id, '') AS combo_id,
+                effective_rank,
+                total_entries,
+                (effective_rank::DOUBLE PRECISION / NULLIF(total_entries, 0)) * 100.0 AS percentile,
+                score,
+                accuracy,
+                is_full_combo,
+                stars,
+                NULLIF(end_time, '') AS end_time
+            FROM RankedEntries
+            WHERE team_key = @teamKey
+            ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+
+        var performances = new List<BandSongPerformanceDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            performances.Add(new BandSongPerformanceDto
+            {
+                SongId = reader.GetString(0),
+                ComboId = reader.IsDBNull(1) ? null : reader.GetString(1),
+                Rank = reader.GetInt32(2),
+                TotalEntries = reader.GetInt32(3),
+                Percentile = reader.IsDBNull(4) ? 0 : reader.GetDouble(4),
+                Score = reader.GetInt32(5),
+                Accuracy = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                IsFullCombo = reader.IsDBNull(7) ? null : reader.GetBoolean(7),
+                Stars = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                EndTime = reader.IsDBNull(9) ? null : reader.GetString(9),
+            });
+        }
+
+        return performances;
+    }
+
     public List<BandComboCatalogEntry> GetBandRankingCombos(string bandType)
     {
         using var conn = _ds.OpenConnection();
@@ -3348,7 +3567,8 @@ public sealed class MetaDatabase : IMetaDatabase
     private static CompositeRankingDto ReadCompositeRanking(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), InstrumentsPlayed = r.GetInt32(1), TotalSongsPlayed = r.GetInt32(2), CompositeRating = r.GetDouble(3), CompositeRank = r.GetInt32(4), GuitarAdjustedSkill = r.IsDBNull(5) ? null : r.GetDouble(5), GuitarSkillRank = r.IsDBNull(6) ? null : r.GetInt32(6), BassAdjustedSkill = r.IsDBNull(7) ? null : r.GetDouble(7), BassSkillRank = r.IsDBNull(8) ? null : r.GetInt32(8), DrumsAdjustedSkill = r.IsDBNull(9) ? null : r.GetDouble(9), DrumsSkillRank = r.IsDBNull(10) ? null : r.GetInt32(10), VocalsAdjustedSkill = r.IsDBNull(11) ? null : r.GetDouble(11), VocalsSkillRank = r.IsDBNull(12) ? null : r.GetInt32(12), ProGuitarAdjustedSkill = r.IsDBNull(13) ? null : r.GetDouble(13), ProGuitarSkillRank = r.IsDBNull(14) ? null : r.GetInt32(14), ProBassAdjustedSkill = r.IsDBNull(15) ? null : r.GetDouble(15), ProBassSkillRank = r.IsDBNull(16) ? null : r.GetInt32(16), ProVocalsAdjustedSkill = r.IsDBNull(17) ? null : r.GetDouble(17), ProVocalsSkillRank = r.IsDBNull(18) ? null : r.GetInt32(18), ProCymbalsAdjustedSkill = r.IsDBNull(19) ? null : r.GetDouble(19), ProCymbalsSkillRank = r.IsDBNull(20) ? null : r.GetInt32(20), ProDrumsAdjustedSkill = r.IsDBNull(21) ? null : r.GetDouble(21), ProDrumsSkillRank = r.IsDBNull(22) ? null : r.GetInt32(22), CompositeRatingWeighted = r.IsDBNull(23) ? null : r.GetDouble(23), CompositeRankWeighted = r.IsDBNull(24) ? null : r.GetInt32(24), CompositeRatingFcRate = r.IsDBNull(25) ? null : r.GetDouble(25), CompositeRankFcRate = r.IsDBNull(26) ? null : r.GetInt32(26), CompositeRatingTotalScore = r.IsDBNull(27) ? null : r.GetDouble(27), CompositeRankTotalScore = r.IsDBNull(28) ? null : r.GetInt32(28), CompositeRatingMaxScore = r.IsDBNull(29) ? null : r.GetDouble(29), CompositeRankMaxScore = r.IsDBNull(30) ? null : r.GetInt32(30), ComputedAt = r.GetDateTime(31).ToString("o") };
     private static ComboLeaderboardEntry ReadComboEntry(NpgsqlDataReader r) => new() { Rank = (int)r.GetInt64(0), AccountId = r.GetString(1), AdjustedRating = r.GetDouble(2), WeightedRating = r.GetDouble(3), FcRate = r.GetDouble(4), TotalScore = r.GetInt32(5), MaxScorePercent = r.GetDouble(6), SongsPlayed = r.GetInt32(7), FullComboCount = r.GetInt32(8), ComputedAt = r.GetDateTime(9).ToString("o") };
     private static BandTeamRankingDto ReadBandTeamRanking(NpgsqlDataReader r, int totalRankedTeams) => new() { BandId = BandIdentity.CreateBandId(r.GetString(0), r.GetString(2)), BandType = r.GetString(0), ComboId = string.IsNullOrEmpty(r.GetString(1)) ? null : r.GetString(1), TeamKey = r.GetString(2), TeamMembers = r.GetFieldValue<string[]>(3), SongsPlayed = r.GetInt32(4), TotalChartedSongs = r.GetInt32(5), Coverage = r.GetDouble(6), RawSkillRating = r.GetDouble(7), AdjustedSkillRating = r.GetDouble(8), AdjustedSkillRank = r.GetInt32(9), WeightedRating = r.GetDouble(10), WeightedRank = r.GetInt32(11), FcRate = r.GetDouble(12), FcRateRank = r.GetInt32(13), TotalScore = r.GetInt64(14), TotalScoreRank = r.GetInt32(15), AvgAccuracy = r.GetDouble(16), FullComboCount = r.GetInt32(17), AvgStars = r.GetDouble(18), BestRank = r.GetInt32(19), AvgRank = r.GetDouble(20), RawWeightedRating = r.IsDBNull(21) ? null : r.GetDouble(21), ComputedAt = r.GetDateTime(22).ToString("o"), TotalRankedTeams = totalRankedTeams };
-    private static (string Column, string Direction) RankByColumn(string rankBy) => rankBy switch { "weighted" => ("weighted_rating", "ASC"), "fcrate" => ("fc_rate", "DESC"), "totalscore" => ("total_score", "DESC"), "maxscore" => ("max_score_percent", "DESC"), _ => ("adjusted_rating", "ASC") };
+    private static (string Column, string Direction) RankByColumn(string rankBy) => rankBy.ToLowerInvariant() switch { "weighted" => ("weighted_rating", "ASC"), "fcrate" => ("fc_rate", "DESC"), "totalscore" => ("total_score", "DESC"), "maxscore" => ("max_score_percent", "DESC"), _ => ("adjusted_rating", "ASC") };
+    private static string ComboRankOrderBy(string rankBy) { var (col, dir) = RankByColumn(rankBy); return rankBy.Equals("fcrate", StringComparison.OrdinalIgnoreCase) ? $"{col} {dir}, total_score DESC, songs_played DESC, account_id ASC" : $"{col} {dir}, songs_played DESC, account_id ASC"; }
     private static string BandRankColumn(string rankBy) => rankBy switch { "weighted" => "weighted_rank", "fcrate" => "fc_rate_rank", "totalscore" => "total_score_rank", _ => "adjusted_skill_rank" };
     private static List<RivalSongSampleRow> ReadRivalSamples(NpgsqlCommand cmd) { var list = new List<RivalSongSampleRow>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadRivalSample(r)); return list; }
     private static RivalSongSampleRow ReadRivalSample(NpgsqlDataReader r) => new() { UserId = r.GetString(0), RivalAccountId = r.GetString(1), Instrument = r.GetString(2), SongId = r.GetString(3), UserRank = r.GetInt32(4), RivalRank = r.GetInt32(5), RankDelta = r.GetInt32(6), UserScore = r.IsDBNull(7) ? null : r.GetInt32(7), RivalScore = r.IsDBNull(8) ? null : r.GetInt32(8) };

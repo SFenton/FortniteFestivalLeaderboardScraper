@@ -21,6 +21,8 @@ type FabSearchContextType = {
   rivalsToggleTab: () => void;
   rivalsActiveTab: 'song' | 'leaderboard';
   setRivalsActiveTab: (tab: 'song' | 'leaderboard') => void;
+  registerBandActions: (actions: { openFilter: () => void }) => void;
+  openBandFilter: () => void;
   registerPlayerQuickLinks: (action: { openQuickLinks: () => void } | null) => void;
   openPlayerQuickLinks: () => void;
   hasPlayerQuickLinks: boolean;
@@ -36,6 +38,7 @@ const FabSearchContext = createContext<FabSearchContextType>({
   registerShopActions: () => {}, shopToggleView: () => {}, shopViewMode: 'grid', setShopViewMode: () => {},
   registerLeaderboardActions: () => {}, openLeaderboardMetric: () => {}, openLeaderboardInstrument: () => {},
   registerRivalsActions: () => {}, rivalsToggleTab: () => {}, rivalsActiveTab: 'song', setRivalsActiveTab: () => {},
+  registerBandActions: () => {}, openBandFilter: () => {},
   registerPlayerQuickLinks: () => {}, openPlayerQuickLinks: () => {}, hasPlayerQuickLinks: false,
   registerPlayerPageSelect: () => {}, playerPageSelect: null,
 });
@@ -48,6 +51,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const shopActionsRef = useRef<{ toggleView: () => void }>({ toggleView: () => {} });
   const leaderboardActionsRef = useRef<{ openMetric: () => void; openInstrument: () => void }>({ openMetric: () => {}, openInstrument: () => {} });
   const rivalsActionsRef = useRef<{ toggleTab: () => void }>({ toggleTab: () => {} });
+  const bandActionsRef = useRef<{ openFilter: () => void }>({ openFilter: () => {} });
   const playerQuickLinksRef = useRef<() => void>(() => {});
 
   const registerActions = useCallback((actions: { openSort: () => void; openFilter: () => void }) => {
@@ -78,6 +82,10 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     rivalsActionsRef.current = actions;
   }, []);
 
+  const registerBandActions = useCallback((actions: { openFilter: () => void }) => {
+    bandActionsRef.current = actions;
+  }, []);
+
   const [hasPlayerQuickLinks, setHasPlayerQuickLinks] = useState(false);
   const registerPlayerQuickLinks = useCallback((action: { openQuickLinks: () => void } | null) => {
     playerQuickLinksRef.current = action?.openQuickLinks ?? (() => {});
@@ -93,6 +101,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const openLeaderboardMetric = useCallback(() => leaderboardActionsRef.current.openMetric(), []);
   const openLeaderboardInstrument = useCallback(() => leaderboardActionsRef.current.openInstrument(), []);
   const rivalsToggleTab = useCallback(() => rivalsActionsRef.current.toggleTab(), []);
+  const openBandFilter = useCallback(() => bandActionsRef.current.openFilter(), []);
   const openPlayerQuickLinks = useCallback(() => playerQuickLinksRef.current(), []);
 
   const [shopViewMode, setShopViewMode] = useState<'grid' | 'list'>('grid');
@@ -111,6 +120,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerShopActions, shopToggleView, shopViewMode, setShopViewMode,
     registerLeaderboardActions, openLeaderboardMetric, openLeaderboardInstrument,
     registerRivalsActions, rivalsToggleTab, rivalsActiveTab, setRivalsActiveTab,
+    registerBandActions, openBandFilter,
     registerPlayerQuickLinks, openPlayerQuickLinks, hasPlayerQuickLinks,
     registerPlayerPageSelect, playerPageSelect,
   }), [registerActions, openSort, openFilter,
@@ -120,6 +130,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerShopActions, shopToggleView, shopViewMode, setShopViewMode,
     registerLeaderboardActions, openLeaderboardMetric, openLeaderboardInstrument,
     registerRivalsActions, rivalsToggleTab, rivalsActiveTab, setRivalsActiveTab,
+    registerBandActions, openBandFilter,
     registerPlayerQuickLinks, openPlayerQuickLinks, hasPlayerQuickLinks,
     registerPlayerPageSelect, playerPageSelect]);
 

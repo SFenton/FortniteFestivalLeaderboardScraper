@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import ModalShell from '../../../../src/components/modals/components/ModalShell';
 
 // Mock useIsMobile
@@ -19,6 +19,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -243,6 +244,27 @@ describe('ModalShell', () => {
     }
     // After transition, should be unmounted
     expect(screen.queryByText('Content')).toBeNull();
+  });
+
+  it('unmounts after the close timeout fallback when transitionend does not fire', () => {
+    vi.useFakeTimers();
+    const onCloseComplete = vi.fn();
+    const { rerender } = render(
+      <ModalShell visible={true} title="Test" onClose={vi.fn()} onCloseComplete={onCloseComplete} transitionMs={300}>
+        <div>Content</div>
+      </ModalShell>,
+    );
+
+    rerender(
+      <ModalShell visible={false} title="Test" onClose={vi.fn()} onCloseComplete={onCloseComplete} transitionMs={300}>
+        <div>Content</div>
+      </ModalShell>,
+    );
+
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    act(() => { vi.advanceTimersByTime(350); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(onCloseComplete).toHaveBeenCalledTimes(1);
   });
 
   it('overlay has data-glow-scope to suppress light painting', () => {

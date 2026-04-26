@@ -1,9 +1,12 @@
 import type { CSSProperties } from 'react';
-import type { PlayerBandEntry, PlayerBandGroup, PlayerBandMember, PlayerBandsResponse } from '@festival/core/api/serverTypes';
+import type { PlayerBandsResponse } from '@festival/core/api/serverTypes';
+import { Link } from 'react-router-dom';
+import { IoChevronForward } from 'react-icons/io5';
 import { Colors, Font, Gap, InstrumentSize, Layout, Radius, Weight, frostedCard, flexColumn, flexRow } from '@festival/theme';
-import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { PlayerItem } from '../helpers/playerPageTypes';
 import PlayerSectionHeading from '../sections/PlayerSectionHeading';
+import { Routes } from '../../../routes';
+import PlayerBandCard, { estimatePlayerBandCardHeight } from './PlayerBandCard';
 
 type Translate = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -15,7 +18,6 @@ export const EMPTY_PLAYER_BANDS: PlayerBandsResponse = {
 };
 
 const BAND_GROUPS: Array<{ key: keyof PlayerBandsResponse; titleKey: string }> = [
-  { key: 'all', titleKey: 'player.allBands' },
   { key: 'duos', titleKey: 'player.duos' },
   { key: 'trios', titleKey: 'player.trios' },
   { key: 'quads', titleKey: 'player.quads' },
@@ -25,13 +27,21 @@ export function buildPlayerBandsItems(
   t: Translate,
   displayName: string,
   bands: PlayerBandsResponse,
+  sourceAccountId?: string,
 ): PlayerItem[] {
   const items: PlayerItem[] = [
     {
       key: 'bands-heading',
       span: true,
       heightEstimate: 72,
-      node: <PlayerSectionHeading title={t('player.bands', { name: displayName })} />,
+      node: (
+        <PlayerSectionHeading
+          title={t('player.bands', { name: displayName })}
+          actionLabel={t('common.viewAll')}
+          actionTo={sourceAccountId ? Routes.playerBands(sourceAccountId, 'all', 1, displayName) : undefined}
+          actionTestId="player-bands-view-all"
+        />
+      ),
     },
   ];
 
@@ -49,9 +59,8 @@ export function buildPlayerBandsItems(
         items.push({
           key: `bands-entry-${group.key}-${entry.teamKey}-${index}`,
           span: false,
-          heightEstimate: estimateEntryHeight(entry),
-          style: bandStyles.entryCard,
-          node: <BandEntryCard entry={entry} testId={`player-bands-entry-${group.key}-${index}`} />,
+          heightEstimate: estimatePlayerBandCardHeight(entry),
+          node: <PlayerBandCard entry={entry} testId={`player-bands-entry-${group.key}-${index}`} sourceAccountId={sourceAccountId} />,
         });
       });
     } else {
@@ -70,7 +79,12 @@ export function buildPlayerBandsItems(
         span: true,
         heightEstimate: VIEW_ALL_CARD_HEIGHT,
         style: bandStyles.viewAllCard,
-        node: <BandViewAllCard label={t('player.viewAllBands', { count: value.totalCount.toLocaleString() })} />,
+        node: (
+          <BandViewAllCard
+            label={t('player.viewAllBands', { count: value.totalCount.toLocaleString() })}
+            to={sourceAccountId ? Routes.playerBands(sourceAccountId, group.key, 1, displayName) : undefined}
+          />
+        ),
       });
     }
   }
@@ -81,9 +95,6 @@ export function buildPlayerBandsItems(
 const BAND_GROUP_HEADER_HEIGHT = InstrumentSize.md + Gap.md;
 const EMPTY_GROUP_HEIGHT = 150;
 const VIEW_ALL_CARD_HEIGHT = Layout.entryRowHeight;
-const MEMBER_ROW_HEIGHT = 32;
-const ENTRY_CARD_BASE_HEIGHT = 32;
-const BAND_MEMBER_ICON_SIZE = 32;
 
 function BandGroupHeader({
   title,
@@ -101,37 +112,26 @@ function BandGroupHeader({
   );
 }
 
-function BandEntryCard({ entry, testId }: { entry: PlayerBandEntry; testId: string }) {
-  return (
-    <div data-testid={testId} style={bandStyles.entryCardBody}>
-      {entry.members.map((member) => <BandMemberRow key={`${entry.teamKey}:${member.accountId}`} member={member} />)}
-    </div>
+function BandViewAllCard({ label, to }: { label: string; to?: string }) {
+  const body = (
+    <>
+      <span>{label}</span>
+      {to && <IoChevronForward aria-hidden="true" size={18} style={bandStyles.entryChevron} />}
+    </>
   );
-}
 
-function BandMemberRow({ member }: { member: PlayerBandMember }) {
-  const displayName = member.displayName || member.accountId.slice(0, 8);
-  const instruments = Array.from(new Set(member.instruments));
+  if (!to) {
+    return (
+      <div aria-disabled="true" style={bandStyles.viewAllCardBody}>
+        {body}
+      </div>
+    );
+  }
 
   return (
-    <div style={bandStyles.memberRow}>
-      <span style={bandStyles.memberName}>{displayName}</span>
-      {instruments.length > 0 && (
-        <div style={bandStyles.instrumentRow}>
-          {instruments.map((instrument) => (
-            <InstrumentIcon key={`${member.accountId}:${instrument}`} instrument={instrument} size={BAND_MEMBER_ICON_SIZE} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BandViewAllCard({ label }: { label: string }) {
-  return (
-    <div aria-disabled="true" style={bandStyles.viewAllCardBody}>
-      {label}
-    </div>
+    <Link to={to} style={bandStyles.viewAllCardLink}>
+      {body}
+    </Link>
   );
 }
 
@@ -142,18 +142,6 @@ function BandGroupEmptyState({ t }: { t: Translate }) {
       <span style={bandStyles.emptySubtitle}>{t('player.noBandsYetSubtitle')}</span>
     </div>
   );
-}
-
-function estimateGroupHeight(group: PlayerBandGroup): number {
-  const entryHeights = group.entries.reduce((total, entry) => total + estimateEntryHeight(entry), 0);
-  const rowGapCount = Math.max(group.entries.length - 1, 0);
-  const emptyHeight = group.entries.length === 0 ? EMPTY_GROUP_HEIGHT : 0;
-  const buttonHeight = group.totalCount > group.entries.length ? VIEW_ALL_CARD_HEIGHT + Gap.md : 0;
-  return BAND_GROUP_HEADER_HEIGHT + emptyHeight + entryHeights + rowGapCount * Gap.md + buttonHeight;
-}
-
-function estimateEntryHeight(entry: PlayerBandEntry): number {
-  return ENTRY_CARD_BASE_HEIGHT + entry.members.length * MEMBER_ROW_HEIGHT;
 }
 
 const bandStyles = {
@@ -179,39 +167,9 @@ const bandStyles = {
     fontSize: Font.xl,
     fontWeight: Weight.bold,
   } as CSSProperties,
-  entryCard: {
-    ...frostedCard,
-    borderRadius: Radius.md,
-    height: '100%',
-  } as CSSProperties,
-  entryCardBody: {
-    ...flexColumn,
-    gap: Gap.md,
-    height: '100%',
-    padding: Gap.md,
-  } as CSSProperties,
-  memberRow: {
-    ...flexRow,
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: Gap.md,
-    minHeight: 24,
-  } as CSSProperties,
-  memberName: {
-    flex: 1,
-    minWidth: 0,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    fontWeight: Weight.semibold,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  } as CSSProperties,
-  instrumentRow: {
-    ...flexRow,
-    alignItems: 'center',
-    gap: Gap.xs,
+  entryChevron: {
     flexShrink: 0,
+    color: Colors.textSubtle,
   } as CSSProperties,
   emptyCard: {
     ...frostedCard,
@@ -244,11 +202,25 @@ const bandStyles = {
     ...flexRow,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: Gap.sm,
     minHeight: VIEW_ALL_CARD_HEIGHT,
     color: Colors.textPrimary,
     fontSize: Font.md,
     fontWeight: Weight.semibold,
     height: '100%',
     cursor: 'default',
+  } as CSSProperties,
+  viewAllCardLink: {
+    ...flexRow,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Gap.sm,
+    minHeight: VIEW_ALL_CARD_HEIGHT,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: Weight.semibold,
+    height: '100%',
+    textDecoration: 'none',
+    cursor: 'pointer',
   } as CSSProperties,
 };

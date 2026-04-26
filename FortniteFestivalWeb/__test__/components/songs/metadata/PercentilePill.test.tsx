@@ -40,4 +40,11 @@ describe('PercentilePill', () => {
     expect(span).toBeTruthy();
     expect(span?.style.fontWeight).toBe('600');
   });
+
+  it('can force bold text for emphasized rows', () => {
+    const { container } = render(<PercentilePill display="Top 25%" bold />);
+    const span = container.querySelector('span');
+    expect(span).toBeTruthy();
+    expect(span?.style.fontWeight).toBe('700');
+  });
 });

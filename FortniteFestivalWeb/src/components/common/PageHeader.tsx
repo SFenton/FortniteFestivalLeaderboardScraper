@@ -6,6 +6,8 @@ export interface PageHeaderProps {
   title?: ReactNode;
   /** Optional subtitle below the title. */
   subtitle?: string;
+  /** Keep one subtitle line reserved even when subtitle is not yet available. */
+  reserveSubtitleSpace?: boolean;
   /** Optional action elements (pills, buttons) rendered on the right. */
   actions?: ReactNode;
   /** Vertical alignment for the actions slot relative to the title block. */
@@ -27,6 +29,7 @@ export interface PageHeaderProps {
 export default function PageHeader({
   title,
   subtitle,
+  reserveSubtitleSpace = false,
   actions,
   actionsAlign = 'center',
   style,
@@ -45,7 +48,11 @@ export default function PageHeader({
           ) : (
             title
           )}
-          {subtitle && <div style={s.subtitle}>{subtitle}</div>}
+          {(subtitle || reserveSubtitleSpace) && (
+            <div style={subtitle ? s.subtitle : s.subtitleReserved} aria-hidden={subtitle ? undefined : true}>
+              {subtitle || '\u00a0'}
+            </div>
+          )}
         </div>
         )}
         {actions && <div style={actionsAlign === 'start' ? s.actionsTop : s.actions}>{actions}</div>}
@@ -82,6 +89,12 @@ function useStyles() {
       fontSize: Font.sm,
       color: Colors.textSubtle,
       marginTop: Gap.xs,
+    } as CSSProperties,
+    subtitleReserved: {
+      fontSize: Font.sm,
+      color: Colors.textSubtle,
+      marginTop: Gap.xs,
+      visibility: 'hidden',
     } as CSSProperties,
     actions: {
       ...flexRow,

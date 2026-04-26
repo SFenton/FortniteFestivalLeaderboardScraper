@@ -53,6 +53,8 @@ export interface PaginatedLeaderboardProps<T> {
   isMobile: boolean;
   /** True when the FAB (mobile chrome / PWA) is present. */
   hasFab: boolean;
+  /** Pixel height for each row. Defaults to the standard leaderboard row height. */
+  rowHeight?: number;
 
   /** Hide pagination when there is an error. */
   error?: boolean;
@@ -100,6 +102,7 @@ export function PaginatedLeaderboard<T>({
   cached: skipAllAnim = false,
   isMobile,
   hasFab,
+  rowHeight = Layout.entryRowHeight,
   error = false,
   emptyMessage,
   staggerRushRef,
@@ -108,6 +111,10 @@ export function PaginatedLeaderboard<T>({
   const isWideDesktop = useIsWideDesktop();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
   const scrollContainerRef = useScrollContainer();
+  const pwaOffset = IS_PWA ? Gap.section - Gap.md : 0;
+  const rowHeightStyle: CSSProperties | undefined = rowHeight !== Layout.entryRowHeight
+    ? { height: rowHeight, boxSizing: 'border-box' }
+    : undefined;
 
   const hasPagination = totalPages > 1;
   const hasLoadedOnce = useRef(!loading);
@@ -123,7 +130,7 @@ export function PaginatedLeaderboard<T>({
   loadPhaseRef.current = loadPhase;
 
   // Compute maxVisibleRows from the scroll container's viewport height.
-  const ROW_SLOT = Layout.entryRowHeight + Gap.sm;
+  const ROW_SLOT = rowHeight + Gap.sm;
   const scrollViewHeight = scrollContainerRef.current?.clientHeight
     ?? Math.max(0, window.innerHeight - (isMobile ? 120 : 200));
   const maxVisibleRows = useMemo(
@@ -192,9 +199,8 @@ export function PaginatedLeaderboard<T>({
     if (hasFab) {
       margin = Layout.fabPaddingBottom;
       if (hasPagination) {
-        const pwaOffset = IS_PWA ? Gap.section - Gap.md : 0;
         const paginationCssBottom = hasPlayerFooter
-          ? Layout.fabBottom + pwaOffset + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm
+          ? Layout.fabBottom + pwaOffset + (Layout.fabSize - rowHeight) / 2 + rowHeight + Gap.sm
           : Layout.fabBottom + pwaOffset + Layout.fabSize + Gap.sm;
         const paginationTop = paginationCssBottom + Layout.paginationHeight;
         const naturalHeight = el.clientHeight + (parseFloat(el.style.marginBottom) || 0);
@@ -206,12 +212,12 @@ export function PaginatedLeaderboard<T>({
       }
     } else {
       margin = Layout.fabPaddingBottom;
-      if (hasPlayerFooter) margin += Layout.entryRowHeight + Gap.xl;
+      if (hasPlayerFooter) margin += rowHeight + Gap.xl;
       if (hasPagination) margin += Layout.paginationHeight + Gap.xl;
     }
     el.style.marginBottom = `${margin}px`;
     return () => { el.style.marginBottom = ''; };
-  }, [hasFab, hasPagination, hasPlayerFooter, scrollContainerRef]);
+  }, [hasFab, hasPagination, hasPlayerFooter, pwaOffset, rowHeight, scrollContainerRef]);
 
   const contentVisible = loadPhase === LoadPhase.ContentIn;
 
@@ -262,7 +268,7 @@ export function PaginatedLeaderboard<T>({
                 ref={isPlayer && playerRowRef ? playerRowRef : undefined}
                 to={entryLinkTo(entry, isPlayer)}
                 state={linkState}
-                style={{ ...rowStyle, ...staggerStyle }}
+                style={{ ...rowStyle, ...rowHeightStyle, ...staggerStyle }}
                 onAnimationEnd={(ev) => {
                   /* v8 ignore start — animation cleanup */
                   const el = ev.currentTarget;
@@ -299,9 +305,7 @@ export function PaginatedLeaderboard<T>({
       {createPortal(
         <>
           {hasLoadedOnce.current && !error && hasPagination && (
-            <div style={{ ...(hasFab
-              ? (hasPlayerFooter ? s.mobilePagination : s.mobilePaginationNoPlayer)
-              : (hasPlayerFooter ? s.desktopPagination : s.desktopPaginationNoPlayer)), ...wideOverride }}>
+            <div style={{ ...getFixedPaginationStyle(hasFab, hasPlayerFooter, rowHeight, pwaOffset), ...wideOverride }}>
               <Paginator
                 className={hasFab ? 'fab-player-footer' : ''}
                 style={isMobile ? s.paginationMobile : s.pagination}
@@ -320,7 +324,7 @@ export function PaginatedLeaderboard<T>({
           )}
           {hasPlayerFooter && renderPlayerFooter && (
             <div
-              style={{ ...(hasFab ? s.playerFooterFab : s.desktopPlayerFooter), ...wideOverride, ...footerStaggerStyle }}
+              style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight, pwaOffset), ...wideOverride, ...footerStaggerStyle }}
               onAnimationEnd={(ev) => {
                 footerShownRef.current = true;
                 const el = ev.currentTarget;
@@ -330,7 +334,7 @@ export function PaginatedLeaderboard<T>({
             >
               {renderPlayerFooter({
                 className: hasFab ? 'fab-player-footer' : '',
-                style: s.playerFooterRow,
+                style: { ...s.playerFooterRow, ...rowHeightStyle },
               })}
             </div>
           )}
@@ -340,4 +344,36 @@ export function PaginatedLeaderboard<T>({
       {/* v8 ignore stop */}
     </>
   );
+}
+
+function getFixedPaginationStyle(hasFab: boolean, hasPlayerFooter: boolean, rowHeight: number, pwaOffset: number): CSSProperties {
+  if (hasFab) {
+    if (hasPlayerFooter) {
+      return {
+        ...s.mobilePagination,
+        bottom: Layout.fabBottom + pwaOffset + (Layout.fabSize - rowHeight) / 2 + rowHeight + Gap.sm,
+      };
+    }
+    return s.mobilePaginationNoPlayer;
+  }
+
+  if (hasPlayerFooter) {
+    return {
+      ...s.desktopPagination,
+      bottom: Layout.fabPaddingBottom + rowHeight + Gap.xl,
+    };
+  }
+
+  return s.desktopPaginationNoPlayer;
+}
+
+function getFixedPlayerFooterStyle(hasFab: boolean, rowHeight: number, pwaOffset: number): CSSProperties {
+  if (hasFab) {
+    return {
+      ...s.playerFooterFab,
+      bottom: Layout.fabBottom + pwaOffset + (Layout.fabSize - rowHeight) / 2,
+    };
+  }
+
+  return s.desktopPlayerFooter;
 }

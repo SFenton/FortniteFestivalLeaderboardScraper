@@ -82,6 +82,43 @@ describe('Routes', () => {
     expect(Routes.fullComboRankings('05', 'totalscore', 2)).toBe('/leaderboards/all?combo=05&rankBy=totalscore&page=2');
   });
 
+  it('generates player bands path with group, page, and friendly name', () => {
+    expect(Routes.playerBands('player id', 'duos', 2, 'Player One')).toBe(
+      '/bands/player/player%20id?group=duos&page=2&name=Player%20One',
+    );
+  });
+
+  it('generates band path without context', () => {
+    expect(Routes.band('band-id-1')).toBe('/bands/band-id-1');
+  });
+
+  it('generates band path with lookup context', () => {
+    expect(Routes.band('band-id-1', { accountId: 'p1', bandType: 'Band_Duets', teamKey: 'p1:p2' })).toBe(
+      '/bands/band-id-1?accountId=p1&bandType=Band_Duets&teamKey=p1%3Ap2',
+    );
+  });
+
+  it('generates band path with friendly names', () => {
+    expect(Routes.band('band id', { names: 'Player One + Player Two' })).toBe(
+      '/bands/band%20id?names=Player%20One%20%2B%20Player%20Two',
+    );
+  });
+
+  it('generates band path with lookup context and friendly names', () => {
+    expect(Routes.band('band-id-1', {
+      accountId: 'p1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      names: 'Player One + Player Two',
+    })).toBe('/bands/band-id-1?accountId=p1&bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two');
+  });
+
+  it('generates lookup band path with friendly names', () => {
+    expect(Routes.bandLookup('p1', 'Band_Duets', 'p1:p2', 'Player One + Player Two')).toBe(
+      '/bands?accountId=p1&bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two',
+    );
+  });
+
   it('encodes special characters in rivalry mode', () => {
     expect(Routes.rivalry('rival-id-2', 'almost_passed')).toBe(
       '/rivals/rival-id-2/rivalry?mode=almost_passed',
@@ -195,6 +232,16 @@ describe('RoutePatterns', () => {
 
     it('does not match /rivals/rival-id', () => {
       expect(RoutePatterns.rivalry.test('/rivals/rival-id')).toBe(false);
+    });
+  });
+
+  describe('playerBands', () => {
+    it('matches account-scoped player bands routes', () => {
+      expect(RoutePatterns.playerBands.test('/bands/player/account-id')).toBe(true);
+    });
+
+    it('does not match band detail routes', () => {
+      expect(RoutePatterns.playerBands.test('/bands/band-id')).toBe(false);
     });
   });
 });

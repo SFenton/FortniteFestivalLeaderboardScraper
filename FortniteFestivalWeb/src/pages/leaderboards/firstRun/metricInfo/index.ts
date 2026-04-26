@@ -5,7 +5,7 @@ import MetricInfoSlide from './MetricInfoSlide';
 import SongDemoSlide from './SongDemoSlide';
 import FcRateHowDemo from './FcRateHowDemo';
 
-/* ── Adjusted Skill ── */
+/* ── Adjusted Percentile ── */
 
 function AdjustedHowDemo() {
   const buildRows = useCallback((songs: { albumArt?: string; title: string; artist: string }[]) => [
@@ -16,10 +16,10 @@ function AdjustedHowDemo() {
 
   return createElement(SongDemoSlide, {
     paragraphs: [
-      'Your rank on each song is turned into a percentile — how you compare to everyone else who played it. Adjusted Skill averages these across all your songs.',
+      'Your rank on each song is turned into a rank percentile — how you compare to everyone else who played it. Adjusted Percentile averages these across your songs. Lower is better.',
     ],
     buildRows,
-    songSummary: 'Your average: 4.5% — lower is better',
+    songSummary: 'Your average rank percentile: 4.5% — lower is better',
   });
 }
 
@@ -39,31 +39,31 @@ const adjustedSlides: FirstRunSlideDef[] = [
     description: 'firstRun.leaderboards.metricInfo.adjusted.experience.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'With few songs played, the system isn\'t sure how good you are — so it keeps your rating close to 50% (average). As you play more, your rating reflects your true skill.',
+        'With only a few scores on an instrument, the rating is treated cautiously. As more scores are added, it follows the rank percentiles earned on those songs more closely.',
       ],
       cards: [
         {
-          label: 'After 5 songs',
+          label: 'After 5 scores',
           entries: [
             { rank: 52, displayName: 'FretPhenom' },
             { rank: 53, displayName: 'NeonPick' },
             { rank: 54, displayName: 'You', isPlayer: true },
             { rank: 55, displayName: 'DrumSurge' },
           ],
-          highlight: 'Still near average — unproven',
+          highlight: 'Few scores — ranking is cautious',
         },
         {
-          label: 'After 100 songs',
+          label: 'After 100 scores',
           entries: [
             { rank: 7, displayName: 'BeatLegend' },
             { rank: 8, displayName: 'TopClutch' },
             { rank: 9, displayName: 'You', isPlayer: true },
             { rank: 10, displayName: 'ComboKing' },
           ],
-          highlight: 'True skill shines through',
+          highlight: 'Results drive more of the rating',
         },
       ],
-      callout: 'Everyone starts near 50%. Each song you play pulls your rating closer to what you\'ve actually earned.',
+      callout: 'A player with only a few scores should not jump high on the leaderboard. Each additional score makes earned rank percentiles count more.',
     }),
     contentStaggerCount: 3,
   },
@@ -74,12 +74,12 @@ const adjustedSlides: FirstRunSlideDef[] = [
     description: 'firstRun.leaderboards.metricInfo.adjusted.hood.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'The formula blends your actual average with a 50% starting point. The more songs you play, the less the starting point matters.',
+        'The formula factors in how many scores the player has on that instrument. More scores means the player\'s average rank percentile determines more of the rating.',
       ],
       formulas: [
-        '\\text{Rating} = \\frac{n \\cdot \\bar{x} + 50 \\cdot 0.5}{n + 50}',
+        '\\text{Rating} = \\frac{n \\cdot \\bar{p} + 50 \\cdot 0.5}{n + 50}',
       ],
-      callout: 'n = songs played, x̄ = your real average percentile.\nAfter 5 songs: (5 × 0.03 + 50 × 0.5) ÷ 55 ≈ 46%.\nAfter 100 songs: (100 × 0.03 + 50 × 0.5) ÷ 150 ≈ 19%.',
+      callout: 'n = scores on the instrument, p̄ = average rank percentile, and 0.5 represents a neutral middle percentile.\nAfter 5 scores at 3% average: (5 × 0.03 + 50 × 0.5) ÷ 55 ≈ 46%.\nAfter 100 scores at 3% average: (100 × 0.03 + 50 × 0.5) ÷ 150 ≈ 19%.',
     }),
     contentStaggerCount: 4,
   },
@@ -90,8 +90,8 @@ const adjustedSlides: FirstRunSlideDef[] = [
     description: 'firstRun.leaderboards.metricInfo.adjusted.experimental.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'All songs count equally — finishing top 1% on an easy song counts the same as a hard one.',
-        'The "experience threshold" of 50 songs is a tuning choice, not a scientifically proven number. A different threshold would shift everyone\'s rankings.',
+        'All songs count equally — a top 1% rank percentile on an easy song counts the same as top 1% on a hard one.',
+        'How strongly score count affects early rankings is a tuning choice, not a fixed rule. A different threshold would shift everyone\'s rankings.',
       ],
     }),
     contentStaggerCount: 2,
@@ -108,11 +108,11 @@ function WeightedHowDemo() {
 
   return createElement(SongDemoSlide, {
     paragraphs: [
-      'Like Adjusted Skill, this uses your percentile on each song — but songs with more players on the leaderboard carry more weight.',
+      'Like Adjusted Percentile, this uses your rank percentile on each song — but songs with larger leaderboard populations carry more influence in the average.',
     ],
     buildRows,
     maxSongs: 2,
-    callout: 'Same percentile, but the popular song counts much more — doing well where competition is fierce is a stronger signal of skill.',
+    callout: 'Same percentile, but the popular song counts more. A larger leaderboard population can make the result less dependent on very small song leaderboards — it does not guarantee the chart is harder.',
   });
 }
 
@@ -132,26 +132,26 @@ const weightedSlides: FirstRunSlideDef[] = [
     description: 'firstRun.leaderboards.metricInfo.weighted.experience.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'New players start near 50% and converge toward their true rating as they play more — the same experience boost as Adjusted Skill.',
+        'It uses the same score-count rule: a few scores on an instrument are only a small sample, and more scores make your weighted percentile average count more directly.',
       ],
       cards: [
         {
-          label: 'After 5 songs',
+          label: 'After 5 scores',
           entries: [
             { rank: 38, displayName: 'StageKnight' },
             { rank: 39, displayName: 'You', isPlayer: true },
             { rank: 40, displayName: 'RhythmEdge' },
           ],
-          highlight: 'Still near average',
+          highlight: 'Few scores — ranking is cautious',
         },
         {
-          label: 'After 100 songs',
+          label: 'After 100 scores',
           entries: [
             { rank: 4, displayName: 'GoldStreak' },
             { rank: 5, displayName: 'NoteHunter' },
             { rank: 6, displayName: 'You', isPlayer: true },
           ],
-          highlight: 'True skill shines through',
+          highlight: 'Weighted average has more influence',
         },
       ],
     }),
@@ -164,15 +164,16 @@ const weightedSlides: FirstRunSlideDef[] = [
     description: 'firstRun.leaderboards.metricInfo.weighted.hood.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'Each song\'s percentile is multiplied by its weight before averaging. Then the same experience adjustment applies.',
+        'First, each song\'s rank percentile is weighted by leaderboard population using log₂(players). Then the number of scores on the instrument is factored in so players with only a few scores do not rank too highly.',
       ],
       formulas: [
         '\\text{Weight}_i = \\log_2(\\text{players}_i)',
-        '\\text{Rating} = \\frac{n \\cdot \\overline{w} + 50 \\cdot 0.5}{n + 50}',
+        '\\text{Raw weighted percentile} = \\frac{\\sum_i p_i \\cdot \\text{Weight}_i}{\\sum_i \\text{Weight}_i}',
+        '\\text{Rating} = \\frac{n \\cdot \\text{Raw weighted percentile} + 50 \\cdot 0.5}{n + 50}',
       ],
-      callout: 'A song with 10,000 players has ~13× the weight of one with 10 players. The logarithm keeps things from getting too extreme.',
+      callout: 'A song with 10,000 players gets about 13 weight units; one with 10 players gets about 3.3, so the larger board counts about 4× as much. The log scale keeps big boards from completely dominating.',
     }),
-    contentStaggerCount: 4,
+    contentStaggerCount: 5,
   },
   {
     id: 'metric-info-weighted-experimental',
@@ -181,8 +182,8 @@ const weightedSlides: FirstRunSlideDef[] = [
     description: 'firstRun.leaderboards.metricInfo.weighted.experimental.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'More players doesn\'t necessarily mean harder. A viral song might have 10,000 casual players, making it easier to rank highly.',
-        'The logarithmic weighting softens extremes but is still a subjective choice — a different scale would produce different rankings.',
+        'More players does not necessarily mean a harder chart. A viral or easy song might have many casual players, so popularity is only a weighting signal.',
+        'The log₂ weighting softens extremes but is still a tuning choice — a different scale would produce different rankings.',
       ],
     }),
     contentStaggerCount: 2,
@@ -226,10 +227,10 @@ const fcRateSlides: FirstRunSlideDef[] = [
             { rank: 7, displayName: 'TopClutch', ratingLabel: '48.5%' },
             { rank: 8, displayName: 'BeatLegend', ratingLabel: '48.3%', isPlayer: true },
           ],
-          highlight: 'Raw: 65% — proven consistency',
+          highlight: 'Raw: 65% — consistent across many songs',
         },
       ],
-      callout: 'Sustained consistency across many songs is more trustworthy than a perfect record on just a few.',
+      callout: 'Sustained consistency across many songs counts more than a perfect record on just a few.',
     }),
     contentStaggerCount: 4,
   },
@@ -240,7 +241,7 @@ const fcRateSlides: FirstRunSlideDef[] = [
     description: 'firstRun.leaderboards.metricInfo.fcrate.hood.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'The formula is the same experience adjustment used by all metrics — blending your real FC rate with a 50% starting point.',
+        'The formula applies the same score-count rule used by all metrics: your real FC rate counts more as you add more scores on the instrument.',
       ],
       formulas: [
         '\\text{Rating} = \\frac{n \\cdot \\frac{\\text{FCs}}{\\text{Songs}} + 50 \\cdot 0.5}{n + 50}',
@@ -298,7 +299,7 @@ const maxScoreSlides: FirstRunSlideDef[] = [
     description: 'firstRun.leaderboards.metricInfo.maxscore.experience.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'A player who scored 99% on two songs isn\'t as proven as one who averages 94% across a hundred. Same experience boost as the other metrics.',
+        'A player who scored 99% on two songs has only a few scores compared with one who averages 94% across a hundred. The same score-count rule applies as the other metrics.',
       ],
       cards: [
         {
@@ -308,7 +309,7 @@ const maxScoreSlides: FirstRunSlideDef[] = [
             { rank: 56, displayName: 'You', ratingLabel: '51.2%', isPlayer: true },
             { rank: 57, displayName: 'FretBlaze', ratingLabel: '50.8%' },
           ],
-          highlight: 'Still near 50% — unproven',
+          highlight: 'Few scores — ranking is cautious',
         },
         {
           label: 'After 100 songs',
@@ -317,7 +318,7 @@ const maxScoreSlides: FirstRunSlideDef[] = [
             { rank: 4, displayName: 'NoteHunter', ratingLabel: '94.3%' },
             { rank: 5, displayName: 'You', ratingLabel: '94.1%', isPlayer: true },
           ],
-          highlight: 'True accuracy proven',
+          highlight: 'Consistent accuracy across many songs',
         },
       ],
     }),

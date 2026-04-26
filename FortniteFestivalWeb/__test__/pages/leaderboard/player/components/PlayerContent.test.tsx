@@ -241,6 +241,37 @@ describe('PlayerContent', () => {
     ],
   };
   const songs = [{ songId: 's1', title: 'Test Song', artist: 'Artist A', year: 2024 }];
+  const playerStatsWithBands = {
+    accountId: 'p1',
+    totalSongs: 1,
+    instruments: [],
+    bands: {
+      all: {
+        totalCount: 6,
+        entries: [{
+          teamKey: 'p1:p2',
+          bandType: 'Band_Duets',
+          members: [
+            { accountId: 'p1', displayName: 'TestPlayer', instruments: ['Solo_Guitar'] },
+            { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+          ],
+        }],
+      },
+      duos: {
+        totalCount: 6,
+        entries: [{
+          teamKey: 'p1:p2',
+          bandType: 'Band_Duets',
+          members: [
+            { accountId: 'p1', displayName: 'TestPlayer', instruments: ['Solo_Guitar'] },
+            { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+          ],
+        }],
+      },
+      trios: { totalCount: 0, entries: [] },
+      quads: { totalCount: 0, entries: [] },
+    },
+  };
 
   it('renders player display name', async () => {
     render(
@@ -359,8 +390,11 @@ describe('PlayerContent', () => {
     await waitFor(() => {
       expect(screen.getByText("TestPlayer's Bands")).toBeDefined();
     });
-      expect(screen.getAllByText('BandMate')).toHaveLength(2);
-      expect(screen.getAllByText('View all bands (6)')).toHaveLength(2);
+    expect(screen.getByTestId('player-bands-view-all')).toHaveAttribute('href', '/bands/player/p1?group=all&page=1&name=TestPlayer');
+    expect(screen.queryByText('All Bands')).toBeNull();
+    expect(screen.getByText('Duos')).toBeDefined();
+    expect(screen.getAllByText('BandMate')).toHaveLength(1);
+    expect(screen.getAllByText('View all bands (6)')).toHaveLength(1);
   });
 
   it('hides the player bands section when the flag is disabled', async () => {
@@ -402,6 +436,78 @@ describe('PlayerContent', () => {
 
     await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
     expect(screen.queryByText("TestPlayer's Bands")).toBeNull();
+  });
+
+  it('uses a single-column player grid on mobile widths above the narrow breakpoint', async () => {
+    mockIsWideDesktop = false;
+    mockHasFab = true;
+    stubMatchMedia(false);
+
+    render(
+      <Providers accountId="p1">
+        <PlayerContent
+          data={playerData as any}
+          songs={songs as any}
+          isSyncing={false}
+          phase={SyncPhase.Idle}
+          backfillProgress={0}
+          historyProgress={0}
+          rivalsProgress={0}
+          itemsCompleted={0}
+          totalItems={0}
+          entriesFound={0}
+          currentSongName={null}
+          seasonsQueried={0}
+          rivalsFound={0}
+          isTrackedPlayer={true}
+          skipAnim
+          statsData={playerStatsWithBands as any}
+          rankingQueryResults={[]}
+        />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("TestPlayer's Bands")).toBeDefined();
+    });
+
+    expect(screen.getByTestId('player-grid-list').style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+  });
+
+  it('keeps the two-column player grid on desktop widths', async () => {
+    mockIsWideDesktop = true;
+    mockHasFab = false;
+    stubMatchMedia(false);
+
+    render(
+      <Providers accountId="p1">
+        <PlayerContent
+          data={playerData as any}
+          songs={songs as any}
+          isSyncing={false}
+          phase={SyncPhase.Idle}
+          backfillProgress={0}
+          historyProgress={0}
+          rivalsProgress={0}
+          itemsCompleted={0}
+          totalItems={0}
+          entriesFound={0}
+          currentSongName={null}
+          seasonsQueried={0}
+          rivalsFound={0}
+          isTrackedPlayer={true}
+          skipAnim
+          statsData={playerStatsWithBands as any}
+          rankingQueryResults={[]}
+        />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("TestPlayer's Bands")).toBeDefined();
+    });
+
+    expect(screen.getByTestId('player-grid-list').style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
   });
 
   it('clears search query when navigating to songs via category card', async () => {

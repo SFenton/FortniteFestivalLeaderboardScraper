@@ -76,6 +76,17 @@ export default function ModalShell({
   }, [animIn, onOpenComplete, onCloseComplete]);
 
   useEffect(() => {
+    if (!mounted || visible) return;
+
+    const id = window.setTimeout(() => {
+      setMounted(false);
+      onCloseComplete?.();
+    }, transitionMs + 50);
+
+    return () => window.clearTimeout(id);
+  }, [mounted, visible, transitionMs, onCloseComplete]);
+
+  useEffect(() => {
     if (!mounted) return;
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', handleKey);

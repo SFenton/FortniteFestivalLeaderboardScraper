@@ -475,8 +475,10 @@ export type PlayerBandMember = {
 };
 
 export type PlayerBandEntry = {
+  bandId?: string | null;
   teamKey: string;
   bandType: PlayerBandType;
+  appearanceCount?: number | null;
   members: PlayerBandMember[];
 };
 
@@ -492,10 +494,19 @@ export type PlayerBandsResponse = {
   quads: PlayerBandGroup;
 };
 
+export type PlayerBandListGroup = keyof PlayerBandsResponse;
+
 export type PlayerBandTypeResponse = {
   accountId: string;
   bandType: PlayerBandType;
   comboId?: string | null;
+  totalCount: number;
+  entries: PlayerBandEntry[];
+};
+
+export type PlayerBandListResponse = {
+  accountId: string;
+  group: PlayerBandListGroup;
   totalCount: number;
   entries: PlayerBandEntry[];
 };
@@ -606,6 +617,7 @@ export type BandTeamMember = {
 };
 
 export type BandRankingEntry = {
+  bandId: string;
   teamKey: string;
   teamMembers: BandTeamMember[];
   songsPlayed: number;
@@ -645,6 +657,62 @@ export type BandRankingDto = BandRankingEntry & {
   totalRankedTeams: number;
 };
 
+export type BandDetailResponse = {
+  band: PlayerBandEntry;
+  ranking?: BandRankingDto | null;
+};
+
+export type BandRankHistoryEntry = {
+  snapshotDate: string;
+  snapshotTakenAt?: string | null;
+  isSynthetic?: boolean;
+  adjustedSkillRank: number;
+  weightedRank: number;
+  fcRateRank: number;
+  totalScoreRank: number;
+  adjustedSkillRating: number | null;
+  weightedRating: number | null;
+  fcRate: number | null;
+  totalScore: number | null;
+  songsPlayed: number | null;
+  coverage: number | null;
+  fullComboCount: number | null;
+  totalChartedSongs: number | null;
+  totalRankedTeams: number | null;
+  rawWeightedRating: number | null;
+  rawSkillRating: number | null;
+};
+
+export type BandRankHistoryResponse = {
+  bandType: BandType;
+  teamKey: string;
+  comboId?: string | null;
+  days: number;
+  history: BandRankHistoryEntry[];
+};
+
+export type BandSongPerformance = {
+  songId: string;
+  comboId?: string | null;
+  rank: number;
+  totalEntries: number;
+  percentile: number;
+  score: number;
+  accuracy?: number | null;
+  isFullCombo?: boolean | null;
+  stars?: number | null;
+  endTime?: string | null;
+};
+
+export type BandSongsResponse = {
+  bandType: BandType;
+  teamKey: string;
+  comboId?: string | null;
+  limit: number;
+  best: BandSongPerformance[];
+  worst: BandSongPerformance[];
+};
+
 export type BandComboCatalogEntry = {
   comboId: string;
   instruments: ServerInstrumentKey[];
@@ -674,6 +742,8 @@ export type RankHistoryEntry = {
   songsPlayed: number | null;
   coverage: number | null;
   fullComboCount: number | null;
+  totalChartedSongs: number | null;
+  rankedAccountCount: number | null;
   rawMaxScorePercent: number | null;
   rawWeightedRating: number | null;
   rawSkillRating: number | null;
@@ -1164,6 +1234,7 @@ type WireStatsResponse = {
   totalSongs: number;
   instruments: WireStatsInstrument[];
   compositeRanks?: CompositeRanks | null;
+  instrumentRanks?: InstrumentRankEntry[] | null;
   bands?: PlayerBandsResponse | null;
 };
 
@@ -1249,6 +1320,7 @@ export function expandWireStatsResponse(wire: WireStatsResponse): PlayerStatsRes
     totalSongs: wire.totalSongs ?? 0,
     instruments: (wire.instruments ?? []).map(expandStatsInstrument),
     compositeRanks: wire.compositeRanks ?? null,
+    instrumentRanks: wire.instrumentRanks ?? null,
     bands: wire.bands ?? null,
   };
 }

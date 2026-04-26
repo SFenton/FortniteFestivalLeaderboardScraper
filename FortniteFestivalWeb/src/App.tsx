@@ -8,6 +8,7 @@ import { SettingsProvider } from './contexts/SettingsContext';
 import { ShopProvider } from './contexts/ShopContext';
 import { AnimatedBackground } from './components/shell/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPlayer';
+import { usePlayerBandsPrefetch } from './hooks/data/usePlayerBandsPrefetch';
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from './hooks/ui/useIsMobile';
 import { useMediaQuery } from './hooks/ui/useMediaQuery';
@@ -26,6 +27,8 @@ const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalryPage'));
 const AllRivalsPage = lazy(() => import('./pages/rivals/AllRivalsPage'));
 const LeaderboardsOverviewPage = lazy(() => import('./pages/leaderboards/LeaderboardsOverviewPage'));
 const FullRankingsPage = lazy(() => import('./pages/leaderboards/FullRankingsPage'));
+const BandPage = lazy(() => import('./pages/band/BandPage'));
+const PlayerBandsPage = lazy(() => import('./pages/band/PlayerBandsPage'));
 const CompetePage = lazy(() => import('./pages/compete/CompetePage'));
 /* v8 ignore stop */
 import { Size, Layout, QUERY_NARROW_GRID } from '@festival/theme';
@@ -74,6 +77,9 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
       <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
       <Route path="/leaderboards" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary>} />
       <Route path="/leaderboards/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary>} />
+      <Route path="/bands/player/:accountId" element={<FeatureGate flag="playerBands"><ErrorBoundary fallback={<RouteErrorFallback />}><PlayerBandsPage /></ErrorBoundary></FeatureGate>} />
+      <Route path="/bands" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandPage /></ErrorBoundary>} />
+      <Route path="/bands/:bandId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandPage /></ErrorBoundary>} />
       {player ? (
         <Route path="/compete" element={<ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary>} />
       ) : (
@@ -120,6 +126,7 @@ import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext
 import { useShopState } from './hooks/data/useShopState';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
+import FeatureGate from './components/routing/FeatureGate';
 
 export default function App() {
   return (
@@ -180,7 +187,7 @@ export function mergePageQuickLinksIntoFabGroups(
 const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
-  return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals') || pathname.startsWith('/leaderboards');
+  return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals') || pathname.startsWith('/leaderboards') || pathname.startsWith('/bands');
 }
 /* v8 ignore stop */
 
@@ -249,6 +256,7 @@ function AppShell() {
 
   // Proximity glow for frosted cards — document-level for full coverage
   useProximityGlow(!settings.disableLightTrails);
+  usePlayerBandsPrefetch(player?.accountId);
 
   const location = useLocation();
   const isMobile = useIsMobileChrome();
@@ -386,6 +394,7 @@ function AppShell() {
     if (parts[0] === 'player' && parts.length === 3) return `/player/${parts[1]}`;
     if (parts[0] === 'player' && parts.length === 2) return AppRoutes.songs;
     if (parts[0] === 'leaderboards' && parts.length === 2) return AppRoutes.leaderboards;
+    if (parts[0] === 'bands' && parts[1] === 'player' && parts[2]) return `/player/${parts[2]}`;
     return null;
   }, [location.pathname]);
 
@@ -592,6 +601,16 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
+      {isMobile && RoutePatterns.playerBands.test(location.pathname) && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={withPageQuickLinks(
+            [{ label: t('common.filterBands'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openBandFilter() }],
+            playerActions(),
+          )}
+          onPress={() => {}}
+        />
+      )}
       {isMobile && location.pathname === AppRoutes.compete && (
         <FloatingActionButton
           mode="players"
@@ -637,7 +656,7 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && (
+      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(

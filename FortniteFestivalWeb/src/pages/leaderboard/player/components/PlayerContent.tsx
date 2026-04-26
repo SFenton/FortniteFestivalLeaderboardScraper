@@ -495,7 +495,7 @@ export default function PlayerContent({
 
   const hasBandsSection = playerBandsEnabled && !!statsData;
   if (playerBandsEnabled && statsData) {
-    items.push(...buildPlayerBandsItems(t, data.displayName, statsData.bands ?? EMPTY_PLAYER_BANDS));
+    items.push(...buildPlayerBandsItems(t, data.displayName, statsData.bands ?? EMPTY_PLAYER_BANDS, data.accountId));
   }
 
   const visibleStaggerItemCount = useMemo(() => estimateVisiblePlayerGridItemCount(items), [items]);
@@ -719,7 +719,7 @@ export default function PlayerContent({
       </>}
     >
         <div style={{ ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}) }}>
-            <div ref={gridListRef} style={{ ...pps.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
+            <div data-testid="player-grid-list" ref={gridListRef} style={{ ...pps.gridList, ...(hasFab ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
               const visibleCount = visibleStaggerItemCount;
               const lastVisibleDelay = visibleCount * STAGGER_ENTRY_OFFSET;

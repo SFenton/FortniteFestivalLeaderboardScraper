@@ -369,6 +369,15 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_rh_latest
             ON rank_history (instrument, account_id, snapshot_date DESC);
 
+        CREATE TABLE IF NOT EXISTS rank_history_snapshot_stats (
+            instrument              TEXT        NOT NULL,
+            snapshot_date           DATE        NOT NULL,
+            snapshot_taken_at       TIMESTAMPTZ,
+            total_charted_songs     INTEGER     NOT NULL,
+            ranked_account_count    INTEGER,
+            PRIMARY KEY (instrument, snapshot_date)
+        );
+
         -- =====================================================================
         -- VALID SCORE OVERRIDES (partitioned by instrument)
         -- =====================================================================
@@ -981,6 +990,30 @@ public static class DatabaseInitializer
         ALTER TABLE account_rankings ADD COLUMN IF NOT EXISTS raw_weighted_rating REAL;
         ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS raw_weighted_rating REAL;
         ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS raw_skill_rating REAL;
+
+                CREATE TABLE IF NOT EXISTS rank_history_snapshot_stats (
+                        instrument              TEXT        NOT NULL,
+                        snapshot_date           DATE        NOT NULL,
+                        snapshot_taken_at       TIMESTAMPTZ,
+                        total_charted_songs     INTEGER     NOT NULL,
+                        ranked_account_count    INTEGER,
+                        PRIMARY KEY (instrument, snapshot_date)
+                );
+
+                INSERT INTO rank_history_snapshot_stats (instrument, snapshot_date, snapshot_taken_at, total_charted_songs, ranked_account_count)
+                SELECT
+                        instrument,
+                        snapshot_date,
+                        MAX(snapshot_taken_at) AS snapshot_taken_at,
+                        MAX(ROUND(songs_played / NULLIF(coverage, 0))::INTEGER) AS total_charted_songs,
+                        NULL::INTEGER AS ranked_account_count
+                FROM rank_history
+                WHERE songs_played IS NOT NULL
+                    AND coverage IS NOT NULL
+                    AND coverage > 0
+                GROUP BY instrument, snapshot_date
+                HAVING MAX(ROUND(songs_played / NULLIF(coverage, 0))::INTEGER) > 0
+                ON CONFLICT (instrument, snapshot_date) DO NOTHING;
 
         -- =====================================================================
         -- MIGRATION: deduplicate rank_history + enforce PRIMARY KEY

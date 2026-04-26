@@ -16,6 +16,9 @@ export type RankHistoryChartPoint = {
   songsPlayed: number | null;
   coverage: number | null;
   fullComboCount: number | null;
+  totalChartedSongs: number | null;
+  rankedAccountCount: number | null;
+  bayesianValue?: number | null;
 };
 
 function getRankField(entry: RankHistoryEntry, metric: RankingMetric): number {
@@ -35,6 +38,14 @@ function getValueField(entry: RankHistoryEntry, metric: RankingMetric): number {
     case 'fcrate': return entry.fcRate ?? 0;
     case 'totalscore': return entry.totalScore ?? 0;
     case 'maxscore': return entry.rawMaxScorePercent ?? entry.maxScorePercent ?? 0;
+  }
+}
+
+function getBayesianValueField(entry: RankHistoryEntry, metric: RankingMetric): number | null {
+  switch (metric) {
+    case 'adjusted': return entry.adjustedSkillRating;
+    case 'weighted': return entry.weightedRating;
+    default: return null;
   }
 }
 
@@ -120,6 +131,9 @@ export function useRankHistory(
         songsPlayed: entry.songsPlayed,
         coverage: entry.coverage,
         fullComboCount: entry.fullComboCount,
+        totalChartedSongs: entry.totalChartedSongs,
+        rankedAccountCount: entry.rankedAccountCount,
+        bayesianValue: getBayesianValueField(entry, metric),
       };
     });
   }, [data, metric]);
@@ -167,6 +181,9 @@ export function useRankHistoryAll(
               songsPlayed: entry.songsPlayed,
               coverage: entry.coverage,
               fullComboCount: entry.fullComboCount,
+              totalChartedSongs: entry.totalChartedSongs,
+              rankedAccountCount: entry.rankedAccountCount,
+              bayesianValue: getBayesianValueField(entry, metric),
             };
           })
         : [];

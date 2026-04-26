@@ -133,6 +133,21 @@ const mockApi = vi.hoisted(() => {
     }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'p1', stats: [] }),
+    getPlayerBandsList: fn().mockResolvedValue({
+      accountId: 'p1',
+      group: 'all',
+      totalCount: 1,
+      entries: [{
+        bandId: 'band-1',
+        teamKey: 'p1:p2',
+        bandType: 'Band_Duets',
+        appearanceCount: 2,
+        members: [
+          { accountId: 'p1', displayName: 'TrackedP', instruments: ['Solo_Guitar'] },
+          { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+        ],
+      }],
+    }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' }),
   };
 });
@@ -415,6 +430,46 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       expect(window.location.hash).toBe('#/rivals');
     });
+
+    window.location.hash = '';
+  });
+
+  it('shows the Filter Bands FAB action on mobile player bands pages', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/bands/player/p1?group=all&page=1&name=TrackedP';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('TrackedP')).toBeDefined();
+      expect(screen.getByText('BandMate')).toBeDefined();
+    }, { timeout: 5000 });
+
+    fireEvent.click(screen.getByLabelText('Actions'));
+    const menu = await screen.findByTestId('fab-menu');
+    expect(within(menu).getByText('Filter Bands')).toBeDefined();
+    fireEvent.click(within(menu).getByText('Filter Bands'));
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Band Type').length).toBeGreaterThan(0);
+    });
+
+    window.location.hash = '';
+  });
+
+  it('redirects player bands pages to songs when the bands feature flag is disabled', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ playerBands: false }));
+    window.location.hash = '#/bands/player/p1?group=all&page=1&name=TrackedP';
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/songs');
+    }, { timeout: 5000 });
+    expect(mockApi.getPlayerBandsList).not.toHaveBeenCalled();
+    expect(await screen.findByText('Test Song')).toBeDefined();
 
     window.location.hash = '';
   });

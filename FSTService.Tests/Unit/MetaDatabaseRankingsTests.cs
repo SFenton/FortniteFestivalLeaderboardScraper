@@ -271,6 +271,25 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(0, total);
     }
 
+    [Fact]
+    public void GetComboLeaderboard_FcRate_TiebreaksByTotalScoreDesc()
+    {
+        Db.ReplaceComboLeaderboard("03",
+            [
+                ("lowScoreManySongs", 0.5, 0.5, 0.75, 1_000L, 0.5, 200, 150),
+                ("highScoreFewerSongs", 0.5, 0.5, 0.75, 5_000L, 0.5, 100, 75),
+            ], 2);
+
+        var (entries, total) = Db.GetComboLeaderboard("03", "fcrate", 1, 50);
+        var lowScoreRank = Db.GetComboRank("03", "lowScoreManySongs", "fcrate");
+
+        Assert.Equal(2, total);
+        Assert.Equal("highScoreFewerSongs", entries[0].AccountId);
+        Assert.Equal(1, entries[0].Rank);
+        Assert.NotNull(lowScoreRank);
+        Assert.Equal(2, lowScoreRank.Rank);
+    }
+
     // ═══════════════════════════════════════════════════════════
     // BandTeamRankings
     // ═══════════════════════════════════════════════════════════
@@ -467,6 +486,46 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         Assert.True(CountBandHistoryRows("band_team_rank_history", "Band_Duets") > baselineRows);
         Assert.True(CountBandHistoryRows("band_team_rank_history", "Band_Duets", today) > 0);
+    }
+
+    [Fact]
+    public void GetBandRankHistory_ReturnsSnapshotsForTeam()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistory("Band_Duets");
+
+        var current = Db.GetBandTeamRanking("Band_Duets", "p1:p2");
+        var history = Db.GetBandRankHistory("Band_Duets", "p1:p2");
+
+        Assert.NotNull(current);
+        var snapshot = Assert.Single(history);
+        Assert.Equal(current.AdjustedSkillRank, snapshot.AdjustedSkillRank);
+        Assert.Equal(current.WeightedRank, snapshot.WeightedRank);
+        Assert.Equal(current.FcRateRank, snapshot.FcRateRank);
+        Assert.Equal(current.TotalScoreRank, snapshot.TotalScoreRank);
+        Assert.Equal(current.TotalChartedSongs, snapshot.TotalChartedSongs);
+        Assert.Equal(current.TotalRankedTeams, snapshot.TotalRankedTeams);
+    }
+
+    [Fact]
+    public void GetBandSongPerformances_ReturnsAnyComboSongPercentiles()
+    {
+        SeedBandRankingsSource();
+
+        var performances = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
+
+        Assert.Equal(["song_0", "song_1"], performances.Select(p => p.SongId).ToArray());
+        var song0 = performances.Single(p => p.SongId == "song_0");
+        var song1 = performances.Single(p => p.SongId == "song_1");
+        Assert.Equal(1, song0.Rank);
+        Assert.Equal(2, song0.TotalEntries);
+        Assert.Equal(50.0, song0.Percentile, 3);
+        Assert.Equal(1100, song0.Score);
+        Assert.Equal(2, song1.Rank);
+        Assert.Equal(3, song1.TotalEntries);
+        Assert.Equal(66.667, song1.Percentile, 3);
     }
 
     private int CountBandHistoryRows(string tableName, string bandType, DateOnly? snapshotDate = null)

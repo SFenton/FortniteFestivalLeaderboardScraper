@@ -25,9 +25,9 @@ import type {
   ComboRankingEntry,
   AccountRankingEntry,
 } from '@festival/core/api/serverTypes';
-import { InstrumentHeaderSize, formatRatingValue, rankColor } from '@festival/core';
+import { InstrumentHeaderSize, rankColor } from '@festival/core';
 import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
-import { LEADERBOARD_PAGE_SIZE, getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth } from './helpers/rankingHelpers';
+import { LEADERBOARD_PAGE_SIZE, getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth, computePillMinWidth, formatBayesianRatingDisplay, formatRankingValueDisplay, getRatingPillTier, usesPercentileValueDisplay } from './helpers/rankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -37,7 +37,7 @@ import { useFabSearch } from '../../contexts/FabSearchContext';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
-import { Size, Colors, Font, Weight } from '@festival/theme';
+import { Size, Colors, Font, Weight, Layout } from '@festival/theme';
 import InstrumentPickerModal from './modals/InstrumentPickerModal';
 import RankByModal from './modals/RankByModal';
 import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScopes';
@@ -141,6 +141,7 @@ export default function FullRankingsPage() {
   const totalPages = data ? Math.ceil(data.totalAccounts / LEADERBOARD_PAGE_SIZE) : 0;
   const entries = data?.entries ?? [];
   const reserveTenDigitScoreWidth = metric === 'totalscore';
+  const usePercentileMetric = usesPercentileValueDisplay(metric);
 
   useEffect(() => {
     rankingsCache.set(cacheKey, { page, scrollTop: 0 });
@@ -170,6 +171,8 @@ export default function FullRankingsPage() {
 
   const isMobile = useIsMobile();
   const loading = isFetching && !data;
+  const useTwoRowPercentile = isMobile && usePercentileMetric;
+  const leaderboardRowHeight = useTwoRowPercentile ? Layout.entryRowHeight + 28 : Layout.entryRowHeight;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
@@ -188,6 +191,20 @@ export default function FullRankingsPage() {
     if (!playerRanking) return undefined;
     return computeRankWidth([getDisplayRank(playerRanking, metric)]);
   }, [metric, playerRanking]);
+
+  const percentileValueMinWidth = useMemo(() => {
+    if (!usePercentileMetric) return undefined;
+    const labels = entries.map((entry) => formatRankingValueDisplay(getDisplayRating(entry, metric), metric));
+    if (playerRanking) labels.push(formatRankingValueDisplay(getDisplayRating(playerRanking, metric), metric));
+    return computePillMinWidth(labels);
+  }, [entries, metric, playerRanking, usePercentileMetric]);
+
+  const bayesianRankMinWidth = useMemo(() => {
+    if (!usePercentileMetric) return undefined;
+    const labels = entries.map((entry) => formatBayesianRatingDisplay(getDisplayBayesianRating(entry, metric), metric));
+    if (playerRanking) labels.push(formatBayesianRatingDisplay(getDisplayBayesianRating(playerRanking, metric), metric));
+    return computePillMinWidth(labels);
+  }, [entries, metric, playerRanking, usePercentileMetric]);
 
   const pageLabel = isCombo ? comboScopeLabel(comboId!) : serverInstrumentLabel(instrument);
   const showMobilePageHeader = !isMobileChrome || settings.showButtonsInHeaderMobile;
@@ -266,9 +283,9 @@ export default function FullRankingsPage() {
         renderRow={(entry) => {
           const rank = getDisplayRank(entry, metric);
           const rating = getDisplayRating(entry, metric);
-          const usePercentile = metric === 'adjusted' || metric === 'weighted';
+          const usePercentile = usePercentileMetric;
           const isFcRate = metric === 'fcrate';
-          const fcPct = isFcRate ? rating * 100 : 0;
+          const bayesianRating = getDisplayBayesianRating(entry, metric);
 
           return (
             <RankingEntry
@@ -276,10 +293,15 @@ export default function FullRankingsPage() {
               displayName={entry.displayName ?? entry.accountId.slice(0, 8)}
               ratingLabel={formatRating(rating, metric)}
               songsLabel={getDisplaySongsLabel(entry, metric)}
-              valueDisplay={usePercentile ? formatRatingValue(rating) : undefined}
-              valueColor={usePercentile ? rankColor(rank, data?.totalAccounts ?? 0) : undefined}
-              ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
+              percentileValueDisplay={usePercentile ? formatRankingValueDisplay(rating, metric) : undefined}
+              percentileValueMinWidth={percentileValueMinWidth}
+              bayesianRankDisplay={usePercentile ? formatBayesianRatingDisplay(bayesianRating, metric) : undefined}
+              bayesianRankColor={usePercentile ? rankColor(rank, data?.totalAccounts ?? 0) : undefined}
+              bayesianRankMinWidth={bayesianRankMinWidth}
+              twoRowPercentileMetadata={useTwoRowPercentile}
+              ratingPillTier={getRatingPillTier(rating, metric)}
               songsLabelPrimary={isFcRate}
+              songsLabelGoldPrefix={isFcRate}
               isPlayer={entry.accountId === player?.accountId}
               rankWidth={rankWidth}
               reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
@@ -295,10 +317,15 @@ export default function FullRankingsPage() {
               displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}
               ratingLabel={formatRating(getDisplayRating(playerRanking, metric), metric)}
               songsLabel={getDisplaySongsLabel(playerRanking, metric)}
-              valueDisplay={(metric === 'adjusted' || metric === 'weighted') ? formatRatingValue(getDisplayRating(playerRanking, metric)) : undefined}
-              valueColor={(metric === 'adjusted' || metric === 'weighted') ? rankColor(getDisplayRank(playerRanking, metric), data?.totalAccounts ?? 0) : undefined}
-              ratingPillTier={metric === 'fcrate' ? ((getDisplayRating(playerRanking, metric) * 100) >= 99 ? 'top1' : (getDisplayRating(playerRanking, metric) * 100) >= 95 ? 'top5' : 'default') : undefined}
+              percentileValueDisplay={usesPercentileValueDisplay(metric) ? formatRankingValueDisplay(getDisplayRating(playerRanking, metric), metric) : undefined}
+              percentileValueMinWidth={percentileValueMinWidth}
+              bayesianRankDisplay={usesPercentileValueDisplay(metric) ? formatBayesianRatingDisplay(getDisplayBayesianRating(playerRanking, metric), metric) : undefined}
+              bayesianRankColor={usesPercentileValueDisplay(metric) ? rankColor(getDisplayRank(playerRanking, metric), data?.totalAccounts ?? 0) : undefined}
+              bayesianRankMinWidth={bayesianRankMinWidth}
+              twoRowPercentileMetadata={useTwoRowPercentile}
+              ratingPillTier={getRatingPillTier(getDisplayRating(playerRanking, metric), metric)}
               songsLabelPrimary={metric === 'fcrate'}
+              songsLabelGoldPrefix={metric === 'fcrate'}
               isPlayer
               rankWidth={isMobile ? playerRankWidth : rankWidth}
               reserveTenDigitScoreWidth={reserveTenDigitScoreWidth && !(isMobile && hasFab)}
@@ -309,6 +336,7 @@ export default function FullRankingsPage() {
         cached={!!cached}
         isMobile={isMobile}
         hasFab={hasFab}
+        rowHeight={leaderboardRowHeight}
         staggerRushRef={staggerRushRef}
         footerAnimKey={cacheKey}
       />
@@ -371,6 +399,22 @@ function getDisplayRating(entry: AccountRankingEntry | ComboRankingEntry | FullP
       return entry.totalScore;
     case 'maxscore':
       return entry.maxScorePercent;
+  }
+}
+
+function getDisplayBayesianRating(entry: AccountRankingEntry | ComboRankingEntry | FullPlayerRanking, metric: RankingMetric): number | undefined {
+  if (!isComboRankingEntry(entry)) {
+    switch (metric) {
+      case 'adjusted': return entry.adjustedSkillRating;
+      case 'weighted': return entry.weightedRating;
+      default: return undefined;
+    }
+  }
+
+  switch (metric) {
+    case 'adjusted': return entry.adjustedRating;
+    case 'weighted': return entry.weightedRating;
+    default: return undefined;
   }
 }
 

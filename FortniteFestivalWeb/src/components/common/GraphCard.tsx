@@ -73,6 +73,8 @@ export type GraphCardProps<T> = {
   listIdentity?: (a: T, b: T) => boolean;
   /** Render a single list item. */
   renderListItem?: (point: T, index: number, phase: 'idle' | 'in' | 'out') => ReactNode;
+  /** Pixel height for each animated list card. */
+  listCardHeight?: number;
 
   /** "View all" button label. If omitted, no button is shown. */
   viewAllLabel?: string;
@@ -103,6 +105,7 @@ function GraphCardInner<T>({
   listData,
   listIdentity,
   renderListItem,
+  listCardHeight,
   viewAllLabel,
   onViewAll,
   skipAnimation,
@@ -142,7 +145,7 @@ function GraphCardInner<T>({
   const { displayedPoint, cardPhase, cardHeight, cardContentRef } = useCardAnimation(selectedPoint);
 
   // List animation
-  const { displayedCards, listPhase, listHeight } = useListAnimation(listData ?? [], skipAnimation, listIdentity ?? identity);
+  const { displayedCards, listPhase, listHeight } = useListAnimation(listData ?? [], skipAnimation, listIdentity ?? identity, listCardHeight);
 
   const compactLabels = useMemo(() => ({
     previous: t('aria.previousInstrument'),

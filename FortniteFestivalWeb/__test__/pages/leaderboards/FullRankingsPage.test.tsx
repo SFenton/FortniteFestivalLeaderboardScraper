@@ -221,4 +221,74 @@ describe('FullRankingsPage', () => {
     expect(pageRank).toHaveStyle({ width: `${expectedWidth}px` });
     expect(footerRank).toHaveStyle({ width: `${expectedWidth}px` });
   });
+
+  it('renders adjusted percentile rows with songs, percentile value, and Bayesian rank', async () => {
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'adjusted',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 1000,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player', rawSkillRating: 0.0056, adjustedSkillRating: 0.0409 })],
+    });
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText('120 / 160')).toBeTruthy();
+    expect(await screen.findByText('Top 0.56%')).toBeTruthy();
+    expect(await screen.findByText('Bayesian-Calculated Rank:')).toBeTruthy();
+    expect(await screen.findByText('0.0409')).toBeTruthy();
+  });
+
+  it('uses taller mobile rows for adjusted percentile metadata', async () => {
+    stubMatchMedia(true);
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'adjusted',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 1000,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player', rawSkillRating: 0.0056, adjustedSkillRating: 0.0409 })],
+    });
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const row = (await screen.findByText('Top Player')).closest('a');
+    expect(row).toHaveStyle({ height: '76px' });
+    expect(await screen.findByText('Top 0.56%')).toBeTruthy();
+    expect(await screen.findByText('0.0409')).toBeTruthy();
+  });
+
+  it('renders FC rate count numerator in gold on full ranking pages', async () => {
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'fcrate',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 1000,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player', fullComboCount: 65, totalChartedSongs: 160 })],
+    });
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=fcrate" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText('65')).toHaveStyle({ color: '#FFD700' });
+  });
 });

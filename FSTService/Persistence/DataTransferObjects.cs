@@ -580,6 +580,8 @@ public sealed class RankHistoryDto
     public int? SongsPlayed { get; init; }
     public double? Coverage { get; init; }
     public int? FullComboCount { get; init; }
+    public int? TotalChartedSongs { get; init; }
+    public int? RankedAccountCount { get; init; }
     public double? RawMaxScorePercent { get; init; }
     public double? RawWeightedRating { get; init; }
     public double? RawSkillRating { get; init; }
@@ -646,6 +648,47 @@ public sealed class BandTeamRankingDto
     public double? RawWeightedRating { get; init; }
     public string ComputedAt { get; init; } = "";
     public int TotalRankedTeams { get; init; }
+}
+
+/// <summary>
+/// Daily rank snapshot for a band-team ranking scope.
+/// </summary>
+public sealed class BandRankHistoryDto
+{
+    public string SnapshotDate { get; init; } = "";
+    public string? SnapshotTakenAt { get; init; }
+    public int AdjustedSkillRank { get; init; }
+    public int WeightedRank { get; init; }
+    public int FcRateRank { get; init; }
+    public int TotalScoreRank { get; init; }
+    public double? AdjustedSkillRating { get; init; }
+    public double? WeightedRating { get; init; }
+    public double? FcRate { get; init; }
+    public long? TotalScore { get; init; }
+    public int? SongsPlayed { get; init; }
+    public double? Coverage { get; init; }
+    public int? FullComboCount { get; init; }
+    public int? TotalChartedSongs { get; init; }
+    public int? TotalRankedTeams { get; init; }
+    public double? RawWeightedRating { get; init; }
+    public double? RawSkillRating { get; init; }
+}
+
+/// <summary>
+/// Current per-song band performance for best/worst song sections.
+/// </summary>
+public sealed class BandSongPerformanceDto
+{
+    public string SongId { get; init; } = "";
+    public string? ComboId { get; init; }
+    public int Rank { get; init; }
+    public int TotalEntries { get; init; }
+    public double Percentile { get; init; }
+    public int Score { get; init; }
+    public int? Accuracy { get; init; }
+    public bool? IsFullCombo { get; init; }
+    public int? Stars { get; init; }
+    public string? EndTime { get; init; }
 }
 
 /// <summary>

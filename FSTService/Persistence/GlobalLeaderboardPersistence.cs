@@ -1490,7 +1490,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         };
     }
 
-    public PlayerBandListResponseDto GetPlayerBandsList(string accountId, string group = "all")
+    public PlayerBandListResponseDto GetPlayerBandsList(string accountId, string group = "all", int page = 1, int? pageSize = null)
     {
         var bandTypeFilter = group switch
         {
@@ -1502,12 +1502,18 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         };
 
         var entries = GetPlayerBandEntries(accountId, bandTypeFilter);
+        var totalCount = entries.Count;
+        if (pageSize is > 0)
+        {
+            var skip = (Math.Max(1, page) - 1) * pageSize.Value;
+            entries = entries.Skip(skip).Take(pageSize.Value).ToList();
+        }
 
         return new PlayerBandListResponseDto
         {
             AccountId = accountId,
             Group = group,
-            TotalCount = entries.Count,
+            TotalCount = totalCount,
             Entries = entries,
         };
     }

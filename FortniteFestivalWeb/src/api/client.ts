@@ -10,6 +10,8 @@ import type {
   ServerInstrumentKey as InstrumentKey,
   AllLeaderboardsResponse,
   PlayerStatsResponse,
+  PlayerBandListGroup,
+  PlayerBandListResponse,
   PlayerBandTypeResponse,
   RivalsOverviewResponse,
   RivalsListResponse,
@@ -23,10 +25,13 @@ import type {
   CompositeRankingDto,
   ComboPageResponse,
   ComboRankingEntry,
+  BandDetailResponse,
   BandComboCatalogResponse,
   BandRankingDto,
+  BandRankHistoryResponse,
   BandRankingsPageResponse,
   BandRankingMetric,
+  BandSongsResponse,
   BandType,
   RankingMetric,
   LeaderboardNeighborhoodResponse,
@@ -39,6 +44,10 @@ import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsRespo
 const BASE = '';
 const TRACKED_PLAYER_STORAGE_KEY = 'fst:trackedPlayer';
 const SELECTED_PLAYER_HEADER = 'X-FST-Selected-Player';
+
+type ApiRequestOptions = {
+  signal?: AbortSignal;
+};
 
 function withSelectedPlayerHeader(headers: Record<string, string> = {}): Record<string, string> {
   try {
@@ -125,13 +134,16 @@ function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
 
 const etagCache = new Map<string, { data: unknown; etag: string }>();
 
-async function getWithETag<T>(path: string): Promise<T> {
+async function getWithETag<T>(path: string, options?: ApiRequestOptions): Promise<T> {
   const url = `${BASE}${path}`;
   const cached = etagCache.get(url);
   const headers: Record<string, string> = {};
   if (cached?.etag) headers['If-None-Match'] = cached.etag;
 
-  const res = await fetch(url, { headers: withSelectedPlayerHeader(headers) });
+  const init: RequestInit = { headers: withSelectedPlayerHeader(headers) };
+  if (options?.signal) init.signal = options.signal;
+
+  const res = await fetch(url, init);
 
   if (res.status === 304 && cached) return cached.data as T;
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -227,6 +239,20 @@ export const api = {
     );
   },
 
+  getPlayerBandsList: (accountId: string, group: PlayerBandListGroup = 'all', page = 1, pageSize = 25, options?: ApiRequestOptions) => {
+    const params = new URLSearchParams();
+    params.set('group', group);
+    params.set('page', String(page));
+    params.set('pageSize', String(pageSize));
+    return getWithETag<PlayerBandListResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/bands?${params.toString()}`,
+      options,
+    );
+  },
+
+  getBandDetail: (bandId: string) =>
+    get<BandDetailResponse>(`/api/bands/${encodeURIComponent(bandId)}`),
+
   getVersion: () => get<{ version: string }>('/api/version'),
 
   getRivalsOverview: (accountId: string) =>
@@ -299,6 +325,25 @@ export const api = {
     const qs = params.toString();
     return get<BandRankingDto>(
       `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}${qs ? `?${qs}` : ''}`,
+    );
+  },
+
+  getBandRankHistory: (bandType: BandType, teamKey: string, days?: number, comboId?: string) => {
+    const params = new URLSearchParams();
+    if (days != null) params.set('days', String(days));
+    if (comboId) params.set('combo', comboId);
+    const qs = params.toString();
+    return get<BandRankHistoryResponse>(
+      `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/history${qs ? `?${qs}` : ''}`,
+    );
+  },
+
+  getBandSongs: (bandType: BandType, teamKey: string, limit = 5, comboId?: string) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    if (comboId) params.set('combo', comboId);
+    return get<BandSongsResponse>(
+      `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/songs?${params.toString()}`,
     );
   },
 

@@ -216,8 +216,11 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         var json = JsonDocument.Parse(result.Value.Json);
         var bands = json.RootElement.GetProperty("bands");
         Assert.Equal(1, bands.GetProperty("duos").GetProperty("totalCount").GetInt32());
+        var duoEntry = bands.GetProperty("duos").GetProperty("entries")[0];
+        Assert.True(Guid.TryParse(duoEntry.GetProperty("bandId").GetString(), out _));
+        Assert.Equal(2, duoEntry.GetProperty("appearanceCount").GetInt32());
 
-        var playerMember = bands.GetProperty("duos").GetProperty("entries")[0].GetProperty("members")
+        var playerMember = duoEntry.GetProperty("members")
             .EnumerateArray()
             .Single(member => string.Equals(member.GetProperty("accountId").GetString(), "u1", StringComparison.Ordinal));
         var instruments = playerMember.GetProperty("instruments")

@@ -74,6 +74,35 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         return dates;
     }
 
+    private (int TotalChartedSongs, int? RankedAccountCount) GetRankHistorySnapshotStats(DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT total_charted_songs, ranked_account_count
+            FROM rank_history_snapshot_stats
+            WHERE instrument = @instrument AND snapshot_date = @snapshotDate";
+        cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        return (reader.GetInt32(0), reader.IsDBNull(1) ? null : reader.GetInt32(1));
+    }
+
+    private int CountRankHistorySnapshotStatsRows(DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COUNT(*)
+            FROM rank_history_snapshot_stats
+            WHERE instrument = @instrument AND snapshot_date = @snapshotDate";
+        cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     // ═══════════════════════════════════════════════════════════
     // SongStats
     // ═══════════════════════════════════════════════════════════
@@ -476,7 +505,7 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Db.UpsertEntries("song1", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
         Db.RecomputeAllRanks();
         Db.ComputeSongStats();
-        Db.ComputeAccountRankings(totalChartedSongs: 1);
+        Db.ComputeAccountRankings(totalChartedSongs: 3);
 
         var count = Db.SnapshotRankHistory();
 
@@ -496,6 +525,11 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Assert.NotNull(history[0].FcRate);
         Assert.NotNull(history[0].FullComboCount);
         Assert.NotNull(history[0].SnapshotTakenAt);
+        Assert.Equal(3, history[0].TotalChartedSongs);
+        Assert.Equal(2, history[0].RankedAccountCount);
+        var snapshotStats = GetRankHistorySnapshotStats(DateOnly.FromDateTime(DateTime.UtcNow));
+        Assert.Equal(3, snapshotStats.TotalChartedSongs);
+        Assert.Equal(2, snapshotStats.RankedAccountCount);
         // RawMaxScorePercent is null when song_stats has no max_score
     }
 
@@ -558,12 +592,15 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Db.UpsertEntries("song1", [MakeEntry("p1", 2000, rank: 1), MakeEntry("p2", 900, rank: 2)]);
         Db.RecomputeAllRanks();
         Db.ComputeSongStats();
-        Db.ComputeAccountRankings(totalChartedSongs: 1);
+        Db.ComputeAccountRankings(totalChartedSongs: 2);
         Db.SnapshotRankHistory();
 
         var history = Db.GetRankHistory("p1", days: 1);
         Assert.Single(history);
         Assert.Equal(2000, history[0].TotalScore); // latest value wins
+        Assert.Equal(2, history[0].TotalChartedSongs);
+        Assert.Equal(2, history[0].RankedAccountCount);
+        Assert.Equal(1, CountRankHistorySnapshotStatsRows(DateOnly.FromDateTime(DateTime.UtcNow)));
     }
 
     [Fact]

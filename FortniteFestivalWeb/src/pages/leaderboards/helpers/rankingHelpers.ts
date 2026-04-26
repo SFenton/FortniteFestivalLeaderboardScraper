@@ -1,4 +1,5 @@
 import type { RankingMetric, AccountRankingEntry, CompositeRankingEntry } from '@festival/core/api/serverTypes';
+import { formatPercentileTopExact, formatRatingValue } from '@festival/core';
 import { Layout } from '@festival/theme';
 
 export const LEADERBOARD_PAGE_SIZE = 25;
@@ -22,6 +23,15 @@ export function getRatingForMetric(entry: AccountRankingEntry, metric: RankingMe
     case 'fcrate': return entry.totalChartedSongs > 0 ? entry.fullComboCount / entry.totalChartedSongs : 0;
     case 'totalscore': return entry.totalScore;
     case 'maxscore': return entry.rawMaxScorePercent ?? entry.maxScorePercent;
+  }
+}
+
+/** Get the Bayesian-adjusted rating value used for adjusted/weighted ranking order. */
+export function getBayesianRatingForMetric(entry: AccountRankingEntry, metric: RankingMetric): number | undefined {
+  switch (metric) {
+    case 'adjusted': return entry.adjustedSkillRating;
+    case 'weighted': return entry.weightedRating;
+    default: return undefined;
   }
 }
 
@@ -52,6 +62,37 @@ export function formatRating(value: number, metric: RankingMetric): string {
     case 'totalscore':
       return value.toLocaleString();
   }
+}
+
+export type RankingPillTier = 'top1' | 'top5' | 'default';
+
+/** True when the ranking metric is shown as a user-facing percentile pill. */
+export function usesPercentileValueDisplay(metric: RankingMetric): boolean {
+  return metric === 'adjusted' || metric === 'weighted';
+}
+
+/** Format adjusted/weighted raw percentile values as friendly Top X% labels. */
+export function formatRankingValueDisplay(value: number, metric: RankingMetric): string | undefined {
+  return usesPercentileValueDisplay(metric) ? formatPercentileTopExact(value) : undefined;
+}
+
+/** Format the Bayesian-adjusted ranking value as the raw value pill shown beside percentile metrics. */
+export function formatBayesianRatingDisplay(value: number | undefined, metric: RankingMetric): string | undefined {
+  return value != null && usesPercentileValueDisplay(metric) ? formatRatingValue(value) : undefined;
+}
+
+/** Compute a shared pixel min-width for a set of pill labels. */
+export function computePillMinWidth(labels: Array<string | null | undefined>): number | undefined {
+  const longest = labels.reduce((max, label) => Math.max(max, label?.length ?? 0), 0);
+  if (longest === 0) return undefined;
+  return Math.ceil(longest * Layout.rankCharWidth) + Layout.rankColumnPadding;
+}
+
+/** Tier percentage metrics the same way rank-history cards do. */
+export function getRatingPillTier(value: number, metric: RankingMetric): RankingPillTier | undefined {
+  if (metric !== 'fcrate' && metric !== 'maxscore') return undefined;
+  const pct = value * 100;
+  return pct >= 99 ? 'top1' : pct >= 95 ? 'top5' : 'default';
 }
 
 /** The default (non-experimental) metric. */

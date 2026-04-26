@@ -172,6 +172,8 @@ public interface IMetaDatabase : IDisposable
     void SnapshotBandRankHistory(string bandType, int retentionDays = 365);
     (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null);
+    List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30);
+    List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null);
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);
 
     // ── Combo ranking deltas ─────────────────────────────────────────

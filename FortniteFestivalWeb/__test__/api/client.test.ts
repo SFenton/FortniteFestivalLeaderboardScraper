@@ -201,8 +201,10 @@ describe('api/client', () => {
           all: {
             totalCount: 1,
             entries: [{
+              bandId: 'band-guid-1',
               teamKey: 'p1:p2',
               bandType: 'Band_Duets',
+              appearanceCount: 2,
               members: [
                 { accountId: 'p1', displayName: 'Player One', instruments: ['Solo_Guitar'] },
                 { accountId: 'p2', displayName: 'Player Two', instruments: ['Solo_Bass'] },
@@ -217,7 +219,73 @@ describe('api/client', () => {
       const result = await api.getPlayerStats('p1');
       expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/stats', { headers: {} });
       expect(result.bands?.all.totalCount).toBe(1);
+      expect(result.bands?.all.entries[0]?.bandId).toBe('band-guid-1');
+      expect(result.bands?.all.entries[0]?.appearanceCount).toBe(2);
       expect(result.bands?.all.entries[0]?.members[0]?.displayName).toBe('Player One');
+    });
+  });
+
+  describe('getBandDetail', () => {
+    it('fetches band detail by encoded band id', async () => {
+      const data = {
+        band: { bandId: 'band/guid', teamKey: 'p1:p2', bandType: 'Band_Duets', appearanceCount: 2, members: [] },
+        ranking: null,
+      };
+      mockFetchOk(data);
+
+      const result = await api.getBandDetail('band/guid');
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/bands/band%2Fguid', { headers: {} });
+    });
+  });
+
+  describe('getBandRankHistory', () => {
+    it('fetches encoded band rank history with days and combo', async () => {
+      const data = { bandType: 'Band_Duets', teamKey: 'p1:p2', comboId: 'Solo_Guitar+Solo_Bass', days: 14, history: [] };
+      mockFetchOk(data);
+
+      const result = await api.getBandRankHistory('Band_Duets', 'p1:p2', 14, 'Solo_Guitar+Solo_Bass');
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/rankings/bands/Band_Duets/p1%3Ap2/history?days=14&combo=Solo_Guitar%2BSolo_Bass', { headers: {} });
+    });
+  });
+
+  describe('getBandSongs', () => {
+    it('fetches encoded band songs with limit and combo', async () => {
+      const data = { bandType: 'Band_Duets', teamKey: 'p1:p2', comboId: 'Solo_Guitar+Solo_Bass', limit: 5, best: [], worst: [] };
+      mockFetchOk(data);
+
+      const result = await api.getBandSongs('Band_Duets', 'p1:p2', 5, 'Solo_Guitar+Solo_Bass');
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/rankings/bands/Band_Duets/p1%3Ap2/songs?limit=5&combo=Solo_Guitar%2BSolo_Bass', { headers: {} });
+    });
+  });
+
+  describe('getPlayerBandsList', () => {
+    it('fetches paged player bands for a selected group', async () => {
+      const data = { accountId: 'p1', group: 'duos', totalCount: 26, entries: [] };
+      mockFetchOk(data);
+
+      const result = await api.getPlayerBandsList('p1', 'duos', 2, 25);
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/bands?group=duos&page=2&pageSize=25', { headers: {} });
+    });
+
+    it('passes an abort signal through to the player bands request', async () => {
+      const data = { accountId: 'p1', group: 'all', totalCount: 0, entries: [] };
+      const controller = new AbortController();
+      mockFetchOk(data);
+
+      await api.getPlayerBandsList('p1', 'all', 1, 25, { signal: controller.signal });
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1/bands?group=all&page=1&pageSize=25', {
+        headers: {},
+        signal: controller.signal,
+      });
     });
   });
 

@@ -460,12 +460,12 @@ public static partial class ApiEndpoints
 
             // ── Check precomputed store first ──
             {
-                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet(cacheKey));
+                var result = ServePlayerStatsIfCached(httpContext, precomputer.TryGet(cacheKey));
                 if (result is not null) return result;
             }
 
             {
-                var result = CacheHelper.ServeIfCached(httpContext, playerCache.Get(cacheKey));
+                var result = ServePlayerStatsIfCached(httpContext, playerCache.Get(cacheKey));
                 if (result is not null) return result;
             }
 
@@ -595,6 +595,8 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             string? group,
+            int? page,
+            int? pageSize,
             GlobalLeaderboardPersistence persistence,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
@@ -604,14 +606,18 @@ public static partial class ApiEndpoints
             if (normalizedGroup is not ("all" or "duos" or "trios" or "quads"))
                 return Results.BadRequest(new { error = $"Unknown band group: {group}" });
 
-            var cacheKey = $"playerbandslist:{accountId}:{normalizedGroup}";
+            var normalizedPage = Math.Max(1, page ?? 1);
+            var normalizedPageSize = pageSize is null ? (int?)null : Math.Clamp(pageSize.Value, 1, 100);
+            var cacheKey = normalizedPageSize is null
+                ? $"playerbandslist:{accountId}:{normalizedGroup}"
+                : $"playerbandslist:{accountId}:{normalizedGroup}:{normalizedPage}:{normalizedPageSize.Value}";
 
             {
                 var result = CacheHelper.ServeIfCached(httpContext, playerCache.Get(cacheKey));
                 if (result is not null) return result;
             }
 
-            var payload = persistence.GetPlayerBandsList(accountId, normalizedGroup);
+            var payload = persistence.GetPlayerBandsList(accountId, normalizedGroup, normalizedPage, normalizedPageSize);
             var jsonOpts = httpContext.RequestServices
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
                 .Value.SerializerOptions;
@@ -758,5 +764,41 @@ public static partial class ApiEndpoints
 
         if (rows.Count > 0)
             metaDb.UpsertPlayerStatsTiersBatch(rows);
+    }
+
+    private static IResult? ServePlayerStatsIfCached(HttpContext httpContext, (byte[] Json, string ETag)? entry)
+    {
+        if (entry is null || !CachedPlayerStatsHasBandIds(entry.Value.Json))
+            return null;
+
+        return CacheHelper.ServeIfCached(httpContext, entry);
+    }
+
+    private static bool CachedPlayerStatsHasBandIds(byte[] json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("bands", out var bands) || bands.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                return true;
+
+            foreach (var groupName in new[] { "all", "duos", "trios", "quads" })
+            {
+                if (!bands.TryGetProperty(groupName, out var group) || !group.TryGetProperty("entries", out var entries) || entries.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                foreach (var entry in entries.EnumerateArray())
+                {
+                    if (!entry.TryGetProperty("bandId", out var bandId) || bandId.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(bandId.GetString()))
+                        return false;
+                }
+            }
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }

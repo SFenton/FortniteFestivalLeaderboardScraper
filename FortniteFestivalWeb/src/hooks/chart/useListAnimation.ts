@@ -15,8 +15,8 @@ const IN_BASE_MS = 300;
 const IN_STEP_MS = 60;
 const HEIGHT_TRANSITION_MS = 300;
 
-function calcListHeight(n: number): number {
-  return n > 0 ? n * CARD_HEIGHT + (n - 1) * CARD_GAP : 0;
+function calcListHeight(n: number, cardHeight: number): number {
+  return n > 0 ? n * cardHeight + (n - 1) * CARD_GAP : 0;
 }
 
 function areListsEqual<T>(
@@ -42,17 +42,22 @@ export function useListAnimation<T>(
   visibleCards: T[],
   skipAnimation?: boolean,
   isEqual: (a: T, b: T) => boolean = Object.is,
+  cardHeight: number = CARD_HEIGHT,
 ) {
   const [displayedCards, setDisplayedCards] = useState<T[]>(visibleCards);
   const [listPhase, setListPhase] = useState<ListPhase>(ListPhase.Idle);
-  const [listHeight, setListHeight] = useState(() => calcListHeight(visibleCards.length));
+  const [listHeight, setListHeight] = useState(() => calcListHeight(visibleCards.length, cardHeight));
   const listHeightRef = useRef(listHeight);
   listHeightRef.current = listHeight;
   const listTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const prevCardsRef = useRef(visibleCards);
 
   useEffect(() => {
-    if (areListsEqual(prevCardsRef.current, visibleCards, isEqual)) return;
+    if (areListsEqual(prevCardsRef.current, visibleCards, isEqual)) {
+      const nextHeight = calcListHeight(visibleCards.length, cardHeight);
+      if (nextHeight !== listHeightRef.current) setListHeight(nextHeight);
+      return;
+    }
     prevCardsRef.current = visibleCards;
 
     listTimers.current.forEach(clearTimeout);
@@ -63,7 +68,7 @@ export function useListAnimation<T>(
 
     if (oldCount > 0) {
       const newN = visibleCards.length;
-      const newHeight = calcListHeight(newN);
+      const newHeight = calcListHeight(newN, cardHeight);
 
       if (skipAnimation) {
         setDisplayedCards(visibleCards);
@@ -100,7 +105,7 @@ export function useListAnimation<T>(
     } else {
       setDisplayedCards(visibleCards);
       const newN = visibleCards.length;
-      setListHeight(calcListHeight(newN));
+      setListHeight(calcListHeight(newN, cardHeight));
       if (skipAnimation) {
         setListPhase(ListPhase.Idle);
       } else {
@@ -111,7 +116,7 @@ export function useListAnimation<T>(
     }
 
     return () => { listTimers.current.forEach(clearTimeout); };
-  }, [visibleCards, skipAnimation, isEqual]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visibleCards, skipAnimation, isEqual, cardHeight]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { displayedCards, listPhase, listHeight };
 }

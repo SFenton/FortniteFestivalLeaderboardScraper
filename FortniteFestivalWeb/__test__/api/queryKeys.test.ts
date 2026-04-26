@@ -7,8 +7,8 @@ describe('queryKeys', () => {
   });
 
   it('player() returns key with accountId and optional params', () => {
-    expect(queryKeys.player('acc-1')).toEqual(['player', 'acc-1', { songId: undefined, instruments: undefined }]);
-    expect(queryKeys.player('acc-1', 'song-1', ['Solo_Guitar'])).toEqual(['player', 'acc-1', { songId: 'song-1', instruments: ['Solo_Guitar'] }]);
+    expect(queryKeys.player('acc-1')).toEqual(['player', 'acc-1', { songId: undefined, instruments: undefined, leeway: undefined }]);
+    expect(queryKeys.player('acc-1', 'song-1', ['Solo_Guitar'])).toEqual(['player', 'acc-1', { songId: 'song-1', instruments: ['Solo_Guitar'], leeway: undefined }]);
   });
 
   it('playerHistory() returns key with accountId and optional params', () => {
@@ -32,6 +32,28 @@ describe('queryKeys', () => {
 
   it('playerStats() returns key with accountId', () => {
     expect(queryKeys.playerStats('acc-1')).toEqual(['playerStats', 'acc-1']);
+  });
+
+  it('playerBandsList() returns key with accountId, group, and pagination', () => {
+    expect(queryKeys.playerBandsList('acc-1', 'duos', 2, 25)).toEqual(['playerBandsList', 'acc-1', { group: 'duos', page: 2, pageSize: 25 }]);
+  });
+
+  it('bandRankHistory() returns key with band identity, days, and combo', () => {
+    expect(queryKeys.bandRankHistory('Band_Duets', 'p1:p2', 30, 'Solo_Guitar+Solo_Bass')).toEqual([
+      'bandRankHistory',
+      'Band_Duets',
+      'p1:p2',
+      { days: 30, comboId: 'Solo_Guitar+Solo_Bass' },
+    ]);
+  });
+
+  it('bandSongs() returns key with band identity, limit, and combo', () => {
+    expect(queryKeys.bandSongs('Band_Duets', 'p1:p2', 5, 'Solo_Guitar+Solo_Bass')).toEqual([
+      'bandSongs',
+      'Band_Duets',
+      'p1:p2',
+      { limit: 5, comboId: 'Solo_Guitar+Solo_Bass' },
+    ]);
   });
 
   it('version() returns ["version"]', () => {
