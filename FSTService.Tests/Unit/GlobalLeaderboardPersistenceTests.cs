@@ -29,7 +29,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         try { Directory.Delete(_dataDir, recursive: true); } catch { }
     }
 
-    private GlobalLeaderboardPersistence CreatePersistence()
+    private GlobalLeaderboardPersistence CreatePersistence(FeatureOptions? features = null)
     {
         var loggerFactory = new NullLoggerFactory();
         var glp = new GlobalLeaderboardPersistence(
@@ -37,7 +37,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             loggerFactory,
             NullLogger<GlobalLeaderboardPersistence>.Instance,
             _metaFixture.DataSource,
-            Options.Create(new FeatureOptions()));
+            Options.Create(features ?? new FeatureOptions()));
         glp.Initialize();
         return glp;
     }
@@ -68,6 +68,16 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries_snapshot WHERE snapshot_id = @snapshotId AND song_id = @songId AND instrument = @instrument";
         cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private int GetLiveRowCount(string songId, string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument";
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", instrument);
         return Convert.ToInt32(cmd.ExecuteScalar());
@@ -148,6 +158,70 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         await glp.FlushSpoolAsync();
 
         Assert.Equal(1, GetSnapshotRowCount(42, "song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task FlushSpoolAsync_default_maintains_legacy_live_rows()
+    {
+        using var glp = CreatePersistence();
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            }
+        ]);
+
+        await glp.FlushSpoolAsync();
+
+        Assert.Equal(1, GetSnapshotRowCount(42, "song_1", "Solo_Guitar"));
+        Assert.Equal(1, GetLiveRowCount("song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task FlushSpoolAsync_when_legacy_live_writes_disabled_writes_snapshot_only()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WriteLegacyLiveLeaderboardDuringScrape = false });
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            }
+        ]);
+
+        await glp.FlushSpoolAsync();
+        var activated = glp.FinalizeShadowSnapshots(42);
+        var currentState = glp.GetCurrentStateLeaderboard("song_1", "Solo_Guitar", top: 10);
+
+        Assert.Equal(1, GetSnapshotRowCount(42, "song_1", "Solo_Guitar"));
+        Assert.Equal(0, GetLiveRowCount("song_1", "Solo_Guitar"));
+        Assert.Equal(1, activated);
+        var entry = Assert.Single(currentState!);
+        Assert.Equal("acct_1", entry.AccountId);
+        Assert.Equal(100_000, entry.Score);
     }
 
     [Fact]
@@ -819,6 +893,27 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
 
         var deleted = glp.PruneAllInstruments(0, new HashSet<string>());
         Assert.Equal(0, deleted);
+    }
+
+    [Fact]
+    public void PruneAllInstruments_WhenLegacyLiveWritesDisabled_ReturnsZeroAndLeavesRows()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WriteLegacyLiveLeaderboardDuringScrape = false });
+        glp.Initialize();
+
+        var db = glp.GetOrCreateInstrumentDb("Solo_Guitar");
+        var entries = Enumerable.Range(0, 50).Select(i =>
+            new LeaderboardEntry
+            {
+                AccountId = $"p_{i}", Score = 5000 - i * 10,
+                Accuracy = 95, Stars = 5, Season = 3,
+            }).ToList();
+        db.UpsertEntries("song1", entries);
+
+        var deleted = glp.PruneAllInstruments(10, new HashSet<string>());
+
+        Assert.Equal(0, deleted);
+        Assert.Equal(50, db.GetLeaderboardCount("song1"));
     }
 
     [Fact]

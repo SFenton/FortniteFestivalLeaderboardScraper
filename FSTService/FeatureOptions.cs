@@ -40,6 +40,13 @@ public sealed class FeatureOptions
     public bool UseRankingDeltaTiers { get; set; } = true;
 
     /// <summary>
+    /// When true, scrape spool flushes continue to maintain the legacy mutable
+    /// leaderboard_entries table. When false, scrape flushes write snapshot
+    /// current-state rows only and leave legacy live rows unchanged for rollback.
+    /// </summary>
+    public bool WriteLegacyLiveLeaderboardDuringScrape { get; set; } = true;
+
+    /// <summary>
     /// Compete page. Always enabled; the flag derivation is retained only for API
     /// shape compatibility and is expected to be removed alongside this property.
     /// </summary>

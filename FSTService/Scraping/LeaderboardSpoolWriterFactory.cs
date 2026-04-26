@@ -25,6 +25,7 @@ public static class LeaderboardSpoolWriterFactory
     {
         var db = (InstrumentDatabase)persistence.GetOrCreateInstrumentDb(instrument);
         var activeInstrument = db.Instrument;
+        var writeLegacyLiveRows = persistence.WriteLegacyLiveLeaderboardDuringScrape;
 
         try
         {
@@ -117,30 +118,38 @@ public static class LeaderboardSpoolWriterFactory
                 snapshotCmd.ExecuteNonQuery();
             }
 
-            // ── Statement 1: Score-gated ON CONFLICT ──
-            // Inserts new entries and updates existing ones ONLY when score changed
-            // or one-time fill-in fields need populating. Skips the full 20-column
-            // tuple rewrite for the ~95% of rows where only api_rank shifted.
-            using (var cmd = conn.CreateCommand())
+            if (writeLegacyLiveRows)
             {
-                cmd.Transaction = tx;
-                cmd.CommandTimeout = 0; // Unlimited — bulk merge of millions of rows
-                cmd.CommandText = BuildScoreMergeSql();
-                cmd.Parameters.AddWithValue("instrument", activeInstrument);
-                cmd.ExecuteNonQuery();
-            }
+                // ── Statement 1: Score-gated ON CONFLICT ──
+                // Inserts new entries and updates existing ones ONLY when score changed
+                // or one-time fill-in fields need populating. Skips the full 20-column
+                // tuple rewrite for the ~95% of rows where only api_rank shifted.
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.Transaction = tx;
+                    cmd.CommandTimeout = 0; // Unlimited — bulk merge of millions of rows
+                    cmd.CommandText = BuildScoreMergeSql();
+                    cmd.Parameters.AddWithValue("instrument", activeInstrument);
+                    cmd.ExecuteNonQuery();
+                }
 
-            // ── Statement 2: Lightweight api_rank + rank UPDATE ──
-            // For existing entries where only the rank shifted (no score change),
-            // update just the rank columns. This writes a much smaller tuple + WAL
-            // than the full 20-column ON CONFLICT rewrite above.
-            using (var cmd = conn.CreateCommand())
+                // ── Statement 2: Lightweight api_rank + rank UPDATE ──
+                // For existing entries where only the rank shifted (no score change),
+                // update just the rank columns. This writes a much smaller tuple + WAL
+                // than the full 20-column ON CONFLICT rewrite above.
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.Transaction = tx;
+                    cmd.CommandTimeout = 0;
+                    cmd.CommandText = BuildRankUpdateSql();
+                    cmd.Parameters.AddWithValue("instrument", activeInstrument);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+            else
             {
-                cmd.Transaction = tx;
-                cmd.CommandTimeout = 0;
-                cmd.CommandText = BuildRankUpdateSql();
-                cmd.Parameters.AddWithValue("instrument", activeInstrument);
-                cmd.ExecuteNonQuery();
+                log.LogDebug("Skipped legacy live leaderboard_entries merge for {Instrument} ({Songs} songs, {Entries:N0} entries); snapshot rows remain authoritative for scrape {ScrapeId}.",
+                    activeInstrument, batch.Count, batch.Sum(b => b.Entries.Count), scrapeId);
             }
 
             using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _le_staging"; cmd.ExecuteNonQuery(); }
