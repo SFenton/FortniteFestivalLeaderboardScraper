@@ -9,12 +9,14 @@ public enum BandTeamRankingWriteMode
 
 public sealed class BandTeamRankingRebuildOptions
 {
+    public const string Section = "BandTeamRankings";
+
     public static BandTeamRankingRebuildOptions Default { get; } = new();
 
-    public BandTeamRankingWriteMode WriteMode { get; init; } = BandTeamRankingWriteMode.Monolithic;
-    public int CommandTimeoutSeconds { get; init; } = 0;
-    public bool AnalyzeStagingTable { get; init; } = false;
-    public bool DisableSynchronousCommit { get; init; } = true;
+    public BandTeamRankingWriteMode WriteMode { get; set; } = BandTeamRankingWriteMode.Monolithic;
+    public int CommandTimeoutSeconds { get; set; } = 0;
+    public bool AnalyzeStagingTable { get; set; } = false;
+    public bool DisableSynchronousCommit { get; set; } = true;
 }
 
 public sealed record BandTeamRankingRebuildMetrics(

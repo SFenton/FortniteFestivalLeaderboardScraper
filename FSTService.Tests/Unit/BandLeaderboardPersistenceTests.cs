@@ -51,6 +51,56 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         Assert.False(reader.Read());
     }
 
+    [Fact]
+    public void PruneBandEntries_RemovesOnlyDeletedEntryMembersAndSummaries()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 3_000), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:1", 2_000), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-e", "acct-f"], "0:1", 1_000), rebuildTeamMembership: true);
+
+        Assert.Equal(3, CountRows("band_entries"));
+        Assert.Equal(6, CountRows("band_member_stats"));
+        Assert.Equal(6, CountRows("band_members"));
+        Assert.Equal(6, CountRows("band_team_membership"));
+
+        var deleted = persistence.PruneBandEntries(new HashSet<string>(), maxValidEntries: 1);
+
+        Assert.Equal(2, deleted);
+        Assert.Equal(1, CountRows("band_entries"));
+        Assert.Equal(2, CountRows("band_member_stats"));
+        Assert.Equal(2, CountRows("band_members"));
+        Assert.Equal(2, CountRows("band_team_membership"));
+        Assert.True(BandEntryExists("song-a", "acct-a:acct-b"));
+        Assert.False(BandEntryExists("song-a", "acct-c:acct-d"));
+        Assert.False(BandEntryExists("song-a", "acct-e:acct-f"));
+    }
+
+    [Fact]
+    public void PruneBandEntries_PreservesRegisteredUserTeamsPastValidLimit()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 3_000), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:1", 2_000), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-e", "acct-f"], "0:1", 1_000), rebuildTeamMembership: true);
+
+        var deleted = persistence.PruneBandEntries(
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct-e" },
+            maxValidEntries: 1);
+
+        Assert.Equal(1, deleted);
+        Assert.Equal(2, CountRows("band_entries"));
+        Assert.True(BandEntryExists("song-a", "acct-a:acct-b"));
+        Assert.False(BandEntryExists("song-a", "acct-c:acct-d"));
+        Assert.True(BandEntryExists("song-a", "acct-e:acct-f"));
+    }
+
     private void UpsertDirect(
         BandLeaderboardPersistence persistence,
         string songId,
@@ -75,6 +125,32 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT COUNT(*) FROM band_team_membership";
         return (long)cmd.ExecuteScalar()!;
+    }
+
+    private long CountRows(string tableName)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT COUNT(*) FROM {tableName}";
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    private bool BandEntryExists(string songId, string teamKey)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT EXISTS(
+                SELECT 1
+                FROM band_entries
+                WHERE song_id = @songId
+                  AND band_type = 'Band_Duets'
+                  AND team_key = @teamKey
+            )
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        return Convert.ToBoolean(cmd.ExecuteScalar());
     }
 
     private static BandLeaderboardEntry MakeBandEntry(string[] teamMembers, string instrumentCombo, int score)

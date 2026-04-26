@@ -46,7 +46,11 @@ public sealed class RankingsCalculatorTests : IDisposable
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
-    private RankingsCalculator CreateSut(IMetaDatabase? metaDb = null, FeatureOptions? features = null, BandRankHistoryOptions? bandHistoryOptions = null)
+    private RankingsCalculator CreateSut(
+        IMetaDatabase? metaDb = null,
+        FeatureOptions? features = null,
+        BandRankHistoryOptions? bandHistoryOptions = null,
+        BandTeamRankingRebuildOptions? bandRankingOptions = null)
     {
         return new RankingsCalculator(
             _persistence,
@@ -55,7 +59,8 @@ public sealed class RankingsCalculatorTests : IDisposable
             new ScrapeProgressTracker(),
             Options.Create(features ?? new FeatureOptions()),
             Substitute.For<ILogger<RankingsCalculator>>(),
-            Options.Create(bandHistoryOptions ?? new BandRankHistoryOptions()));
+            Options.Create(bandHistoryOptions ?? new BandRankHistoryOptions()),
+            Options.Create(bandRankingOptions ?? BandTeamRankingRebuildOptions.Default));
     }
 
     private static LeaderboardEntry MakeEntry(string accountId, int score,
@@ -366,6 +371,31 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.NotNull(ranking);
         Assert.Null(_metaFixture.Db.GetNextBandRankHistoryJob());
         Assert.Empty(_metaFixture.Db.GetBandRankHistory("Band_Duets", "p1:p2", days: 30));
+    }
+
+    [Fact]
+    public void ComputeBandRankings_UsesConfiguredBandRankingWriteMode()
+    {
+        var meta = Substitute.For<IMetaDatabase>();
+        var options = new BandTeamRankingRebuildOptions
+        {
+            WriteMode = BandTeamRankingWriteMode.ComboBatched,
+            DisableSynchronousCommit = true,
+        };
+        var sut = CreateSut(
+            metaDb: meta,
+            bandHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Disabled },
+            bandRankingOptions: options);
+
+        sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 1);
+
+        meta.Received(1).RebuildBandTeamRankings(
+            "Band_Duets",
+            1,
+            Arg.Any<int>(),
+            Arg.Any<double>(),
+            Arg.Is<BandTeamRankingRebuildOptions>(actual =>
+                actual.WriteMode == BandTeamRankingWriteMode.ComboBatched));
     }
 
     // ═══════════════════════════════════════════════════════════

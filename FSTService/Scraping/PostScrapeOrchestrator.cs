@@ -726,6 +726,13 @@ public sealed class PostScrapeOrchestrator
         var maxPages = _options.Value.MaxPagesPerLeaderboard;
         if (maxPages <= 0) return; // unlimited — no pruning
 
+        if (!_persistence.WriteLegacyLiveLeaderboardDuringScrape)
+        {
+            _log.LogInformation(
+                "Skipping legacy live leaderboard excess prune because legacy live scrape writes are disabled; snapshot current-state replaces foreground solo prune.");
+            return;
+        }
+
         var maxEntries = maxPages * 100;
         try
         {

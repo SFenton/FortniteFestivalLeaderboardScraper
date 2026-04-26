@@ -335,6 +335,21 @@ public sealed class ScraperOptions
     public bool EnableBandScraping { get; set; } = true;
 
     /// <summary>
+    /// Maximum number of songs processed concurrently by post-scrape band context
+    /// extraction. Zero chooses a conservative automatic cap based on CPU count.
+    /// Set via <c>Scraper__BandExtractionParallelism</c> env var.
+    /// </summary>
+    public int BandExtractionParallelism { get; set; } = 0;
+
+    /// <summary>
+    /// Number of impacted band teams rebuilt per membership-summary transaction
+    /// after post-scrape extraction. Larger batches reduce transaction overhead;
+    /// smaller batches reduce lock duration and retry scope.
+    /// Set via <c>Scraper__BandMembershipRebuildBatchSize</c> env var.
+    /// </summary>
+    public int BandMembershipRebuildBatchSize { get; set; } = 500;
+
+    /// <summary>
     /// Maximum pages to fetch per band leaderboard (25 entries per page).
     /// Band leaderboards use per-member CHOpt validation instead of a single
     /// max-score threshold. Pagination continues until <see cref="BandValidEntryTarget"/>

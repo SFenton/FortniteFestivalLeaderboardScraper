@@ -78,6 +78,8 @@ builder.Services.Configure<FeatureOptions>(
     builder.Configuration.GetSection(FeatureOptions.Section));
 builder.Services.Configure<BandRankHistoryOptions>(
     builder.Configuration.GetSection(BandRankHistoryOptions.Section));
+builder.Services.Configure<BandTeamRankingRebuildOptions>(
+    builder.Configuration.GetSection(BandTeamRankingRebuildOptions.Section));
 builder.Services.Configure<BackgroundJobOptions>(
     builder.Configuration.GetSection(BackgroundJobOptions.Section));
 builder.Services.Configure<ApiSettings>(

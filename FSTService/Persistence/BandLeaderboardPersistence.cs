@@ -634,124 +634,224 @@ public sealed class BandLeaderboardPersistence
     {
         if (maxValidEntries <= 0) return 0;
 
-        using var conn = _dataSource.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
-
-        // Build a temp table of registered account IDs for the JOIN
-        using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "CREATE TEMP TABLE _prune_reg (account_id TEXT PRIMARY KEY) ON COMMIT DROP"; cmd.ExecuteNonQuery(); }
-        if (registeredIds.Count > 0)
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = "INSERT INTO _prune_reg VALUES (@id) ON CONFLICT DO NOTHING";
-            var p = cmd.Parameters.Add("id", NpgsqlDbType.Text);
-            cmd.Prepare();
-            foreach (var id in registeredIds) { p.Value = id; cmd.ExecuteNonQuery(); }
-        }
-
-        // Identify entries to DELETE across all songs and band types in one pass.
-        // The CTE computes a rank within each (song_id, band_type) partition,
-        // finds the first valid entry (is_over_threshold = false), then marks
-        // everything beyond (over_threshold_count + maxValidEntries) for deletion
-        // — unless the team contains a registered user.
         var affectedTeamsByBandType = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-        using var deleteCmd = conn.CreateCommand();
-        deleteCmd.Transaction = tx;
-        deleteCmd.CommandTimeout = 0;
-        deleteCmd.CommandText = """
-            WITH ranked AS (
-                SELECT song_id, band_type, team_key, instrument_combo, is_over_threshold,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY song_id, band_type
-                           ORDER BY score DESC, COALESCE(end_time, '') ASC
-                       ) AS rn
-                FROM band_entries
-            ),
-            boundaries AS (
-                SELECT song_id, band_type,
-                       COALESCE(MIN(rn) FILTER (WHERE is_over_threshold = false), 2147483647) AS first_valid_rn
-                FROM ranked
-                GROUP BY song_id, band_type
-            ),
-            to_delete AS (
-                SELECT r.song_id, r.band_type, r.team_key, r.instrument_combo
-                FROM ranked r
-                JOIN boundaries b ON r.song_id = b.song_id AND r.band_type = b.band_type
-                WHERE r.rn >= b.first_valid_rn + @maxValid
-                  AND NOT EXISTS (
-                      SELECT 1 FROM band_members bm
-                      JOIN _prune_reg pr ON bm.account_id = pr.account_id
-                      WHERE bm.song_id = r.song_id AND bm.band_type = r.band_type
-                        AND bm.team_key = r.team_key AND bm.instrument_combo = r.instrument_combo
-                  )
-            )
-            DELETE FROM band_entries be
-            USING to_delete td
-            WHERE be.song_id = td.song_id AND be.band_type = td.band_type
-              AND be.team_key = td.team_key AND be.instrument_combo = td.instrument_combo
-            RETURNING be.band_type, be.team_key
-            """;
-        deleteCmd.Parameters.AddWithValue("maxValid", maxValidEntries);
-        int deleted = 0;
-        using (var reader = deleteCmd.ExecuteReader())
+        var affectedAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int deleted;
+        int statsDeleted = 0;
+        int lookupsDeleted = 0;
+
+        using var conn = _dataSource.OpenConnection();
+
+        using (var tx = conn.BeginTransaction())
         {
-            while (reader.Read())
+            using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
+
+            // Build a temp table of registered account IDs for the JOIN
+            using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "CREATE TEMP TABLE _prune_reg (account_id TEXT PRIMARY KEY) ON COMMIT DROP"; cmd.ExecuteNonQuery(); }
+            if (registeredIds.Count > 0)
             {
-                deleted++;
-                var bandType = reader.GetString(0);
-                var teamKey = reader.GetString(1);
-                if (!affectedTeamsByBandType.TryGetValue(bandType, out var teamKeys))
+                using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = "INSERT INTO _prune_reg VALUES (@id) ON CONFLICT DO NOTHING";
+                var p = cmd.Parameters.Add("id", NpgsqlDbType.Text);
+                cmd.Prepare();
+                foreach (var id in registeredIds) { p.Value = id; cmd.ExecuteNonQuery(); }
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    CREATE TEMP TABLE _band_prune_deleted_keys (
+                        song_id TEXT NOT NULL,
+                        band_type TEXT NOT NULL,
+                        team_key TEXT NOT NULL,
+                        instrument_combo TEXT NOT NULL
+                    ) ON COMMIT DROP
+                    """;
+                cmd.ExecuteNonQuery();
+            }
+
+            // Identify entries to DELETE across all songs and band types in one pass.
+            // The CTE computes a rank within each (song_id, band_type) partition,
+            // finds the first valid entry (is_over_threshold = false), then marks
+            // everything beyond (over_threshold_count + maxValidEntries) for deletion
+            // — unless the team contains a registered user. Deleted keys are captured
+            // so member cleanup can be targeted instead of scanning every band member row.
+            using (var deleteCmd = conn.CreateCommand())
+            {
+                deleteCmd.Transaction = tx;
+                deleteCmd.CommandTimeout = 0;
+                deleteCmd.CommandText = """
+                    WITH ranked AS (
+                        SELECT song_id, band_type, team_key, instrument_combo, is_over_threshold,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY song_id, band_type
+                                   ORDER BY score DESC, COALESCE(end_time, '') ASC
+                               ) AS rn
+                        FROM band_entries
+                    ),
+                    boundaries AS (
+                        SELECT song_id, band_type,
+                               COALESCE(MIN(rn) FILTER (WHERE is_over_threshold = false), 2147483647) AS first_valid_rn
+                        FROM ranked
+                        GROUP BY song_id, band_type
+                    ),
+                    to_delete AS (
+                        SELECT r.song_id, r.band_type, r.team_key, r.instrument_combo
+                        FROM ranked r
+                        JOIN boundaries b ON r.song_id = b.song_id AND r.band_type = b.band_type
+                        WHERE r.rn >= b.first_valid_rn + @maxValid
+                          AND NOT EXISTS (
+                              SELECT 1 FROM band_members bm
+                              JOIN _prune_reg pr ON bm.account_id = pr.account_id
+                              WHERE bm.song_id = r.song_id AND bm.band_type = r.band_type
+                                AND bm.team_key = r.team_key AND bm.instrument_combo = r.instrument_combo
+                          )
+                    ),
+                    deleted AS (
+                        DELETE FROM band_entries be
+                        USING to_delete td
+                        WHERE be.song_id = td.song_id AND be.band_type = td.band_type
+                          AND be.team_key = td.team_key AND be.instrument_combo = td.instrument_combo
+                        RETURNING be.song_id, be.band_type, be.team_key, be.instrument_combo
+                    )
+                    INSERT INTO _band_prune_deleted_keys (song_id, band_type, team_key, instrument_combo)
+                    SELECT song_id, band_type, team_key, instrument_combo
+                    FROM deleted
+                    """;
+                deleteCmd.Parameters.AddWithValue("maxValid", maxValidEntries);
+                deleted = deleteCmd.ExecuteNonQuery();
+            }
+
+            if (deleted > 0)
+            {
+                using (var affectedCmd = conn.CreateCommand())
                 {
-                    teamKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    affectedTeamsByBandType[bandType] = teamKeys;
+                    affectedCmd.Transaction = tx;
+                    affectedCmd.CommandText = """
+                        SELECT band_type, team_key
+                        FROM _band_prune_deleted_keys
+                        GROUP BY band_type, team_key
+                        ORDER BY band_type, team_key
+                        """;
+                    using var reader = affectedCmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        var bandType = reader.GetString(0);
+                        var teamKey = reader.GetString(1);
+                        if (!affectedTeamsByBandType.TryGetValue(bandType, out var teamKeys))
+                        {
+                            teamKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            affectedTeamsByBandType[bandType] = teamKeys;
+                        }
+
+                        teamKeys.Add(teamKey);
+                        foreach (var accountId in SplitTeamKey(teamKey))
+                            affectedAccounts.Add(accountId);
+                    }
                 }
 
-                teamKeys.Add(teamKey);
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.Transaction = tx;
+                    cmd.CommandTimeout = 0;
+                    cmd.CommandText = """
+                        DELETE FROM band_member_stats bms
+                        USING _band_prune_deleted_keys d
+                        WHERE bms.song_id = d.song_id
+                          AND bms.band_type = d.band_type
+                          AND bms.team_key = d.team_key
+                          AND bms.instrument_combo = d.instrument_combo
+                        """;
+                    statsDeleted = cmd.ExecuteNonQuery();
+                }
+
+                using (var cmd = conn.CreateCommand())
+                {
+                    cmd.Transaction = tx;
+                    cmd.CommandTimeout = 0;
+                    cmd.CommandText = """
+                        DELETE FROM band_members bm
+                        USING _band_prune_deleted_keys d
+                        WHERE bm.song_id = d.song_id
+                          AND bm.band_type = d.band_type
+                          AND bm.team_key = d.team_key
+                          AND bm.instrument_combo = d.instrument_combo
+                        """;
+                    lookupsDeleted = cmd.ExecuteNonQuery();
+                }
+
+                DeleteBandTeamMembershipStateForAccounts(conn, tx, affectedAccounts);
             }
+
+            tx.Commit();
         }
 
-        // Cascade: remove orphaned band_member_stats rows
-        int statsDeleted = 0;
         if (deleted > 0)
         {
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandTimeout = 0;
-            cmd.CommandText = """
-                DELETE FROM band_member_stats bms
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM band_entries be
-                    WHERE be.song_id = bms.song_id AND be.band_type = bms.band_type
-                      AND be.team_key = bms.team_key AND be.instrument_combo = bms.instrument_combo
-                )
-                """;
-            statsDeleted = cmd.ExecuteNonQuery();
-
-            using var cmd2 = conn.CreateCommand();
-            cmd2.Transaction = tx;
-            cmd2.CommandTimeout = 0;
-            cmd2.CommandText = """
-                DELETE FROM band_members bm
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM band_entries be
-                    WHERE be.song_id = bm.song_id AND be.band_type = bm.band_type
-                      AND be.team_key = bm.team_key AND be.instrument_combo = bm.instrument_combo
-                )
-                """;
-            int lookupsDeleted = cmd2.ExecuteNonQuery();
-
             foreach (var (bandType, teamKeys) in affectedTeamsByBandType)
             {
-                RebuildBandTeamMembershipForTeams(conn, tx, bandType, teamKeys.ToArray());
+                RebuildBandTeamMembershipForTeams(bandType, teamKeys.ToArray());
             }
 
-            _log.LogInformation("Pruned {Entries:N0} band entries, {Stats:N0} member stats, {Lookups:N0} member lookups.",
-                deleted, statsDeleted, lookupsDeleted);
+            MarkBandTeamMembershipStateForAccounts(affectedAccounts);
+
+            _log.LogInformation(
+                "Pruned {Entries:N0} band entries, {Stats:N0} member stats, {Lookups:N0} member lookups; rebuilt membership summaries for {TeamCount:N0} team(s).",
+                deleted,
+                statsDeleted,
+                lookupsDeleted,
+                affectedTeamsByBandType.Sum(static kvp => kvp.Value.Count));
         }
 
-        tx.Commit();
         return deleted;
+    }
+
+    private void MarkBandTeamMembershipStateForAccounts(IReadOnlyCollection<string> accountIds)
+    {
+        if (accountIds.Count == 0)
+            return;
+
+        using var conn = _dataSource.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        UpsertBandTeamMembershipStateForAccounts(conn, tx, accountIds);
+        tx.Commit();
+    }
+
+    private static void DeleteBandTeamMembershipStateForAccounts(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        IReadOnlyCollection<string> accountIds)
+    {
+        if (accountIds.Count == 0)
+            return;
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"DELETE FROM {BandTeamMembershipStateTable} WHERE account_id = ANY(@accountIds)";
+        cmd.Parameters.AddWithValue("accountIds", accountIds.ToArray());
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void UpsertBandTeamMembershipStateForAccounts(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        IReadOnlyCollection<string> accountIds)
+    {
+        if (accountIds.Count == 0)
+            return;
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"""
+            INSERT INTO {BandTeamMembershipStateTable} (account_id, rebuilt_at)
+            SELECT DISTINCT unnest(@accountIds), @rebuiltAt
+            ON CONFLICT (account_id) DO UPDATE SET rebuilt_at = EXCLUDED.rebuilt_at
+            """;
+        cmd.Parameters.AddWithValue("accountIds", accountIds.ToArray());
+        cmd.Parameters.AddWithValue("rebuiltAt", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
     }
 
     internal static void RebuildBandTeamMembershipForAccount(

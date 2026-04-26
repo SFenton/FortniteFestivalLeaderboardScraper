@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using FSTService.Persistence;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -20,6 +21,7 @@ public sealed class PostScrapeBandExtractor
 {
     private readonly NpgsqlDataSource _dataSource;
     private readonly IPathDataStore _pathDataStore;
+    private readonly ScraperOptions _options;
     private readonly ScrapeProgressTracker? _progress;
     private readonly ILogger<PostScrapeBandExtractor> _log;
 
@@ -27,10 +29,12 @@ public sealed class PostScrapeBandExtractor
         NpgsqlDataSource dataSource,
         IPathDataStore pathDataStore,
         ILogger<PostScrapeBandExtractor> log,
-        ScrapeProgressTracker? progress = null)
+        ScrapeProgressTracker? progress = null,
+        IOptions<ScraperOptions>? options = null)
     {
         _dataSource = dataSource;
         _pathDataStore = pathDataStore;
+        _options = options?.Value ?? new ScraperOptions();
         _progress = progress;
         _log = log;
     }
@@ -48,7 +52,9 @@ public sealed class PostScrapeBandExtractor
         int totalBandRows = 0;
         int totalMemberStats = 0;
         int totalMemberLookups = 0;
-        var maxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 1, 8);
+        var maxDegreeOfParallelism = _options.BandExtractionParallelism > 0
+            ? Math.Clamp(_options.BandExtractionParallelism, 1, 64)
+            : Math.Clamp(Environment.ProcessorCount, 1, 8);
 
         long bandContextRowCount;
         await using (var conn = await _dataSource.OpenConnectionAsync(ct))
@@ -281,11 +287,12 @@ public sealed class PostScrapeBandExtractor
         ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> impactedTeamsByBandType,
         CancellationToken ct)
     {
+        var batchSize = Math.Clamp(_options.BandMembershipRebuildBatchSize, 1, 10_000);
         var rebuildBatches = impactedTeamsByBandType
             .OrderBy(static kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
-            .SelectMany(static kvp => kvp.Value.Keys
+            .SelectMany(kvp => kvp.Value.Keys
                 .OrderBy(static teamKey => teamKey, StringComparer.OrdinalIgnoreCase)
-                .Chunk(500)
+                .Chunk(batchSize)
                 .Select(teamKeys => (BandType: kvp.Key, TeamKeys: (IReadOnlyCollection<string>)teamKeys)))
             .ToList();
 

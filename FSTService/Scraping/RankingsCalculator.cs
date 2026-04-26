@@ -43,6 +43,7 @@ public sealed class RankingsCalculator
     private readonly ScrapeProgressTracker _progress;
     private readonly FeatureOptions _features;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
+    private readonly BandTeamRankingRebuildOptions _bandTeamRankingOptions;
     private readonly ILogger<RankingsCalculator> _log;
 
     public RankingsCalculator(
@@ -52,7 +53,8 @@ public sealed class RankingsCalculator
         ScrapeProgressTracker progress,
         IOptions<FeatureOptions> features,
         ILogger<RankingsCalculator> log,
-        IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null)
+        IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null,
+        IOptions<BandTeamRankingRebuildOptions>? bandTeamRankingOptions = null)
     {
         _persistence = persistence;
         _metaDb = metaDb;
@@ -60,6 +62,7 @@ public sealed class RankingsCalculator
         _progress = progress;
         _features = features.Value;
         _bandRankHistoryOptions = bandRankHistoryOptions?.Value ?? new BandRankHistoryOptions();
+        _bandTeamRankingOptions = bandTeamRankingOptions?.Value ?? BandTeamRankingRebuildOptions.Default;
         _log = log;
     }
 
@@ -499,7 +502,12 @@ public sealed class RankingsCalculator
             var perBandSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                _metaDb.RebuildBandTeamRankings(bandType, totalChartedSongs, CredibilityThreshold, PopulationMedian);
+                _metaDb.RebuildBandTeamRankings(
+                    bandType,
+                    totalChartedSongs,
+                    CredibilityThreshold,
+                    PopulationMedian,
+                    _bandTeamRankingOptions);
                 perBandSw.Stop();
                 LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
                 successfulBandTypes++;
