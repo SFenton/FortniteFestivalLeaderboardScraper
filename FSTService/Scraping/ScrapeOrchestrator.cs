@@ -241,14 +241,21 @@ public sealed class ScrapeOrchestrator
             int totalScoreChanges = 0;
             if (registeredIds.Count > 0)
             {
-                var changes = _persistence.DetectScoreChanges(previousState, registeredIds);
-                if (changes.Count > 0)
+                if (_persistence.WriteLegacyLiveLeaderboardDuringScrape)
                 {
-                    _persistence.Meta.InsertScoreChanges(changes);
-                    totalScoreChanges = changes.Count;
-                    aggregates.AddChanges(totalScoreChanges);
+                    var changes = _persistence.DetectScoreChanges(previousState, registeredIds);
+                    if (changes.Count > 0)
+                    {
+                        _persistence.Meta.InsertScoreChanges(changes);
+                        totalScoreChanges = changes.Count;
+                        aggregates.AddChanges(totalScoreChanges);
+                    }
+                    _log.LogInformation("{Changes:N0} score changes detected for registered users.", totalScoreChanges);
                 }
-                _log.LogInformation("{Changes:N0} score changes detected for registered users.", totalScoreChanges);
+                else
+                {
+                    _log.LogInformation("Skipping live-table score change detection because legacy live scrape writes are disabled; snapshot current-state rows remain authoritative.");
+                }
             }
 
             // Checkpoint all WAL files after the heavy write phase to keep them small
@@ -275,9 +282,16 @@ public sealed class ScrapeOrchestrator
             aggregates.TotalChanges, sw.Elapsed.TotalSeconds);
 
         // Report entry counts per instrument
-        var counts = _persistence.GetEntryCounts();
-        foreach (var (instrument, count) in counts)
-            _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
+        if (_persistence.WriteLegacyLiveLeaderboardDuringScrape)
+        {
+            var counts = _persistence.GetEntryCounts();
+            foreach (var (instrument, count) in counts)
+                _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
+        }
+        else
+        {
+            _log.LogInformation("Skipping legacy live leaderboard_entries count report because legacy live scrape writes are disabled.");
+        }
 
         // ── Update leaderboard population from Epic's reported totalPages ──
         _progress.SetSubOperation("updating_population");

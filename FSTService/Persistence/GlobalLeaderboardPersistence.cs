@@ -29,6 +29,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>The meta database (ScrapeLog, ScoreHistory, etc.).</summary>
     public IMetaDatabase Meta => _metaDb;
 
+    /// <summary>
+    /// True when scrape flushes should maintain the legacy mutable leaderboard_entries table.
+    /// Snapshot current-state rows are written independently of this rollback flag.
+    /// </summary>
+    public bool WriteLegacyLiveLeaderboardDuringScrape => _features.WriteLegacyLiveLeaderboardDuringScrape;
+
     public GlobalLeaderboardPersistence(IMetaDatabase metaDb,
                                         ILoggerFactory loggerFactory,
                                         ILogger<GlobalLeaderboardPersistence> log,
@@ -956,10 +962,28 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>Drop only solo (leaderboard_entries) secondary indexes.</summary>
-    public void DropSoloIndexes() => DropIndexes(SoloDroppableIndexes, "solo");
+    public void DropSoloIndexes()
+    {
+        if (!WriteLegacyLiveLeaderboardDuringScrape)
+        {
+            _log.LogInformation("Skipping solo leaderboard_entries index drop because legacy live scrape writes are disabled.");
+            return;
+        }
+
+        DropIndexes(SoloDroppableIndexes, "solo");
+    }
 
     /// <summary>Recreate only solo (leaderboard_entries) secondary indexes.</summary>
-    public void CreateSoloIndexes() => CreateIndexes(SoloIndexDefinitions, "solo");
+    public void CreateSoloIndexes()
+    {
+        if (!WriteLegacyLiveLeaderboardDuringScrape)
+        {
+            _log.LogInformation("Skipping solo leaderboard_entries index recreation because legacy live scrape writes are disabled.");
+            return;
+        }
+
+        CreateIndexes(SoloIndexDefinitions, "solo");
+    }
 
     /// <summary>Drop only band (band_entries, band_member_stats, band_members) secondary indexes.</summary>
     public void DropBandIndexes() => DropIndexes(BandDroppableIndexes, "band");
@@ -2272,6 +2296,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public int RecomputeRanksForSongs(IReadOnlyCollection<string> songIds)
     {
+        if (!WriteLegacyLiveLeaderboardDuringScrape)
+        {
+            _log.LogInformation("Skipping legacy live leaderboard rank recompute for {SongCount} songs because legacy live scrape writes are disabled.",
+                songIds.Count);
+            return 0;
+        }
+
         if (songIds.Count == 0)
             return RecomputeAllRanks();
 
@@ -2389,6 +2420,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>>? thresholdsPerInstrument = null)
     {
         if (maxEntriesPerSong <= 0) return 0;
+
+        if (!WriteLegacyLiveLeaderboardDuringScrape)
+        {
+            _log.LogInformation("Skipping legacy live leaderboard excess prune because legacy live scrape writes are disabled.");
+            return 0;
+        }
 
         int totalDeleted = 0;
         foreach (var (instrument, db) in _instrumentDbs)
