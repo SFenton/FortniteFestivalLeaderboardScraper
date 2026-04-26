@@ -2379,65 +2379,267 @@ public sealed class MetaDatabase : IMetaDatabase
 
     public void SnapshotBandRankHistory(string bandType, int retentionDays = 365)
     {
+        SnapshotBandRankHistoryChunked(bandType, new BandRankHistorySnapshotOptions
+        {
+            UseLatestState = true,
+            UseNarrowHistory = true,
+            UseWideHistoryCompatibilityWrite = true,
+            RetentionDays = retentionDays,
+        });
+    }
+
+    public BandRankHistorySnapshotResult SnapshotBandRankHistoryChunked(
+        string bandType,
+        BandRankHistorySnapshotOptions options,
+        long? jobId = null,
+        CancellationToken ct = default)
+    {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var cutoff = today.AddDays(-retentionDays);
-
         using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-
-        EnsureBandRankHistoryTables(conn, tx);
+        using (var tx = conn.BeginTransaction())
+        {
+            EnsureBandRankHistoryTables(conn, tx);
+            tx.Commit();
+        }
 
         var rankingsTable = ResolveBandRankingReadTable(conn, bandType);
         var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
 
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = $@"
-                CREATE TEMP TABLE _latest_band_rank_history ON COMMIT DROP AS
-                SELECT DISTINCT ON (ranking_scope, combo_id, team_key)
-                    ranking_scope,
-                    combo_id,
-                    team_key,
-                    team_members,
-                    songs_played,
-                    total_charted_songs,
-                    coverage,
-                    raw_skill_rating,
-                    adjusted_skill_rating,
-                    adjusted_skill_rank,
-                    weighted_rating,
-                    weighted_rank,
-                    fc_rate,
-                    fc_rate_rank,
-                    total_score,
-                    total_score_rank,
-                    avg_accuracy,
-                    full_combo_count,
-                    avg_stars,
-                    best_rank,
-                    avg_rank,
-                    raw_weighted_rating
-                FROM band_team_rank_history
-                WHERE band_type = @bandType
-                ORDER BY ranking_scope, combo_id, team_key, snapshot_date DESC;
+        if (options.UseLatestState)
+            SeedBandRankHistoryLatestState(conn, bandType, options.CommandTimeoutSeconds, ct);
 
-                CREATE TEMP TABLE _latest_band_rank_stats_history ON COMMIT DROP AS
-                SELECT DISTINCT ON (ranking_scope, combo_id)
-                    ranking_scope,
-                    combo_id,
-                    total_teams
-                FROM band_team_ranking_stats_history
-                WHERE band_type = @bandType
-                ORDER BY ranking_scope, combo_id, snapshot_date DESC;";
-            cmd.Parameters.AddWithValue("bandType", bandType);
-            cmd.ExecuteNonQuery();
+        var chunks = jobId.HasValue
+            ? EnsureAndGetBandRankHistoryJobChunks(conn, jobId.Value, bandType, statsTable, options.CommandTimeoutSeconds)
+            : GetBandRankHistoryChunks(conn, bandType, statsTable, options.CommandTimeoutSeconds)
+                .Select(chunk => new BandRankHistoryChunkInfo
+                {
+                    JobId = 0,
+                    BandType = bandType,
+                    RankingScope = chunk.RankingScope,
+                    ComboId = chunk.ComboId,
+                    Status = "queued",
+                })
+                .ToList();
+
+        long scanned = 0;
+        long inserted = 0;
+        int completed = 0;
+        foreach (var chunk in chunks)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (jobId.HasValue)
+                MarkBandRankHistoryChunkRunning(conn, jobId.Value, chunk.RankingScope, chunk.ComboId, options.CommandTimeoutSeconds);
+
+            var chunkResult = SnapshotBandRankHistoryChunk(
+                conn,
+                rankingsTable,
+                statsTable,
+                bandType,
+                chunk.RankingScope,
+                chunk.ComboId,
+                today,
+                options,
+                ct);
+
+            scanned += chunkResult.RowsScanned;
+            inserted += chunkResult.RowsInserted;
+            completed++;
+
+            if (jobId.HasValue)
+                CompleteBandRankHistoryChunk(
+                    conn,
+                    jobId.Value,
+                    chunk.RankingScope,
+                    chunk.ComboId,
+                    chunkResult.RowsScanned,
+                    chunkResult.RowsInserted,
+                    Math.Max(0, chunkResult.RowsScanned - chunkResult.RowsInserted),
+                    options.CommandTimeoutSeconds);
         }
 
-        using (var cmd = conn.CreateCommand())
+        CleanupBandRankHistoryRetention(conn, bandType, options.RetentionDays, options.CommandTimeoutSeconds, ct);
+
+        return new BandRankHistorySnapshotResult
         {
-            cmd.Transaction = tx;
-            cmd.CommandText = $@"
+            RowsScanned = scanned,
+            RowsInserted = inserted,
+            RowsSkipped = Math.Max(0, scanned - inserted),
+            ChunksCompleted = completed,
+            ChunksTotal = chunks.Count,
+        };
+    }
+
+    private sealed record BandRankHistoryChunkKey(string RankingScope, string ComboId);
+
+    private sealed record BandRankHistoryChunkResult(long RowsScanned, long RowsInserted);
+
+    private static string BandRankHistoryFingerprintExpression(string alias) => $@"md5(concat_ws('|',
+                    {alias}.team_members::text,
+                    {alias}.songs_played::text,
+                    {alias}.total_charted_songs::text,
+                    {alias}.coverage::text,
+                    {alias}.raw_skill_rating::text,
+                    {alias}.adjusted_skill_rating::text,
+                    {alias}.adjusted_skill_rank::text,
+                    {alias}.weighted_rating::text,
+                    {alias}.weighted_rank::text,
+                    {alias}.fc_rate::text,
+                    {alias}.fc_rate_rank::text,
+                    {alias}.total_score::text,
+                    {alias}.total_score_rank::text,
+                    {alias}.avg_accuracy::text,
+                    {alias}.full_combo_count::text,
+                    {alias}.avg_stars::text,
+                    {alias}.best_rank::text,
+                    {alias}.avg_rank::text,
+                    COALESCE({alias}.raw_weighted_rating::text, '')))";
+
+    private static void ConfigureCommandTimeout(NpgsqlCommand cmd, int commandTimeoutSeconds)
+    {
+        if (commandTimeoutSeconds > 0)
+            cmd.CommandTimeout = commandTimeoutSeconds;
+    }
+
+    private static List<BandRankHistoryChunkKey> GetBandRankHistoryChunks(
+        NpgsqlConnection conn,
+        string bandType,
+        string statsTable,
+        int commandTimeoutSeconds)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureCommandTimeout(cmd, commandTimeoutSeconds);
+        cmd.CommandText = $@"
+            SELECT ranking_scope, combo_id
+            FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)}
+            WHERE band_type = @bandType
+            ORDER BY ranking_scope, combo_id";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+
+        var chunks = new List<BandRankHistoryChunkKey>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            chunks.Add(new BandRankHistoryChunkKey(reader.GetString(0), reader.GetString(1)));
+        return chunks;
+    }
+
+    private static void SeedBandRankHistoryLatestState(
+        NpgsqlConnection conn,
+        string bandType,
+        int commandTimeoutSeconds,
+        CancellationToken ct)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureCommandTimeout(cmd, commandTimeoutSeconds);
+        cmd.CommandText = $@"
+            INSERT INTO band_team_rank_history_latest (
+                band_type, ranking_scope, combo_id, team_key, team_members,
+                songs_played, total_charted_songs, coverage, raw_skill_rating,
+                adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating,
+                computed_at, snapshot_date, fingerprint, updated_at)
+            SELECT DISTINCT ON (band_type, ranking_scope, combo_id, team_key)
+                h.band_type,
+                h.ranking_scope,
+                h.combo_id,
+                h.team_key,
+                h.team_members,
+                h.songs_played,
+                h.total_charted_songs,
+                h.coverage,
+                h.raw_skill_rating,
+                h.adjusted_skill_rating,
+                h.adjusted_skill_rank,
+                h.weighted_rating,
+                h.weighted_rank,
+                h.fc_rate,
+                h.fc_rate_rank,
+                h.total_score,
+                h.total_score_rank,
+                h.avg_accuracy,
+                h.full_combo_count,
+                h.avg_stars,
+                h.best_rank,
+                h.avg_rank,
+                h.raw_weighted_rating,
+                h.computed_at,
+                h.snapshot_date,
+                {BandRankHistoryFingerprintExpression("h")},
+                now()
+            FROM band_team_rank_history h
+            WHERE h.band_type = @bandType
+              AND NOT EXISTS (
+                SELECT 1 FROM band_team_rank_history_latest latest
+                WHERE latest.band_type = h.band_type
+                  AND latest.ranking_scope = h.ranking_scope
+                  AND latest.combo_id = h.combo_id
+                  AND latest.team_key = h.team_key)
+            ORDER BY band_type, ranking_scope, combo_id, team_key, snapshot_date DESC
+            ON CONFLICT (band_type, ranking_scope, combo_id, team_key) DO NOTHING";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        ct.ThrowIfCancellationRequested();
+        using var registration = ct.Register(static state => ((NpgsqlCommand)state!).Cancel(), cmd);
+        try
+        {
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ct);
+        }
+    }
+
+    private static BandRankHistoryChunkResult SnapshotBandRankHistoryChunk(
+        NpgsqlConnection conn,
+        string rankingsTable,
+        string statsTable,
+        string bandType,
+        string rankingScope,
+        string comboId,
+        DateOnly today,
+        BandRankHistorySnapshotOptions options,
+        CancellationToken ct)
+    {
+        using var tx = conn.BeginTransaction();
+        if (options.SynchronousCommitOff)
+        {
+            using var syncCmd = conn.CreateCommand();
+            syncCmd.Transaction = tx;
+            syncCmd.CommandText = "SET LOCAL synchronous_commit = off";
+            syncCmd.ExecuteNonQuery();
+        }
+
+        using var cmd = conn.CreateCommand();
+        ConfigureCommandTimeout(cmd, options.CommandTimeoutSeconds);
+        cmd.Transaction = tx;
+        cmd.CommandText = $@"
+            WITH src AS (
+                SELECT
+                    src.*,
+                    {BandRankHistoryFingerprintExpression("src")} AS fingerprint
+                FROM {BandRankingStorageNames.QuoteIdentifier(rankingsTable)} src
+                WHERE src.band_type = @bandType
+                  AND src.ranking_scope = @scope
+                  AND src.combo_id = @comboId
+            ), stats AS (
+                SELECT total_teams, computed_at
+                FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)}
+                WHERE band_type = @bandType
+                  AND ranking_scope = @scope
+                  AND combo_id = @comboId
+            ), changed AS (
+                SELECT src.*, stats.total_teams
+                FROM src
+                CROSS JOIN stats
+                LEFT JOIN band_team_rank_history_latest latest
+                    ON latest.band_type = src.band_type
+                   AND latest.ranking_scope = src.ranking_scope
+                   AND latest.combo_id = src.combo_id
+                   AND latest.team_key = src.team_key
+                WHERE NOT @useLatestState
+                   OR latest.team_key IS NULL
+                   OR latest.fingerprint IS DISTINCT FROM src.fingerprint
+            ), wide AS (
                 INSERT INTO band_team_rank_history (
                     band_type, ranking_scope, combo_id, team_key, team_members,
                     songs_played, total_charted_songs, coverage, raw_skill_rating,
@@ -2446,59 +2648,14 @@ public sealed class MetaDatabase : IMetaDatabase
                     full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating,
                     computed_at, snapshot_date)
                 SELECT
-                    src.band_type,
-                    src.ranking_scope,
-                    src.combo_id,
-                    src.team_key,
-                    src.team_members,
-                    src.songs_played,
-                    src.total_charted_songs,
-                    src.coverage,
-                    src.raw_skill_rating,
-                    src.adjusted_skill_rating,
-                    src.adjusted_skill_rank,
-                    src.weighted_rating,
-                    src.weighted_rank,
-                    src.fc_rate,
-                    src.fc_rate_rank,
-                    src.total_score,
-                    src.total_score_rank,
-                    src.avg_accuracy,
-                    src.full_combo_count,
-                    src.avg_stars,
-                    src.best_rank,
-                    src.avg_rank,
-                    src.raw_weighted_rating,
-                    src.computed_at,
-                    @today
-                FROM {BandRankingStorageNames.QuoteIdentifier(rankingsTable)} src
-                LEFT JOIN _latest_band_rank_history latest
-                    ON latest.ranking_scope = src.ranking_scope
-                   AND latest.combo_id = src.combo_id
-                   AND latest.team_key = src.team_key
-                WHERE src.band_type = @bandType
-                  AND (
-                    latest.team_key IS NULL
-                    OR latest.team_members IS DISTINCT FROM src.team_members
-                    OR latest.songs_played IS DISTINCT FROM src.songs_played
-                    OR latest.total_charted_songs IS DISTINCT FROM src.total_charted_songs
-                    OR latest.coverage IS DISTINCT FROM src.coverage
-                    OR latest.raw_skill_rating IS DISTINCT FROM src.raw_skill_rating
-                    OR latest.adjusted_skill_rating IS DISTINCT FROM src.adjusted_skill_rating
-                    OR latest.adjusted_skill_rank IS DISTINCT FROM src.adjusted_skill_rank
-                    OR latest.weighted_rating IS DISTINCT FROM src.weighted_rating
-                    OR latest.weighted_rank IS DISTINCT FROM src.weighted_rank
-                    OR latest.fc_rate IS DISTINCT FROM src.fc_rate
-                    OR latest.fc_rate_rank IS DISTINCT FROM src.fc_rate_rank
-                    OR latest.total_score IS DISTINCT FROM src.total_score
-                    OR latest.total_score_rank IS DISTINCT FROM src.total_score_rank
-                    OR latest.avg_accuracy IS DISTINCT FROM src.avg_accuracy
-                    OR latest.full_combo_count IS DISTINCT FROM src.full_combo_count
-                    OR latest.avg_stars IS DISTINCT FROM src.avg_stars
-                    OR latest.best_rank IS DISTINCT FROM src.best_rank
-                    OR latest.avg_rank IS DISTINCT FROM src.avg_rank
-                    OR latest.raw_weighted_rating IS DISTINCT FROM src.raw_weighted_rating
-                  )
+                    band_type, ranking_scope, combo_id, team_key, team_members,
+                    songs_played, total_charted_songs, coverage, raw_skill_rating,
+                    adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                    fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                    full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating,
+                    computed_at, @today
+                FROM changed
+                WHERE @writeWide
                 ON CONFLICT (band_type, ranking_scope, combo_id, team_key, snapshot_date) DO UPDATE SET
                     team_members = EXCLUDED.team_members,
                     songs_played = EXCLUDED.songs_played,
@@ -2519,78 +2676,599 @@ public sealed class MetaDatabase : IMetaDatabase
                     best_rank = EXCLUDED.best_rank,
                     avg_rank = EXCLUDED.avg_rank,
                     raw_weighted_rating = EXCLUDED.raw_weighted_rating,
-                    computed_at = EXCLUDED.computed_at;";
-            cmd.Parameters.AddWithValue("bandType", bandType);
-            cmd.Parameters.AddWithValue("today", today);
-            cmd.ExecuteNonQuery();
-        }
-
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = $@"
+                    computed_at = EXCLUDED.computed_at
+                RETURNING 1
+            ), points AS (
+                INSERT INTO band_team_rank_history_points (
+                    band_type, ranking_scope, combo_id, team_key, snapshot_date, snapshot_taken_at,
+                    adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank,
+                    adjusted_skill_rating, weighted_rating, fc_rate, total_score,
+                    songs_played, coverage, full_combo_count, total_charted_songs,
+                    total_ranked_teams, raw_weighted_rating, raw_skill_rating)
+                SELECT
+                    band_type, ranking_scope, combo_id, team_key, @today, computed_at,
+                    adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank,
+                    adjusted_skill_rating, weighted_rating, fc_rate, total_score,
+                    songs_played, coverage, full_combo_count, total_charted_songs,
+                    total_teams, raw_weighted_rating, raw_skill_rating
+                FROM changed
+                WHERE @writeNarrow
+                ON CONFLICT (band_type, ranking_scope, combo_id, team_key, snapshot_date) DO UPDATE SET
+                    snapshot_taken_at = EXCLUDED.snapshot_taken_at,
+                    adjusted_skill_rank = EXCLUDED.adjusted_skill_rank,
+                    weighted_rank = EXCLUDED.weighted_rank,
+                    fc_rate_rank = EXCLUDED.fc_rate_rank,
+                    total_score_rank = EXCLUDED.total_score_rank,
+                    adjusted_skill_rating = EXCLUDED.adjusted_skill_rating,
+                    weighted_rating = EXCLUDED.weighted_rating,
+                    fc_rate = EXCLUDED.fc_rate,
+                    total_score = EXCLUDED.total_score,
+                    songs_played = EXCLUDED.songs_played,
+                    coverage = EXCLUDED.coverage,
+                    full_combo_count = EXCLUDED.full_combo_count,
+                    total_charted_songs = EXCLUDED.total_charted_songs,
+                    total_ranked_teams = EXCLUDED.total_ranked_teams,
+                    raw_weighted_rating = EXCLUDED.raw_weighted_rating,
+                    raw_skill_rating = EXCLUDED.raw_skill_rating
+                RETURNING 1
+            ), latest AS (
+                INSERT INTO band_team_rank_history_latest (
+                    band_type, ranking_scope, combo_id, team_key, team_members,
+                    songs_played, total_charted_songs, coverage, raw_skill_rating,
+                    adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                    fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                    full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating,
+                    computed_at, snapshot_date, fingerprint, updated_at)
+                SELECT
+                    band_type, ranking_scope, combo_id, team_key, team_members,
+                    songs_played, total_charted_songs, coverage, raw_skill_rating,
+                    adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                    fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                    full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating,
+                    computed_at, @today, fingerprint, now()
+                FROM changed
+                ON CONFLICT (band_type, ranking_scope, combo_id, team_key) DO UPDATE SET
+                    team_members = EXCLUDED.team_members,
+                    songs_played = EXCLUDED.songs_played,
+                    total_charted_songs = EXCLUDED.total_charted_songs,
+                    coverage = EXCLUDED.coverage,
+                    raw_skill_rating = EXCLUDED.raw_skill_rating,
+                    adjusted_skill_rating = EXCLUDED.adjusted_skill_rating,
+                    adjusted_skill_rank = EXCLUDED.adjusted_skill_rank,
+                    weighted_rating = EXCLUDED.weighted_rating,
+                    weighted_rank = EXCLUDED.weighted_rank,
+                    fc_rate = EXCLUDED.fc_rate,
+                    fc_rate_rank = EXCLUDED.fc_rate_rank,
+                    total_score = EXCLUDED.total_score,
+                    total_score_rank = EXCLUDED.total_score_rank,
+                    avg_accuracy = EXCLUDED.avg_accuracy,
+                    full_combo_count = EXCLUDED.full_combo_count,
+                    avg_stars = EXCLUDED.avg_stars,
+                    best_rank = EXCLUDED.best_rank,
+                    avg_rank = EXCLUDED.avg_rank,
+                    raw_weighted_rating = EXCLUDED.raw_weighted_rating,
+                    computed_at = EXCLUDED.computed_at,
+                    snapshot_date = EXCLUDED.snapshot_date,
+                    fingerprint = EXCLUDED.fingerprint,
+                    updated_at = now()
+                RETURNING 1
+            ), stats_history AS (
                 INSERT INTO band_team_ranking_stats_history (
                     band_type, ranking_scope, combo_id, total_teams, computed_at, snapshot_date)
-                SELECT
-                    src.band_type,
-                    src.ranking_scope,
-                    src.combo_id,
-                    src.total_teams,
-                    src.computed_at,
-                    @today
-                FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)} src
-                LEFT JOIN _latest_band_rank_stats_history latest
-                    ON latest.ranking_scope = src.ranking_scope
-                   AND latest.combo_id = src.combo_id
-                WHERE src.band_type = @bandType
-                  AND (
-                    latest.combo_id IS NULL
-                    OR latest.total_teams IS DISTINCT FROM src.total_teams
-                  )
+                SELECT @bandType, @scope, @comboId, total_teams, computed_at, @today
+                FROM stats
+                WHERE @writeWide OR @writeNarrow
                 ON CONFLICT (band_type, ranking_scope, combo_id, snapshot_date) DO UPDATE SET
                     total_teams = EXCLUDED.total_teams,
-                    computed_at = EXCLUDED.computed_at;";
-            cmd.Parameters.AddWithValue("bandType", bandType);
-            cmd.Parameters.AddWithValue("today", today);
-            cmd.ExecuteNonQuery();
-        }
+                    computed_at = EXCLUDED.computed_at
+                RETURNING 1
+            )
+            SELECT
+                (SELECT count(*) FROM src) AS rows_scanned,
+                (SELECT count(*) FROM changed) AS rows_inserted;";
 
-        using (var cmd = conn.CreateCommand())
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", comboId);
+        cmd.Parameters.AddWithValue("today", today);
+        cmd.Parameters.AddWithValue("useLatestState", options.UseLatestState);
+        cmd.Parameters.AddWithValue("writeWide", options.UseWideHistoryCompatibilityWrite);
+        cmd.Parameters.AddWithValue("writeNarrow", options.UseNarrowHistory);
+
+        ct.ThrowIfCancellationRequested();
+        using var registration = ct.Register(static state => ((NpgsqlCommand)state!).Cancel(), cmd);
+        BandRankHistoryChunkResult result;
+        try
         {
-            cmd.Transaction = tx;
-            cmd.CommandText = @"
-                DELETE FROM band_team_rank_history history
-                WHERE history.band_type = @bandType
-                  AND history.snapshot_date < @cutoff
-                  AND EXISTS (
-                    SELECT 1
-                    FROM band_team_rank_history newer
-                    WHERE newer.band_type = history.band_type
-                      AND newer.ranking_scope = history.ranking_scope
-                      AND newer.combo_id = history.combo_id
-                      AND newer.team_key = history.team_key
-                      AND newer.snapshot_date > history.snapshot_date
-                      AND newer.snapshot_date <= @cutoff
-                  );
+            using var reader = cmd.ExecuteReader();
+            reader.Read();
+            result = new BandRankHistoryChunkResult(reader.GetInt64(0), reader.GetInt64(1));
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ct);
+        }
+        tx.Commit();
+        return result;
+    }
 
-                DELETE FROM band_team_ranking_stats_history history
-                WHERE history.band_type = @bandType
-                  AND history.snapshot_date < @cutoff
-                  AND EXISTS (
-                    SELECT 1
-                    FROM band_team_ranking_stats_history newer
-                    WHERE newer.band_type = history.band_type
-                      AND newer.ranking_scope = history.ranking_scope
-                      AND newer.combo_id = history.combo_id
-                      AND newer.snapshot_date > history.snapshot_date
-                      AND newer.snapshot_date <= @cutoff
-                  );";
-            cmd.Parameters.AddWithValue("bandType", bandType);
-            cmd.Parameters.AddWithValue("cutoff", cutoff);
+    private static void CleanupBandRankHistoryRetention(
+        NpgsqlConnection conn,
+        string bandType,
+        int retentionDays,
+        int commandTimeoutSeconds,
+        CancellationToken ct)
+    {
+        if (retentionDays <= 0)
+            return;
+
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
+        using var cmd = conn.CreateCommand();
+        ConfigureCommandTimeout(cmd, commandTimeoutSeconds);
+        cmd.CommandText = @"
+            DELETE FROM band_team_rank_history_points history
+            WHERE history.band_type = @bandType
+              AND history.snapshot_date < @cutoff
+              AND EXISTS (
+                SELECT 1 FROM band_team_rank_history_points newer
+                WHERE newer.band_type = history.band_type
+                  AND newer.ranking_scope = history.ranking_scope
+                  AND newer.combo_id = history.combo_id
+                  AND newer.team_key = history.team_key
+                  AND newer.snapshot_date > history.snapshot_date
+                  AND newer.snapshot_date <= @cutoff
+              );
+
+            DELETE FROM band_team_rank_history history
+            WHERE history.band_type = @bandType
+              AND history.snapshot_date < @cutoff
+              AND EXISTS (
+                SELECT 1
+                FROM band_team_rank_history newer
+                WHERE newer.band_type = history.band_type
+                  AND newer.ranking_scope = history.ranking_scope
+                  AND newer.combo_id = history.combo_id
+                  AND newer.team_key = history.team_key
+                  AND newer.snapshot_date > history.snapshot_date
+                  AND newer.snapshot_date <= @cutoff
+              );
+
+            DELETE FROM band_team_ranking_stats_history history
+            WHERE history.band_type = @bandType
+              AND history.snapshot_date < @cutoff
+              AND EXISTS (
+                SELECT 1
+                FROM band_team_ranking_stats_history newer
+                WHERE newer.band_type = history.band_type
+                  AND newer.ranking_scope = history.ranking_scope
+                  AND newer.combo_id = history.combo_id
+                  AND newer.snapshot_date > history.snapshot_date
+                  AND newer.snapshot_date <= @cutoff
+              );";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("cutoff", cutoff);
+        ct.ThrowIfCancellationRequested();
+        using var registration = ct.Register(static state => ((NpgsqlCommand)state!).Cancel(), cmd);
+        try
+        {
             cmd.ExecuteNonQuery();
         }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(ct);
+        }
+    }
 
-        tx.Commit();
+    public BandRankHistoryJobInfo EnqueueBandRankHistoryJob(long scrapeId, string bandType, DateOnly snapshotDate, string mode, bool coalesceSameDay = true)
+    {
+        using var conn = _ds.OpenConnection();
+        using (var tx = conn.BeginTransaction())
+        {
+            EnsureBandRankHistoryTables(conn, tx);
+            tx.Commit();
+        }
+
+        if (coalesceSameDay)
+        {
+            using var supersede = conn.CreateCommand();
+            supersede.CommandText = @"
+                UPDATE band_rank_history_jobs
+                SET status = 'superseded', superseded_at = now(), updated_at = now(), last_error = 'Superseded by newer same-day history job.'
+                WHERE band_type = @bandType
+                  AND snapshot_date = @snapshotDate
+                  AND scrape_id < @scrapeId
+                  AND status IN ('queued', 'running', 'paused', 'failed')";
+            supersede.Parameters.AddWithValue("bandType", bandType);
+            supersede.Parameters.AddWithValue("snapshotDate", snapshotDate);
+            supersede.Parameters.AddWithValue("scrapeId", scrapeId);
+            supersede.ExecuteNonQuery();
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO band_rank_history_jobs (scrape_id, snapshot_date, band_type, mode, status, updated_at)
+            VALUES (@scrapeId, @snapshotDate, @bandType, @mode, 'queued', now())
+            ON CONFLICT (scrape_id, band_type, snapshot_date) DO UPDATE SET
+                mode = EXCLUDED.mode,
+                status = CASE
+                    WHEN band_rank_history_jobs.status = 'complete' THEN band_rank_history_jobs.status
+                    ELSE 'queued'
+                END,
+                updated_at = now(),
+                last_error = NULL
+            RETURNING job_id, scrape_id, snapshot_date, band_type, mode, status, started_at, completed_at,
+                      failed_at, paused_at, superseded_at, last_error, attempts, chunks_total,
+                      chunks_completed, rows_scanned, rows_inserted, rows_skipped,
+                      current_ranking_scope, current_combo_id, updated_at";
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("mode", mode);
+        using var reader = cmd.ExecuteReader();
+        reader.Read();
+        return ReadBandRankHistoryJob(reader);
+    }
+
+    public BandRankHistoryJobInfo? GetNextBandRankHistoryJob()
+    {
+        using var conn = _ds.OpenConnection();
+        using (var tx = conn.BeginTransaction())
+        {
+            EnsureBandRankHistoryTables(conn, tx);
+            tx.Commit();
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT job_id, scrape_id, snapshot_date, band_type, mode, status, started_at, completed_at,
+                   failed_at, paused_at, superseded_at, last_error, attempts, chunks_total,
+                   chunks_completed, rows_scanned, rows_inserted, rows_skipped,
+                   current_ranking_scope, current_combo_id, updated_at
+            FROM band_rank_history_jobs
+            WHERE status IN ('queued', 'paused')
+            ORDER BY snapshot_date DESC, scrape_id DESC, job_id ASC
+            LIMIT 1";
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? ReadBandRankHistoryJob(reader) : null;
+    }
+
+    public bool TryStartBandRankHistoryJob(long jobId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE band_rank_history_jobs
+            SET status = 'running', started_at = COALESCE(started_at, now()), paused_at = NULL,
+                attempts = attempts + 1, updated_at = now()
+            WHERE job_id = @jobId AND status IN ('queued', 'paused')";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        return cmd.ExecuteNonQuery() == 1;
+    }
+
+    public void CompleteBandRankHistoryJob(long jobId, BandRankHistorySnapshotResult result)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE band_rank_history_jobs
+            SET status = 'complete', completed_at = now(), updated_at = now(), last_error = NULL,
+                chunks_total = @chunksTotal, chunks_completed = @chunksCompleted,
+                rows_scanned = @rowsScanned, rows_inserted = @rowsInserted, rows_skipped = @rowsSkipped,
+                current_ranking_scope = NULL, current_combo_id = NULL
+            WHERE job_id = @jobId";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("chunksTotal", result.ChunksTotal);
+        cmd.Parameters.AddWithValue("chunksCompleted", result.ChunksCompleted);
+        cmd.Parameters.AddWithValue("rowsScanned", result.RowsScanned);
+        cmd.Parameters.AddWithValue("rowsInserted", result.RowsInserted);
+        cmd.Parameters.AddWithValue("rowsSkipped", result.RowsSkipped);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void PauseBandRankHistoryJob(long jobId, string? reason = null)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE band_rank_history_jobs
+            SET status = 'paused', paused_at = now(), updated_at = now(), last_error = @reason
+            WHERE job_id = @jobId AND status = 'running';
+
+            UPDATE band_rank_history_job_chunks
+            SET status = 'queued', updated_at = now(), last_error = @reason
+            WHERE job_id = @jobId AND status = 'running';";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("reason", (object?)reason ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void FailBandRankHistoryJob(long jobId, string error)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE band_rank_history_jobs
+            SET status = 'failed', failed_at = now(), updated_at = now(), last_error = @error
+            WHERE job_id = @jobId;
+
+            UPDATE band_rank_history_job_chunks
+            SET status = 'failed', updated_at = now(), last_error = @error
+            WHERE job_id = @jobId AND status = 'running';";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("error", error);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static BandRankHistoryJobInfo ReadBandRankHistoryJob(NpgsqlDataReader reader) => new()
+    {
+        JobId = reader.GetInt64(0),
+        ScrapeId = reader.GetInt64(1),
+        SnapshotDate = reader.GetDateTime(2).ToString("yyyy-MM-dd"),
+        BandType = reader.GetString(3),
+        Mode = reader.GetString(4),
+        Status = reader.GetString(5),
+        StartedAt = reader.IsDBNull(6) ? null : reader.GetDateTime(6).ToString("o"),
+        CompletedAt = reader.IsDBNull(7) ? null : reader.GetDateTime(7).ToString("o"),
+        FailedAt = reader.IsDBNull(8) ? null : reader.GetDateTime(8).ToString("o"),
+        PausedAt = reader.IsDBNull(9) ? null : reader.GetDateTime(9).ToString("o"),
+        SupersededAt = reader.IsDBNull(10) ? null : reader.GetDateTime(10).ToString("o"),
+        LastError = reader.IsDBNull(11) ? null : reader.GetString(11),
+        Attempts = reader.GetInt32(12),
+        ChunksTotal = reader.GetInt32(13),
+        ChunksCompleted = reader.GetInt32(14),
+        RowsScanned = reader.GetInt64(15),
+        RowsInserted = reader.GetInt64(16),
+        RowsSkipped = reader.GetInt64(17),
+        CurrentRankingScope = reader.IsDBNull(18) ? null : reader.GetString(18),
+        CurrentComboId = reader.IsDBNull(19) ? null : reader.GetString(19),
+        UpdatedAt = reader.GetDateTime(20).ToString("o"),
+    };
+
+    private static List<BandRankHistoryChunkInfo> EnsureAndGetBandRankHistoryJobChunks(
+        NpgsqlConnection conn,
+        long jobId,
+        string bandType,
+        string statsTable,
+        int commandTimeoutSeconds)
+    {
+        var chunks = GetBandRankHistoryChunks(conn, bandType, statsTable, commandTimeoutSeconds);
+
+        using (var insert = conn.CreateCommand())
+        {
+            ConfigureCommandTimeout(insert, commandTimeoutSeconds);
+            insert.CommandText = @"
+                INSERT INTO band_rank_history_job_chunks (job_id, band_type, ranking_scope, combo_id, status, updated_at)
+                VALUES (@jobId, @bandType, @scope, @comboId, 'queued', now())
+                ON CONFLICT (job_id, ranking_scope, combo_id) DO NOTHING";
+            insert.Parameters.AddWithValue("jobId", jobId);
+            insert.Parameters.AddWithValue("bandType", bandType);
+            var scopeParam = insert.Parameters.Add("scope", NpgsqlDbType.Text);
+            var comboParam = insert.Parameters.Add("comboId", NpgsqlDbType.Text);
+            foreach (var chunk in chunks)
+            {
+                scopeParam.Value = chunk.RankingScope;
+                comboParam.Value = chunk.ComboId;
+                insert.ExecuteNonQuery();
+            }
+        }
+
+        using (var update = conn.CreateCommand())
+        {
+            ConfigureCommandTimeout(update, commandTimeoutSeconds);
+            update.CommandText = @"
+                UPDATE band_rank_history_jobs job
+                SET chunks_total = counts.total_count,
+                    chunks_completed = counts.completed_count,
+                    updated_at = now()
+                FROM (
+                    SELECT job_id,
+                           count(*)::int AS total_count,
+                           count(*) FILTER (WHERE status = 'complete')::int AS completed_count
+                    FROM band_rank_history_job_chunks
+                    WHERE job_id = @jobId
+                    GROUP BY job_id
+                ) counts
+                WHERE job.job_id = counts.job_id";
+            update.Parameters.AddWithValue("jobId", jobId);
+            update.ExecuteNonQuery();
+        }
+
+        using var select = conn.CreateCommand();
+        ConfigureCommandTimeout(select, commandTimeoutSeconds);
+        select.CommandText = @"
+            SELECT job_id, band_type, ranking_scope, combo_id, status
+            FROM band_rank_history_job_chunks
+            WHERE job_id = @jobId AND status IN ('queued', 'failed')
+            ORDER BY ranking_scope, combo_id";
+        select.Parameters.AddWithValue("jobId", jobId);
+        var pending = new List<BandRankHistoryChunkInfo>();
+        using var reader = select.ExecuteReader();
+        while (reader.Read())
+        {
+            pending.Add(new BandRankHistoryChunkInfo
+            {
+                JobId = reader.GetInt64(0),
+                BandType = reader.GetString(1),
+                RankingScope = reader.GetString(2),
+                ComboId = reader.GetString(3),
+                Status = reader.GetString(4),
+            });
+        }
+
+        return pending;
+    }
+
+    private static void MarkBandRankHistoryChunkRunning(NpgsqlConnection conn, long jobId, string rankingScope, string comboId, int commandTimeoutSeconds)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureCommandTimeout(cmd, commandTimeoutSeconds);
+        cmd.CommandText = @"
+            UPDATE band_rank_history_job_chunks
+            SET status = 'running', started_at = COALESCE(started_at, now()), updated_at = now(), last_error = NULL
+            WHERE job_id = @jobId AND ranking_scope = @scope AND combo_id = @comboId;
+
+            UPDATE band_rank_history_jobs
+            SET current_ranking_scope = @scope, current_combo_id = @comboId, updated_at = now()
+            WHERE job_id = @jobId";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", comboId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void CompleteBandRankHistoryChunk(
+        NpgsqlConnection conn,
+        long jobId,
+        string rankingScope,
+        string comboId,
+        long rowsScanned,
+        long rowsInserted,
+        long rowsSkipped,
+        int commandTimeoutSeconds)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureCommandTimeout(cmd, commandTimeoutSeconds);
+        cmd.CommandText = @"
+            UPDATE band_rank_history_job_chunks
+            SET status = 'complete', completed_at = now(), updated_at = now(),
+                rows_scanned = @rowsScanned, rows_inserted = @rowsInserted, rows_skipped = @rowsSkipped,
+                last_error = NULL
+            WHERE job_id = @jobId AND ranking_scope = @scope AND combo_id = @comboId;
+
+            UPDATE band_rank_history_jobs job
+            SET chunks_completed = counts.completed_count,
+                rows_scanned = counters.rows_scanned,
+                rows_inserted = counters.rows_inserted,
+                rows_skipped = counters.rows_skipped,
+                updated_at = now()
+            FROM (
+                SELECT job_id, count(*) FILTER (WHERE status = 'complete')::int AS completed_count
+                FROM band_rank_history_job_chunks
+                WHERE job_id = @jobId
+                GROUP BY job_id
+            ) counts,
+            (
+                SELECT job_id,
+                       COALESCE(sum(rows_scanned), 0)::bigint AS rows_scanned,
+                       COALESCE(sum(rows_inserted), 0)::bigint AS rows_inserted,
+                       COALESCE(sum(rows_skipped), 0)::bigint AS rows_skipped
+                FROM band_rank_history_job_chunks
+                WHERE job_id = @jobId
+                GROUP BY job_id
+            ) counters
+            WHERE job.job_id = counts.job_id AND job.job_id = counters.job_id";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", comboId);
+        cmd.Parameters.AddWithValue("rowsScanned", rowsScanned);
+        cmd.Parameters.AddWithValue("rowsInserted", rowsInserted);
+        cmd.Parameters.AddWithValue("rowsSkipped", rowsSkipped);
+        cmd.ExecuteNonQuery();
+    }
+
+    public BandRankHistoryStatusDto GetBandRankHistoryStatus(string bandType, string? comboId = null)
+    {
+        using var conn = _ds.OpenConnection();
+        using (var tx = conn.BeginTransaction())
+        {
+            EnsureBandRankHistoryTables(conn, tx);
+            tx.Commit();
+        }
+
+        string? currentComputedAt = null;
+        try
+        {
+            var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
+            using var current = conn.CreateCommand();
+            current.CommandText = $@"
+                SELECT max(computed_at)
+                FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)}
+                WHERE band_type = @bandType
+                  AND (@comboId IS NULL OR combo_id = @comboId)";
+            current.Parameters.AddWithValue("bandType", bandType);
+            current.Parameters.Add("comboId", NpgsqlDbType.Text).Value = (object?)comboId ?? DBNull.Value;
+            var result = current.ExecuteScalar();
+            if (result is DateTime dt)
+                currentComputedAt = dt.ToString("o");
+        }
+        catch
+        {
+            // Current ranking tables are created lazily by the ranking publisher.
+        }
+
+        string? historyThrough = null;
+        using (var hist = conn.CreateCommand())
+        {
+            hist.CommandText = @"
+                SELECT max(snapshot_date)
+                FROM band_team_rank_history_points
+                WHERE band_type = @bandType
+                  AND (@comboId IS NULL OR combo_id = @comboId)";
+            hist.Parameters.AddWithValue("bandType", bandType);
+                        hist.Parameters.Add("comboId", NpgsqlDbType.Text).Value = (object?)comboId ?? DBNull.Value;
+            var result = hist.ExecuteScalar();
+            historyThrough = result switch
+            {
+                DateOnly date => date.ToString("yyyy-MM-dd"),
+                DateTime dt => dt.ToString("yyyy-MM-dd"),
+                _ => historyThrough,
+            };
+        }
+
+        BandRankHistoryJobInfo? job = null;
+        using (var jobs = conn.CreateCommand())
+        {
+            jobs.CommandText = @"
+                SELECT job_id, scrape_id, snapshot_date, band_type, mode, status, started_at, completed_at,
+                       failed_at, paused_at, superseded_at, last_error, attempts, chunks_total,
+                       chunks_completed, rows_scanned, rows_inserted, rows_skipped,
+                       current_ranking_scope, current_combo_id, updated_at
+                FROM band_rank_history_jobs
+                WHERE band_type = @bandType
+                ORDER BY snapshot_date DESC, scrape_id DESC, job_id DESC
+                LIMIT 1";
+            jobs.Parameters.AddWithValue("bandType", bandType);
+            using var reader = jobs.ExecuteReader();
+            if (reader.Read())
+                job = ReadBandRankHistoryJob(reader);
+        }
+
+        if (job is null)
+        {
+            return new BandRankHistoryStatusDto
+            {
+                HistoryStatus = historyThrough is null ? "stale" : "current",
+                CurrentRankingsComputedAt = currentComputedAt,
+                HistoryComputedThrough = historyThrough,
+                HistoryMessage = historyThrough is null ? "No band rank history has been written yet." : null,
+            };
+        }
+
+        var status = job.Status switch
+        {
+            "queued" or "running" or "paused" => "catching_up",
+            "failed" => "failed",
+            "disabled" => "disabled",
+            "superseded" => historyThrough is null ? "stale" : "current",
+            _ => historyThrough is null ? "stale" : "current",
+        };
+
+        return new BandRankHistoryStatusDto
+        {
+            HistoryStatus = status,
+            CurrentRankingsComputedAt = currentComputedAt,
+            HistoryComputedThrough = historyThrough,
+            HistoryJobUpdatedAt = job.UpdatedAt,
+            HistoryMessage = job.Status switch
+            {
+                "queued" => "Band rank history is queued for background catch-up.",
+                "running" => $"Band rank history is catching up ({job.ChunksCompleted}/{job.ChunksTotal} chunks).",
+                "paused" => "Band rank history is paused while current scrape work has priority.",
+                "failed" => job.LastError ?? "Band rank history catch-up failed.",
+                "disabled" => "Band rank history writes are disabled.",
+                _ => null,
+            },
+        };
     }
 
     public (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50)
@@ -2661,6 +3339,13 @@ public sealed class MetaDatabase : IMetaDatabase
         var cutoff = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-Math.Max(days, 1)));
 
         using var conn = _ds.OpenConnection();
+        if (TableExists(conn, null, "band_team_rank_history_points"))
+        {
+            var narrow = GetBandRankHistoryFromPoints(conn, bandType, teamKey, rankingScope, normalizedComboId, cutoff);
+            if (narrow.Count > 0)
+                return narrow;
+        }
+
         if (!TableExists(conn, null, "band_team_rank_history") || !TableExists(conn, null, "band_team_ranking_stats_history"))
             return [];
 
@@ -2748,6 +3433,77 @@ public sealed class MetaDatabase : IMetaDatabase
             });
         }
 
+        return history;
+    }
+
+    private static List<BandRankHistoryDto> GetBandRankHistoryFromPoints(
+        NpgsqlConnection conn,
+        string bandType,
+        string teamKey,
+        string rankingScope,
+        string normalizedComboId,
+        DateOnly cutoff)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT DISTINCT ON (snapshot_date)
+                snapshot_date,
+                snapshot_taken_at,
+                adjusted_skill_rank,
+                weighted_rank,
+                fc_rate_rank,
+                total_score_rank,
+                adjusted_skill_rating,
+                weighted_rating,
+                fc_rate,
+                total_score,
+                songs_played,
+                coverage,
+                full_combo_count,
+                raw_weighted_rating,
+                raw_skill_rating,
+                total_charted_songs,
+                total_ranked_teams
+            FROM band_team_rank_history_points
+            WHERE band_type = @bandType
+              AND ranking_scope = @scope
+              AND combo_id = @comboId
+              AND team_key = @teamKey
+              AND snapshot_date >= @cutoff
+            ORDER BY snapshot_date DESC, snapshot_taken_at DESC";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("cutoff", cutoff);
+
+        var history = new List<BandRankHistoryDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            history.Add(new BandRankHistoryDto
+            {
+                SnapshotDate = reader.GetDateTime(0).ToString("yyyy-MM-dd"),
+                SnapshotTakenAt = reader.GetDateTime(1).ToString("o"),
+                AdjustedSkillRank = reader.GetInt32(2),
+                WeightedRank = reader.GetInt32(3),
+                FcRateRank = reader.GetInt32(4),
+                TotalScoreRank = reader.GetInt32(5),
+                AdjustedSkillRating = reader.GetDouble(6),
+                WeightedRating = reader.GetDouble(7),
+                FcRate = reader.GetDouble(8),
+                TotalScore = reader.GetInt64(9),
+                SongsPlayed = reader.GetInt32(10),
+                Coverage = reader.GetDouble(11),
+                FullComboCount = reader.GetInt32(12),
+                RawWeightedRating = reader.IsDBNull(13) ? null : reader.GetDouble(13),
+                RawSkillRating = reader.GetDouble(14),
+                TotalChartedSongs = reader.GetInt32(15),
+                TotalRankedTeams = reader.GetInt32(16),
+            });
+        }
+
+        history.Reverse();
         return history;
     }
 
@@ -3535,6 +4291,68 @@ public sealed class MetaDatabase : IMetaDatabase
             CREATE INDEX IF NOT EXISTS ix_btrh_latest
                 ON band_team_rank_history (band_type, ranking_scope, combo_id, team_key, snapshot_date DESC);
 
+            CREATE TABLE IF NOT EXISTS band_team_rank_history_latest (
+                band_type             TEXT             NOT NULL,
+                ranking_scope         TEXT             NOT NULL,
+                combo_id              TEXT             NOT NULL DEFAULT '',
+                team_key              TEXT             NOT NULL,
+                team_members          TEXT[]           NOT NULL,
+                songs_played          INT              NOT NULL,
+                total_charted_songs   INT              NOT NULL,
+                coverage              DOUBLE PRECISION NOT NULL,
+                raw_skill_rating      DOUBLE PRECISION NOT NULL,
+                adjusted_skill_rating DOUBLE PRECISION NOT NULL,
+                adjusted_skill_rank   INT              NOT NULL,
+                weighted_rating       DOUBLE PRECISION NOT NULL,
+                weighted_rank         INT              NOT NULL,
+                fc_rate               DOUBLE PRECISION NOT NULL,
+                fc_rate_rank          INT              NOT NULL,
+                total_score           BIGINT           NOT NULL,
+                total_score_rank      INT              NOT NULL,
+                avg_accuracy          DOUBLE PRECISION NOT NULL,
+                full_combo_count      INT              NOT NULL,
+                avg_stars             DOUBLE PRECISION NOT NULL,
+                best_rank             INT              NOT NULL,
+                avg_rank              DOUBLE PRECISION NOT NULL,
+                raw_weighted_rating   DOUBLE PRECISION,
+                computed_at           TIMESTAMPTZ      NOT NULL,
+                snapshot_date         DATE             NOT NULL,
+                fingerprint           TEXT             NOT NULL,
+                updated_at            TIMESTAMPTZ      NOT NULL DEFAULT now(),
+                PRIMARY KEY (band_type, ranking_scope, combo_id, team_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_btrhl_snapshot
+                ON band_team_rank_history_latest (band_type, snapshot_date DESC);
+
+            CREATE TABLE IF NOT EXISTS band_team_rank_history_points (
+                band_type             TEXT             NOT NULL,
+                ranking_scope         TEXT             NOT NULL,
+                combo_id              TEXT             NOT NULL DEFAULT '',
+                team_key              TEXT             NOT NULL,
+                snapshot_date         DATE             NOT NULL,
+                snapshot_taken_at     TIMESTAMPTZ      NOT NULL,
+                adjusted_skill_rank   INT              NOT NULL,
+                weighted_rank         INT              NOT NULL,
+                fc_rate_rank          INT              NOT NULL,
+                total_score_rank      INT              NOT NULL,
+                adjusted_skill_rating DOUBLE PRECISION,
+                weighted_rating       DOUBLE PRECISION,
+                fc_rate               DOUBLE PRECISION,
+                total_score           BIGINT,
+                songs_played          INT,
+                coverage              DOUBLE PRECISION,
+                full_combo_count      INT,
+                total_charted_songs   INT,
+                total_ranked_teams    INT,
+                raw_weighted_rating   DOUBLE PRECISION,
+                raw_skill_rating      DOUBLE PRECISION,
+                PRIMARY KEY (band_type, ranking_scope, combo_id, team_key, snapshot_date)
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_btrhp_team_date
+                ON band_team_rank_history_points (band_type, ranking_scope, combo_id, team_key, snapshot_date DESC);
+
             CREATE TABLE IF NOT EXISTS band_team_ranking_stats_history (
                 band_type      TEXT        NOT NULL,
                 ranking_scope  TEXT        NOT NULL,
@@ -3546,7 +4364,51 @@ public sealed class MetaDatabase : IMetaDatabase
             );
 
             CREATE INDEX IF NOT EXISTS ix_btrsh_latest
-                ON band_team_ranking_stats_history (band_type, ranking_scope, combo_id, snapshot_date DESC);";
+                ON band_team_ranking_stats_history (band_type, ranking_scope, combo_id, snapshot_date DESC);
+
+            CREATE TABLE IF NOT EXISTS band_rank_history_jobs (
+                job_id                 BIGSERIAL PRIMARY KEY,
+                scrape_id              BIGINT      NOT NULL,
+                snapshot_date          DATE        NOT NULL,
+                band_type              TEXT        NOT NULL,
+                mode                   TEXT        NOT NULL,
+                status                 TEXT        NOT NULL,
+                started_at             TIMESTAMPTZ,
+                completed_at           TIMESTAMPTZ,
+                failed_at              TIMESTAMPTZ,
+                paused_at              TIMESTAMPTZ,
+                superseded_at          TIMESTAMPTZ,
+                last_error             TEXT,
+                attempts               INT         NOT NULL DEFAULT 0,
+                chunks_total           INT         NOT NULL DEFAULT 0,
+                chunks_completed       INT         NOT NULL DEFAULT 0,
+                rows_scanned           BIGINT      NOT NULL DEFAULT 0,
+                rows_inserted          BIGINT      NOT NULL DEFAULT 0,
+                rows_skipped           BIGINT      NOT NULL DEFAULT 0,
+                current_ranking_scope  TEXT,
+                current_combo_id       TEXT,
+                updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (scrape_id, band_type, snapshot_date)
+            );
+
+            CREATE INDEX IF NOT EXISTS ix_brhj_status
+                ON band_rank_history_jobs (status, snapshot_date DESC, scrape_id DESC);
+
+            CREATE TABLE IF NOT EXISTS band_rank_history_job_chunks (
+                job_id          BIGINT      NOT NULL REFERENCES band_rank_history_jobs(job_id) ON DELETE CASCADE,
+                band_type       TEXT        NOT NULL,
+                ranking_scope   TEXT        NOT NULL,
+                combo_id        TEXT        NOT NULL DEFAULT '',
+                status          TEXT        NOT NULL,
+                started_at      TIMESTAMPTZ,
+                completed_at    TIMESTAMPTZ,
+                rows_scanned    BIGINT      NOT NULL DEFAULT 0,
+                rows_inserted   BIGINT      NOT NULL DEFAULT 0,
+                rows_skipped    BIGINT      NOT NULL DEFAULT 0,
+                last_error      TEXT,
+                updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (job_id, ranking_scope, combo_id)
+            );";
         cmd.ExecuteNonQuery();
     }
 

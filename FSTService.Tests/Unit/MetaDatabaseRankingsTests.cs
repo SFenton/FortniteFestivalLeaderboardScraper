@@ -489,6 +489,55 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void SnapshotBandRankHistory_WritesLatestStateAndNarrowPoints()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var result = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        Assert.True(result.RowsScanned > 0);
+        Assert.True(result.RowsInserted > 0);
+        Assert.True(CountBandHistoryRows("band_team_rank_history", "Band_Duets") > 0);
+        Assert.True(CountBandHistoryRows("band_team_rank_history_points", "Band_Duets") > 0);
+        Assert.True(CountBandHistoryRows("band_team_rank_history_latest", "Band_Duets") > 0);
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_NarrowOnlyStillServesApiHistory()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            UseWideHistoryCompatibilityWrite = false,
+            UseNarrowHistory = true,
+            UseLatestState = true,
+        });
+
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history", "Band_Duets"));
+        Assert.True(CountBandHistoryRows("band_team_rank_history_points", "Band_Duets") > 0);
+        Assert.NotEmpty(Db.GetBandRankHistory("Band_Duets", "p1:p2"));
+        var status = Db.GetBandRankHistoryStatus("Band_Duets");
+        Assert.Equal("current", status.HistoryStatus);
+        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd"), status.HistoryComputedThrough);
+    }
+
+    [Fact]
+    public void EnqueueBandRankHistoryJob_CoalescesOlderSameDayJobs()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        var oldJob = Db.EnqueueBandRankHistoryJob(100, "Band_Duets", today, "Background", coalesceSameDay: true);
+        var newJob = Db.EnqueueBandRankHistoryJob(101, "Band_Duets", today, "Background", coalesceSameDay: true);
+
+        Assert.NotEqual(oldJob.JobId, newJob.JobId);
+        Assert.Equal("superseded", GetBandHistoryJobStatus(oldJob.JobId));
+        Assert.Equal(newJob.JobId, Db.GetNextBandRankHistoryJob()?.JobId);
+    }
+
+    [Fact]
     public void GetBandRankHistory_ReturnsSnapshotsForTeam()
     {
         SeedBandRankingsSource();
@@ -555,6 +604,15 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
         cmd.ExecuteNonQuery();
+    }
+
+    private string GetBandHistoryJobStatus(long jobId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT status FROM band_rank_history_jobs WHERE job_id = @jobId";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        return (string)cmd.ExecuteScalar()!;
     }
 
     private static string SerializeBandTeamRanking(BandTeamRankingDto entry)

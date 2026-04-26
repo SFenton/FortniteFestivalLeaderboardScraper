@@ -50,6 +50,7 @@ export function useBandRankHistory(
     queryFn: () => api.getBandRankHistory(bandType!, teamKey!, days, comboId),
     enabled: !!bandType && !!teamKey,
     staleTime: 5 * 60 * 1000,
+    refetchInterval: query => query.state.data?.historyStatus === 'catching_up' ? 30 * 1000 : false,
   });
 
   const chartData: RankHistoryChartPoint[] = useMemo(() => {
@@ -75,5 +76,14 @@ export function useBandRankHistory(
     });
   }, [data, metric]);
 
-  return { chartData, loading: isLoading, error };
+  return {
+    chartData,
+    loading: isLoading,
+    error,
+    historyStatus: data?.historyStatus ?? 'current',
+    historyComputedThrough: data?.historyComputedThrough ?? null,
+    historyJobUpdatedAt: data?.historyJobUpdatedAt ?? null,
+    historyMessage: data?.historyMessage ?? null,
+    currentRankingsComputedAt: data?.currentRankingsComputedAt ?? null,
+  };
 }

@@ -170,6 +170,14 @@ public interface IMetaDatabase : IDisposable
     void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
     BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
     void SnapshotBandRankHistory(string bandType, int retentionDays = 365);
+    BandRankHistorySnapshotResult SnapshotBandRankHistoryChunked(string bandType, BandRankHistorySnapshotOptions options, long? jobId = null, CancellationToken ct = default);
+    BandRankHistoryJobInfo EnqueueBandRankHistoryJob(long scrapeId, string bandType, DateOnly snapshotDate, string mode, bool coalesceSameDay = true);
+    BandRankHistoryJobInfo? GetNextBandRankHistoryJob();
+    bool TryStartBandRankHistoryJob(long jobId);
+    void CompleteBandRankHistoryJob(long jobId, BandRankHistorySnapshotResult result);
+    void PauseBandRankHistoryJob(long jobId, string? reason = null);
+    void FailBandRankHistoryJob(long jobId, string error);
+    BandRankHistoryStatusDto GetBandRankHistoryStatus(string bandType, string? comboId = null);
     (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null);
     List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30);

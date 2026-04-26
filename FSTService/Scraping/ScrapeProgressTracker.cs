@@ -378,6 +378,20 @@ public sealed class ScrapeProgressTracker
     private volatile bool _soloFetchComplete;
     private volatile bool _bandFetchComplete;
 
+    // Band rank-history background/inline maintenance
+    private volatile string? _bandRankHistoryMode;
+    private volatile string? _bandRankHistoryStatus;
+    private volatile string? _bandRankHistoryBandType;
+    private volatile string? _bandRankHistoryRankingScope;
+    private volatile string? _bandRankHistoryComboId;
+    private volatile string? _bandRankHistoryMessage;
+    private int _bandRankHistoryChunksCompleted;
+    private int _bandRankHistoryChunksTotal;
+    private long _bandRankHistoryRowsScanned;
+    private long _bandRankHistoryRowsInserted;
+    private long _bandRankHistoryRowsSkipped;
+    private long _bandRankHistoryUpdatedAtUtcTicks;
+
     /// <summary>Report spool flush progress for one instrument.</summary>
     public void ReportFlushProgress(string instrument, int completed, int total)
     {
@@ -460,6 +474,36 @@ public sealed class ScrapeProgressTracker
     /// <summary>Mark the band fetch as complete.</summary>
     public void SetBandFetchComplete() { _bandFetchComplete = true; Interlocked.Increment(ref _changeSequence); }
 
+    /// <summary>Report progress for band rank-history maintenance, including background catch-up jobs.</summary>
+    public void ReportBandRankHistoryProgress(
+        string mode,
+        string status,
+        string bandType,
+        string? rankingScope,
+        string? comboId,
+        int chunksCompleted,
+        int chunksTotal,
+        long rowsScanned,
+        long rowsInserted,
+        long rowsSkipped,
+        string? message,
+        DateTime updatedAtUtc)
+    {
+        _bandRankHistoryMode = mode;
+        _bandRankHistoryStatus = status;
+        _bandRankHistoryBandType = bandType;
+        _bandRankHistoryRankingScope = rankingScope;
+        _bandRankHistoryComboId = comboId;
+        _bandRankHistoryMessage = message;
+        _bandRankHistoryChunksCompleted = chunksCompleted;
+        _bandRankHistoryChunksTotal = chunksTotal;
+        Interlocked.Exchange(ref _bandRankHistoryRowsScanned, rowsScanned);
+        Interlocked.Exchange(ref _bandRankHistoryRowsInserted, rowsInserted);
+        Interlocked.Exchange(ref _bandRankHistoryRowsSkipped, rowsSkipped);
+        Interlocked.Exchange(ref _bandRankHistoryUpdatedAtUtcTicks, updatedAtUtc.Ticks);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
     private void ResetSubOperationDetail()
     {
         _flushLabel = null;
@@ -492,6 +536,18 @@ public sealed class ScrapeProgressTracker
         Interlocked.Exchange(ref _bandRetries, 0);
         _soloFetchComplete = false;
         _bandFetchComplete = false;
+        _bandRankHistoryMode = null;
+        _bandRankHistoryStatus = null;
+        _bandRankHistoryBandType = null;
+        _bandRankHistoryRankingScope = null;
+        _bandRankHistoryComboId = null;
+        _bandRankHistoryMessage = null;
+        _bandRankHistoryChunksCompleted = 0;
+        _bandRankHistoryChunksTotal = 0;
+        Interlocked.Exchange(ref _bandRankHistoryRowsScanned, 0);
+        Interlocked.Exchange(ref _bandRankHistoryRowsInserted, 0);
+        Interlocked.Exchange(ref _bandRankHistoryRowsSkipped, 0);
+        Interlocked.Exchange(ref _bandRankHistoryUpdatedAtUtcTicks, 0);
     }
 
     /// <summary>Build a snapshot of the sub-operation detail, or null if nothing interesting is set.</summary>
@@ -502,9 +558,10 @@ public sealed class ScrapeProgressTracker
         var bandPh = _bandPhase;
         var soloComplete = _soloFetchComplete;
         var bandComplete = _bandFetchComplete;
+        var historyStatus = _bandRankHistoryStatus;
 
         // Only emit detail when there's something to report
-        if (flushInst is null && indexOp is null && bandPh is null && !soloComplete && !bandComplete)
+        if (flushInst is null && indexOp is null && bandPh is null && !soloComplete && !bandComplete && historyStatus is null)
             return null;
 
         return new SubOperationDetail
@@ -544,6 +601,20 @@ public sealed class ScrapeProgressTracker
             BandRetries = bandPh is not null ? Interlocked.Read(ref _bandRetries) : null,
             SoloFetchComplete = soloComplete,
             BandFetchComplete = bandComplete,
+            BandRankHistoryMode = historyStatus is not null ? _bandRankHistoryMode : null,
+            BandRankHistoryStatus = historyStatus,
+            BandRankHistoryBandType = historyStatus is not null ? _bandRankHistoryBandType : null,
+            BandRankHistoryRankingScope = historyStatus is not null ? _bandRankHistoryRankingScope : null,
+            BandRankHistoryComboId = historyStatus is not null ? _bandRankHistoryComboId : null,
+            BandRankHistoryChunksCompleted = historyStatus is not null ? _bandRankHistoryChunksCompleted : null,
+            BandRankHistoryChunksTotal = historyStatus is not null ? _bandRankHistoryChunksTotal : null,
+            BandRankHistoryRowsScanned = historyStatus is not null ? Interlocked.Read(ref _bandRankHistoryRowsScanned) : null,
+            BandRankHistoryRowsInserted = historyStatus is not null ? Interlocked.Read(ref _bandRankHistoryRowsInserted) : null,
+            BandRankHistoryRowsSkipped = historyStatus is not null ? Interlocked.Read(ref _bandRankHistoryRowsSkipped) : null,
+            BandRankHistoryUpdatedAtUtc = historyStatus is not null && Interlocked.Read(ref _bandRankHistoryUpdatedAtUtcTicks) > 0
+                ? new DateTime(Interlocked.Read(ref _bandRankHistoryUpdatedAtUtcTicks), DateTimeKind.Utc)
+                : null,
+            BandRankHistoryMessage = historyStatus is not null ? _bandRankHistoryMessage : null,
         };
     }
 
@@ -1341,6 +1412,20 @@ public sealed class SubOperationDetail
     // Solo vs band completion
     public bool SoloFetchComplete { get; init; }
     public bool BandFetchComplete { get; init; }
+
+    // Band rank-history maintenance
+    public string? BandRankHistoryMode { get; init; }
+    public string? BandRankHistoryStatus { get; init; }
+    public string? BandRankHistoryBandType { get; init; }
+    public string? BandRankHistoryRankingScope { get; init; }
+    public string? BandRankHistoryComboId { get; init; }
+    public int? BandRankHistoryChunksCompleted { get; init; }
+    public int? BandRankHistoryChunksTotal { get; init; }
+    public long? BandRankHistoryRowsScanned { get; init; }
+    public long? BandRankHistoryRowsInserted { get; init; }
+    public long? BandRankHistoryRowsSkipped { get; init; }
+    public DateTime? BandRankHistoryUpdatedAtUtc { get; init; }
+    public string? BandRankHistoryMessage { get; init; }
 }
 
 /// <summary>

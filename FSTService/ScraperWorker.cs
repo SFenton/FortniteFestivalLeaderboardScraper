@@ -40,6 +40,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly ScrapeLifecycleNotifier _lifecycle;
     private readonly ScrapeTimePrecomputer _precomputer;
     private readonly ScrapeProgressTracker _progress;
+    private readonly BackgroundWorkCoordinator _backgroundWork;
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
@@ -70,6 +71,7 @@ public sealed class ScraperWorker : BackgroundService
         ScrapeLifecycleNotifier lifecycle,
         ScrapeTimePrecomputer precomputer,
         ScrapeProgressTracker progress,
+        BackgroundWorkCoordinator backgroundWork,
         UserSyncProgressTracker syncTracker,
         IOptions<ScraperOptions> options,
         IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
@@ -93,6 +95,7 @@ public sealed class ScraperWorker : BackgroundService
         _lifecycle = lifecycle;
         _precomputer = precomputer;
         _progress = progress;
+        _backgroundWork = backgroundWork;
         _syncTracker = syncTracker;
         _options = options;
         _jsonOpts = jsonOptions.Value.SerializerOptions;
@@ -397,138 +400,145 @@ public sealed class ScraperWorker : BackgroundService
     {
         var processMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
         _log.LogInformation("Starting scrape pass... (Process memory: {MemoryMB} MB)", processMemMb);
-
-        var resolvedPhases = opts.ResolvedPhases;
-        if (resolvedPhases != ScrapePhase.All)
-            _log.LogInformation("Phase-selective mode: {Phases}", ScrapePhaseResolver.Format(resolvedPhases));
-
-        PruneStaleWebRegistrationsIfEligible(opts);
-
-        // Stale precomputed data (from last scrape) is served during the scrape pass.
-        // PrecomputeAllAsync at post-scrape overwrites entries atomically, so we don't
-        // need to invalidate here. This avoids an 8+ second cold-start penalty for the
-        // first API request when the service restarts mid-scrape.
-
-        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
-        if (accessToken is null)
-        {
-            _log.LogError("Cannot obtain access token. Skipping this pass.");
-            return;
-        }
-
-        // Re-sync the song catalog in case new songs appeared
-        await service.SyncSongsAsync();
-        _persistence.InvalidateTotalSongCount();
-
-        // Make new songs visible immediately — SongsCacheService is independent
-        // of the ResponseCacheService freeze, so this doesn't conflict with scrape
-        // atomicity. Without this, new songs are invisible until the scrape completes.
-        PrimeSongsCache();
-
-        // Fire-and-forget path generation (runs in parallel with the scrape)
-        var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);
-
-        // ── Core scrape: delegate to ScrapeOrchestrator ──
-        // Freeze all response caches so API consumers see consistent (stale) data
-        // throughout the scrape + post-scrape enrichment + precomputation cycle.
-        _lifecycle.ScrapeStarting();
-
-        bool anyScrapePhase = resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
-                           || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
-
-        ScrapePassResult? result = null;
-        if (anyScrapePhase)
-        {
-            try
-            {
-                result = await _scrapeOrchestrator.RunAsync(
-                    accessToken, _tokenManager.AccountId!, service, ct);
-            }
-            catch (CdnBlockedException ex)
-            {
-                _log.LogError(ex,
-                    "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
-                    "Partial data from this pass was already persisted via pipelined writers. " +
-                    "Continuing to post-scrape phases on whatever data was captured.",
-                    _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
-                // Do NOT return — fall through so post-scrape (rankings/rivals/precompute) still runs.
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                _log.LogWarning(
-                    "Scrape pass was canceled by an internal cancellation source. " +
-                    "Partial data from this pass was already persisted. " +
-                    "Continuing to post-scrape phases on whatever data was captured.");
-                // Do NOT return — fall through so post-scrape still runs.
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogError(ex,
-                    "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
-                    "Continuing to post-scrape phases on whatever data was captured.");
-                // Do NOT return — fall through so post-scrape still runs.
-            }
-        }
-        else
-        {
-            _log.LogInformation("Scrape phases not requested. Skipping ScrapeOrchestrator.");
-        }
-
-        // Build a minimal context when scrape was skipped (post-scrape phases
-        // still need registered IDs, scrape requests, etc.)
-        var ctx = result?.Context ?? new ScrapePassContext
-        {
-            ScrapeId = result?.ScrapeId ?? 0,
-            AccessToken = accessToken,
-            CallerAccountId = _tokenManager.AccountId!,
-            RegisteredIds = _persistence.Meta.GetRegisteredAccountIds(),
-            Aggregates = new Persistence.GlobalLeaderboardPersistence.PipelineAggregates(),
-            ScrapeRequests = service.Songs
-                .Where(s => s.track?.su is not null)
-                .Select(s => new Scraping.GlobalLeaderboardScraper.SongScrapeRequest
-                {
-                    SongId = s.track.su,
-                    Instruments = Scraping.ScrapeOrchestrator.GetEnabledInstruments(opts),
-                    Label = s.track.tt,
-                })
-                .ToList(),
-            DegreeOfParallelism = opts.DegreeOfParallelism,
-        };
-
-        // Observe the path generation task that ran in parallel with the scrape
-        try { await pathGenTask; }
-        catch (OperationCanceledException) { /* expected on shutdown */ }
-        catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
-
-        // ── Post-pass: enrichment, refresh, backfill, history recon, cleanup ──
+        _backgroundWork.RequestPauseForScrape();
         try
         {
-            await _postScrapeOrchestrator.RunAsync(ctx, service, resolvedPhases, ct);
+            var resolvedPhases = opts.ResolvedPhases;
+            if (resolvedPhases != ScrapePhase.All)
+                _log.LogInformation("Phase-selective mode: {Phases}", ScrapePhaseResolver.Format(resolvedPhases));
+
+            PruneStaleWebRegistrationsIfEligible(opts);
+
+            // Stale precomputed data (from last scrape) is served during the scrape pass.
+            // PrecomputeAllAsync at post-scrape overwrites entries atomically, so we don't
+            // need to invalidate here. This avoids an 8+ second cold-start penalty for the
+            // first API request when the service restarts mid-scrape.
+
+            var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
+            if (accessToken is null)
+            {
+                _log.LogError("Cannot obtain access token. Skipping this pass.");
+                return;
+            }
+
+            // Re-sync the song catalog in case new songs appeared
+            await service.SyncSongsAsync();
+            _persistence.InvalidateTotalSongCount();
+
+            // Make new songs visible immediately — SongsCacheService is independent
+            // of the ResponseCacheService freeze, so this doesn't conflict with scrape
+            // atomicity. Without this, new songs are invisible until the scrape completes.
+            PrimeSongsCache();
+
+            // Fire-and-forget path generation (runs in parallel with the scrape)
+            var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);
+
+            // ── Core scrape: delegate to ScrapeOrchestrator ──
+            // Freeze all response caches so API consumers see consistent (stale) data
+            // throughout the scrape + post-scrape enrichment + precomputation cycle.
+            _lifecycle.ScrapeStarting();
+
+            bool anyScrapePhase = resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
+                               || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
+
+            ScrapePassResult? result = null;
+            if (anyScrapePhase)
+            {
+                try
+                {
+                    result = await _scrapeOrchestrator.RunAsync(
+                        accessToken, _tokenManager.AccountId!, service, ct);
+                }
+                catch (CdnBlockedException ex)
+                {
+                    _log.LogError(ex,
+                        "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
+                        "Partial data from this pass was already persisted via pipelined writers. " +
+                        "Continuing to post-scrape phases on whatever data was captured.",
+                        _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
+                    // Do NOT return — fall through so post-scrape (rankings/rivals/precompute) still runs.
+                }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    _log.LogWarning(
+                        "Scrape pass was canceled by an internal cancellation source. " +
+                        "Partial data from this pass was already persisted. " +
+                        "Continuing to post-scrape phases on whatever data was captured.");
+                    // Do NOT return — fall through so post-scrape still runs.
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogError(ex,
+                        "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
+                        "Continuing to post-scrape phases on whatever data was captured.");
+                    // Do NOT return — fall through so post-scrape still runs.
+                }
+            }
+            else
+            {
+                _log.LogInformation("Scrape phases not requested. Skipping ScrapeOrchestrator.");
+            }
+
+            // Build a minimal context when scrape was skipped (post-scrape phases
+            // still need registered IDs, scrape requests, etc.)
+            var ctx = result?.Context ?? new ScrapePassContext
+            {
+                ScrapeId = result?.ScrapeId ?? 0,
+                AccessToken = accessToken,
+                CallerAccountId = _tokenManager.AccountId!,
+                RegisteredIds = _persistence.Meta.GetRegisteredAccountIds(),
+                Aggregates = new Persistence.GlobalLeaderboardPersistence.PipelineAggregates(),
+                ScrapeRequests = service.Songs
+                    .Where(s => s.track?.su is not null)
+                    .Select(s => new Scraping.GlobalLeaderboardScraper.SongScrapeRequest
+                    {
+                        SongId = s.track.su,
+                        Instruments = Scraping.ScrapeOrchestrator.GetEnabledInstruments(opts),
+                        Label = s.track.tt,
+                    })
+                    .ToList(),
+                DegreeOfParallelism = opts.DegreeOfParallelism,
+            };
+
+            // Observe the path generation task that ran in parallel with the scrape
+            try { await pathGenTask; }
+            catch (OperationCanceledException) { /* expected on shutdown */ }
+            catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
+
+            // ── Post-pass: enrichment, refresh, backfill, history recon, cleanup ──
+            try
+            {
+                await _postScrapeOrchestrator.RunAsync(ctx, service, resolvedPhases, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
+            }
+
+            PrimeSongsCache();
+
+            // Unfreeze all response caches and invalidate — API consumers now see fresh data atomically.
+            _lifecycle.ScrapeCompleted();
+
+            var endMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
+            _log.LogInformation("Scrape pass complete. (Process memory: {MemoryMB} MB)", endMemMb);
+
+            _progress.EndPass();
+
+            if (result is not null)
+            {
+                _persistence.Meta.CompleteScrapeRun(
+                    result.ScrapeId,
+                    result.SongsScraped,
+                    result.TotalEntries,
+                    result.TotalRequests,
+                    result.TotalBytes);
+            }
         }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
+        finally
         {
-            _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
-        }
-
-        PrimeSongsCache();
-
-        // Unfreeze all response caches and invalidate — API consumers now see fresh data atomically.
-        _lifecycle.ScrapeCompleted();
-
-        var endMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
-        _log.LogInformation("Scrape pass complete. (Process memory: {MemoryMB} MB)", endMemMb);
-
-        _progress.EndPass();
-
-        if (result is not null)
-        {
-            _persistence.Meta.CompleteScrapeRun(
-                result.ScrapeId,
-                result.SongsScraped,
-                result.TotalEntries,
-                result.TotalRequests,
-                result.TotalBytes);
+            _backgroundWork.ResumeAfterScrape();
         }
     }
 

@@ -1,5 +1,6 @@
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
+using FSTService;
 using FSTService.Persistence;
 using Microsoft.Extensions.Options;
 
@@ -41,6 +42,7 @@ public sealed class RankingsCalculator
     private readonly IPathDataStore _pathStore;
     private readonly ScrapeProgressTracker _progress;
     private readonly FeatureOptions _features;
+    private readonly BandRankHistoryOptions _bandRankHistoryOptions;
     private readonly ILogger<RankingsCalculator> _log;
 
     public RankingsCalculator(
@@ -49,13 +51,15 @@ public sealed class RankingsCalculator
         IPathDataStore pathStore,
         ScrapeProgressTracker progress,
         IOptions<FeatureOptions> features,
-        ILogger<RankingsCalculator> log)
+        ILogger<RankingsCalculator> log,
+        IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null)
     {
         _persistence = persistence;
         _metaDb = metaDb;
         _pathStore = pathStore;
         _progress = progress;
         _features = features.Value;
+        _bandRankHistoryOptions = bandRankHistoryOptions?.Value ?? new BandRankHistoryOptions();
         _log = log;
     }
 
@@ -77,7 +81,7 @@ public sealed class RankingsCalculator
     /// <summary>
     /// Compute all rankings: per-instrument (parallel) → composite → combo → history snapshots → band.
     /// </summary>
-    public async Task ComputeAllAsync(FestivalService festivalService, CancellationToken ct = default)
+    public async Task ComputeAllAsync(FestivalService festivalService, CancellationToken ct = default, long scrapeId = 0)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
@@ -271,7 +275,7 @@ public sealed class RankingsCalculator
         // ── Phase 6: Band team rankings (best-effort per band type) ──
         _progress.SetSubOperation("band_rankings");
         var bandSw = System.Diagnostics.Stopwatch.StartNew();
-        ComputeBandRankings(bandTypes, festivalService.Songs.Count, ct, _progress.ReportPhaseItemComplete);
+        ComputeBandRankings(bandTypes, festivalService.Songs.Count, scrapeId, ct, _progress.ReportPhaseItemComplete);
         bandSw.Stop();
         LogPhase("band_rankings.total", instrument: null, bandSw.Elapsed);
 
@@ -478,7 +482,7 @@ public sealed class RankingsCalculator
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
     }
 
-    internal void ComputeBandRankings(IReadOnlyList<string> bandTypes, int totalChartedSongs, CancellationToken ct = default, Action? onBandComplete = null)
+    internal void ComputeBandRankings(IReadOnlyList<string> bandTypes, int totalChartedSongs, long scrapeId = 0, CancellationToken ct = default, Action? onBandComplete = null)
     {
         if (totalChartedSongs <= 0)
         {
@@ -500,21 +504,7 @@ public sealed class RankingsCalculator
                 LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
                 successfulBandTypes++;
 
-                var historySw = System.Diagnostics.Stopwatch.StartNew();
-                try
-                {
-                    _metaDb.SnapshotBandRankHistory(bandType);
-                    historySw.Stop();
-                    LogPhase("band_rankings.history_snapshot", bandType, historySw.Elapsed);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    historySw.Stop();
-                    _log.LogWarning(ex,
-                        "Band ranking history snapshot failed for {BandType}. Current rankings remain published.",
-                        bandType);
-                    LogPhase("band_rankings.history_snapshot.failed", bandType, historySw.Elapsed);
-                }
+                HandleBandRankHistoryAfterPublish(bandType, scrapeId, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -532,6 +522,99 @@ public sealed class RankingsCalculator
 
         _log.LogInformation("Computed band rankings for {SuccessfulBandTypeCount}/{BandTypeCount} band types.",
             successfulBandTypes, bandTypes.Count);
+    }
+
+    private void HandleBandRankHistoryAfterPublish(string bandType, long scrapeId, CancellationToken ct)
+    {
+        var mode = _bandRankHistoryOptions.Mode;
+        var historySw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            switch (mode)
+            {
+                case BandRankHistoryMode.Disabled:
+                    _log.LogInformation("Band ranking history snapshot skipped for {BandType}: mode=Disabled. Current rankings remain published.", bandType);
+                    _progress.ReportBandRankHistoryProgress(
+                        mode.ToString(),
+                        "disabled",
+                        bandType,
+                        rankingScope: null,
+                        comboId: null,
+                        chunksCompleted: 0,
+                        chunksTotal: 0,
+                        rowsScanned: 0,
+                        rowsInserted: 0,
+                        rowsSkipped: 0,
+                        message: "history disabled",
+                        updatedAtUtc: DateTime.UtcNow);
+                    break;
+
+                case BandRankHistoryMode.Background:
+                    var job = _metaDb.EnqueueBandRankHistoryJob(
+                        scrapeId,
+                        bandType,
+                        DateOnly.FromDateTime(DateTime.UtcNow),
+                        mode.ToString(),
+                        _bandRankHistoryOptions.CoalesceSameDaySnapshots);
+                    _log.LogInformation(
+                        "Band ranking history job {JobId} queued for {BandType} scrape {ScrapeId}; current rankings remain published.",
+                        job.JobId,
+                        bandType,
+                        scrapeId);
+                    _progress.ReportBandRankHistoryProgress(
+                        mode.ToString(),
+                        "queued",
+                        bandType,
+                        rankingScope: null,
+                        comboId: null,
+                        chunksCompleted: job.ChunksCompleted,
+                        chunksTotal: job.ChunksTotal,
+                        rowsScanned: job.RowsScanned,
+                        rowsInserted: job.RowsInserted,
+                        rowsSkipped: job.RowsSkipped,
+                        message: $"history job {job.JobId} queued",
+                        updatedAtUtc: DateTime.UtcNow);
+                    break;
+
+                case BandRankHistoryMode.Inline:
+                default:
+                    var options = new BandRankHistorySnapshotOptions
+                    {
+                        UseLatestState = _bandRankHistoryOptions.UseLatestState,
+                        UseNarrowHistory = _bandRankHistoryOptions.UseNarrowHistory,
+                        UseWideHistoryCompatibilityWrite = _bandRankHistoryOptions.UseWideHistoryCompatibilityWrite,
+                        SynchronousCommitOff = _bandRankHistoryOptions.SynchronousCommitOff,
+                        CommandTimeoutSeconds = _bandRankHistoryOptions.CommandTimeoutSeconds,
+                        RetentionDays = _bandRankHistoryOptions.RetentionDays,
+                    };
+                    var result = _metaDb.SnapshotBandRankHistoryChunked(bandType, options, jobId: null, ct);
+                    _progress.ReportBandRankHistoryProgress(
+                        mode.ToString(),
+                        "complete",
+                        bandType,
+                        rankingScope: null,
+                        comboId: null,
+                        chunksCompleted: result.ChunksCompleted,
+                        chunksTotal: result.ChunksTotal,
+                        rowsScanned: result.RowsScanned,
+                        rowsInserted: result.RowsInserted,
+                        rowsSkipped: result.RowsSkipped,
+                        message: "inline history snapshot complete",
+                        updatedAtUtc: DateTime.UtcNow);
+                    break;
+            }
+
+            historySw.Stop();
+            LogPhase(mode == BandRankHistoryMode.Background ? "band_rankings.history_queued" : "band_rankings.history_snapshot", bandType, historySw.Elapsed);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            historySw.Stop();
+            _log.LogWarning(ex,
+                "Band ranking history maintenance failed for {BandType}. Current rankings remain published.",
+                bandType);
+            LogPhase("band_rankings.history_snapshot.failed", bandType, historySw.Elapsed);
+        }
     }
 
     private async Task SnapshotRankHistoryBestEffortAsync(IReadOnlyList<string> instruments, CancellationToken ct)

@@ -46,7 +46,7 @@ public sealed class RankingsCalculatorTests : IDisposable
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
-    private RankingsCalculator CreateSut(IMetaDatabase? metaDb = null, FeatureOptions? features = null)
+    private RankingsCalculator CreateSut(IMetaDatabase? metaDb = null, FeatureOptions? features = null, BandRankHistoryOptions? bandHistoryOptions = null)
     {
         return new RankingsCalculator(
             _persistence,
@@ -54,7 +54,8 @@ public sealed class RankingsCalculatorTests : IDisposable
             _pathStore,
             new ScrapeProgressTracker(),
             Options.Create(features ?? new FeatureOptions()),
-            Substitute.For<ILogger<RankingsCalculator>>());
+            Substitute.For<ILogger<RankingsCalculator>>(),
+            Options.Create(bandHistoryOptions ?? new BandRankHistoryOptions()));
     }
 
     private static LeaderboardEntry MakeEntry(string accountId, int score,
@@ -320,6 +321,51 @@ public sealed class RankingsCalculatorTests : IDisposable
         var comboRank = _metaFixture.Db.GetBandTeamRanking("Band_Duets", "p1:p2", comboId);
         Assert.NotNull(comboRank);
         Assert.Equal(1, comboRank.AdjustedSkillRank);
+
+        var history = _metaFixture.Db.GetBandRankHistory("Band_Duets", "p1:p2", days: 30);
+        var point = Assert.Single(history);
+        Assert.Equal(1, point.AdjustedSkillRank);
+    }
+
+    [Fact]
+    public void ComputeBandRankings_BackgroundHistoryMode_QueuesJobAndPublishesCurrentRankings()
+    {
+        var bandPersistence = new BandLeaderboardPersistence(_metaFixture.DataSource, Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000, isFullCombo: true),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+        ]);
+
+        var sut = CreateSut(bandHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Background });
+        sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 1, scrapeId: 123);
+
+        var ranking = _metaFixture.Db.GetBandTeamRanking("Band_Duets", "p1:p2");
+        Assert.NotNull(ranking);
+        var job = _metaFixture.Db.GetNextBandRankHistoryJob();
+        Assert.NotNull(job);
+        Assert.Equal(123, job.ScrapeId);
+        Assert.Equal("Band_Duets", job.BandType);
+        Assert.Equal("queued", job.Status);
+    }
+
+    [Fact]
+    public void ComputeBandRankings_DisabledHistoryMode_SkipsHistoryAndPublishesCurrentRankings()
+    {
+        var bandPersistence = new BandLeaderboardPersistence(_metaFixture.DataSource, Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        bandPersistence.UpsertBandEntries("song_0", "Band_Duets",
+        [
+            MakeBandEntry(["p1", "p2"], "0:1", 1000, isFullCombo: true),
+            MakeBandEntry(["p3", "p4"], "0:3", 900),
+        ]);
+
+        var sut = CreateSut(bandHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Disabled });
+        sut.ComputeBandRankings(["Band_Duets"], totalChartedSongs: 1, scrapeId: 123);
+
+        var ranking = _metaFixture.Db.GetBandTeamRanking("Band_Duets", "p1:p2");
+        Assert.NotNull(ranking);
+        Assert.Null(_metaFixture.Db.GetNextBandRankHistoryJob());
+        Assert.Empty(_metaFixture.Db.GetBandRankHistory("Band_Duets", "p1:p2", days: 30));
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -947,6 +993,16 @@ public sealed class RankingsCalculatorTests : IDisposable
             .Do(call => inner.SnapshotCompositeRankHistory(call.Arg<int>()));
         proxy.When(x => x.SnapshotBandRankHistory(Arg.Any<string>(), Arg.Any<int>()))
             .Do(call => inner.SnapshotBandRankHistory(call.Arg<string>(), call.Arg<int>()));
+        proxy.SnapshotBandRankHistoryChunked(
+                Arg.Any<string>(),
+                Arg.Any<BandRankHistorySnapshotOptions>(),
+                Arg.Any<long?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call => inner.SnapshotBandRankHistoryChunked(
+                call.Arg<string>(),
+                call.Arg<BandRankHistorySnapshotOptions>(),
+                call.ArgAt<long?>(2),
+                call.ArgAt<CancellationToken>(3)));
         proxy.When(x => x.RebuildBandTeamRankings(
                 Arg.Any<string>(),
                 Arg.Any<int>(),
@@ -985,6 +1041,23 @@ public sealed class RankingsCalculatorTests : IDisposable
                     throw new TimeoutException($"synthetic band history snapshot failure for {bandType}");
 
                 inner.SnapshotBandRankHistory(bandType, call.ArgAt<int>(1));
+            });
+        proxy.SnapshotBandRankHistoryChunked(
+                Arg.Any<string>(),
+                Arg.Any<BandRankHistorySnapshotOptions>(),
+                Arg.Any<long?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var bandType = call.Arg<string>();
+                if (failingSet.Contains(bandType))
+                    throw new TimeoutException($"synthetic band history snapshot failure for {bandType}");
+
+                return inner.SnapshotBandRankHistoryChunked(
+                    bandType,
+                    call.Arg<BandRankHistorySnapshotOptions>(),
+                    call.ArgAt<long?>(2),
+                    call.ArgAt<CancellationToken>(3));
             });
 
         return proxy;

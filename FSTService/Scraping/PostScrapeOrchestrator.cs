@@ -152,7 +152,7 @@ public sealed class PostScrapeOrchestrator
         // ── Solo rankings ──
         var rankingsSucceeded = false;
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
-            rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ct));
+            rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
 
         // ── Solo rivals ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
@@ -175,37 +175,23 @@ public sealed class PostScrapeOrchestrator
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
             _progress.RegisterBranches(new[] { "final_checkpoint", "pre_warming_cache" });
-            await RunPhaseAsync("Checkpoint+CacheWarm", () => Task.WhenAll(
-                Task.Run(() =>
+            await RunPhaseAsync("Checkpoint", () => Task.Run(() =>
+            {
+                _progress.StartBranch("final_checkpoint");
+                _progress.SetSubOperation("final_checkpoint");
+                try
                 {
-                    _progress.StartBranch("final_checkpoint");
-                    _progress.SetSubOperation("final_checkpoint");
-                    try
-                    {
-                        _persistence.CheckpointAll();
-                        _progress.CompleteBranch("final_checkpoint", "complete");
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _progress.CompleteBranch("final_checkpoint", "failed", ex.Message);
-                        throw;
-                    }
-                }, ct),
-                Task.Run(() =>
+                    _persistence.CheckpointAll();
+                    _progress.CompleteBranch("final_checkpoint", "complete");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _progress.StartBranch("pre_warming_cache");
-                    _progress.SetSubOperation("pre_warming_cache");
-                    try
-                    {
-                        _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
-                        _progress.CompleteBranch("pre_warming_cache", "complete");
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _progress.CompleteBranch("pre_warming_cache", "failed", ex.Message);
-                        throw;
-                    }
-                }, ct)));
+                    _progress.CompleteBranch("final_checkpoint", "failed", ex.Message);
+                    throw;
+                }
+            }, ct));
+
+            StartBestEffortCacheWarm(ctx.RegisteredIds);
 
             if (ctx.ScrapeId > 0)
             {
@@ -231,6 +217,25 @@ public sealed class PostScrapeOrchestrator
                 _log.LogWarning(ex, "Background band scrape failed. Band data may be incomplete this cycle.");
             }
         }
+    }
+
+    private void StartBestEffortCacheWarm(IReadOnlyCollection<string> registeredIds)
+    {
+        _progress.StartBranch("pre_warming_cache");
+        _progress.CompleteBranch("pre_warming_cache", "queued", "running after scrape completion");
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                _persistence.PreWarmRankingsCache(registeredIds);
+                _log.LogInformation("Best-effort rankings cache warm completed for {UserCount:N0} registered user(s).", registeredIds.Count);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Best-effort rankings cache warm failed. Cache entries will populate on demand.");
+            }
+        });
     }
 
     private static bool ShouldActivateShadowSnapshotsBeforeDerived(ScrapePassContext ctx, ScrapePhase resolvedPhases)
@@ -433,12 +438,15 @@ public sealed class PostScrapeOrchestrator
     /// Compute per-instrument + composite + combo rankings and daily history snapshots.
     /// Runs after enrichment/pruning and registered-user refresh, before rivals.
     /// </summary>
-    internal async Task<bool> ComputeRankingsAsync(FestivalService service, CancellationToken ct)
+    internal Task<bool> ComputeRankingsAsync(FestivalService service, CancellationToken ct)
+        => ComputeRankingsAsync(service, 0, ct);
+
+    internal async Task<bool> ComputeRankingsAsync(FestivalService service, long scrapeId, CancellationToken ct)
     {
         try
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
-            await _rankingsCalculator.ComputeAllAsync(service, ct);
+            await _rankingsCalculator.ComputeAllAsync(service, ct, scrapeId);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

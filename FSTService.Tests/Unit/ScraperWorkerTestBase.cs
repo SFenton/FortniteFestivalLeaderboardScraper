@@ -244,6 +244,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             lifecycle,
             precomputer,
             _progress,
+            new BackgroundWorkCoordinator(),
             new FSTService.Scraping.UserSyncProgressTracker(
                 new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
                 Substitute.For<ILogger<FSTService.Scraping.UserSyncProgressTracker>>()),

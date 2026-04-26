@@ -736,6 +736,11 @@ export type BandRankHistoryResponse = {
   comboId?: string | null;
   days: number;
   history: BandRankHistoryEntry[];
+  historyStatus?: 'current' | 'catching_up' | 'stale' | 'failed' | 'disabled';
+  currentRankingsComputedAt?: string | null;
+  historyComputedThrough?: string | null;
+  historyJobUpdatedAt?: string | null;
+  historyMessage?: string | null;
 };
 
 export type BandSongPerformance = {

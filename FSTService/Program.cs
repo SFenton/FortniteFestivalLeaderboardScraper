@@ -76,6 +76,10 @@ builder.Services.Configure<ScraperOptions>(
     builder.Configuration.GetSection(ScraperOptions.Section));
 builder.Services.Configure<FeatureOptions>(
     builder.Configuration.GetSection(FeatureOptions.Section));
+builder.Services.Configure<BandRankHistoryOptions>(
+    builder.Configuration.GetSection(BandRankHistoryOptions.Section));
+builder.Services.Configure<BackgroundJobOptions>(
+    builder.Configuration.GetSection(BackgroundJobOptions.Section));
 builder.Services.Configure<ApiSettings>(
     builder.Configuration.GetSection(ApiSettings.Section));
 
@@ -321,6 +325,7 @@ builder.Services.AddSingleton<LeaderboardRivalsCalculator>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardRivalsCache",
     (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5)));
 builder.Services.AddSingleton<ScrapeLifecycleNotifier>();
+builder.Services.AddSingleton<BackgroundWorkCoordinator>();
 builder.Services.AddSingleton<RankingsCalculator>();
 builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
@@ -469,6 +474,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<StartupInitializer
 builder.Services.AddHealthChecks()
     .AddCheck<StartupInitializer>("database", tags: ["ready"]);
 builder.Services.AddHostedService<ScraperWorker>();
+builder.Services.AddHostedService<BandRankHistoryWorker>();
 
 // ─── Build and configure pipeline ───────────────────────────
 

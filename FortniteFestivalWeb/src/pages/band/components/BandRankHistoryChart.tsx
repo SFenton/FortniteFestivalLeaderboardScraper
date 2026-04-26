@@ -109,8 +109,24 @@ export default memo(function BandRankHistoryChart({
 }: BandRankHistoryChartProps) {
   const { t } = useTranslation();
   const st = useBandRankHistoryChartStyles();
-  const { chartData, loading } = useBandRankHistory(bandType, teamKey, metric, days, comboId);
+  const { chartData, loading, historyStatus, historyMessage } = useBandRankHistory(bandType, teamKey, metric, days, comboId);
   const metricLabel = t(`rankings.metric.${metric}`);
+
+  const statusMessage = useMemo(() => {
+    if (historyMessage) return historyMessage;
+    switch (historyStatus) {
+      case 'catching_up': return t('band.rankHistoryCatchingUp');
+      case 'stale': return t('band.rankHistoryStale');
+      case 'failed': return t('band.rankHistoryFailed');
+      case 'disabled': return t('band.rankHistoryDisabled');
+      default: return null;
+    }
+  }, [historyMessage, historyStatus, t]);
+
+  const subtitle = useMemo(() => {
+    const base = t('band.rankHistoryHint', { days });
+    return statusMessage ? `${base} ${statusMessage}` : base;
+  }, [days, statusMessage, t]);
 
   const totalTeams = useMemo(() => {
     if (totalRankedTeams != null && totalRankedTeams > 0) return totalRankedTeams;
@@ -315,7 +331,7 @@ export default memo(function BandRankHistoryChart({
       selected={GRAPH_CARD_INSTRUMENT}
       onInstrumentSelect={() => {}}
       title={t('band.rankHistory')}
-      subtitle={t('band.rankHistoryHint', { days })}
+      subtitle={subtitle}
       loadingMessage={t('chart.loadingRankHistory')}
       emptyMessage={t('band.noRankHistory')}
       identity={RANK_POINT_IDENTITY}

@@ -541,6 +541,7 @@ public static partial class ApiEndpoints
 
             var effectiveDays = Math.Clamp(days ?? 30, 1, 3650);
             var history = metaDb.GetBandRankHistory(bandType, teamKey, comboValidation.ComboId, effectiveDays);
+            var freshness = metaDb.GetBandRankHistoryStatus(bandType, comboValidation.ComboId);
 
             return Results.Ok(new
             {
@@ -549,6 +550,11 @@ public static partial class ApiEndpoints
                 comboId = comboValidation.ComboId,
                 days = effectiveDays,
                 history,
+                historyStatus = freshness.HistoryStatus,
+                currentRankingsComputedAt = freshness.CurrentRankingsComputedAt,
+                historyComputedThrough = freshness.HistoryComputedThrough,
+                historyJobUpdatedAt = freshness.HistoryJobUpdatedAt,
+                historyMessage = freshness.HistoryMessage,
             });
         })
         .WithTags("Rankings")
