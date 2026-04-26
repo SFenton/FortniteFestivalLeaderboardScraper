@@ -295,6 +295,71 @@ public sealed class BandDetailDto
     public BandTeamRankingDto? Ranking { get; init; }
 }
 
+/// <summary>
+/// Search response for free-text or explicit-account band lookup.
+/// </summary>
+public sealed class BandSearchResponseDto
+{
+    public string Query { get; init; } = "";
+    public string NormalizedQuery { get; init; } = "";
+    public string? BandType { get; init; }
+    public string? ComboId { get; init; }
+    public string RankBy { get; init; } = "appearance";
+    public int Page { get; init; }
+    public int PageSize { get; init; }
+    public int TotalCount { get; init; }
+    public bool IsAmbiguous { get; init; }
+    public bool NeedsDisambiguation { get; init; }
+    public List<BandSearchInterpretationDto> Interpretations { get; init; } = [];
+    public List<BandSearchResultDto> Results { get; init; } = [];
+}
+
+/// <summary>
+/// One plausible parsing of a band-search query.
+/// </summary>
+public sealed class BandSearchInterpretationDto
+{
+    public int Id { get; init; }
+    public double Score { get; init; }
+    public bool IsExplicit { get; init; }
+    public int MatchCount { get; init; }
+    public List<BandSearchTermDto> Terms { get; init; } = [];
+}
+
+/// <summary>
+/// One username term within a parsed band-search interpretation.
+/// </summary>
+public sealed class BandSearchTermDto
+{
+    public string Text { get; init; } = "";
+    public string MatchKind { get; init; } = "contains";
+    public List<BandSearchCandidateDto> Candidates { get; init; } = [];
+}
+
+/// <summary>
+/// One account candidate matched by a band-search username term.
+/// </summary>
+public sealed class BandSearchCandidateDto
+{
+    public string AccountId { get; init; } = "";
+    public string? DisplayName { get; init; }
+}
+
+/// <summary>
+/// One band returned by band search, with parsing provenance.
+/// </summary>
+public sealed class BandSearchResultDto
+{
+    public string BandId { get; init; } = "";
+    public string TeamKey { get; init; } = "";
+    public string BandType { get; init; } = "";
+    public int AppearanceCount { get; init; }
+    public List<PlayerBandMemberDto> Members { get; init; } = [];
+    public BandTeamRankingDto? Ranking { get; init; }
+    public List<int> MatchedInterpretationIds { get; init; } = [];
+    public List<string> MatchedAccountIds { get; init; } = [];
+}
+
 /// <summary>Song reference in top/bottom song lists within a stats tier.</summary>
 public sealed class StatsSongRef
 {

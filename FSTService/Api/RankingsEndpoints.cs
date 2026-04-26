@@ -436,6 +436,58 @@ public static partial class ApiEndpoints
         .WithTags("Rankings")
         .RequireRateLimiting("public");
 
+        app.MapGet("/api/bands/search", (
+            HttpContext httpContext,
+            string? q,
+            string? accountIds,
+            string? bandType,
+            string? combo,
+            string? rankBy,
+            int? page,
+            int? pageSize,
+            GlobalLeaderboardPersistence persistence) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=60, stale-while-revalidate=300";
+
+            if (!string.IsNullOrWhiteSpace(q) && q.Trim().Length > 200)
+                return Results.BadRequest(new { error = "Band search query is too long." });
+
+            var explicitAccountIds = SplitBandSearchAccountIds(accountIds);
+            if (explicitAccountIds.Count > 4)
+                return Results.BadRequest(new { error = "Band search supports at most 4 explicit account IDs." });
+
+            if (!string.IsNullOrWhiteSpace(bandType) && !BandComboIds.IsValidBandType(bandType))
+                return Results.BadRequest(new { error = $"Unknown band type: {bandType}" });
+
+            string? comboId = null;
+            if (!string.IsNullOrWhiteSpace(combo))
+            {
+                if (string.IsNullOrWhiteSpace(bandType))
+                    return Results.BadRequest(new { error = "bandType is required when filtering by combo." });
+
+                var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
+                if (comboValidation.Error is not null)
+                    return Results.BadRequest(new { error = comboValidation.Error });
+
+                comboId = comboValidation.ComboId;
+            }
+
+            var effectivePage = Math.Max(1, page ?? 1);
+            var effectivePageSize = Math.Clamp(pageSize ?? 25, 1, 100);
+            var response = persistence.SearchBands(
+                q,
+                explicitAccountIds,
+                string.IsNullOrWhiteSpace(bandType) ? null : bandType,
+                comboId,
+                rankBy ?? "appearance",
+                effectivePage,
+                effectivePageSize);
+
+            return Results.Ok(response);
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
         app.MapGet("/api/bands/{bandId}", (
             HttpContext httpContext,
             string bandId,
@@ -845,6 +897,14 @@ public static partial class ApiEndpoints
         .WithTags("Rankings")
         .RequireRateLimiting("public");
     }
+
+    private static List<string> SplitBandSearchAccountIds(string? accountIds) => string.IsNullOrWhiteSpace(accountIds)
+        ? []
+        : accountIds
+            .Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     private static object MapBandRanking(BandTeamRankingDto ranking, IReadOnlyDictionary<string, string> names) => new
     {

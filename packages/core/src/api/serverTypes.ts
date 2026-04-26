@@ -662,6 +662,53 @@ export type BandDetailResponse = {
   ranking?: BandRankingDto | null;
 };
 
+export type BandSearchRankBy = BandRankingMetric | 'appearance';
+
+export type BandSearchCandidate = {
+  accountId: string;
+  displayName?: string | null;
+};
+
+export type BandSearchTerm = {
+  text: string;
+  matchKind: 'explicit' | 'exact' | 'prefix' | 'contains' | string;
+  candidates: BandSearchCandidate[];
+};
+
+export type BandSearchInterpretation = {
+  id: number;
+  score: number;
+  isExplicit: boolean;
+  matchCount: number;
+  terms: BandSearchTerm[];
+};
+
+export type BandSearchResult = {
+  bandId: string;
+  teamKey: string;
+  bandType: BandType;
+  appearanceCount: number;
+  members: PlayerBandMember[];
+  ranking?: BandRankingDto | null;
+  matchedInterpretationIds: number[];
+  matchedAccountIds: string[];
+};
+
+export type BandSearchResponse = {
+  query: string;
+  normalizedQuery: string;
+  bandType?: BandType | null;
+  comboId?: string | null;
+  rankBy: BandSearchRankBy;
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  isAmbiguous: boolean;
+  needsDisambiguation: boolean;
+  interpretations: BandSearchInterpretation[];
+  results: BandSearchResult[];
+};
+
 export type BandRankHistoryEntry = {
   snapshotDate: string;
   snapshotTakenAt?: string | null;

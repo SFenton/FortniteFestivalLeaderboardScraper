@@ -240,6 +240,37 @@ describe('api/client', () => {
     });
   });
 
+  describe('searchBands', () => {
+    it('searches bands with text, explicit accounts, filters, and paging', async () => {
+      const data = {
+        query: 'SFenton Jasgor9',
+        normalizedQuery: 'SFenton Jasgor9',
+        rankBy: 'appearance',
+        page: 2,
+        pageSize: 25,
+        totalCount: 0,
+        isAmbiguous: false,
+        needsDisambiguation: false,
+        interpretations: [],
+        results: [],
+      };
+      mockFetchOk(data);
+
+      const result = await api.searchBands({
+        q: 'SFenton Jasgor9',
+        accountIds: ['acct-1', 'acct-2'],
+        bandType: 'Band_Duets',
+        combo: 'Solo_Guitar+Solo_Bass',
+        rankBy: 'appearance',
+        page: 2,
+        pageSize: 25,
+      });
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/bands/search?q=SFenton+Jasgor9&accountIds=acct-1%2Cacct-2&bandType=Band_Duets&combo=Solo_Guitar%2BSolo_Bass&rankBy=appearance&page=2&pageSize=25', { headers: {} });
+    });
+  });
+
   describe('getBandRankHistory', () => {
     it('fetches encoded band rank history with days and combo', async () => {
       const data = { bandType: 'Band_Duets', teamKey: 'p1:p2', comboId: 'Solo_Guitar+Solo_Bass', days: 14, history: [] };

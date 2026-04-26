@@ -19,6 +19,11 @@ namespace FSTService.Persistence;
 public sealed class GlobalLeaderboardPersistence : IDisposable
 {
     private const string LeaderboardStagingTable = MetaDatabase.LeaderboardStagingTable;
+    private const int MaxBandSearchQueryLength = 200;
+    private const int MaxBandSearchTokens = 5;
+    private const int MaxBandSearchCandidatesPerTerm = 8;
+    private const int MaxBandSearchInterpretations = 12;
+    private const int MaxBandSearchCandidateAccounts = 32;
     private readonly Dictionary<string, IInstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
@@ -1518,6 +1523,130 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         };
     }
 
+    public BandSearchResponseDto SearchBands(
+        string? query,
+        IReadOnlyCollection<string>? explicitAccountIds,
+        string? bandTypeFilter = null,
+        string? comboIdFilter = null,
+        string rankBy = "appearance",
+        int page = 1,
+        int pageSize = 25)
+    {
+        var normalizedQuery = NormalizeBandSearchQuery(query);
+        var effectivePage = Math.Max(1, page);
+        var effectivePageSize = Math.Clamp(pageSize, 1, 100);
+        var effectiveRankBy = NormalizeBandSearchRankBy(rankBy);
+        var queryForResponse = query?.Trim() ?? string.Empty;
+
+        var interpretations = BuildBandSearchInterpretations(normalizedQuery, explicitAccountIds);
+        if (interpretations.Count == 0)
+        {
+            return CreateBandSearchResponse(
+                queryForResponse,
+                normalizedQuery,
+                bandTypeFilter,
+                comboIdFilter,
+                effectiveRankBy,
+                effectivePage,
+                effectivePageSize,
+                needsDisambiguation: false,
+                interpretations,
+                [],
+                totalCount: 0);
+        }
+
+        var candidateAccountIds = interpretations
+            .SelectMany(static interpretation => interpretation.Terms)
+            .SelectMany(static term => term.Candidates)
+            .Select(static candidate => candidate.AccountId)
+            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (candidateAccountIds.Count > MaxBandSearchCandidateAccounts)
+        {
+            return CreateBandSearchResponse(
+                queryForResponse,
+                normalizedQuery,
+                bandTypeFilter,
+                comboIdFilter,
+                effectiveRankBy,
+                effectivePage,
+                effectivePageSize,
+                needsDisambiguation: true,
+                interpretations,
+                [],
+                totalCount: 0);
+        }
+
+        using var conn = _pgDataSource.OpenConnection();
+        foreach (var accountId in candidateAccountIds)
+            EnsureBandTeamMembershipSummary(conn, accountId);
+
+        var candidateRows = GetBandSearchCandidateMembershipRows(conn, candidateAccountIds, bandTypeFilter);
+        if (comboIdFilter is not null)
+        {
+            candidateRows = candidateRows
+                .Where(row => string.Equals(
+                    BandComboIds.FromEpicRawCombo(row.InstrumentCombo),
+                    comboIdFilter,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        var matchedTeams = MatchBandSearchTeams(candidateRows, interpretations);
+        if (matchedTeams.Count == 0)
+        {
+            return CreateBandSearchResponse(
+                queryForResponse,
+                normalizedQuery,
+                bandTypeFilter,
+                comboIdFilter,
+                effectiveRankBy,
+                effectivePage,
+                effectivePageSize,
+                needsDisambiguation: false,
+                interpretations,
+                [],
+                totalCount: 0);
+        }
+
+        var teamRows = GetBandSearchTeamMembershipRows(conn, matchedTeams.Keys.ToList());
+        var allMemberAccountIds = matchedTeams.Keys
+            .SelectMany(static key => SplitTeamKey(key.TeamKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var displayNames = _metaDb.GetDisplayNames(allMemberAccountIds);
+        var rankingLookup = effectiveRankBy == "appearance"
+            ? new Dictionary<BandSearchTeamKey, BandTeamRankingDto>()
+            : GetBandSearchRankingsForTeams(matchedTeams.Keys.ToList(), comboIdFilter);
+
+        var results = matchedTeams.Keys
+            .Select(teamKey => BuildBandSearchResult(teamKey, matchedTeams[teamKey], teamRows, displayNames, rankingLookup))
+            .ToList();
+
+        results = OrderBandSearchResults(results, effectiveRankBy).ToList();
+
+        var totalCount = results.Count;
+        var pagedResults = results
+            .Skip((effectivePage - 1) * effectivePageSize)
+            .Take(effectivePageSize)
+            .ToList();
+
+        return CreateBandSearchResponse(
+            queryForResponse,
+            normalizedQuery,
+            bandTypeFilter,
+            comboIdFilter,
+            effectiveRankBy,
+            effectivePage,
+            effectivePageSize,
+            needsDisambiguation: false,
+            interpretations,
+            pagedResults,
+            totalCount);
+    }
+
     public PlayerBandEntryDto? GetBandById(string bandId)
     {
         using var conn = _pgDataSource.OpenConnection();
@@ -1627,6 +1756,509 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         cmd.Parameters.AddWithValue("accountId", accountId);
         return Convert.ToBoolean(cmd.ExecuteScalar());
     }
+
+    private List<BandSearchInternalInterpretation> BuildBandSearchInterpretations(
+        string normalizedQuery,
+        IReadOnlyCollection<string>? explicitAccountIds)
+    {
+        var explicitIds = explicitAccountIds?
+            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Select(static accountId => accountId.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+
+        if (explicitIds.Count > 0)
+            return [BuildExplicitBandSearchInterpretation(explicitIds)];
+
+        if (string.IsNullOrWhiteSpace(normalizedQuery))
+            return [];
+
+        var tokens = normalizedQuery.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (tokens.Length == 0 || tokens.Length > MaxBandSearchTokens)
+            return [];
+
+        var termCache = new Dictionary<(int Start, int End), BandSearchInternalTerm?>();
+        BandSearchInternalTerm? ResolveSpan(int start, int end)
+        {
+            var key = (start, end);
+            if (termCache.TryGetValue(key, out var cached))
+                return cached;
+
+            var text = string.Join(' ', tokens[start..end]);
+            var term = ResolveBandSearchTerm(text);
+            termCache[key] = term;
+            return term;
+        }
+
+        var results = new List<BandSearchInternalInterpretation>();
+        var terms = new List<BandSearchInternalTerm>();
+
+        void Recurse(int index, double score)
+        {
+            if (index == tokens.Length)
+            {
+                if (terms.Count is > 0 and <= 4)
+                {
+                    results.Add(new BandSearchInternalInterpretation(
+                        Id: results.Count + 1,
+                        Score: Math.Round(score, 3),
+                        IsExplicit: false,
+                        Terms: terms.ToList()));
+                }
+
+                return;
+            }
+
+            if (terms.Count >= 4)
+                return;
+
+            for (var end = tokens.Length; end > index; end--)
+            {
+                var term = ResolveSpan(index, end);
+                if (term is null)
+                    continue;
+
+                terms.Add(term);
+                Recurse(end, score + ScoreBandSearchTerm(term, end - index));
+                terms.RemoveAt(terms.Count - 1);
+            }
+        }
+
+        Recurse(0, 0);
+
+        return results
+            .OrderByDescending(static interpretation => interpretation.Score)
+            .ThenBy(static interpretation => interpretation.Terms.Count)
+            .Take(MaxBandSearchInterpretations)
+            .Select((interpretation, index) => interpretation with { Id = index + 1 })
+            .ToList();
+    }
+
+    private BandSearchInternalInterpretation BuildExplicitBandSearchInterpretation(IReadOnlyList<string> accountIds)
+    {
+        var displayNames = _metaDb.GetDisplayNames(accountIds);
+        var terms = accountIds
+            .Select(accountId => new BandSearchInternalTerm(
+                Text: displayNames.GetValueOrDefault(accountId) ?? accountId,
+                MatchKind: "explicit",
+                Candidates:
+                [
+                    new BandSearchCandidateDto
+                    {
+                        AccountId = accountId,
+                        DisplayName = displayNames.GetValueOrDefault(accountId),
+                    }
+                ]))
+            .ToList();
+
+        return new BandSearchInternalInterpretation(
+            Id: 1,
+            Score: terms.Count * 250,
+            IsExplicit: true,
+            Terms: terms);
+    }
+
+    private BandSearchInternalTerm? ResolveBandSearchTerm(string text)
+    {
+        var matches = _metaDb.SearchAccountNames(text, Math.Max(50, MaxBandSearchCandidatesPerTerm * 4));
+        if (matches.Count == 0)
+            return null;
+
+        var normalizedText = text.Trim().ToLowerInvariant();
+        var exact = matches
+            .Where(match => string.Equals(match.DisplayName, text, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var prefix = matches
+            .Where(match => match.DisplayName.StartsWith(text, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var selected = exact.Count > 0
+            ? exact
+            : prefix.Count > 0
+                ? prefix
+                : matches.Where(match => match.DisplayName.ToLowerInvariant().Contains(normalizedText, StringComparison.Ordinal)).ToList();
+
+        if (selected.Count == 0)
+            return null;
+
+        var matchKind = exact.Count > 0 ? "exact" : prefix.Count > 0 ? "prefix" : "contains";
+        var candidates = selected
+            .GroupBy(static match => match.AccountId, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .Take(MaxBandSearchCandidatesPerTerm)
+            .Select(static match => new BandSearchCandidateDto
+            {
+                AccountId = match.AccountId,
+                DisplayName = match.DisplayName,
+            })
+            .ToList();
+
+        return candidates.Count == 0
+            ? null
+            : new BandSearchInternalTerm(text, matchKind, candidates);
+    }
+
+    private static double ScoreBandSearchTerm(BandSearchInternalTerm term, int tokenCount)
+    {
+        var baseScore = term.MatchKind switch
+        {
+            "explicit" => 250,
+            "exact" => 200,
+            "prefix" => 100,
+            _ => 50,
+        };
+
+        return baseScore + (tokenCount * 20) - ((term.Candidates.Count - 1) * 2);
+    }
+
+    private static Dictionary<BandSearchTeamKey, BandSearchTeamMatch> MatchBandSearchTeams(
+        IReadOnlyList<PlayerBandMembershipSummaryRow> candidateRows,
+        IReadOnlyList<BandSearchInternalInterpretation> interpretations)
+    {
+        var matches = new Dictionary<BandSearchTeamKey, BandSearchTeamMatch>();
+
+        foreach (var teamGroup in candidateRows.GroupBy(static row => new BandSearchTeamKey(row.BandType, row.TeamKey)))
+        {
+            var teamAccounts = teamGroup
+                .Select(static row => row.AccountId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var interpretation in interpretations)
+            {
+                var matchedAccountsForInterpretation = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var allTermsMatched = true;
+
+                foreach (var term in interpretation.Terms)
+                {
+                    var termMatches = term.Candidates
+                        .Select(static candidate => candidate.AccountId)
+                        .Where(teamAccounts.Contains)
+                        .ToList();
+
+                    if (termMatches.Count == 0)
+                    {
+                        allTermsMatched = false;
+                        break;
+                    }
+
+                    matchedAccountsForInterpretation.UnionWith(termMatches);
+                }
+
+                if (!allTermsMatched)
+                    continue;
+
+                if (!matches.TryGetValue(teamGroup.Key, out var match))
+                {
+                    match = new BandSearchTeamMatch();
+                    matches[teamGroup.Key] = match;
+                }
+
+                match.InterpretationIds.Add(interpretation.Id);
+                match.AccountIds.UnionWith(matchedAccountsForInterpretation);
+            }
+        }
+
+        return matches;
+    }
+
+    private static List<PlayerBandMembershipSummaryRow> GetBandSearchCandidateMembershipRows(
+        NpgsqlConnection conn,
+        IReadOnlyCollection<string> accountIds,
+        string? bandTypeFilter)
+    {
+        if (accountIds.Count == 0)
+            return [];
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = bandTypeFilter is null
+            ? $"""
+                SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json
+                FROM {BandLeaderboardPersistence.BandTeamMembershipTable}
+                WHERE account_id = ANY(@accountIds)
+                ORDER BY account_id, band_type, team_key, instrument_combo
+                """
+            : $"""
+                SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json
+                FROM {BandLeaderboardPersistence.BandTeamMembershipTable}
+                WHERE account_id = ANY(@accountIds)
+                  AND band_type = @bandType
+                ORDER BY account_id, band_type, team_key, instrument_combo
+                """;
+        cmd.Parameters.AddWithValue("accountIds", accountIds.ToArray());
+        if (bandTypeFilter is not null)
+            cmd.Parameters.AddWithValue("bandType", bandTypeFilter);
+
+        return ReadBandMembershipSummaryRows(cmd);
+    }
+
+    private static Dictionary<BandSearchTeamKey, List<PlayerBandMembershipSummaryRow>> GetBandSearchTeamMembershipRows(
+        NpgsqlConnection conn,
+        IReadOnlyCollection<BandSearchTeamKey> teamKeys)
+    {
+        var result = new Dictionary<BandSearchTeamKey, List<PlayerBandMembershipSummaryRow>>();
+        foreach (var teamGroup in teamKeys.GroupBy(static key => key.BandType, StringComparer.OrdinalIgnoreCase))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json
+                FROM {BandLeaderboardPersistence.BandTeamMembershipTable}
+                WHERE band_type = @bandType
+                  AND team_key = ANY(@teamKeys)
+                ORDER BY band_type, team_key, instrument_combo, account_id
+                """;
+            cmd.Parameters.AddWithValue("bandType", teamGroup.Key);
+            cmd.Parameters.AddWithValue("teamKeys", teamGroup.Select(static key => key.TeamKey).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+
+            foreach (var row in ReadBandMembershipSummaryRows(cmd))
+            {
+                var key = new BandSearchTeamKey(row.BandType, row.TeamKey);
+                if (!result.TryGetValue(key, out var rows))
+                {
+                    rows = [];
+                    result[key] = rows;
+                }
+
+                rows.Add(row);
+            }
+        }
+
+        return result;
+    }
+
+    private static List<PlayerBandMembershipSummaryRow> ReadBandMembershipSummaryRows(NpgsqlCommand cmd)
+    {
+        var rows = new List<PlayerBandMembershipSummaryRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new PlayerBandMembershipSummaryRow(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                reader.GetInt32(4),
+                ParseMemberInstrumentsJson(reader.IsDBNull(5) ? "{}" : reader.GetString(5))));
+        }
+
+        return rows;
+    }
+
+    private BandSearchResultDto BuildBandSearchResult(
+        BandSearchTeamKey teamKey,
+        BandSearchTeamMatch match,
+        IReadOnlyDictionary<BandSearchTeamKey, List<PlayerBandMembershipSummaryRow>> teamRows,
+        IReadOnlyDictionary<string, string> displayNames,
+        IReadOnlyDictionary<BandSearchTeamKey, BandTeamRankingDto> rankingLookup)
+    {
+        var rows = teamRows.GetValueOrDefault(teamKey) ?? [];
+        var memberInstruments = BuildMemberInstrumentsForSummaryGroup(rows);
+        var appearanceCount = rows
+            .GroupBy(static row => row.InstrumentCombo, StringComparer.OrdinalIgnoreCase)
+            .Sum(static group => group.Max(static row => row.AppearanceCount));
+
+        return new BandSearchResultDto
+        {
+            BandId = BandIdentity.CreateBandId(teamKey.BandType, teamKey.TeamKey),
+            TeamKey = teamKey.TeamKey,
+            BandType = teamKey.BandType,
+            AppearanceCount = appearanceCount,
+            Members = SplitTeamKey(teamKey.TeamKey)
+                .Select(memberAccountId => new PlayerBandMemberDto
+                {
+                    AccountId = memberAccountId,
+                    DisplayName = displayNames.GetValueOrDefault(memberAccountId),
+                    Instruments = memberInstruments.GetValueOrDefault(memberAccountId, []),
+                })
+                .ToList(),
+            Ranking = rankingLookup.GetValueOrDefault(teamKey),
+            MatchedInterpretationIds = match.InterpretationIds.Order().ToList(),
+            MatchedAccountIds = match.AccountIds.Order(StringComparer.OrdinalIgnoreCase).ToList(),
+        };
+    }
+
+    private Dictionary<BandSearchTeamKey, BandTeamRankingDto> GetBandSearchRankingsForTeams(
+        IReadOnlyCollection<BandSearchTeamKey> teamKeys,
+        string? comboIdFilter)
+    {
+        var result = new Dictionary<BandSearchTeamKey, BandTeamRankingDto>();
+        if (teamKeys.Count == 0)
+            return result;
+
+        using var conn = _pgDataSource.OpenConnection();
+        var rankingScope = string.IsNullOrWhiteSpace(comboIdFilter) ? "overall" : "combo";
+        var normalizedComboId = comboIdFilter ?? string.Empty;
+
+        foreach (var teamGroup in teamKeys.GroupBy(static key => key.BandType, StringComparer.OrdinalIgnoreCase))
+        {
+            var bandType = teamGroup.Key;
+            var totalRankedTeams = GetBandSearchTotalRankedTeams(conn, bandType, rankingScope, normalizedComboId);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"
+                SELECT
+                    band_type, combo_id, team_key, team_members, songs_played, total_charted_songs,
+                    coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank,
+                    weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score,
+                    total_score_rank, avg_accuracy, full_combo_count, avg_stars, best_rank,
+                    avg_rank, raw_weighted_rating, computed_at
+                FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentRankingTable(bandType))}
+                WHERE band_type = @bandType
+                  AND ranking_scope = @scope
+                  AND combo_id = @comboId
+                  AND team_key = ANY(@teamKeys)";
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.Parameters.AddWithValue("scope", rankingScope);
+            cmd.Parameters.AddWithValue("comboId", normalizedComboId);
+            cmd.Parameters.AddWithValue("teamKeys", teamGroup.Select(static key => key.TeamKey).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var ranking = ReadBandSearchRanking(reader, totalRankedTeams);
+                result[new BandSearchTeamKey(ranking.BandType, ranking.TeamKey)] = ranking;
+            }
+        }
+
+        return result;
+    }
+
+    private static int GetBandSearchTotalRankedTeams(NpgsqlConnection conn, string bandType, string rankingScope, string comboId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT total_teams
+            FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentStatsTable(bandType))}
+            WHERE band_type = @bandType AND ranking_scope = @scope AND combo_id = @comboId";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", comboId);
+        var result = cmd.ExecuteScalar();
+        return result is DBNull or null ? 0 : Convert.ToInt32(result);
+    }
+
+    private static BandTeamRankingDto ReadBandSearchRanking(NpgsqlDataReader r, int totalRankedTeams) => new()
+    {
+        BandId = BandIdentity.CreateBandId(r.GetString(0), r.GetString(2)),
+        BandType = r.GetString(0),
+        ComboId = string.IsNullOrEmpty(r.GetString(1)) ? null : r.GetString(1),
+        TeamKey = r.GetString(2),
+        TeamMembers = r.GetFieldValue<string[]>(3),
+        SongsPlayed = r.GetInt32(4),
+        TotalChartedSongs = r.GetInt32(5),
+        Coverage = r.GetDouble(6),
+        RawSkillRating = r.GetDouble(7),
+        AdjustedSkillRating = r.GetDouble(8),
+        AdjustedSkillRank = r.GetInt32(9),
+        WeightedRating = r.GetDouble(10),
+        WeightedRank = r.GetInt32(11),
+        FcRate = r.GetDouble(12),
+        FcRateRank = r.GetInt32(13),
+        TotalScore = r.GetInt64(14),
+        TotalScoreRank = r.GetInt32(15),
+        AvgAccuracy = r.GetDouble(16),
+        FullComboCount = r.GetInt32(17),
+        AvgStars = r.GetDouble(18),
+        BestRank = r.GetInt32(19),
+        AvgRank = r.GetDouble(20),
+        RawWeightedRating = r.IsDBNull(21) ? null : r.GetDouble(21),
+        ComputedAt = r.GetDateTime(22).ToString("o"),
+        TotalRankedTeams = totalRankedTeams,
+    };
+
+    private static IEnumerable<BandSearchResultDto> OrderBandSearchResults(
+        IEnumerable<BandSearchResultDto> results,
+        string rankBy) => rankBy switch
+    {
+        "adjusted" => results
+            .OrderBy(static result => result.Ranking?.AdjustedSkillRank ?? int.MaxValue)
+            .ThenByDescending(static result => result.AppearanceCount)
+            .ThenBy(static result => result.TeamKey, StringComparer.OrdinalIgnoreCase),
+        "weighted" => results
+            .OrderBy(static result => result.Ranking?.WeightedRank ?? int.MaxValue)
+            .ThenByDescending(static result => result.AppearanceCount)
+            .ThenBy(static result => result.TeamKey, StringComparer.OrdinalIgnoreCase),
+        "fcrate" => results
+            .OrderBy(static result => result.Ranking?.FcRateRank ?? int.MaxValue)
+            .ThenByDescending(static result => result.AppearanceCount)
+            .ThenBy(static result => result.TeamKey, StringComparer.OrdinalIgnoreCase),
+        "totalscore" => results
+            .OrderBy(static result => result.Ranking?.TotalScoreRank ?? int.MaxValue)
+            .ThenByDescending(static result => result.AppearanceCount)
+            .ThenBy(static result => result.TeamKey, StringComparer.OrdinalIgnoreCase),
+        _ => results
+            .OrderByDescending(static result => result.AppearanceCount)
+            .ThenBy(static result => result.TeamKey, StringComparer.OrdinalIgnoreCase),
+    };
+
+    private static BandSearchResponseDto CreateBandSearchResponse(
+        string query,
+        string normalizedQuery,
+        string? bandType,
+        string? comboId,
+        string rankBy,
+        int page,
+        int pageSize,
+        bool needsDisambiguation,
+        IReadOnlyList<BandSearchInternalInterpretation> interpretations,
+        IReadOnlyList<BandSearchResultDto> results,
+        int totalCount)
+    {
+        var matchCounts = results
+            .SelectMany(static result => result.MatchedInterpretationIds)
+            .GroupBy(static id => id)
+            .ToDictionary(static group => group.Key, static group => group.Count());
+
+        return new BandSearchResponseDto
+        {
+            Query = query,
+            NormalizedQuery = normalizedQuery,
+            BandType = bandType,
+            ComboId = comboId,
+            RankBy = rankBy,
+            Page = page,
+            PageSize = pageSize,
+            TotalCount = totalCount,
+            IsAmbiguous = interpretations.Count > 1 || interpretations.Any(static interpretation => interpretation.Terms.Any(static term => term.Candidates.Count > 1)),
+            NeedsDisambiguation = needsDisambiguation,
+            Interpretations = interpretations
+                .Select(interpretation => new BandSearchInterpretationDto
+                {
+                    Id = interpretation.Id,
+                    Score = interpretation.Score,
+                    IsExplicit = interpretation.IsExplicit,
+                    MatchCount = matchCounts.GetValueOrDefault(interpretation.Id),
+                    Terms = interpretation.Terms
+                        .Select(static term => new BandSearchTermDto
+                        {
+                            Text = term.Text,
+                            MatchKind = term.MatchKind,
+                            Candidates = term.Candidates,
+                        })
+                        .ToList(),
+                })
+                .ToList(),
+            Results = results.ToList(),
+        };
+    }
+
+    private static string NormalizeBandSearchQuery(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return string.Empty;
+
+        var normalized = string.Join(' ', query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        return normalized.Length <= MaxBandSearchQueryLength
+            ? normalized
+            : normalized[..MaxBandSearchQueryLength];
+    }
+
+    private static string NormalizeBandSearchRankBy(string? rankBy) => rankBy?.Trim().ToLowerInvariant() switch
+    {
+        "adjusted" => "adjusted",
+        "weighted" => "weighted",
+        "fcrate" => "fcrate",
+        "totalscore" => "totalscore",
+        _ => "appearance",
+    };
 
     private static List<PlayerBandMembershipSummaryRow> GetPlayerBandMembershipRows(
         NpgsqlConnection conn,
@@ -2387,6 +3019,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         int AppearanceCount,
         Dictionary<string, List<string>> MemberInstruments);
     private sealed record PlayerBandTeamSummary(string BandType, string TeamKey, int AppearanceCount);
+    private sealed record BandSearchTeamKey(string BandType, string TeamKey);
+    private sealed record BandSearchInternalTerm(string Text, string MatchKind, List<BandSearchCandidateDto> Candidates);
+    private sealed record BandSearchInternalInterpretation(int Id, double Score, bool IsExplicit, List<BandSearchInternalTerm> Terms);
+    private sealed class BandSearchTeamMatch
+    {
+        public HashSet<int> InterpretationIds { get; } = [];
+        public HashSet<string> AccountIds { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
 
     private int? _cachedTotalSongCount;
 

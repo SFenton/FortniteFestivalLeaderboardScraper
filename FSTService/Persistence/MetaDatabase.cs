@@ -511,9 +511,10 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         var normalizedQuery = query.Trim().ToLowerInvariant();
-        cmd.CommandText = "SELECT account_id, display_name FROM account_names WHERE display_name IS NOT NULL AND LOWER(display_name) LIKE @pattern ORDER BY CASE WHEN LOWER(display_name) LIKE @prefix THEN 0 ELSE 1 END, LENGTH(display_name), display_name LIMIT @limit";
-        cmd.Parameters.AddWithValue("pattern", $"%{normalizedQuery}%");
-        cmd.Parameters.AddWithValue("prefix", $"{normalizedQuery}%");
+        var escapedQuery = EscapeLikePattern(normalizedQuery);
+        cmd.CommandText = "SELECT account_id, display_name FROM account_names WHERE display_name IS NOT NULL AND LOWER(display_name) LIKE @pattern ESCAPE '!' ORDER BY CASE WHEN LOWER(display_name) LIKE @prefix ESCAPE '!' THEN 0 ELSE 1 END, LENGTH(display_name), display_name LIMIT @limit";
+        cmd.Parameters.AddWithValue("pattern", $"%{escapedQuery}%");
+        cmd.Parameters.AddWithValue("prefix", $"{escapedQuery}%");
         cmd.Parameters.AddWithValue("limit", limit);
         var list = new List<(string, string)>();
         using var r = cmd.ExecuteReader();
@@ -521,6 +522,11 @@ public sealed class MetaDatabase : IMetaDatabase
             list.Add((r.GetString(0), r.GetString(1)));
         return list;
     }
+
+    private static string EscapeLikePattern(string value) => value
+        .Replace("!", "!!", StringComparison.Ordinal)
+        .Replace("%", "!%", StringComparison.Ordinal)
+        .Replace("_", "!_", StringComparison.Ordinal);
 
     public Dictionary<string, string> GetDisplayNames(IEnumerable<string> accountIds)
     {

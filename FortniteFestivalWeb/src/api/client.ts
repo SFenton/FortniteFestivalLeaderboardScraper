@@ -28,6 +28,8 @@ import type {
   BandDetailResponse,
   BandComboCatalogResponse,
   BandRankingDto,
+  BandSearchRankBy,
+  BandSearchResponse,
   BandRankHistoryResponse,
   BandRankingsPageResponse,
   BandRankingMetric,
@@ -252,6 +254,19 @@ export const api = {
 
   getBandDetail: (bandId: string) =>
     get<BandDetailResponse>(`/api/bands/${encodeURIComponent(bandId)}`),
+
+  searchBands: (params: { q?: string; accountIds?: string[]; bandType?: BandType; combo?: string; rankBy?: BandSearchRankBy; page?: number; pageSize?: number }) => {
+    const query = new URLSearchParams();
+    if (params.q) query.set('q', params.q);
+    if (params.accountIds?.length) query.set('accountIds', params.accountIds.join(','));
+    if (params.bandType) query.set('bandType', params.bandType);
+    if (params.combo) query.set('combo', params.combo);
+    if (params.rankBy) query.set('rankBy', params.rankBy);
+    if (params.page != null) query.set('page', String(params.page));
+    if (params.pageSize != null) query.set('pageSize', String(params.pageSize));
+    const qs = query.toString();
+    return get<BandSearchResponse>(`/api/bands/search${qs ? `?${qs}` : ''}`);
+  },
 
   getVersion: () => get<{ version: string }>('/api/version'),
 
