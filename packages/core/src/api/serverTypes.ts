@@ -472,6 +472,12 @@ export type PlayerBandMember = {
   accountId: string;
   displayName?: string | null;
   instruments: ServerInstrumentKey[];
+  score?: number | null;
+  accuracy?: number | null;
+  isFullCombo?: boolean | null;
+  stars?: number | null;
+  difficulty?: number | null;
+  season?: number | null;
 };
 
 export type PlayerBandEntry = {
@@ -480,6 +486,39 @@ export type PlayerBandEntry = {
   bandType: PlayerBandType;
   appearanceCount?: number | null;
   members: PlayerBandMember[];
+};
+
+export type SongBandLeaderboardEntry = {
+  bandId: string;
+  bandType: PlayerBandType;
+  teamKey: string;
+  comboId?: string | null;
+  members: PlayerBandMember[];
+  score: number;
+  rank: number;
+  percentile?: number;
+  accuracy?: number;
+  isFullCombo?: boolean;
+  stars?: number;
+  season?: number;
+  difficulty?: number;
+  endTime?: string | null;
+};
+
+export type SongBandLeaderboardResponse = {
+  songId: string;
+  bandType: PlayerBandType;
+  count: number;
+  totalEntries: number;
+  localEntries: number;
+  entries: SongBandLeaderboardEntry[];
+  selectedPlayerEntry?: SongBandLeaderboardEntry | null;
+  selectedBandEntry?: SongBandLeaderboardEntry | null;
+};
+
+export type AllSongBandLeaderboardsResponse = {
+  songId: string;
+  bands: Array<Omit<SongBandLeaderboardResponse, 'songId'>>;
 };
 
 export type PlayerBandGroup = {
@@ -620,6 +659,7 @@ export type BandRankingEntry = {
   bandId: string;
   teamKey: string;
   teamMembers: BandTeamMember[];
+  members?: PlayerBandMember[];
   songsPlayed: number;
   totalChartedSongs: number;
   coverage: number;
@@ -649,6 +689,8 @@ export type BandRankingsPageResponse = {
   pageSize: number;
   totalTeams: number;
   entries: BandRankingEntry[];
+  selectedPlayerEntry?: BandRankingEntry | null;
+  selectedBandEntry?: BandRankingEntry | null;
 };
 
 export type BandRankingDto = BandRankingEntry & {

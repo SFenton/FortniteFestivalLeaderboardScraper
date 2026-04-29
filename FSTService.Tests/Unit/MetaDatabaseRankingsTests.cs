@@ -300,12 +300,26 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         SeedBandRankingsSource();
 
         Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        SeedBandSearchProjection("Band_Duets", "p1:p2", ["p1", "p2"], """
+            {"p1":["Solo_Guitar","Solo_Bass"],"p2":["Solo_Drums"]}
+            """);
 
         var (overall, totalTeams) = Db.GetBandTeamRankings("Band_Duets");
         Assert.Equal(3, totalTeams);
         Assert.Equal(3, overall.Count);
         Assert.Equal("p1:p2", overall[0].TeamKey);
         Assert.Equal(1, overall[0].AdjustedSkillRank);
+        Assert.Collection(overall[0].Members,
+            member =>
+            {
+                Assert.Equal("p1", member.AccountId);
+                Assert.Equal(["Solo_Guitar", "Solo_Bass"], member.Instruments);
+            },
+            member =>
+            {
+                Assert.Equal("p2", member.AccountId);
+                Assert.Equal(["Solo_Drums"], member.Instruments);
+            });
 
         var comboId = BandComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass"]);
         var (comboEntries, comboTotal) = Db.GetBandTeamRankings("Band_Duets", comboId);
@@ -316,6 +330,16 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         var team = Db.GetBandTeamRanking("Band_Duets", "p1:p2");
         Assert.NotNull(team);
         Assert.Equal(3, team.TotalRankedTeams);
+        Assert.Equal(["Solo_Guitar", "Solo_Bass"], team.Members[0].Instruments);
+
+        var bestForP1 = Db.GetBandTeamRankingForAccount("Band_Duets", "p1", rankBy: "totalscore");
+        var expectedBestForP1 = Db.GetBandTeamRankings("Band_Duets", rankBy: "totalscore")
+            .Entries
+            .First(entry => entry.TeamMembers.Contains("p1"));
+        Assert.NotNull(bestForP1);
+        Assert.Equal(expectedBestForP1.TeamKey, bestForP1.TeamKey);
+        Assert.Equal(expectedBestForP1.TotalScoreRank, bestForP1.TotalScoreRank);
+        Assert.Null(Db.GetBandTeamRankingForAccount("Band_Duets", "missing", rankBy: "totalscore"));
 
         var combos = Db.GetBandRankingCombos("Band_Duets");
         Assert.Contains(combos, entry => entry.ComboId == comboId && entry.TeamCount == 2);
@@ -525,6 +549,28 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void GetBandRankHistoryStatus_UsesStatsHistoryWhenPointsAreAbsent()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM band_team_rank_history_points WHERE band_type = @bandType";
+            cmd.Parameters.AddWithValue("bandType", "Band_Duets");
+            cmd.ExecuteNonQuery();
+        }
+
+        var status = Db.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Equal("current", status.HistoryStatus);
+        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd"), status.HistoryComputedThrough);
+    }
+
+    [Fact]
     public void EnqueueBandRankHistoryJob_CoalescesOlderSameDayJobs()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
@@ -577,6 +623,21 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(66.667, song1.Percentile, 3);
     }
 
+    [Fact]
+    public void GetBandSongPerformanceExtremes_ReturnsLimitedBestAndWorst()
+    {
+        SeedBandRankingsSource();
+
+        var (best, worst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+
+        var bestSong = Assert.Single(best);
+        var worstSong = Assert.Single(worst);
+        Assert.Equal("song_0", bestSong.SongId);
+        Assert.Equal(50.0, bestSong.Percentile, 3);
+        Assert.Equal("song_1", worstSong.SongId);
+        Assert.Equal(66.667, worstSong.Percentile, 3);
+    }
+
     private int CountBandHistoryRows(string tableName, string bandType, DateOnly? snapshotDate = null)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -613,6 +674,30 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.CommandText = "SELECT status FROM band_rank_history_jobs WHERE job_id = @jobId";
         cmd.Parameters.AddWithValue("jobId", jobId);
         return (string)cmd.ExecuteScalar()!;
+    }
+
+    private void SeedBandSearchProjection(string bandType, string teamKey, string[] memberAccountIds, string memberInstrumentsJson)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO band_search_team_projection (
+                band_type, team_key, band_id, appearance_count, member_account_ids,
+                member_instruments_json, combo_appearances_json, updated_at)
+            VALUES (@bandType, @teamKey, @bandId, 1, @memberAccountIds,
+                CAST(@memberInstrumentsJson AS jsonb), '{}'::jsonb, @updatedAt)
+            ON CONFLICT (band_type, team_key) DO UPDATE SET
+                member_account_ids = EXCLUDED.member_account_ids,
+                member_instruments_json = EXCLUDED.member_instruments_json,
+                updated_at = EXCLUDED.updated_at;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("bandId", BandIdentity.CreateBandId(bandType, teamKey));
+        cmd.Parameters.AddWithValue("memberAccountIds", memberAccountIds);
+        cmd.Parameters.AddWithValue("memberInstrumentsJson", memberInstrumentsJson);
+        cmd.Parameters.AddWithValue("updatedAt", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
     }
 
     private static string SerializeBandTeamRanking(BandTeamRankingDto entry)

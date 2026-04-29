@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { IoOptions } from 'react-icons/io5';
 import { api } from '../../api/client';
@@ -13,6 +13,7 @@ import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import { ActionPill } from '../../components/common/ActionPill';
 import RankingCard from './components/RankingCard';
+import BandRankingCard from './components/BandRankingCard';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
@@ -31,10 +32,12 @@ import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 import {
   Display, Overflow, Gap,
-  GridTemplate, Size, STAGGER_INTERVAL, FADE_DURATION,
+  GridTemplate, Size, STAGGER_INTERVAL, FADE_DURATION, flexColumn,
 } from '@festival/theme';
 import { leaderboardsSlides } from './firstRun';
 import { coerceRankingMetric } from './helpers/rankingHelpers';
+import { coerceBandRankingMetric } from './helpers/bandRankingHelpers';
+import { BAND_TYPES } from '../../utils/bandTypes';
 
 /** Set to 1 to stagger the right column one slot (125 ms) after the left. */
 const COLUMN_STAGGER_OFFSET = 1;
@@ -42,14 +45,18 @@ const COLUMN_STAGGER_OFFSET = 1;
 export default function LeaderboardsOverviewPage() {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const { experimentalRanks: experimentalRanksEnabled = false, leaderboards: rankHistoryEnabled = false } = useFeatureFlags();
-  const { player } = useTrackedPlayer();
+  const { experimentalRanks: experimentalRanksEnabled = false, leaderboards: rankHistoryEnabled = false, playerBands: playerBandsEnabled = false } = useFeatureFlags();
+  const { profile, player } = useTrackedPlayer();
+  const selectedAccountId = player?.accountId;
+  const selectedBandTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
+  const selectedBandType = profile?.type === 'band' ? profile.bandType : undefined;
   const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const scrollContainerRef = useScrollContainer();
   const [searchParams, setSearchParams] = useSearchParams();
   const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
   const metric = coerceRankingMetric(rawMetric, experimentalRanksEnabled);
+  const bandMetric = coerceBandRankingMetric(metric, experimentalRanksEnabled);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
 
@@ -85,6 +92,27 @@ export default function LeaderboardsOverviewPage() {
     })),
   });
 
+  const bandTypes = useMemo(() => playerBandsEnabled ? BAND_TYPES : [], [playerBandsEnabled]);
+
+  const bandRankingQueries = useQueries({
+    queries: bandTypes.map((bandType) => {
+      const selectedTeamKey = selectedBandType === bandType ? selectedBandTeamKey : undefined;
+      return {
+        queryKey: queryKeys.bandRankings(bandType, undefined, bandMetric, 1, 10, selectedAccountId, selectedTeamKey),
+        queryFn: () => api.getBandRankings(bandType, undefined, bandMetric, 1, 10, selectedAccountId, selectedTeamKey),
+      };
+    }),
+  });
+
+  const selectedBandRankingQuery = useQuery({
+    queryKey: selectedBandType && selectedBandTeamKey
+      ? queryKeys.bandRanking(selectedBandType, selectedBandTeamKey, undefined, bandMetric)
+      : ['bandRanking', 'none'],
+    queryFn: () => api.getBandRanking(selectedBandType!, selectedBandTeamKey!, undefined, bandMetric),
+    enabled: playerBandsEnabled && !!selectedBandType && !!selectedBandTeamKey,
+    retry: false,
+  });
+
   // Fetch player ranking per visible instrument (only when player is tracked)
   const playerQueries = useQueries({
     queries: player
@@ -101,15 +129,16 @@ export default function LeaderboardsOverviewPage() {
   const historyLoading = rankHistoryEnabled && player ? instruments.some(inst => allHistory[inst]?.loading) : false;
   const historyAllCached = !rankHistoryEnabled || !player || instruments.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
 
-  const isLoading = rankingQueries.some(q => q.isLoading) || historyLoading;
-  const hasCachedData = rankingQueries.every(q => q.data != null) && historyAllCached;
-  const allErrored = !isLoading && rankingQueries.length > 0 && rankingQueries.every(q => q.error);
+  const leaderboardQueries = useMemo(() => [...rankingQueries, ...bandRankingQueries], [rankingQueries, bandRankingQueries]);
+  const isLoading = leaderboardQueries.some(query => query.isLoading) || historyLoading;
+  const hasCachedData = leaderboardQueries.every(query => query.data != null) && historyAllCached;
+  const allErrored = !isLoading && leaderboardQueries.length > 0 && leaderboardQueries.every(query => query.error);
   const { phase: loadPhase } = useLoadPhase(!isLoading, { skipAnimation: hasCachedData });
 
   const [shouldStagger, setShouldStagger] = useState(!hasCachedData);
   const maxEntriesPerCard = useMemo(
-    () => Math.max(0, ...rankingQueries.map(q => q.data?.entries?.length ?? 0)),
-    [rankingQueries],
+    () => Math.max(0, ...leaderboardQueries.map(query => query.data?.entries?.length ?? 0)),
+    [leaderboardQueries],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const [cols, gridRef] = useGridColumnCount();
@@ -122,16 +151,28 @@ export default function LeaderboardsOverviewPage() {
 
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
-    const totalRows = Math.ceil(instruments.length / cols);
+    const instrumentRows = Math.ceil(instruments.length / cols);
+    const totalRows = instrumentRows + bandTypes.length;
     const chartSlot = player && rankHistoryEnabled ? 1 : 0;
     const totalAnimTime =
       (chartSlot + totalRows * itemsPerCard + (cols - 1) * COLUMN_STAGGER_OFFSET) * STAGGER_INTERVAL + FADE_DURATION;
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
-  }, [loadPhase, shouldStagger, maxEntriesPerCard, cols, instruments.length, itemsPerCard]);
+  }, [bandTypes.length, cols, instruments.length, itemsPerCard, loadPhase, player, rankHistoryEnabled, shouldStagger]);
 
   const s = useLeaderboardsStyles();
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled }), [experimentalRanksEnabled, player]);
+  const firstLeaderboardError = leaderboardQueries.find(query => query.error)?.error;
+  const chartSlots = player && rankHistoryEnabled ? 1 : 0;
+  const instrumentRows = Math.ceil(instruments.length / cols);
+  const getInstrumentCardStaggerOffset = useCallback((cardIndex: number) => {
+    const gridRow = Math.floor(cardIndex / cols);
+    const gridCol = cardIndex % cols;
+    return chartSlots + gridRow * itemsPerCard + gridCol * COLUMN_STAGGER_OFFSET;
+  }, [chartSlots, cols, itemsPerCard]);
+  const getBandCardStaggerOffset = useCallback((bandIndex: number) => (
+    chartSlots + instrumentRows * itemsPerCard + bandIndex * itemsPerCard
+  ), [chartSlots, instrumentRows, itemsPerCard]);
 
   return (
     <Page
@@ -171,7 +212,7 @@ export default function LeaderboardsOverviewPage() {
       }
     >
       {loadPhase === LoadPhase.ContentIn && allErrored && (() => {
-        const parsed = parseApiError(String(rankingQueries[0]!.error));
+        const parsed = parseApiError(String(firstLeaderboardError));
         return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
       })()}
       {loadPhase === LoadPhase.ContentIn && !allErrored && player && rankHistoryEnabled && (
@@ -186,29 +227,50 @@ export default function LeaderboardsOverviewPage() {
         </div>
       )}
       {loadPhase === LoadPhase.ContentIn && !allErrored && (
-        <div ref={gridRef} style={s.grid}>
-          {instruments.map((inst, idx) => {
-            const q = rankingQueries[idx];
-            const pq = player ? playerQueries[idx] : undefined;
-            const gridRow = Math.floor(idx / cols);
-            const gridCol = idx % cols;
-            const chartSlots = player && rankHistoryEnabled ? 1 : 0;
-            const offset = chartSlots + gridRow * itemsPerCard + gridCol * COLUMN_STAGGER_OFFSET;
-            return (
-              <RankingCard
-                key={inst}
-                instrument={inst as InstrumentKey}
-                metric={metric}
-                entries={q?.data?.entries ?? []}
-                totalAccounts={q?.data?.totalAccounts ?? 0}
-                playerRanking={pq?.data ?? null}
-                playerAccountId={player?.accountId}
-                error={q?.error ? String(q.error) : null}
-                shouldStagger={shouldStagger}
-                staggerOffset={offset}
-              />
-            );
-          })}
+        <div style={s.contentStack}>
+          <div ref={gridRef} data-testid="leaderboards-instrument-grid" style={s.grid}>
+            {instruments.map((inst, idx) => {
+              const q = rankingQueries[idx];
+              const pq = player ? playerQueries[idx] : undefined;
+              const offset = getInstrumentCardStaggerOffset(idx);
+              return (
+                <RankingCard
+                  key={inst}
+                  instrument={inst as InstrumentKey}
+                  metric={metric}
+                  entries={q?.data?.entries ?? []}
+                  totalAccounts={q?.data?.totalAccounts ?? 0}
+                  playerRanking={pq?.data ?? null}
+                  playerAccountId={player?.accountId}
+                  error={q?.error ? String(q.error) : null}
+                  shouldStagger={shouldStagger}
+                  staggerOffset={offset}
+                />
+              );
+            })}
+          </div>
+          {bandTypes.length > 0 && (
+            <div data-testid="leaderboards-band-section-stack" style={s.bandSectionStack}>
+              {bandTypes.map((bandType, idx) => {
+                const bandQuery = bandRankingQueries[idx];
+                return (
+                  <BandRankingCard
+                    key={bandType}
+                    bandType={bandType}
+                    metric={bandMetric}
+                    entries={bandQuery?.data?.entries ?? []}
+                    selectedPlayerEntry={bandQuery?.data?.selectedPlayerEntry ?? null}
+                    selectedBandEntry={bandQuery?.data?.selectedBandEntry ?? (selectedBandType === bandType ? selectedBandRankingQuery.data ?? null : null)}
+                    selectedAccountId={selectedAccountId}
+                    totalTeams={bandQuery?.data?.totalTeams ?? 0}
+                    error={bandQuery?.error ? String(bandQuery.error) : null}
+                    shouldStagger={shouldStagger}
+                    staggerOffset={getBandCardStaggerOffset(idx)}
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </Page>
@@ -217,11 +279,20 @@ export default function LeaderboardsOverviewPage() {
 
 function useLeaderboardsStyles() {
   return useMemo(() => ({
+    contentStack: {
+      ...flexColumn,
+      gap: Gap.section,
+    } as CSSProperties,
     grid: {
       display: Display.grid,
       gridTemplateColumns: GridTemplate.autoFillInstrument,
       gap: `${Gap.section}px ${Gap.md}px`,
       overflow: Overflow.hidden,
+    } as CSSProperties,
+    bandSectionStack: {
+      ...flexColumn,
+      gap: Gap.section,
+      width: '100%',
     } as CSSProperties,
     chartWrapper: {
       marginBottom: Gap.section,

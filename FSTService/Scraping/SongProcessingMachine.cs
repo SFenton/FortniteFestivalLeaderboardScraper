@@ -22,6 +22,7 @@ public class SongProcessingMachine
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly ILogger<SongProcessingMachine> _log;
     private readonly ResilientHttpExecutor? _executor;
+    private readonly SongMachineApiLookupRunner _lookupRunner;
 
     public SongProcessingMachine(
         ILeaderboardQuerier scraper,
@@ -39,29 +40,11 @@ public class SongProcessingMachine
         _syncTracker = syncTracker;
         _log = log;
         _executor = executor ?? (scraper as GlobalLeaderboardScraper)?.Executor;
+        _lookupRunner = new SongMachineApiLookupRunner(_executor, progress);
     }
 
     /// <summary>The underlying HTTP executor, if available. Used by <see cref="CyclicalSongMachine"/> to wire CDN probe callbacks.</summary>
     internal ResilientHttpExecutor? Executor => _executor;
-
-    /// <summary>
-    /// Fallback for when no <see cref="ResilientHttpExecutor"/> is available (e.g. tests
-    /// with a mock <see cref="ILeaderboardQuerier"/>). Acquires a slot, runs work,
-    /// and releases the slot — no CDN resilience.
-    /// </summary>
-    private static async Task<T> FallbackAcquireAndRunAsync<T>(
-        Func<Task> acquireSlot, Func<Task<T>> work, Action releaseSlot)
-    {
-        await acquireSlot();
-        try
-        {
-            return await work();
-        }
-        finally
-        {
-            releaseSlot();
-        }
-    }
 
     /// <summary>
     /// Run the machine to completion. Fires all songs in parallel, bounded only
@@ -333,19 +316,6 @@ public class SongProcessingMachine
 
                 // Acquire DOP slot only for the HTTP call, release immediately after.
                 // WithCdnResilienceAsync handles pre-wait, CDN catch/release/retry.
-                List<LeaderboardEntry> entries;
-                LowPriorityToken lowToken = default;
-
-                Func<Task> acquireSlot = async () =>
-                {
-                    if (isHighPriority) await pool.AcquireHighAsync(ct);
-                    else lowToken = await pool.AcquireLowAsync(ct);
-                };
-                Action releaseSlot = () =>
-                {
-                    if (isHighPriority) pool.ReleaseHigh();
-                    else pool.ReleaseLow(lowToken);
-                };
                 Func<Task<List<LeaderboardEntry>>> work = () =>
                 {
                     _progress.ReportPhaseRequest();
@@ -355,18 +325,16 @@ public class SongProcessingMachine
                         accessToken, callerAccountId, limiter: pool.Limiter, ct);
                 };
 
-                try
-                {
-                    entries = _executor is not null
-                        ? await _executor.WithCdnResilienceAsync(work, ct, acquireSlot, releaseSlot)
-                        : await FallbackAcquireAndRunAsync(acquireSlot, work, releaseSlot);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogDebug(ex, "Alltime batch failed for {Song}/{Instrument}.", songId, instrument);
-                    _progress.ReportPhaseRetry();
+                var lookupResult = await _lookupRunner.TryRunAsync(
+                    pool,
+                    isHighPriority,
+                    ct,
+                    work,
+                    ex => _log.LogDebug(ex, "Alltime batch failed for {Song}/{Instrument}.", songId, instrument));
+                if (!lookupResult.Succeeded || lookupResult.Value is null)
                     continue;
-                }
+
+                var entries = lookupResult.Value;
 
                 // DB processing runs outside the DOP slot — no API concurrency needed
                 var count = _resultProcessor.ProcessAlltimeResults(songId, instrument, entries, existingSet);
@@ -454,8 +422,6 @@ public class SongProcessingMachine
                 continue; // Song didn't exist in this season — skip
             }
 
-            bool firstBatchEmpty = false;
-
             for (int offset = 0; offset < seasonUsers.Count; offset += batchSize)
             {
                 var chunk = seasonUsers.GetRange(offset, Math.Min(batchSize, seasonUsers.Count - offset));
@@ -463,19 +429,6 @@ public class SongProcessingMachine
 
                 // Acquire DOP slot only for the HTTP call, release immediately after.
                 // WithCdnResilienceAsync handles pre-wait, CDN catch/release/retry.
-                List<SessionHistoryEntry> sessions;
-                LowPriorityToken lowToken = default;
-
-                Func<Task> acquireSlot = async () =>
-                {
-                    if (isHighPriority) await pool.AcquireHighAsync(ct);
-                    else lowToken = await pool.AcquireLowAsync(ct);
-                };
-                Action releaseSlot = () =>
-                {
-                    if (isHighPriority) pool.ReleaseHigh();
-                    else pool.ReleaseLow(lowToken);
-                };
                 Func<Task<List<SessionHistoryEntry>>> work = () =>
                 {
                     _progress.ReportPhaseRequest();
@@ -485,18 +438,15 @@ public class SongProcessingMachine
                         accessToken, callerAccountId, limiter: pool.Limiter, ct);
                 };
 
-                try
+                var lookupResult = await _lookupRunner.TryRunAsync(
+                    pool,
+                    isHighPriority,
+                    ct,
+                    work,
+                    ex => _log.LogDebug(ex, "Seasonal batch failed for {Song}/{Instrument}/{Season}.",
+                        songId, instrument, seasonPrefix));
+                if (!lookupResult.Succeeded || lookupResult.Value is null)
                 {
-                    sessions = _executor is not null
-                        ? await _executor.WithCdnResilienceAsync(work, ct, acquireSlot, releaseSlot)
-                        : await FallbackAcquireAndRunAsync(acquireSlot, work, releaseSlot);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogDebug(ex, "Seasonal batch failed for {Song}/{Instrument}/{Season}.",
-                        songId, instrument, seasonPrefix);
-                    _progress.ReportPhaseRetry();
-
                     // If the first batch fails (BadRequest = song not charted in this season),
                     // mark so other instruments can skip this season and earlier ones.
                     if (offset == 0)
@@ -504,6 +454,8 @@ public class SongProcessingMachine
 
                     continue;
                 }
+
+                var sessions = lookupResult.Value;
 
                 // If the first batch for this season returned zero sessions,
                 // the song likely didn't exist in this season (BadRequest or genuinely empty).

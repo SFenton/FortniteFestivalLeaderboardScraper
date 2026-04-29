@@ -77,6 +77,46 @@ describe('Sidebar', () => {
     expect(props.onDeselect).toHaveBeenCalled();
   });
 
+  it('shows selected band members in the sidebar footer', () => {
+    renderSidebar({
+      player: null,
+      selectedProfile: {
+        type: 'band',
+        bandId: 'band-1',
+        bandType: 'Band_Duets',
+        teamKey: 'p1:p2',
+        displayName: 'Player One + Player Two',
+        members: [
+          { accountId: 'p1', displayName: 'Player One' },
+          { accountId: 'p2', displayName: 'Player Two' },
+        ],
+      },
+    });
+
+    expect(screen.getByTestId('sidebar-band-profile')).toBeTruthy();
+    expect(screen.getByText('Player One + Player Two')).toBeTruthy();
+    expect(screen.getByText('Player One')).toBeTruthy();
+    expect(screen.getByText('Player Two')).toBeTruthy();
+    expect(screen.queryByText('Select Player Profile')).toBeNull();
+  });
+
+  it('deselects a selected band from the sidebar footer', () => {
+    const { props } = renderSidebar({
+      player: null,
+      selectedProfile: {
+        type: 'band',
+        bandId: 'band-1',
+        bandType: 'Band_Duets',
+        teamKey: 'p1:p2',
+        displayName: 'Player One + Player Two',
+        members: [],
+      },
+    });
+
+    fireEvent.click(screen.getByText('Deselect Band'));
+    expect(props.onDeselect).toHaveBeenCalled();
+  });
+
   it('calls onClose when overlay is clicked', () => {
     const { props, container } = renderSidebar();
     // Sidebar renders: <Fragment><div (overlay)>...<div (sidebar)>...</Fragment>

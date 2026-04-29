@@ -125,6 +125,30 @@ public sealed class HistoryReconStatusInfo
 }
 
 /// <summary>
+/// DTO for registered-band targeted lookup status.
+/// </summary>
+public sealed class RegisteredBandProcessingStatusInfo
+{
+    public string SourceId { get; init; } = "";
+    public string BandType { get; init; } = "";
+    public string TeamKey { get; init; } = "";
+    public string Status { get; init; } = "pending";
+    public int LookupsChecked { get; init; }
+    public int EntriesFound { get; init; }
+    public int TotalLookupsToCheck { get; init; }
+    public string? StartedAt { get; init; }
+    public string? CompletedAt { get; init; }
+    public string? LastResumedAt { get; init; }
+    public string? ErrorMessage { get; init; }
+}
+
+public sealed record RegisteredBandLookupProgressInfo(
+    string SongId,
+    string Scope,
+    int Season,
+    bool EntryFound);
+
+/// <summary>
 /// DTO for a discovered season window.
 /// </summary>
 public sealed class SeasonWindowInfo
@@ -277,13 +301,42 @@ public sealed class PlayerBandEntryDto
 }
 
 /// <summary>
-/// One member within a player band, including all instruments they have played with that band.
+/// One member within a player band, including instruments and optional score-event stats.
 /// </summary>
 public sealed class PlayerBandMemberDto
 {
     public string AccountId { get; init; } = "";
     public string? DisplayName { get; init; }
     public List<string> Instruments { get; init; } = [];
+    public int? Score { get; init; }
+    public int? Accuracy { get; init; }
+    public bool? IsFullCombo { get; init; }
+    public int? Stars { get; init; }
+    /// <summary>Epic difficulty level: 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert.</summary>
+    public int? Difficulty { get; init; }
+    public int? Season { get; init; }
+}
+
+/// <summary>
+/// One band score on a song-scoped band leaderboard.
+/// </summary>
+public sealed class SongBandLeaderboardEntryDto
+{
+    public string BandId { get; init; } = "";
+    public string BandType { get; init; } = "";
+    public string TeamKey { get; init; } = "";
+    public string? ComboId { get; init; }
+    public List<PlayerBandMemberDto> Members { get; init; } = [];
+    public int Score { get; init; }
+    public int Rank { get; init; }
+    public int Accuracy { get; init; }
+    public bool IsFullCombo { get; init; }
+    public int Stars { get; init; }
+    public int Season { get; init; }
+    /// <summary>Epic difficulty level: 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert.</summary>
+    public int Difficulty { get; init; }
+    public double Percentile { get; init; }
+    public string? EndTime { get; init; }
 }
 
 /// <summary>
@@ -693,6 +746,7 @@ public sealed class BandTeamRankingDto
     public string? ComboId { get; init; }
     public string TeamKey { get; init; } = "";
     public string[] TeamMembers { get; init; } = [];
+    public List<PlayerBandMemberDto> Members { get; init; } = [];
     public int SongsPlayed { get; init; }
     public int TotalChartedSongs { get; init; }
     public double Coverage { get; init; }

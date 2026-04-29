@@ -35,6 +35,8 @@ public sealed class PostScrapeOrchestrator
     private readonly PostScrapeBandExtractor _bandExtractor;
     private readonly BandScrapePhase _bandScrapePhase;
     private readonly BandLeaderboardPersistence _bandPersistence;
+    private readonly RegisteredBandProcessingOrchestrator? _registeredBandProcessingOrchestrator;
+    private readonly BandSearchProjectionBuilder? _bandSearchProjectionBuilder;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
@@ -59,7 +61,9 @@ public sealed class PostScrapeOrchestrator
         BandScrapePhase bandScrapePhase,
         BandLeaderboardPersistence bandPersistence,
         IOptions<ScraperOptions> options,
-        ILogger<PostScrapeOrchestrator> log)
+        ILogger<PostScrapeOrchestrator> log,
+        BandSearchProjectionBuilder? bandSearchProjectionBuilder,
+        RegisteredBandProcessingOrchestrator? registeredBandProcessingOrchestrator = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -80,6 +84,8 @@ public sealed class PostScrapeOrchestrator
         _bandExtractor = bandExtractor;
         _bandScrapePhase = bandScrapePhase;
         _bandPersistence = bandPersistence;
+        _registeredBandProcessingOrchestrator = registeredBandProcessingOrchestrator;
+        _bandSearchProjectionBuilder = bandSearchProjectionBuilder;
         _options = options;
         _log = log;
     }
@@ -142,11 +148,76 @@ public sealed class PostScrapeOrchestrator
         }
 
         // ── Band extraction (SQL-only) ──
+        var bandExtractionResult = BandExtractionResult.Empty;
         if (resolvedPhases.HasFlag(ScrapePhase.BandExtraction))
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
             _progress.SetSubOperation("extracting_band_context");
-            await RunPhaseAsync("BandExtraction", () => _bandExtractor.RunAsync(ct));
+            bandExtractionResult = await RunPhaseAsync("BandExtraction", () => _bandExtractor.RunAsync(ct), BandExtractionResult.Empty);
+        }
+
+        if (bandScrapeTask is not null)
+        {
+            try
+            {
+                await bandScrapeTask;
+                _log.LogInformation("Background band scrape completed successfully.");
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Background band scrape failed. Band data may be incomplete this cycle.");
+            }
+            finally
+            {
+                bandScrapeTask = null;
+            }
+        }
+
+        var registeredBandProcessingResult = RegisteredBandProcessingResult.Empty;
+        if (ShouldRunRegisteredBandProcessing(resolvedPhases))
+        {
+            var registeredBandProcessingOrchestrator = _registeredBandProcessingOrchestrator!;
+            var bandAccessToken = await _tokenManager.GetAccessTokenAsync(ct);
+            if (bandAccessToken is not null)
+            {
+                var chartedSongIds = service.Songs
+                    .Select(static song => song.track?.su)
+                    .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+                    .Select(static songId => songId!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var seasonWindows = _persistence.Meta.GetSeasonWindows();
+                _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+                _progress.SetSubOperation("registered_band_targeted_processing");
+                registeredBandProcessingResult = await RunPhaseAsync(
+                    "RegisteredBandTargetedProcessing",
+                    () => registeredBandProcessingOrchestrator.RunAsync(
+                        chartedSongIds,
+                        seasonWindows,
+                        bandAccessToken,
+                        _tokenManager.AccountId!,
+                        _pool,
+                        ct),
+                    RegisteredBandProcessingResult.Empty);
+            }
+            else
+            {
+                _log.LogWarning("No access token for registered-band targeted processing. Will retry next pass.");
+            }
+        }
+
+        if (ShouldRunBandMaintenance(resolvedPhases) || registeredBandProcessingResult.ImpactedTeamsByBandType.Count > 0)
+        {
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
+            _progress.SetSubOperation("maintaining_band_projection");
+            var mergedExtractionResult = bandExtractionResult with
+            {
+                ImpactedTeamsByBandType = MergeImpactedTeams(
+                    bandExtractionResult.ImpactedTeamsByBandType,
+                    registeredBandProcessingResult.ImpactedTeamsByBandType),
+            };
+            await RunPhaseAsync("BandMaintenance", () => RunBandMaintenanceAsync(ctx, mergedExtractionResult, ct));
         }
 
         // ── Solo rankings ──
@@ -217,6 +288,72 @@ public sealed class PostScrapeOrchestrator
                 _log.LogWarning(ex, "Background band scrape failed. Band data may be incomplete this cycle.");
             }
         }
+    }
+
+    private static bool ShouldRunBandMaintenance(ScrapePhase resolvedPhases) =>
+        resolvedPhases.HasFlag(ScrapePhase.BandScrape) ||
+        resolvedPhases.HasFlag(ScrapePhase.BandScrapePhase) ||
+        resolvedPhases.HasFlag(ScrapePhase.BandExtraction) ||
+        resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment);
+
+    private bool ShouldRunRegisteredBandProcessing(ScrapePhase resolvedPhases) =>
+        _registeredBandProcessingOrchestrator is not null &&
+        _options.Value.EnableRegisteredBandTargetedProcessing &&
+        (resolvedPhases.HasFlag(ScrapePhase.BandScrape) ||
+         resolvedPhases.HasFlag(ScrapePhase.BandScrapePhase) ||
+         resolvedPhases.HasFlag(ScrapePhase.BandExtraction) ||
+         resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers));
+
+    private async Task RunBandMaintenanceAsync(ScrapePassContext ctx, BandExtractionResult extractionResult, CancellationToken ct)
+    {
+        var pruneResult = PruneBandEntries(ctx);
+        var impactedTeams = MergeImpactedTeams(
+            extractionResult.ImpactedTeamsByBandType,
+            pruneResult.AffectedTeamsByBandType);
+
+        if (_bandSearchProjectionBuilder is null)
+            return;
+
+        var refreshResult = await _bandSearchProjectionBuilder.RefreshIncrementalAsync(impactedTeams, ct);
+        if (!refreshResult.ProjectionAvailable)
+        {
+            _log.LogDebug("Band search projection refresh skipped because no published projection state exists.");
+            return;
+        }
+
+        _log.LogInformation(
+            "Band search projection maintenance complete: {ImpactedTeams:N0} impacted team(s), " +
+            "teams {DeletedTeams:N0}->{InsertedTeams:N0}, members {DeletedMembers:N0}->{InsertedMembers:N0}.",
+            refreshResult.ImpactedTeams,
+            refreshResult.DeletedTeamRows,
+            refreshResult.InsertedTeamRows,
+            refreshResult.DeletedMemberRows,
+            refreshResult.InsertedMemberRows);
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> MergeImpactedTeams(
+        params IReadOnlyDictionary<string, IReadOnlyCollection<string>>[] sources)
+    {
+        var merged = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var source in sources)
+        {
+            foreach (var (bandType, teamKeys) in source)
+            {
+                if (!merged.TryGetValue(bandType, out var set))
+                {
+                    set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    merged[bandType] = set;
+                }
+
+                foreach (var teamKey in teamKeys)
+                    set.Add(teamKey);
+            }
+        }
+
+        return merged.ToDictionary(
+            static kvp => kvp.Key,
+            static kvp => (IReadOnlyCollection<string>)kvp.Value.ToArray(),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private void StartBestEffortCacheWarm(IReadOnlyCollection<string> registeredIds)
@@ -416,7 +553,6 @@ public sealed class PostScrapeOrchestrator
             try
             {
                 PruneExcessEntries(ctx);
-                PruneBandEntries(ctx);
                 _progress.CompleteBranch("pruning", "complete");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -780,17 +916,19 @@ public sealed class PostScrapeOrchestrator
     /// entries at the top plus the next 10K valid entries plus any team containing a
     /// registered user. Cascades to band_member_stats and band_members.
     /// </summary>
-    internal void PruneBandEntries(ScrapePassContext ctx)
+    internal BandPruneResult PruneBandEntries(ScrapePassContext ctx)
     {
         try
         {
-            var deleted = _bandPersistence.PruneBandEntries(ctx.RegisteredIds);
-            if (deleted > 0)
-                _log.LogInformation("Band pruning complete: {Deleted:N0} entries removed.", deleted);
+            var result = _bandPersistence.PruneBandEntriesDetailed(ctx.RegisteredIds);
+            if (result.DeletedEntries > 0)
+                _log.LogInformation("Band pruning complete: {Deleted:N0} entries removed.", result.DeletedEntries);
+            return result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Band entry pruning failed. Will retry next pass.");
+            return BandPruneResult.Empty;
         }
     }
 

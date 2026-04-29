@@ -19,4 +19,9 @@ describe('HeaderProfileButton', () => {
     render(<HeaderProfileButton hasPlayer={true} onClick={() => {}} />);
     expect(screen.getByRole('button').getAttribute('aria-label')).toBeTruthy();
   });
+
+  it('marks the button as a band profile when a band is selected', () => {
+    render(<HeaderProfileButton hasPlayer={false} profileType="band" onClick={() => {}} />);
+    expect(screen.getByRole('button').getAttribute('data-profile-type')).toBe('band');
+  });
 });

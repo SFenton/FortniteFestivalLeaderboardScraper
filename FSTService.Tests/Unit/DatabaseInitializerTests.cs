@@ -15,9 +15,12 @@ public class DatabaseInitializerTests : IDisposable
 {
     private readonly InMemoryMetaDatabase _metaFixture;
     private readonly GlobalLeaderboardPersistence _persistence;
+    private readonly string _tempDir;
 
     public DatabaseInitializerTests()
     {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"startup_init_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
         _metaFixture = new InMemoryMetaDatabase();
         var loggerFactory = Substitute.For<ILoggerFactory>();
         loggerFactory.CreateLogger(Arg.Any<string>()).Returns(Substitute.For<ILogger>());
@@ -32,6 +35,7 @@ public class DatabaseInitializerTests : IDisposable
     {
         _persistence.Dispose();
         _metaFixture.Dispose();
+        try { Directory.Delete(_tempDir, true); } catch { }
     }
 
     [Fact]
@@ -45,6 +49,7 @@ public class DatabaseInitializerTests : IDisposable
 
         var init = new StartupInitializer(
             _persistence, festivalService, shopService, lifetime,
+            Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
             Substitute.For<ILogger<StartupInitializer>>());
 
         Assert.False(init.IsReady);
@@ -63,6 +68,7 @@ public class DatabaseInitializerTests : IDisposable
 
         var init = new StartupInitializer(
             _persistence, festivalService, shopService, lifetime,
+            Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
             Substitute.For<ILogger<StartupInitializer>>());
 
         await init.StartAsync(CancellationToken.None);
@@ -87,6 +93,7 @@ public class DatabaseInitializerTests : IDisposable
 
         var init = new StartupInitializer(
             _persistence, festivalService, shopService, lifetime,
+            Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
             Substitute.For<ILogger<StartupInitializer>>());
 
         await init.StopAsync(CancellationToken.None);

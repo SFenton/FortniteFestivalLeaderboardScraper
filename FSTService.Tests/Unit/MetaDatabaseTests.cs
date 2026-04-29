@@ -3,6 +3,7 @@ using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace FSTService.Tests.Unit;
 
@@ -637,15 +638,152 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Contains("acct1", Db.GetRegisteredAccountIds());
     }
 
+    [Fact]
+    public void RegisterSelectedBandActivity_registers_band_and_member_accounts()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+
+        var result = Db.RegisterSelectedBandActivity("Band_Duets", "acct1:acct2");
+
+        Assert.True(result.Registered);
+        Assert.Equal(["acct1", "acct2"], result.MemberAccountIds);
+        Assert.Contains("acct1", Db.GetRegisteredAccountIds());
+        Assert.Contains("acct2", Db.GetRegisteredAccountIds());
+        var registeredBand = Assert.Single(Db.GetRegisteredBands());
+        Assert.Equal("web-band-tracker", registeredBand.SourceId);
+        Assert.Equal("Band_Duets", registeredBand.BandType);
+        Assert.Equal("acct1:acct2", registeredBand.TeamKey);
+        Assert.Equal(result.BandId, registeredBand.BandId);
+
+        var acct1Backfill = Db.GetBackfillStatus("acct1");
+        var acct2Backfill = Db.GetBackfillStatus("acct2");
+        Assert.Equal("pending", acct1Backfill?.Status);
+        Assert.Equal(0, acct1Backfill?.TotalSongsToCheck);
+        Assert.Equal("pending", acct2Backfill?.Status);
+        Assert.Equal(0, acct2Backfill?.TotalSongsToCheck);
+
+        var processingStatus = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2");
+        Assert.Equal("pending", processingStatus?.Status);
+    }
+
+    [Fact]
+    public void RegisteredBandProcessingStatus_tracks_progress_and_completion()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+        Db.RegisterSelectedBandActivity("Band_Duets", "acct1:acct2");
+
+        Db.EnsureRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2", 2);
+        Db.StartRegisteredBandProcessing("web-band-tracker", "Band_Duets", "acct1:acct2");
+        Db.MarkRegisteredBandLookupChecked("web-band-tracker", "Band_Duets", "acct1:acct2", "song-a", "alltime", 0, true);
+        Db.UpdateRegisteredBandProcessingProgress("web-band-tracker", "Band_Duets", "acct1:acct2", 1, 1, 2);
+
+        var progress = Db.GetCheckedRegisteredBandLookups("web-band-tracker", "Band_Duets", "acct1:acct2");
+        Assert.Single(progress);
+        Assert.True(progress[0].EntryFound);
+
+        var inProgress = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2");
+        Assert.Equal("in_progress", inProgress?.Status);
+        Assert.Equal(1, inProgress?.LookupsChecked);
+        Assert.Equal(2, inProgress?.TotalLookupsToCheck);
+
+        Db.MarkRegisteredBandLookupChecked("web-band-tracker", "Band_Duets", "acct1:acct2", "song-a", "season", 14, false);
+        Db.CompleteRegisteredBandProcessing("web-band-tracker", "Band_Duets", "acct1:acct2", 2, 1);
+
+        var complete = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2");
+        Assert.Equal("complete", complete?.Status);
+        Assert.Equal(2, complete?.LookupsChecked);
+        Assert.Equal(1, complete?.EntriesFound);
+        Assert.NotNull(complete?.CompletedAt);
+    }
+
+    [Fact]
+    public void RegisterSelectedBandActivity_does_not_reset_completed_member_backfill()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+        Db.EnqueueBackfill("acct1", 50);
+        Db.StartBackfill("acct1");
+        Db.CompleteBackfill("acct1");
+
+        var result = Db.RegisterSelectedBandActivity("Band_Duets", "acct1:acct2");
+
+        Assert.True(result.Registered);
+        Assert.Equal("complete", Db.GetBackfillStatus("acct1")?.Status);
+        Assert.Equal("pending", Db.GetBackfillStatus("acct2")?.Status);
+    }
+
+    [Fact]
+    public void RegisterSelectedBandActivity_rejects_mismatched_band_id()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+
+        var result = Db.RegisterSelectedBandActivity("Band_Duets", "acct1:acct2", "not-the-band-id");
+
+        Assert.False(result.Registered);
+        Assert.Empty(result.MemberAccountIds);
+        Assert.Empty(Db.GetRegisteredBands());
+        Assert.Empty(Db.GetRegisteredAccountIds());
+        Assert.Null(Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2"));
+    }
+
+    [Fact]
+    public void PruneStaleWebRegistrations_removes_stale_band_profile_rows()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+        Db.RegisterSelectedBandActivity("Band_Duets", "acct1:acct2");
+        var staleAt = DateTime.UtcNow.AddHours(-8);
+        SetRegistrationActivity("acct1", "web-band-tracker", staleAt);
+        SetRegistrationActivity("acct2", "web-band-tracker", staleAt);
+        SetRegisteredBandActivity("Band_Duets", "acct1:acct2", staleAt);
+
+        var pruned = Db.PruneStaleWebRegistrations(DateTime.UtcNow.AddHours(-4));
+
+        Assert.Equal(3, pruned);
+        Assert.Empty(Db.GetRegisteredBands());
+        Assert.Empty(Db.GetRegisteredAccountIds());
+    }
+
     private void SetWebRegistrationActivity(string accountId, DateTime lastActivityAt)
+        => SetRegistrationActivity(accountId, "web-tracker", lastActivityAt);
+
+    private void SetRegistrationActivity(string accountId, string deviceId, DateTime lastActivityAt)
     {
         using var conn = DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE registered_users SET last_activity_at = @lastActivityAt, registered_at = @registeredAt WHERE device_id = @deviceId AND account_id = @accountId";
-        cmd.Parameters.AddWithValue("deviceId", "web-tracker");
+        cmd.Parameters.AddWithValue("deviceId", deviceId);
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("lastActivityAt", lastActivityAt);
         cmd.Parameters.AddWithValue("registeredAt", lastActivityAt);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SetRegisteredBandActivity(string bandType, string teamKey, DateTime lastActivityAt)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE registered_bands SET last_activity_at = @lastActivityAt, registered_at = @registeredAt WHERE source_id = @sourceId AND band_type = @bandType AND team_key = @teamKey";
+        cmd.Parameters.AddWithValue("sourceId", "web-band-tracker");
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("lastActivityAt", lastActivityAt);
+        cmd.Parameters.AddWithValue("registeredAt", lastActivityAt);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertBandProjection(string bandType, string teamKey, string[] memberAccountIds)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO band_search_team_projection (band_type, team_key, band_id, appearance_count, member_account_ids, updated_at)
+            VALUES (@bandType, @teamKey, @bandId, @appearanceCount, @memberAccountIds, @updatedAt)
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("bandId", $"test-{bandType}-{teamKey}");
+        cmd.Parameters.AddWithValue("appearanceCount", 1);
+        cmd.Parameters.Add("memberAccountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = memberAccountIds;
+        cmd.Parameters.AddWithValue("updatedAt", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }
 

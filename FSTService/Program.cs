@@ -333,6 +333,21 @@ builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
 builder.Services.AddSingleton<BandScrapePhase>();
 builder.Services.AddSingleton<BandLeaderboardPersistence>();
+builder.Services.AddSingleton<IRegisteredBandLookupStrategy, DirectRegisteredBandLookupStrategy>();
+builder.Services.AddSingleton<RegisteredBandProcessingOrchestrator>(sp =>
+{
+    var scraper = sp.GetRequiredService<ILeaderboardQuerier>();
+    var executor = (scraper as GlobalLeaderboardScraper)?.Executor;
+    return new RegisteredBandProcessingOrchestrator(
+        sp.GetRequiredService<IMetaDatabase>(),
+        sp.GetRequiredService<BandLeaderboardPersistence>(),
+        sp.GetRequiredService<IRegisteredBandLookupStrategy>(),
+        sp.GetRequiredService<ScrapeProgressTracker>(),
+        sp.GetRequiredService<IOptions<ScraperOptions>>(),
+        sp.GetRequiredService<ILogger<RegisteredBandProcessingOrchestrator>>(),
+        executor);
+});
+builder.Services.AddSingleton<BandSearchProjectionBuilder>();
 builder.Services.AddSingleton<PostScrapeBandExtractor>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
 builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
@@ -552,8 +567,6 @@ notificationService.SetShopProvider(shopService);
 notificationService.SetFestivalService(festivalService);
 notificationService.SetSyncTracker(app.Services.GetRequiredService<UserSyncProgressTracker>());
 
-const string selectedPlayerHeaderName = "X-FST-Selected-Player";
-
 app.UseCors();
 app.UseWebSockets(new WebSocketOptions
 {
@@ -577,16 +590,19 @@ app.Use(async (context, next) =>
         return;
     }
 
-    if (!context.Request.Headers.TryGetValue(selectedPlayerHeaderName, out var values))
+    if (!SelectedProfileHeaders.TryParse(context.Request.Headers, out var selection) || selection is null)
         return;
 
-    var accountId = values.ToString().Trim();
-    if (string.IsNullOrWhiteSpace(accountId) || accountId.Length > 128)
-        return;
-
-    context.RequestServices
-        .GetRequiredService<IMetaDatabase>()
-        .TouchWebRegistrationActivity(accountId);
+    var metaDatabase = context.RequestServices.GetRequiredService<IMetaDatabase>();
+    switch (selection)
+    {
+        case SelectedPlayerSelection player:
+            metaDatabase.TouchWebRegistrationActivity(player.AccountId);
+            break;
+        case SelectedBandSelection band:
+            metaDatabase.RegisterSelectedBandActivity(band.BandType, band.TeamKey, band.BandId);
+            break;
+    }
 });
 
 // Serve static files (wwwroot/) and fall back to index.html for non-API routes,

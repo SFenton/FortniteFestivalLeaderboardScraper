@@ -221,12 +221,12 @@ describe('App — mobile FAB branches', () => {
     const groups = mergePageQuickLinksIntoFabGroups(
       [createAction('Quick Links')],
       [createAction('Leaderboard Rivals')],
-      [createAction('Find Player')],
+      [createAction('Search')],
     );
 
     expect(groups.map(group => group.map(action => action.label))).toEqual([
       ['Quick Links', 'Leaderboard Rivals'],
-      ['Find Player'],
+      ['Search'],
     ]);
   });
 
@@ -236,12 +236,12 @@ describe('App — mobile FAB branches', () => {
     const groups = mergePageQuickLinksIntoFabGroups(
       [createAction('Quick Links')],
       [],
-      [createAction('Find Player')],
+      [createAction('Search')],
     );
 
     expect(groups.map(group => group.map(action => action.label))).toEqual([
       ['Quick Links'],
-      ['Find Player'],
+      ['Search'],
     ]);
   });
 
@@ -262,7 +262,7 @@ describe('App — mobile FAB branches', () => {
       expect(container.textContent).toContain('Test Song');
     }, { timeout: 5000 });
     // FAB should be rendered for mobile /songs — look for the FAB search bar
-    container.querySelector('.fab-search-bar') || container.querySelector('[class*="fab"]') || container.querySelector('[class*="search"]');
+    expect(container.querySelector('.fab-search-bar') || container.querySelector('[class*="fab"]') || container.querySelector('[class*="search"]')).toBeTruthy();
     expect(container.innerHTML.length).toBeGreaterThan(200);
   });
 
@@ -273,7 +273,7 @@ describe('App — mobile FAB branches', () => {
       expect(container.innerHTML.length).toBeGreaterThan(200);
     });
     // Mobile header should contain the nav title "Songs"
-    container.querySelector('[class*="mobileHeader"]') || container.querySelector('[class*="navTitle"]');
+    expect(container.textContent).toContain('Songs');
     expect(container.innerHTML).toBeTruthy();
   });
 
@@ -485,7 +485,7 @@ describe('App — mobile FAB branches', () => {
 
     fireEvent.click(screen.getByLabelText('Actions'));
     await waitFor(() => {
-      expect(screen.getByText('Find Player')).toBeDefined();
+      expect(screen.getByText('Search')).toBeDefined();
     });
     expect(screen.getByText('View Paths')).toBeDefined();
     window.location.hash = '';
@@ -513,7 +513,7 @@ describe('App — mobile FAB branches', () => {
 
     fireEvent.click(screen.getByLabelText('Actions'));
     await waitFor(() => {
-      expect(screen.getByText('Find Player')).toBeDefined();
+      expect(screen.getByText('Search')).toBeDefined();
     });
     expect(screen.queryByText('View Paths')).toBeNull();
     window.location.hash = '';

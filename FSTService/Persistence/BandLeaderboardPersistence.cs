@@ -631,8 +631,11 @@ public sealed class BandLeaderboardPersistence
     /// </summary>
     /// <returns>Total band_entries rows deleted.</returns>
     public int PruneBandEntries(IReadOnlySet<string> registeredIds, int maxValidEntries = 10000)
+        => PruneBandEntriesDetailed(registeredIds, maxValidEntries).DeletedEntries;
+
+    public BandPruneResult PruneBandEntriesDetailed(IReadOnlySet<string> registeredIds, int maxValidEntries = 10000)
     {
-        if (maxValidEntries <= 0) return 0;
+        if (maxValidEntries <= 0) return BandPruneResult.Empty;
 
         var affectedTeamsByBandType = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var affectedAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -805,7 +808,14 @@ public sealed class BandLeaderboardPersistence
                 affectedTeamsByBandType.Sum(static kvp => kvp.Value.Count));
         }
 
-        return deleted;
+        return new BandPruneResult(
+            deleted,
+            statsDeleted,
+            lookupsDeleted,
+            affectedTeamsByBandType.ToDictionary(
+                static kvp => kvp.Key,
+                static kvp => (IReadOnlyCollection<string>)kvp.Value.ToArray(),
+                StringComparer.OrdinalIgnoreCase));
     }
 
     private void MarkBandTeamMembershipStateForAccounts(IReadOnlyCollection<string> accountIds)
@@ -1242,4 +1252,17 @@ public sealed class BandLeaderboardPersistence
         DateTime UpdatedAt);
 
     private sealed record BandTeamMembershipComboKey(string BandType, string TeamKey, string InstrumentCombo);
+}
+
+public sealed record BandPruneResult(
+    int DeletedEntries,
+    int DeletedMemberStats,
+    int DeletedMemberLookups,
+    IReadOnlyDictionary<string, IReadOnlyCollection<string>> AffectedTeamsByBandType)
+{
+    public static BandPruneResult Empty { get; } = new(
+        0,
+        0,
+        0,
+        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase));
 }

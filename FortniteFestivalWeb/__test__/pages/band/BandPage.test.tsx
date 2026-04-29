@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { ACCURACY_SCALE } from '@festival/core';
+import { Colors } from '@festival/theme';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 
@@ -16,6 +17,8 @@ const mockApi = vi.hoisted(() => ({
 
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
 
+const SELECTED_PROFILE_STORAGE_KEY = 'fst:selectedProfile';
+
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
@@ -24,6 +27,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
+  localStorage.clear();
   vi.clearAllMocks();
   mockApi.getSongs.mockResolvedValue({
     count: 6,
@@ -100,6 +104,10 @@ beforeEach(() => {
     teamMembers: [
       { accountId: 'p1', displayName: 'Player One' },
       { accountId: 'p2', displayName: 'Player Two' },
+    ],
+    members: [
+      { accountId: 'p1', displayName: 'Player One', instruments: ['Solo_Guitar'] },
+      { accountId: 'p2', displayName: 'Player Two', instruments: ['Solo_Bass'] },
     ],
     songsPlayed: 2,
     totalChartedSongs: 10,
@@ -272,6 +280,73 @@ describe('BandPage', () => {
     expect(screen.getByText('Song Zeta')).toBeTruthy();
   });
 
+  it('does not select a band just because the band page loads', async () => {
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    expect(screen.getByRole('button', { name: 'Select Band Profile' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Select Band Profile' })).toHaveStyle({ backgroundColor: Colors.accentPurple });
+    expect(localStorage.getItem(SELECTED_PROFILE_STORAGE_KEY)).toBeNull();
+  });
+
+  it('selects the current band with member summaries when Select Band Profile is clicked', async () => {
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Band Profile' }));
+
+    expect(JSON.parse(localStorage.getItem(SELECTED_PROFILE_STORAGE_KEY)!)).toEqual({
+      type: 'band',
+      bandId: 'band-guid-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'Player One + Player Two',
+      members: [
+        { accountId: 'p1', displayName: 'Player One' },
+        { accountId: 'p2', displayName: 'Player Two' },
+      ],
+    });
+  });
+
+  it('does not show an on-page deselect action for the selected band', async () => {
+    localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
+      type: 'band',
+      bandId: 'band-guid-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'Player One + Player Two',
+      members: [
+        { accountId: 'p1', displayName: 'Player One' },
+        { accountId: 'p2', displayName: 'Player Two' },
+      ],
+    }));
+
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    expect(screen.queryByRole('button', { name: 'Deselect Band' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select Band Profile' })).toBeNull();
+    expect(JSON.parse(localStorage.getItem(SELECTED_PROFILE_STORAGE_KEY)!)).toMatchObject({
+      type: 'band',
+      bandId: 'band-guid-1',
+      teamKey: 'p1:p2',
+    });
+  });
+
+  it('fades the select band profile action after selecting the current band', async () => {
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select Band Profile' }));
+
+    expect(screen.queryByRole('button', { name: 'Deselect Band' })).toBeNull();
+    expect(screen.getByTestId('band-select-profile-slot')).toHaveStyle({ opacity: '0' });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+
+    expect(screen.queryByTestId('band-select-profile-slot')).toBeNull();
+  });
+
   it('uses friendly fallback text instead of account ids when member names are missing', async () => {
     mockApi.getBandDetail.mockResolvedValueOnce({
       band: {
@@ -339,5 +414,74 @@ describe('BandPage', () => {
     expect(mockApi.getBandDetail).not.toHaveBeenCalled();
     expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
     expect(screen.getByTestId('current-location')).toHaveTextContent('/bands/band-guid-1?accountId=p1&bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two');
+  });
+
+  it('loads band detail pages from team context without requiring an account id', async () => {
+    renderBandPage('/bands/band-guid-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two');
+    await advancePastSpinner();
+
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expect(mockApi.getPlayerBandsByType).not.toHaveBeenCalled();
+    expect(mockApi.getBandDetail).not.toHaveBeenCalled();
+    expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
+    expect(screen.getByText('Band Summary')).toBeTruthy();
+    expect(screen.getByText('2 / 10')).toBeTruthy();
+  });
+
+  it('uses route names as member fallbacks for ranking-only band context', async () => {
+    mockApi.getBandRanking.mockResolvedValueOnce({
+      bandId: 'band-guid-2',
+      bandType: 'Band_Duets',
+      teamKey: 'p3:p4',
+      teamMembers: [
+        { accountId: 'p3', displayName: null },
+        { accountId: 'p4', displayName: '' },
+      ],
+      members: [
+        { accountId: 'p3', displayName: null, instruments: ['Solo_Drums'] },
+        { accountId: 'p4', displayName: '', instruments: ['Solo_Vocals'] },
+      ],
+      songsPlayed: 3,
+      totalChartedSongs: 10,
+      coverage: 0.3,
+      rawSkillRating: 12,
+      adjustedSkillRating: 10,
+      adjustedSkillRank: 7,
+      weightedRating: 9,
+      weightedRank: 8,
+      fcRate: 0.5,
+      fcRateRank: 9,
+      totalScore: 123456,
+      totalScoreRank: 10,
+      avgAccuracy: 98.5 * ACCURACY_SCALE,
+      fullComboCount: 1,
+      avgStars: 5.5,
+      bestRank: 1,
+      avgRank: 4.5,
+      rawWeightedRating: 9,
+      computedAt: '2026-04-24T00:00:00Z',
+      totalRankedTeams: 50,
+    });
+
+    renderBandPage('/bands/band-guid-2?bandType=Band_Duets&teamKey=p3%3Ap4&names=Friendly%20Three%2C%20Friendly%20Four');
+    await advancePastSpinner();
+
+    expect(mockApi.getBandDetail).not.toHaveBeenCalled();
+    expect(await screen.findByText('Friendly Three + Friendly Four')).toBeTruthy();
+    const memberCards = screen.getAllByTestId('band-member-card');
+    expect(memberCards[0]).toHaveTextContent('Friendly Three');
+    expect(memberCards[1]).toHaveTextContent('Friendly Four');
+  });
+
+  it('does not fall back to the clean band detail endpoint when contextual ranking fails', async () => {
+    mockApi.getBandRanking.mockRejectedValueOnce(new Error('Team not found'));
+
+    renderBandPage('/bands/band-guid-missing?bandType=Band_Duets&teamKey=missing-a%3Amissing-b&names=Missing%20Band');
+    await advancePastSpinner();
+
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'missing-a:missing-b');
+    expect(mockApi.getBandDetail).not.toHaveBeenCalled();
+    expect(await screen.findByText('Band not found')).toBeTruthy();
+    expect(screen.getByText('Team not found')).toBeTruthy();
   });
 });

@@ -1,21 +1,26 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { IoPerson } from 'react-icons/io5';
+import { IoPeople, IoPerson } from 'react-icons/io5';
 import { Colors, IconSize, Border, TRANSITION_MS, CssValue, CssProp, flexCenter, transition, transitions, border } from '@festival/theme';
+
+export type HeaderProfileType = 'none' | 'player' | 'band';
 
 export interface HeaderProfileButtonProps {
   hasPlayer: boolean;
+  profileType?: HeaderProfileType;
   onClick: () => void;
 }
 
-export default function HeaderProfileButton({ hasPlayer, onClick }: HeaderProfileButtonProps) {
+export default function HeaderProfileButton({ hasPlayer, profileType, onClick }: HeaderProfileButtonProps) {
   const { t } = useTranslation();
-  const s = useStyles(hasPlayer);
+  const resolvedProfileType = profileType ?? (hasPlayer ? 'player' : 'none');
+  const s = useStyles(resolvedProfileType !== 'none');
+  const Icon = resolvedProfileType === 'band' ? IoPeople : IoPerson;
   return (
-    <button style={s.button} onClick={onClick} aria-label={t('aria.profile')}>
+    <button style={s.button} onClick={onClick} aria-label={t('aria.profile')} data-profile-type={resolvedProfileType}>
       <span style={s.circle}>
-        <IoPerson size={IconSize.xs} />
+        <Icon size={IconSize.xs} />
       </span>
     </button>
   );

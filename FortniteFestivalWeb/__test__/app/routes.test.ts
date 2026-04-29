@@ -26,6 +26,14 @@ describe('Routes', () => {
     expect(Routes.leaderboard('abc-123', 'Solo_Guitar')).toBe('/songs/abc-123/Solo_Guitar');
   });
 
+  it('generates song band leaderboard path', () => {
+    expect(Routes.songBandLeaderboard('abc-123', 'Band_Duets')).toBe('/songs/abc-123/bands/Band_Duets');
+  });
+
+  it('generates song band leaderboard path with page', () => {
+    expect(Routes.songBandLeaderboard('abc-123', 'Band_Quad', 3)).toBe('/songs/abc-123/bands/Band_Quad?page=3');
+  });
+
   it('generates player history path', () => {
     expect(Routes.playerHistory('abc-123', 'Solo_Guitar')).toBe('/songs/abc-123/Solo_Guitar/history');
   });
@@ -80,6 +88,10 @@ describe('Routes', () => {
 
   it('generates full combo rankings path with rankBy and page', () => {
     expect(Routes.fullComboRankings('05', 'totalscore', 2)).toBe('/leaderboards/all?combo=05&rankBy=totalscore&page=2');
+  });
+
+  it('generates band rankings path with rankBy and page', () => {
+    expect(Routes.bandRankings('Band_Duets', 'totalscore', 2)).toBe('/leaderboards/bands/Band_Duets?rankBy=totalscore&page=2');
   });
 
   it('generates player bands path with group, page, and friendly name', () => {
@@ -152,6 +164,16 @@ describe('RoutePatterns', () => {
 
     it('does not match /songs/abc/def/ghi', () => {
       expect(RoutePatterns.leaderboard.test('/songs/abc/def/ghi')).toBe(false);
+    });
+  });
+
+  describe('songBandLeaderboard', () => {
+    it('matches /songs/abc/bands/Band_Duets', () => {
+      expect(RoutePatterns.songBandLeaderboard.test('/songs/abc/bands/Band_Duets')).toBe(true);
+    });
+
+    it('does not match solo leaderboard routes', () => {
+      expect(RoutePatterns.songBandLeaderboard.test('/songs/abc/Solo_Guitar')).toBe(false);
     });
   });
 

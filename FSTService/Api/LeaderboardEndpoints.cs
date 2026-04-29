@@ -9,6 +9,101 @@ public static partial class ApiEndpoints
 {
     public static void MapLeaderboardEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/leaderboard/{songId}/bands/all", (
+            HttpContext httpContext,
+            string songId,
+            int? top,
+            string? accountId,
+            string? selectedBandType,
+            string? selectedTeamKey,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            var effectiveTop = Math.Clamp(top ?? 10, 1, 50);
+            var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
+            var normalizedSelectedBandType = string.IsNullOrWhiteSpace(selectedBandType) ? null : selectedBandType.Trim();
+            var normalizedSelectedTeamKey = string.IsNullOrWhiteSpace(selectedTeamKey) ? null : selectedTeamKey.Trim();
+            var bands = BandInstrumentMapping.AllBandTypes.Select(bandType =>
+            {
+                var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, 0);
+                var selectedPlayerEntry = selectedAccountId is null
+                    ? null
+                    : metaDb.GetSongBandLeaderboardEntryForAccount(songId, bandType, selectedAccountId);
+                var selectedBandEntry = normalizedSelectedBandType == bandType && normalizedSelectedTeamKey is not null
+                    ? metaDb.GetSongBandLeaderboardEntryForTeam(songId, bandType, normalizedSelectedTeamKey)
+                    : null;
+                IEnumerable<SongBandLeaderboardEntryDto> entriesForNames = entries;
+                if (selectedPlayerEntry is not null)
+                    entriesForNames = entriesForNames.Append(selectedPlayerEntry);
+                if (selectedBandEntry is not null)
+                    entriesForNames = entriesForNames.Append(selectedBandEntry);
+                var names = metaDb.GetDisplayNames(entriesForNames.SelectMany(entry => entry.Members.Select(member => member.AccountId)));
+                return new
+                {
+                    bandType,
+                    count = entries.Count,
+                    totalEntries,
+                    localEntries = totalEntries,
+                    entries = MapSongBandLeaderboardEntries(entries, names),
+                    selectedPlayerEntry = selectedPlayerEntry is null ? null : MapSongBandLeaderboardEntry(selectedPlayerEntry, names),
+                    selectedBandEntry = selectedBandEntry is null ? null : MapSongBandLeaderboardEntry(selectedBandEntry, names),
+                };
+            }).ToList();
+
+            return Results.Ok(new { songId, bands });
+        })
+        .WithTags("Leaderboards")
+        .RequireRateLimiting("public");
+
+        app.MapGet("/api/leaderboard/{songId}/bands/{bandType}", (
+            HttpContext httpContext,
+            string songId,
+            string bandType,
+            int? top,
+            int? offset,
+            string? accountId,
+            string? teamKey,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            if (!BandComboIds.IsValidBandType(bandType))
+                return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
+
+            var effectiveTop = Math.Clamp(top ?? 25, 1, 100);
+            var effectiveOffset = Math.Max(0, offset ?? 0);
+            var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, effectiveOffset);
+            var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
+            var selectedPlayerEntry = selectedAccountId is null
+                ? null
+                : metaDb.GetSongBandLeaderboardEntryForAccount(songId, bandType, selectedAccountId);
+            var selectedTeamKey = string.IsNullOrWhiteSpace(teamKey) ? null : teamKey.Trim();
+            var selectedBandEntry = selectedTeamKey is null
+                ? null
+                : metaDb.GetSongBandLeaderboardEntryForTeam(songId, bandType, selectedTeamKey);
+            IEnumerable<SongBandLeaderboardEntryDto> entriesForNames = entries;
+            if (selectedPlayerEntry is not null)
+                entriesForNames = entriesForNames.Append(selectedPlayerEntry);
+            if (selectedBandEntry is not null)
+                entriesForNames = entriesForNames.Append(selectedBandEntry);
+            var names = metaDb.GetDisplayNames(entriesForNames.SelectMany(entry => entry.Members.Select(member => member.AccountId)));
+
+            return Results.Ok(new
+            {
+                songId,
+                bandType,
+                count = entries.Count,
+                totalEntries,
+                localEntries = totalEntries,
+                entries = MapSongBandLeaderboardEntries(entries, names),
+                selectedPlayerEntry = selectedPlayerEntry is null ? null : MapSongBandLeaderboardEntry(selectedPlayerEntry, names),
+                selectedBandEntry = selectedBandEntry is null ? null : MapSongBandLeaderboardEntry(selectedBandEntry, names),
+            });
+        })
+        .WithTags("Leaderboards")
+        .RequireRateLimiting("public");
+
         app.MapGet("/api/leaderboard/{songId}/{instrument}", (
             HttpContext httpContext,
             string songId,
@@ -176,4 +271,40 @@ public static partial class ApiEndpoints
         .WithTags("Leaderboards")
         .RequireRateLimiting("public");
     }
+
+    private static List<object> MapSongBandLeaderboardEntries(
+        IEnumerable<SongBandLeaderboardEntryDto> entries,
+        IReadOnlyDictionary<string, string> names) =>
+        entries.Select(entry => MapSongBandLeaderboardEntry(entry, names)).ToList();
+
+    private static object MapSongBandLeaderboardEntry(
+        SongBandLeaderboardEntryDto entry,
+        IReadOnlyDictionary<string, string> names) => new
+        {
+            entry.BandId,
+            entry.BandType,
+            entry.TeamKey,
+            entry.ComboId,
+            Members = entry.Members.Select(member => new
+            {
+                member.AccountId,
+                DisplayName = names.GetValueOrDefault(member.AccountId),
+                member.Instruments,
+                member.Score,
+                member.Accuracy,
+                member.IsFullCombo,
+                member.Stars,
+                member.Difficulty,
+                member.Season,
+            }).ToList(),
+            entry.Score,
+            entry.Rank,
+            entry.Accuracy,
+            entry.IsFullCombo,
+            entry.Stars,
+            entry.Difficulty,
+            entry.Season,
+            entry.Percentile,
+            entry.EndTime,
+        };
 }

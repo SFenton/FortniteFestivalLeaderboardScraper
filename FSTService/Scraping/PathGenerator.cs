@@ -9,7 +9,7 @@ namespace FSTService.Scraping;
 /// <summary>
 /// Orchestrates path generation for Fortnite Festival songs:
 ///   1. Downloads encrypted .dat from Epic CDN
-///   2. Compares hash with cached version (skip if unchanged)
+///   2. Compares hash with DB state (skip if unchanged)
 ///   3. Decrypts to MIDI, produces instrument variants
 ///   4. Runs CHOpt CLI for each instrument
 ///   5. Stores max scores in Songs DB and path images on disk
@@ -90,15 +90,13 @@ public sealed class PathGenerator
         }
 
         var dataDir = Path.GetFullPath(opts.DataDirectory);
-        var midiDir = Path.Combine(dataDir, "midi");
         var pathsDir = Path.Combine(dataDir, "paths");
-        Directory.CreateDirectory(midiDir);
 
         var tasks = songs.Select(async song =>
         {
             try
             {
-                return await ProcessSongAsync(song, key, choptPath, midiDir, pathsDir, force, ct);
+                return await ProcessSongAsync(song, key, choptPath, pathsDir, force, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -117,7 +115,6 @@ public sealed class PathGenerator
         SongPathRequest song,
         byte[] key,
         string choptPath,
-        string midiDir,
         string pathsDir,
         bool force,
         CancellationToken ct)
@@ -151,17 +148,13 @@ public sealed class PathGenerator
             return null;
         }
 
-        // Check hash against cached version
+        // Check hash against persisted generation state.
         var hash = MidiCryptor.ComputeHash(datBytes);
         if (!force && hash == song.ExistingDatHash)
         {
             _progress.PathGenSongSkipped();
             return null;
         }
-
-        // Cache the .dat file on disk
-        var datPath = Path.Combine(midiDir, $"{song.SongId}.dat");
-        await File.WriteAllBytesAsync(datPath, datBytes, ct);
 
         // Decrypt
         var midiBytes = MidiCryptor.Decrypt(datBytes, key);

@@ -3,6 +3,8 @@ export const Routes = {
   songs: '/songs',
   songDetail: (songId: string) => `/songs/${songId}`,
   leaderboard: (songId: string, instrument: string) => `/songs/${songId}/${instrument}`,
+  songBandLeaderboard: (songId: string, bandType: string, page?: number) =>
+    `/songs/${encodeURIComponent(songId)}/bands/${encodeURIComponent(bandType)}${page != null ? `?page=${page}` : ''}`,
   playerHistory: (songId: string, instrument: string) => `/songs/${songId}/${instrument}/history`,
   player: (accountId: string) => `/player/${accountId}`,
   rivals: '/rivals',
@@ -20,6 +22,8 @@ export const Routes = {
     `/leaderboards/all?instrument=${encodeURIComponent(instrument)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}${page != null ? `&page=${page}` : ''}`,
   fullComboRankings: (comboId: string, rankBy?: string, page?: number) =>
     `/leaderboards/all?combo=${encodeURIComponent(comboId)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}${page != null ? `&page=${page}` : ''}`,
+  bandRankings: (bandType: string, rankBy?: string, page?: number) =>
+    `/leaderboards/bands/${encodeURIComponent(bandType)}${rankBy ? `?rankBy=${encodeURIComponent(rankBy)}` : ''}${page != null ? `${rankBy ? '&' : '?'}page=${page}` : ''}`,
   playerBands: (accountId: string, group = 'all', page?: number, name?: string) => {
     const params: string[] = [`group=${encodeURIComponent(group)}`];
     if (page != null) params.push(`page=${page}`);
@@ -52,6 +56,7 @@ function buildBandQuery(context?: { accountId?: string; bandType?: string; teamK
 /** Regex patterns for route matching. */
 export const RoutePatterns = {
   songDetail: /^\/songs\/[^/]+$/,
+  songBandLeaderboard: /^\/songs\/[^/]+\/bands\/[^/]+$/,
   leaderboard: /^\/songs\/[^/]+\/[^/]+$/,
   history: /\/history$/,
   player: /^\/player\//,

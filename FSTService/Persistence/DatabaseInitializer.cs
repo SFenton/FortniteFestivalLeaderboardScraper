@@ -505,6 +505,63 @@ public static class DatabaseInitializer
         SET last_activity_at = COALESCE(last_activity_at, last_sync_at, last_login_at, registered_at)
         WHERE last_activity_at IS NULL;
 
+        CREATE TABLE IF NOT EXISTS registered_bands (
+            source_id           TEXT        NOT NULL,
+            band_type           TEXT        NOT NULL,
+            team_key            TEXT        NOT NULL,
+            band_id             TEXT        NOT NULL,
+            registered_at       TIMESTAMPTZ NOT NULL,
+            last_activity_at    TIMESTAMPTZ,
+            last_member_sync_at TIMESTAMPTZ,
+            PRIMARY KEY (source_id, band_type, team_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_registered_bands_band
+            ON registered_bands (band_type, team_key);
+
+        CREATE INDEX IF NOT EXISTS ix_registered_bands_band_id
+            ON registered_bands (band_id);
+
+        ALTER TABLE registered_bands
+            ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ;
+
+        ALTER TABLE registered_bands
+            ADD COLUMN IF NOT EXISTS last_member_sync_at TIMESTAMPTZ;
+
+        CREATE TABLE IF NOT EXISTS registered_band_processing_status (
+            source_id              TEXT    NOT NULL,
+            band_type              TEXT    NOT NULL,
+            team_key               TEXT    NOT NULL,
+            status                 TEXT    NOT NULL DEFAULT 'pending',
+            lookups_checked        INTEGER NOT NULL DEFAULT 0,
+            entries_found          INTEGER NOT NULL DEFAULT 0,
+            total_lookups_to_check INTEGER NOT NULL DEFAULT 0,
+            started_at             TIMESTAMPTZ,
+            completed_at           TIMESTAMPTZ,
+            last_resumed_at        TIMESTAMPTZ,
+            error_message          TEXT,
+            PRIMARY KEY (source_id, band_type, team_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_registered_band_processing_status
+            ON registered_band_processing_status (status);
+
+        CREATE TABLE IF NOT EXISTS registered_band_processing_progress (
+            source_id   TEXT        NOT NULL,
+            band_type   TEXT        NOT NULL,
+            team_key    TEXT        NOT NULL,
+            song_id     TEXT        NOT NULL,
+            scope       TEXT        NOT NULL,
+            season      INTEGER     NOT NULL DEFAULT 0,
+            checked     INTEGER     NOT NULL DEFAULT 0,
+            entry_found INTEGER     NOT NULL DEFAULT 0,
+            checked_at  TIMESTAMPTZ,
+            PRIMARY KEY (source_id, band_type, team_key, song_id, scope, season)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_registered_band_processing_progress_band
+            ON registered_band_processing_progress (source_id, band_type, team_key);
+
         -- =====================================================================
         -- USER SESSIONS (from fst-meta.db)
         -- =====================================================================
@@ -1447,6 +1504,56 @@ public static class DatabaseInitializer
             account_id   TEXT        PRIMARY KEY,
             rebuilt_at   TIMESTAMPTZ NOT NULL
         );
+
+        -- Rich global band-search projection. Search reads these precomputed
+        -- rows instead of triggering request-time per-account summary rebuilds.
+        CREATE TABLE IF NOT EXISTS band_search_team_projection (
+            band_type               TEXT        NOT NULL,
+            team_key                TEXT        NOT NULL,
+            band_id                 TEXT        NOT NULL DEFAULT '',
+            appearance_count        INTEGER     NOT NULL,
+            member_account_ids      TEXT[]      NOT NULL,
+            member_instruments_json JSONB       NOT NULL DEFAULT '{}'::jsonb,
+            combo_appearances_json  JSONB       NOT NULL DEFAULT '{}'::jsonb,
+            updated_at              TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (band_type, team_key)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_bstp_band_id
+            ON band_search_team_projection (band_id)
+            WHERE band_id <> '';
+
+        CREATE INDEX IF NOT EXISTS ix_bstp_type_appearance
+            ON band_search_team_projection (band_type, appearance_count DESC, team_key);
+
+        CREATE TABLE IF NOT EXISTS band_search_member_projection (
+            account_id              TEXT        NOT NULL,
+            band_type               TEXT        NOT NULL,
+            team_key                TEXT        NOT NULL,
+            band_id                 TEXT        NOT NULL DEFAULT '',
+            appearance_count        INTEGER     NOT NULL,
+            team_appearance_count   INTEGER     NOT NULL,
+            instrument_combos       TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
+            updated_at              TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (account_id, band_type, team_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_bsmp_account_type_appearance
+            ON band_search_member_projection (account_id, band_type, team_appearance_count DESC, team_key);
+
+        CREATE INDEX IF NOT EXISTS ix_bsmp_type_team
+            ON band_search_member_projection (band_type, team_key);
+
+        CREATE TABLE IF NOT EXISTS band_search_projection_state (
+            id          BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            rebuilt_at  TIMESTAMPTZ NOT NULL,
+            refreshed_at TIMESTAMPTZ,
+            team_rows   BIGINT      NOT NULL,
+            member_rows BIGINT      NOT NULL
+        );
+
+        ALTER TABLE band_search_projection_state
+            ADD COLUMN IF NOT EXISTS refreshed_at TIMESTAMPTZ;
 
         -- Aggregate band-team rankings are stored in per-band current tables.
 

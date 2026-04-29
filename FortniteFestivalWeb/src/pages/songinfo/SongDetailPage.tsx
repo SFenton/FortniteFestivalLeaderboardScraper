@@ -3,15 +3,17 @@ import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback, typ
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
+import { useSelectedProfile } from '../../hooks/data/useSelectedProfile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { api } from '../../api/client';
 import {
   INSTRUMENT_KEYS,
+  type PlayerBandType,
   type ServerInstrumentKey as InstrumentKey,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
-import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, CssValue, flexCenter, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, CssValue, flexCenter, flexColumn, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import Page, { PageBackground } from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -31,12 +33,28 @@ import EmptyState from '../../components/common/EmptyState';
 import CollapsePresence from '../../components/common/CollapsePresence';
 import { parseApiError } from '../../utils/apiError';
 import InstrumentCard from './components/InstrumentCard';
+import SongBandLeaderboardPreview from './components/SongBandLeaderboardPreview';
 import IntensityCard from './components/IntensityCard';
 import { songInfoSlides } from './firstRun';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
+import { SONG_BAND_TYPES } from '../../utils/songBandLeaderboards';
 
 import { songDetailCache } from '../../api/pageCache';
-import type { InstrumentData } from '../../api/pageCache';
+import type { InstrumentData, SongBandData } from '../../api/pageCache';
 export { clearSongDetailCache } from '../../api/pageCache';
+
+function createSongBandData(loading: boolean): Record<PlayerBandType, SongBandData> {
+  const data = {} as Record<PlayerBandType, SongBandData>;
+  for (const bandType of SONG_BAND_TYPES) {
+    data[bandType] = { entries: [], loading, error: null };
+  }
+  return data;
+}
+
+function getBandSelectionKey(bandType: PlayerBandType | undefined, teamKey: string | undefined): string | undefined {
+  if (!bandType || !teamKey) return undefined;
+  return `${bandType}:${teamKey}`;
+}
 
 export default function SongDetailPage() {
   const { t } = useTranslation();
@@ -59,7 +77,13 @@ export default function SongDetailPage() {
     state: { songs },
   } = useFestival();
   const { player } = useTrackedPlayer();
+  const { profile } = useSelectedProfile();
+  const selectedAccountId = player?.accountId;
+  const selectedBandType = profile?.type === 'band' ? profile.bandType as PlayerBandType : undefined;
+  const selectedTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
+  const bandSelectionKey = getBandSelectionKey(selectedBandType, selectedTeamKey);
   const { settings } = useSettings();
+  const { playerBands: playerBandsEnabled } = useFeatureFlags();
   const song = songs.find((s) => s.songId === songId);
   const configuredInstruments = visibleInstruments(settings);
   const activeInstruments = useMemo(
@@ -90,7 +114,8 @@ export default function SongDetailPage() {
   const navType = useNavigationType();
   const location = useLocation();
   const cached = songId ? songDetailCache.get(songId) : undefined;
-  const hasCachedScoreHistory = cached && cached.accountId === player?.accountId;
+  const hasCachedScoreHistory = cached && cached.scoreHistoryAccountId === selectedAccountId;
+  const hasCachedBandData = !playerBandsEnabled || (!!cached?.bandData && cached.bandSelectionKey === bandSelectionKey);
 
   const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>(hasCachedScoreHistory ? cached.scoreHistory : []);
   const [scoreHistoryReady, setScoreHistoryReady] = useState(!!hasCachedScoreHistory);
@@ -101,12 +126,15 @@ export default function SongDetailPage() {
           INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
         ) as unknown as Record<InstrumentKey, InstrumentData>,
   );
+  const [bandData, setBandData] = useState<Record<PlayerBandType, SongBandData>>(
+    () => cached?.bandData ?? createSongBandData(playerBandsEnabled),
+  );
 
   // Track whether the component mounted with cached data so effects can skip the initial fetch.
   // After the first render cycle, clear the flag so future prop changes (e.g. player swap) refetch.
   // This must be declared AFTER the fetch effects so it runs last in the effect order.
   // The cache is only fully valid when player-specific score history also matches (or no player is selected).
-  const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedScoreHistory));
+  const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedScoreHistory) && hasCachedBandData);
   const openPaths = useCallback(() => {
     if (canViewPaths) {
       setPathsOpen(true);
@@ -192,6 +220,48 @@ export default function SongDetailPage() {
     });
     return () => { cancelled = true; };
   }, [songId, leewayParam]);
+
+  // Fetch generic band leaderboards in a single request while the bands feature is enabled.
+  useEffect(() => {
+    if (mountedWithCacheRef.current) return;
+    if (!songId || !playerBandsEnabled) {
+      setBandData(createSongBandData(false));
+      return;
+    }
+    let cancelled = false;
+    if (!hasCachedBandData) {
+      setBandData(createSongBandData(true));
+    }
+    api.getAllSongBandLeaderboards(songId, 10, selectedAccountId, selectedBandType, selectedTeamKey).then((res) => {
+      if (cancelled) return;
+      const nextData = createSongBandData(false);
+      for (const band of res.bands) {
+        const bandType = band.bandType as PlayerBandType;
+        if (bandType in nextData) {
+          nextData[bandType] = {
+            entries: band.entries,
+            selectedPlayerEntry: band.selectedPlayerEntry ?? null,
+            selectedBandEntry: band.selectedBandEntry ?? null,
+            loading: false,
+            error: null,
+            totalEntries: band.totalEntries,
+            localEntries: band.localEntries,
+          };
+        }
+      }
+      setBandData(nextData);
+    }).catch((e) => {
+      if (cancelled) return;
+      const errMsg = e instanceof Error ? e.message : 'Error';
+      const nextData = createSongBandData(false);
+      for (const bandType of SONG_BAND_TYPES) {
+        nextData[bandType] = { entries: [], loading: false, error: errMsg };
+      }
+      setBandData(nextData);
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- cache presence is intentionally frozen at mount
+  }, [songId, playerBandsEnabled, selectedAccountId, selectedBandType, selectedTeamKey]);
   /* v8 ignore stop */
 
   // Clear the cache-skip flag after all fetch effects have had a chance to check it.
@@ -201,7 +271,8 @@ export default function SongDetailPage() {
   // No player means no player-specific data to wait for
   const playerDataReady = !player || scoreHistoryReady;
   const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
-  const allReady = playerDataReady && instrumentsReady;
+  const bandsReady = !playerBandsEnabled || SONG_BAND_TYPES.every((bandType) => !bandData[bandType].loading);
+  const allReady = playerDataReady && instrumentsReady && bandsReady;
 
   // Apply invalid score filtering
   const filteredScoreHistory = useMemo(() => {
@@ -238,12 +309,23 @@ export default function SongDetailPage() {
     for (const h of filteredScoreHistory) {
       maxLen = Math.max(maxLen, h.newScore.toLocaleString().length);
     }
+    if (playerBandsEnabled) {
+      for (const bandType of SONG_BAND_TYPES) {
+        for (const e of bandData[bandType].entries) {
+          maxLen = Math.max(maxLen, e.score.toLocaleString().length);
+        }
+        const selectedEntry = bandData[bandType].selectedBandEntry ?? bandData[bandType].selectedPlayerEntry;
+        if (selectedEntry) {
+          maxLen = Math.max(maxLen, selectedEntry.score.toLocaleString().length);
+        }
+      }
+    }
     return `${maxLen}ch`;
-  }, [activeInstruments, instrumentData, filteredPlayerScores, filteredScoreHistory]);
+  }, [activeInstruments, instrumentData, filteredPlayerScores, filteredScoreHistory, playerBandsEnabled, bandData]);
 
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
-  const allCached = !!cached && (!player || hasCachedScoreHistory);
+  const allCached = !!cached && (!player || hasCachedScoreHistory) && hasCachedBandData;
   // Skip animations when all data is already cached (return visit, layout remount, etc.).
   // Frozen at mount time — the cache getting written mid-lifecycle should not flip this.
   const skipAnimRef = useRef(allCached);
@@ -292,11 +374,13 @@ export default function SongDetailPage() {
     if (!songId || !allReady) return;
     songDetailCache.set(songId, {
       instrumentData,
+      bandData: playerBandsEnabled ? bandData : undefined,
       scoreHistory,
-      accountId: player?.accountId,
+      scoreHistoryAccountId: player?.accountId,
+      bandSelectionKey,
       scrollTop: scrollContainerRef.current?.scrollTop ?? 0,
     });
-  }, [allReady, songId, instrumentData, scoreHistory, player?.accountId]);
+  }, [allReady, songId, instrumentData, bandData, playerBandsEnabled, scoreHistory, player?.accountId, bandSelectionKey]);
   /* v8 ignore stop */
 
   // Restore scroll position when returning from cache (not on fresh PUSH navigations)
@@ -346,7 +430,7 @@ export default function SongDetailPage() {
 
   return (
     <Page
-      scrollDeps={[phase, activeInstruments.length]}
+      scrollDeps={[phase, activeInstruments.length, playerBandsEnabled ? SONG_BAND_TYPES.length : 0]}
       variant="withBgClip"
       fabSpacer={phase === LoadPhase.ContentIn && allErrored ? 'none' : 'end'}
       headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
@@ -438,6 +522,24 @@ export default function SongDetailPage() {
               );
             })}
           </div>
+          {playerBandsEnabled && (
+            <div style={styles.bandSections}>
+              {SONG_BAND_TYPES.map((bandType, idx) => {
+                const baseDelay = 450 + Math.ceil(activeInstruments.length / 2) * 150 + idx * 150;
+                return (
+                  <SongBandLeaderboardPreview
+                    key={bandType}
+                    songId={songId}
+                    bandType={bandType}
+                    data={bandData[bandType]}
+                    selectedAccountId={selectedAccountId}
+                    baseDelay={baseDelay}
+                    skipAnimation={skipAnim}
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       {/* v8 ignore stop */}
@@ -458,6 +560,11 @@ function useSongDetailStyles() {
       gridTemplateColumns: GridTemplate.autoFillInstrument,
       gap: `${Gap.section}px ${Gap.md}px`,
       overflow: Overflow.hidden,
+    } as CSSProperties,
+    bandSections: {
+      ...flexColumn,
+      gap: Gap.section,
+      marginTop: Gap.section,
     } as CSSProperties,
     center: {
       ...flexCenter,

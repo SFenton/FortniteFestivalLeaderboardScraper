@@ -62,6 +62,16 @@ public interface IMetaDatabase : IDisposable
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);
     void TouchWebRegistrationActivity(string accountId);
+    SelectedBandRegistrationResult RegisterSelectedBandActivity(string bandType, string teamKey, string? bandId = null);
+    List<RegisteredBandInfo> GetRegisteredBands();
+    void EnsureRegisteredBandProcessingStatus(string sourceId, string bandType, string teamKey, int totalLookupsToCheck);
+    RegisteredBandProcessingStatusInfo? GetRegisteredBandProcessingStatus(string sourceId, string bandType, string teamKey);
+    void StartRegisteredBandProcessing(string sourceId, string bandType, string teamKey);
+    void CompleteRegisteredBandProcessing(string sourceId, string bandType, string teamKey, int lookupsChecked, int entriesFound);
+    void FailRegisteredBandProcessing(string sourceId, string bandType, string teamKey, string errorMessage);
+    void UpdateRegisteredBandProcessingProgress(string sourceId, string bandType, string teamKey, int lookupsChecked, int entriesFound, int totalLookupsToCheck);
+    void MarkRegisteredBandLookupChecked(string sourceId, string bandType, string teamKey, string songId, string scope, int season, bool entryFound);
+    List<RegisteredBandLookupProgressInfo> GetCheckedRegisteredBandLookups(string sourceId, string bandType, string teamKey);
     int PruneStaleWebRegistrations(DateTime staleBeforeUtc);
     string? GetAccountIdForUsername(string username);
 
@@ -180,8 +190,13 @@ public interface IMetaDatabase : IDisposable
     BandRankHistoryStatusDto GetBandRankHistoryStatus(string bandType, string? comboId = null);
     (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null);
+    BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted");
     List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30);
     List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null);
+    (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5);
+    (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0);
+    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId);
+    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey);
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);
 
     // ── Combo ranking deltas ─────────────────────────────────────────
@@ -254,3 +269,17 @@ public interface IMetaDatabase : IDisposable
     /// <summary>Count staged entries for one leaderboard combo.</summary>
     int GetStagedEntryCount(long scrapeId, string songId, string instrument);
 }
+
+public sealed record RegisteredBandInfo(
+    string SourceId,
+    string BandType,
+    string TeamKey,
+    string BandId,
+    DateTime RegisteredAt,
+    DateTime? LastActivityAt,
+    DateTime? LastMemberSyncAt);
+
+public sealed record SelectedBandRegistrationResult(
+    bool Registered,
+    string BandId,
+    IReadOnlyList<string> MemberAccountIds);

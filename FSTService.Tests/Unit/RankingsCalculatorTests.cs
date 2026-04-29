@@ -50,13 +50,14 @@ public sealed class RankingsCalculatorTests : IDisposable
         IMetaDatabase? metaDb = null,
         FeatureOptions? features = null,
         BandRankHistoryOptions? bandHistoryOptions = null,
-        BandTeamRankingRebuildOptions? bandRankingOptions = null)
+        BandTeamRankingRebuildOptions? bandRankingOptions = null,
+        ScrapeProgressTracker? progress = null)
     {
         return new RankingsCalculator(
             _persistence,
             metaDb ?? _metaFixture.Db,
             _pathStore,
-            new ScrapeProgressTracker(),
+            progress ?? new ScrapeProgressTracker(),
             Options.Create(features ?? new FeatureOptions()),
             Substitute.For<ILogger<RankingsCalculator>>(),
             Options.Create(bandHistoryOptions ?? new BandRankHistoryOptions()),
@@ -430,6 +431,43 @@ public sealed class RankingsCalculatorTests : IDisposable
         // Verify history snapshotted
         var history = guitarDb.GetRankHistory("p1", 1);
         Assert.Single(history);
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_OverlappedSnapshotsAndBandRankings_WaitsForBothBranches()
+    {
+        var progress = new ScrapeProgressTracker();
+        progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+        var sut = CreateSut(
+            bandHistoryOptions: new BandRankHistoryOptions { Mode = BandRankHistoryMode.Disabled },
+            bandRankingOptions: new BandTeamRankingRebuildOptions
+            {
+                WriteMode = BandTeamRankingWriteMode.Monolithic,
+                AnalyzeStagingTable = false,
+                OverlapRankHistorySnapshotsWithBandRankings = true,
+            },
+            progress: progress);
+
+        var svc = CreateFestivalServiceWithSongs(1);
+
+        await sut.ComputeAllAsync(svc, CancellationToken.None);
+
+        var current = progress.GetProgressResponse().Current;
+        Assert.NotNull(current);
+        Assert.Equal(24, current.WorkItems?.Total);
+        Assert.Equal(24, current.WorkItems?.Completed);
+
+        var branches = Assert.IsAssignableFrom<List<BranchProgress>>(current.Branches);
+        Assert.Contains(branches, branch =>
+            branch.Id == "rank_history_snapshots"
+            && branch.Status == "complete"
+            && branch.Completed == 10
+            && branch.Total == 10);
+        Assert.Contains(branches, branch =>
+            branch.Id == "band_rankings"
+            && branch.Status == "complete"
+            && branch.Completed == 3
+            && branch.Total == 3);
     }
 
     [Fact]

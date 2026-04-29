@@ -535,6 +535,40 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     }
 
     /// <summary>
+    /// Fetch one exact band team's V2 row. <paramref name="windowId"/> is either
+    /// <c>alltime</c> or a season prefix such as <c>season014</c>.
+    /// </summary>
+    public async Task<BandLeaderboardEntry?> LookupBandAsync(
+        string songId,
+        string bandType,
+        IReadOnlyList<string> teamAccountIds,
+        string windowId,
+        string accessToken,
+        string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null,
+        CancellationToken ct = default)
+    {
+        if (teamAccountIds.Count < 2) return null;
+        if (!SupportsSongInstrument(songId, bandType)) return null;
+
+        using var res = await SendV2BandLookupWithRetryAsync(
+            songId, bandType, teamAccountIds, windowId,
+            accessToken, callerAccountId, limiter, ct);
+
+        if (res is null) return null;
+
+        await using var stream = await res.Content.ReadAsStreamAsync(ct);
+        var entries = await ParseV2BandResponseAsync(stream, ct);
+        if (entries.Count == 0) return null;
+
+        var teamKey = string.Join(':', teamAccountIds.OrderBy(static id => id, StringComparer.OrdinalIgnoreCase));
+        var entry = entries.FirstOrDefault(e => e.TeamKey.Equals(teamKey, StringComparison.OrdinalIgnoreCase));
+        if (entry is not null)
+            entry.Source = "findteams";
+        return entry;
+    }
+
+    /// <summary>
     /// Fetch a specific player's leaderboard entry for one song + instrument
     /// in a specific seasonal window. Returns null if the player has no entry
     /// in that season.
@@ -694,6 +728,61 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             res.Dispose();
             throw new HttpRequestException(
                 $"Account lookup returned {res.StatusCode} for {songId}/{instrument}",
+                null, res.StatusCode);
+        }
+
+        return res;
+    }
+
+    private async Task<HttpResponseMessage?> SendV2BandLookupWithRetryAsync(
+        string songId,
+        string bandType,
+        IReadOnlyList<string> teamAccountIds,
+        string windowId,
+        string accessToken,
+        string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter,
+        CancellationToken ct)
+    {
+        var eventId = windowId == "alltime"
+            ? $"alltime_{songId}_{bandType}"
+            : $"{windowId}_{songId}";
+        var v2WindowId = windowId == "alltime"
+            ? "alltime"
+            : $"{songId}_{bandType}";
+
+        var url = $"{EventsBase}/api/v2/games/FNFestival/leaderboards/{eventId}/{v2WindowId}/scores" +
+                  $"?accountId={callerAccountId}&fromIndex=0&findTeams=false";
+        var teamsJson = JsonSerializer.Serialize(new { teams = new[] { teamAccountIds.ToArray() } });
+        var label = $"{songId}/{bandType}/{windowId}/band";
+
+        HttpRequestMessage CreateRequest()
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, url);
+            ApplyFortniteHeaders(req, accessToken);
+            req.Headers.TryAddWithoutValidation("Accept", "application/json");
+            req.Content = new StringContent(teamsJson, System.Text.Encoding.UTF8, "application/json");
+            return req;
+        }
+
+        var res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
+
+        if (!res.IsSuccessStatusCode)
+        {
+            var body = await res.Content.ReadAsStringAsync(ct);
+            if (body.Contains("no_score_found", StringComparison.Ordinal))
+            {
+                _log.LogDebug("No band score for {TeamKey} on {Song}/{BandType}/{Window}.",
+                    string.Join(':', teamAccountIds), songId, bandType, windowId);
+                res.Dispose();
+                return null;
+            }
+
+            _log.LogWarning("Band lookup failed for {TeamKey} on {Song}/{BandType}/{Window}: {Status} {Body}",
+                string.Join(':', teamAccountIds), songId, bandType, windowId, res.StatusCode, body);
+            res.Dispose();
+            throw new HttpRequestException(
+                $"Band lookup returned {res.StatusCode} for {songId}/{bandType}/{windowId}",
                 null, res.StatusCode);
         }
 
@@ -2135,6 +2224,30 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         catch
         {
             return null;
+        }
+    }
+
+    private static async Task<List<BandLeaderboardEntry>> ParseV2BandResponseAsync(Stream stream, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return [];
+
+            var entries = new List<BandLeaderboardEntry>();
+            foreach (var element in doc.RootElement.EnumerateArray())
+            {
+                var entry = ParseBandEntryElement(element);
+                if (entry is not null)
+                    entries.Add(entry);
+            }
+
+            return entries;
+        }
+        catch
+        {
+            return [];
         }
     }
 

@@ -1,5 +1,5 @@
 import { FADE_DURATION } from '@festival/theme';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 /**
@@ -8,7 +8,10 @@ import { useScrollContainer } from '../../contexts/ScrollContainerContext';
  *
  * Listens to the app's scroll container (via ScrollContainerContext).
  */
-export function useStaggerRush(containerRef: React.RefObject<HTMLElement | null>) {
+export function useStaggerRush(
+  containerRef: RefObject<HTMLElement | null>,
+  scrollRef?: RefObject<HTMLElement | null>,
+) {
   const rushedRef = useRef(false);
   const scrollContainerRef = useScrollContainer();
 
@@ -28,11 +31,11 @@ export function useStaggerRush(containerRef: React.RefObject<HTMLElement | null>
   }, [containerRef]);
 
   useEffect(() => {
-    const scrollEl = scrollContainerRef.current;
+    const scrollEl = scrollRef?.current ?? scrollContainerRef.current;
     if (!scrollEl) return;
     scrollEl.addEventListener('scroll', rushOnScroll, { passive: true });
     return () => scrollEl.removeEventListener('scroll', rushOnScroll);
-  }, [rushOnScroll, scrollContainerRef]);
+  }, [rushOnScroll, scrollContainerRef, scrollRef]);
 
   const resetRush = useCallback(() => { rushedRef.current = false; }, []);
 

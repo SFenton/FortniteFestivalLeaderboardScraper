@@ -879,6 +879,7 @@ static int RunBandRankings(string[] args)
     string? pg = null;
     string? outPath = null;
     string? bandTypesArg = null;
+    string? writeModesArg = null;
     var defaults = BandTeamRankingRebuildOptions.Default;
     var writeMode = defaults.WriteMode;
     var commandTimeoutSeconds = defaults.CommandTimeoutSeconds;
@@ -900,6 +901,9 @@ static int RunBandRankings(string[] args)
                 break;
             case "--write-mode":
                 writeMode = ParseBandTeamRankingWriteMode(args[++i], "--write-mode");
+                break;
+            case "--write-modes":
+                writeModesArg = args[++i];
                 break;
             case "--command-timeout-seconds":
                 commandTimeoutSeconds = ParseNonNegativeIntArg(args[++i], "--command-timeout-seconds");
@@ -925,50 +929,78 @@ static int RunBandRankings(string[] args)
         additionalProvider: stageCollector,
         minimumLogLevel: LogLevel.Information);
     var requestedBandTypes = ParseCsvListOrEmpty(bandTypesArg);
+    var writeModes = ParseBandTeamRankingWriteModes(writeModesArg, writeMode);
     var scope = requestedBandTypes.Count == 0 ? "all" : "explicit";
-    var options = new BandTeamRankingRebuildOptions
-    {
-        WriteMode = writeMode,
-        CommandTimeoutSeconds = commandTimeoutSeconds,
-        AnalyzeStagingTable = analyzeStagingTable,
-        DisableSynchronousCommit = disableSynchronousCommit,
-    };
 
     Console.WriteLine($"Database: {FormatConnection(pg!)}");
     Console.WriteLine($"Band types: {(requestedBandTypes.Count == 0 ? "all" : string.Join(", ", requestedBandTypes))}");
-    Console.WriteLine($"Write mode: {writeMode}");
+    Console.WriteLine($"Write mode(s): {string.Join(", ", writeModes)}");
     Console.WriteLine($"Command timeout: {(commandTimeoutSeconds == 0 ? "none" : $"{commandTimeoutSeconds}s")}");
     Console.WriteLine($"Analyze staging: {analyzeStagingTable}");
     Console.WriteLine($"Disable synchronous commit: {disableSynchronousCommit}");
 
-    var beforeCounts = CaptureTableCounts(dataSource, PresetCatalog.BandRankingsOutputTables);
     var repairService = new BandRankingRepairService(
         services.MetaDb,
         dataSource,
         services.LoggerFactory.CreateLogger<BandRankingRepairService>());
 
-    var sw = Stopwatch.StartNew();
-    var results = repairService.Rebuild(requestedBandTypes.Count == 0 ? null : requestedBandTypes, options: options);
-    sw.Stop();
+    var totalSw = Stopwatch.StartNew();
+    var modeRuns = new List<BandRankingsModeRun>(writeModes.Count);
+    IReadOnlyList<BandRankingRepairResult> finalResults = [];
+    IReadOnlyList<TableCountDelta> finalTableCounts = [];
 
-    var afterCounts = CaptureTableCounts(dataSource, PresetCatalog.BandRankingsOutputTables);
-    foreach (var count in afterCounts)
+    foreach (var currentWriteMode in writeModes)
     {
-        var before = beforeCounts.FirstOrDefault(x => x.Table.Equals(count.Table, StringComparison.OrdinalIgnoreCase));
-        Console.WriteLine($"{count.Table,-32} before={before?.Rows ?? 0,12:N0} after={count.Rows,12:N0} delta={count.Rows - (before?.Rows ?? 0),12:N0}");
-    }
+        stageCollector.Clear();
+        var options = new BandTeamRankingRebuildOptions
+        {
+            WriteMode = currentWriteMode,
+            CommandTimeoutSeconds = commandTimeoutSeconds,
+            AnalyzeStagingTable = analyzeStagingTable,
+            DisableSynchronousCommit = disableSynchronousCommit,
+        };
 
-    foreach (var result in results)
-    {
-        Console.WriteLine(
-            $"{result.BandType,-16} source={result.After.SourceRows,12:N0} rankable={result.After.RankableRows,12:N0} rankings={result.After.RankingRows,12:N0} combos={result.After.ComboCatalogEntries,6:N0} total={result.Elapsed.TotalMilliseconds,9:F1}ms");
+        if (writeModes.Count > 1)
+            Console.WriteLine($"\n=== {currentWriteMode} ===");
 
-        if (result.Metrics is not null)
+        var beforeCounts = CaptureTableCounts(dataSource, PresetCatalog.BandRankingsOutputTables);
+        var sw = Stopwatch.StartNew();
+        var results = repairService.Rebuild(requestedBandTypes.Count == 0 ? null : requestedBandTypes, options: options);
+        sw.Stop();
+
+        var afterCounts = CaptureTableCounts(dataSource, PresetCatalog.BandRankingsOutputTables);
+        var tableCounts = MergeTableCounts(beforeCounts, afterCounts);
+        foreach (var count in afterCounts)
+        {
+            var before = beforeCounts.FirstOrDefault(x => x.Table.Equals(count.Table, StringComparison.OrdinalIgnoreCase));
+            Console.WriteLine($"{count.Table,-32} before={before?.Rows ?? 0,12:N0} after={count.Rows,12:N0} delta={count.Rows - (before?.Rows ?? 0),12:N0}");
+        }
+
+        foreach (var result in results)
         {
             Console.WriteLine(
-                $"{string.Empty,16} materialize={result.Metrics.MaterializeResultsMs,9:F1}ms analyze={result.Metrics.AnalyzeResultsMs,9:F1}ms delete={result.Metrics.DeleteExistingMs,9:F1}ms insert={result.Metrics.InsertRankingsMs,9:F1}ms stats={result.Metrics.InsertStatsMs,9:F1}ms rows={result.Metrics.ResultRowCount,12:N0}");
+                $"{result.BandType,-16} source={result.After.SourceRows,12:N0} rankable={result.After.RankableRows,12:N0} rankings={result.After.RankingRows,12:N0} combos={result.After.ComboCatalogEntries,6:N0} total={result.Elapsed.TotalMilliseconds,9:F1}ms");
+
+            if (result.Metrics is not null)
+            {
+                Console.WriteLine(
+                    $"{string.Empty,16} materialize={result.Metrics.MaterializeResultsMs,9:F1}ms analyze={result.Metrics.AnalyzeResultsMs,9:F1}ms delete={result.Metrics.DeleteExistingMs,9:F1}ms insert={result.Metrics.InsertRankingsMs,9:F1}ms stats={result.Metrics.InsertStatsMs,9:F1}ms rows={result.Metrics.ResultRowCount,12:N0}");
+            }
         }
+
+        var stageTimings = stageCollector.GetEntries();
+        modeRuns.Add(new BandRankingsModeRun
+        {
+            WriteMode = currentWriteMode.ToString(),
+            TotalElapsedMs = Math.Round(sw.Elapsed.TotalMilliseconds, 3),
+            StageTimings = stageTimings,
+            Results = results,
+            TableCounts = tableCounts,
+        });
+        finalResults = results;
+        finalTableCounts = tableCounts;
     }
+    totalSw.Stop();
 
     var payload = new BandRankingsRunSummary
     {
@@ -976,16 +1008,18 @@ static int RunBandRankings(string[] args)
         Mode = "run-band-rankings",
         Database = DescribeConnection(pg!),
         Scope = scope,
-        BandTypes = results.Select(result => result.BandType).ToArray(),
-        WriteMode = writeMode.ToString(),
+        BandTypes = finalResults.Select(result => result.BandType).ToArray(),
+        WriteMode = writeModes.Count == 1 ? writeModes[0].ToString() : "Benchmark",
+        WriteModes = writeModes.Select(mode => mode.ToString()).ToArray(),
         CommandTimeoutSeconds = commandTimeoutSeconds,
         AnalyzeStagingTable = analyzeStagingTable,
         DisableSynchronousCommit = disableSynchronousCommit,
-        TotalChartedSongs = results.FirstOrDefault()?.TotalChartedSongs ?? 0,
-        TotalElapsedMs = Math.Round(sw.Elapsed.TotalMilliseconds, 3),
-        StageTimings = stageCollector.GetEntries(),
-        Results = results,
-        TableCounts = MergeTableCounts(beforeCounts, afterCounts),
+        TotalChartedSongs = finalResults.FirstOrDefault()?.TotalChartedSongs ?? 0,
+        TotalElapsedMs = Math.Round(totalSw.Elapsed.TotalMilliseconds, 3),
+        StageTimings = modeRuns.SelectMany(run => run.StageTimings).ToArray(),
+        Results = finalResults,
+        TableCounts = finalTableCounts,
+        ModeRuns = modeRuns,
     };
 
     EmitJson(outPath, payload);
@@ -1598,6 +1632,22 @@ static BandTeamRankingWriteMode ParseBandTeamRankingWriteMode(string value, stri
     };
 }
 
+static IReadOnlyList<BandTeamRankingWriteMode> ParseBandTeamRankingWriteModes(string? value, BandTeamRankingWriteMode fallback)
+{
+    if (string.IsNullOrWhiteSpace(value))
+        return [fallback];
+
+    var modes = new List<BandTeamRankingWriteMode>();
+    foreach (var part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        var mode = ParseBandTeamRankingWriteMode(part, "--write-modes");
+        if (!modes.Contains(mode))
+            modes.Add(mode);
+    }
+
+    return modes.Count == 0 ? [fallback] : modes;
+}
+
 static CloneFilters CreateFilters(string? accountIdsArg, string? songIdsArg, string? instrumentsArg, string? bandTypesArg)
 {
     return new CloneFilters
@@ -1815,7 +1865,7 @@ static void PrintUsage()
                     - `run-rankings` executes `RankingsCalculator.ComputeAllAsync` directly against the selected database and records phase timings plus before/after output table counts.
                     - `run-rivals`, `run-leaderboard-rivals`, and `run-player-stats` default to all registered users unless `--account-ids` is supplied.
                     - `run-precompute` runs the full registered-user precompute when `--account-ids` is omitted; otherwise it precomputes only the supplied users.
-                    - `run-band-rankings` rebuilds derived band team rankings with a selectable write strategy and emits per-band timing breakdowns.
+                    - `run-band-rankings` rebuilds derived band team rankings with `--write-mode <mode>` or benchmark-style `--write-modes <csv>` and emits per-band timing breakdowns.
           - Filter options are best-effort and apply directly to matching table columns (`account_id`, `user_id`, `team_members`, `song_id`, `instrument`, `band_type`).
           - `--tables` overrides the preset with an explicit table list.
           - This harness never mutates the source database.
@@ -1889,10 +1939,21 @@ sealed class BandRankingsRunSummary
     public string Scope { get; init; } = string.Empty;
     public IReadOnlyList<string> BandTypes { get; init; } = [];
     public string WriteMode { get; init; } = string.Empty;
+    public IReadOnlyList<string> WriteModes { get; init; } = [];
     public int CommandTimeoutSeconds { get; init; }
     public bool AnalyzeStagingTable { get; init; }
     public bool DisableSynchronousCommit { get; init; }
     public int TotalChartedSongs { get; init; }
+    public double TotalElapsedMs { get; init; }
+    public IReadOnlyList<BandRankingsStageTiming> StageTimings { get; init; } = [];
+    public IReadOnlyList<BandRankingRepairResult> Results { get; init; } = [];
+    public IReadOnlyList<TableCountDelta> TableCounts { get; init; } = [];
+    public IReadOnlyList<BandRankingsModeRun> ModeRuns { get; init; } = [];
+}
+
+sealed class BandRankingsModeRun
+{
+    public string WriteMode { get; init; } = string.Empty;
     public double TotalElapsedMs { get; init; }
     public IReadOnlyList<BandRankingsStageTiming> StageTimings { get; init; } = [];
     public IReadOnlyList<BandRankingRepairResult> Results { get; init; } = [];
@@ -2260,6 +2321,12 @@ sealed class BandRankingsStageLogCollector : ILoggerProvider
     {
         lock (_sync)
             return _entries.ToArray();
+    }
+
+    public void Clear()
+    {
+        lock (_sync)
+            _entries.Clear();
     }
 
     public ILogger CreateLogger(string categoryName) => new BandRankingsStageLogger(categoryName, this);

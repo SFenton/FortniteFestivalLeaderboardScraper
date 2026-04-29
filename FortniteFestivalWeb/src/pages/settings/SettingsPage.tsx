@@ -43,6 +43,7 @@ import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks'
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { IoCompass } from 'react-icons/io5';
+import type { SearchTarget } from '../../types/search';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
@@ -125,6 +126,12 @@ const METADATA_TOGGLES: { key: MetadataKey; i18nKey: string }[] = [
   { key: 'metadataShowGameDifficulty', i18nKey: 'metadata.difficulty' },
   { key: 'metadataShowStars', i18nKey: 'metadata.stars' },
   { key: 'metadataShowLastPlayed', i18nKey: 'metadata.lastPlayed' },
+];
+
+const DEFAULT_SEARCH_TARGETS: { value: SearchTarget; i18nKey: string }[] = [
+  { value: 'songs', i18nKey: 'search.tabs.songs' },
+  { value: 'players', i18nKey: 'search.tabs.players' },
+  { value: 'bands', i18nKey: 'search.tabs.bands' },
 ];
 
 const LEEWAY_SLIDER_ID = 'fst-leeway-slider';
@@ -752,6 +759,20 @@ export default function SettingsPage() {
                     selected={settings.pathDefaultView === 'text'}
                     onSelect={() => updateSettings({ pathDefaultView: 'text' })}
                   />
+                </div>
+                <div style={st.standaloneRow}>
+                  <div style={st.standaloneLabel}>{t('settings.defaultSearchTarget')}</div>
+                  <div style={st.standaloneDesc}>
+                    {t('settings.defaultSearchTargetDesc')}
+                  </div>
+                  {DEFAULT_SEARCH_TARGETS.map(target => (
+                    <RadioRow
+                      key={target.value}
+                      label={t(target.i18nKey)}
+                      selected={settings.defaultSearchTarget === target.value}
+                      onSelect={() => updateSettings({ defaultSearchTarget: target.value })}
+                    />
+                  ))}
                 </div>
                 <div style={st.standaloneRow}>
                   <div style={st.standaloneLabel}>{t('settings.pathColumnOrder')}</div>

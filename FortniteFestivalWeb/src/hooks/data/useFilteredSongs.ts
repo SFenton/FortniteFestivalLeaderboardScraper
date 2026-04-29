@@ -7,6 +7,7 @@ import { type ServerSong as Song, type PlayerScore, type ServerInstrumentKey as 
 import type { SongFilters, SongSortMode } from '../../utils/songSettings';
 import { compareByMode } from '../../utils/songSort';
 import { getSongInstrumentDifficulty, songSupportsInstrument } from '../../utils/songInstrumentDifficulty';
+import { songMatchesSearch } from '../../utils/songSearch';
 
 interface FilterSortOptions {
   songs: Song[];
@@ -53,7 +54,6 @@ export function useFilteredSongs({
   shopVisible,
 }: FilterSortOptions): Song[] {
   return useMemo(() => {
-    const q = search.toLowerCase();
     const hasPlayerData = allScoreMap.size > 0;
 
     // Pre-compute which instruments have any missing/has filter active
@@ -82,7 +82,7 @@ export function useFilteredSongs({
     const checkDiff = inst != null && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
 
     const list = songs.filter(s => {
-      if (q && !s.title.toLowerCase().includes(q) && !s.artist.toLowerCase().includes(q)) return false;
+      if (!songMatchesSearch(s, search)) return false;
 
       // Item Shop filters (independent of player data)
       // AND logic: both must pass when both enabled; leaving tomorrow ⊂ in shop

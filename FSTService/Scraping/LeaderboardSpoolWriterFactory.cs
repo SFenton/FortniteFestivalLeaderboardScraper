@@ -20,8 +20,8 @@ public static class LeaderboardSpoolWriterFactory
             baseDirectory: baseDirectory);
     }
 
-    private static void FlushSoloBatch(ILogger log, GlobalLeaderboardPersistence persistence, long scrapeId, string instrument,
-                                        List<(string SongId, IReadOnlyList<LeaderboardEntry> Entries)> batch)
+    internal static void FlushSoloBatch(ILogger log, GlobalLeaderboardPersistence persistence, long scrapeId, string instrument,
+                                         List<(string SongId, IReadOnlyList<LeaderboardEntry> Entries)> batch)
     {
         var db = (InstrumentDatabase)persistence.GetOrCreateInstrumentDb(instrument);
         var activeInstrument = db.Instrument;

@@ -255,6 +255,47 @@ public class SpoolWriterFlushAllTests
         }
     }
 
+    [Fact]
+    public async Task DisposeAsync_BeforeComplete_ClosesAndDeletesSpoolDirectory()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"spool_dispose_test_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+
+        var spool = new SpoolWriter<TestEntry>(
+            _log, "test-dispose",
+            serialize: (buf, header, songId, entries) =>
+            {
+                SpoolWriter<TestEntry>.WriteString(buf, header, songId);
+                SpoolWriter<TestEntry>.WriteInt32(buf, header, entries.Count);
+                foreach (var e in entries)
+                {
+                    SpoolWriter<TestEntry>.WriteString(buf, header, e.Id);
+                    SpoolWriter<TestEntry>.WriteInt32(buf, header, e.Value);
+                }
+            },
+            deserialize: (stream, header) => (SpoolWriter<TestEntry>.ReadString(stream, header), Array.Empty<TestEntry>()),
+            flush: (_, _) => { },
+            baseDirectory: tempDir);
+
+        try
+        {
+            spool.Enqueue("s1", "Guitar", new[] { new TestEntry { Id = "a", Value = 1 } });
+            var spoolDir = spool.SpoolDirectory;
+            Assert.True(Directory.Exists(spoolDir));
+
+            await spool.DisposeAsync();
+            await spool.DisposeAsync();
+
+            Assert.False(Directory.Exists(spoolDir));
+        }
+        finally
+        {
+            try { await spool.DisposeAsync(); } catch { }
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
     // ── Chunked FlushAll tests ──────────────────────────────────
 
     [Fact]

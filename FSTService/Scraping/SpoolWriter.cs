@@ -62,7 +62,11 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
     private readonly object _spoolsLock = new();
     private long _recordCount;
     private long _entryCount;
+    private int _disposed;
     private volatile bool _completed;
+
+    /// <summary>Directory containing this writer's transient spool files.</summary>
+    public string SpoolDirectory => _spoolDir;
 
     /// <summary>Number of page records written across all instruments.</summary>
     public long RecordCount => Interlocked.Read(ref _recordCount);
@@ -601,12 +605,18 @@ public sealed class SpoolWriter<T> : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return ValueTask.CompletedTask;
+
         if (!_completed)
         {
             lock (_spoolsLock)
             {
                 foreach (var spool in _spools.Values)
-                    spool.WriteStream.Dispose();
+                {
+                    try { spool.WriteStream.Dispose(); }
+                    catch (Exception ex) { _log.LogDebug(ex, "Failed to close spool file {Path} during dispose.", spool.Path); }
+                }
             }
         }
         TryDeleteSpoolDir();

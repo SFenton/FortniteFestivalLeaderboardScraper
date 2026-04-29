@@ -80,6 +80,26 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
     }
 
     [Fact]
+    public void PruneBandEntriesDetailed_ReturnsAffectedTeamsForProjectionRefresh()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 3_000), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:1", 2_000), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-e", "acct-f"], "0:1", 1_000), rebuildTeamMembership: true);
+
+        var result = persistence.PruneBandEntriesDetailed(new HashSet<string>(), maxValidEntries: 1);
+
+        Assert.Equal(2, result.DeletedEntries);
+        var affectedTeams = Assert.Single(result.AffectedTeamsByBandType);
+        Assert.Equal("Band_Duets", affectedTeams.Key);
+        Assert.Contains("acct-c:acct-d", affectedTeams.Value);
+        Assert.Contains("acct-e:acct-f", affectedTeams.Value);
+    }
+
+    [Fact]
     public void PruneBandEntries_PreservesRegisteredUserTeamsPastValidLimit()
     {
         var persistence = new BandLeaderboardPersistence(
@@ -99,6 +119,93 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         Assert.True(BandEntryExists("song-a", "acct-a:acct-b"));
         Assert.False(BandEntryExists("song-a", "acct-c:acct-d"));
         Assert.True(BandEntryExists("song-a", "acct-e:acct-f"));
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboard_UsesBestTeamScoreAndPerScoreMemberInstruments()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000, instruments: [0, 1]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-b", "acct-a"], "2:3", 1_200, instruments: [2, 3], memberScores: [700, 500], memberDifficulties: [2, 3]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:3", 1_100, instruments: [0, 3]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-e", "acct-f"], "0:1", 1_300, instruments: [0, 1], isOverThreshold: true), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-b", MakeBandEntry(["acct-g", "acct-h"], "0:1", 1_400, instruments: [0, 1]), rebuildTeamMembership: true);
+
+        var (firstPage, totalEntries) = _fixture.Db.GetSongBandLeaderboard("song-a", "Band_Duets", limit: 1, offset: 0);
+
+        Assert.Equal(2, totalEntries);
+        var top = Assert.Single(firstPage);
+        Assert.Equal("acct-a:acct-b", top.TeamKey);
+        Assert.Equal(1_200, top.Score);
+        Assert.Equal(1, top.Rank);
+        Assert.Equal("Solo_Drums+Solo_Vocals", top.ComboId);
+        Assert.Equal(new[] { "acct-a", "acct-b" }, top.Members.Select(member => member.AccountId));
+        Assert.Equal(new[] { "Solo_Vocals" }, top.Members[0].Instruments);
+        Assert.Equal(new[] { "Solo_Drums" }, top.Members[1].Instruments);
+        Assert.Equal(700, top.Members[0].Score);
+        Assert.Equal(500, top.Members[1].Score);
+        Assert.Equal(950_000, top.Members[0].Accuracy);
+        Assert.True(top.Members[0].IsFullCombo);
+        Assert.Equal(5, top.Members[0].Stars);
+        Assert.Equal(2, top.Members[0].Difficulty);
+        Assert.Equal(1, top.Members[0].Season);
+
+        var (secondPage, secondTotal) = _fixture.Db.GetSongBandLeaderboard("song-a", "Band_Duets", limit: 1, offset: 1);
+
+        Assert.Equal(2, secondTotal);
+        var second = Assert.Single(secondPage);
+        Assert.Equal("acct-c:acct-d", second.TeamKey);
+        Assert.Equal(2, second.Rank);
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboardEntryForAccount_ReturnsBestTeamContainingAccount()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000, instruments: [0, 1]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-b", "acct-a"], "2:3", 1_200, instruments: [2, 3]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:3", 1_100, instruments: [0, 3]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-e", "acct-f"], "0:1", 1_300, instruments: [0, 1], isOverThreshold: true), rebuildTeamMembership: true);
+
+        var selectedTop = _fixture.Db.GetSongBandLeaderboardEntryForAccount("song-a", "Band_Duets", "acct-b");
+        var selectedSecond = _fixture.Db.GetSongBandLeaderboardEntryForAccount("song-a", "Band_Duets", "acct-d");
+        var missing = _fixture.Db.GetSongBandLeaderboardEntryForAccount("song-a", "Band_Duets", "acct-missing");
+
+        Assert.NotNull(selectedTop);
+        Assert.Equal("acct-a:acct-b", selectedTop.TeamKey);
+        Assert.Equal(1, selectedTop.Rank);
+        Assert.Equal(1_200, selectedTop.Score);
+        Assert.NotNull(selectedSecond);
+        Assert.Equal("acct-c:acct-d", selectedSecond.TeamKey);
+        Assert.Equal(2, selectedSecond.Rank);
+        Assert.Null(missing);
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboardEntryForTeam_ReturnsExactTeamByRankedEntry()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000, instruments: [0, 1]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:3", 1_100, instruments: [0, 3]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-e", "acct-f"], "0:1", 1_300, instruments: [0, 1], isOverThreshold: true), rebuildTeamMembership: true);
+
+        var selectedTeam = _fixture.Db.GetSongBandLeaderboardEntryForTeam("song-a", "Band_Duets", "acct-c:acct-d");
+        var missing = _fixture.Db.GetSongBandLeaderboardEntryForTeam("song-a", "Band_Duets", "acct-missing:acct-other");
+
+        Assert.NotNull(selectedTeam);
+        Assert.Equal("acct-c:acct-d", selectedTeam.TeamKey);
+        Assert.Equal(1, selectedTeam.Rank);
+        Assert.Equal(1_100, selectedTeam.Score);
+        Assert.Null(missing);
     }
 
     private void UpsertDirect(
@@ -153,9 +260,19 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         return Convert.ToBoolean(cmd.ExecuteScalar());
     }
 
-    private static BandLeaderboardEntry MakeBandEntry(string[] teamMembers, string instrumentCombo, int score)
+    private static BandLeaderboardEntry MakeBandEntry(
+        string[] teamMembers,
+        string instrumentCombo,
+        int score,
+        int[]? instruments = null,
+        int[]? memberScores = null,
+        int[]? memberDifficulties = null,
+        bool isOverThreshold = false)
     {
         var sortedMembers = teamMembers.OrderBy(static member => member, StringComparer.OrdinalIgnoreCase).ToArray();
+        var memberInstruments = instruments ?? [0, 1];
+        var perMemberScores = memberScores ?? [score / 2, score / 2];
+        var perMemberDifficulties = memberDifficulties ?? [3, 3];
         return new BandLeaderboardEntry
         {
             TeamKey = string.Join(':', sortedMembers),
@@ -170,29 +287,30 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
             Rank = 1,
             Percentile = 0.1,
             Source = "test",
+            IsOverThreshold = isOverThreshold,
             MemberStats =
             [
                 new BandMemberStats
                 {
                     MemberIndex = 0,
                     AccountId = sortedMembers[0],
-                    InstrumentId = 0,
-                    Score = score / 2,
+                    InstrumentId = memberInstruments[0],
+                    Score = perMemberScores[0],
                     Accuracy = 950_000,
                     IsFullCombo = true,
                     Stars = 5,
-                    Difficulty = 3,
+                    Difficulty = perMemberDifficulties[0],
                 },
                 new BandMemberStats
                 {
                     MemberIndex = 1,
                     AccountId = sortedMembers[1],
-                    InstrumentId = 1,
-                    Score = score / 2,
+                    InstrumentId = memberInstruments[1],
+                    Score = perMemberScores[1],
                     Accuracy = 950_000,
                     IsFullCombo = true,
                     Stars = 5,
-                    Difficulty = 3,
+                    Difficulty = perMemberDifficulties[1],
                 },
             ],
         };

@@ -739,6 +739,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     // ─── Disk-spool persistence ───────────────────────────────────
 
     private SpoolWriter<LeaderboardEntry>? _spoolWriter;
+    private OnlineBoundedPageWriter<LeaderboardEntry>? _onlineSoloWriter;
+    private readonly object _activeWriterLock = new();
 
     /// <summary>
     /// Start a disk-spool writer that appends fetched pages to per-instrument
@@ -747,9 +749,20 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public SpoolWriter<LeaderboardEntry> StartSpoolWriter(long scrapeId, string? spoolDirectory = null)
     {
-        _spoolWriter = LeaderboardSpoolWriterFactory.Create(_log, this, scrapeId, spoolDirectory);
+        SpoolWriter<LeaderboardEntry> writer;
+        lock (_activeWriterLock)
+        {
+            if (_onlineSoloWriter is not null)
+                throw new InvalidOperationException("Online solo writer is already active.");
+            if (_spoolWriter is not null)
+                throw new InvalidOperationException("Disk spool writer is already active.");
+
+            writer = LeaderboardSpoolWriterFactory.Create(_log, this, scrapeId, spoolDirectory);
+            _spoolWriter = writer;
+        }
+
         _log.LogInformation("Started disk-spool writer (post-fetch flush mode).");
-        return _spoolWriter;
+        return writer;
     }
 
     /// <summary>
@@ -764,24 +777,141 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Start an experimental bounded online solo writer that persists pages during
+    /// fetch using small COPY/merge batches. Producers are backpressured when the
+    /// bounded channel is full, preventing unbounded RAM growth.
+    /// </summary>
+    public OnlineBoundedPageWriter<LeaderboardEntry> StartOnlineSoloWriter(
+        long scrapeId,
+        int channelCapacity,
+        int maxBatchPages,
+        int writerCount,
+        CancellationToken ct = default)
+    {
+        OnlineBoundedPageWriter<LeaderboardEntry> writer;
+        lock (_activeWriterLock)
+        {
+            if (_spoolWriter is not null)
+                throw new InvalidOperationException("Disk spool writer is already active.");
+            if (_onlineSoloWriter is not null)
+                throw new InvalidOperationException("Online solo writer is already active.");
+
+            writer = new OnlineBoundedPageWriter<LeaderboardEntry>(
+                _log,
+                "solo-online",
+                (instrument, batch) => LeaderboardSpoolWriterFactory.FlushSoloBatch(_log, this, scrapeId, instrument, batch),
+                Math.Max(1, channelCapacity),
+                Math.Max(1, maxBatchPages),
+                Math.Clamp(writerCount, 1, 16),
+                ct);
+            _onlineSoloWriter = writer;
+        }
+
+        return writer;
+    }
+
+    public ValueTask EnqueueOnlineSoloPageAsync(
+        string songId,
+        string instrument,
+        IReadOnlyList<LeaderboardEntry> entries,
+        CancellationToken ct = default)
+    {
+        if (_onlineSoloWriter is null)
+            throw new InvalidOperationException("Online solo writer not started. Call StartOnlineSoloWriter() first.");
+
+        return _onlineSoloWriter.EnqueueAsync(songId, instrument, entries, ct);
+    }
+
+    public async Task DrainOnlineSoloWriterAsync()
+    {
+        OnlineBoundedPageWriter<LeaderboardEntry>? writer;
+        lock (_activeWriterLock)
+        {
+            writer = _onlineSoloWriter;
+            _onlineSoloWriter = null;
+        }
+
+        if (writer is null) return;
+
+        try
+        {
+            await writer.CompleteAndDrainAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            await writer.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Signal the spool writer that no more data will arrive, then flush
     /// all spool data to PG in bulk. Index management is handled externally
     /// by the orchestrator to coordinate with the band spool.
     /// </summary>
     public async Task FlushSpoolAsync(ScrapeProgressTracker? progress = null)
     {
-        if (_spoolWriter is null) return;
+        SpoolWriter<LeaderboardEntry>? spool;
+        lock (_activeWriterLock)
+        {
+            spool = _spoolWriter;
+            _spoolWriter = null;
+        }
 
-        _spoolWriter.Complete();
+        if (spool is null) return;
 
-        _log.LogInformation("Flushing solo spool: {Records:N0} pages, {Entries:N0} entries...",
-            _spoolWriter.RecordCount, _spoolWriter.EntryCount);
-        await Task.Run(() => _spoolWriter.FlushAll(
-            maxBatchPages: 64,
-            onProgress: p => ReportSpoolFlushProgress(progress, p)));
+        try
+        {
+            spool.Complete();
 
-        await _spoolWriter.DisposeAsync();
-        _spoolWriter = null;
+            _log.LogInformation("Flushing solo spool: {Records:N0} pages, {Entries:N0} entries...",
+                spool.RecordCount, spool.EntryCount);
+            await Task.Run(() => spool.FlushAll(
+                maxBatchPages: 64,
+                onProgress: p => ReportSpoolFlushProgress(progress, p)));
+        }
+        finally
+        {
+            await spool.DisposeAsync();
+        }
+    }
+
+    public async ValueTask CleanupActiveScrapeWritersAsync()
+    {
+        SpoolWriter<LeaderboardEntry>? spool;
+        OnlineBoundedPageWriter<LeaderboardEntry>? onlineWriter;
+        lock (_activeWriterLock)
+        {
+            spool = _spoolWriter;
+            _spoolWriter = null;
+            onlineWriter = _onlineSoloWriter;
+            _onlineSoloWriter = null;
+        }
+
+        if (onlineWriter is not null)
+        {
+            _log.LogInformation("Best-effort cleanup disposing active online solo writer.");
+            try
+            {
+                await onlineWriter.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Best-effort cleanup failed while disposing active online solo writer.");
+            }
+        }
+
+        if (spool is not null)
+        {
+            _log.LogInformation("Best-effort cleanup disposing active solo spool writer.");
+            try
+            {
+                await spool.DisposeAsync();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Best-effort cleanup failed while disposing active solo spool writer.");
+            }
+        }
     }
 
     private static void ReportSpoolFlushProgress(
@@ -1580,6 +1710,21 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         }
 
         using var conn = _pgDataSource.OpenConnection();
+        if (HasBandSearchProjection(conn))
+        {
+            return SearchBandsFromProjection(
+                conn,
+                queryForResponse,
+                normalizedQuery,
+                bandTypeFilter,
+                comboIdFilter,
+                effectiveRankBy,
+                effectivePage,
+                effectivePageSize,
+                interpretations,
+                candidateAccountIds);
+        }
+
         foreach (var accountId in candidateAccountIds)
             EnsureBandTeamMembershipSummary(conn, accountId);
 
@@ -1647,6 +1792,96 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             totalCount);
     }
 
+    private BandSearchResponseDto SearchBandsFromProjection(
+        NpgsqlConnection conn,
+        string queryForResponse,
+        string normalizedQuery,
+        string? bandTypeFilter,
+        string? comboIdFilter,
+        string effectiveRankBy,
+        int effectivePage,
+        int effectivePageSize,
+        IReadOnlyList<BandSearchInternalInterpretation> interpretations,
+        IReadOnlyCollection<string> candidateAccountIds)
+    {
+        var candidateRows = GetBandSearchProjectionMemberRows(conn, candidateAccountIds, bandTypeFilter);
+        if (comboIdFilter is not null)
+        {
+            candidateRows = candidateRows
+                .Where(row => BandSearchProjectionRowMatchesCombo(row, comboIdFilter))
+                .ToList();
+        }
+
+        var matchedTeams = MatchBandSearchProjectionTeams(candidateRows, interpretations);
+        if (matchedTeams.Count == 0)
+        {
+            return CreateBandSearchResponse(
+                queryForResponse,
+                normalizedQuery,
+                bandTypeFilter,
+                comboIdFilter,
+                effectiveRankBy,
+                effectivePage,
+                effectivePageSize,
+                needsDisambiguation: false,
+                interpretations,
+                [],
+                totalCount: 0);
+        }
+
+        var appearanceLookup = candidateRows
+            .GroupBy(static row => new BandSearchTeamKey(row.BandType, row.TeamKey))
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.Max(static row => row.TeamAppearanceCount));
+
+        var rankingLookup = effectiveRankBy == "appearance"
+            ? new Dictionary<BandSearchTeamKey, BandTeamRankingDto>()
+            : GetBandSearchRankingsForTeams(matchedTeams.Keys.ToList(), comboIdFilter);
+
+        var orderedTeamKeys = OrderBandSearchTeamKeys(matchedTeams.Keys, effectiveRankBy, appearanceLookup, rankingLookup)
+            .ToList();
+        var totalCount = orderedTeamKeys.Count;
+        var pageTeamKeys = orderedTeamKeys
+            .Skip((effectivePage - 1) * effectivePageSize)
+            .Take(effectivePageSize)
+            .ToList();
+
+        var teamRows = GetBandSearchProjectedTeamRows(conn, pageTeamKeys);
+        var allMemberAccountIds = pageTeamKeys
+            .SelectMany(key => teamRows.TryGetValue(key, out var row)
+                ? (IEnumerable<string>)row.MemberAccountIds
+                : SplitTeamKey(key.TeamKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var displayNames = _metaDb.GetDisplayNames(allMemberAccountIds);
+
+        var results = pageTeamKeys
+            .Select(teamKey => BuildBandSearchProjectionResult(
+                teamKey,
+                matchedTeams[teamKey],
+                teamRows,
+                displayNames,
+                rankingLookup,
+                appearanceLookup.GetValueOrDefault(teamKey)))
+            .Where(static result => result is not null)
+            .Select(static result => result!)
+            .ToList();
+
+        return CreateBandSearchResponse(
+            queryForResponse,
+            normalizedQuery,
+            bandTypeFilter,
+            comboIdFilter,
+            effectiveRankBy,
+            effectivePage,
+            effectivePageSize,
+            needsDisambiguation: false,
+            interpretations,
+            results,
+            totalCount);
+    }
+
     public PlayerBandEntryDto? GetBandById(string bandId)
     {
         using var conn = _pgDataSource.OpenConnection();
@@ -1654,16 +1889,18 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (bandIdentity is null)
             return null;
 
-        var memberAccountIds = SplitTeamKey(bandIdentity.TeamKey);
+        var memberAccountIds = bandIdentity.MemberAccountIds.Count > 0
+            ? bandIdentity.MemberAccountIds
+            : SplitTeamKey(bandIdentity.TeamKey);
         var displayNames = _metaDb.GetDisplayNames(memberAccountIds);
-        var instrumentsByMember = GetBandInstrumentsByMember(conn, bandIdentity.BandType, bandIdentity.TeamKey);
+        var instrumentsByMember = bandIdentity.MemberInstruments;
 
         return new PlayerBandEntryDto
         {
             BandId = bandId,
             TeamKey = bandIdentity.TeamKey,
             BandType = bandIdentity.BandType,
-            AppearanceCount = GetBandAppearanceCount(conn, bandIdentity.BandType, bandIdentity.TeamKey),
+            AppearanceCount = bandIdentity.AppearanceCount ?? 0,
             Members = memberAccountIds
                 .Select(memberAccountId => new PlayerBandMemberDto
                 {
@@ -1755,6 +1992,215 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         cmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {BandLeaderboardPersistence.BandTeamMembershipStateTable} WHERE account_id = @accountId)";
         cmd.Parameters.AddWithValue("accountId", accountId);
         return Convert.ToBoolean(cmd.ExecuteScalar());
+    }
+
+    private static bool HasBandSearchProjection(NpgsqlConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT EXISTS(
+                SELECT 1
+                FROM {BandSearchProjectionBuilder.StateTable}
+                WHERE id = TRUE
+                  AND team_rows > 0
+                  AND member_rows > 0)
+            """;
+        return Convert.ToBoolean(cmd.ExecuteScalar());
+    }
+
+    private static List<BandSearchProjectionMemberRow> GetBandSearchProjectionMemberRows(
+        NpgsqlConnection conn,
+        IReadOnlyCollection<string> accountIds,
+        string? bandTypeFilter)
+    {
+        if (accountIds.Count == 0)
+            return [];
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = bandTypeFilter is null
+            ? $"""
+                SELECT account_id, band_type, team_key, appearance_count, team_appearance_count, instrument_combos
+                FROM {BandSearchProjectionBuilder.MemberProjectionTable}
+                WHERE account_id = ANY(@accountIds)
+                ORDER BY account_id, band_type, team_appearance_count DESC, team_key
+                """
+            : $"""
+                SELECT account_id, band_type, team_key, appearance_count, team_appearance_count, instrument_combos
+                FROM {BandSearchProjectionBuilder.MemberProjectionTable}
+                WHERE account_id = ANY(@accountIds)
+                  AND band_type = @bandType
+                ORDER BY account_id, band_type, team_appearance_count DESC, team_key
+                """;
+        cmd.Parameters.AddWithValue("accountIds", accountIds.ToArray());
+        if (bandTypeFilter is not null)
+            cmd.Parameters.AddWithValue("bandType", bandTypeFilter);
+
+        var rows = new List<BandSearchProjectionMemberRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new BandSearchProjectionMemberRow(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                reader.GetInt32(4),
+                reader.GetFieldValue<string[]>(5)));
+        }
+
+        return rows;
+    }
+
+    private static bool BandSearchProjectionRowMatchesCombo(BandSearchProjectionMemberRow row, string comboId) =>
+        row.InstrumentCombos.Any(rawCombo => string.Equals(
+            BandComboIds.FromEpicRawCombo(rawCombo),
+            comboId,
+            StringComparison.OrdinalIgnoreCase));
+
+    private static Dictionary<BandSearchTeamKey, BandSearchTeamMatch> MatchBandSearchProjectionTeams(
+        IReadOnlyList<BandSearchProjectionMemberRow> candidateRows,
+        IReadOnlyList<BandSearchInternalInterpretation> interpretations)
+    {
+        var matches = new Dictionary<BandSearchTeamKey, BandSearchTeamMatch>();
+
+        foreach (var teamGroup in candidateRows.GroupBy(static row => new BandSearchTeamKey(row.BandType, row.TeamKey)))
+        {
+            var teamAccounts = teamGroup
+                .Select(static row => row.AccountId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var interpretation in interpretations)
+            {
+                var matchedAccountsForInterpretation = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var allTermsMatched = true;
+
+                foreach (var term in interpretation.Terms)
+                {
+                    var termMatches = term.Candidates
+                        .Select(static candidate => candidate.AccountId)
+                        .Where(teamAccounts.Contains)
+                        .ToList();
+
+                    if (termMatches.Count == 0)
+                    {
+                        allTermsMatched = false;
+                        break;
+                    }
+
+                    matchedAccountsForInterpretation.UnionWith(termMatches);
+                }
+
+                if (!allTermsMatched)
+                    continue;
+
+                if (!matches.TryGetValue(teamGroup.Key, out var match))
+                {
+                    match = new BandSearchTeamMatch();
+                    matches[teamGroup.Key] = match;
+                }
+
+                match.InterpretationIds.Add(interpretation.Id);
+                match.AccountIds.UnionWith(matchedAccountsForInterpretation);
+            }
+        }
+
+        return matches;
+    }
+
+    private static IEnumerable<BandSearchTeamKey> OrderBandSearchTeamKeys(
+        IEnumerable<BandSearchTeamKey> teamKeys,
+        string rankBy,
+        IReadOnlyDictionary<BandSearchTeamKey, int> appearanceLookup,
+        IReadOnlyDictionary<BandSearchTeamKey, BandTeamRankingDto> rankingLookup) => rankBy switch
+    {
+        "adjusted" => teamKeys
+            .OrderBy(key => rankingLookup.GetValueOrDefault(key)?.AdjustedSkillRank ?? int.MaxValue)
+            .ThenByDescending(key => appearanceLookup.GetValueOrDefault(key))
+            .ThenBy(key => key.TeamKey, StringComparer.OrdinalIgnoreCase),
+        "weighted" => teamKeys
+            .OrderBy(key => rankingLookup.GetValueOrDefault(key)?.WeightedRank ?? int.MaxValue)
+            .ThenByDescending(key => appearanceLookup.GetValueOrDefault(key))
+            .ThenBy(key => key.TeamKey, StringComparer.OrdinalIgnoreCase),
+        "fcrate" => teamKeys
+            .OrderBy(key => rankingLookup.GetValueOrDefault(key)?.FcRateRank ?? int.MaxValue)
+            .ThenByDescending(key => appearanceLookup.GetValueOrDefault(key))
+            .ThenBy(key => key.TeamKey, StringComparer.OrdinalIgnoreCase),
+        "totalscore" => teamKeys
+            .OrderBy(key => rankingLookup.GetValueOrDefault(key)?.TotalScoreRank ?? int.MaxValue)
+            .ThenByDescending(key => appearanceLookup.GetValueOrDefault(key))
+            .ThenBy(key => key.TeamKey, StringComparer.OrdinalIgnoreCase),
+        _ => teamKeys
+            .OrderByDescending(key => appearanceLookup.GetValueOrDefault(key))
+            .ThenBy(key => key.TeamKey, StringComparer.OrdinalIgnoreCase),
+    };
+
+    private static Dictionary<BandSearchTeamKey, BandSearchProjectionTeamRow> GetBandSearchProjectedTeamRows(
+        NpgsqlConnection conn,
+        IReadOnlyCollection<BandSearchTeamKey> teamKeys)
+    {
+        var result = new Dictionary<BandSearchTeamKey, BandSearchProjectionTeamRow>();
+        foreach (var teamGroup in teamKeys.GroupBy(static key => key.BandType, StringComparer.OrdinalIgnoreCase))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT band_type, team_key, band_id, appearance_count, member_account_ids, member_instruments_json
+                FROM {BandSearchProjectionBuilder.TeamProjectionTable}
+                WHERE band_type = @bandType
+                  AND team_key = ANY(@teamKeys)
+                """;
+            cmd.Parameters.AddWithValue("bandType", teamGroup.Key);
+            cmd.Parameters.AddWithValue("teamKeys", teamGroup.Select(static key => key.TeamKey).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var row = new BandSearchProjectionTeamRow(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                    reader.GetInt32(3),
+                    reader.GetFieldValue<string[]>(4),
+                    ParseMemberInstrumentsJson(reader.IsDBNull(5) ? "{}" : reader.GetString(5)));
+                result[new BandSearchTeamKey(row.BandType, row.TeamKey)] = row;
+            }
+        }
+
+        return result;
+    }
+
+    private static BandSearchResultDto? BuildBandSearchProjectionResult(
+        BandSearchTeamKey teamKey,
+        BandSearchTeamMatch match,
+        IReadOnlyDictionary<BandSearchTeamKey, BandSearchProjectionTeamRow> teamRows,
+        IReadOnlyDictionary<string, string> displayNames,
+        IReadOnlyDictionary<BandSearchTeamKey, BandTeamRankingDto> rankingLookup,
+        int fallbackAppearanceCount)
+    {
+        if (!teamRows.TryGetValue(teamKey, out var row))
+            return null;
+
+        var bandId = string.IsNullOrWhiteSpace(row.BandId)
+            ? BandIdentity.CreateBandId(teamKey.BandType, teamKey.TeamKey)
+            : row.BandId;
+
+        return new BandSearchResultDto
+        {
+            BandId = bandId,
+            TeamKey = teamKey.TeamKey,
+            BandType = teamKey.BandType,
+            AppearanceCount = row.AppearanceCount > 0 ? row.AppearanceCount : fallbackAppearanceCount,
+            Members = row.MemberAccountIds
+                .Select(memberAccountId => new PlayerBandMemberDto
+                {
+                    AccountId = memberAccountId,
+                    DisplayName = displayNames.GetValueOrDefault(memberAccountId),
+                    Instruments = row.MemberInstruments.GetValueOrDefault(memberAccountId, []),
+                })
+                .ToList(),
+            Ranking = rankingLookup.GetValueOrDefault(teamKey),
+            MatchedInterpretationIds = match.InterpretationIds.Order().ToList(),
+            MatchedAccountIds = match.AccountIds.Order(StringComparer.OrdinalIgnoreCase).ToList(),
+        };
     }
 
     private List<BandSearchInternalInterpretation> BuildBandSearchInterpretations(
@@ -2493,81 +2939,86 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     private static BandIdentityLookup? ResolveBandIdentity(NpgsqlConnection conn, string bandId)
     {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT DISTINCT band_type, team_key
-            FROM band_members
-            ORDER BY band_type, team_key
-            """;
-
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        using (var projection = conn.CreateCommand())
         {
-            var bandType = reader.GetString(0);
-            var teamKey = reader.GetString(1);
-            if (string.Equals(BandIdentity.CreateBandId(bandType, teamKey), bandId, StringComparison.OrdinalIgnoreCase))
-                return new BandIdentityLookup(bandType, teamKey);
+            projection.CommandText = $"""
+                SELECT band_type, team_key, appearance_count, member_account_ids, member_instruments_json::text
+                FROM {BandSearchProjectionBuilder.TeamProjectionTable}
+                WHERE band_id = @bandId
+                LIMIT 1
+                """;
+            projection.Parameters.AddWithValue("bandId", bandId);
+
+            using var reader = projection.ExecuteReader();
+            if (reader.Read())
+            {
+                return new BandIdentityLookup(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetInt32(2),
+                    reader.GetFieldValue<string[]>(3).ToList(),
+                    ParseMemberInstrumentsJson(reader.IsDBNull(4) ? "{}" : reader.GetString(4)));
+            }
+        }
+
+        string? registeredBandType = null;
+        string? registeredTeamKey = null;
+        using (var registered = conn.CreateCommand())
+        {
+            registered.CommandText = """
+                SELECT band_type, team_key
+                FROM registered_bands
+                WHERE band_id = @bandId
+                ORDER BY last_activity_at DESC NULLS LAST, registered_at DESC
+                LIMIT 1
+                """;
+            registered.Parameters.AddWithValue("bandId", bandId);
+
+            using var reader = registered.ExecuteReader();
+            if (reader.Read())
+            {
+                registeredBandType = reader.GetString(0);
+                registeredTeamKey = reader.GetString(1);
+            }
+        }
+
+        if (registeredBandType is not null && registeredTeamKey is not null)
+        {
+            var projected = ResolveBandIdentityFromProjectionTeam(conn, registeredBandType, registeredTeamKey);
+            return projected ?? new BandIdentityLookup(
+                registeredBandType,
+                registeredTeamKey,
+                null,
+                SplitTeamKey(registeredTeamKey),
+                new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase));
         }
 
         return null;
     }
 
-    private static int GetBandAppearanceCount(NpgsqlConnection conn, string bandType, string teamKey)
+    private static BandIdentityLookup? ResolveBandIdentityFromProjectionTeam(NpgsqlConnection conn, string bandType, string teamKey)
     {
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT COUNT(*)
-            FROM (
-                SELECT DISTINCT song_id, instrument_combo
-                FROM band_members
-                WHERE band_type = @bandType
-                  AND team_key = @teamKey
-            ) band_appearances
-            """;
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.Parameters.AddWithValue("teamKey", teamKey);
-        return Convert.ToInt32(cmd.ExecuteScalar());
-    }
-
-    private static Dictionary<string, List<string>> GetBandInstrumentsByMember(NpgsqlConnection conn, string bandType, string teamKey)
-    {
-        var instrumentsByMember = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT account_id, instrument_id
-            FROM band_member_stats
+        cmd.CommandText = $"""
+            SELECT band_type, team_key, appearance_count, member_account_ids, member_instruments_json::text
+            FROM {BandSearchProjectionBuilder.TeamProjectionTable}
             WHERE band_type = @bandType
               AND team_key = @teamKey
-            ORDER BY account_id, instrument_combo, instrument_id
+            LIMIT 1
             """;
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("teamKey", teamKey);
 
         using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            if (reader.IsDBNull(1))
-                continue;
+        if (!reader.Read())
+            return null;
 
-            var instrument = BandInstrumentMapping.ToLeaderboardType(reader.GetInt32(1));
-            if (string.IsNullOrWhiteSpace(instrument))
-                continue;
-
-            var accountId = reader.GetString(0);
-            if (!instrumentsByMember.TryGetValue(accountId, out var instruments))
-            {
-                instruments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                instrumentsByMember[accountId] = instruments;
-            }
-
-            instruments.Add(instrument);
-        }
-
-        return instrumentsByMember.ToDictionary(
-            kvp => kvp.Key,
-            kvp => BandComboIds.ToInstruments(BandComboIds.FromInstruments(kvp.Value)).ToList(),
-            StringComparer.OrdinalIgnoreCase);
+        return new BandIdentityLookup(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetInt32(2),
+            reader.GetFieldValue<string[]>(3).ToList(),
+            ParseMemberInstrumentsJson(reader.IsDBNull(4) ? "{}" : reader.GetString(4)));
     }
 
     /// <summary>
@@ -3010,13 +3461,32 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             .ToList();
     }
 
-    private sealed record BandIdentityLookup(string BandType, string TeamKey);
+    private sealed record BandIdentityLookup(
+        string BandType,
+        string TeamKey,
+        int? AppearanceCount,
+        List<string> MemberAccountIds,
+        Dictionary<string, List<string>> MemberInstruments);
     private sealed record PlayerBandMembershipSummaryRow(
         string AccountId,
         string BandType,
         string TeamKey,
         string InstrumentCombo,
         int AppearanceCount,
+        Dictionary<string, List<string>> MemberInstruments);
+    private sealed record BandSearchProjectionMemberRow(
+        string AccountId,
+        string BandType,
+        string TeamKey,
+        int AppearanceCount,
+        int TeamAppearanceCount,
+        string[] InstrumentCombos);
+    private sealed record BandSearchProjectionTeamRow(
+        string BandType,
+        string TeamKey,
+        string BandId,
+        int AppearanceCount,
+        string[] MemberAccountIds,
         Dictionary<string, List<string>> MemberInstruments);
     private sealed record PlayerBandTeamSummary(string BandType, string TeamKey, int AppearanceCount);
     private sealed record BandSearchTeamKey(string BandType, string TeamKey);
@@ -3127,6 +3597,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     public void Dispose()
     {
+        CleanupActiveScrapeWritersAsync().AsTask().GetAwaiter().GetResult();
         foreach (var db in _instrumentDbs.Values)
             db.Dispose();
         _metaDb.Dispose();

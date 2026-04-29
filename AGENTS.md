@@ -57,8 +57,8 @@ This repository uses a hierarchical agent organization. All agents follow these 
 
 | Tier | Model | Agents | Purpose |
 |---|---|---|---|
-| Research/Coordination | Claude Opus 4.6 | festival-score-tracker | Deep reasoning, architecture, triage |
-| Implementation | Claude Haiku 4.5 | All other agents (45) — heads, principals, design, feat, test, cross-cutting, runner | Design review, code gen, measurement, mechanical tasks |
+| Research/Coordination | GPT-5.5 | festival-score-tracker | Deep reasoning, architecture, triage |
+| Implementation | Claude Opus 4.7 | All other agents (45) — heads, principals, design, feat, test, cross-cutting, runner | Design review, code gen, measurement, mechanical tasks |
 
 Only the `festival-score-tracker` coordinator is user-invocable. All other agents are called internally via `runSubagent`.
 

@@ -73,6 +73,49 @@ describe('PinnedSidebar', () => {
     expect(props.onDeselect).toHaveBeenCalled();
   });
 
+  it('shows selected band members in the pinned sidebar', () => {
+    renderPinned({
+      player: null,
+      selectedProfile: {
+        type: 'band',
+        bandId: 'band-1',
+        bandType: 'Band_Trios',
+        teamKey: 'p1:p2:p3',
+        displayName: 'Player One + Player Two + Player Three',
+        members: [
+          { accountId: 'p1', displayName: 'Player One' },
+          { accountId: 'p2', displayName: 'Player Two' },
+          { accountId: 'p3', displayName: 'Player Three' },
+        ],
+      },
+    });
+
+    expect(screen.getByTestId('pinned-sidebar-band-profile')).toBeTruthy();
+    expect(screen.getByText('Player One + Player Two + Player Three')).toBeTruthy();
+    expect(screen.getByText('Player One')).toBeTruthy();
+    expect(screen.getByText('Player Two')).toBeTruthy();
+    expect(screen.getByText('Player Three')).toBeTruthy();
+    expect(screen.getByText('Trios')).toBeTruthy();
+    expect(screen.queryByText('Select Player Profile')).toBeNull();
+  });
+
+  it('deselects a selected band from the pinned sidebar', () => {
+    const { props } = renderPinned({
+      player: null,
+      selectedProfile: {
+        type: 'band',
+        bandId: 'band-1',
+        bandType: 'Band_Duets',
+        teamKey: 'p1:p2',
+        displayName: 'Player One + Player Two',
+        members: [],
+      },
+    });
+
+    fireEvent.click(screen.getByText('Deselect Band'));
+    expect(props.onDeselect).toHaveBeenCalled();
+  });
+
   it('renders Settings link', () => {
     renderPinned();
     expect(screen.getByText('Settings')).toBeTruthy();

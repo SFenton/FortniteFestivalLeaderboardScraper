@@ -83,6 +83,36 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
+    [Fact]
+    public async Task CleanupActiveScrapeWritersAsync_DisposesActiveDiskSpool()
+    {
+        using var glp = CreatePersistence();
+        var spoolRoot = Path.Combine(_dataDir, "spool");
+        var spool = glp.StartSpoolWriter(1001, spoolRoot);
+        spool.Enqueue("song-a", "Solo_Guitar", new[]
+        {
+            new LeaderboardEntry
+            {
+                AccountId = "account-a",
+                Score = 12345,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 34,
+                Difficulty = 3,
+                Percentile = 90,
+                Rank = 1,
+                Source = "scrape",
+            },
+        });
+        var spoolDir = spool.SpoolDirectory;
+        Assert.True(Directory.Exists(spoolDir));
+
+        await glp.CleanupActiveScrapeWritersAsync();
+        await glp.CleanupActiveScrapeWritersAsync();
+
+        Assert.False(Directory.Exists(spoolDir));
+    }
+
     private (long ActiveSnapshotId, long ScrapeId, bool IsFinalized)? GetSnapshotState(string songId, string instrument)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
@@ -213,6 +243,40 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         ]);
 
         await glp.FlushSpoolAsync();
+        var activated = glp.FinalizeShadowSnapshots(42);
+        var currentState = glp.GetCurrentStateLeaderboard("song_1", "Solo_Guitar", top: 10);
+
+        Assert.Equal(1, GetSnapshotRowCount(42, "song_1", "Solo_Guitar"));
+        Assert.Equal(0, GetLiveRowCount("song_1", "Solo_Guitar"));
+        Assert.Equal(1, activated);
+        var entry = Assert.Single(currentState!);
+        Assert.Equal("acct_1", entry.AccountId);
+        Assert.Equal(100_000, entry.Score);
+    }
+
+    [Fact]
+    public async Task OnlineSoloWriter_when_legacy_live_writes_disabled_writes_snapshot_only()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WriteLegacyLiveLeaderboardDuringScrape = false });
+
+        glp.StartOnlineSoloWriter(42, channelCapacity: 2, maxBatchPages: 2, writerCount: 1);
+        await glp.EnqueueOnlineSoloPageAsync("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            }
+        ]);
+        await glp.DrainOnlineSoloWriterAsync();
         var activated = glp.FinalizeShadowSnapshots(42);
         var currentState = glp.GetCurrentStateLeaderboard("song_1", "Solo_Guitar", top: 10);
 

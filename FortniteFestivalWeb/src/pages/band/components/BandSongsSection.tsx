@@ -23,6 +23,20 @@ export type BandSongsSectionProps = {
   onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void;
 };
 
+export function useBandSongs(
+  bandType: BandType | undefined,
+  teamKey: string | undefined,
+  limit = 5,
+  comboId?: string,
+) {
+  return useQuery({
+    queryKey: queryKeys.bandSongs(bandType ?? '', teamKey ?? '', limit, comboId),
+    queryFn: () => api.getBandSongs(bandType!, teamKey!, limit, comboId),
+    enabled: !!bandType && !!teamKey,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export default function BandSongsSection({
   bandType,
   teamKey,
@@ -39,11 +53,7 @@ export default function BandSongsSection({
   const { state } = useFestival();
   const songMap = useMemo(() => new Map(state.songs.map(song => [song.songId, song])), [state.songs]);
 
-  const { data, isLoading } = useQuery({
-    queryKey: queryKeys.bandSongs(bandType, teamKey, limit, comboId),
-    queryFn: () => api.getBandSongs(bandType, teamKey, limit, comboId),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data, isLoading } = useBandSongs(bandType, teamKey, limit, comboId);
 
   const renderSongRow = (performance: BandSongPerformance) => {
     const song = songMap.get(performance.songId);

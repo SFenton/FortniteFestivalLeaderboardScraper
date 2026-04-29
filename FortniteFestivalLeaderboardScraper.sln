@@ -25,6 +25,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ComboRankingRepairHarness",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PostScrapeCloneHarness", "FSTService.Harnesses\PostScrapeCloneHarness\PostScrapeCloneHarness.csproj", "{2F650BF6-3D0A-4E82-8AF4-1D81194DEB53}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BandSearchProjectionHarness", "FSTService.Harnesses\BandSearchProjectionHarness\BandSearchProjectionHarness.csproj", "{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -168,6 +170,18 @@ Global
 		{2F650BF6-3D0A-4E82-8AF4-1D81194DEB53}.Release|x64.Build.0 = Release|Any CPU
 		{2F650BF6-3D0A-4E82-8AF4-1D81194DEB53}.Release|x86.ActiveCfg = Release|Any CPU
 		{2F650BF6-3D0A-4E82-8AF4-1D81194DEB53}.Release|x86.Build.0 = Release|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Debug|x64.Build.0 = Debug|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Debug|x86.Build.0 = Debug|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|x64.ActiveCfg = Release|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|x64.Build.0 = Release|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|x86.ActiveCfg = Release|Any CPU
+		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

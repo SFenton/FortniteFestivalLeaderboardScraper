@@ -371,8 +371,8 @@ describe('SettingsPage', () => {
   it('renders Service Info section', () => {
     renderSettings();
     expect(screen.getByText('Service Info')).toBeDefined();
-    expect(screen.getByText('Most recent leaderboard update start')).toBeDefined();
-    expect(screen.getByText('Leaderboard update status')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).getByText('Most recent leaderboard update start')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Leaderboard update status')).toBeDefined();
   });
 
   it('keeps service info rows inline when every row fits on one line', async () => {
@@ -412,13 +412,13 @@ describe('SettingsPage', () => {
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByText(new Date(defaultServiceInfo.lastCompletedUpdate.startedAt).toLocaleString())).toBeDefined();
+      expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).getByText(new Date(defaultServiceInfo.lastCompletedUpdate.startedAt).toLocaleString())).toBeDefined();
     });
 
-    expect(screen.getByText(new Date(defaultServiceInfo.lastCompletedUpdate.completedAt).toLocaleString())).toBeDefined();
-    expect(screen.getByText('Idle')).toBeDefined();
-    expect(screen.getByText('Waiting for the next scheduled update')).toBeDefined();
-    expect(screen.getByText(new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-last-update-complete')).getByText(new Date(defaultServiceInfo.lastCompletedUpdate.completedAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Idle')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).getByText('Waiting for the next scheduled update')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).getByText(new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString())).toBeDefined();
   });
 
   it('renders purple arc spinners on Status and Step rows when update is in progress', async () => {
@@ -475,12 +475,12 @@ describe('SettingsPage', () => {
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByText('Selected player ID')).toBeDefined();
+      expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('Selected player ID')).toBeDefined();
     });
 
-    expect(screen.getByText('tracked-player-1')).toBeDefined();
-    expect(screen.getByText('Selected player Rivals status')).toBeDefined();
-    expect(screen.getByText('Complete')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-selected-player-id')).getByText('tracked-player-1')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Selected player Rivals status')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-selected-player-rivals-status')).getByText('Complete')).toBeDefined();
   });
 
   it('displays service version after fetch', async () => {
@@ -536,6 +536,21 @@ describe('SettingsPage', () => {
     expect(stored.showButtonsInHeaderMobile).toBe(false);
   });
 
+  it('defaults Search to Songs and persists a changed default search target', async () => {
+    renderSettings();
+    const row = screen.getByText('Default Search Target').closest('div')!.parentElement!;
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
+      expect(stored.defaultSearchTarget).toBe('songs');
+    });
+
+    fireEvent.click(within(row).getByText('Bands').closest('button')!);
+
+    const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
+    expect(stored.defaultSearchTarget).toBe('bands');
+  });
+
   it('hides the mobile quick links header trigger when the setting is off', () => {
     setViewportQueries({ mobile: true, wide: false });
     localStorage.setItem('fst:appSettings', JSON.stringify({ showButtonsInHeaderMobile: false }));
@@ -586,14 +601,16 @@ describe('SettingsPage', () => {
   });
 
   it.each([
-    ['Songs', 0],
-    ['Song Info', 1],
-    ['Statistics', 2],
-    ['Suggestions', 3],
-  ] as const)('opens %s first-run replay carousel', async (label, _idx) => {
+    'Songs',
+    'Song Info',
+    'Statistics',
+    'Suggestions',
+  ] as const)('opens %s first-run replay carousel', async (label) => {
     renderSettings();
-    // There are multiple buttons per row; find the one whose sibling text matches the label
-    const row = screen.getByText(label).closest('button')!;
+    // Some labels also appear in unrelated settings controls; select the First Run row with its Show button.
+    const row = screen.getAllByText(label)
+      .map(element => element.closest('button'))
+      .find((button): button is HTMLButtonElement => !!button && within(button).queryByText('Show') !== null)!;
     expect(row).toBeTruthy();
 
     await act(async () => {

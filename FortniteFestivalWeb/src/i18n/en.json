@@ -5,6 +5,7 @@
     "apply": "Apply",
     "reset": "Reset",
     "search": "Search...",
+    "searchAction": "Search",
     "dismiss": "Dismiss",
     "loading": "Loading…",
     "error": "Something went wrong",
@@ -17,6 +18,7 @@
     "failedToLoad": "Failed to load data",
     "searchPlayer": "Search player…",
     "selectPlayerProfile": "Select Player Profile",
+    "selectBandProfile": "Select Band Profile",
     "selectAsProfile": "Select {{name}} as Player Profile",
     "findPlayer": "Find Player",
     "deselect": "Deselect",
@@ -127,6 +129,28 @@
     "invalidScoreAriaLabel": "Invalid score indicator",
     "goToSettings": "Settings"
   },
+  "search": {
+    "title": "Search",
+    "placeholder": "Search songs, players, or bands…",
+    "targetTabs": "Search targets",
+    "enterQuery": "Enter at least two characters to search.",
+    "failed": "Search failed. Try again.",
+    "unknownBand": "Unknown Band",
+    "bandSummary": "{{type}} • {{count}} appearances",
+    "tabs": {
+      "songs": "Songs",
+      "players": "Players",
+      "bands": "Bands"
+    },
+    "noResults": {
+      "songs": "No songs found.",
+      "players": "No players found.",
+      "bands": "No bands found."
+    },
+    "resultKinds": {
+      "player": "Player"
+    }
+  },
   "songDetail": {
     "leaderboard": "Leaderboard",
     "scoreHistory": "Score History",
@@ -134,7 +158,16 @@
     "noScoresSubtitle": "When scores are submitted for {{instrument}}, they will show up here on the next leaderboard update.",
     "viewFullLeaderboard": "View full leaderboard",
     "songNotFound": "Song not found",
-    "noEntries": "No {{instrument}} entries"
+    "noEntries": "No {{instrument}} entries",
+    "noBandScores": "No band scores recorded yet.",
+    "bandScoreFooter": "Rank {{rank}}, season {{season}}, score {{score}}, {{stars}} stars, {{accuracy}}"
+  },
+  "songBandLeaderboard": {
+    "notFound": "Band leaderboard not found",
+    "subtitle": "{{type}} • {{formattedCount}} entries",
+    "failedToLoad": "Failed to load band leaderboard",
+    "emptyTitle": "No band scores found",
+    "emptySubtitle": "No {{type}} scores have been recorded for this song yet."
   },
   "leaderboard": {
     "title": "Leaderboard",
@@ -275,7 +308,9 @@
     "notFound": "Band not found",
     "notFoundSubtitle": "This band may not have been indexed yet.",
     "missingId": "This band link is missing an ID and cannot be resolved.",
-    "lookupFailed": "The service could not resolve this older band link. Try refreshing the player page."
+    "lookupFailed": "The service could not resolve this older band link. Try refreshing the player page.",
+    "selectProfile": "Select Band Profile",
+    "deselectProfile": "Deselect Band"
   },
   "bandList": {
     "title": "Player Bands",
@@ -424,6 +459,8 @@
     "pathDefaultViewDesc": "Choose whether CHOpt paths open as an image or text table by default.",
     "pathDefaultViewImage": "Image",
     "pathDefaultViewText": "Text",
+    "defaultSearchTarget": "Default Search Target",
+    "defaultSearchTargetDesc": "Choose which search results tab opens first when you use Search.",
     "pathColumnOrder": "CHOpt Text Path Column Order",
     "pathColumnOrderDesc": "Choose the order columns appear in the CHOpt text path view. You can also drag column headers directly in the path modal.",
     "showInstruments": "Show Instruments",
@@ -1045,13 +1082,18 @@
     "combined": "Combined Rankings",
     "viewAllRankings": "View all rankings",
     "viewAllRankingsWithCount": "View all rankings ({{formattedCount}})",
+    "viewAllBandRankings": "View all band rankings",
+    "viewAllBandRankingsWithCount": "View all band rankings ({{formattedCount}})",
     "page": "Page {{current}} of {{total}}",
     "noRankings": "No rankings available yet.",
+    "noBandRankings": "No band rankings available yet.",
     "noRankingsSubtitle": "When leaderboard ranks are recomputed for {{instrument}}, they will show up here on the next update.",
     "noRankingsHint": "Rankings are computed after each scrape pass.",
     "totalRanked": "{{formattedCount}} ranked players",
+    "totalRankedBands": "{{formattedCount}} ranked bands",
     "rankBy": "Rank By",
     "rankByHint": "Choose how players are ranked.",
+    "rankByBandHint": "Choose how bands are ranked.",
     "rankByReset": "Reset to Default",
     "rankByResetHint": "Revert to Total Score ranking.",
     "rankByCancelTitle": "Discard changes?",
@@ -1072,6 +1114,12 @@
       "totalscoreDesc": "Sum of all scores across every played song.",
       "maxscore": "Max Score %",
       "maxscoreDesc": "Percentage of the maximum possible score achieved, factoring in the number of scores on the selected instrument so a few near-perfect scores do not rank too highly."
+    },
+    "bandMetric": {
+      "adjustedDesc": "Average rank percentile across songs, factoring in chart coverage so bands with only a few scores do not rank too highly. Lower is better.",
+      "weightedDesc": "Rank percentile weighted by each song's leaderboard population, factoring in chart coverage so bands with only a few scores do not rank too highly. Lower is better.",
+      "fcrateDesc": "Percentage of played songs with a full combo, factoring in chart coverage so a short perfect streak does not rank too highly.",
+      "totalscoreDesc": "Sum of all scores across every played song."
     },
     "column": {
       "rank": "#",

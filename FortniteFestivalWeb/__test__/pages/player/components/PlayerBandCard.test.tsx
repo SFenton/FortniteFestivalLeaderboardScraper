@@ -185,6 +185,49 @@ describe('PlayerBandCard adaptive instrument layout', () => {
     expect(screen.getAllByTestId(/instrument-icon-/)).toHaveLength(2);
   });
 
+  it('can render score metadata in the footer instead of appearance count', () => {
+    render(
+      <MemoryRouter>
+        <PlayerBandCard
+          entry={makeMixedEntry()}
+          rank={7}
+          testId="band-card"
+          scoreFooter={<span>Season 4 - 1,234,567 - 99%</span>}
+          scoreFooterAriaLabel="Season 4 score 1,234,567 99 percent"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByLabelText('Season 4 score 1,234,567 99 percent')).toBeInTheDocument();
+    expect(screen.getByLabelText('Season 4 score 1,234,567 99 percent')).toHaveStyle({ paddingLeft: '8px', paddingRight: '8px' });
+    expect(screen.getByText('Season 4 - 1,234,567 - 99%')).toBeInTheDocument();
+    expect(screen.getByTestId('band-rank-rail')).toHaveTextContent('#7');
+    expect(screen.getByTestId('band-rank-rail')).toHaveStyle({ alignSelf: 'stretch' });
+    expect(screen.getByTestId('band-ranked-card-content')).toContainElement(screen.getByTestId('band-rank-rail'));
+    expect(screen.getByTestId('band-ranked-card-content')).toContainElement(screen.getByLabelText('Season 4 score 1,234,567 99 percent'));
+    expect(screen.getByTestId('band-card-member-content')).not.toContainElement(screen.getByTestId('band-rank-rail'));
+    expect(screen.queryByText('appearances')).toBeNull();
+  });
+
+  it('renders member metadata before member instrument icons', () => {
+    render(
+      <MemoryRouter>
+        <PlayerBandCard
+          entry={makeEntry(1, 'BandMate')}
+          testId="band-card"
+          renderMemberMetadata={() => <span data-testid="member-meta">Meta</span>}
+        />
+      </MemoryRouter>,
+    );
+
+    const trailing = screen.getByTestId('band-member-trailing');
+    const metadata = within(trailing).getByTestId('member-meta');
+    const instrument = within(trailing).getByTestId('instrument-icon-Solo_Guitar');
+    expect(trailing).toContainElement(metadata);
+    expect(trailing).toContainElement(instrument);
+    expect(metadata.compareDocumentPosition(instrument) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('resolves layout from measured width without relying on viewport category', () => {
     expect(resolveBandMemberInstrumentLayout('BandMate', 9, 800)).toEqual({ stacked: false, instrumentRowCount: 1 });
     expect(resolveBandMemberInstrumentLayout('BandMate', 9, 260)).toEqual({ stacked: true, instrumentRowCount: 2 });

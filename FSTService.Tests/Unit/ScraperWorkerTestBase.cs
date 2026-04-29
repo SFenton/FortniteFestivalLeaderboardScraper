@@ -185,7 +185,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             options,
-            Substitute.For<ILogger<PostScrapeOrchestrator>>());
+            Substitute.For<ILogger<PostScrapeOrchestrator>>(),
+            null);
 
         var resultProcessor = new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>());
 
@@ -211,6 +212,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var dbInitializer = new StartupInitializer(
             _persistence, _festivalService, shopService,
             _lifetime,
+            options,
             Substitute.For<ILogger<StartupInitializer>>());
         dbInitializer.StartAsync(CancellationToken.None);
         dbInitializer.WaitForReadyAsync().GetAwaiter().GetResult();

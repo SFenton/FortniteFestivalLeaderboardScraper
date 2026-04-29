@@ -80,6 +80,7 @@ export function useBandRankHistory(
     chartData,
     loading: isLoading,
     error,
+    hasData: data != null,
     historyStatus: data?.historyStatus ?? 'current',
     historyComputedThrough: data?.historyComputedThrough ?? null,
     historyJobUpdatedAt: data?.historyJobUpdatedAt ?? null,

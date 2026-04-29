@@ -17,6 +17,13 @@ public sealed class BandTeamRankingRebuildOptions
     public int CommandTimeoutSeconds { get; set; } = 0;
     public bool AnalyzeStagingTable { get; set; } = false;
     public bool DisableSynchronousCommit { get; set; } = true;
+
+    /// <summary>
+    /// Run standard rank-history snapshots concurrently with band ranking rebuilds, then await both
+    /// before the rankings pass completes. This preserves scrape completion gating while reducing
+    /// wall clock when PostgreSQL can absorb the overlap.
+    /// </summary>
+    public bool OverlapRankHistorySnapshotsWithBandRankings { get; set; } = false;
 }
 
 public sealed record BandTeamRankingRebuildMetrics(

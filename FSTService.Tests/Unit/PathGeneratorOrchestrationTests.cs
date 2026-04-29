@@ -298,8 +298,56 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
             Assert.True(Directory.Exists(instDir), $"Missing directory: {instDir}");
         }
 
-        // Verify .dat was cached
-        Assert.True(File.Exists(Path.Combine(_tempDir, "midi", "song123.dat")));
+        // Encrypted Epic .dat payloads are not persisted.
+        Assert.False(File.Exists(Path.Combine(_tempDir, "midi", "song123.dat")));
+        if (Directory.Exists(Path.Combine(_tempDir, "midi")))
+            Assert.Empty(Directory.EnumerateFiles(Path.Combine(_tempDir, "midi"), "*.dat"));
+    }
+
+    [Fact]
+    public async Task GeneratePathsAsync_does_not_persist_encrypted_dat()
+    {
+        var midi = BuildMinimalMidi();
+        var encrypted = EncryptMidi(midi);
+
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(encrypted),
+        });
+
+        var gen = CreateGenerator(handler);
+        var results = await gen.GeneratePathsAsync(
+            [new PathGenerator.SongPathRequest("noDatCache", "No Dat Cache", "Artist", "http://x/s.dat", null, null, null)],
+            false, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.False(File.Exists(Path.Combine(_tempDir, "midi", "noDatCache.dat")));
+    }
+
+    [Fact]
+    public async Task GeneratePathsAsync_deletes_temp_midi_directory_after_success()
+    {
+        var songId = $"tempCleanup{Guid.NewGuid():N}";
+        var tempPath = Path.Combine(Path.GetTempPath(), $"fst-paths-{songId}");
+        try { if (Directory.Exists(tempPath)) Directory.Delete(tempPath, true); } catch { }
+
+        var midi = BuildMinimalMidi();
+        var encrypted = EncryptMidi(midi);
+
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueResponse(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(encrypted),
+        });
+
+        var gen = CreateGenerator(handler);
+        var results = await gen.GeneratePathsAsync(
+            [new PathGenerator.SongPathRequest(songId, "Temp Cleanup", "Artist", "http://x/s.dat", null, null, null)],
+            false, CancellationToken.None);
+
+        Assert.Single(results);
+        Assert.False(Directory.Exists(tempPath));
     }
 
     [Fact]

@@ -49,6 +49,68 @@ export interface RankingEntryProps {
   reserveTenDigitScoreWidth?: boolean;
 }
 
+export type RankingMetadataProps = Pick<RankingEntryProps,
+  'ratingLabel'
+  | 'songsLabel'
+  | 'percentileDisplay'
+  | 'valueDisplay'
+  | 'valueColor'
+  | 'percentileValueDisplay'
+  | 'bayesianRankLabel'
+  | 'bayesianRankDisplay'
+  | 'bayesianRankColor'
+  | 'percentileValueMinWidth'
+  | 'bayesianRankMinWidth'
+  | 'ratingPillTier'
+  | 'songsLabelPrimary'
+  | 'songsLabelGoldPrefix'
+  | 'isPlayer'
+  | 'reserveTenDigitScoreWidth'
+>;
+
+export const RankingMetadata = memo(function RankingMetadata({
+  ratingLabel,
+  songsLabel,
+  percentileDisplay,
+  valueDisplay,
+  valueColor,
+  percentileValueDisplay,
+  bayesianRankLabel = 'Bayesian-Calculated Rank:',
+  bayesianRankDisplay,
+  bayesianRankColor,
+  percentileValueMinWidth,
+  bayesianRankMinWidth,
+  ratingPillTier,
+  songsLabelPrimary,
+  songsLabelGoldPrefix,
+  isPlayer,
+  reserveTenDigitScoreWidth,
+}: RankingMetadataProps) {
+  const s = useStyles(isPlayer, undefined, reserveTenDigitScoreWidth);
+  const hasPercentileMetricValue = !!percentileValueDisplay;
+
+  return (
+    <>
+      {!hasPercentileMetricValue && valueDisplay && <PercentilePill display={valueDisplay} color={valueColor} minWidth={MetadataSize.valuePillMinWidth} bold={isPlayer} />}
+      {!hasPercentileMetricValue && !valueDisplay && (percentileDisplay ? <PercentilePill display={percentileDisplay} bold={isPlayer} /> : songsLabel && renderSongsLabel(songsLabel, songsLabelPrimary || songsLabelGoldPrefix, !!songsLabelGoldPrefix, s))}
+      {hasPercentileMetricValue && renderPercentileMetadata({
+        songsLabel,
+        songsLabelPrimary,
+        songsLabelGoldPrefix,
+        percentileValueDisplay,
+        percentileValueMinWidth,
+        bayesianRankLabel,
+        bayesianRankDisplay,
+        bayesianRankColor,
+        bayesianRankMinWidth,
+        isPlayer,
+        s,
+      })}
+      {ratingPillTier ? <PercentilePill display={ratingLabel} tier={ratingPillTier} bold={isPlayer} /> : ratingLabel && <span data-testid="ranking-rating-label" style={s.colRating}>{ratingLabel}</span>}
+    </>
+  );
+});
+
 export const RankingEntry = memo(function RankingEntry({
   rank,
   displayName,
@@ -104,22 +166,24 @@ export const RankingEntry = memo(function RankingEntry({
     <>
       <span style={s.colRank}>#{rank.toLocaleString()}</span>
       <span style={s.colName}>{displayName}</span>
-      {!hasPercentileMetricValue && valueDisplay && <PercentilePill display={valueDisplay} color={valueColor} minWidth={MetadataSize.valuePillMinWidth} bold={isPlayer} />}
-      {!hasPercentileMetricValue && !valueDisplay && (percentileDisplay ? <PercentilePill display={percentileDisplay} bold={isPlayer} /> : songsLabel && renderSongsLabel(songsLabel, songsLabelPrimary || songsLabelGoldPrefix, !!songsLabelGoldPrefix, s))}
-      {hasPercentileMetricValue && renderPercentileMetadata({
-        songsLabel,
-        songsLabelPrimary,
-        songsLabelGoldPrefix,
-        percentileValueDisplay,
-        percentileValueMinWidth,
-        bayesianRankLabel,
-        bayesianRankDisplay,
-        bayesianRankColor,
-        bayesianRankMinWidth,
-        isPlayer,
-        s,
-      })}
-      {ratingPillTier ? <PercentilePill display={ratingLabel} tier={ratingPillTier} bold={isPlayer} /> : ratingLabel && <span style={s.colRating}>{ratingLabel}</span>}
+      <RankingMetadata
+        ratingLabel={ratingLabel}
+        songsLabel={songsLabel}
+        percentileDisplay={percentileDisplay}
+        valueDisplay={valueDisplay}
+        valueColor={valueColor}
+        percentileValueDisplay={percentileValueDisplay}
+        bayesianRankLabel={bayesianRankLabel}
+        bayesianRankDisplay={bayesianRankDisplay}
+        bayesianRankColor={bayesianRankColor}
+        percentileValueMinWidth={percentileValueMinWidth}
+        bayesianRankMinWidth={bayesianRankMinWidth}
+        ratingPillTier={ratingPillTier}
+        songsLabelPrimary={songsLabelPrimary}
+        songsLabelGoldPrefix={songsLabelGoldPrefix}
+        isPlayer={isPlayer}
+        reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
+      />
     </>
   );
 });
@@ -166,13 +230,13 @@ function renderSongsLabel(
   s: ReturnType<typeof useStyles>,
 ) {
   const style = primary ? s.colSongsPrimary : s.colSongs;
-  if (!goldPrefix) return <span style={style}>{songsLabel}</span>;
+  if (!goldPrefix) return <span data-testid="ranking-songs-label" style={style}>{songsLabel}</span>;
 
   const match = songsLabel.match(/^(.+?)(\s*\/\s*.*)$/);
   if (!match) return <span style={style}>{songsLabel}</span>;
 
   return (
-    <span style={style}>
+    <span data-testid="ranking-songs-label" style={style}>
       <span style={s.colSongsGoldPrefix}>{match[1]}</span>
       {match[2]}
     </span>

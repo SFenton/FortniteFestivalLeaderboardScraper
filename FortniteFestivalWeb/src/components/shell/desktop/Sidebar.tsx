@@ -4,21 +4,24 @@ import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
+import type { SelectedBandProfile, SelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { useSettings } from '../../../contexts/SettingsContext';
 import MarqueeText from '../../common/MarqueeText';
 import { sidebarStyles as s } from './sidebarStyles';
+import { Routes } from '../../../routes';
 
 const SIDEBAR_DURATION = 250;
 
 interface SidebarProps {
   player: TrackedPlayer | null;
+  selectedProfile?: SelectedProfile | null;
   open: boolean;
   onClose: () => void;
   onDeselect: () => void;
   onSelectPlayer: () => void;
 }
 
-export default function Sidebar({ player, open, onClose, onDeselect, onSelectPlayer }: SidebarProps) {
+export default function Sidebar({ player, selectedProfile, open, onClose, onDeselect, onSelectPlayer }: SidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -54,6 +57,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
   }, [mounted, onClose]);
 
   if (!mounted) return null;
+  const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
 
   return (
     <>
@@ -108,7 +112,9 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
           {/* v8 ignore stop */}
         </nav>
         <div style={s.sidebarFooter}>
-          {player ? (
+          {selectedBand ? (
+            <SelectedBandPanel band={selectedBand} onClose={onClose} onDeselect={onDeselect} />
+          ) : player ? (
             <div style={s.sidebarPlayerRow}>
               <Link to="/statistics" onClick={onClose} style={s.playerLink}>
                 <span style={s.sidebarLinkIcon}><IoPerson size={20} /></span>
@@ -132,4 +138,36 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
       </div>
     </>
   );
+}
+
+function SelectedBandPanel({ band, onClose, onDeselect }: { band: SelectedBandProfile; onClose: () => void; onDeselect: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div style={s.bandProfilePanel} data-testid="sidebar-band-profile">
+      <Link to={Routes.band(band.bandId, { names: band.displayName })} onClick={onClose} style={s.bandProfileLink}>
+        <span style={s.sidebarLinkIcon}><IoPeople size={20} /></span>
+        <MarqueeText as="p" text={band.displayName} style={s.bandProfileName} />
+      </Link>
+      <div style={s.bandProfileType}>{formatBandType(band.bandType)}</div>
+      <div style={s.bandMemberList} aria-label={t('band.members')}>
+        {band.members.map(member => (
+          <Link key={member.accountId} to={Routes.player(member.accountId)} onClick={onClose} style={s.bandMemberLink}>
+            <span style={s.sidebarLinkIcon}><IoPerson size={18} /></span>
+            <MarqueeText as="p" text={member.displayName} style={s.bandMemberName} />
+          </Link>
+        ))}
+      </div>
+      <button style={s.bandDeselectBtn} onClick={onDeselect}>
+        {t('band.deselectProfile')}
+      </button>
+    </div>
+  );
+}
+
+function formatBandType(bandType: SelectedBandProfile['bandType']): string {
+  switch (bandType) {
+    case 'Band_Duets': return 'Duos';
+    case 'Band_Trios': return 'Trios';
+    case 'Band_Quad': return 'Quads';
+  }
 }

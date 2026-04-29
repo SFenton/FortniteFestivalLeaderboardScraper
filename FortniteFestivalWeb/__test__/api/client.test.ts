@@ -111,19 +111,23 @@ describe('api/client', () => {
     });
   });
 
-  describe('selected-player header', () => {
-    it('includes selected-player header on GET requests when a tracked player is selected', async () => {
+  describe('selected-profile headers', () => {
+    it('includes player profile headers on GET requests when a tracked player is selected', async () => {
       localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-1', displayName: 'Tracked' }));
       mockFetchOk({ version: '1.0.0' });
 
       await api.getVersion();
 
       expect(global.fetch).toHaveBeenCalledWith('/api/version', {
-        headers: { 'X-FST-Selected-Player': 'tracked-1' },
+        headers: {
+          'X-FST-Selected-Profile-Type': 'player',
+          'X-FST-Selected-Profile-Id': 'tracked-1',
+          'X-FST-Selected-Player': 'tracked-1',
+        },
       });
     });
 
-    it('includes selected-player header on POST requests when a tracked player is selected', async () => {
+    it('includes player profile headers on POST requests when a tracked player is selected', async () => {
       localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-1', displayName: 'Tracked' }));
       mockFetchOk({ accountId: 'p1', displayName: 'Player', trackingStarted: true, backfillStatus: 'queued' });
 
@@ -133,7 +137,33 @@ describe('api/client', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-FST-Selected-Profile-Type': 'player',
+          'X-FST-Selected-Profile-Id': 'tracked-1',
           'X-FST-Selected-Player': 'tracked-1',
+        },
+      });
+    });
+
+    it('includes band profile headers without a stale player header when a band is selected', async () => {
+      localStorage.setItem('fst:selectedProfile', JSON.stringify({
+        type: 'band',
+        bandId: 'band-1',
+        bandType: 'Band_Duets',
+        teamKey: 'p1:p2',
+        displayName: 'Player One, Player Two',
+      }));
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'stale-player', displayName: 'Stale' }));
+      mockFetchOk({ version: '1.0.0' });
+
+      await api.getVersion();
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/version', {
+        headers: {
+          'X-FST-Selected-Profile-Type': 'band',
+          'X-FST-Selected-Profile-Id': 'band-1',
+          'X-FST-Selected-Band-Id': 'band-1',
+          'X-FST-Selected-Band-Type': 'Band_Duets',
+          'X-FST-Selected-Band-Team-Key': 'p1:p2',
         },
       });
     });
@@ -390,21 +420,21 @@ describe('api/client', () => {
         { albumArt: 'fortnite/image2.png' },
       ];
       expandAlbumArt(songs);
-      expect(songs[0].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image1.png');
-      expect(songs[1].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image2.png');
+      expect(songs[0]!.albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image1.png');
+      expect(songs[1]!.albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image2.png');
     });
 
     it('does not modify URLs that already have http prefix', () => {
       const songs = [{ albumArt: 'https://cdn2.unrealengine.com/fortnite/image.png' }];
       expandAlbumArt(songs);
-      expect(songs[0].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image.png');
+      expect(songs[0]!.albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image.png');
     });
 
     it('skips songs without albumArt', () => {
       const songs = [{ albumArt: undefined }, { albumArt: 'fortnite/img.png' }];
       expandAlbumArt(songs);
-      expect(songs[0].albumArt).toBeUndefined();
-      expect(songs[1].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/img.png');
+      expect(songs[0]!.albumArt).toBeUndefined();
+      expect(songs[1]!.albumArt).toBe('https://cdn2.unrealengine.com/fortnite/img.png');
     });
   });
 
@@ -418,8 +448,8 @@ describe('api/client', () => {
       };
       mockFetchOk(shopData);
       const result = await api.getShop();
-      expect(result.songs[0].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/art.png');
-      expect(result.songs[1].albumArt).toBeUndefined();
+      expect(result.songs[0]!.albumArt).toBe('https://cdn2.unrealengine.com/fortnite/art.png');
+      expect(result.songs[1]!.albumArt).toBeUndefined();
     });
   });
 });

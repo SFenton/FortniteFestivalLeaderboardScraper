@@ -15,8 +15,8 @@ export type InstrumentChipRowCount = 1 | 2 | 3;
 
 export function getInstrumentRowWidth(
   chipCount: number,
-  chipSize = InstrumentSize.chip,
-  gap = Gap.sm,
+  chipSize: number = InstrumentSize.chip,
+  gap: number = Gap.sm,
 ): number {
   if (chipCount <= 0) return 0;
   return chipCount * chipSize + Math.max(chipCount - 1, 0) * gap;
@@ -26,8 +26,8 @@ export function resolveInstrumentChipRows(
   width: number | undefined,
   chipCount: number,
   horizontalPadding = SONG_ROW_HORIZONTAL_PADDING,
-  chipSize = InstrumentSize.chip,
-  gap = Gap.sm,
+  chipSize: number = InstrumentSize.chip,
+  gap: number = Gap.sm,
   previousRowCount: InstrumentChipRowCount = 1,
   hysteresis = INSTRUMENT_ROW_HYSTERESIS,
 ): InstrumentChipRowCount {

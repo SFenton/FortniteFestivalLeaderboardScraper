@@ -40,6 +40,33 @@ const mockApi = vi.hoisted(() => {
     getSyncStatus: fn().mockResolvedValue({ accountId: 'test-player-1', isTracked: false, backfill: null, historyRecon: null }),
     getVersion: fn().mockResolvedValue({ version: '1.0.0' }),
     getLeaderboard: fn().mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
+    getAllSongBandLeaderboards: fn().mockResolvedValue({
+      songId: 'song-1',
+      bands: [
+        {
+          bandType: 'Band_Duets',
+          count: 1,
+          totalEntries: 15,
+          localEntries: 15,
+          entries: [
+            {
+              bandId: 'duo-1',
+              bandType: 'Band_Duets',
+              teamKey: 'acct-a:acct-b',
+              comboId: 'Solo_Guitar+Solo_Bass',
+              score: 1_200_000,
+              rank: 1,
+              members: [
+                { accountId: 'acct-a', displayName: 'Alpha', instruments: ['Solo_Guitar'], score: 600_000 },
+                { accountId: 'acct-b', displayName: 'Beta', instruments: ['Solo_Bass'], score: 600_000 },
+              ],
+            },
+          ],
+          selectedPlayerEntry: null,
+          selectedBandEntry: null,
+        },
+      ],
+    }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'test-player-1', stats: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' }),
@@ -84,6 +111,33 @@ function resetMocks() {
   mockApi.getSyncStatus.mockResolvedValue({ accountId: 'test-player-1', isTracked: false, backfill: null, historyRecon: null });
   mockApi.getVersion.mockResolvedValue({ version: '1.0.0' });
   mockApi.getLeaderboard.mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] });
+  mockApi.getAllSongBandLeaderboards.mockResolvedValue({
+    songId: 'song-1',
+    bands: [
+      {
+        bandType: 'Band_Duets',
+        count: 1,
+        totalEntries: 15,
+        localEntries: 15,
+        entries: [
+          {
+            bandId: 'duo-1',
+            bandType: 'Band_Duets',
+            teamKey: 'acct-a:acct-b',
+            comboId: 'Solo_Guitar+Solo_Bass',
+            score: 1_200_000,
+            rank: 1,
+            members: [
+              { accountId: 'acct-a', displayName: 'Alpha', instruments: ['Solo_Guitar'], score: 600_000 },
+              { accountId: 'acct-b', displayName: 'Beta', instruments: ['Solo_Bass'], score: 600_000 },
+            ],
+          },
+        ],
+        selectedPlayerEntry: null,
+        selectedBandEntry: null,
+      },
+    ],
+  });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'test-player-1', stats: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' });
@@ -219,6 +273,32 @@ describe('SongDetailPage', () => {
     renderSongDetail();
     await waitFor(() => {
       expect(mockApi.getAllLeaderboards).toHaveBeenCalledWith('song-1', 10, undefined);
+    });
+  });
+
+  it('requests selected band context for matching song-band previews', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-42',
+      bandType: 'Band_Duets',
+      teamKey: 'acct-band-a:acct-band-b',
+      displayName: 'Selected Duo',
+      members: [
+        { accountId: 'acct-band-a', displayName: 'Band Alpha' },
+        { accountId: 'acct-band-b', displayName: 'Band Beta' },
+      ],
+    }));
+
+    renderSongDetail();
+
+    await waitFor(() => {
+      expect(mockApi.getAllSongBandLeaderboards).toHaveBeenCalledWith(
+        'song-1',
+        10,
+        undefined,
+        'Band_Duets',
+        'acct-band-a:acct-band-b',
+      );
     });
   });
 

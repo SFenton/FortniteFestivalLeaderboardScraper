@@ -2,6 +2,7 @@ using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 namespace FSTService;
 
@@ -16,6 +17,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
     private readonly FestivalService _festivalService;
     private readonly ItemShopService _shopService;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly ScraperOptions _scraperOptions;
     private readonly ILogger<StartupInitializer> _log;
     private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -31,12 +33,14 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         FestivalService festivalService,
         ItemShopService shopService,
         IHostApplicationLifetime lifetime,
+        IOptions<ScraperOptions> scraperOptions,
         ILogger<StartupInitializer> log)
     {
         _persistence = persistence;
         _festivalService = festivalService;
         _shopService = shopService;
         _lifetime = lifetime;
+        _scraperOptions = scraperOptions.Value;
         _log = log;
     }
 
@@ -54,6 +58,11 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
 
             // Clean up any leftover spool files from previous runs
             SpoolWriter<LeaderboardEntry>.CleanupStaleFiles(_log);
+            ScraperDataCleanup.DeleteLegacyDatFiles(_scraperOptions.DataDirectory, _log);
+            ScraperDataCleanup.CleanupStaleDataSpools(
+                _scraperOptions.DataDirectory,
+                TimeSpan.FromHours(Math.Max(1, _scraperOptions.StaleSpoolCleanupMinAgeHours)),
+                _log);
 
             var dbTask = Task.Run(() => _persistence.Initialize(), ct);
             var songTask = _festivalService.InitializeAsync();

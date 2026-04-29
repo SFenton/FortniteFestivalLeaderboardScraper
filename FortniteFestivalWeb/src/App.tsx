@@ -9,6 +9,7 @@ import { ShopProvider } from './contexts/ShopContext';
 import { AnimatedBackground } from './components/shell/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPlayer';
 import { usePlayerBandsPrefetch } from './hooks/data/usePlayerBandsPrefetch';
+import type { SelectedProfile } from './hooks/data/useSelectedProfile';
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from './hooks/ui/useIsMobile';
 import { useMediaQuery } from './hooks/ui/useMediaQuery';
@@ -16,6 +17,7 @@ import SongsPage from './pages/songs/SongsPage';
 /* v8 ignore start -- lazy() wrappers are resolved by the bundler, not callable in unit tests */
 const SongDetailPage = lazy(() => import('./pages/songinfo/SongDetailPage'));
 const LeaderboardPage = lazy(() => import('./pages/leaderboard/global/LeaderboardPage'));
+const SongBandLeaderboardPage = lazy(() => import('./pages/leaderboard/band/SongBandLeaderboardPage'));
 const PlayerHistoryPage = lazy(() => import('./pages/leaderboard/player/PlayerHistoryPage'));
 const PlayerPage = lazy(() => import('./pages/player/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/suggestions/SuggestionsPage'));
@@ -27,6 +29,7 @@ const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalryPage'));
 const AllRivalsPage = lazy(() => import('./pages/rivals/AllRivalsPage'));
 const LeaderboardsOverviewPage = lazy(() => import('./pages/leaderboards/LeaderboardsOverviewPage'));
 const FullRankingsPage = lazy(() => import('./pages/leaderboards/FullRankingsPage'));
+const BandRankingsPage = lazy(() => import('./pages/leaderboards/BandRankingsPage'));
 const BandPage = lazy(() => import('./pages/band/BandPage'));
 const PlayerBandsPage = lazy(() => import('./pages/band/PlayerBandsPage'));
 const CompetePage = lazy(() => import('./pages/compete/CompetePage'));
@@ -41,6 +44,7 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
       <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
       <Route path="/songs" element={<SongsPage />} />
       <Route path="/songs/:songId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongDetailPage /></ErrorBoundary>} />
+      <Route path="/songs/:songId/bands/:bandType" element={<FeatureGate flag="playerBands"><ErrorBoundary fallback={<RouteErrorFallback />}><SongBandLeaderboardPage /></ErrorBoundary></FeatureGate>} />
       <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
       <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
       <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
@@ -77,6 +81,7 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
       <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
       <Route path="/leaderboards" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary>} />
       <Route path="/leaderboards/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary>} />
+      <Route path="/leaderboards/bands/:bandType" element={<FeatureGate flag="playerBands"><ErrorBoundary fallback={<RouteErrorFallback />}><BandRankingsPage /></ErrorBoundary></FeatureGate>} />
       <Route path="/bands/player/:accountId" element={<FeatureGate flag="playerBands"><ErrorBoundary fallback={<RouteErrorFallback />}><PlayerBandsPage /></ErrorBoundary></FeatureGate>} />
       <Route path="/bands" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandPage /></ErrorBoundary>} />
       <Route path="/bands/:bandId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandPage /></ErrorBoundary>} />
@@ -106,6 +111,7 @@ import DesktopNav from './components/shell/desktop/DesktopNav';
 import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
+import SearchModal from './components/search/SearchModal';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
@@ -165,6 +171,25 @@ export function getFabQuickLinksActionLabel(t: TFunction): string {
   return t('common.quickLinks', 'Quick Links');
 }
 
+/**
+ * Determines the destination action for the compact-desktop profile icon click.
+ * Returns the navigation target string, 'sidebar', or 'modal'.
+ */
+export function getProfileClickDestination(
+  player: TrackedPlayer | null,
+  selectedProfile: SelectedProfile | null,
+): string | 'sidebar' | 'modal' {
+  if (player) return AppRoutes.statistics;
+  if (selectedProfile?.type === 'band') {
+    const { bandId, bandType, teamKey, displayName } = selectedProfile;
+    if (bandId && bandType && teamKey) {
+      return AppRoutes.band(bandId, { bandType, teamKey, names: displayName });
+    }
+    return 'sidebar';
+  }
+  return 'modal';
+}
+
 export function mergePageQuickLinksIntoFabGroups(
   quickLinksActions: ActionItem[],
   pageSpecificActions: ActionItem[],
@@ -197,6 +222,7 @@ function WideDesktopLayout({
   shellPortalRefCallback,
   shellQuickLinksRailPortalRefCallback,
   player,
+  selectedProfile,
   onDeselect,
   onSelectPlayer,
 }: {
@@ -204,6 +230,7 @@ function WideDesktopLayout({
   shellPortalRefCallback: (el: HTMLDivElement | null) => void;
   shellQuickLinksRailPortalRefCallback: (el: HTMLDivElement | null) => void;
   player: TrackedPlayer | null;
+  selectedProfile: ReturnType<typeof useTrackedPlayer>['profile'];
   onDeselect: () => void;
   onSelectPlayer: () => void;
 }) {
@@ -226,6 +253,7 @@ function WideDesktopLayout({
       <div style={appStyles.sidebarOverlay}>
         <PinnedSidebar
           player={player}
+          selectedProfile={selectedProfile}
           onDeselect={onDeselect}
           onSelectPlayer={onSelectPlayer}
         />
@@ -249,7 +277,7 @@ function WideDesktopLayout({
 
 function AppShell() {
   const { t } = useTranslation();
-  const { player, setPlayer, clearPlayer } = useTrackedPlayer();
+  const { profile: selectedProfile, player, setPlayer, clearPlayer } = useTrackedPlayer();
   const { state: { songs } } = useFestival();
   const { settings } = useSettings();
   const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
@@ -274,7 +302,7 @@ function AppShell() {
   } = useShellRefs();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
-  const [findPlayerOpen, setFindPlayerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [hasNewChangelog] = useState(() => {
     try {
       const stored = localStorage.getItem(CHANGELOG_STORAGE_KEY);
@@ -336,22 +364,28 @@ function AppShell() {
   };
   /* v8 ignore stop */
 
-  /* v8 ignore start — deep AppInner callback */
-  const handleFindPlayerSelect = useCallback((p: TrackedPlayer) => {
-    navigate(AppRoutes.player(p.accountId));
-  }, [navigate]);
-  /* v8 ignore stop */
-
   /* v8 ignore start — deep AppInner: deselect callback */
   const [showDeselectConfirm, setShowDeselectConfirm] = useState(false);
   const handleDeselect = useCallback(() => {
+    if (selectedProfile?.type === 'band') {
+      clearPlayer();
+      return;
+    }
     setShowDeselectConfirm(true);
-  }, []);
+  }, [clearPlayer, selectedProfile?.type]);
   const confirmDeselect = useCallback(() => {
     resetSongSettingsForDeselect();
     clearPlayer();
     setShowDeselectConfirm(false);
   }, [clearPlayer]);
+
+  /* v8 ignore start — deep AppInner: compact desktop profile icon click */
+  const handleProfileClick = useCallback(() => {
+    const dest = getProfileClickDestination(player, selectedProfile);
+    if (dest === 'sidebar') setSidebarOpen(true);
+    else if (dest === 'modal') setPlayerModalOpen(true);
+    else navigate(dest);
+  }, [navigate, player, selectedProfile]);
   /* v8 ignore stop */
 
   /* v8 ignore start — deep AppInner: instrument sync event listener */
@@ -411,6 +445,7 @@ function AppShell() {
   /* v8 ignore stop */
 
   const wideDesktop = !isMobile && isWideDesktop;
+  const profileType = selectedProfile?.type ?? 'none';
   const onPlayerDetailsPage = location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname);
   const quickLinksActions = pageQuickLinks.hasPageQuickLinks && pageQuickLinks.pageQuickLinks
     ? [{
@@ -424,7 +459,7 @@ function AppShell() {
 
   /** Shared FAB action group for player navigation (Find Player + Profile/Select + optionally Item Shop). */
   const playerActions = (includeShop = true) => [
-    { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
+    { label: t('common.searchAction'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setSearchOpen(true) },
     player
       ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
       : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
@@ -440,6 +475,7 @@ function AppShell() {
       {!wideDesktop && (
         <Sidebar
           player={player}
+          selectedProfile={selectedProfile}
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           onDeselect={handleDeselect}
@@ -466,8 +502,10 @@ function AppShell() {
         ) : (
           <DesktopNav
             hasPlayer={!!player}
+            profileType={profileType}
             onOpenSidebar={() => setSidebarOpen((o) => !o)}
-            onProfileClick={() => player ? navigate(AppRoutes.statistics) : setPlayerModalOpen(true)}
+            onProfileClick={handleProfileClick}
+            onOpenSearch={() => setSearchOpen(true)}
             isWideDesktop={isWideDesktop}
           />
         )}
@@ -480,6 +518,7 @@ function AppShell() {
           shellPortalRefCallback={shellPortalRefCallback}
           shellQuickLinksRailPortalRefCallback={shellQuickLinksRailPortalRefCallback}
           player={player}
+          selectedProfile={selectedProfile}
           onDeselect={handleDeselect}
           onSelectPlayer={() => setPlayerModalOpen(true)}
         />
@@ -678,14 +717,10 @@ function AppShell() {
         onDeselect={handleDeselect}
         isMobile={isNarrow}
       />
-      <MobilePlayerSearchModal
-        visible={findPlayerOpen}
-        onClose={() => setFindPlayerOpen(false)}
-        onSelect={handleFindPlayerSelect}
-        player={null}
-        onDeselect={() => {}}
-        isMobile={isNarrow}
-        title={t('common.findPlayer')}
+      <SearchModal
+        visible={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        defaultTarget={settings.defaultSearchTarget}
       />
       {showChangelog && <ChangelogModal onDismiss={dismissChangelog} onExitComplete={() => setChangelogDismissed(true)} />}
       {showDeselectConfirm && (

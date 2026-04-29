@@ -1,5 +1,11 @@
 namespace FSTService;
 
+public enum LeaderboardWriteMode
+{
+    DiskSpool,
+    OnlineBounded,
+}
+
 /// <summary>
 /// Configuration for the scraping service, loaded from appsettings.json.
 /// </summary>
@@ -44,9 +50,14 @@ public sealed class ScraperOptions
     public bool QueryProDrums { get; set; } = true;
 
     /// <summary>
-    /// Root directory for all data files (device auth, MIDI cache, path images, precomputed responses).
+    /// Root directory for all data files (device auth, path images, precomputed responses).
     /// </summary>
     public string DataDirectory { get; set; } = "data";
+
+    /// <summary>
+    /// Minimum age, in hours, before startup cleanup may delete stale scrape spool directories.
+    /// </summary>
+    public int StaleSpoolCleanupMinAgeHours { get; set; } = 24;
 
     /// <summary>
     /// Path to the device auth credentials file.
@@ -232,6 +243,22 @@ public sealed class ScraperOptions
     public int SongMachineDop { get; set; } = 32;
 
     /// <summary>
+    /// Enables low-priority direct V2 lookups for registered bands. This is a
+    /// parallel band lifecycle that reuses the song-machine DOP/CDN wrapper.
+    /// </summary>
+    public bool EnableRegisteredBandTargetedProcessing { get; set; } = true;
+
+    /// <summary>
+    /// Maximum registered bands processed in one post-scrape pass. Set to 0 for no limit.
+    /// </summary>
+    public int RegisteredBandProcessingMaxBandsPerPass { get; set; } = 10;
+
+    /// <summary>
+    /// Maximum direct lookups per registered band in one pass. Set to 0 for no limit.
+    /// </summary>
+    public int RegisteredBandProcessingMaxLookupsPerBand { get; set; } = 50;
+
+    /// <summary>
     /// When true, the post-scrape refresh also queries the current season for each
     /// registered user to capture sub-optimal sessions (plays that didn't beat the
     /// all-time best) for the score history chart.
@@ -260,6 +287,14 @@ public sealed class ScraperOptions
     public int InitialDop { get; set; } = 32;
 
     /// <summary>
+    /// Controls how scraped solo leaderboard pages are staged before PostgreSQL persistence.
+    /// DiskSpool is the proven default. OnlineBounded is an experimental mode that
+    /// writes during fetch through bounded channels and explicit database backpressure.
+    /// Set via <c>Scraper__LeaderboardWriteMode</c> env var.
+    /// </summary>
+    public LeaderboardWriteMode LeaderboardWriteMode { get; set; } = LeaderboardWriteMode.DiskSpool;
+
+    /// <summary>
     /// Capacity of each per-instrument bounded channel in the persistence pipeline.
     /// Higher values allow more buffering between scraper and writer tasks; lower
     /// values apply earlier back-pressure. Default 128.
@@ -272,6 +307,20 @@ public sealed class ScraperOptions
     /// transaction size and memory usage. Default 10.
     /// </summary>
     public int WriteBatchSize { get; set; } = 10;
+
+    /// <summary>
+    /// Maximum solo leaderboard pages per PostgreSQL COPY/merge batch in online
+    /// bounded write mode. Default 64 matches the disk-spool flush chunk size.
+    /// Set via <c>Scraper__OnlineWriteBatchPages</c> env var.
+    /// </summary>
+    public int OnlineWriteBatchPages { get; set; } = 64;
+
+    /// <summary>
+    /// Number of concurrent database workers used by online bounded solo writes.
+    /// Keep this small so PostgreSQL backpressure slows fetchers instead of growing RAM.
+    /// Set via <c>Scraper__OnlineDbWriterConcurrency</c> env var.
+    /// </summary>
+    public int OnlineDbWriterConcurrency { get; set; } = 2;
 
     /// <summary>
     /// Number of leaderboard neighbors above/below to include when computing

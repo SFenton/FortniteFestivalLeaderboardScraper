@@ -44,7 +44,7 @@ public sealed class PostScrapeBandExtractor
     /// Processes all instruments in a single pass using the partial index on
     /// <c>band_members_json IS NOT NULL</c>.
     /// </summary>
-    public async Task RunAsync(CancellationToken ct)
+    public async Task<BandExtractionResult> RunAsync(CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         _log.LogInformation("Post-scrape band extraction starting...");
@@ -68,7 +68,7 @@ public sealed class PostScrapeBandExtractor
         }
 
         _log.LogInformation("Found {Count:N0} solo entries with band context to extract.", bandContextRowCount);
-        if (bandContextRowCount == 0) return;
+        if (bandContextRowCount == 0) return BandExtractionResult.Empty;
 
         // Process in batches by song_id to limit transaction size
         var songIds = new List<string>();
@@ -128,6 +128,15 @@ public sealed class PostScrapeBandExtractor
             "Post-scrape band extraction complete in {Elapsed}. " +
             "Band entries: {BandRows:N0}, member stats: {MemberStats:N0}, member lookups: {MemberLookups:N0}.",
             sw.Elapsed, totalBandRows, totalMemberStats, totalMemberLookups);
+
+        return new BandExtractionResult(
+            totalBandRows,
+            totalMemberStats,
+            totalMemberLookups,
+            impactedTeamsByBandType.ToDictionary(
+                static kvp => kvp.Key,
+                static kvp => (IReadOnlyCollection<string>)kvp.Value.Keys.ToArray(),
+                StringComparer.OrdinalIgnoreCase));
     }
 
     private async Task<(int Bands, int Members, int Lookups, List<(string BandType, string TeamKey)> ImpactedTeams)> ExtractSongBandDataAsync(
@@ -333,4 +342,17 @@ public sealed class PostScrapeBandExtractor
         public int? OverdriveBonus { get; init; }
         public string? InstrumentCombo { get; init; }
     }
+}
+
+public sealed record BandExtractionResult(
+    int BandRows,
+    int MemberStats,
+    int MemberLookups,
+    IReadOnlyDictionary<string, IReadOnlyCollection<string>> ImpactedTeamsByBandType)
+{
+    public static BandExtractionResult Empty { get; } = new(
+        0,
+        0,
+        0,
+        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase));
 }

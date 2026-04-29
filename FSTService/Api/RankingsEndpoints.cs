@@ -405,6 +405,8 @@ public static partial class ApiEndpoints
             string? rankBy,
             int? page,
             int? pageSize,
+            string? accountId,
+            string? teamKey,
             IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
@@ -420,7 +422,20 @@ public static partial class ApiEndpoints
             var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
             var metric = rankBy ?? "adjusted";
             var (entries, totalTeams) = metaDb.GetBandTeamRankings(bandType, comboValidation.ComboId, metric, effectivePage, effectivePageSize);
-            var names = metaDb.GetDisplayNames(entries.SelectMany(entry => entry.TeamMembers));
+            var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
+            var selectedEntry = selectedAccountId is null
+                ? null
+                : metaDb.GetBandTeamRankingForAccount(bandType, selectedAccountId, comboValidation.ComboId, metric);
+            var selectedTeamKey = string.IsNullOrWhiteSpace(teamKey) ? null : teamKey.Trim();
+            var selectedBandEntry = selectedTeamKey is null
+                ? null
+                : metaDb.GetBandTeamRanking(bandType, selectedTeamKey, comboValidation.ComboId);
+            IEnumerable<string> accountIdsForNames = entries.SelectMany(entry => entry.TeamMembers);
+            if (selectedEntry is not null)
+                accountIdsForNames = accountIdsForNames.Concat(selectedEntry.TeamMembers);
+            if (selectedBandEntry is not null)
+                accountIdsForNames = accountIdsForNames.Concat(selectedBandEntry.TeamMembers);
+            var names = metaDb.GetDisplayNames(accountIdsForNames);
 
             return Results.Ok(new
             {
@@ -431,6 +446,8 @@ public static partial class ApiEndpoints
                 pageSize = effectivePageSize,
                 totalTeams,
                 entries = entries.Select(entry => MapBandRanking(entry, names)).ToList(),
+                selectedPlayerEntry = selectedEntry is null ? null : MapBandRanking(selectedEntry, names),
+                selectedBandEntry = selectedBandEntry is null ? null : MapBandRanking(selectedBandEntry, names),
             });
         })
         .WithTags("Rankings")
@@ -580,21 +597,7 @@ public static partial class ApiEndpoints
                 return Results.BadRequest(new { error = comboValidation.Error });
 
             var effectiveLimit = Math.Clamp(limit ?? 5, 1, 20);
-            var performances = metaDb.GetBandSongPerformances(bandType, teamKey, comboValidation.ComboId);
-            var best = performances
-                .OrderBy(song => song.Percentile)
-                .ThenBy(song => song.Rank)
-                .ThenByDescending(song => song.Score)
-                .Take(effectiveLimit)
-                .ToList();
-            var worst = performances.Count > effectiveLimit
-                ? performances
-                    .OrderByDescending(song => song.Percentile)
-                    .ThenByDescending(song => song.Rank)
-                    .ThenBy(song => song.Score)
-                    .Take(effectiveLimit)
-                    .ToList()
-                : new List<BandSongPerformanceDto>();
+            var (best, worst) = metaDb.GetBandSongPerformanceExtremes(bandType, teamKey, comboValidation.ComboId, effectiveLimit);
 
             return Results.Ok(new
             {
@@ -646,6 +649,12 @@ public static partial class ApiEndpoints
                 {
                     accountId,
                     displayName = names.GetValueOrDefault(accountId),
+                }).ToList(),
+                members = ranking.Members.Select(member => new
+                {
+                    member.AccountId,
+                    displayName = names.GetValueOrDefault(member.AccountId),
+                    member.Instruments,
                 }).ToList(),
                 ranking.SongsPlayed,
                 ranking.TotalChartedSongs,
@@ -920,6 +929,12 @@ public static partial class ApiEndpoints
         {
             accountId,
             displayName = names.GetValueOrDefault(accountId),
+        }).ToList(),
+        members = ranking.Members.Select(member => new
+        {
+            member.AccountId,
+            displayName = names.GetValueOrDefault(member.AccountId),
+            member.Instruments,
         }).ToList(),
         ranking.SongsPlayed,
         ranking.TotalChartedSongs,

@@ -4,7 +4,7 @@
  * On mobile, renders as a pulsing circle with IoPersonAdd icon.
  * On desktop, renders as a full pill with text.
  */
-import { useMemo, type CSSProperties } from 'react';
+import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { IoPersonAdd } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
 import { ActionPill, ACTION_PILL_TRANSITION } from '../common/ActionPill';
@@ -21,11 +21,18 @@ export interface SelectProfilePillProps {
   visible: boolean;
   onClick: () => void;
   isMobile?: boolean;
+  label?: string;
+  ariaLabel?: string;
+  icon?: ReactNode;
+  circleIcon?: ReactNode;
 }
 
-export function SelectProfilePill({ visible, onClick, isMobile }: SelectProfilePillProps) {
+export function SelectProfilePill({ visible, onClick, isMobile, label, ariaLabel, icon, circleIcon }: SelectProfilePillProps) {
   const { t } = useTranslation();
   const s = useStyles(visible);
+  const buttonLabel = label ?? t('common.selectPlayerProfile');
+  const buttonAriaLabel = ariaLabel ?? buttonLabel;
+  const pillIcon = icon ?? <IoPersonAdd size={IconSize.action} />;
 
   if (isMobile) {
     return (
@@ -34,18 +41,18 @@ export function SelectProfilePill({ visible, onClick, isMobile }: SelectProfileP
         style={s.circle}
         className={visible ? anim.profileCircleBreathe : undefined}
         onClick={onClick}
-        aria-label={t('common.selectPlayerProfile')}
+        aria-label={buttonAriaLabel}
         tabIndex={visible ? 0 : -1}
       >
-        <IoPersonAdd size={IconSize.action} />
+        {circleIcon ?? pillIcon}
       </button>
     );
   }
 
   return (
     <ActionPill
-      icon={<IoPersonAdd size={IconSize.action} />}
-      label={t('common.selectPlayerProfile')}
+      icon={pillIcon}
+      label={buttonLabel}
       onClick={onClick}
       style={s.pill}
       tabIndex={visible ? 0 : -1}

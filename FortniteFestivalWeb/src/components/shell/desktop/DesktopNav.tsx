@@ -1,33 +1,21 @@
-import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import HamburgerButton from '../HamburgerButton';
-import PlayerSearchBar from '../../player/PlayerSearchBar';
-import HeaderProfileButton from './HeaderProfileButton';
+import HeaderProfileButton, { type HeaderProfileType } from './HeaderProfileButton';
 import { appStyles } from '../../../appStyles';
-import { headerSearchStyles } from './HeaderSearch';
+import SearchPill from '../../search/SearchPill';
 
 export interface DesktopNavProps {
   hasPlayer: boolean;
+  profileType?: HeaderProfileType;
   onOpenSidebar: () => void;
   onProfileClick: () => void;
+  onOpenSearch?: () => void;
   isWideDesktop?: boolean;
 }
 
-export default function DesktopNav({ hasPlayer, onOpenSidebar, onProfileClick, isWideDesktop }: DesktopNavProps) {
-  const navigate = useNavigate();
-  /* v8 ignore start — navigation callback */
-  const handleSelect = useCallback((r: { accountId: string }) => {
-    navigate(`/player/${r.accountId}`);
-  }, [navigate]);
-  /* v8 ignore stop */
-
-  const searchBar = (
-    <PlayerSearchBar
-      onSelect={handleSelect}
-      style={headerSearchStyles.container}
-      searchStyle={headerSearchStyles.inputWrap}
-    />
-  );
+export default function DesktopNav({ hasPlayer, profileType, onOpenSidebar, onProfileClick, onOpenSearch = () => {}, isWideDesktop }: DesktopNavProps) {
+  const { t } = useTranslation();
+  const searchBar = <SearchPill label={t('common.searchAction')} onClick={onOpenSearch} />;
 
   return (
     <nav className="sa-top" style={isWideDesktop ? { ...appStyles.nav, ...appStyles.navWide } : appStyles.nav}>
@@ -45,7 +33,7 @@ export default function DesktopNav({ hasPlayer, onOpenSidebar, onProfileClick, i
           <HamburgerButton onClick={onOpenSidebar} />
           <div style={appStyles.spacer} />
           {searchBar}
-          <HeaderProfileButton hasPlayer={hasPlayer} onClick={onProfileClick} />
+          <HeaderProfileButton hasPlayer={hasPlayer} profileType={profileType} onClick={onProfileClick} />
         </>
       )}
     </nav>

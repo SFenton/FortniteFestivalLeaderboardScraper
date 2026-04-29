@@ -1,0 +1,1 @@
+import{R as n}from"./rankingHelpers-BiqemSeh.js";const o="fst:leaderboardSettings",e="totalscore";function c(){try{const t=localStorage.getItem(o);if(!t)return e;const r=JSON.parse(t),a=r==null?void 0:r.rankBy;if(typeof a=="string"&&n.includes(a))return a}catch{}return e}function i(t){localStorage.setItem(o,JSON.stringify({rankBy:t}))}export{c as l,i as s};

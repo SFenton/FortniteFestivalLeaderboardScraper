@@ -49,6 +49,7 @@ public sealed class ScraperWorker : BackgroundService
     private DateTime _serviceStartedAtUtc = DateTime.UtcNow;
 
     private static readonly TimeSpan WebRegistrationStartupProtection = TimeSpan.FromHours(4);
+    private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Background song sync task — stored so we can observe failures.</summary>
     private Task? _backgroundSyncTask;
@@ -121,6 +122,18 @@ public sealed class ScraperWorker : BackgroundService
         finally
         {
             _lifetime.StopApplication();
+        }
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await base.StopAsync(cancellationToken);
+        }
+        finally
+        {
+            await CleanupActiveScrapeResourcesAsync("scheduled shutdown", cancellationToken);
         }
     }
 
@@ -538,7 +551,43 @@ public sealed class ScraperWorker : BackgroundService
         }
         finally
         {
+            await CleanupActiveScrapeResourcesAsync("scrape pass exit", CancellationToken.None);
             _backgroundWork.ResumeAfterScrape();
+        }
+    }
+
+    private async Task CleanupActiveScrapeResourcesAsync(string reason, CancellationToken ct)
+    {
+        var cleanupTask = Task.Run(async () =>
+        {
+            await _scrapeOrchestrator.CleanupActiveBandSpoolAsync();
+            await _persistence.CleanupActiveScrapeWritersAsync();
+        });
+
+        Task completedTask;
+        try
+        {
+            completedTask = await Task.WhenAny(cleanupTask, Task.Delay(BestEffortCleanupTimeout, ct));
+        }
+        catch (OperationCanceledException)
+        {
+            _log.LogWarning("Best-effort scrape resource cleanup skipped during {Reason}: shutdown cancellation was already requested.", reason);
+            return;
+        }
+
+        if (!ReferenceEquals(completedTask, cleanupTask))
+        {
+            _log.LogWarning("Best-effort scrape resource cleanup timed out after {Timeout} during {Reason}.", BestEffortCleanupTimeout, reason);
+            return;
+        }
+
+        try
+        {
+            await cleanupTask;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Best-effort scrape resource cleanup failed during {Reason}.", reason);
         }
     }
 

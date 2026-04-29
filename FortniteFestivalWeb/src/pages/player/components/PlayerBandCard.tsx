@@ -1,8 +1,8 @@
-import { useRef, type AnimationEventHandler, type CSSProperties } from 'react';
+import { useRef, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { IoChevronForward } from 'react-icons/io5';
 import type { PlayerBandEntry, PlayerBandMember } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap, Radius, Weight, flexColumn, flexRow, frostedCard } from '@festival/theme';
+import { Colors, CssProp, FAST_FADE_MS, Font, Gap, Radius, Weight, flexColumn, flexRow, frostedCard, transition } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import { Routes } from '../../../routes';
 import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
@@ -11,7 +11,7 @@ import { getInstrumentRowWidth, splitInstrumentRows } from '../../songs/layoutMo
 const MEMBER_ROW_HEIGHT = 32;
 const STACKED_MEMBER_NAME_ROW_HEIGHT = 28;
 const ENTRY_CARD_BASE_HEIGHT = 32;
-const BAND_MEMBER_ICON_SIZE = 32;
+const BAND_MEMBER_ICON_SIZE: number = 32;
 const BAND_MEMBER_ICON_GAP = Gap.xs;
 const BAND_MEMBER_INLINE_GAP = Gap.md;
 const APPEARANCE_FOOTER_HEIGHT = 34;
@@ -111,7 +111,7 @@ export function getPlayerBandRoute(entry: PlayerBandEntry, sourceAccountId?: str
   if (entry.bandId) {
     return Routes.band(entry.bandId, sourceAccountId
       ? { accountId: sourceAccountId, bandType: entry.bandType, teamKey: entry.teamKey, names }
-      : { names });
+      : { bandType: entry.bandType, teamKey: entry.teamKey, names });
   }
   if (sourceAccountId) return Routes.bandLookup(sourceAccountId, entry.bandType, entry.teamKey, names);
   return null;
@@ -120,20 +120,30 @@ export function getPlayerBandRoute(entry: PlayerBandEntry, sourceAccountId?: str
 type PlayerBandCardProps = {
   entry: PlayerBandEntry;
   sourceAccountId?: string;
+  rank?: number;
+  rankWidth?: number;
   testId?: string;
   style?: CSSProperties;
   ariaLabel?: string;
   appearanceLabel?: string;
+  renderMemberMetadata?: (member: PlayerBandMember) => ReactNode;
+  scoreFooter?: ReactNode;
+  scoreFooterAriaLabel?: string;
   onAnimationEnd?: AnimationEventHandler<HTMLElement>;
 };
 
 export default function PlayerBandCard({
   entry,
   sourceAccountId,
+  rank,
+  rankWidth,
   testId,
   style,
   ariaLabel,
   appearanceLabel,
+  renderMemberMetadata,
+  scoreFooter,
+  scoreFooterAriaLabel,
   onAnimationEnd,
 }: PlayerBandCardProps) {
   const route = getPlayerBandRoute(entry, sourceAccountId);
@@ -141,41 +151,58 @@ export default function PlayerBandCard({
   const contentRef = useRef<HTMLDivElement>(null);
   const contentWidth = useContainerWidth(contentRef);
   const memberLayouts = resolveBandCardMemberLayouts(entry.members, contentWidth);
+  const rankRail = typeof rank === 'number' ? (
+    <div data-testid="band-rank-rail" style={{ ...bandCardStyles.rankRail, ...(rankWidth ? { width: rankWidth, minWidth: rankWidth } : undefined) }} aria-label={`Rank ${rank.toLocaleString()}`}>#{rank.toLocaleString()}</div>
+  ) : null;
   const memberContent = (
     <div ref={contentRef} style={bandCardStyles.entryCardContent}>
       <div style={bandCardStyles.memberList}>
-        {entry.members.map((member, index) => <BandMemberRow key={`${entry.teamKey}:${member.accountId}`} member={member} layout={memberLayouts[index] ?? { stacked: false, instrumentRowCount: 1 }} />)}
+        {entry.members.map((member, index) => <BandMemberRow key={`${entry.teamKey}:${member.accountId}`} member={member} layout={memberLayouts[index] ?? { stacked: false, instrumentRowCount: 1 }} metadata={renderMemberMetadata?.(member)} />)}
       </div>
     </div>
   );
   const chevron = route ? <IoChevronForward aria-hidden="true" size={18} style={bandCardStyles.entryChevron} /> : null;
-  const body = appearanceLabel ? (
+  const footer = appearanceLabel ? (
+    <div style={bandCardStyles.appearanceFooter} aria-label={`${appearanceCount.toLocaleString()} ${appearanceLabel}`}>
+      <span style={bandCardStyles.appearanceCount}>{appearanceCount.toLocaleString()}</span>
+      <span style={bandCardStyles.appearanceLabel}>{appearanceLabel}</span>
+    </div>
+  ) : scoreFooter ? (
+    <div style={bandCardStyles.scoreFooter} aria-label={scoreFooterAriaLabel}>
+      {scoreFooter}
+    </div>
+  ) : null;
+  const hasFooter = !!footer;
+  const content = hasFooter ? (
     <>
-      <div style={bandCardStyles.entryCardMetaContent}>{memberContent}</div>
-      <div style={bandCardStyles.appearanceFooter} aria-label={`${appearanceCount.toLocaleString()} ${appearanceLabel}`}>
-        <span style={bandCardStyles.appearanceCount}>{appearanceCount.toLocaleString()}</span>
-        <span style={bandCardStyles.appearanceLabel}>{appearanceLabel}</span>
-      </div>
+      <div data-testid="band-card-member-content" style={bandCardStyles.entryCardMetaContent}>{memberContent}</div>
+      {footer}
     </>
   ) : memberContent;
+  const body = rankRail ? (
+    <div data-testid="band-ranked-card-content" style={bandCardStyles.rankedCardContent}>
+      {rankRail}
+      <div style={hasFooter ? bandCardStyles.rankedMetaStack : bandCardStyles.rankedMemberOnly}>{content}</div>
+    </div>
+  ) : content;
 
   if (!route) {
     return (
       <div data-testid={testId} style={{ ...bandCardStyles.entryCard, ...style }} onAnimationEnd={onAnimationEnd}>
-        <div style={appearanceLabel ? bandCardStyles.entryCardMetaBody : bandCardStyles.entryCardBody}>{body}{chevron}</div>
+        <div style={hasFooter ? bandCardStyles.entryCardMetaBody : bandCardStyles.entryCardBody}>{body}{chevron}</div>
       </div>
     );
   }
 
   return (
-    <Link data-testid={testId} to={route} aria-label={ariaLabel ?? `View band ${entry.teamKey}`} style={{ ...bandCardStyles.entryCard, ...(appearanceLabel ? bandCardStyles.entryCardMetaLink : bandCardStyles.entryCardLink), ...style }} onAnimationEnd={onAnimationEnd}>
+    <Link data-testid={testId} to={route} aria-label={ariaLabel ?? `View band ${entry.teamKey}`} style={{ ...bandCardStyles.entryCard, ...(hasFooter ? bandCardStyles.entryCardMetaLink : bandCardStyles.entryCardLink), ...style }} onAnimationEnd={onAnimationEnd}>
       {body}
       {chevron}
     </Link>
   );
 }
 
-function BandMemberRow({ member, layout }: { member: PlayerBandMember; layout: BandMemberInstrumentLayout }) {
+function BandMemberRow({ member, layout, metadata }: { member: PlayerBandMember; layout: BandMemberInstrumentLayout; metadata?: ReactNode }) {
   const displayName = member.displayName || member.accountId.slice(0, 8);
   const instruments = getUniqueMemberInstruments(member);
   const instrumentRows = layout.stacked && layout.instrumentRowCount > 1
@@ -185,7 +212,22 @@ function BandMemberRow({ member, layout }: { member: PlayerBandMember; layout: B
   return (
     <div data-testid="band-member-row" data-layout={layout.stacked ? 'stacked' : 'inline'} style={layout.stacked ? bandCardStyles.memberRowStacked : bandCardStyles.memberRow}>
       <span data-testid="band-member-name" style={layout.stacked ? bandCardStyles.memberNameStacked : bandCardStyles.memberName}>{displayName}</span>
-      {instruments.length > 0 && (
+      {metadata ? (
+        <div data-testid="band-member-trailing" style={layout.stacked ? bandCardStyles.memberTrailingStacked : bandCardStyles.memberTrailingInline}>
+          <span data-testid="band-member-metadata-slot" style={bandCardStyles.memberMetadataSlot}>{metadata}</span>
+          {instruments.length > 0 && (
+            <div data-testid="band-member-instrument-rows" style={layout.stacked ? bandCardStyles.instrumentRowsWrapper : bandCardStyles.instrumentRowsInlineWrapper}>
+              {instrumentRows.map((row, rowIndex) => (
+                <div key={`${member.accountId}:instrument-row:${rowIndex}`} data-testid="band-member-instrument-row" style={layout.stacked ? bandCardStyles.instrumentRowCentered : bandCardStyles.instrumentRow}>
+                  {row.map((instrument) => (
+                    <InstrumentIcon key={`${member.accountId}:${instrument}`} instrument={instrument} size={BAND_MEMBER_ICON_SIZE} />
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : instruments.length > 0 && (
         <div data-testid="band-member-instrument-rows" style={layout.stacked ? bandCardStyles.instrumentRowsWrapper : bandCardStyles.instrumentRowsInlineWrapper}>
           {instrumentRows.map((row, rowIndex) => (
             <div key={`${member.accountId}:instrument-row:${rowIndex}`} data-testid="band-member-instrument-row" style={layout.stacked ? bandCardStyles.instrumentRowCentered : bandCardStyles.instrumentRow}>
@@ -260,11 +302,67 @@ const bandCardStyles = {
     flex: 1,
     minWidth: 0,
   } as CSSProperties,
+  rankedCardContent: {
+    ...flexRow,
+    alignItems: 'center',
+    gap: Gap.md,
+    flex: 1,
+    minWidth: 0,
+  } as CSSProperties,
+  rankedMetaStack: {
+    ...flexColumn,
+    alignItems: 'stretch',
+    gap: Gap.md,
+    flex: 1,
+    minWidth: 0,
+  } as CSSProperties,
+  rankedMemberOnly: {
+    ...flexRow,
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  } as CSSProperties,
+  rankRail: {
+    ...flexRow,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
+    width: 44,
+    minWidth: 44,
+    color: Colors.textSecondary,
+    fontSize: Font.lg,
+    fontWeight: Weight.bold,
+    lineHeight: 1,
+    fontVariantNumeric: 'tabular-nums',
+    transition: transition(CssProp.width, FAST_FADE_MS),
+  } as CSSProperties,
   memberList: {
     ...flexColumn,
     gap: Gap.md,
     flex: 1,
     minWidth: 0,
+  } as CSSProperties,
+  memberTrailingInline: {
+    ...flexRow,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: Gap.md,
+    flexShrink: 0,
+    minWidth: 0,
+  } as CSSProperties,
+  memberTrailingStacked: {
+    ...flexRow,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Gap.md,
+    width: '100%',
+    minWidth: 0,
+    flexWrap: 'wrap',
+  } as CSSProperties,
+  memberMetadataSlot: {
+    ...flexRow,
+    alignItems: 'center',
+    flexShrink: 0,
   } as CSSProperties,
   entryChevron: {
     position: 'absolute',
@@ -359,5 +457,17 @@ const bandCardStyles = {
     fontSize: Font.md,
     fontWeight: Weight.semibold,
     lineHeight: 1.2,
+  } as CSSProperties,
+  scoreFooter: {
+    ...flexRow,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    flexWrap: 'wrap',
+    gap: Gap.md,
+    width: '100%',
+    padding: `0 ${Gap.md}px`,
+    boxSizing: 'border-box',
+    flexShrink: 0,
   } as CSSProperties,
 };

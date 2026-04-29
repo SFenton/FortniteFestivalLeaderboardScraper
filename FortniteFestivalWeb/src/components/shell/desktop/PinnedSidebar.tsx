@@ -4,9 +4,11 @@ import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
+import type { SelectedBandProfile, SelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { useSettings } from '../../../contexts/SettingsContext';
 import MarqueeText from '../../common/MarqueeText';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
+import { Routes } from '../../../routes';
 import {
   Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
   Display, Align, Justify, Cursor, BoxSizing, CssValue, CssProp,
@@ -16,15 +18,17 @@ import {
 
 interface PinnedSidebarProps {
   player: TrackedPlayer | null;
+  selectedProfile?: SelectedProfile | null;
   onDeselect: () => void;
   onSelectPlayer: () => void;
 }
 
-export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: PinnedSidebarProps) {
+export default function PinnedSidebar({ player, selectedProfile, onDeselect, onSelectPlayer }: PinnedSidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
   const scrollRef = useScrollContainer();
   const s = useStyles();
+  const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
 
   const linkClass = (isActive: boolean) => isActive ? s.linkActive : s.link;
 
@@ -68,7 +72,9 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
         )}
         {/* v8 ignore stop */}
         <div style={s.spacer} />
-        {player ? (
+        {selectedBand ? (
+          <SelectedBandPanel band={selectedBand} onDeselect={onDeselect} styles={s} />
+        ) : player ? (
           <div style={s.playerRow}>
             <Link to="/statistics" style={s.playerLink}>
               <span style={s.linkIcon}><IoPerson size={20} /></span>
@@ -91,6 +97,38 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
       </nav>
     </aside>
   );
+}
+
+function SelectedBandPanel({ band, onDeselect, styles: s }: { band: SelectedBandProfile; onDeselect: () => void; styles: ReturnType<typeof useStyles> }) {
+  const { t } = useTranslation();
+  return (
+    <div style={s.bandProfilePanel} data-testid="pinned-sidebar-band-profile">
+      <Link to={Routes.band(band.bandId, { names: band.displayName })} style={s.bandProfileLink}>
+        <span style={s.linkIcon}><IoPeople size={20} /></span>
+        <MarqueeText as="p" text={band.displayName} style={s.bandProfileName} />
+      </Link>
+      <div style={s.bandProfileType}>{formatBandType(band.bandType)}</div>
+      <div style={s.bandMemberList} aria-label={t('band.members')}>
+        {band.members.map(member => (
+          <Link key={member.accountId} to={Routes.player(member.accountId)} style={s.bandMemberLink}>
+            <span style={s.linkIcon}><IoPerson size={18} /></span>
+            <MarqueeText as="p" text={member.displayName} style={s.bandMemberName} />
+          </Link>
+        ))}
+      </div>
+      <button style={s.bandDeselectBtn} onClick={onDeselect}>
+        {t('band.deselectProfile')}
+      </button>
+    </div>
+  );
+}
+
+function formatBandType(bandType: SelectedBandProfile['bandType']): string {
+  switch (bandType) {
+    case 'Band_Duets': return 'Duos';
+    case 'Band_Trios': return 'Trios';
+    case 'Band_Quad': return 'Quads';
+  }
 }
 
 /** Exported styles for NavigationDemo cross-consumer. */
@@ -165,6 +203,52 @@ function useStyles() {
       playerName: {
         flex: 1,
         minWidth: 0,
+      } as CSSProperties,
+      bandProfilePanel: {
+        ...flexColumn,
+        gap: Gap.sm,
+        padding: padding(0, Gap.md),
+      } as CSSProperties,
+      bandProfileLink: {
+        ...link,
+        minWidth: 0,
+        overflow: Overflow.hidden,
+        padding: padding(0, Gap.md),
+      } as CSSProperties,
+      bandProfileName: {
+        flex: 1,
+        minWidth: 0,
+      } as CSSProperties,
+      bandProfileType: {
+        color: Colors.textSubtle,
+        fontSize: Font.sm,
+        fontWeight: Weight.semibold,
+        padding: padding(0, Gap.md),
+        marginTop: -Gap.xs,
+      } as CSSProperties,
+      bandMemberList: {
+        ...flexColumn,
+        gap: Gap.xs,
+      } as CSSProperties,
+      bandMemberLink: {
+        ...link,
+        height: 36,
+        minWidth: 0,
+        overflow: Overflow.hidden,
+        padding: padding(0, Gap.md),
+        fontSize: Font.sm,
+      } as CSSProperties,
+      bandMemberName: {
+        flex: 1,
+        minWidth: 0,
+      } as CSSProperties,
+      bandDeselectBtn: {
+        ...btnDanger,
+        alignSelf: 'flex-start',
+        padding: padding(Gap.sm, Gap.xl),
+        fontSize: Font.sm,
+        whiteSpace: 'nowrap',
+        marginLeft: Gap.md,
       } as CSSProperties,
       selectPlayerBtn: {
         ...link,

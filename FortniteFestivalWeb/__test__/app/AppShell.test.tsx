@@ -208,3 +208,60 @@ describe('AppShell', () => {
     });
   });
 });
+
+import { getProfileClickDestination } from '../../src/App';
+
+describe('getProfileClickDestination', () => {
+  const playerProfile = { accountId: 'p1', displayName: 'Player' };
+  const bandProfile = {
+    type: 'band' as const,
+    bandId: 'band-123',
+    bandType: 'Band_Duets',
+    teamKey: 'tk-abc',
+    displayName: 'My Duo',
+    members: [],
+  };
+
+  it('navigates to statistics when player is set', () => {
+    const dest = getProfileClickDestination(playerProfile, null);
+    expect(typeof dest).toBe('string');
+    expect(dest).toContain('statistics');
+  });
+
+  it('navigates to statistics when both player and band profile are set', () => {
+    const dest = getProfileClickDestination(playerProfile, bandProfile);
+    expect(dest).toContain('statistics');
+  });
+
+  it('navigates to band route when no player and selected profile is a band with full context', () => {
+    const dest = getProfileClickDestination(null, bandProfile);
+    expect(typeof dest).toBe('string');
+    expect(dest).toContain('bands');
+    expect(dest).toContain('band-123');
+    expect(dest).toContain('Band_Duets');
+    expect(dest).toContain('tk-abc');
+  });
+
+  it('falls back to sidebar when selected band profile has no bandId', () => {
+    const incomplete = { ...bandProfile, bandId: '' };
+    const dest = getProfileClickDestination(null, incomplete);
+    expect(dest).toBe('sidebar');
+  });
+
+  it('falls back to sidebar when selected band profile has no teamKey', () => {
+    const incomplete = { ...bandProfile, teamKey: '' };
+    const dest = getProfileClickDestination(null, incomplete);
+    expect(dest).toBe('sidebar');
+  });
+
+  it('opens modal when no player and no selected profile', () => {
+    const dest = getProfileClickDestination(null, null);
+    expect(dest).toBe('modal');
+  });
+
+  it('opens modal when no player and selected profile is a player type', () => {
+    const playerSelectedProfile = { type: 'player' as const, accountId: 'p2', displayName: 'Other' };
+    const dest = getProfileClickDestination(null, playerSelectedProfile);
+    expect(dest).toBe('modal');
+  });
+});

@@ -1,28 +1,44 @@
 /* eslint-disable react/forbid-dom-props -- page-level dynamic styles use inline style objects */
-import { useEffect, useMemo, type AnimationEvent, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type AnimationEvent, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { IoChevronForward } from 'react-icons/io5';
+import { IoChevronForward, IoPeople } from 'react-icons/io5';
 import type { BandRankingDto, BandType, PlayerBandEntry, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { ACCURACY_SCALE, LoadPhase } from '@festival/core';
-import { Colors, Font, Gap, Layout, Radius, Weight, flexColumn, flexRow, frostedCard } from '@festival/theme';
+import { Colors, Font, Gap, IconSize, Layout, Radius, TRANSITION_MS, Weight, flexColumn, flexRow, frostedCard, transition, transitions } from '@festival/theme';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
+import { SelectProfilePill } from '../../components/player/SelectProfilePill';
 import StatBox from '../../components/player/StatBox';
+import { useBandRankHistory } from '../../hooks/chart/useBandRankHistory';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useStagger } from '../../hooks/ui/useStagger';
+import { useSelectedProfile } from '../../hooks/data/useSelectedProfile';
 import { Routes } from '../../routes';
 import Page from '../Page';
 import PlayerSectionHeading from '../player/sections/PlayerSectionHeading';
 import BandRankHistoryChart from './components/BandRankHistoryChart';
-import BandSongsSection from './components/BandSongsSection';
+import BandSongsSection, { useBandSongs } from './components/BandSongsSection';
 
 const VALID_BAND_TYPES: BandType[] = ['Band_Duets', 'Band_Trios', 'Band_Quad'];
+const SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH = 360;
+const SELECT_BAND_PROFILE_ACTION_SLOT_STYLE: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  overflow: 'hidden',
+  flexShrink: 0,
+  minWidth: 0,
+  transition: transitions(
+    transition('max-width', TRANSITION_MS),
+    transition('opacity', TRANSITION_MS),
+  ),
+};
 
 export default function BandPage() {
   const { t } = useTranslation();
@@ -30,13 +46,15 @@ export default function BandPage() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const { profile, selectBand } = useSelectedProfile();
 
   const lookupAccountId = searchParams.get('accountId') ?? undefined;
   const lookupTeamKey = searchParams.get('teamKey') ?? undefined;
   const lookupBandTypeRaw = searchParams.get('bandType') ?? undefined;
   const lookupBandType = isBandType(lookupBandTypeRaw) ? lookupBandTypeRaw : undefined;
   const routeNames = searchParams.get('names')?.trim() || undefined;
-  const hasLookupContext = !!lookupAccountId && !!lookupBandType && !!lookupTeamKey;
+  const hasTeamContext = !!lookupBandType && !!lookupTeamKey;
+  const hasAccountLookupContext = !!lookupAccountId && hasTeamContext;
 
   const lookupQuery = useQuery({
     queryKey: queryKeys.bandLookup(lookupAccountId ?? '', lookupBandType ?? '', lookupTeamKey ?? ''),
@@ -46,14 +64,25 @@ export default function BandPage() {
       if (!match) throw new Error(t('band.lookupFailed'));
       return match;
     },
-    enabled: hasLookupContext,
+    enabled: hasAccountLookupContext,
     staleTime: 5 * 60_000,
   });
 
-  const contextBand = lookupQuery.data ?? null;
-  const effectiveBandId = bandId ?? contextBand?.bandId ?? null;
+  const rankingQuery = useQuery({
+    queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? ''),
+    queryFn: () => api.getBandRanking(lookupBandType!, lookupTeamKey!),
+    enabled: hasTeamContext,
+    staleTime: 5 * 60_000,
+  });
+
+  const rankedContextBand = useMemo(
+    () => rankingQuery.data ? buildBandEntryFromRanking(rankingQuery.data, routeNames) : null,
+    [rankingQuery.data, routeNames],
+  );
+  const contextBand = lookupQuery.data ?? rankedContextBand;
+  const effectiveBandId = bandId ?? contextBand?.bandId ?? rankingQuery.data?.bandId ?? null;
   const bandRouteContext = useMemo(() => {
-    if (lookupAccountId && lookupBandType && lookupTeamKey) {
+    if (lookupBandType && lookupTeamKey) {
       return { accountId: lookupAccountId, bandType: lookupBandType, teamKey: lookupTeamKey, names: routeNames };
     }
     return routeNames ? { names: routeNames } : undefined;
@@ -65,29 +94,20 @@ export default function BandPage() {
     }
   }, [bandId, bandRouteContext, contextBand?.bandId, navigate]);
 
-  const rankingQuery = useQuery({
-    queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? ''),
-    queryFn: async () => {
-      try {
-        return await api.getBandRanking(lookupBandType!, lookupTeamKey!);
-      } catch {
-        return null;
-      }
-    },
-    enabled: hasLookupContext,
-    staleTime: 5 * 60_000,
-  });
-
   const detailQuery = useQuery({
     queryKey: queryKeys.bandDetail(effectiveBandId ?? ''),
     queryFn: () => api.getBandDetail(effectiveBandId!),
-    enabled: !!effectiveBandId && !contextBand,
+    enabled: !!effectiveBandId && !hasTeamContext && !contextBand,
     staleTime: 5 * 60_000,
   });
 
-  const missingLookupParams = !bandId && !hasLookupContext;
-  const loading = (hasLookupContext && lookupQuery.isLoading) || (hasLookupContext && rankingQuery.isLoading) || (!!effectiveBandId && !contextBand && detailQuery.isLoading);
-  const error = missingLookupParams ? new Error(t('band.missingId')) : (lookupQuery.error ?? detailQuery.error ?? null);
+  const missingLookupParams = !bandId && !hasTeamContext;
+  const loading = (hasTeamContext && rankingQuery.isLoading && !contextBand)
+    || (hasAccountLookupContext && lookupQuery.isLoading && !rankingQuery.data)
+    || (!!effectiveBandId && !hasTeamContext && !contextBand && detailQuery.isLoading);
+  const error = missingLookupParams
+    ? new Error(t('band.missingId'))
+    : (!contextBand ? (lookupQuery.error ?? rankingQuery.error ?? detailQuery.error ?? null) : null);
   const payload = contextBand ? { band: contextBand, ranking: rankingQuery.data ?? null } : (detailQuery.data ?? null);
   const genericBandTitle = t('band.title');
   const unknownMemberName = t('common.unknownUser');
@@ -102,8 +122,11 @@ export default function BandPage() {
   }, [bandId, contextBand?.bandId, genericBandTitle, location.pathname, location.state, navigate, payload, resolvedTitle, routeNames, searchParams]);
 
   const pageKey = effectiveBandId ?? `${lookupAccountId ?? 'missing'}:${lookupBandType ?? 'missing'}:${lookupTeamKey ?? 'missing'}`;
-  const hasCachedData = !!payload;
-  const { phase, shouldStagger } = usePageTransition(`band:${pageKey}`, !loading, hasCachedData);
+  const bandRankHistory = useBandRankHistory(payload?.band.bandType, payload?.band.teamKey, 'adjusted', 30);
+  const bandSongsQuery = useBandSongs(payload?.band.bandType, payload?.band.teamKey);
+  const secondaryLoading = !!payload && (bandRankHistory.loading || bandSongsQuery.isLoading);
+  const hasCachedData = !!payload && bandRankHistory.hasData && bandSongsQuery.data != null;
+  const { phase, shouldStagger } = usePageTransition(`band:${pageKey}`, !loading && !secondaryLoading, hasCachedData);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   const styles = useStyles();
 
@@ -115,13 +138,81 @@ export default function BandPage() {
       })
     : undefined;
 
+  const isCurrentBandSelected = !!payload && profile?.type === 'band'
+    && profile.bandId === payload.band.bandId
+    && profile.teamKey === payload.band.teamKey;
+  const selectBandProfileVisible = !!payload && !isCurrentBandSelected;
+  const [selectBandProfileMounted, setSelectBandProfileMounted] = useState(selectBandProfileVisible);
+  const selectBandProfileExitTimerRef = useRef<number | null>(null);
+
+  const clearSelectBandProfileExitTimer = useCallback(() => {
+    if (selectBandProfileExitTimerRef.current === null) return;
+    window.clearTimeout(selectBandProfileExitTimerRef.current);
+    selectBandProfileExitTimerRef.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    clearSelectBandProfileExitTimer();
+  }, [clearSelectBandProfileExitTimer]);
+
+  useEffect(() => {
+    if (selectBandProfileVisible) {
+      clearSelectBandProfileExitTimer();
+      setSelectBandProfileMounted(true);
+      return;
+    }
+
+    if (!selectBandProfileMounted) return;
+
+    clearSelectBandProfileExitTimer();
+    selectBandProfileExitTimerRef.current = window.setTimeout(() => {
+      selectBandProfileExitTimerRef.current = null;
+      setSelectBandProfileMounted(false);
+    }, TRANSITION_MS);
+  }, [clearSelectBandProfileExitTimer, selectBandProfileMounted, selectBandProfileVisible]);
+
+  const handleBandProfileClick = useCallback(() => {
+    if (!payload) return;
+
+    selectBand({
+      bandId: payload.band.bandId,
+      bandType: payload.band.bandType,
+      teamKey: payload.band.teamKey,
+      displayName: title,
+      members: payload.band.members.map(member => ({
+        accountId: member.accountId,
+        displayName: formatMemberName(member, unknownMemberName),
+      })),
+    });
+  }, [payload, selectBand, title, unknownMemberName]);
+
+  const bandProfileAction = selectBandProfileMounted ? (
+    <div
+      data-testid="band-select-profile-slot"
+      aria-hidden={!selectBandProfileVisible}
+      style={{
+        ...SELECT_BAND_PROFILE_ACTION_SLOT_STYLE,
+        maxWidth: selectBandProfileVisible ? SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH : 0,
+        opacity: selectBandProfileVisible ? 1 : 0,
+      }}
+    >
+      <SelectProfilePill
+        visible={selectBandProfileVisible}
+        label={t('band.selectProfile')}
+        ariaLabel={t('band.selectProfile')}
+        icon={<IoPeople size={IconSize.action} />}
+        onClick={handleBandProfileClick}
+      />
+    </div>
+  ) : undefined;
+
   return (
     <Page
       scrollRestoreKey={`band:${pageKey}`}
       scrollDeps={[phase, effectiveBandId]}
       loadPhase={phase}
       containerStyle={styles.container}
-      before={<PageHeader title={title} subtitle={subtitle} reserveSubtitleSpace={loading} />}
+      before={<PageHeader title={title} subtitle={subtitle} reserveSubtitleSpace={loading} actions={bandProfileAction} />}
     >
       {phase === LoadPhase.ContentIn && error && (
         <EmptyState
@@ -144,6 +235,36 @@ export default function BandPage() {
       )}
     </Page>
   );
+}
+
+function buildBandEntryFromRanking(ranking: BandRankingDto, routeNames?: string): PlayerBandEntry {
+  const routeNameFallbacks = splitRouteNames(routeNames);
+  const memberNameByAccountId = new Map(ranking.teamMembers.map(member => [member.accountId, member.displayName?.trim() || undefined]));
+  const members: PlayerBandMember[] = (ranking.members?.length ? ranking.members : ranking.teamMembers.map(member => ({
+    accountId: member.accountId,
+    displayName: member.displayName,
+    instruments: [] as ServerInstrumentKey[],
+  }))).map((member, index) => ({
+    accountId: member.accountId,
+    displayName: member.displayName?.trim() || memberNameByAccountId.get(member.accountId) || routeNameFallbacks[index] || null,
+    instruments: member.instruments ?? [],
+  }));
+
+  return {
+    bandId: ranking.bandId,
+    bandType: ranking.bandType,
+    teamKey: ranking.teamKey,
+    appearanceCount: ranking.songsPlayed,
+    members,
+  };
+}
+
+function splitRouteNames(routeNames?: string): string[] {
+  if (!routeNames) return [];
+  return routeNames
+    .split(/\s+\+\s+|\s*,\s*/)
+    .map(name => name.trim())
+    .filter(Boolean);
 }
 
 function MembersSection({ band, style, onAnimationEnd }: { band: PlayerBandEntry; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {

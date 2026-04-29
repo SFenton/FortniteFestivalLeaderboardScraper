@@ -12,6 +12,7 @@ import { INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
 import { DEFAULT_METADATA_ORDER } from '../utils/songSettings';
 import { DEFAULT_COLUMN_ORDER } from '../pages/songinfo/components/path/PathDataTable';
 import type { ColumnKey } from '../pages/songinfo/components/path/PathDataTable';
+import { isSearchTarget, type SearchTarget } from '../types/search';
 
 /* ── Settings shape ── */
 
@@ -28,6 +29,7 @@ export type AppSettings = {
   enableExperimentalRanks: boolean;
   disableLightTrails: boolean;
   showButtonsInHeaderMobile: boolean;
+  defaultSearchTarget: SearchTarget;
 
   /* Item Shop */
   hideItemShop: boolean;
@@ -67,6 +69,7 @@ export const defaultAppSettings = (): AppSettings => ({
   enableExperimentalRanks: false,
   disableLightTrails: false,
   showButtonsInHeaderMobile: true,
+  defaultSearchTarget: 'songs',
 
   hideItemShop: false,
   disableShopHighlighting: false,
@@ -176,6 +179,9 @@ function loadSettings(): AppSettings {
       merged.metadataShowIntensity = (parsed as Record<string, unknown>).metadataShowDifficulty;
     }
     delete (merged as Record<string, unknown>).metadataShowDifficulty;
+    if (!isSearchTarget(merged.defaultSearchTarget)) {
+      merged.defaultSearchTarget = defaults.defaultSearchTarget;
+    }
     return merged;
   } catch {
     return defaultAppSettings();

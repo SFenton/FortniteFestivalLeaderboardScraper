@@ -16,11 +16,15 @@ type RankByModalProps = {
   onApply: () => void;
   onReset: () => void;
   experimentalRanksEnabled: boolean;
+  metrics?: RankingMetric[];
+  subject?: 'players' | 'bands';
 };
 
-export default function RankByModal({ visible, draft, onDraftChange, onClose, onApply, onReset, experimentalRanksEnabled }: RankByModalProps) {
+export default function RankByModal({ visible, draft, onDraftChange, onClose, onApply, onReset, experimentalRanksEnabled, metrics, subject = 'players' }: RankByModalProps) {
   const { t } = useTranslation();
   const [infoMetric, setInfoMetric] = useState<RankingMetric | null>(null);
+  const metricOptions = metrics ?? getEnabledRankingMetrics(experimentalRanksEnabled);
+  const usesBandCopy = subject === 'bands';
 
   return (
     <>
@@ -33,15 +37,15 @@ export default function RankByModal({ visible, draft, onDraftChange, onClose, on
         resetLabel={t('rankings.rankByReset')}
         resetHint={t('rankings.rankByResetHint')}
       >
-        <ModalSection title={t('rankings.rankBy')} hint={t('rankings.rankByHint')}>
-          {getEnabledRankingMetrics(experimentalRanksEnabled).map((m) => (
+        <ModalSection title={t('rankings.rankBy')} hint={t(usesBandCopy ? 'rankings.rankByBandHint' : 'rankings.rankByHint')}>
+          {metricOptions.map((m) => (
             <RadioRow
               key={m}
               label={t(`rankings.metric.${m}`)}
-              hint={t(`rankings.metric.${m}Desc`)}
+              hint={t(usesBandCopy ? `rankings.bandMetric.${m}Desc` : `rankings.metric.${m}Desc`)}
               selected={draft === m}
               onSelect={() => onDraftChange(m)}
-              onInfo={isExperimentalRankingMetric(m) ? () => setInfoMetric(m) : undefined}
+              onInfo={!usesBandCopy && isExperimentalRankingMetric(m) ? () => setInfoMetric(m) : undefined}
             />
           ))}
         </ModalSection>

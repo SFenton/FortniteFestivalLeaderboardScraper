@@ -27,6 +27,8 @@ namespace FSTService.Scraping;
 public sealed class RankingsCalculator
 {
     private const int CredibilityThreshold = 50;
+    private const string RankHistorySnapshotsBranch = "rank_history_snapshots";
+    private const string BandRankingsBranch = "band_rankings";
 
     /// <summary>The assumed population median percentile (0.5 = 50th percentile).</summary>
     private const double PopulationMedian = 0.5;
@@ -272,15 +274,21 @@ public sealed class RankingsCalculator
         _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
         LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
 
-        // ── Phase 5: History snapshots (best-effort maintenance) ──
-        await SnapshotRankHistoryBestEffortAsync(instruments, ct);
-
-        // ── Phase 6: Band team rankings (best-effort per band type) ──
-        _progress.SetSubOperation("band_rankings");
-        var bandSw = System.Diagnostics.Stopwatch.StartNew();
-        ComputeBandRankings(bandTypes, festivalService.Songs.Count, scrapeId, ct, _progress.ReportPhaseItemComplete);
-        bandSw.Stop();
-        LogPhase("band_rankings.total", instrument: null, bandSw.Elapsed);
+        // ── Phase 5+6: History snapshots and band team rankings ──
+        if (_bandTeamRankingOptions.OverlapRankHistorySnapshotsWithBandRankings)
+        {
+            await RunRankHistorySnapshotsAndBandRankingsOverlappedAsync(
+                instruments,
+                bandTypes,
+                festivalService.Songs.Count,
+                scrapeId,
+                ct);
+        }
+        else
+        {
+            await SnapshotRankHistoryBestEffortAsync(instruments, ct);
+            RunBandRankingsWithTiming(bandTypes, festivalService.Songs.Count, scrapeId, ct);
+        }
 
         _log.LogInformation("Full rankings computation complete in {Total}.", sw.Elapsed);
         LogPhase("total", instrument: null, sw.Elapsed);
@@ -485,13 +493,90 @@ public sealed class RankingsCalculator
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
     }
 
-    internal void ComputeBandRankings(IReadOnlyList<string> bandTypes, int totalChartedSongs, long scrapeId = 0, CancellationToken ct = default, Action? onBandComplete = null)
+    private async Task RunRankHistorySnapshotsAndBandRankingsOverlappedAsync(
+        IReadOnlyList<string> instruments,
+        IReadOnlyList<string> bandTypes,
+        int totalChartedSongs,
+        long scrapeId,
+        CancellationToken ct)
+    {
+        _progress.SetSubOperation("rank_history_and_band_rankings");
+        _progress.RegisterBranches([RankHistorySnapshotsBranch, BandRankingsBranch]);
+        _progress.SetBranchTotal(RankHistorySnapshotsBranch, instruments.Count + 1);
+        _progress.SetBranchTotal(BandRankingsBranch, bandTypes.Count);
+
+        _log.LogInformation(
+            "Running rank-history snapshots and band rankings concurrently; rankings pass completion still waits for both branches.");
+
+        _progress.StartBranch(RankHistorySnapshotsBranch);
+        var snapshotsTask = SnapshotRankHistoryBestEffortAsync(instruments, ct, RankHistorySnapshotsBranch)
+            .ContinueWith(task =>
+            {
+                if (task.IsCanceled)
+                    _progress.CompleteBranch(RankHistorySnapshotsBranch, "failed", "cancelled");
+                else if (task.IsFaulted)
+                    _progress.CompleteBranch(RankHistorySnapshotsBranch, "failed", task.Exception?.GetBaseException().Message);
+                else
+                    _progress.CompleteBranch(RankHistorySnapshotsBranch);
+
+                return task;
+            }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default)
+            .Unwrap();
+
+        _progress.StartBranch(BandRankingsBranch);
+        var bandTask = Task.Run(() =>
+        {
+            try
+            {
+                RunBandRankingsWithTiming(bandTypes, totalChartedSongs, scrapeId, ct, BandRankingsBranch);
+                _progress.CompleteBranch(BandRankingsBranch);
+            }
+            catch (OperationCanceledException)
+            {
+                _progress.CompleteBranch(BandRankingsBranch, "failed", "cancelled");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _progress.CompleteBranch(BandRankingsBranch, "failed", ex.Message);
+                throw;
+            }
+        });
+
+        await Task.WhenAll(snapshotsTask, bandTask);
+    }
+
+    private void RunBandRankingsWithTiming(
+        IReadOnlyList<string> bandTypes,
+        int totalChartedSongs,
+        long scrapeId,
+        CancellationToken ct,
+        string? progressBranchId = null)
+    {
+        _progress.SetSubOperation("band_rankings");
+        var bandSw = System.Diagnostics.Stopwatch.StartNew();
+        ComputeBandRankings(bandTypes, totalChartedSongs, scrapeId, ct, _progress.ReportPhaseItemComplete, progressBranchId);
+        bandSw.Stop();
+        LogPhase("band_rankings.total", instrument: null, bandSw.Elapsed);
+    }
+
+    internal void ComputeBandRankings(
+        IReadOnlyList<string> bandTypes,
+        int totalChartedSongs,
+        long scrapeId = 0,
+        CancellationToken ct = default,
+        Action? onBandComplete = null,
+        string? progressBranchId = null)
     {
         if (totalChartedSongs <= 0)
         {
             _log.LogWarning("No charted songs available, skipping band rankings.");
             foreach (var _ in bandTypes)
+            {
+                if (progressBranchId is not null)
+                    _progress.IncrementBranchProgress(progressBranchId);
                 onBandComplete?.Invoke();
+            }
             return;
         }
 
@@ -524,6 +609,8 @@ public sealed class RankingsCalculator
             }
             finally
             {
+                if (progressBranchId is not null)
+                    _progress.IncrementBranchProgress(progressBranchId);
                 onBandComplete?.Invoke();
             }
         }
@@ -625,7 +712,7 @@ public sealed class RankingsCalculator
         }
     }
 
-    private async Task SnapshotRankHistoryBestEffortAsync(IReadOnlyList<string> instruments, CancellationToken ct)
+    private async Task SnapshotRankHistoryBestEffortAsync(IReadOnlyList<string> instruments, CancellationToken ct, string? progressBranchId = null)
     {
         _progress.SetSubOperation("rank_history_snapshots");
         var snapshotsSw = System.Diagnostics.Stopwatch.StartNew();
@@ -663,6 +750,8 @@ public sealed class RankingsCalculator
             }
             finally
             {
+                if (progressBranchId is not null)
+                    _progress.IncrementBranchProgress(progressBranchId);
                 _progress.ReportPhaseItemComplete();
             }
         }, ct)).ToList();
@@ -685,6 +774,8 @@ public sealed class RankingsCalculator
         }
         finally
         {
+            if (progressBranchId is not null)
+                _progress.IncrementBranchProgress(progressBranchId);
             _progress.ReportPhaseItemComplete();
         }
 

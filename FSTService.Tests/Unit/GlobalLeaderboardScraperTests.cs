@@ -308,6 +308,71 @@ public class GlobalLeaderboardScraperTests
         Assert.Contains("song1_Solo_Guitar", url);
     }
 
+    [Fact]
+    public async Task LookupBandAsync_UsesExactTeamBodyAndParsesBandEntry()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        handler.EnqueueJsonOk("""
+        [
+            {
+                "teamAccountIds": ["acct2", "acct1"],
+                "rank": 7,
+                "percentile": 0.5,
+                "sessionHistory": [
+                    {
+                        "endTime": "2026-04-27T00:00:00Z",
+                        "trackedStats": {
+                            "SCORE": 123456,
+                            "B_SCORE": 123456,
+                            "B_BASESCORE": 100000,
+                            "B_INSTRUMENT_BONUS": 1000,
+                            "B_OVERDRIVE_BONUS": 22456,
+                            "B_ACCURACY": 990000,
+                            "B_FULL_COMBO": 1,
+                            "B_STARS": 6,
+                            "SEASON": 14,
+                            "DIFFICULTY": 3,
+                            "M_0_ID_acct2": 0,
+                            "M_0_INSTRUMENT": 0,
+                            "M_0_SCORE": 60000,
+                            "M_0_ACCURACY": 990000,
+                            "M_0_FULL_COMBO": 1,
+                            "M_0_STARS_EARNED": 6,
+                            "M_0_DIFFICULTY": 3,
+                            "M_1_ID_acct1": 1,
+                            "M_1_INSTRUMENT": 1,
+                            "M_1_SCORE": 63456,
+                            "M_1_ACCURACY": 990000,
+                            "M_1_FULL_COMBO": 1,
+                            "M_1_STARS_EARNED": 6,
+                            "M_1_DIFFICULTY": 3
+                        }
+                    }
+                ]
+            }
+        ]
+        """);
+
+        var entry = await scraper.LookupBandAsync(
+            "song1", "Band_Duets", ["acct1", "acct2"], "alltime", "token", "caller");
+
+        Assert.NotNull(entry);
+        Assert.Equal("acct1:acct2", entry!.TeamKey);
+        Assert.Equal(7, entry.Rank);
+        Assert.Equal(123456, entry.Score);
+        Assert.Equal("findteams", entry.Source);
+        Assert.Equal("0:1", entry.InstrumentCombo);
+        Assert.Equal(2, entry.MemberStats.Count);
+
+        var request = handler.Requests[0];
+        var url = request.RequestUri!.ToString();
+        Assert.Contains("/api/v2/games/FNFestival/leaderboards/alltime_song1_Band_Duets/alltime/scores", url);
+        Assert.Contains("findTeams=false", url);
+        var body = await request.Content!.ReadAsStringAsync();
+        Assert.Equal("{\"teams\":[[\"acct1\",\"acct2\"]]}", body);
+    }
+
     // ─── ScrapeLeaderboardAsync ─────────────────────────
 
     [Fact]

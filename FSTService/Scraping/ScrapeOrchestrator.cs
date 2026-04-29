@@ -22,6 +22,8 @@ public sealed class ScrapeOrchestrator
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<ScrapeOrchestrator> _log;
+    private readonly object _activeBandSpoolLock = new();
+    private SpoolWriter<BandLeaderboardEntry>? _activeBandSpool;
 
     public ScrapeOrchestrator(
         GlobalLeaderboardScraper globalScraper,
@@ -113,7 +115,29 @@ public sealed class ScrapeOrchestrator
         int totalRequests = 0;
         long totalBytes = 0;
 
-        _persistence.StartSpoolWriter(scrapeId, spoolDir);
+        var useOnlineSoloWriter = opts.LeaderboardWriteMode == LeaderboardWriteMode.OnlineBounded;
+        if (useOnlineSoloWriter && _persistence.WriteLegacyLiveLeaderboardDuringScrape)
+        {
+            _log.LogWarning("Scraper LeaderboardWriteMode=OnlineBounded is only enabled for snapshot-only scrape writes. Falling back to DiskSpool because legacy live writes are enabled.");
+            useOnlineSoloWriter = false;
+        }
+
+        if (doSoloScrape)
+        {
+            if (useOnlineSoloWriter)
+            {
+                _persistence.StartOnlineSoloWriter(
+                    scrapeId,
+                    opts.BoundedChannelCapacity,
+                    opts.OnlineWriteBatchPages,
+                    opts.OnlineDbWriterConcurrency,
+                    passCt);
+            }
+            else
+            {
+                _persistence.StartSpoolWriter(scrapeId, spoolDir);
+            }
+        }
 
         // Band spool — separate files for band_entries tables
         SpoolWriter<BandLeaderboardEntry>? bandSpool = null;
@@ -121,6 +145,7 @@ public sealed class ScrapeOrchestrator
         if (hasBandTypes)
         {
             bandSpool = BandSpoolWriterFactory.Create(_log, _bandPersistence, spoolDir);
+            SetActiveBandSpool(bandSpool);
         }
 
         // Snapshot registered users' current scores for change detection at end.
@@ -145,7 +170,7 @@ public sealed class ScrapeOrchestrator
         }).ToList();
 
         // Shared callback for solo results
-        ValueTask OnSoloSongComplete(string songId, List<GlobalLeaderboardResult> results)
+        async ValueTask OnSoloSongComplete(string songId, List<GlobalLeaderboardResult> results)
         {
             bool hasData = false;
             foreach (var result in results)
@@ -158,7 +183,16 @@ public sealed class ScrapeOrchestrator
 
                 if (result.Entries.Count > 0)
                 {
-                    _persistence.EnqueueSpoolPage(songId, result.Instrument, result.Entries);
+                    if (useOnlineSoloWriter)
+                    {
+                        await _persistence.EnqueueOnlineSoloPageAsync(songId, result.Instrument, result.Entries, passCt)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        _persistence.EnqueueSpoolPage(songId, result.Instrument, result.Entries);
+                    }
+
                     aggregates.AddRankChangedSongId(songId);
 
                     if (registeredIds.Count > 0)
@@ -177,7 +211,6 @@ public sealed class ScrapeOrchestrator
                 aggregates.IncrementSongsWithData();
                 aggregates.AddChangedSongId(songId);
             }
-            return ValueTask.CompletedTask;
         }
 
         // Band scrape: flat parallel page fetcher using SharedDopPool for
@@ -226,15 +259,23 @@ public sealed class ScrapeOrchestrator
             allResults = await soloTask;
             _pool.EndHighPriorityPhase();
 
-            // ── Post-fetch bulk flush for solo: drop solo indexes → flush → recreate ──
-            _progress.SetSubOperation("dropping_solo_indexes");
-            _persistence.DropSoloIndexes();
+            if (useOnlineSoloWriter)
+            {
+                _progress.SetSubOperation("draining_solo_writes");
+                await _persistence.DrainOnlineSoloWriterAsync();
+            }
+            else
+            {
+                // ── Post-fetch bulk flush for solo: drop solo indexes → flush → recreate ──
+                _progress.SetSubOperation("dropping_solo_indexes");
+                _persistence.DropSoloIndexes();
 
-            _progress.SetSubOperation("flushing_solo");
-            await _persistence.FlushSpoolAsync(_progress);
+                _progress.SetSubOperation("flushing_solo");
+                await _persistence.FlushSpoolAsync(_progress);
 
-            _progress.SetSubOperation("creating_solo_indexes");
-            _persistence.CreateSoloIndexes();
+                _progress.SetSubOperation("creating_solo_indexes");
+                _persistence.CreateSoloIndexes();
+            }
 
             // ── Detect score changes for registered users (solo data only) ──
             _progress.SetSubOperation("detecting_score_changes");
@@ -315,28 +356,35 @@ public sealed class ScrapeOrchestrator
         // ── Band: await completion and flush (runs in background during solo post-processing) ──
         if (bandTask is not null && bandSpool is not null)
         {
-            _progress.SetSubOperation("awaiting_band");
-            await bandTask;
+            try
+            {
+                _progress.SetSubOperation("awaiting_band");
+                await bandTask;
 
-            Interlocked.Add(ref totalRequests, (int)Interlocked.Read(ref bandFetcher!.TotalRequests));
-            Interlocked.Add(ref totalBytes, Interlocked.Read(ref bandFetcher.TotalBytes));
+                Interlocked.Add(ref totalRequests, (int)Interlocked.Read(ref bandFetcher!.TotalRequests));
+                Interlocked.Add(ref totalBytes, Interlocked.Read(ref bandFetcher.TotalBytes));
 
-            _progress.SetSubOperation("dropping_band_indexes");
-            _persistence.DropBandIndexes();
+                _progress.SetSubOperation("dropping_band_indexes");
+                _persistence.DropBandIndexes();
 
-            _progress.SetSubOperation("flushing_band");
-            bandSpool.Complete();
-            _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
-                bandSpool.RecordCount, bandSpool.EntryCount);
-            await Task.Run(() => bandSpool.FlushAll(
-                maxBatchPages: 64,
-                onProgress: ReportBandSpoolFlushProgress));
-            await bandSpool.DisposeAsync();
+                _progress.SetSubOperation("flushing_band");
+                bandSpool.Complete();
+                _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
+                    bandSpool.RecordCount, bandSpool.EntryCount);
+                await Task.Run(() => bandSpool.FlushAll(
+                    maxBatchPages: 64,
+                    onProgress: ReportBandSpoolFlushProgress));
 
-            _progress.SetSubOperation("creating_band_indexes");
-            _persistence.CreateBandIndexes();
+                _progress.SetSubOperation("creating_band_indexes");
+                _persistence.CreateBandIndexes();
 
-            _log.LogInformation("Band flush complete.");
+                _log.LogInformation("Band flush complete.");
+            }
+            finally
+            {
+                await DisposeBandSpoolAsync(bandSpool);
+                bandSpool = null;
+            }
         }
 
         // Build the explicit output contract
@@ -404,6 +452,51 @@ public sealed class ScrapeOrchestrator
             flushProgress.State,
             flushProgress.ActiveChunkElapsedSeconds,
             flushProgress.UpdatedAtUtc);
+    }
+
+    public async ValueTask CleanupActiveBandSpoolAsync()
+    {
+        SpoolWriter<BandLeaderboardEntry>? spool;
+        lock (_activeBandSpoolLock)
+        {
+            spool = _activeBandSpool;
+            _activeBandSpool = null;
+        }
+
+        if (spool is null)
+            return;
+
+        _log.LogInformation("Best-effort cleanup disposing active band spool writer.");
+        try
+        {
+            await spool.DisposeAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Best-effort cleanup failed while disposing active band spool writer.");
+        }
+    }
+
+    private void SetActiveBandSpool(SpoolWriter<BandLeaderboardEntry> spool)
+    {
+        lock (_activeBandSpoolLock)
+            _activeBandSpool = spool;
+    }
+
+    private async ValueTask DisposeBandSpoolAsync(SpoolWriter<BandLeaderboardEntry> spool)
+    {
+        try
+        {
+            await spool.DisposeAsync();
+        }
+        finally
+        {
+            lock (_activeBandSpoolLock)
+            {
+                if (ReferenceEquals(_activeBandSpool, spool))
+                    _activeBandSpool = null;
+            }
+        }
     }
 
     /// <summary>Returns true if the instrument key is a band type (Duets/Trios/Quad).</summary>

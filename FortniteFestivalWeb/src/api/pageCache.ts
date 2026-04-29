@@ -5,7 +5,7 @@
  * restore scroll position and skip stagger animations.
  */
 
-import type { ServerInstrumentKey as InstrumentKey, LeaderboardEntry, ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey, LeaderboardEntry, ServerScoreHistoryEntry as ScoreHistoryEntry, PlayerBandType, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
 
 /* ── SongDetailPage cache ── */
 
@@ -19,10 +19,22 @@ export type InstrumentData = {
   localEntries?: number;
 };
 
+export type SongBandData = {
+  entries: SongBandLeaderboardEntry[];
+  selectedPlayerEntry?: SongBandLeaderboardEntry | null;
+  selectedBandEntry?: SongBandLeaderboardEntry | null;
+  loading: boolean;
+  error: string | null;
+  totalEntries?: number;
+  localEntries?: number;
+};
+
 export type SongDetailCache = {
   instrumentData: Record<InstrumentKey, InstrumentData>;
+  bandData?: Record<PlayerBandType, SongBandData>;
   scoreHistory: ScoreHistoryEntry[];
-  accountId: string | undefined;
+  scoreHistoryAccountId: string | undefined;
+  bandSelectionKey: string | undefined;
   scrollTop: number;
 };
 export const songDetailCache = new Map<string, SongDetailCache>();
