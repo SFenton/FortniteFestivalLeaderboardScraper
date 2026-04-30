@@ -1,5 +1,7 @@
 import { useMemo, type ReactNode, type CSSProperties } from 'react';
 import { Colors, Font, Weight, Gap, MaxWidth, Layout, BoxSizing, CssValue, padding, flexBetween, flexRow } from '@festival/theme';
+import BandFilterPill from './BandFilterPill';
+import { useBandFilterAction } from '../../contexts/BandFilterActionContext';
 
 export interface PageHeaderProps {
   /** Page title text. Optional — omit for actions-only headers. */
@@ -37,6 +39,19 @@ export default function PageHeader({
   className,
 }: PageHeaderProps) {
   const s = useStyles();
+  const bandFilterAction = useBandFilterAction();
+  const resolvedActions = (bandFilterAction.visible || actions) ? (
+    <>
+      {bandFilterAction.visible && (
+        <BandFilterPill
+          label={bandFilterAction.label}
+          selectedInstruments={bandFilterAction.selectedInstruments}
+          onClick={bandFilterAction.onPress}
+        />
+      )}
+      {actions}
+    </>
+  ) : null;
 
   return (
     <div className={className} style={{ ...s.header, ...style }} onAnimationEnd={onAnimationEnd}>
@@ -55,7 +70,7 @@ export default function PageHeader({
           )}
         </div>
         )}
-        {actions && <div style={actionsAlign === 'start' ? s.actionsTop : s.actions}>{actions}</div>}
+        {resolvedActions && <div style={actionsAlign === 'start' ? s.actionsTop : s.actions}>{resolvedActions}</div>}
       </div>
     </div>
   );

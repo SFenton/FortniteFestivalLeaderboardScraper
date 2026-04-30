@@ -101,6 +101,7 @@ import BackLink from './components/shell/mobile/BackLink';
 import MobileHeader from './components/shell/mobile/MobileHeader';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/PageQuickLinksContext';
+import { BandFilterActionProvider, type BandFilterActionContextValue } from './contexts/BandFilterActionContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visiblePathInstruments } from './contexts/SettingsContext';
 import { useFeatureFlags } from './contexts/FeatureFlagsContext';
@@ -122,6 +123,7 @@ import ErrorBoundary from './components/page/ErrorBoundary';
 import SuspenseFallback from './components/common/SuspenseFallback';
 import RouteErrorFallback from './components/page/RouteErrorFallback';
 import { createPreserveShellScrollState, type PreserveShellScrollState } from './utils/quietNavigation';
+import { getBandFilterActionLabel } from './utils/bandFilterDisplay';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -169,6 +171,14 @@ const CHANGELOG_STORAGE_KEY = 'fst:changelog';
 
 export function getFabQuickLinksActionLabel(t: TFunction): string {
   return t('common.quickLinks', 'Quick Links');
+}
+
+export function shouldShowBandFilterAction(selectedProfile: SelectedProfile | null, pathname: string): boolean {
+  return selectedProfile?.type === 'band' && pathname !== AppRoutes.settings;
+}
+
+export function prependFabActionGroup(leadingActions: ActionItem[], actionGroups: ActionItem[][]): ActionItem[][] {
+  return leadingActions.length > 0 ? [leadingActions, ...actionGroups] : actionGroups;
 }
 
 /**
@@ -447,6 +457,20 @@ function AppShell() {
   const wideDesktop = !isMobile && isWideDesktop;
   const profileType = selectedProfile?.type ?? 'none';
   const onPlayerDetailsPage = location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname);
+  const emptyBandFilterLabel = t('common.filterBandType', 'Filter Band Type');
+  const selectedBandFilterInstruments = useMemo(() => [], []);
+  const showBandFilterAction = shouldShowBandFilterAction(selectedProfile, location.pathname);
+  const bandFilterLabel = getBandFilterActionLabel(selectedBandFilterInstruments, emptyBandFilterLabel);
+  const handleBandFilterPress = useCallback(() => {}, []);
+  const bandFilterActionValue = useMemo<BandFilterActionContextValue>(() => ({
+    visible: showBandFilterAction && !isMobile,
+    label: bandFilterLabel,
+    selectedInstruments: selectedBandFilterInstruments,
+    onPress: handleBandFilterPress,
+  }), [bandFilterLabel, handleBandFilterPress, isMobile, selectedBandFilterInstruments, showBandFilterAction]);
+  const bandFilterFabActions: ActionItem[] = isMobile && showBandFilterAction
+    ? [{ label: bandFilterLabel, icon: <IoFunnel size={Size.iconFab} />, onPress: handleBandFilterPress }]
+    : [];
   const quickLinksActions = pageQuickLinks.hasPageQuickLinks && pageQuickLinks.pageQuickLinks
     ? [{
       label: getFabQuickLinksActionLabel(t),
@@ -455,7 +479,10 @@ function AppShell() {
     }]
     : [];
   const withPageQuickLinks = (pageSpecificActions: ActionItem[], ...groups: ActionItem[][]) =>
-    mergePageQuickLinksIntoFabGroups(quickLinksActions, pageSpecificActions, ...groups);
+    prependFabActionGroup(
+      bandFilterFabActions,
+      mergePageQuickLinksIntoFabGroups(quickLinksActions, pageSpecificActions, ...groups),
+    );
 
   /** Shared FAB action group for player navigation (Find Player + Profile/Select + optionally Item Shop). */
   const playerActions = (includeShop = true) => [
@@ -467,6 +494,7 @@ function AppShell() {
   ];
 
   return (
+    <BandFilterActionProvider value={bandFilterActionValue}>
     <PlayerDataProvider accountId={player?.accountId}>
     <div style={appStyles.shell}>
       <ScrollToTop />
@@ -735,6 +763,7 @@ function AppShell() {
       {/* v8 ignore stop */}
     </div>
     </PlayerDataProvider>
+    </BandFilterActionProvider>
   );
 }
 

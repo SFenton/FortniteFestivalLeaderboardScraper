@@ -21,6 +21,7 @@ const mockApi = vi.hoisted(() => {
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'p1', count: 0, history: [] }),
     getLeaderboard: fn().mockResolvedValue({ songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 's1', instruments: [] }),
+    getAllSongBandLeaderboards: fn().mockResolvedValue({ songId: 's1', bands: [] }),
     getComboRankings: fn().mockImplementation(async (comboId: string) => ({
       comboId,
       rankBy: 'totalscore',
@@ -154,7 +155,8 @@ const mockApi = vi.hoisted(() => {
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
-import App, { getFabQuickLinksActionLabel, mergePageQuickLinksIntoFabGroups } from '../../src/App';
+import App, { getFabQuickLinksActionLabel, mergePageQuickLinksIntoFabGroups, prependFabActionGroup, shouldShowBandFilterAction } from '../../src/App';
+import type { SelectedProfile } from '../../src/hooks/data/useSelectedProfile';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
 
@@ -243,6 +245,40 @@ describe('App — mobile FAB branches', () => {
       ['Quick Links'],
       ['Search'],
     ]);
+  });
+
+  it('prepends the band filter FAB action above quick links', () => {
+    const createAction = (label: string) => ({ label, icon: <span>{label}</span>, onPress: vi.fn() });
+    const quickLinksGroups = mergePageQuickLinksIntoFabGroups(
+      [createAction('Quick Links')],
+      [createAction('Sort Songs')],
+      [createAction('Search')],
+    );
+
+    const groups = prependFabActionGroup([createAction('Filter Band Type')], quickLinksGroups);
+
+    expect(groups.map(group => group.map(action => action.label))).toEqual([
+      ['Filter Band Type'],
+      ['Quick Links', 'Sort Songs'],
+      ['Search'],
+    ]);
+  });
+
+  it('only shows the band filter action for selected bands outside settings', () => {
+    const bandProfile: SelectedProfile = {
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'Lead + Bass',
+      members: [],
+    };
+    const playerProfile: SelectedProfile = { type: 'player', accountId: 'p1', displayName: 'Player' };
+
+    expect(shouldShowBandFilterAction(bandProfile, '/songs')).toBe(true);
+    expect(shouldShowBandFilterAction(bandProfile, '/settings')).toBe(false);
+    expect(shouldShowBandFilterAction(playerProfile, '/songs')).toBe(false);
+    expect(shouldShowBandFilterAction(null, '/songs')).toBe(false);
   });
 
   it('uses a generic label for shell FAB quick links instead of a page-specific title', () => {
