@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FSTService;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
@@ -129,7 +130,10 @@ public sealed class ScrapeTimePrecomputer
                 tiers, bandScoresCache, ct).GetAwaiter().GetResult();
         }, ct);
         var phase3 = Task.Run(() =>
-            PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys), ct);
+        {
+            PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
+            PrecomputeSongBandLeaderboardsAll();
+        }, ct);
         var phase4 = Task.Run(() =>
         {
             PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct)
@@ -690,9 +694,91 @@ public sealed class ScrapeTimePrecomputer
 
         var payload = new { songId, instruments };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-        var cacheKey = $"lb:{songId}:10:{leeway}";
+        var cacheKey = LeaderboardCacheKeys.LeaderboardAll(songId, LeaderboardCacheKeys.SongDetailPreviewTop, leeway);
         Store(cacheKey, jsonBytes);
     }
+
+    private void PrecomputeSongBandLeaderboardsAll()
+    {
+        var songIds = _metaDb.GetBandLeaderboardSongIds();
+        if (songIds.Count == 0) return;
+
+        Parallel.ForEach(songIds, new ParallelOptions { MaxDegreeOfParallelism = 4 }, songId =>
+        {
+            try
+            {
+                PrecomputeSongBandLeaderboardsAllForSong(songId);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to precompute song band leaderboards for song {SongId}", songId);
+            }
+        });
+    }
+
+    private void PrecomputeSongBandLeaderboardsAllForSong(string songId)
+    {
+        var bands = BandInstrumentMapping.AllBandTypes.Select(bandType =>
+        {
+            var (entries, totalEntries) = _metaDb.GetSongBandLeaderboard(
+                songId,
+                bandType,
+                LeaderboardCacheKeys.SongDetailPreviewTop,
+                0);
+            var names = _metaDb.GetDisplayNames(entries.SelectMany(entry => entry.Members.Select(member => member.AccountId)));
+            return new
+            {
+                bandType,
+                count = entries.Count,
+                totalEntries,
+                localEntries = totalEntries,
+                entries = MapSongBandLeaderboardEntries(entries, names),
+                selectedPlayerEntry = (object?)null,
+                selectedBandEntry = (object?)null,
+            };
+        }).ToList();
+
+        var payload = new { songId, bands };
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+        var cacheKey = LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, LeaderboardCacheKeys.SongDetailPreviewTop);
+        Store(cacheKey, jsonBytes);
+    }
+
+    private static List<object> MapSongBandLeaderboardEntries(
+        IEnumerable<SongBandLeaderboardEntryDto> entries,
+        IReadOnlyDictionary<string, string> names) =>
+        entries.Select(entry => MapSongBandLeaderboardEntry(entry, names)).ToList();
+
+    private static object MapSongBandLeaderboardEntry(
+        SongBandLeaderboardEntryDto entry,
+        IReadOnlyDictionary<string, string> names) => new
+        {
+            entry.BandId,
+            entry.BandType,
+            entry.TeamKey,
+            entry.ComboId,
+            Members = entry.Members.Select(member => new
+            {
+                member.AccountId,
+                DisplayName = names.GetValueOrDefault(member.AccountId),
+                member.Instruments,
+                member.Score,
+                member.Accuracy,
+                member.IsFullCombo,
+                member.Stars,
+                member.Difficulty,
+                member.Season,
+            }).ToList(),
+            entry.Score,
+            entry.Rank,
+            entry.Accuracy,
+            entry.IsFullCombo,
+            entry.Stars,
+            entry.Difficulty,
+            entry.Season,
+            entry.Percentile,
+            entry.EndTime,
+        };
 
     // ═══════════════════════════════════════════════════════════════
     // Helpers

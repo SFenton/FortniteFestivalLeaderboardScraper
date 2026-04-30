@@ -1745,9 +1745,10 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task ApiLeaderboardAll_IgnoresStalePrecomputedCache_AndReturnsFreshResults()
+    public async Task ApiLeaderboardAll_UsesPrecomputedCache_AndPrimesMemoryCache()
     {
-        const string songId = "allSongStaleCache";
+        const string songId = "allSongPrecomputedCache";
+        byte[] firstJson;
 
         using (var scope = _factory.Services.CreateScope())
         {
@@ -1758,22 +1759,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             guitarDb.UpsertEntries(songId, new[]
             {
                 new LeaderboardEntry { AccountId = "freshGuitar1", Score = 111_000 },
-                new LeaderboardEntry { AccountId = "freshGuitar2", Score = 101_000 },
             });
 
-            var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
-            bassDb.UpsertEntries(songId, new[]
-            {
-                new LeaderboardEntry { AccountId = "freshBass1", Score = 95_000 },
-            });
-
-            metaDb.UpsertLeaderboardPopulation(new[]
-            {
-                (songId, "Solo_Guitar", 200L),
-                (songId, "Solo_Bass", 50L),
-            });
-
-            var stalePayload = new
+            var firstPayload = new
             {
                 songId,
                 instruments = new[]
@@ -1781,59 +1769,155 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     new
                     {
                         instrument = "Solo_Guitar",
-                        count = 0,
+                        count = 1,
                         totalEntries = 10,
                         localEntries = 10,
-                        entries = Array.Empty<object>(),
-                    },
-                    new
-                    {
-                        instrument = "Solo_Bass",
-                        count = 0,
-                        totalEntries = 5,
-                        localEntries = 5,
-                        entries = Array.Empty<object>(),
+                        entries = new object[] { new { accountId = "precomputedGuitar", score = 222_000, rank = 1 } },
                     },
                 },
             };
 
-            var staleJson = JsonSerializer.SerializeToUtf8Bytes(stalePayload);
+            firstJson = JsonSerializer.SerializeToUtf8Bytes(firstPayload);
             metaDb.BulkSetCachedResponses(new[]
             {
-                ($"lb:{songId}:10:", staleJson, ResponseCacheService.ComputeETag(staleJson)),
+                (global::FSTService.LeaderboardCacheKeys.LeaderboardAll(songId, 10, null), firstJson, ResponseCacheService.ComputeETag(firstJson)),
             });
         }
 
-        var response = await _client.GetAsync($"/api/leaderboard/{songId}/all?top=10");
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/all");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        var instruments = json.GetProperty("instruments");
+        var guitar = json.GetProperty("instruments")[0];
+        Assert.Equal("precomputedGuitar", guitar.GetProperty("entries")[0].GetProperty("accountId").GetString());
+        Assert.Equal(222_000, guitar.GetProperty("entries")[0].GetProperty("score").GetInt32());
 
-        JsonElement guitar = default;
-        JsonElement bass = default;
-        foreach (var inst in instruments.EnumerateArray())
+        using (var scope = _factory.Services.CreateScope())
         {
-            switch (inst.GetProperty("instrument").GetString())
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+            var secondPayload = new
             {
-                case "Solo_Guitar":
-                    guitar = inst;
-                    break;
-                case "Solo_Bass":
-                    bass = inst;
-                    break;
-            }
+                songId,
+                instruments = new[]
+                {
+                    new
+                    {
+                        instrument = "Solo_Guitar",
+                        count = 1,
+                        totalEntries = 10,
+                        localEntries = 10,
+                        entries = new object[] { new { accountId = "replacementDbPayload", score = 333_000, rank = 1 } },
+                    },
+                },
+            };
+            var secondJson = JsonSerializer.SerializeToUtf8Bytes(secondPayload);
+            metaDb.BulkSetCachedResponses(new[]
+            {
+                (global::FSTService.LeaderboardCacheKeys.LeaderboardAll(songId, 10, null), secondJson, ResponseCacheService.ComputeETag(secondJson)),
+            });
         }
 
-        Assert.Equal(2, guitar.GetProperty("count").GetInt32());
-        Assert.Equal(2, guitar.GetProperty("localEntries").GetInt32());
-        Assert.Equal(200, guitar.GetProperty("totalEntries").GetInt32());
-        Assert.Equal(2, guitar.GetProperty("entries").GetArrayLength());
+        var secondResponse = await _client.GetAsync($"/api/leaderboard/{songId}/all");
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        var secondBody = await secondResponse.Content.ReadAsByteArrayAsync();
+        Assert.Equal(firstJson, secondBody);
+    }
 
-        Assert.Equal(1, bass.GetProperty("count").GetInt32());
-        Assert.Equal(1, bass.GetProperty("localEntries").GetInt32());
-        Assert.Equal(50, bass.GetProperty("totalEntries").GetInt32());
-        Assert.Equal(1, bass.GetProperty("entries").GetArrayLength());
+    [Fact]
+    public async Task ApiLeaderboardAll_LeewayOne_UsesPrecomputedCache()
+    {
+        const string songId = "allSongPrecomputedLeewayOne";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+            var payload = new
+            {
+                songId,
+                instruments = new[]
+                {
+                    new
+                    {
+                        instrument = "Solo_Guitar",
+                        count = 1,
+                        totalEntries = 10,
+                        localEntries = 10,
+                        entries = new object[] { new { accountId = "precomputedLeewayOne", score = 111_000, rank = 1 } },
+                    },
+                },
+            };
+            var json = JsonSerializer.SerializeToUtf8Bytes(payload);
+            metaDb.BulkSetCachedResponses(new[]
+            {
+                (global::FSTService.LeaderboardCacheKeys.LeaderboardAll(songId, 10, 1), json, ResponseCacheService.ComputeETag(json)),
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/all?leeway=1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("precomputedLeewayOne", body.GetProperty("instruments")[0].GetProperty("entries")[0].GetProperty("accountId").GetString());
+    }
+
+    [Fact]
+    public async Task ApiSongBandLeaderboardsAll_UsesGenericPrecomputedCacheOnlyWhenUnselected()
+    {
+        const string songId = "songBandPrecomputedCache";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+            var cachedEntry = new
+            {
+                bandId = "cached-band-id",
+                bandType = "Band_Duets",
+                teamKey = "cachedA:cachedB",
+                comboId = (string?)null,
+                members = Array.Empty<object>(),
+                score = 123_456,
+                rank = 1,
+                accuracy = 950_000,
+                isFullCombo = true,
+                stars = 5,
+                difficulty = 3,
+                season = 1,
+                percentile = 50.0,
+                endTime = (string?)null,
+            };
+            var payload = new
+            {
+                songId,
+                bands = new[]
+                {
+                    new { bandType = "Band_Duets", count = 1, totalEntries = 1, localEntries = 1, entries = new object[] { cachedEntry }, selectedPlayerEntry = (object?)null, selectedBandEntry = (object?)null },
+                    new { bandType = "Band_Trios", count = 0, totalEntries = 0, localEntries = 0, entries = Array.Empty<object>(), selectedPlayerEntry = (object?)null, selectedBandEntry = (object?)null },
+                    new { bandType = "Band_Quad", count = 0, totalEntries = 0, localEntries = 0, entries = Array.Empty<object>(), selectedPlayerEntry = (object?)null, selectedBandEntry = (object?)null },
+                },
+            };
+            var json = JsonSerializer.SerializeToUtf8Bytes(payload);
+            metaDb.BulkSetCachedResponses(new[]
+            {
+                (global::FSTService.LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, 10), json, ResponseCacheService.ComputeETag(json)),
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/bands/all?top=10");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var duos = body.GetProperty("bands").EnumerateArray()
+            .Single(band => band.GetProperty("bandType").GetString() == "Band_Duets");
+        Assert.Equal("cachedA:cachedB", duos.GetProperty("entries")[0].GetProperty("teamKey").GetString());
+        Assert.Equal(123_456, duos.GetProperty("entries")[0].GetProperty("score").GetInt32());
+
+        var selectedResponse = await _client.GetAsync($"/api/leaderboard/{songId}/bands/all?top=10&accountId=selectedAcct");
+        Assert.Equal(HttpStatusCode.OK, selectedResponse.StatusCode);
+        var selectedBody = await selectedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var selectedDuos = selectedBody.GetProperty("bands").EnumerateArray()
+            .Single(band => band.GetProperty("bandType").GetString() == "Band_Duets");
+        Assert.Equal(0, selectedDuos.GetProperty("entries").GetArrayLength());
+        if (selectedDuos.TryGetProperty("selectedPlayerEntry", out var selectedPlayerEntry))
+            Assert.Equal(JsonValueKind.Null, selectedPlayerEntry.ValueKind);
     }
 
     // ═══ Player Stats Endpoint ══════════════════════════════════

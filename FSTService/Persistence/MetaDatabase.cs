@@ -4046,6 +4046,241 @@ public sealed class MetaDatabase : IMetaDatabase
             WHERE mapped.instrument IS NOT NULL
         ), '')";
 
+    public BandSongTeamRankingRebuildMetrics RebuildBandSongTeamRankings(string bandType, BandTeamRankingRebuildOptions? options = null)
+    {
+        var resolvedOptions = ResolveBandTeamRankingRebuildOptions(options);
+        var expectedMembers = BandInstrumentMapping.ExpectedMemberCount(bandType);
+        var computedAt = DateTime.UtcNow;
+        var totalSw = Stopwatch.StartNew();
+        var materializeMs = 0d;
+        var swapMs = 0d;
+        var overallRows = 0;
+        var comboRows = 0;
+
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+
+        try
+        {
+            if (resolvedOptions.DisableSynchronousCommit)
+            {
+                using var syncCmd = conn.CreateCommand();
+                ConfigureBandRebuildCommand(syncCmd, tx, resolvedOptions);
+                syncCmd.CommandText = "SET LOCAL synchronous_commit = off";
+                syncCmd.ExecuteNonQuery();
+            }
+
+            var materializeSw = Stopwatch.StartNew();
+            using (var cmd = conn.CreateCommand())
+            {
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = $@"
+                    CREATE TEMP TABLE _band_song_rank_results ON COMMIT DROP AS
+                    WITH NormalizedEntries AS (
+                        SELECT
+                            be.song_id,
+                            be.team_key,
+                            be.score,
+                            be.accuracy,
+                            be.is_full_combo,
+                            be.stars,
+                            COALESCE(be.end_time, '') AS end_time,
+                            {BandSongComboIdExpression} AS combo_id
+                        FROM band_entries be
+                        WHERE be.band_type = @bandType
+                          AND NOT be.is_over_threshold
+                    ),
+                    OverallChoice AS (
+                        SELECT *
+                        FROM (
+                            SELECT
+                                ne.*,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY ne.song_id, ne.team_key
+                                    ORDER BY ne.score DESC, ne.end_time ASC, ne.combo_id ASC, ne.team_key ASC
+                                ) AS choice_rank
+                            FROM NormalizedEntries ne
+                        ) ranked
+                        WHERE choice_rank = 1
+                    ),
+                    OverallRanked AS (
+                        SELECT
+                            @bandType AS band_type,
+                            'overall'::TEXT AS ranking_scope,
+                            ''::TEXT AS scope_combo_id,
+                            team_key,
+                            song_id,
+                            combo_id AS entry_combo_id,
+                            (ROW_NUMBER() OVER (
+                                PARTITION BY song_id
+                                ORDER BY score DESC, end_time ASC, team_key ASC
+                            ))::INT AS rank,
+                            (COUNT(*) OVER (PARTITION BY song_id))::INT AS total_entries,
+                            score,
+                            accuracy,
+                            is_full_combo,
+                            stars,
+                            NULLIF(end_time, '') AS end_time,
+                            @computedAt AS computed_at
+                        FROM OverallChoice
+                    ),
+                    ComboRanked AS (
+                        SELECT
+                            @bandType AS band_type,
+                            'combo'::TEXT AS ranking_scope,
+                            combo_id AS scope_combo_id,
+                            team_key,
+                            song_id,
+                            combo_id AS entry_combo_id,
+                            (ROW_NUMBER() OVER (
+                                PARTITION BY combo_id, song_id
+                                ORDER BY score DESC, end_time ASC, team_key ASC
+                            ))::INT AS rank,
+                            (COUNT(*) OVER (PARTITION BY combo_id, song_id))::INT AS total_entries,
+                            score,
+                            accuracy,
+                            is_full_combo,
+                            stars,
+                            NULLIF(end_time, '') AS end_time,
+                            @computedAt AS computed_at
+                        FROM NormalizedEntries
+                        WHERE combo_id <> ''
+                          AND array_length(string_to_array(combo_id, '+'), 1) = @expectedMembers
+                    )
+                    SELECT
+                        band_type,
+                        ranking_scope,
+                        scope_combo_id,
+                        team_key,
+                        song_id,
+                        entry_combo_id,
+                        rank,
+                        total_entries,
+                        (rank::DOUBLE PRECISION / NULLIF(total_entries, 0)) * 100.0 AS percentile,
+                        score,
+                        accuracy,
+                        is_full_combo,
+                        stars,
+                        end_time,
+                        computed_at
+                    FROM OverallRanked
+                    UNION ALL
+                    SELECT
+                        band_type,
+                        ranking_scope,
+                        scope_combo_id,
+                        team_key,
+                        song_id,
+                        entry_combo_id,
+                        rank,
+                        total_entries,
+                        (rank::DOUBLE PRECISION / NULLIF(total_entries, 0)) * 100.0 AS percentile,
+                        score,
+                        accuracy,
+                        is_full_combo,
+                        stars,
+                        end_time,
+                        computed_at
+                    FROM ComboRanked;";
+                cmd.Parameters.AddWithValue("bandType", bandType);
+                cmd.Parameters.AddWithValue("expectedMembers", expectedMembers);
+                cmd.Parameters.AddWithValue("computedAt", computedAt);
+                cmd.ExecuteNonQuery();
+            }
+            materializeSw.Stop();
+            materializeMs = RoundElapsed(materializeSw);
+            LogBandSongRebuildStage(bandType, resolvedOptions, "materialize_results", materializeMs);
+
+            using (var cmd = conn.CreateCommand())
+            {
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = @"
+                    SELECT
+                        COUNT(*) FILTER (WHERE ranking_scope = 'overall')::INT AS overall_rows,
+                        COUNT(*) FILTER (WHERE ranking_scope = 'combo')::INT AS combo_rows
+                    FROM _band_song_rank_results;";
+                using var reader = cmd.ExecuteReader();
+                if (reader.Read())
+                {
+                    overallRows = reader.GetInt32(0);
+                    comboRows = reader.GetInt32(1);
+                }
+            }
+
+            var swapSw = Stopwatch.StartNew();
+            using (var cmd = conn.CreateCommand())
+            {
+                ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
+                cmd.CommandText = @"
+                    DELETE FROM band_song_team_rankings
+                    WHERE band_type = @bandType;
+
+                    INSERT INTO band_song_team_rankings (
+                        band_type, ranking_scope, scope_combo_id, team_key, song_id,
+                        entry_combo_id, rank, total_entries, percentile, score, accuracy,
+                        is_full_combo, stars, end_time, computed_at)
+                    SELECT
+                        band_type, ranking_scope, scope_combo_id, team_key, song_id,
+                        entry_combo_id, rank, total_entries, percentile, score, accuracy,
+                        is_full_combo, stars, end_time, computed_at
+                    FROM _band_song_rank_results
+                    ORDER BY ranking_scope, scope_combo_id, team_key, percentile ASC, rank ASC, score DESC, song_id ASC;";
+                cmd.Parameters.AddWithValue("bandType", bandType);
+                cmd.ExecuteNonQuery();
+            }
+            swapSw.Stop();
+            swapMs = RoundElapsed(swapSw);
+            LogBandSongRebuildStage(bandType, resolvedOptions, "swap_rows", swapMs, overallRows + comboRows);
+
+            tx.Commit();
+            totalSw.Stop();
+            var metrics = new BandSongTeamRankingRebuildMetrics(
+                bandType,
+                overallRows + comboRows,
+                overallRows,
+                comboRows,
+                materializeMs,
+                swapMs,
+                RoundElapsed(totalSw));
+
+            _log.LogInformation(
+                "Rebuilt band song team rankings for {BandType}: rows={RowCount}, overallRows={OverallRows}, comboRows={ComboRows}, materializeMs={MaterializeMs}, swapMs={SwapMs}, totalMs={TotalElapsedMs}",
+                metrics.BandType,
+                metrics.RowCount,
+                metrics.OverallRows,
+                metrics.ComboRows,
+                metrics.MaterializeMs,
+                metrics.SwapMs,
+                metrics.TotalElapsedMs);
+
+            return metrics;
+        }
+        catch
+        {
+            totalSw.Stop();
+            _log.LogWarning(
+                "Band song team ranking rebuild failed for {BandType}: rows={RowCount}, materializeMs={MaterializeMs}, swapMs={SwapMs}, totalMs={TotalElapsedMs}",
+                bandType,
+                overallRows + comboRows,
+                materializeMs,
+                swapMs,
+                RoundElapsed(totalSw));
+            throw;
+        }
+    }
+
+    private void LogBandSongRebuildStage(string bandType, BandTeamRankingRebuildOptions options, string stage, double elapsedMs, int? rowCount = null)
+    {
+        _log.LogInformation(
+            "[BandSongRankings.Stage] band_type={BandType} write_mode={WriteMode} timeout_seconds={CommandTimeoutSeconds} stage={Stage} elapsed_ms={ElapsedMs} row_count={RowCount}",
+            bandType,
+            options.WriteMode,
+            options.CommandTimeoutSeconds,
+            stage,
+            elapsedMs,
+            rowCount?.ToString() ?? "-");
+    }
+
     public List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null)
     {
         var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
@@ -4155,6 +4390,144 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     public (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5)
+    {
+        if (TryGetBandSongPerformanceExtremesFromDerived(bandType, teamKey, comboId, limit, out var extremes))
+            return extremes;
+
+        _log.LogInformation(
+            "Band song team ranking projection is unavailable for band_type={BandType}, combo_id={ComboId}; falling back to live computation.",
+            bandType,
+            comboId ?? string.Empty);
+
+        return GetBandSongPerformanceExtremesLive(bandType, teamKey, comboId, limit);
+    }
+
+    private bool TryGetBandSongPerformanceExtremesFromDerived(
+        string bandType,
+        string teamKey,
+        string? comboId,
+        int limit,
+        out (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) extremes)
+    {
+        var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
+        var normalizedComboId = comboId ?? string.Empty;
+        var effectiveLimit = Math.Clamp(limit, 1, 20);
+
+        var best = new List<BandSongPerformanceDto>();
+        var worst = new List<BandSongPerformanceDto>();
+        extremes = (best, worst);
+
+        using var conn = _ds.OpenConnection();
+
+        using (var scopeCmd = conn.CreateCommand())
+        {
+            scopeCmd.CommandText = @"
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM band_song_team_rankings
+                    WHERE band_type = @bandType
+                      AND ranking_scope = @scope
+                      AND scope_combo_id = @comboId
+                );";
+            scopeCmd.Parameters.AddWithValue("bandType", bandType);
+            scopeCmd.Parameters.AddWithValue("scope", rankingScope);
+            scopeCmd.Parameters.AddWithValue("comboId", normalizedComboId);
+            if (scopeCmd.ExecuteScalar() is not bool hasScopeRows || !hasScopeRows)
+                return false;
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            WITH TeamRows AS MATERIALIZED (
+                SELECT
+                    song_id,
+                    NULLIF(entry_combo_id, '') AS combo_id,
+                    rank AS effective_rank,
+                    total_entries,
+                    percentile,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    end_time
+                FROM band_song_team_rankings
+                WHERE band_type = @bandType
+                  AND ranking_scope = @scope
+                  AND scope_combo_id = @comboId
+                  AND team_key = @teamKey
+            ),
+            TeamPerformanceCount AS (
+                SELECT COUNT(*)::INT AS total FROM TeamRows
+            )
+            SELECT *
+            FROM (
+                SELECT *
+                FROM (
+                    SELECT
+                        0 AS bucket_order,
+                        song_id,
+                        combo_id,
+                        effective_rank,
+                        total_entries,
+                        percentile,
+                        score,
+                        accuracy,
+                        is_full_combo,
+                        stars,
+                        end_time
+                    FROM TeamRows
+                    ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC
+                    LIMIT @limit
+                ) best
+                UNION ALL
+                SELECT *
+                FROM (
+                    SELECT
+                        1 AS bucket_order,
+                        song_id,
+                        combo_id,
+                        effective_rank,
+                        total_entries,
+                        percentile,
+                        score,
+                        accuracy,
+                        is_full_combo,
+                        stars,
+                        end_time
+                    FROM TeamRows
+                    WHERE (SELECT total FROM TeamPerformanceCount) > @limit
+                    ORDER BY percentile DESC, effective_rank DESC, score ASC, song_id ASC
+                    LIMIT @limit
+                ) worst
+            ) combined
+            ORDER BY bucket_order,
+                CASE WHEN bucket_order = 0 THEN percentile END ASC,
+                CASE WHEN bucket_order = 0 THEN effective_rank END ASC,
+                CASE WHEN bucket_order = 0 THEN score END DESC,
+                CASE WHEN bucket_order = 1 THEN percentile END DESC,
+                CASE WHEN bucket_order = 1 THEN effective_rank END DESC,
+                CASE WHEN bucket_order = 1 THEN score END ASC,
+                song_id ASC;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("limit", effectiveLimit);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var performance = ReadBandSongPerformance(reader, offset: 1);
+            if (reader.GetInt32(0) == 0)
+                best.Add(performance);
+            else
+                worst.Add(performance);
+        }
+
+        return true;
+    }
+
+    private (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremesLive(string bandType, string teamKey, string? comboId = null, int limit = 5)
     {
         var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
         var normalizedComboId = comboId ?? string.Empty;
@@ -4535,6 +4908,23 @@ public sealed class MetaDatabase : IMetaDatabase
 
         using var reader = cmd.ExecuteReader();
         return ReadSongBandLeaderboardEntries(reader, bandType).FirstOrDefault();
+    }
+
+    public IReadOnlyList<string> GetBandLeaderboardSongIds()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT song_id
+            FROM band_entries
+            WHERE NOT is_over_threshold
+            ORDER BY song_id
+            """;
+        var songIds = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            songIds.Add(reader.GetString(0));
+        return songIds;
     }
 
     private static List<SongBandLeaderboardEntryDto> ReadSongBandLeaderboardEntries(NpgsqlDataReader reader, string bandType)

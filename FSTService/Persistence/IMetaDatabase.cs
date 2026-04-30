@@ -188,6 +188,7 @@ public interface IMetaDatabase : IDisposable
     void PauseBandRankHistoryJob(long jobId, string? reason = null);
     void FailBandRankHistoryJob(long jobId, string error);
     BandRankHistoryStatusDto GetBandRankHistoryStatus(string bandType, string? comboId = null);
+    BandSongTeamRankingRebuildMetrics RebuildBandSongTeamRankings(string bandType, BandTeamRankingRebuildOptions? options = null);
     (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null);
     BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted");
@@ -197,6 +198,7 @@ public interface IMetaDatabase : IDisposable
     (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0);
     SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId);
     SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey);
+    IReadOnlyList<string> GetBandLeaderboardSongIds();
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);
 
     // ── Combo ranking deltas ─────────────────────────────────────────

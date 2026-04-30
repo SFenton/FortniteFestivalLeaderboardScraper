@@ -170,6 +170,26 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
         });
     }
 
+    [Fact]
+    public void SongDetail_LeaderboardAll_CacheKey_RoundTrips()
+    {
+        StoreAndVerify(global::FSTService.LeaderboardCacheKeys.LeaderboardAll("song1", 10, null), new
+        {
+            songId = "song1",
+            instruments = Array.Empty<object>(),
+        });
+    }
+
+    [Fact]
+    public void SongDetail_BandLeaderboardsAll_CacheKey_RoundTrips()
+    {
+        StoreAndVerify(global::FSTService.LeaderboardCacheKeys.SongBandLeaderboardsAll("song1", 10), new
+        {
+            songId = "song1",
+            bands = Array.Empty<object>(),
+        });
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Neighborhoods
     // ═══════════════════════════════════════════════════════════════

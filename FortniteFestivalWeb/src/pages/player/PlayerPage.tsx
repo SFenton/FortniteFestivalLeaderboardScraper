@@ -151,11 +151,10 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
       : [],
   });
 
-  // Hoist rank-history loading so stagger waits for chart data (same pattern as LeaderboardsOverviewPage).
+  // Prefetch rank-history so charts warm in background, but do not block initial player content.
   // When the rank-history flag is off, pass [] so no queries are issued.
   const { leaderboards: rankHistoryEnabled = false } = useFeatureFlags();
   const allHistory = useRankHistoryAll(rankHistoryEnabled ? visibleKeys : [], accountId, 'totalscore');
-  const historyLoading = rankHistoryEnabled && accountId ? visibleKeys.some(inst => allHistory[inst]?.loading) : false;
   const historyAllCached = !rankHistoryEnabled || !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
 
   // Skip stagger if we've rendered this account before.
@@ -177,7 +176,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const skipAnim = skipAnimRef.current;
   const statsReady = !statsQuery.isLoading;
   const rankingsReady = hasRankTiers || instrumentRankingQueries.every(q => !q.isLoading);
-  const dataReady = !loading && !error && !!data && statsReady && rankingsReady && !historyLoading;
+  const dataReady = !loading && !error && !!data && statsReady && rankingsReady;
   const allCached = !!data && statsQuery.data != null
     && (hasRankTiers || instrumentRankingQueries.every(q => q.data != null))
     && historyAllCached;

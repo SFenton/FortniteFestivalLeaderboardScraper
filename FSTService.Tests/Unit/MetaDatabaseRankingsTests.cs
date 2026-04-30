@@ -638,6 +638,40 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(66.667, worstSong.Percentile, 3);
     }
 
+    [Fact]
+    public void RebuildBandSongTeamRankings_PopulatesOverallAndComboProjectionRows()
+    {
+        SeedBandRankingsSource();
+
+        var metrics = Db.RebuildBandSongTeamRankings("Band_Duets");
+
+        Assert.Equal(11, metrics.RowCount);
+        Assert.Equal(5, metrics.OverallRows);
+        Assert.Equal(6, metrics.ComboRows);
+        Assert.Equal(5, CountBandSongRankingRows("Band_Duets", "overall"));
+        Assert.Equal(6, CountBandSongRankingRows("Band_Duets", "combo"));
+    }
+
+    [Fact]
+    public void GetBandSongPerformanceExtremes_ReadsDerivedProjectionWhenAvailable()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandSongTeamRankings("Band_Duets");
+        DeleteBandEntries("Band_Duets");
+
+        var (best, worst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+        var bestSong = Assert.Single(best);
+        var worstSong = Assert.Single(worst);
+        Assert.Equal("song_0", bestSong.SongId);
+        Assert.Equal(50.0, bestSong.Percentile, 3);
+        Assert.Equal("song_1", worstSong.SongId);
+        Assert.Equal(66.667, worstSong.Percentile, 3);
+
+        var (comboBest, comboWorst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", "Solo_Guitar+Solo_Bass", limit: 1);
+        Assert.Equal("song_1", Assert.Single(comboBest).SongId);
+        Assert.Equal("song_0", Assert.Single(comboWorst).SongId);
+    }
+
     private int CountBandHistoryRows(string tableName, string bandType, DateOnly? snapshotDate = null)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -648,6 +682,29 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         if (snapshotDate.HasValue)
             cmd.Parameters.AddWithValue("snapshotDate", snapshotDate.Value);
         return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private int CountBandSongRankingRows(string bandType, string rankingScope)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COUNT(*)
+            FROM band_song_team_rankings
+            WHERE band_type = @bandType
+              AND ranking_scope = @rankingScope;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private void DeleteBandEntries(string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM band_entries WHERE band_type = @bandType";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.ExecuteNonQuery();
     }
 
     private void BackdateBandHistory(string bandType, DateOnly snapshotDate)

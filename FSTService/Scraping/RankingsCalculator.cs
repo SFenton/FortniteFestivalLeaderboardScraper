@@ -593,6 +593,23 @@ public sealed class RankingsCalculator
                     CredibilityThreshold,
                     PopulationMedian,
                     _bandTeamRankingOptions);
+
+                var songRankingSw = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    _metaDb.RebuildBandSongTeamRankings(bandType, _bandTeamRankingOptions);
+                    songRankingSw.Stop();
+                    LogPhase("band_song_rankings.per_type", bandType, songRankingSw.Elapsed);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    songRankingSw.Stop();
+                    _log.LogWarning(ex,
+                        "Band song team ranking projection rebuild failed for {BandType}. Band song endpoints will fall back to live computation until the projection is rebuilt.",
+                        bandType);
+                    LogPhase("band_song_rankings.per_type.failed", bandType, songRankingSw.Elapsed);
+                }
+
                 perBandSw.Stop();
                 LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
                 successfulBandTypes++;

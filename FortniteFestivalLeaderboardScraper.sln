@@ -27,6 +27,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PostScrapeCloneHarness", "F
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BandSearchProjectionHarness", "FSTService.Harnesses\BandSearchProjectionHarness\BandSearchProjectionHarness.csproj", "{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BandSongRankingBackfillHarness", "FSTService.Harnesses\BandSongRankingBackfillHarness\BandSongRankingBackfillHarness.csproj", "{432B0AD0-A385-4408-BAB9-C3041B1FF770}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -182,6 +184,18 @@ Global
 		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|x64.Build.0 = Release|Any CPU
 		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|x86.ActiveCfg = Release|Any CPU
 		{B2A81BDE-1F46-4D4A-B39C-55F3E21E5B8F}.Release|x86.Build.0 = Release|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Debug|x64.Build.0 = Debug|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Debug|x86.Build.0 = Debug|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Release|Any CPU.Build.0 = Release|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Release|x64.ActiveCfg = Release|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Release|x64.Build.0 = Release|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Release|x86.ActiveCfg = Release|Any CPU
+		{432B0AD0-A385-4408-BAB9-C3041B1FF770}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

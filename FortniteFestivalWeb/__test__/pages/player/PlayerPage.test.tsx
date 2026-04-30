@@ -60,6 +60,7 @@ const mockApi = vi.hoisted(() => {
     getVersion: fn().mockResolvedValue({ version: '1.0.0' }),
     getLeaderboard: fn().mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 'song-1', instruments: [] }),
+    getRankHistory: fn().mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', count: 0, history: [], deltas: [] }),
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getRivalsAll: fn().mockResolvedValue({ accountId: 'test-player-1', songs: [], combos: [] }),
@@ -87,6 +88,7 @@ beforeEach(() => {
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' });
   mockApi.getLeaderboard.mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] });
   mockApi.getAllLeaderboards.mockResolvedValue({ songId: 'song-1', instruments: [] });
+  mockApi.getRankHistory.mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', count: 0, history: [], deltas: [] });
   mockApi.getPlayerHistory.mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
 });
@@ -281,6 +283,16 @@ describe('PlayerPage', () => {
     });
     await waitFor(() => {
       expect(document.body.textContent).toContain('TestPlayer');
+    });
+  });
+
+  it('renders primary player content while rank history is still loading', async () => {
+    mockApi.getRankHistory.mockReturnValue(new Promise(() => {}));
+
+    renderPlayerPage('/player/test-player-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('TestPlayer')).toBeDefined();
     });
   });
 });

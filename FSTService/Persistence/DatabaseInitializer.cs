@@ -1555,6 +1555,33 @@ public static class DatabaseInitializer
         ALTER TABLE band_search_projection_state
             ADD COLUMN IF NOT EXISTS refreshed_at TIMESTAMPTZ;
 
+        -- Per-song band team ranking projection. Band profile best/worst song
+        -- sections read this instead of ranking song leaderboards at request time.
+        CREATE TABLE IF NOT EXISTS band_song_team_rankings (
+            band_type       TEXT             NOT NULL,
+            ranking_scope   TEXT             NOT NULL,
+            scope_combo_id  TEXT             NOT NULL DEFAULT '',
+            team_key        TEXT             NOT NULL,
+            song_id         TEXT             NOT NULL,
+            entry_combo_id  TEXT             NOT NULL DEFAULT '',
+            rank            INTEGER          NOT NULL,
+            total_entries   INTEGER          NOT NULL,
+            percentile      DOUBLE PRECISION NOT NULL,
+            score           INTEGER          NOT NULL,
+            accuracy        INTEGER,
+            is_full_combo   BOOLEAN,
+            stars           INTEGER,
+            end_time        TEXT,
+            computed_at     TIMESTAMPTZ      NOT NULL,
+            PRIMARY KEY (band_type, ranking_scope, scope_combo_id, team_key, song_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_bstr_team_best
+            ON band_song_team_rankings (band_type, ranking_scope, scope_combo_id, team_key, percentile ASC, rank ASC, score DESC, song_id ASC);
+
+        CREATE INDEX IF NOT EXISTS ix_bstr_team_worst
+            ON band_song_team_rankings (band_type, ranking_scope, scope_combo_id, team_key, percentile DESC, rank DESC, score ASC, song_id ASC);
+
         -- Aggregate band-team rankings are stored in per-band current tables.
 
         -- ── Migration: add instrument_combo column to existing band tables ──

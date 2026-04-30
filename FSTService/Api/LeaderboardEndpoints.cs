@@ -16,7 +16,9 @@ public static partial class ApiEndpoints
             string? accountId,
             string? selectedBandType,
             string? selectedTeamKey,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
@@ -24,32 +26,36 @@ public static partial class ApiEndpoints
             var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
             var normalizedSelectedBandType = string.IsNullOrWhiteSpace(selectedBandType) ? null : selectedBandType.Trim();
             var normalizedSelectedTeamKey = string.IsNullOrWhiteSpace(selectedTeamKey) ? null : selectedTeamKey.Trim();
-            var bands = BandInstrumentMapping.AllBandTypes.Select(bandType =>
+            var canUseGenericCache = effectiveTop == LeaderboardCacheKeys.SongDetailPreviewTop
+                && selectedAccountId is null
+                && normalizedSelectedTeamKey is null;
+
+            if (canUseGenericCache)
             {
-                var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, 0);
-                var selectedPlayerEntry = selectedAccountId is null
-                    ? null
-                    : metaDb.GetSongBandLeaderboardEntryForAccount(songId, bandType, selectedAccountId);
-                var selectedBandEntry = normalizedSelectedBandType == bandType && normalizedSelectedTeamKey is not null
-                    ? metaDb.GetSongBandLeaderboardEntryForTeam(songId, bandType, normalizedSelectedTeamKey)
-                    : null;
-                IEnumerable<SongBandLeaderboardEntryDto> entriesForNames = entries;
-                if (selectedPlayerEntry is not null)
-                    entriesForNames = entriesForNames.Append(selectedPlayerEntry);
-                if (selectedBandEntry is not null)
-                    entriesForNames = entriesForNames.Append(selectedBandEntry);
-                var names = metaDb.GetDisplayNames(entriesForNames.SelectMany(entry => entry.Members.Select(member => member.AccountId)));
-                return new
+                var cacheKey = LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, effectiveTop);
+                var cachedResult = CacheHelper.ServeIfCached(httpContext, lbCache.Get(cacheKey));
+                if (cachedResult is not null) return cachedResult;
+
+                var precomputed = precomputer.TryGet(cacheKey);
+                if (precomputed is not null)
                 {
-                    bandType,
-                    count = entries.Count,
-                    totalEntries,
-                    localEntries = totalEntries,
-                    entries = MapSongBandLeaderboardEntries(entries, names),
-                    selectedPlayerEntry = selectedPlayerEntry is null ? null : MapSongBandLeaderboardEntry(selectedPlayerEntry, names),
-                    selectedBandEntry = selectedBandEntry is null ? null : MapSongBandLeaderboardEntry(selectedBandEntry, names),
-                };
-            }).ToList();
+                    lbCache.Set(cacheKey, precomputed.Value.Json);
+                    var precomputedResult = CacheHelper.ServeIfCached(httpContext, precomputed);
+                    if (precomputedResult is not null) return precomputedResult;
+                }
+            }
+
+            var bands = BuildSongBandLeaderboardsPayload(songId, effectiveTop, selectedAccountId,
+                normalizedSelectedBandType, normalizedSelectedTeamKey, metaDb);
+
+            if (canUseGenericCache)
+            {
+                var cacheKey = LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, effectiveTop);
+                var jsonBytes = SerializeJsonPayload(httpContext, new { songId, bands });
+                var etag = lbCache.Set(cacheKey, jsonBytes);
+                httpContext.Response.Headers.ETag = etag;
+                return Results.Bytes(jsonBytes, "application/json");
+            }
 
             return Results.Ok(new { songId, bands });
         })
@@ -174,15 +180,28 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             IPathDataStore pathStore,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+            var effectiveTop = top ?? LeaderboardCacheKeys.SongDetailPreviewTop;
 
             // ── Check cache ──────────────────────────────────────
-            var legacyCacheKey = $"lb:{songId}:{top}:{leeway}";
+            var legacyCacheKey = LeaderboardCacheKeys.LeaderboardAll(songId, effectiveTop, leeway);
             {
                 var result = CacheHelper.ServeIfCached(httpContext, lbCache.Get(legacyCacheKey));
                 if (result is not null) return result;
+            }
+
+            if (effectiveTop == LeaderboardCacheKeys.SongDetailPreviewTop)
+            {
+                var precomputed = precomputer.TryGet(legacyCacheKey);
+                if (precomputed is not null)
+                {
+                    lbCache.Set(legacyCacheKey, precomputed.Value.Json);
+                    var result = CacheHelper.ServeIfCached(httpContext, precomputed);
+                    if (result is not null) return result;
+                }
             }
 
             // ── Build response ───────────────────────────────────
@@ -206,7 +225,7 @@ public static partial class ApiEndpoints
                     if (raw.HasValue)
                         maxScore = (int)(raw.Value * (1.0 + leeway!.Value / 100.0));
                 }
-                var result = persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, top ?? 10, maxScore: maxScore);
+                var result = persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, effectiveTop, maxScore: maxScore);
                 if (result is null) return;
 
                 var (entries, dbCount) = result.Value;
@@ -259,10 +278,7 @@ public static partial class ApiEndpoints
                 songId,
                 instruments,
             };
-            var jsonOpts = httpContext.RequestServices
-                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
-                .Value.SerializerOptions;
-            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var jsonBytes = SerializeJsonPayload(httpContext, payload);
             var etag = lbCache.Set(legacyCacheKey, jsonBytes);
 
             httpContext.Response.Headers.ETag = etag;
@@ -270,6 +286,48 @@ public static partial class ApiEndpoints
         })
         .WithTags("Leaderboards")
         .RequireRateLimiting("public");
+    }
+
+    private static List<object> BuildSongBandLeaderboardsPayload(
+        string songId,
+        int effectiveTop,
+        string? selectedAccountId,
+        string? normalizedSelectedBandType,
+        string? normalizedSelectedTeamKey,
+        IMetaDatabase metaDb) =>
+        BandInstrumentMapping.AllBandTypes.Select(bandType =>
+        {
+            var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, 0);
+            var selectedPlayerEntry = selectedAccountId is null
+                ? null
+                : metaDb.GetSongBandLeaderboardEntryForAccount(songId, bandType, selectedAccountId);
+            var selectedBandEntry = normalizedSelectedBandType == bandType && normalizedSelectedTeamKey is not null
+                ? metaDb.GetSongBandLeaderboardEntryForTeam(songId, bandType, normalizedSelectedTeamKey)
+                : null;
+            IEnumerable<SongBandLeaderboardEntryDto> entriesForNames = entries;
+            if (selectedPlayerEntry is not null)
+                entriesForNames = entriesForNames.Append(selectedPlayerEntry);
+            if (selectedBandEntry is not null)
+                entriesForNames = entriesForNames.Append(selectedBandEntry);
+            var names = metaDb.GetDisplayNames(entriesForNames.SelectMany(entry => entry.Members.Select(member => member.AccountId)));
+            return new
+            {
+                bandType,
+                count = entries.Count,
+                totalEntries,
+                localEntries = totalEntries,
+                entries = MapSongBandLeaderboardEntries(entries, names),
+                selectedPlayerEntry = selectedPlayerEntry is null ? null : MapSongBandLeaderboardEntry(selectedPlayerEntry, names),
+                selectedBandEntry = selectedBandEntry is null ? null : MapSongBandLeaderboardEntry(selectedBandEntry, names),
+            };
+        }).Cast<object>().ToList();
+
+    private static byte[] SerializeJsonPayload(HttpContext httpContext, object payload)
+    {
+        var jsonOpts = httpContext.RequestServices
+            .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+            .Value.SerializerOptions;
+        return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
     }
 
     private static List<object> MapSongBandLeaderboardEntries(

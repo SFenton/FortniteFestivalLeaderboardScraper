@@ -76,6 +76,50 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         _metaDb.RegisterUser("web-tracker", accountId);
     }
 
+    private void SeedBandSong(
+        string songId,
+        string bandType,
+        params (string[] Members, string InstrumentCombo, int Score)[] entries)
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        persistence.UpsertBandEntries(songId, bandType, entries.Select(entry =>
+        {
+            var sortedMembers = entry.Members.OrderBy(static member => member, StringComparer.OrdinalIgnoreCase).ToArray();
+            var instrumentIds = entry.InstrumentCombo.Split(':', StringSplitOptions.RemoveEmptyEntries)
+                .Select(int.Parse)
+                .ToArray();
+            return new BandLeaderboardEntry
+            {
+                TeamKey = string.Join(':', sortedMembers),
+                TeamMembers = sortedMembers,
+                InstrumentCombo = entry.InstrumentCombo,
+                Score = entry.Score,
+                Accuracy = 950_000,
+                IsFullCombo = true,
+                Stars = 5,
+                Difficulty = 3,
+                Season = 1,
+                Rank = 1,
+                Percentile = 0.1,
+                Source = "test",
+                MemberStats = sortedMembers.Select((member, index) => new BandMemberStats
+                {
+                    MemberIndex = index,
+                    AccountId = member,
+                    InstrumentId = instrumentIds[index],
+                    Score = entry.Score / sortedMembers.Length,
+                    Accuracy = 950_000,
+                    IsFullCombo = true,
+                    Stars = 5,
+                    Difficulty = 3,
+                }).ToList(),
+            };
+        }).ToList());
+    }
+
     private void InsertScoreHistory(string accountId, string songId, string instrument, int score)
     {
         _metaDb.InsertScoreChange(songId, instrument, accountId,
@@ -221,6 +265,31 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
 
         var lb1 = _sut.TryGet("lb:s1:10:1");
         Assert.NotNull(lb1);
+    }
+
+    [Fact]
+    public async Task PrecomputeAllAsync_ProducesSongBandLeaderboardAllEntries()
+    {
+        SeedBandSong("band-song-1", "Band_Duets",
+            (["band-p1", "band-p2"], "0:1", 1_200),
+            (["band-p3", "band-p4"], "2:3", 1_100));
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var result = _sut.TryGet(global::FSTService.LeaderboardCacheKeys.SongBandLeaderboardsAll("band-song-1", 10));
+        Assert.NotNull(result);
+
+        var json = JsonDocument.Parse(result.Value.Json);
+        Assert.Equal("band-song-1", json.RootElement.GetProperty("songId").GetString());
+
+        var duos = json.RootElement.GetProperty("bands")
+            .EnumerateArray()
+            .Single(band => band.GetProperty("bandType").GetString() == "Band_Duets");
+        Assert.Equal(2, duos.GetProperty("count").GetInt32());
+        Assert.Equal("band-p1:band-p2", duos.GetProperty("entries")[0].GetProperty("teamKey").GetString());
+        Assert.Equal(1_200, duos.GetProperty("entries")[0].GetProperty("score").GetInt32());
+        Assert.Equal(JsonValueKind.Null, duos.GetProperty("selectedPlayerEntry").ValueKind);
+        Assert.Equal(JsonValueKind.Null, duos.GetProperty("selectedBandEntry").ValueKind);
     }
 
     [Fact]
