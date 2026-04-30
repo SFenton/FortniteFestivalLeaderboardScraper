@@ -1505,6 +1505,23 @@ public static class DatabaseInitializer
             rebuilt_at   TIMESTAMPTZ NOT NULL
         );
 
+        -- Exact member-to-instrument assignments observed for a band/team/combo.
+        -- band_team_membership stores per-member instrument unions; this table
+        -- preserves the exact tuple for selected-band instrument filters.
+        CREATE TABLE IF NOT EXISTS band_team_configurations (
+            band_type               TEXT        NOT NULL,
+            team_key                TEXT        NOT NULL,
+            instrument_combo        TEXT        NOT NULL DEFAULT '',
+            assignment_key          TEXT        NOT NULL,
+            appearance_count        INTEGER     NOT NULL,
+            member_assignments_json JSONB       NOT NULL DEFAULT '{}'::jsonb,
+            updated_at              TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (band_type, team_key, instrument_combo, assignment_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_btc_band_team
+            ON band_team_configurations (band_type, team_key);
+
         -- Rich global band-search projection. Search reads these precomputed
         -- rows instead of triggering request-time per-account summary rebuilds.
         CREATE TABLE IF NOT EXISTS band_search_team_projection (

@@ -346,6 +346,17 @@ public sealed class BandDetailDto
 {
     public PlayerBandEntryDto Band { get; init; } = new();
     public BandTeamRankingDto? Ranking { get; init; }
+    public List<BandConfigurationDto> Configurations { get; init; } = [];
+}
+
+public sealed class BandConfigurationDto
+{
+    public string RawInstrumentCombo { get; init; } = "";
+    public string ComboId { get; init; } = "";
+    public List<string> Instruments { get; init; } = [];
+    public string AssignmentKey { get; init; } = "";
+    public int AppearanceCount { get; init; }
+    public Dictionary<string, string> MemberInstruments { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>

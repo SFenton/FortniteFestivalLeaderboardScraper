@@ -532,6 +532,7 @@ public static partial class ApiEndpoints
             {
                 band,
                 ranking = ranking is null ? null : MapBandRanking(ranking, names),
+                configurations = persistence.GetBandConfigurations(band.BandType, band.TeamKey),
             }, jsonOpts);
         })
         .WithTags("Rankings")

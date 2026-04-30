@@ -52,6 +52,74 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
     }
 
     [Fact]
+    public void RebuildBandTeamMembershipForTeams_RebuildsExactBandConfigurations()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000, instruments: [0, 1]), rebuildTeamMembership: false);
+        UpsertDirect(persistence, "song-b", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_200, instruments: [1, 0]), rebuildTeamMembership: false);
+
+        persistence.RebuildBandTeamMembershipForTeams("Band_Duets", ["acct-a:acct-b"]);
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT instrument_combo, assignment_key, appearance_count,
+                   member_assignments_json->>'acct-a', member_assignments_json->>'acct-b'
+            FROM band_team_configurations
+            ORDER BY assignment_key
+            """;
+        using var reader = cmd.ExecuteReader();
+
+        Assert.True(reader.Read());
+        Assert.Equal("0:1", reader.GetString(0));
+        Assert.Equal("acct-a=Solo_Bass|acct-b=Solo_Guitar", reader.GetString(1));
+        Assert.Equal(1, reader.GetInt32(2));
+        Assert.Equal("Solo_Bass", reader.GetString(3));
+        Assert.Equal("Solo_Guitar", reader.GetString(4));
+
+        Assert.True(reader.Read());
+        Assert.Equal("0:1", reader.GetString(0));
+        Assert.Equal("acct-a=Solo_Guitar|acct-b=Solo_Bass", reader.GetString(1));
+        Assert.Equal(1, reader.GetInt32(2));
+        Assert.Equal("Solo_Guitar", reader.GetString(3));
+        Assert.Equal("Solo_Bass", reader.GetString(4));
+
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
+    public void RebuildBandTeamMembershipForTeams_PreservesRepeatedBandInstruments()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:0", 1_000, instruments: [0, 0]), rebuildTeamMembership: false);
+
+        persistence.RebuildBandTeamMembershipForTeams("Band_Duets", ["acct-a:acct-b"]);
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT instrument_combo, assignment_key, appearance_count,
+                   member_assignments_json->>'acct-a', member_assignments_json->>'acct-b'
+            FROM band_team_configurations
+            """;
+        using var reader = cmd.ExecuteReader();
+
+        Assert.True(reader.Read());
+        Assert.Equal("0:0", reader.GetString(0));
+        Assert.Equal("acct-a=Solo_Guitar|acct-b=Solo_Guitar", reader.GetString(1));
+        Assert.Equal(1, reader.GetInt32(2));
+        Assert.Equal("Solo_Guitar", reader.GetString(3));
+        Assert.Equal("Solo_Guitar", reader.GetString(4));
+        Assert.False(reader.Read());
+    }
+
+    [Fact]
     public void PruneBandEntries_RemovesOnlyDeletedEntryMembersAndSummaries()
     {
         var persistence = new BandLeaderboardPersistence(

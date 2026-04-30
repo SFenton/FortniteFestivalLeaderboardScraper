@@ -149,6 +149,42 @@ describe('InstrumentSelector', () => {
     expect(Array.from(buttons).some(button => button.getAttribute('title') === 'Bass')).toBe(false);
   });
 
+  it('renders disabled instruments but does not select them', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: null,
+        onSelect,
+        disabledInstruments: ['Solo_Bass'],
+      }),
+    );
+    const bassButton = Array.from(container.querySelectorAll('button'))
+      .find(button => button.getAttribute('title') === 'Bass');
+
+    expect(bassButton).toBeDisabled();
+    fireEvent.click(bassButton!);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('renders muted instruments as conflicted but selectable', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: null,
+        onSelect,
+        mutedInstruments: ['Solo_Bass'],
+      }),
+    );
+    const bassButton = Array.from(container.querySelectorAll('button'))
+      .find(button => button.getAttribute('title') === 'Bass');
+
+    expect(bassButton).toHaveAttribute('data-conflict', 'true');
+    fireEvent.click(bassButton!);
+    expect(onSelect).toHaveBeenCalledWith('Solo_Bass');
+  });
+
   it('renders compact mode with arrow buttons', () => {
     const onSelect = vi.fn();
     const { container } = render(
@@ -229,6 +265,25 @@ describe('InstrumentSelector', () => {
     const buttons = container.querySelectorAll('button');
     fireEvent.click(buttons[2]!);
     expect(onSelect).toHaveBeenCalledWith('Solo_Drums');
+  });
+
+  it('previews compact instruments without selecting when deferSelection is true', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: null,
+        onSelect,
+        compact: true,
+        deferSelection: true,
+      }),
+    );
+    const buttons = container.querySelectorAll('button');
+    fireEvent.click(buttons[2]!);
+    expect(onSelect).not.toHaveBeenCalled();
+
+    fireEvent.click(buttons[1]!);
+    expect(onSelect).toHaveBeenCalledWith('Solo_Bass');
   });
 
   it('renders full mode by default when compact is omitted', () => {

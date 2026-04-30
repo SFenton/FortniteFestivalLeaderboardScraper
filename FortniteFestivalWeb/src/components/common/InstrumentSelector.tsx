@@ -6,7 +6,7 @@
  * arrow-cycling mode (unless overridden via the explicit `compact` prop).
  * Used in FilterModal, SuggestionsFilterModal, PathsModal, and ScoreHistoryChart.
  */
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Size, Layout, Gap } from '@festival/theme';
 import { SERVER_INSTRUMENT_LABELS, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type { InstrumentKey } from '@festival/core/instruments';
@@ -42,6 +42,10 @@ export interface InstrumentSelectorProps<K extends AnyInstrumentKey = ServerInst
   onSelect: (key: K | null) => void;
   /** Optional instruments to hide from the rendered selector without changing the source list. */
   hiddenInstruments?: readonly K[];
+  /** Optional instruments to render but prevent from being selected. */
+  disabledInstruments?: readonly K[];
+  /** Optional instruments to render as conflicting while still allowing selection. */
+  mutedInstruments?: readonly K[];
   /** When true, clicking the selected instrument does not deselect it. */
   required?: boolean;
   /**
@@ -71,10 +75,12 @@ export interface InstrumentSelectorProps<K extends AnyInstrumentKey = ServerInst
 }
 
 export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrumentKey>({
-  instruments, selected, onSelect, hiddenInstruments, required, compact,
+  instruments, selected, onSelect, hiddenInstruments, disabledInstruments, mutedInstruments, required, compact,
   compactLabels, deferSelection, classNames, styles: sty, sig, children,
 }: InstrumentSelectorProps<K>) {
-  const hiddenInstrumentSet = hiddenInstruments ? new Set(hiddenInstruments) : null;
+  const hiddenInstrumentSet = useMemo(() => hiddenInstruments ? new Set(hiddenInstruments) : null, [hiddenInstruments]);
+  const disabledInstrumentSet = useMemo(() => disabledInstruments ? new Set(disabledInstruments) : null, [disabledInstruments]);
+  const mutedInstrumentSet = useMemo(() => mutedInstruments ? new Set(mutedInstruments) : null, [mutedInstruments]);
   const availableItems = hiddenInstrumentSet
     ? instruments.filter(inst => !hiddenInstrumentSet.has(inst.key))
     : instruments;
@@ -126,6 +132,15 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
   const useStyOverride = !!sty;
   const compactPreviewKey = effectiveSelected ?? previewKey;
 
+  const findNextSelectableIndex = useCallback((startIndex: number, dir: 1 | -1) => {
+    for (let offset = 1; offset <= availableItems.length; offset += 1) {
+      const next = (startIndex + (offset * dir) + availableItems.length) % availableItems.length;
+      const nextItem = availableItems[next];
+      if (nextItem && !disabledInstrumentSet?.has(nextItem.key)) return next;
+    }
+    return -1;
+  }, [availableItems, disabledInstrumentSet]);
+
   const cycle = useCallback((dir: 1 | -1) => {
     if (availableItems.length === 0) {
       return;
@@ -134,14 +149,24 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
       if (deferSelection) {
         setPreviewIdx(prev => (prev + dir + availableItems.length) % availableItems.length);
       } else {
-        onSelect(availableItems[dir === 1 ? 0 : availableItems.length - 1]!.key);
+        const edgeIndex = dir === 1 ? -1 : 0;
+        const nextIndex = findNextSelectableIndex(edgeIndex, dir);
+        if (nextIndex >= 0) onSelect(availableItems[nextIndex]!.key);
       }
       return;
     }
     const idx = availableItems.findIndex(i => i.key === effectiveSelected);
-    const next = (idx + dir + availableItems.length) % availableItems.length;
+    const next = findNextSelectableIndex(idx, dir);
+    if (next < 0) return;
     onSelect(availableItems[next]!.key);
-  }, [availableItems, effectiveSelected, onSelect, deferSelection]);
+  }, [availableItems, effectiveSelected, onSelect, deferSelection, findNextSelectableIndex]);
+
+  const compactPreviewDisabled = compactPreviewKey != null && disabledInstrumentSet?.has(compactPreviewKey);
+  const compactPreviewMuted = !compactPreviewDisabled && compactPreviewKey != null && mutedInstrumentSet?.has(compactPreviewKey);
+  const compactButtonStyle = mergeInstrumentButtonStyle(
+    btnActiveStyle ?? (btnActiveClass ? undefined : filterStyles.instrumentBtn),
+    compactPreviewDisabled ? instrumentDisabledStyle : compactPreviewMuted ? instrumentMutedStyle : undefined,
+  );
 
   return (
     <>
@@ -153,7 +178,9 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
             </button>
             <button
               className={btnActiveClass || undefined}
-              style={btnActiveStyle ?? (btnActiveClass ? undefined : filterStyles.instrumentBtn)}
+              style={compactButtonStyle}
+              disabled={compactPreviewDisabled}
+              data-conflict={compactPreviewMuted ? 'true' : undefined}
               onClick={() => {
                 if (effectiveSelected) {
                   onSelect(required ? effectiveSelected : null);
@@ -182,15 +209,18 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
         ) : (
           availableItems.map(inst => {
             const isSelected = effectiveSelected === inst.key;
+            const isDisabled = disabledInstrumentSet?.has(inst.key) ?? false;
+            const isMuted = !isSelected && !isDisabled && (mutedInstrumentSet?.has(inst.key) ?? false);
+            const baseButtonStyle = useStyOverride
+              ? (isSelected ? btnActiveStyle : btnStyle)
+              : ((isSelected ? btnActiveClass : btnClass) ? undefined : filterStyles.instrumentBtn);
             return (
               <button
                 key={inst.key}
                 className={(isSelected ? btnActiveClass : btnClass) || undefined}
-                style={
-                  useStyOverride
-                    ? (isSelected ? btnActiveStyle : btnStyle)
-                    : ((isSelected ? btnActiveClass : btnClass) ? undefined : filterStyles.instrumentBtn)
-                }
+                style={mergeInstrumentButtonStyle(baseButtonStyle, isDisabled ? instrumentDisabledStyle : isMuted ? instrumentMutedStyle : undefined)}
+                disabled={isDisabled}
+                data-conflict={isMuted ? 'true' : undefined}
                 onClick={() => onSelect(isSelected && !required ? null : inst.key)}
                 title={inst.label ?? (SERVER_INSTRUMENT_LABELS as Record<string, string>)[inst.key] ?? inst.key}
               >
@@ -219,4 +249,21 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
       )}
     </>
   );
+}
+
+const instrumentMutedStyle: CSSProperties = {
+  cursor: 'pointer',
+  filter: 'grayscale(1)',
+  opacity: 0.42,
+};
+
+const instrumentDisabledStyle: CSSProperties = {
+  cursor: 'not-allowed',
+  filter: 'grayscale(1)',
+  opacity: 0.28,
+};
+
+function mergeInstrumentButtonStyle(base: CSSProperties | undefined, state: CSSProperties | undefined) {
+  if (!state) return base;
+  return { ...(base ?? {}), ...state };
 }

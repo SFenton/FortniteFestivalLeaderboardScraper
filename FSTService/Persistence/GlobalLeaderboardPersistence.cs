@@ -1912,6 +1912,57 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         };
     }
 
+    public List<BandConfigurationDto> GetBandConfigurations(string bandType, string teamKey)
+    {
+        using var conn = _pgDataSource.OpenConnection();
+        EnsureBandTeamConfigurations(conn, bandType, teamKey);
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT instrument_combo, assignment_key, appearance_count, member_assignments_json::text
+            FROM {BandLeaderboardPersistence.BandTeamConfigurationTable}
+            WHERE band_type = @bandType AND team_key = @teamKey
+            ORDER BY appearance_count DESC, instrument_combo, assignment_key
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+
+        var configurations = new List<BandConfigurationDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var rawCombo = reader.IsDBNull(0) ? string.Empty : reader.GetString(0);
+            var comboId = BandComboIds.FromEpicRawCombo(rawCombo);
+            configurations.Add(new BandConfigurationDto
+            {
+                RawInstrumentCombo = rawCombo,
+                ComboId = comboId,
+                Instruments = BandComboIds.ToInstruments(comboId).ToList(),
+                AssignmentKey = reader.GetString(1),
+                AppearanceCount = reader.GetInt32(2),
+                MemberInstruments = ParseMemberAssignmentJson(reader.IsDBNull(3) ? "{}" : reader.GetString(3)),
+            });
+        }
+
+        return configurations;
+    }
+
+    private void EnsureBandTeamConfigurations(NpgsqlConnection conn, string bandType, string teamKey)
+    {
+        using (var existsCmd = conn.CreateCommand())
+        {
+            existsCmd.CommandText = $"SELECT EXISTS(SELECT 1 FROM {BandLeaderboardPersistence.BandTeamConfigurationTable} WHERE band_type = @bandType AND team_key = @teamKey)";
+            existsCmd.Parameters.AddWithValue("bandType", bandType);
+            existsCmd.Parameters.AddWithValue("teamKey", teamKey);
+            if (Convert.ToBoolean(existsCmd.ExecuteScalar()))
+                return;
+        }
+
+        using var tx = conn.BeginTransaction();
+        BandLeaderboardPersistence.RebuildBandTeamConfigurationsForTeams(conn, tx, bandType, [teamKey]);
+        tx.Commit();
+    }
+
     private List<PlayerBandEntryDto> GetPlayerBandEntries(string accountId, string? bandTypeFilter = null, string? comboIdFilter = null)
     {
         using var conn = _pgDataSource.OpenConnection();
@@ -2790,6 +2841,26 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 : [];
 
             result[property.Name] = instruments;
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, string> ParseMemberAssignmentJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        using var document = JsonDocument.Parse(json);
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String)
+                continue;
+
+            var instrument = property.Value.GetString();
+            if (!string.IsNullOrWhiteSpace(instrument))
+                result[property.Name] = instrument;
         }
 
         return result;

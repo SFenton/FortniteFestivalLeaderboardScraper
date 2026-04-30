@@ -117,6 +117,7 @@ import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } fro
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
 import ConfirmAlert from './components/modals/ConfirmAlert';
+import BandInstrumentFilterModal, { type BandInstrumentFilterAssignment } from './pages/band/modals/BandInstrumentFilterModal';
 import { APP_VERSION } from './hooks/data/useVersions';
 import { changelogHash } from './changelog';
 import ErrorBoundary from './components/page/ErrorBoundary';
@@ -168,6 +169,7 @@ export default function App() {
 import { useTabNavigation } from './hooks/ui/useTabNavigation';
 
 const CHANGELOG_STORAGE_KEY = 'fst:changelog';
+const EMPTY_BAND_FILTER_ASSIGNMENTS: BandInstrumentFilterAssignment[] = [];
 
 export function getFabQuickLinksActionLabel(t: TFunction): string {
   return t('common.quickLinks', 'Quick Links');
@@ -313,6 +315,11 @@ function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [bandFilterModalOpen, setBandFilterModalOpen] = useState(false);
+  const [appliedBandFilter, setAppliedBandFilter] = useState<{
+    bandId: string;
+    assignments: BandInstrumentFilterAssignment[];
+  } | null>(null);
   const [hasNewChangelog] = useState(() => {
     try {
       const stored = localStorage.getItem(CHANGELOG_STORAGE_KEY);
@@ -456,12 +463,31 @@ function AppShell() {
 
   const wideDesktop = !isMobile && isWideDesktop;
   const profileType = selectedProfile?.type ?? 'none';
-  const onPlayerDetailsPage = location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname);
   const emptyBandFilterLabel = t('common.filterBandType', 'Filter Band Type');
-  const selectedBandFilterInstruments = useMemo(() => [], []);
+  const activeBandFilterAssignments = selectedProfile?.type === 'band' && appliedBandFilter?.bandId === selectedProfile.bandId
+    ? appliedBandFilter.assignments
+    : EMPTY_BAND_FILTER_ASSIGNMENTS;
+  const selectedBandFilterInstruments = useMemo(
+    () => activeBandFilterAssignments.map(assignment => assignment.instrument),
+    [activeBandFilterAssignments],
+  );
   const showBandFilterAction = shouldShowBandFilterAction(selectedProfile, location.pathname);
   const bandFilterLabel = getBandFilterActionLabel(selectedBandFilterInstruments, emptyBandFilterLabel);
-  const handleBandFilterPress = useCallback(() => {}, []);
+  const handleBandFilterPress = useCallback(() => setBandFilterModalOpen(true), []);
+  const handleApplyBandFilter = useCallback((assignments: BandInstrumentFilterAssignment[]) => {
+    if (selectedProfile?.type !== 'band') return;
+    setAppliedBandFilter({ bandId: selectedProfile.bandId, assignments });
+    setBandFilterModalOpen(false);
+  }, [selectedProfile]);
+  const handleResetBandFilter = useCallback(() => {
+    setAppliedBandFilter(null);
+    setBandFilterModalOpen(false);
+  }, []);
+  useEffect(() => {
+    if (selectedProfile?.type === 'band') return;
+    setAppliedBandFilter(null);
+    setBandFilterModalOpen(false);
+  }, [selectedProfile?.type]);
   const bandFilterActionValue = useMemo<BandFilterActionContextValue>(() => ({
     visible: showBandFilterAction && !isMobile,
     label: bandFilterLabel,
@@ -749,6 +775,14 @@ function AppShell() {
         visible={searchOpen}
         onClose={() => setSearchOpen(false)}
         defaultTarget={settings.defaultSearchTarget}
+      />
+      <BandInstrumentFilterModal
+        visible={bandFilterModalOpen && selectedProfile?.type === 'band'}
+        selectedBand={selectedProfile?.type === 'band' ? selectedProfile : null}
+        appliedAssignments={activeBandFilterAssignments}
+        onCancel={() => setBandFilterModalOpen(false)}
+        onApply={handleApplyBandFilter}
+        onReset={handleResetBandFilter}
       />
       {showChangelog && <ChangelogModal onDismiss={dismissChangelog} onExitComplete={() => setChangelogDismissed(true)} />}
       {showDeselectConfirm && (

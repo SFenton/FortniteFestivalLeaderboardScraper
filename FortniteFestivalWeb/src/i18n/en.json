@@ -607,6 +607,18 @@
     "openNavigation": "Open navigation",
     "profile": "Profile"
   },
+  "bandFilter": {
+    "modalTitle": "Filter Band Type",
+    "bandmateLabel": "Bandmate #{{index}}",
+    "resetTitle": "Reset Instruments",
+    "loadFailed": "Could not load band configurations.",
+    "noInstruments": "No instruments found",
+    "invalidTitle": "Invalid Configuration",
+    "invalidMessage": "That instrument does not match a played configuration with the other selected bandmates.",
+    "keepSelection": "Keep Selection",
+    "cancelTitle": "Discard Instrument Changes?",
+    "cancelMessage": "Are you sure you want to discard these instrument changes?"
+  },
   "sort": {
     "direction": "Sort Direction",
     "duration": "Duration",

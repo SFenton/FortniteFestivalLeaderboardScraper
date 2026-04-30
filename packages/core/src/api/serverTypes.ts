@@ -488,6 +488,15 @@ export type PlayerBandEntry = {
   members: PlayerBandMember[];
 };
 
+export type BandConfiguration = {
+  rawInstrumentCombo: string;
+  comboId: string;
+  instruments: ServerInstrumentKey[];
+  assignmentKey: string;
+  appearanceCount: number;
+  memberInstruments: Record<string, ServerInstrumentKey>;
+};
+
 export type SongBandLeaderboardEntry = {
   bandId: string;
   bandType: PlayerBandType;
@@ -702,6 +711,7 @@ export type BandRankingDto = BandRankingEntry & {
 export type BandDetailResponse = {
   band: PlayerBandEntry;
   ranking?: BandRankingDto | null;
+  configurations?: BandConfiguration[];
 };
 
 export type BandSearchRankBy = BandRankingMetric | 'appearance';

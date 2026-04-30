@@ -18,6 +18,7 @@ public sealed class BandLeaderboardPersistence
 
     internal const string BandTeamMembershipTable = "band_team_membership";
     internal const string BandTeamMembershipStateTable = "band_team_membership_state";
+    internal const string BandTeamConfigurationTable = "band_team_configurations";
 
     /// <summary>Exposes the data source for batched spool consumer transactions.</summary>
     internal NpgsqlDataSource DataSource => _dataSource;
@@ -898,6 +899,12 @@ public sealed class BandLeaderboardPersistence
         }
 
         UpsertBandTeamMembershipRows(conn, tx, BuildBandTeamMembershipWriteRows(conn, tx, countRows));
+        RebuildBandTeamConfigurationsForTeams(conn, tx, countRows
+            .GroupBy(static row => row.BandType, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyCollection<string>)group.Select(static row => row.TeamKey).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                StringComparer.OrdinalIgnoreCase));
     }
 
     public int RebuildBandTeamMembershipForTeams(
@@ -968,7 +975,121 @@ public sealed class BandLeaderboardPersistence
 
         var rows = BuildBandTeamMembershipWriteRows(conn, tx, countRows);
         UpsertBandTeamMembershipRows(conn, tx, rows);
+        RebuildBandTeamConfigurationsForTeams(conn, tx, bandType, teamKeys);
         return rows.Count;
+    }
+
+    internal static int RebuildBandTeamConfigurationsForTeams(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> teamKeysByBandType)
+    {
+        var rebuilt = 0;
+        foreach (var (bandType, teamKeys) in teamKeysByBandType)
+            rebuilt += RebuildBandTeamConfigurationsForTeams(conn, tx, bandType, teamKeys);
+        return rebuilt;
+    }
+
+    internal static int RebuildBandTeamConfigurationsForTeams(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string bandType,
+        IReadOnlyCollection<string> teamKeys)
+    {
+        var sortedTeamKeys = teamKeys
+            .Where(static teamKey => !string.IsNullOrWhiteSpace(teamKey))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static teamKey => teamKey, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (sortedTeamKeys.Length == 0)
+            return 0;
+
+        using (var deleteCmd = conn.CreateCommand())
+        {
+            deleteCmd.Transaction = tx;
+            deleteCmd.CommandText = $"DELETE FROM {BandTeamConfigurationTable} WHERE band_type = @bandType AND team_key = ANY(@teamKeys)";
+            deleteCmd.Parameters.AddWithValue("bandType", bandType);
+            deleteCmd.Parameters.AddWithValue("teamKeys", sortedTeamKeys);
+            deleteCmd.ExecuteNonQuery();
+        }
+
+        var expectedMembers = BandInstrumentMapping.ExpectedMemberCount(bandType);
+        if (expectedMembers <= 0)
+            return 0;
+
+        using var insertCmd = conn.CreateCommand();
+        insertCmd.Transaction = tx;
+        insertCmd.CommandText = $"""
+            WITH mapped AS (
+                SELECT
+                    song_id,
+                    band_type,
+                    team_key,
+                    instrument_combo,
+                    account_id,
+                    CASE instrument_id
+                        WHEN 0 THEN 'Solo_Guitar'
+                        WHEN 1 THEN 'Solo_Bass'
+                        WHEN 3 THEN 'Solo_Drums'
+                        WHEN 2 THEN 'Solo_Vocals'
+                        WHEN 4 THEN 'Solo_PeripheralGuitar'
+                        WHEN 5 THEN 'Solo_PeripheralBass'
+                        WHEN 7 THEN 'Solo_PeripheralVocals'
+                        WHEN 8 THEN 'Solo_PeripheralCymbals'
+                        WHEN 6 THEN 'Solo_PeripheralDrums'
+                    END AS instrument
+                FROM band_member_stats
+                WHERE band_type = @bandType
+                  AND team_key = ANY(@teamKeys)
+                  AND instrument_id IS NOT NULL
+            ),
+            entry_assignments AS (
+                SELECT
+                    band_type,
+                    team_key,
+                    instrument_combo,
+                    song_id,
+                    string_agg(account_id || '=' || instrument, '|' ORDER BY account_id) AS assignment_key,
+                    jsonb_object_agg(account_id, instrument ORDER BY account_id) AS member_assignments_json,
+                    COUNT(*)::INT AS member_count
+                FROM mapped
+                WHERE instrument IS NOT NULL
+                GROUP BY band_type, team_key, instrument_combo, song_id
+            ),
+            configuration_rows AS (
+                SELECT
+                    band_type,
+                    team_key,
+                    instrument_combo,
+                    assignment_key,
+                    member_assignments_json,
+                    COUNT(*)::INT AS appearance_count
+                FROM entry_assignments
+                WHERE member_count = @expectedMembers
+                GROUP BY band_type, team_key, instrument_combo, assignment_key, member_assignments_json
+            )
+            INSERT INTO {BandTeamConfigurationTable} (
+                band_type, team_key, instrument_combo, assignment_key,
+                appearance_count, member_assignments_json, updated_at)
+            SELECT
+                band_type,
+                team_key,
+                instrument_combo,
+                assignment_key,
+                appearance_count,
+                member_assignments_json,
+                @updatedAt
+            FROM configuration_rows
+            ON CONFLICT (band_type, team_key, instrument_combo, assignment_key) DO UPDATE SET
+                appearance_count = EXCLUDED.appearance_count,
+                member_assignments_json = EXCLUDED.member_assignments_json,
+                updated_at = EXCLUDED.updated_at
+            """;
+        insertCmd.Parameters.AddWithValue("bandType", bandType);
+        insertCmd.Parameters.AddWithValue("teamKeys", sortedTeamKeys);
+        insertCmd.Parameters.AddWithValue("expectedMembers", expectedMembers);
+        insertCmd.Parameters.AddWithValue("updatedAt", DateTime.UtcNow);
+        return insertCmd.ExecuteNonQuery();
     }
 
     private static T ExecuteWithDeadlockRetry<T>(Func<T> action, int maxDeadlockRetries)
