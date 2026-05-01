@@ -14,10 +14,10 @@ export const queryKeys = {
     ['leaderboard', songId, instrument, { top, offset, leeway }] as const,
   allLeaderboards: (songId: string, top: number, leeway?: number) =>
     ['allLeaderboards', songId, { top, leeway }] as const,
-  songBandLeaderboard: (songId: string, bandType: string, top: number, offset: number, selectedAccountId?: string) =>
-    ['songBandLeaderboard', songId, bandType, { top, offset, selectedAccountId }] as const,
-  allSongBandLeaderboards: (songId: string, top: number, selectedAccountId?: string) =>
-    ['allSongBandLeaderboards', songId, { top, selectedAccountId }] as const,
+  songBandLeaderboard: (songId: string, bandType: string, top: number, offset: number, selectedAccountId?: string, selectedTeamKey?: string, comboId?: string) =>
+    ['songBandLeaderboard', songId, bandType, { top, offset, selectedAccountId, selectedTeamKey, comboId }] as const,
+  allSongBandLeaderboards: (songId: string, top: number, selectedAccountId?: string, selectedBandType?: string, selectedTeamKey?: string, comboId?: string) =>
+    ['allSongBandLeaderboards', songId, { top, selectedAccountId, selectedBandType, selectedTeamKey, comboId }] as const,
   playerStats: (accountId: string) => ['playerStats', accountId] as const,
   version: () => ['version'] as const,
   rivalsOverview: (accountId: string) => ['rivalsOverview', accountId] as const,

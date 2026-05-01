@@ -46,4 +46,14 @@ public sealed class BandComboIdsTests
         Assert.Null(comboId);
         Assert.Equal("Combo size does not match band type Band_Duets.", error);
     }
+
+    [Fact]
+    public void ToEpicRawComboCandidates_PreservesDuplicatesAndIncludesReorderedRawCombos()
+    {
+        var leadBass = BandComboIds.ToEpicRawComboCandidates("Solo_Guitar+Solo_Bass");
+        var doubleLead = BandComboIds.ToEpicRawComboCandidates("Solo_Guitar+Solo_Guitar");
+
+        Assert.Equal(["0:1", "1:0"], leadBass);
+        Assert.Equal(["0:0"], doubleLead);
+    }
 }

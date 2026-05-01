@@ -24,6 +24,19 @@ public static class BandComboIds
         .Select((instrument, index) => new { instrument, index })
         .ToDictionary(x => x.instrument, x => x.index, StringComparer.OrdinalIgnoreCase);
 
+    private static readonly Dictionary<string, string> LeaderboardToEpicId = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Solo_Guitar"] = "0",
+        ["Solo_Bass"] = "1",
+        ["Solo_Vocals"] = "2",
+        ["Solo_Drums"] = "3",
+        ["Solo_PeripheralGuitar"] = "4",
+        ["Solo_PeripheralBass"] = "5",
+        ["Solo_PeripheralDrums"] = "6",
+        ["Solo_PeripheralVocals"] = "7",
+        ["Solo_PeripheralCymbals"] = "8",
+    };
+
     public static bool IsValidBandType(string bandType) =>
         BandInstrumentMapping.AllBandTypes.Contains(bandType, StringComparer.OrdinalIgnoreCase);
 
@@ -108,5 +121,43 @@ public static class BandComboIds
             return (null, $"Combo size does not match band type {bandType}.");
 
         return (comboId, null);
+    }
+
+    public static IReadOnlyList<string> ToEpicRawComboCandidates(string? comboId)
+    {
+        var instruments = ToInstruments(comboId);
+        if (instruments.Count == 0)
+            return [];
+
+        var ids = new string[instruments.Count];
+        for (var i = 0; i < instruments.Count; i++)
+        {
+            if (!LeaderboardToEpicId.TryGetValue(instruments[i], out var id))
+                return [];
+            ids[i] = id;
+        }
+
+        var results = new HashSet<string>(StringComparer.Ordinal);
+        PermuteRawComboIds(ids, 0, results);
+        return results.Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private static void PermuteRawComboIds(string[] ids, int index, HashSet<string> results)
+    {
+        if (index == ids.Length)
+        {
+            results.Add(string.Join(':', ids));
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = index; i < ids.Length; i++)
+        {
+            if (!seen.Add(ids[i]))
+                continue;
+            (ids[index], ids[i]) = (ids[i], ids[index]);
+            PermuteRawComboIds(ids, index + 1, results);
+            (ids[index], ids[i]) = (ids[i], ids[index]);
+        }
     }
 }

@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import BandInstrumentFilterModal, { type BandInstrumentFilterAssignment } from '../../../src/pages/band/modals/BandInstrumentFilterModal';
+import BandInstrumentFilterModal, { type BandInstrumentFilterApplyPayload, type BandInstrumentFilterAssignment } from '../../../src/pages/band/modals/BandInstrumentFilterModal';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import type { SelectedBandProfile } from '../../../src/hooks/data/useSelectedProfile';
@@ -38,7 +38,7 @@ const selectedBand: SelectedBandProfile = {
 
 function renderModal(overrides: Partial<{
   appliedAssignments: BandInstrumentFilterAssignment[];
-  onApply: (assignments: BandInstrumentFilterAssignment[]) => void;
+  onApply: (payload: BandInstrumentFilterApplyPayload) => void;
   onReset: () => void;
 }> = {}) {
   const props = {
@@ -71,30 +71,55 @@ describe('BandInstrumentFilterModal', () => {
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 
-  it('hides instruments that were not played by a bandmate', async () => {
+  it('shows the complete unique instrument set for every combo slot', async () => {
     renderModal();
 
     expect(await screen.findAllByTitle('Lead')).toHaveLength(2);
     expect(await screen.findAllByTitle('Bass')).toHaveLength(2);
-    expect(screen.queryByTitle('Drums')).not.toBeInTheDocument();
+    expect(await screen.findAllByTitle('Drums')).toHaveLength(2);
+    expect(screen.queryByTitle('Vocals')).not.toBeInTheDocument();
   });
 
-  it('applies only a complete exact configuration', async () => {
+  it('applies a complete generic combo regardless of slot order', async () => {
     const onApply = vi.fn();
     renderModal({ onApply });
 
     const leadButtons = await screen.findAllByTitle('Lead');
     const bassButtons = await screen.findAllByTitle('Bass');
-    fireEvent.click(leadButtons[0]!);
-    fireEvent.click(bassButtons[1]!);
+    fireEvent.click(bassButtons[0]!);
+    fireEvent.click(leadButtons[1]!);
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
-    expect(onApply).toHaveBeenCalledWith([
-      { accountId: 'acct-a', instrument: 'Solo_Guitar' },
-      { accountId: 'acct-b', instrument: 'Solo_Bass' },
-    ]);
+    expect(onApply).toHaveBeenCalledWith({
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Bass' },
+        { accountId: 'acct-b', instrument: 'Solo_Guitar' },
+      ],
+    });
+  });
+
+  it('applies a repeated-instrument combo when the band has played it', async () => {
+    const onApply = vi.fn();
+    apiMock.getBandDetail.mockResolvedValue(makeBandDetail({ includeDoubleLead: true }));
+    renderModal({ onApply });
+
+    const leadButtons = await screen.findAllByTitle('Lead');
+    fireEvent.click(leadButtons[0]!);
+    fireEvent.click(leadButtons[1]!);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(onApply).toHaveBeenCalledWith({
+      comboId: 'Solo_Guitar+Solo_Guitar',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+        { accountId: 'acct-b', instrument: 'Solo_Guitar' },
+      ],
+    });
   });
 
   it('confirms a selection that cannot match the current partial assignment', async () => {
@@ -111,7 +136,7 @@ describe('BandInstrumentFilterModal', () => {
   });
 });
 
-function makeBandDetail() {
+function makeBandDetail(options: { includeDoubleLead?: boolean } = {}) {
   return {
     band: {
       bandId: 'band-duo',
@@ -146,6 +171,28 @@ function makeBandDetail() {
           'acct-b': 'Solo_Guitar',
         },
       },
+      {
+        rawInstrumentCombo: '0:3',
+        comboId: 'Solo_Guitar+Solo_Drums',
+        instruments: ['Solo_Guitar', 'Solo_Drums'],
+        assignmentKey: 'acct-a=Solo_Guitar|acct-b=Solo_Drums',
+        appearanceCount: 1,
+        memberInstruments: {
+          'acct-a': 'Solo_Guitar',
+          'acct-b': 'Solo_Drums',
+        },
+      },
+      ...(options.includeDoubleLead ? [{
+        rawInstrumentCombo: '0:0',
+        comboId: 'Solo_Guitar+Solo_Guitar',
+        instruments: ['Solo_Guitar', 'Solo_Guitar'],
+        assignmentKey: 'acct-a=Solo_Guitar|acct-b=Solo_Guitar',
+        appearanceCount: 1,
+        memberInstruments: {
+          'acct-a': 'Solo_Guitar',
+          'acct-b': 'Solo_Guitar',
+        },
+      }] : []),
     ],
   };
 }

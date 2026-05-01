@@ -298,6 +298,52 @@ describe('SongDetailPage', () => {
         undefined,
         'Band_Duets',
         'acct-band-a:acct-band-b',
+        undefined,
+      );
+    });
+  });
+
+  it('requests the applied combo for the matching selected band type', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-42',
+      bandType: 'Band_Duets',
+      teamKey: 'acct-band-a:acct-band-b',
+      displayName: 'Selected Duo',
+      members: [
+        { accountId: 'acct-band-a', displayName: 'Band Alpha' },
+        { accountId: 'acct-band-b', displayName: 'Band Beta' },
+      ],
+    }));
+
+    render(
+      <TestProviders
+        route="/songs/song-1"
+        bandFilter={{
+          bandId: 'band-42',
+          bandType: 'Band_Duets',
+          teamKey: 'acct-band-a:acct-band-b',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'acct-band-a', instrument: 'Solo_Guitar' },
+            { accountId: 'acct-band-b', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/songs/:songId" element={<SongDetailPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getAllSongBandLeaderboards).toHaveBeenCalledWith(
+        'song-1',
+        10,
+        undefined,
+        'Band_Duets',
+        'acct-band-a:acct-band-b',
+        'Solo_Guitar+Solo_Bass',
       );
     });
   });

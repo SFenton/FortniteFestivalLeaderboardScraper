@@ -230,6 +230,46 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
     }
 
     [Fact]
+    public void GetSongBandLeaderboard_WithCombo_FiltersBeforeChoosingBestTeamScore()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000, instruments: [0, 1]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-b", "acct-a"], "2:3", 1_200, instruments: [2, 3]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:1", 1_100, instruments: [0, 1]), rebuildTeamMembership: true);
+
+        var (entries, totalEntries) = _fixture.Db.GetSongBandLeaderboard("song-a", "Band_Duets", limit: 25, offset: 0, comboId: "Solo_Guitar+Solo_Bass");
+
+        Assert.Equal(2, totalEntries);
+        Assert.Equal(["acct-c:acct-d", "acct-a:acct-b"], entries.Select(entry => entry.TeamKey));
+        Assert.All(entries, entry => Assert.Equal("Solo_Guitar+Solo_Bass", entry.ComboId));
+        Assert.Equal([1, 2], entries.Select(entry => entry.Rank));
+        Assert.Equal([1_100, 1_000], entries.Select(entry => entry.Score));
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboard_WithCombo_PreservesRepeatedBandInstruments()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:0", 1_000, instruments: [0, 0]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:1", 1_100, instruments: [0, 1]), rebuildTeamMembership: true);
+
+        var (entries, totalEntries) = _fixture.Db.GetSongBandLeaderboard("song-a", "Band_Duets", limit: 25, offset: 0, comboId: "Solo_Guitar+Solo_Guitar");
+
+        Assert.Equal(1, totalEntries);
+        var entry = Assert.Single(entries);
+        Assert.Equal("acct-a:acct-b", entry.TeamKey);
+        Assert.Equal("Solo_Guitar+Solo_Guitar", entry.ComboId);
+        Assert.Equal(["Solo_Guitar"], entry.Members[0].Instruments);
+        Assert.Equal(["Solo_Guitar"], entry.Members[1].Instruments);
+    }
+
+    [Fact]
     public void GetSongBandLeaderboardEntryForAccount_ReturnsBestTeamContainingAccount()
     {
         var persistence = new BandLeaderboardPersistence(
@@ -252,6 +292,32 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         Assert.NotNull(selectedSecond);
         Assert.Equal("acct-c:acct-d", selectedSecond.TeamKey);
         Assert.Equal(2, selectedSecond.Rank);
+        Assert.Null(missing);
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboardEntryForAccount_WithCombo_RanksWithinComboScope()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000, instruments: [0, 1]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-b", "acct-a"], "2:3", 1_200, instruments: [2, 3]), rebuildTeamMembership: true);
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-c", "acct-d"], "0:1", 1_100, instruments: [0, 1]), rebuildTeamMembership: true);
+
+        var leadBass = _fixture.Db.GetSongBandLeaderboardEntryForAccount("song-a", "Band_Duets", "acct-b", comboId: "Solo_Guitar+Solo_Bass");
+        var drumsVocals = _fixture.Db.GetSongBandLeaderboardEntryForAccount("song-a", "Band_Duets", "acct-b", comboId: "Solo_Drums+Solo_Vocals");
+        var missing = _fixture.Db.GetSongBandLeaderboardEntryForTeam("song-a", "Band_Duets", "acct-a:acct-b", comboId: "Solo_Guitar+Solo_Guitar");
+
+        Assert.NotNull(leadBass);
+        Assert.Equal("Solo_Guitar+Solo_Bass", leadBass.ComboId);
+        Assert.Equal(2, leadBass.Rank);
+        Assert.Equal(1_000, leadBass.Score);
+        Assert.NotNull(drumsVocals);
+        Assert.Equal("Solo_Drums+Solo_Vocals", drumsVocals.ComboId);
+        Assert.Equal(1, drumsVocals.Rank);
+        Assert.Equal(1_200, drumsVocals.Score);
         Assert.Null(missing);
     }
 

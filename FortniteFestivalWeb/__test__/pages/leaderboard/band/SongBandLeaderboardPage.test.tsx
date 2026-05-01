@@ -5,6 +5,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import type { SongBandLeaderboardResponse } from '@festival/core/api/serverTypes';
 import SongBandLeaderboardPage from '../../../../src/pages/leaderboard/band/SongBandLeaderboardPage';
+import { BandFilterActionProvider } from '../../../../src/contexts/BandFilterActionContext';
+import type { AppliedBandComboFilter } from '../../../../src/types/bandFilter';
 
 const mockGetSongBandLeaderboard = vi.hoisted(() => vi.fn());
 const mockScrollTo = vi.hoisted(() => vi.fn());
@@ -127,18 +129,26 @@ const response: SongBandLeaderboardResponse = {
   ],
 };
 
-function renderPage() {
+function renderPage(bandFilter?: AppliedBandComboFilter | null) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
 
   return render(
     <QueryClientProvider client={queryClient}>
+      <BandFilterActionProvider value={{
+        visible: false,
+        label: 'Filter Band Type',
+        selectedInstruments: bandFilter?.assignments.map(assignment => assignment.instrument) ?? [],
+        appliedFilter: bandFilter ?? null,
+        onPress: () => {},
+      }}>
       <MemoryRouter initialEntries={['/songs/song-a/bands/Band_Duets']}>
         <Routes>
           <Route path="/songs/:songId/bands/:bandType" element={<SongBandLeaderboardPage />} />
         </Routes>
       </MemoryRouter>
+      </BandFilterActionProvider>
     </QueryClientProvider>,
   );
 }
@@ -214,8 +224,25 @@ describe('SongBandLeaderboardPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     await waitFor(() => {
-      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 25);
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 25, undefined, undefined, undefined);
     });
     expect(mockScrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('passes the applied selected-band combo for the matching band type', async () => {
+    renderPage({
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'acct-a:acct-b',
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+        { accountId: 'acct-b', instrument: 'Solo_Bass' },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
+    });
   });
 });

@@ -19,18 +19,16 @@ import { InstrumentSelector, type InstrumentSelectorItem } from '../../../compon
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
+import type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
 
-export type BandInstrumentFilterAssignment = {
-  accountId: string;
-  instrument: ServerInstrumentKey;
-};
+export type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
 
 type BandInstrumentFilterModalProps = {
   visible: boolean;
   selectedBand: SelectedBandProfile | null;
   appliedAssignments: readonly BandInstrumentFilterAssignment[];
   onCancel: () => void;
-  onApply: (assignments: BandInstrumentFilterAssignment[]) => void;
+  onApply: (payload: BandInstrumentFilterApplyPayload) => void;
   onReset: () => void;
 };
 
@@ -81,12 +79,16 @@ export default function BandInstrumentFilterModal({
 
   const configurations = detailQuery.data?.configurations ?? EMPTY_CONFIGURATIONS;
   const hasConfigurationData = configurations.length > 0;
+  const availableInstruments = useMemo(
+    () => getAvailableInstruments(configurations),
+    [configurations],
+  );
   const instrumentStates = useMemo(
-    () => getInstrumentStates(configurations, members, draft, hasConfigurationData),
-    [configurations, draft, hasConfigurationData, members],
+    () => getInstrumentStates(configurations, draft, hasConfigurationData, availableInstruments),
+    [availableInstruments, configurations, draft, hasConfigurationData],
   );
   const complete = draft.length === members.length && draft.length > 0 && draft.every(Boolean);
-  const matchingConfiguration = complete ? findMatchingConfiguration(configurations, members, draft) : null;
+  const matchingConfiguration = complete ? findMatchingConfiguration(configurations, draft) : null;
   const applyDisabled = !complete || !matchingConfiguration;
   const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(
     draft,
@@ -112,14 +114,14 @@ export default function BandInstrumentFilterModal({
 
     const nextDraft = replaceAt(draft, index, instrument);
     const selectedCount = nextDraft.filter(Boolean).length;
-    if (!hasPartialMatchingConfiguration(configurations, members, nextDraft)) {
+    if (!hasPartialMatchingConfiguration(configurations, nextDraft)) {
       if (selectedCount <= 1) return;
       setPendingInvalidSelection({ index, instrument });
       return;
     }
 
     setDraft(nextDraft);
-  }, [configurations, draft, hasConfigurationData, members, setConfirmOpen]);
+  }, [configurations, draft, hasConfigurationData, setConfirmOpen]);
 
   const confirmInvalidSelection = useCallback(() => {
     if (!pendingInvalidSelection) return;
@@ -133,12 +135,15 @@ export default function BandInstrumentFilterModal({
   }, [appliedAssignments.length, members, onReset]);
 
   const apply = useCallback(() => {
-    if (applyDisabled) return;
-    onApply(members.map((member, index) => ({
-      accountId: member.accountId,
-      instrument: draft[index]!,
-    })));
-  }, [applyDisabled, draft, members, onApply]);
+    if (applyDisabled || !matchingConfiguration) return;
+    onApply({
+      comboId: matchingConfiguration.comboId,
+      assignments: members.map((member, index) => ({
+        accountId: member.accountId,
+        instrument: draft[index]!,
+      })),
+    });
+  }, [applyDisabled, draft, matchingConfiguration, members, onApply]);
 
   return (
     <Modal
@@ -184,6 +189,7 @@ export default function BandInstrumentFilterModal({
               member={member}
               selected={draft[index] ?? null}
               onSelect={(instrument) => handleSelect(index, instrument)}
+              availableInstruments={availableInstruments}
               disabledInstruments={instrumentStates[index]?.disabled ?? []}
               mutedInstruments={instrumentStates[index]?.muted ?? []}
               compact={isMobile}
@@ -201,6 +207,7 @@ function BandmateInstrumentRow({
   member,
   selected,
   onSelect,
+  availableInstruments,
   disabledInstruments,
   mutedInstruments,
   compact,
@@ -210,13 +217,14 @@ function BandmateInstrumentRow({
   member: PlayerBandMember;
   selected: ServerInstrumentKey | null;
   onSelect: (instrument: ServerInstrumentKey | null) => void;
+  availableInstruments: readonly ServerInstrumentKey[];
   disabledInstruments: readonly ServerInstrumentKey[];
   mutedInstruments: readonly ServerInstrumentKey[];
   compact: boolean;
   styles: ReturnType<typeof useStyles>;
 }) {
   const { t } = useTranslation();
-  const allowed = new Set(member.instruments);
+  const allowed = new Set(availableInstruments);
   const hiddenInstruments = SERVER_INSTRUMENT_KEYS.filter(instrument => !allowed.has(instrument));
   const name = member.displayName?.trim() || t('common.unknownUser');
 
@@ -226,7 +234,7 @@ function BandmateInstrumentRow({
         <span style={styles.bandmateLabel}>{t('bandFilter.bandmateLabel', { index: index + 1 })}</span>
         <span style={styles.bandmateName}>{name}</span>
       </div>
-      {member.instruments.length > 0 ? (
+      {availableInstruments.length > 0 ? (
         <InstrumentSelector
           instruments={INSTRUMENT_ITEMS}
           selected={selected}
@@ -255,46 +263,37 @@ function areDraftsEqual(a: readonly (ServerInstrumentKey | null)[], b: readonly 
 
 function hasPartialMatchingConfiguration(
   configurations: readonly BandConfiguration[],
-  members: readonly PlayerBandMember[],
   draft: readonly (ServerInstrumentKey | null)[],
 ) {
-  return configurations.some(configuration => members.every((member, index) => {
-    const selected = draft[index];
-    return !selected || configuration.memberInstruments[member.accountId] === selected;
-  }));
+  const selected = selectedInstrumentsFromDraft(draft);
+  return configurations.some(configuration => containsInstrumentMultiset(configuration.instruments, selected));
 }
 
 function findMatchingConfiguration(
   configurations: readonly BandConfiguration[],
-  members: readonly PlayerBandMember[],
   draft: readonly (ServerInstrumentKey | null)[],
 ) {
-  return configurations.find(configuration => members.every((member, index) => (
-    configuration.memberInstruments[member.accountId] === draft[index]
-  ))) ?? null;
+  const selected = selectedInstrumentsFromDraft(draft);
+  return configurations.find(configuration => areInstrumentMultisetsEqual(configuration.instruments, selected)) ?? null;
 }
 
 function getInstrumentStates(
   configurations: readonly BandConfiguration[],
-  members: readonly PlayerBandMember[],
   draft: readonly (ServerInstrumentKey | null)[],
   hasConfigurationData: boolean,
+  availableInstruments: readonly ServerInstrumentKey[],
 ) {
-  return members.map((member, index) => {
+  return draft.map((_, index) => {
     if (!hasConfigurationData) return { disabled: [], muted: [] };
 
-    const memberInstrumentSet = new Set(member.instruments);
-    const possibleInstrumentSet = new Set(configurations
-      .map(configuration => configuration.memberInstruments[member.accountId])
-      .filter((instrument): instrument is ServerInstrumentKey => !!instrument));
+    const possibleInstrumentSet = new Set(availableInstruments);
 
     const disabled: ServerInstrumentKey[] = [];
     const muted: ServerInstrumentKey[] = [];
     for (const instrument of SERVER_INSTRUMENT_KEYS) {
-      if (!memberInstrumentSet.has(instrument)) continue;
       if (!possibleInstrumentSet.has(instrument)) {
         disabled.push(instrument);
-      } else if (!canSelectInstrument(configurations, members, draft, index, instrument)) {
+      } else if (!canSelectInstrument(configurations, draft, index, instrument)) {
         muted.push(instrument);
       }
     }
@@ -305,12 +304,49 @@ function getInstrumentStates(
 
 function canSelectInstrument(
   configurations: readonly BandConfiguration[],
-  members: readonly PlayerBandMember[],
   draft: readonly (ServerInstrumentKey | null)[],
   index: number,
   instrument: ServerInstrumentKey,
 ) {
-  return hasPartialMatchingConfiguration(configurations, members, replaceAt(draft, index, instrument));
+  return hasPartialMatchingConfiguration(configurations, replaceAt(draft, index, instrument));
+}
+
+function getAvailableInstruments(configurations: readonly BandConfiguration[]): ServerInstrumentKey[] {
+  const available = new Set(configurations.flatMap(configuration => configuration.instruments));
+  return SERVER_INSTRUMENT_KEYS.filter(instrument => available.has(instrument));
+}
+
+function selectedInstrumentsFromDraft(draft: readonly (ServerInstrumentKey | null)[]): ServerInstrumentKey[] {
+  return draft.filter((instrument): instrument is ServerInstrumentKey => !!instrument);
+}
+
+function containsInstrumentMultiset(
+  available: readonly ServerInstrumentKey[],
+  selected: readonly ServerInstrumentKey[],
+): boolean {
+  const counts = toInstrumentCounts(available);
+  return selected.every(instrument => {
+    const remaining = counts.get(instrument) ?? 0;
+    if (remaining <= 0) return false;
+    counts.set(instrument, remaining - 1);
+    return true;
+  });
+}
+
+function areInstrumentMultisetsEqual(
+  a: readonly ServerInstrumentKey[],
+  b: readonly ServerInstrumentKey[],
+): boolean {
+  if (a.length !== b.length) return false;
+  return containsInstrumentMultiset(a, b);
+}
+
+function toInstrumentCounts(instruments: readonly ServerInstrumentKey[]) {
+  const counts = new Map<ServerInstrumentKey, number>();
+  for (const instrument of instruments) {
+    counts.set(instrument, (counts.get(instrument) ?? 0) + 1);
+  }
+  return counts;
 }
 
 function useStyles() {

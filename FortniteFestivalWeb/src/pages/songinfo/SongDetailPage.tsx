@@ -22,6 +22,7 @@ import ScoreHistoryChart from './components/chart/ScoreHistoryChart';
 import { useSettings, visibleInstruments, visiblePathInstruments } from '../../contexts/SettingsContext';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
@@ -51,9 +52,9 @@ function createSongBandData(loading: boolean): Record<PlayerBandType, SongBandDa
   return data;
 }
 
-function getBandSelectionKey(bandType: PlayerBandType | undefined, teamKey: string | undefined): string | undefined {
+function getBandSelectionKey(bandType: PlayerBandType | undefined, teamKey: string | undefined, comboId: string | undefined): string | undefined {
   if (!bandType || !teamKey) return undefined;
-  return `${bandType}:${teamKey}`;
+  return `${bandType}:${teamKey}:${comboId ?? 'all'}`;
 }
 
 export default function SongDetailPage() {
@@ -81,7 +82,9 @@ export default function SongDetailPage() {
   const selectedAccountId = player?.accountId;
   const selectedBandType = profile?.type === 'band' ? profile.bandType as PlayerBandType : undefined;
   const selectedTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
-  const bandSelectionKey = getBandSelectionKey(selectedBandType, selectedTeamKey);
+  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const activeBandComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType ? appliedBandComboFilter.comboId : undefined;
+  const bandSelectionKey = getBandSelectionKey(selectedBandType, selectedTeamKey, activeBandComboId);
   const { settings } = useSettings();
   const { playerBands: playerBandsEnabled } = useFeatureFlags();
   const song = songs.find((s) => s.songId === songId);
@@ -232,7 +235,7 @@ export default function SongDetailPage() {
     if (!hasCachedBandData) {
       setBandData(createSongBandData(true));
     }
-    api.getAllSongBandLeaderboards(songId, 10, selectedAccountId, selectedBandType, selectedTeamKey).then((res) => {
+    api.getAllSongBandLeaderboards(songId, 10, selectedAccountId, selectedBandType, selectedTeamKey, activeBandComboId).then((res) => {
       if (cancelled) return;
       const nextData = createSongBandData(false);
       for (const band of res.bands) {
@@ -261,7 +264,7 @@ export default function SongDetailPage() {
     });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- cache presence is intentionally frozen at mount
-  }, [songId, playerBandsEnabled, selectedAccountId, selectedBandType, selectedTeamKey]);
+  }, [activeBandComboId, songId, playerBandsEnabled, selectedAccountId, selectedBandType, selectedTeamKey]);
   /* v8 ignore stop */
 
   // Clear the cache-skip flag after all fetch effects have had a chance to check it.

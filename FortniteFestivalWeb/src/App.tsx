@@ -117,7 +117,8 @@ import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } fro
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
 import ConfirmAlert from './components/modals/ConfirmAlert';
-import BandInstrumentFilterModal, { type BandInstrumentFilterAssignment } from './pages/band/modals/BandInstrumentFilterModal';
+import BandInstrumentFilterModal, { type BandInstrumentFilterApplyPayload, type BandInstrumentFilterAssignment } from './pages/band/modals/BandInstrumentFilterModal';
+import type { AppliedBandComboFilter } from './types/bandFilter';
 import { APP_VERSION } from './hooks/data/useVersions';
 import { changelogHash } from './changelog';
 import ErrorBoundary from './components/page/ErrorBoundary';
@@ -316,10 +317,7 @@ function AppShell() {
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [bandFilterModalOpen, setBandFilterModalOpen] = useState(false);
-  const [appliedBandFilter, setAppliedBandFilter] = useState<{
-    bandId: string;
-    assignments: BandInstrumentFilterAssignment[];
-  } | null>(null);
+  const [appliedBandFilter, setAppliedBandFilter] = useState<AppliedBandComboFilter | null>(null);
   const [hasNewChangelog] = useState(() => {
     try {
       const stored = localStorage.getItem(CHANGELOG_STORAGE_KEY);
@@ -464,8 +462,11 @@ function AppShell() {
   const wideDesktop = !isMobile && isWideDesktop;
   const profileType = selectedProfile?.type ?? 'none';
   const emptyBandFilterLabel = t('common.filterBandType', 'Filter Band Type');
-  const activeBandFilterAssignments = selectedProfile?.type === 'band' && appliedBandFilter?.bandId === selectedProfile.bandId
-    ? appliedBandFilter.assignments
+  const activeBandFilter = selectedProfile?.type === 'band' && appliedBandFilter?.bandId === selectedProfile.bandId
+    ? appliedBandFilter
+    : null;
+  const activeBandFilterAssignments = activeBandFilter
+    ? activeBandFilter.assignments
     : EMPTY_BAND_FILTER_ASSIGNMENTS;
   const selectedBandFilterInstruments = useMemo(
     () => activeBandFilterAssignments.map(assignment => assignment.instrument),
@@ -474,9 +475,15 @@ function AppShell() {
   const showBandFilterAction = shouldShowBandFilterAction(selectedProfile, location.pathname);
   const bandFilterLabel = getBandFilterActionLabel(selectedBandFilterInstruments, emptyBandFilterLabel);
   const handleBandFilterPress = useCallback(() => setBandFilterModalOpen(true), []);
-  const handleApplyBandFilter = useCallback((assignments: BandInstrumentFilterAssignment[]) => {
+  const handleApplyBandFilter = useCallback((payload: BandInstrumentFilterApplyPayload) => {
     if (selectedProfile?.type !== 'band') return;
-    setAppliedBandFilter({ bandId: selectedProfile.bandId, assignments });
+    setAppliedBandFilter({
+      bandId: selectedProfile.bandId,
+      bandType: selectedProfile.bandType,
+      teamKey: selectedProfile.teamKey,
+      comboId: payload.comboId,
+      assignments: payload.assignments,
+    });
     setBandFilterModalOpen(false);
   }, [selectedProfile]);
   const handleResetBandFilter = useCallback(() => {
@@ -492,8 +499,9 @@ function AppShell() {
     visible: showBandFilterAction && !isMobile,
     label: bandFilterLabel,
     selectedInstruments: selectedBandFilterInstruments,
+    appliedFilter: activeBandFilter,
     onPress: handleBandFilterPress,
-  }), [bandFilterLabel, handleBandFilterPress, isMobile, selectedBandFilterInstruments, showBandFilterAction]);
+  }), [activeBandFilter, bandFilterLabel, handleBandFilterPress, isMobile, selectedBandFilterInstruments, showBandFilterAction]);
   const bandFilterFabActions: ActionItem[] = isMobile && showBandFilterAction
     ? [{ label: bandFilterLabel, icon: <IoFunnel size={Size.iconFab} />, onPress: handleBandFilterPress }]
     : [];

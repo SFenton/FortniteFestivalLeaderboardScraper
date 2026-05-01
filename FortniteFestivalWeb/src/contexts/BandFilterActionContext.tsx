@@ -1,10 +1,12 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { AppliedBandComboFilter } from '../types/bandFilter';
 
 export type BandFilterActionContextValue = {
   visible: boolean;
   label: string;
   selectedInstruments: readonly ServerInstrumentKey[];
+  appliedFilter?: AppliedBandComboFilter | null;
   onPress: () => void;
 };
 
@@ -14,6 +16,7 @@ const DEFAULT_VALUE: BandFilterActionContextValue = {
   visible: false,
   label: 'Filter Band Type',
   selectedInstruments: [],
+  appliedFilter: null,
   onPress: noop,
 };
 
@@ -29,4 +32,8 @@ export function BandFilterActionProvider({ children, value }: { children: ReactN
 
 export function useBandFilterAction() {
   return useContext(BandFilterActionContext);
+}
+
+export function useAppliedBandComboFilter() {
+  return useBandFilterAction().appliedFilter ?? null;
 }

@@ -8,6 +8,7 @@ import {
   Font,
   Gap,
   IconSize,
+  InstrumentSize,
   Layout,
   Radius,
   Weight,
@@ -45,14 +46,22 @@ export default function BandFilterPill({ label, selectedInstruments, onClick }: 
       data-testid="band-filter-pill"
     >
       {selectedInstruments.length > 0 ? (
-        <span style={s.iconGroup} aria-hidden="true">
-          {selectedInstruments.map((instrument) => (
-            <InstrumentIcon key={instrument} instrument={instrument} size={IconSize.xs} />
-          ))}
-        </span>
+        <>
+          <IoFunnel size={IconSize.action} data-testid="band-filter-pill-filter-icon" aria-hidden="true" />
+          <span style={s.iconGroup} aria-hidden="true">
+            {selectedInstruments.map((instrument, index) => (
+              <InstrumentIcon
+                key={`${instrument}-${index}`}
+                instrument={instrument}
+                size={InstrumentSize.sm}
+                style={s.instrumentIcon}
+              />
+            ))}
+          </span>
+        </>
       ) : (
         <>
-          <IoFunnel size={IconSize.action} />
+          <IoFunnel size={IconSize.action} data-testid="band-filter-pill-filter-icon" />
           <span>{label}</span>
         </>
       )}
@@ -67,7 +76,7 @@ function useStyles(iconOnly: boolean) {
       position: 'relative',
       width: 'auto',
       minWidth: iconOnly ? Layout.pillButtonHeight : undefined,
-      gap: iconOnly ? Gap.sm : Gap.md,
+      gap: iconOnly ? Gap.lg : Gap.md,
       height: Layout.pillButtonHeight,
       borderRadius: Radius.full,
       cursor: 'pointer',
@@ -85,6 +94,10 @@ function useStyles(iconOnly: boolean) {
       alignItems: Align.center,
       gap: Gap.sm,
       lineHeight: 0,
+    } as CSSProperties,
+    instrumentIcon: {
+      display: 'block',
+      flexShrink: 0,
     } as CSSProperties,
   }), [iconOnly]);
 }

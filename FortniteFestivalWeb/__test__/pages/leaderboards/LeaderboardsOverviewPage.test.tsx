@@ -6,6 +6,7 @@ import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo
 import { TestProviders } from '../../helpers/TestProviders';
 import LeaderboardsOverviewPage from '../../../src/pages/leaderboards/LeaderboardsOverviewPage';
 import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { writeSelectedProfile } from '../../../src/state/selectedProfile';
 
 const mockApi = vi.hoisted(() => ({
   getRankings: vi.fn(),
@@ -116,7 +117,7 @@ describe('LeaderboardsOverviewPage band rankings', () => {
   });
 
   it('requests and renders selected-player band rankings using the active metric', async () => {
-    localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', accountId: 'tracked-player', displayName: 'Tracked Player' }));
+    writeSelectedProfile({ type: 'player', accountId: 'tracked-player', displayName: 'Tracked Player' });
     mockApi.getBandRankings.mockImplementation((bandType: BandType, _comboId: string | undefined, rankBy: string, page: number, pageSize: number, selectedAccountId?: string) => Promise.resolve({
       bandType,
       comboId: null,
@@ -195,6 +196,47 @@ describe('LeaderboardsOverviewPage band rankings', () => {
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'weighted', 1, 10, undefined, undefined);
       expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'selected-a:selected-b', undefined, 'weighted');
+    });
+  });
+
+  it('applies the selected-band combo only to the matching band type', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'selected-a:selected-b',
+      displayName: 'Selected Duo',
+      members: [
+        { accountId: 'selected-a', displayName: 'Selected A' },
+        { accountId: 'selected-b', displayName: 'Selected B' },
+      ],
+    }));
+
+    render(
+      <TestProviders
+        route="/leaderboards?rankBy=weighted"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'selected-a:selected-b',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'selected-a', instrument: 'Solo_Guitar' },
+            { accountId: 'selected-b', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'weighted', 1, 10, undefined, undefined);
+      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'selected-a:selected-b', 'Solo_Guitar+Solo_Bass', 'weighted');
     });
   });
 

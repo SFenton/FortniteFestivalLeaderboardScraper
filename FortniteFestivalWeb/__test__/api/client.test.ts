@@ -81,6 +81,28 @@ describe('api/client', () => {
     });
   });
 
+  describe('song band leaderboards', () => {
+    it('fetches a single song band leaderboard with selected context and combo', async () => {
+      const data = { songId: 's1', bandType: 'Band_Duets', count: 0, totalEntries: 0, localEntries: 0, entries: [] };
+      mockFetchOk(data);
+
+      const result = await api.getSongBandLeaderboard('s1', 'Band_Duets', 25, 50, 'acct-1', 'acct-1:acct-2', 'Solo_Guitar+Solo_Bass');
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/bands/Band_Duets?top=25&offset=50&accountId=acct-1&teamKey=acct-1%3Aacct-2&combo=Solo_Guitar%2BSolo_Bass', { headers: {} });
+    });
+
+    it('fetches all song band leaderboards with selected band type and combo', async () => {
+      const data = { songId: 's1', bands: [] };
+      mockFetchOk(data);
+
+      const result = await api.getAllSongBandLeaderboards('s1', 10, undefined, 'Band_Duets', 'acct-1:acct-2', 'Solo_Guitar+Solo_Bass');
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/bands/all?top=10&selectedBandType=Band_Duets&selectedTeamKey=acct-1%3Aacct-2&combo=Solo_Guitar%2BSolo_Bass', { headers: {} });
+    });
+  });
+
   describe('getPlayer', () => {
     it('fetches player with accountId', async () => {
       mockFetchOk({ accountId: 'p1', displayName: 'Player', totalScores: 0, scores: [] });

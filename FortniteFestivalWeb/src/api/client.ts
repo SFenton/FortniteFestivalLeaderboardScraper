@@ -244,23 +244,25 @@ export const api = {
       `/api/leaderboard/${encodeURIComponent(songId)}/all?top=${top}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 
-  getSongBandLeaderboard: (songId: string, bandType: BandType, top = 25, offset = 0, selectedAccountId?: string, selectedTeamKey?: string) => {
+  getSongBandLeaderboard: (songId: string, bandType: BandType, top = 25, offset = 0, selectedAccountId?: string, selectedTeamKey?: string, comboId?: string) => {
     const params = new URLSearchParams();
     params.set('top', String(top));
     params.set('offset', String(offset));
     if (selectedAccountId) params.set('accountId', selectedAccountId);
     if (selectedTeamKey) params.set('teamKey', selectedTeamKey);
+    if (comboId) params.set('combo', comboId);
     return get<SongBandLeaderboardResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/bands/${encodeURIComponent(bandType)}?${params.toString()}`,
     );
   },
 
-  getAllSongBandLeaderboards: (songId: string, top = 10, selectedAccountId?: string, selectedBandType?: BandType, selectedTeamKey?: string) => {
+  getAllSongBandLeaderboards: (songId: string, top = 10, selectedAccountId?: string, selectedBandType?: BandType, selectedTeamKey?: string, comboId?: string) => {
     const params = new URLSearchParams();
     params.set('top', String(top));
     if (selectedAccountId) params.set('accountId', selectedAccountId);
     if (selectedBandType) params.set('selectedBandType', selectedBandType);
     if (selectedTeamKey) params.set('selectedTeamKey', selectedTeamKey);
+    if (comboId) params.set('combo', comboId);
     return getWithETag<AllSongBandLeaderboardsResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/bands/all?${params.toString()}`,
     );

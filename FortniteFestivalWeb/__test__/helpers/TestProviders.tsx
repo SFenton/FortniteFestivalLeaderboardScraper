@@ -15,6 +15,8 @@ import { SearchQueryProvider } from '../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../src/contexts/PlayerDataContext';
 import { FirstRunProvider } from '../../src/contexts/FirstRunContext';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../src/contexts/ScrollContainerContext';
+import { BandFilterActionProvider } from '../../src/contexts/BandFilterActionContext';
+import type { AppliedBandComboFilter } from '../../src/types/bandFilter';
 
 /** Create a QueryClient configured for tests: no retries, no gc delays. */
 export function createTestQueryClient() {
@@ -55,7 +57,7 @@ function ShellRefInjector({ children }: { children: ReactNode }) {
   );
 }
 
-export function TestProviders({ children, route = '/', accountId }: { children: ReactNode; route?: string; accountId?: string }) {
+export function TestProviders({ children, route = '/', accountId, bandFilter }: { children: ReactNode; route?: string; accountId?: string; bandFilter?: AppliedBandComboFilter | null }) {
   const qc = createTestQueryClient();
   return (
     <QueryClientProvider client={qc}>
@@ -69,11 +71,19 @@ export function TestProviders({ children, route = '/', accountId }: { children: 
             <PlayerDataProvider accountId={accountId}>
               <FirstRunProvider>
                 <ScrollContainerProvider>
-                <ShellRefInjector>
-                <MemoryRouter initialEntries={[route]}>
-                  {children}
-                </MemoryRouter>
-                </ShellRefInjector>
+                  <BandFilterActionProvider value={{
+                    visible: false,
+                    label: 'Filter Band Type',
+                    selectedInstruments: bandFilter?.assignments.map(assignment => assignment.instrument) ?? [],
+                    appliedFilter: bandFilter ?? null,
+                    onPress: () => {},
+                  }}>
+                    <ShellRefInjector>
+                      <MemoryRouter initialEntries={[route]}>
+                        {children}
+                      </MemoryRouter>
+                    </ShellRefInjector>
+                  </BandFilterActionProvider>
                 </ScrollContainerProvider>
               </FirstRunProvider>
             </PlayerDataProvider>

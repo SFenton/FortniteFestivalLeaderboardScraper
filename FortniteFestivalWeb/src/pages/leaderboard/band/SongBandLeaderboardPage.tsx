@@ -18,6 +18,7 @@ import { usePageTransition } from '../../../hooks/ui/usePageTransition';
 import { useStagger } from '../../../hooks/ui/useStagger';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
+import { useAppliedBandComboFilter } from '../../../contexts/BandFilterActionContext';
 import { parseApiError } from '../../../utils/apiError';
 import { coerceSongBandType, songBandToPlayerBandEntry, songBandTypeLabel } from '../../../utils/songBandLeaderboards';
 import Page, { PageBackground } from '../../Page';
@@ -39,13 +40,15 @@ export default function SongBandLeaderboardPage() {
 
   const song = songs.find((s) => s.songId === songId);
   const bandType = coerceSongBandType(rawBandType);
+  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const activeComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType ? appliedBandComboFilter.comboId : undefined;
   const bandLabel = bandType ? songBandTypeLabel(bandType, t) : '';
   const page = Math.max(1, Number(searchParams.get('page')) || 1);
   const goToSongDetail = useNavigateToSongDetail(songId);
 
   const leaderboardQuery = useQuery({
-    queryKey: queryKeys.songBandLeaderboard(songId, bandType ?? 'unknown', PAGE_SIZE, (page - 1) * PAGE_SIZE),
-    queryFn: () => api.getSongBandLeaderboard(songId, bandType!, PAGE_SIZE, (page - 1) * PAGE_SIZE),
+    queryKey: queryKeys.songBandLeaderboard(songId, bandType ?? 'unknown', PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, undefined, activeComboId),
+    queryFn: () => api.getSongBandLeaderboard(songId, bandType!, PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, undefined, activeComboId),
     enabled: !!songId && !!bandType,
     staleTime: 5 * 60_000,
   });
@@ -76,7 +79,7 @@ export default function SongBandLeaderboardPage() {
     }
   }, [data, goToPage, localEntries, page, totalPages]);
 
-  const { phase, shouldStagger } = usePageTransition(`songBandLeaderboard:${songId}:${bandType}:${page}`, !loading);
+  const { phase, shouldStagger } = usePageTransition(`songBandLeaderboard:${songId}:${bandType}:${activeComboId ?? 'all'}:${page}`, !loading);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   useLeaderboardFooterScrollMargin({ hasFab, hasPagination });
   const styles = useStyles();
@@ -95,8 +98,8 @@ export default function SongBandLeaderboardPage() {
 
   return (
     <Page
-      scrollRestoreKey={`songBandLeaderboard:${songId}:${bandType}:${page}`}
-      scrollDeps={[phase, entries.length, page, bandType]}
+      scrollRestoreKey={`songBandLeaderboard:${songId}:${bandType}:${activeComboId ?? 'all'}:${page}`}
+      scrollDeps={[phase, entries.length, page, bandType, activeComboId]}
       loadPhase={phase}
       fabSpacer="none"
       background={<PageBackground src={song?.albumArt} />}

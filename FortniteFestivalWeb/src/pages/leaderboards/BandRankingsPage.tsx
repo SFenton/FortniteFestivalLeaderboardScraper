@@ -19,6 +19,7 @@ import { PageMessage } from '../PageMessage';
 import RankByModal from './modals/RankByModal';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -44,6 +45,8 @@ export default function BandRankingsPage() {
   const fabSearch = useFabSearch();
   const scrollContainerRef = useScrollContainer();
   const bandType = coerceBandType(rawBandType);
+  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const activeComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType ? appliedBandComboFilter.comboId : undefined;
   const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
   const metric = coerceBandRankingMetric(rawMetric, experimentalRanksEnabled);
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
@@ -71,8 +74,8 @@ export default function BandRankingsPage() {
   }, [experimentalRanksEnabled, fabSearch, openMetricModal]);
 
   const leaderboardQuery = useQuery({
-    queryKey: queryKeys.bandRankings(bandType ?? 'unknown', undefined, metric, pageParam, LEADERBOARD_PAGE_SIZE),
-    queryFn: () => api.getBandRankings(bandType!, undefined, metric, pageParam, LEADERBOARD_PAGE_SIZE),
+    queryKey: queryKeys.bandRankings(bandType ?? 'unknown', activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE),
+    queryFn: () => api.getBandRankings(bandType!, activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE),
     enabled: !!bandType,
     placeholderData: (previous) => previous,
   });
@@ -104,7 +107,7 @@ export default function BandRankingsPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [goToPage, pageParam, totalPages]);
 
-  const { phase, shouldStagger } = usePageTransition(`bandRankings:${bandType}:${metric}:${pageParam}`, !loading);
+  const { phase, shouldStagger } = usePageTransition(`bandRankings:${bandType}:${activeComboId ?? 'all'}:${metric}:${pageParam}`, !loading);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   useLeaderboardFooterScrollMargin({ hasFab, hasPagination });
   const styles = useStyles();
@@ -120,8 +123,8 @@ export default function BandRankingsPage() {
     <Page
       scrollRef={scrollRef}
       staggerRushRef={staggerRushRef}
-      scrollRestoreKey={`bandRankings:${bandType}:${metric}:${pageParam}`}
-      scrollDeps={[phase, entries.length, pageParam, metric, bandType]}
+      scrollRestoreKey={`bandRankings:${bandType}:${activeComboId ?? 'all'}:${metric}:${pageParam}`}
+      scrollDeps={[phase, entries.length, pageParam, metric, bandType, activeComboId]}
       loadPhase={phase}
       fabSpacer="none"
       before={isMobileChrome ? (

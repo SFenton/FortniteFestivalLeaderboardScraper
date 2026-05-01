@@ -28,6 +28,7 @@ import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useGridColumnCount } from '../../hooks/ui/useGridColumnCount';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 import {
@@ -50,6 +51,7 @@ export default function LeaderboardsOverviewPage() {
   const selectedAccountId = player?.accountId;
   const selectedBandTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
   const selectedBandType = profile?.type === 'band' ? profile.bandType : undefined;
+  const appliedBandComboFilter = useAppliedBandComboFilter();
   const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const scrollContainerRef = useScrollContainer();
@@ -97,18 +99,23 @@ export default function LeaderboardsOverviewPage() {
   const bandRankingQueries = useQueries({
     queries: bandTypes.map((bandType) => {
       const selectedTeamKey = selectedBandType === bandType ? selectedBandTeamKey : undefined;
+      const comboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType ? appliedBandComboFilter.comboId : undefined;
       return {
-        queryKey: queryKeys.bandRankings(bandType, undefined, bandMetric, 1, 10, selectedAccountId, selectedTeamKey),
-        queryFn: () => api.getBandRankings(bandType, undefined, bandMetric, 1, 10, selectedAccountId, selectedTeamKey),
+        queryKey: queryKeys.bandRankings(bandType, comboId, bandMetric, 1, 10, selectedAccountId, selectedTeamKey),
+        queryFn: () => api.getBandRankings(bandType, comboId, bandMetric, 1, 10, selectedAccountId, selectedTeamKey),
       };
     }),
   });
 
+  const selectedBandComboId = selectedBandType && appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType
+    ? appliedBandComboFilter.comboId
+    : undefined;
+
   const selectedBandRankingQuery = useQuery({
     queryKey: selectedBandType && selectedBandTeamKey
-      ? queryKeys.bandRanking(selectedBandType, selectedBandTeamKey, undefined, bandMetric)
+      ? queryKeys.bandRanking(selectedBandType, selectedBandTeamKey, selectedBandComboId, bandMetric)
       : ['bandRanking', 'none'],
-    queryFn: () => api.getBandRanking(selectedBandType!, selectedBandTeamKey!, undefined, bandMetric),
+    queryFn: () => api.getBandRanking(selectedBandType!, selectedBandTeamKey!, selectedBandComboId, bandMetric),
     enabled: playerBandsEnabled && !!selectedBandType && !!selectedBandTeamKey,
     retry: false,
   });

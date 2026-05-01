@@ -16,6 +16,7 @@ public static partial class ApiEndpoints
             string? accountId,
             string? selectedBandType,
             string? selectedTeamKey,
+            string? combo,
             IMetaDatabase metaDb,
             ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
@@ -26,9 +27,23 @@ public static partial class ApiEndpoints
             var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
             var normalizedSelectedBandType = string.IsNullOrWhiteSpace(selectedBandType) ? null : selectedBandType.Trim();
             var normalizedSelectedTeamKey = string.IsNullOrWhiteSpace(selectedTeamKey) ? null : selectedTeamKey.Trim();
+            string? normalizedComboId = null;
+            if (!string.IsNullOrWhiteSpace(combo))
+            {
+                if (normalizedSelectedBandType is null)
+                    return Results.BadRequest(new { error = "selectedBandType is required when combo is supplied." });
+                if (!BandComboIds.IsValidBandType(normalizedSelectedBandType))
+                    return Results.NotFound(new { error = $"Unknown band type: {normalizedSelectedBandType}" });
+
+                var comboValidation = BandComboIds.TryNormalizeForBandType(normalizedSelectedBandType, combo);
+                if (comboValidation.Error is not null)
+                    return Results.BadRequest(new { error = comboValidation.Error });
+                normalizedComboId = comboValidation.ComboId;
+            }
             var canUseGenericCache = effectiveTop == LeaderboardCacheKeys.SongDetailPreviewTop
                 && selectedAccountId is null
-                && normalizedSelectedTeamKey is null;
+                && normalizedSelectedTeamKey is null
+                && normalizedComboId is null;
 
             if (canUseGenericCache)
             {
@@ -46,7 +61,7 @@ public static partial class ApiEndpoints
             }
 
             var bands = BuildSongBandLeaderboardsPayload(songId, effectiveTop, selectedAccountId,
-                normalizedSelectedBandType, normalizedSelectedTeamKey, metaDb);
+                normalizedSelectedBandType, normalizedSelectedTeamKey, normalizedComboId, metaDb);
 
             if (canUseGenericCache)
             {
@@ -70,6 +85,7 @@ public static partial class ApiEndpoints
             int? offset,
             string? accountId,
             string? teamKey,
+            string? combo,
             IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
@@ -77,17 +93,21 @@ public static partial class ApiEndpoints
             if (!BandComboIds.IsValidBandType(bandType))
                 return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
 
+            var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
+            if (comboValidation.Error is not null)
+                return Results.BadRequest(new { error = comboValidation.Error });
+
             var effectiveTop = Math.Clamp(top ?? 25, 1, 100);
             var effectiveOffset = Math.Max(0, offset ?? 0);
-            var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, effectiveOffset);
+            var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, effectiveOffset, comboValidation.ComboId);
             var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
             var selectedPlayerEntry = selectedAccountId is null
                 ? null
-                : metaDb.GetSongBandLeaderboardEntryForAccount(songId, bandType, selectedAccountId);
+                : metaDb.GetSongBandLeaderboardEntryForAccount(songId, bandType, selectedAccountId, comboValidation.ComboId);
             var selectedTeamKey = string.IsNullOrWhiteSpace(teamKey) ? null : teamKey.Trim();
             var selectedBandEntry = selectedTeamKey is null
                 ? null
-                : metaDb.GetSongBandLeaderboardEntryForTeam(songId, bandType, selectedTeamKey);
+                : metaDb.GetSongBandLeaderboardEntryForTeam(songId, bandType, selectedTeamKey, comboValidation.ComboId);
             IEnumerable<SongBandLeaderboardEntryDto> entriesForNames = entries;
             if (selectedPlayerEntry is not null)
                 entriesForNames = entriesForNames.Append(selectedPlayerEntry);
@@ -294,15 +314,17 @@ public static partial class ApiEndpoints
         string? selectedAccountId,
         string? normalizedSelectedBandType,
         string? normalizedSelectedTeamKey,
+        string? normalizedComboId,
         IMetaDatabase metaDb) =>
         BandInstrumentMapping.AllBandTypes.Select(bandType =>
         {
-            var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, 0);
+            var bandComboId = normalizedSelectedBandType == bandType ? normalizedComboId : null;
+            var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, 0, bandComboId);
             var selectedPlayerEntry = selectedAccountId is null
                 ? null
-                : metaDb.GetSongBandLeaderboardEntryForAccount(songId, bandType, selectedAccountId);
+                : metaDb.GetSongBandLeaderboardEntryForAccount(songId, bandType, selectedAccountId, bandComboId);
             var selectedBandEntry = normalizedSelectedBandType == bandType && normalizedSelectedTeamKey is not null
-                ? metaDb.GetSongBandLeaderboardEntryForTeam(songId, bandType, normalizedSelectedTeamKey)
+                ? metaDb.GetSongBandLeaderboardEntryForTeam(songId, bandType, normalizedSelectedTeamKey, bandComboId)
                 : null;
             IEnumerable<SongBandLeaderboardEntryDto> entriesForNames = entries;
             if (selectedPlayerEntry is not null)

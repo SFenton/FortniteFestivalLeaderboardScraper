@@ -30,6 +30,23 @@ describe('queryKeys', () => {
     expect(queryKeys.allLeaderboards('song-1', 5, 10)).toEqual(['allLeaderboards', 'song-1', { top: 5, leeway: 10 }]);
   });
 
+  it('songBandLeaderboard() returns key with selected band and combo params', () => {
+    expect(queryKeys.songBandLeaderboard('song-1', 'Band_Duets', 25, 0, 'acct-1', 'acct-1:acct-2', 'Solo_Guitar+Solo_Bass')).toEqual([
+      'songBandLeaderboard',
+      'song-1',
+      'Band_Duets',
+      { top: 25, offset: 0, selectedAccountId: 'acct-1', selectedTeamKey: 'acct-1:acct-2', comboId: 'Solo_Guitar+Solo_Bass' },
+    ]);
+  });
+
+  it('allSongBandLeaderboards() returns key with selected band and combo params', () => {
+    expect(queryKeys.allSongBandLeaderboards('song-1', 10, undefined, 'Band_Duets', 'acct-1:acct-2', 'Solo_Guitar+Solo_Bass')).toEqual([
+      'allSongBandLeaderboards',
+      'song-1',
+      { top: 10, selectedAccountId: undefined, selectedBandType: 'Band_Duets', selectedTeamKey: 'acct-1:acct-2', comboId: 'Solo_Guitar+Solo_Bass' },
+    ]);
+  });
+
   it('playerStats() returns key with accountId', () => {
     expect(queryKeys.playerStats('acc-1')).toEqual(['playerStats', 'acc-1']);
   });

@@ -113,4 +113,30 @@ describe('BandRankingsPage', () => {
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 2, 25);
     });
   });
+
+  it('uses the applied selected-band combo when the route band type matches', async () => {
+    render(
+      <TestProviders
+        route="/leaderboards/bands/Band_Duets?rankBy=totalscore"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'acct-a:acct-b',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+            { accountId: 'acct-b', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25);
+    });
+  });
 });

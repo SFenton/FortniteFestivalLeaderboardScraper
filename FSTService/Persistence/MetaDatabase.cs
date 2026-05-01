@@ -4707,6 +4707,7 @@ public sealed class MetaDatabase : IMetaDatabase
             FROM band_entries be
             WHERE be.song_id = @songId
               AND be.band_type = @bandType
+              AND (@comboId IS NULL OR be.instrument_combo = ANY(@comboRawIds))
               AND NOT be.is_over_threshold
         ),
         ChosenEntries AS (
@@ -4798,7 +4799,7 @@ public sealed class MetaDatabase : IMetaDatabase
             ORDER BY pe.effective_rank ASC
         """;
 
-    public (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0)
+    public (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0, string? comboId = null)
     {
         var effectiveLimit = Math.Clamp(limit, 1, 200);
         var effectiveOffset = Math.Max(0, offset);
@@ -4831,6 +4832,8 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("limit", effectiveLimit);
         cmd.Parameters.AddWithValue("offset", effectiveOffset);
+        cmd.Parameters.Add("comboId", NpgsqlDbType.Text).Value = (object?)comboId ?? DBNull.Value;
+        cmd.Parameters.Add("comboRawIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = BandComboIds.ToEpicRawComboCandidates(comboId).ToArray();
 
         var entries = new List<SongBandLeaderboardEntryDto>();
         var totalEntries = 0;
@@ -4846,7 +4849,7 @@ public sealed class MetaDatabase : IMetaDatabase
         return (entries, totalEntries);
     }
 
-    public SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId)
+    public SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId, string? comboId = null)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -4873,12 +4876,14 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.Add("comboId", NpgsqlDbType.Text).Value = (object?)comboId ?? DBNull.Value;
+        cmd.Parameters.Add("comboRawIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = BandComboIds.ToEpicRawComboCandidates(comboId).ToArray();
 
         using var reader = cmd.ExecuteReader();
         return ReadSongBandLeaderboardEntries(reader, bandType).FirstOrDefault();
     }
 
-    public SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey)
+    public SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey, string? comboId = null)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -4905,6 +4910,8 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.Add("comboId", NpgsqlDbType.Text).Value = (object?)comboId ?? DBNull.Value;
+        cmd.Parameters.Add("comboRawIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = BandComboIds.ToEpicRawComboCandidates(comboId).ToArray();
 
         using var reader = cmd.ExecuteReader();
         return ReadSongBandLeaderboardEntries(reader, bandType).FirstOrDefault();

@@ -195,9 +195,9 @@ public interface IMetaDatabase : IDisposable
     List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30);
     List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null);
     (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5);
-    (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0);
-    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId);
-    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey);
+    (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0, string? comboId = null);
+    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId, string? comboId = null);
+    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey, string? comboId = null);
     IReadOnlyList<string> GetBandLeaderboardSongIds();
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);
 
