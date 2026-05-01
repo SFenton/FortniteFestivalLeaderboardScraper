@@ -19,7 +19,13 @@ const mockApi = vi.hoisted(() => ({
 
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
 
-function makeBandEntry(rank: number, bandType: BandType, names: string[], accountIds?: string[]): BandRankingEntry {
+function makeBandEntry(
+  rank: number,
+  bandType: BandType,
+  names: string[],
+  accountIds?: string[],
+  memberInstruments?: ServerInstrumentKey[][],
+): BandRankingEntry {
   const ids = accountIds ?? names.map((_, index) => `${bandType}-${rank}-${index}`);
   return {
     bandId: `${bandType}-${rank}`,
@@ -28,7 +34,7 @@ function makeBandEntry(rank: number, bandType: BandType, names: string[], accoun
     members: names.map((name, index) => ({
       accountId: ids[index]!,
       displayName: name,
-      instruments: (index === 0 ? ['Solo_Guitar', 'Solo_Bass'] : ['Solo_Drums']) as ServerInstrumentKey[],
+      instruments: memberInstruments?.[index] ?? (index === 0 ? ['Solo_Guitar', 'Solo_Bass'] : ['Solo_Drums']) as ServerInstrumentKey[],
     })),
     songsPlayed: 120,
     totalChartedSongs: 160,
@@ -237,6 +243,82 @@ describe('LeaderboardsOverviewPage band rankings', () => {
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'weighted', 1, 10, undefined, undefined);
       expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'selected-a:selected-b', 'Solo_Guitar+Solo_Bass', 'weighted');
+    });
+  });
+
+  it('filters matching band card member instruments by the active selected-band combo', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'selected-a:selected-b',
+      displayName: 'Selected Duo',
+      members: [
+        { accountId: 'selected-a', displayName: 'Selected A' },
+        { accountId: 'selected-b', displayName: 'Selected B' },
+      ],
+    }));
+
+    mockApi.getBandRankings.mockImplementation((bandType: BandType, comboId: string | undefined, rankBy: string, page: number, pageSize: number, selectedAccountId?: string, selectedTeamKey?: string) => Promise.resolve({
+      bandType,
+      comboId: comboId ?? null,
+      rankBy,
+      page,
+      pageSize,
+      totalTeams: 42,
+      entries: [bandType === 'Band_Duets'
+        ? makeBandEntry(1, bandType, ['Alpha', 'Beta'], ['duo-a', 'duo-b'], [
+          ['Solo_Guitar', 'Solo_Vocals', 'Solo_Drums', 'Solo_PeripheralGuitar'],
+          ['Solo_Bass', 'Solo_Drums'],
+        ])
+        : makeBandEntry(1, bandType, ['Gamma', 'Delta'], undefined, [
+          ['Solo_Guitar', 'Solo_Vocals'],
+          ['Solo_Bass', 'Solo_Drums'],
+        ])],
+      selectedBandEntry: bandType === 'Band_Duets' && selectedAccountId == null && selectedTeamKey === 'selected-a:selected-b'
+        ? makeBandEntry(17, bandType, ['Selected A', 'Selected B'], ['selected-a', 'selected-b'])
+        : null,
+    }));
+
+    render(
+      <TestProviders
+        route="/leaderboards?rankBy=weighted"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'selected-a:selected-b',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'selected-a', instrument: 'Solo_Guitar' },
+            { accountId: 'selected-b', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const duosEntry = await screen.findByTestId('band-ranking-entry-Band_Duets-0');
+    const duosRows = within(duosEntry).getAllByTestId('band-member-row');
+    expect(within(duosRows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(duosRows[0]!).queryByAltText('Solo_Vocals')).toBeNull();
+    expect(within(duosRows[0]!).queryByAltText('Solo_Drums')).toBeNull();
+    expect(within(duosRows[0]!).queryByAltText('Solo_PeripheralGuitar')).toBeNull();
+    expect(within(duosRows[1]!).getByAltText('Solo_Bass')).toBeTruthy();
+    expect(within(duosRows[1]!).queryByAltText('Solo_Drums')).toBeNull();
+
+    const triosEntry = await screen.findByTestId('band-ranking-entry-Band_Trios-0');
+    const triosRows = within(triosEntry).getAllByTestId('band-member-row');
+    expect(within(triosRows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(triosRows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(triosRows[1]!).getByAltText('Solo_Bass')).toBeTruthy();
+    expect(within(triosRows[1]!).getByAltText('Solo_Drums')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
     });
   });
 

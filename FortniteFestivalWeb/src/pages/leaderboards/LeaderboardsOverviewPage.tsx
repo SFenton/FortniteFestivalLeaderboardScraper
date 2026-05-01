@@ -260,6 +260,9 @@ export default function LeaderboardsOverviewPage() {
             <div data-testid="leaderboards-band-section-stack" style={s.bandSectionStack}>
               {bandTypes.map((bandType, idx) => {
                 const bandQuery = bandRankingQueries[idx];
+                const activeFilterInstruments = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+                  ? appliedBandComboFilter.assignments.map(assignment => assignment.instrument)
+                  : undefined;
                 return (
                   <BandRankingCard
                     key={bandType}
@@ -269,6 +272,7 @@ export default function LeaderboardsOverviewPage() {
                     selectedPlayerEntry={bandQuery?.data?.selectedPlayerEntry ?? null}
                     selectedBandEntry={bandQuery?.data?.selectedBandEntry ?? (selectedBandType === bandType ? selectedBandRankingQuery.data ?? null : null)}
                     selectedAccountId={selectedAccountId}
+                    activeFilterInstruments={activeFilterInstruments}
                     totalTeams={bandQuery?.data?.totalTeams ?? 0}
                     error={bandQuery?.error ? String(bandQuery.error) : null}
                     shouldStagger={shouldStagger}

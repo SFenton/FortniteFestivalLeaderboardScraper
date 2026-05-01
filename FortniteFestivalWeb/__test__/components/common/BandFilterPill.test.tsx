@@ -16,6 +16,7 @@ describe('BandFilterPill', () => {
       <BandFilterPill
         label="Lead / Bass / Lead"
         selectedInstruments={['Solo_Guitar', 'Solo_Bass', 'Solo_Guitar']}
+        bandType="Band_Duets"
         onClick={vi.fn()}
       />,
     );
@@ -24,8 +25,18 @@ describe('BandFilterPill', () => {
     expect(button).toBeTruthy();
     expect(button.style.height).toBe(`${Layout.pillButtonHeight}px`);
     expect(button.style.gap).toBe(`${Gap.lg}px`);
+    expect(button.style.background).toBe('rgb(45, 130, 230)');
+    expect(button.style.border).toBe('1px solid transparent');
+    expect(button.style.boxShadow).toBe('none');
+    expect(button.style.color).toBe('rgb(255, 255, 255)');
     expect(screen.queryByText('Lead / Bass / Lead')).toBeNull();
+    expect(screen.getByText('Duos')).toBeTruthy();
     expect(screen.getByTestId('band-filter-pill-filter-icon')).toBeTruthy();
+
+    const visibleTextNodes = Array.from(button.childNodes)
+      .map(node => node.textContent?.trim())
+      .filter(Boolean);
+    expect(visibleTextNodes).toEqual(['Duos']);
 
     const icons = container.querySelectorAll('img');
     expect(icons).toHaveLength(3);

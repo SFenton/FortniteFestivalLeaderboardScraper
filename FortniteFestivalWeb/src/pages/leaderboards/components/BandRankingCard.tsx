@@ -2,7 +2,7 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import type { BandRankingEntry, BandRankingMetric, BandType } from '@festival/core/api/serverTypes';
+import type { BandRankingEntry, BandRankingMetric, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { staggerDelay } from '@festival/ui-utils';
 import { Border, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Overflow, Cursor, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, border, frostedCard, flexColumn, flexRow, transition } from '@festival/theme';
 import { Routes } from '../../../routes';
@@ -19,6 +19,7 @@ type BandRankingCardProps = {
   selectedPlayerEntry?: BandRankingEntry | null;
   selectedBandEntry?: BandRankingEntry | null;
   selectedAccountId?: string;
+  activeFilterInstruments?: readonly ServerInstrumentKey[];
   totalTeams: number;
   error?: string | null;
   shouldStagger?: boolean;
@@ -32,6 +33,7 @@ export default memo(function BandRankingCard({
   selectedPlayerEntry,
   selectedBandEntry,
   selectedAccountId,
+  activeFilterInstruments,
   totalTeams,
   error,
   shouldStagger,
@@ -94,6 +96,7 @@ export default memo(function BandRankingCard({
               metric={metric}
               totalTeams={totalTeams}
               sourceAccountId={entryHasAccount(entry, selectedAccountId) ? selectedAccountId : undefined}
+              activeFilterInstruments={activeFilterInstruments}
               rankWidth={rankWidth}
               testId={`band-ranking-entry-${bandType}-${index}`}
               style={rowStaggerStyle}
@@ -113,6 +116,7 @@ export default memo(function BandRankingCard({
             metric={metric}
             totalTeams={totalTeams}
             sourceAccountId={selectedBandEntry ? undefined : selectedAccountId}
+            activeFilterInstruments={activeFilterInstruments}
             rankWidth={rankWidth}
             testId={`band-ranking-selected-entry-${bandType}`}
             style={{ ...styles.selectedCard, ...selectedStaggerStyle }}

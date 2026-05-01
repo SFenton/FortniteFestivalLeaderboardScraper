@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- shared card footer uses inline theme styles */
 import { type AnimationEventHandler, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { BandRankingEntry, BandRankingMetric, BandType, PlayerBandEntry } from '@festival/core/api/serverTypes';
+import type { BandRankingEntry, BandRankingMetric, BandType, PlayerBandEntry, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { Gap } from '@festival/theme';
 import { rankColor } from '@festival/core';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
@@ -15,6 +15,7 @@ type BandRankingPlayerCardProps = {
   metric: BandRankingMetric;
   totalTeams?: number;
   sourceAccountId?: string;
+  activeFilterInstruments?: readonly ServerInstrumentKey[];
   rankWidth?: number;
   testId?: string;
   style?: CSSProperties;
@@ -27,13 +28,14 @@ export default function BandRankingPlayerCard({
   metric,
   totalTeams,
   sourceAccountId,
+  activeFilterInstruments,
   rankWidth,
   testId,
   style,
   onAnimationEnd,
 }: BandRankingPlayerCardProps) {
   const { t } = useTranslation();
-  const playerBandEntry = bandRankingToPlayerBandEntry(entry, bandType);
+  const playerBandEntry = bandRankingToPlayerBandEntry(entry, bandType, activeFilterInstruments);
   const names = formatPlayerBandNames(playerBandEntry);
   const rank = getBandRankForMetric(entry, metric);
 
@@ -53,7 +55,7 @@ export default function BandRankingPlayerCard({
   );
 }
 
-export function bandRankingToPlayerBandEntry(entry: BandRankingEntry, bandType: BandType): PlayerBandEntry {
+export function bandRankingToPlayerBandEntry(entry: BandRankingEntry, bandType: BandType, activeFilterInstruments?: readonly ServerInstrumentKey[]): PlayerBandEntry {
   const members = entry.members && entry.members.length > 0
     ? entry.members
     : entry.teamMembers.map(member => ({
@@ -66,8 +68,18 @@ export function bandRankingToPlayerBandEntry(entry: BandRankingEntry, bandType: 
     bandId: entry.bandId,
     teamKey: entry.teamKey,
     bandType,
-    members,
+    members: filterMemberInstruments(members, activeFilterInstruments),
   };
+}
+
+function filterMemberInstruments(members: readonly PlayerBandMember[], activeFilterInstruments?: readonly ServerInstrumentKey[]): PlayerBandMember[] {
+  if (!activeFilterInstruments?.length) return [...members];
+
+  const allowed = new Set(activeFilterInstruments);
+  return members.map(member => ({
+    ...member,
+    instruments: member.instruments.filter(instrument => allowed.has(instrument)),
+  }));
 }
 
 function BandRankingFooter({ entry, metric, rank, totalTeams }: { entry: BandRankingEntry; metric: BandRankingMetric; rank: number; totalTeams?: number }) {

@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- PageHeader composes shared theme style objects inline */
 import { useMemo, type ReactNode, type CSSProperties } from 'react';
 import { Colors, Font, Weight, Gap, MaxWidth, Layout, BoxSizing, CssValue, padding, flexBetween, flexRow } from '@festival/theme';
 import BandFilterPill from './BandFilterPill';
@@ -46,6 +47,7 @@ export default function PageHeader({
         <BandFilterPill
           label={bandFilterAction.label}
           selectedInstruments={bandFilterAction.selectedInstruments}
+          bandType={bandFilterAction.appliedFilter?.bandType}
           onClick={bandFilterAction.onPress}
         />
       )}
