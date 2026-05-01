@@ -9,7 +9,7 @@ import {
   type PlayerBandMember,
   type ServerInstrumentKey,
 } from '@festival/core/api/serverTypes';
-import { Align, Colors, Font, Gap, Radius, Weight, flexColumn, frostedCard, padding } from '@festival/theme';
+import { Colors, Font, Weight } from '@festival/theme';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';
 import type { SelectedBandProfile } from '../../../hooks/data/useSelectedProfile';
@@ -43,6 +43,7 @@ const INSTRUMENT_ITEMS: InstrumentSelectorItem<ServerInstrumentKey>[] = SERVER_I
 }));
 const BAND_FILTER_DETAIL_STALE_MS = 300_000;
 const EMPTY_CONFIGURATIONS: BandConfiguration[] = [];
+const INSTRUMENT_SLOT_ORDINAL_KEYS = ['first', 'second', 'third', 'fourth'] as const;
 
 export default function BandInstrumentFilterModal({
   visible,
@@ -176,35 +177,33 @@ export default function BandInstrumentFilterModal({
         ) : null
       )}
     >
-      <ModalSection>
-        <div style={styles.rows}>
-          {detailQuery.isLoading && members.length === 0 ? (
-            <div style={styles.status}>{t('common.loading')}</div>
-          ) : detailQuery.error ? (
-            <div style={styles.status}>{t('bandFilter.loadFailed')}</div>
-          ) : members.map((member, index) => (
-            <BandmateInstrumentRow
-              key={member.accountId}
-              index={index}
-              member={member}
-              selected={draft[index] ?? null}
-              onSelect={(instrument) => handleSelect(index, instrument)}
-              availableInstruments={availableInstruments}
-              disabledInstruments={instrumentStates[index]?.disabled ?? []}
-              mutedInstruments={instrumentStates[index]?.muted ?? []}
-              compact={isMobile}
-              styles={styles}
-            />
-          ))}
-        </div>
-      </ModalSection>
+      {detailQuery.isLoading && members.length === 0 ? (
+        <ModalSection>
+          <div style={styles.status}>{t('common.loading')}</div>
+        </ModalSection>
+      ) : detailQuery.error ? (
+        <ModalSection>
+          <div style={styles.status}>{t('bandFilter.loadFailed')}</div>
+        </ModalSection>
+      ) : members.map((member, index) => (
+        <InstrumentSlotSection
+          key={member.accountId}
+          index={index}
+          selected={draft[index] ?? null}
+          onSelect={(instrument) => handleSelect(index, instrument)}
+          availableInstruments={availableInstruments}
+          disabledInstruments={instrumentStates[index]?.disabled ?? []}
+          mutedInstruments={instrumentStates[index]?.muted ?? []}
+          compact={isMobile}
+          styles={styles}
+        />
+      ))}
     </Modal>
   );
 }
 
-function BandmateInstrumentRow({
+function InstrumentSlotSection({
   index,
-  member,
   selected,
   onSelect,
   availableInstruments,
@@ -214,7 +213,6 @@ function BandmateInstrumentRow({
   styles,
 }: {
   index: number;
-  member: PlayerBandMember;
   selected: ServerInstrumentKey | null;
   onSelect: (instrument: ServerInstrumentKey | null) => void;
   availableInstruments: readonly ServerInstrumentKey[];
@@ -226,14 +224,13 @@ function BandmateInstrumentRow({
   const { t } = useTranslation();
   const allowed = new Set(availableInstruments);
   const hiddenInstruments = SERVER_INSTRUMENT_KEYS.filter(instrument => !allowed.has(instrument));
-  const name = member.displayName?.trim() || t('common.unknownUser');
+  const ordinalKey = INSTRUMENT_SLOT_ORDINAL_KEYS[index] ?? INSTRUMENT_SLOT_ORDINAL_KEYS[INSTRUMENT_SLOT_ORDINAL_KEYS.length - 1];
 
   return (
-    <div style={styles.row}>
-      <div style={styles.rowHeader}>
-        <span style={styles.bandmateLabel}>{t('bandFilter.bandmateLabel', { index: index + 1 })}</span>
-        <span style={styles.bandmateName}>{name}</span>
-      </div>
+    <ModalSection
+      title={t('bandFilter.instrumentSlotTitle', { index: index + 1 })}
+      hint={t('bandFilter.instrumentSlotSubtitle', { ordinal: t(`bandFilter.instrumentSlotOrdinals.${ordinalKey}`) })}
+    >
       {availableInstruments.length > 0 ? (
         <InstrumentSelector
           instruments={INSTRUMENT_ITEMS}
@@ -249,7 +246,7 @@ function BandmateInstrumentRow({
       ) : (
         <div style={styles.status}>{t('bandFilter.noInstruments')}</div>
       )}
-    </div>
+    </ModalSection>
   );
 }
 
@@ -351,39 +348,6 @@ function toInstrumentCounts(instruments: readonly ServerInstrumentKey[]) {
 
 function useStyles() {
   return useMemo(() => ({
-    rows: {
-      ...flexColumn,
-      gap: Gap.md,
-    } as CSSProperties,
-    row: {
-      ...frostedCard,
-      ...flexColumn,
-      gap: Gap.md,
-      borderRadius: Radius.md,
-      padding: padding(Gap.lg),
-    } as CSSProperties,
-    rowHeader: {
-      display: 'flex',
-      alignItems: Align.baseline,
-      justifyContent: 'space-between',
-      gap: Gap.md,
-      minWidth: 0,
-    } as CSSProperties,
-    bandmateLabel: {
-      color: Colors.textSecondary,
-      fontSize: Font.sm,
-      fontWeight: Weight.semibold,
-      whiteSpace: 'nowrap',
-    } as CSSProperties,
-    bandmateName: {
-      color: Colors.textPrimary,
-      fontSize: Font.md,
-      fontWeight: Weight.bold,
-      minWidth: 0,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap',
-    } as CSSProperties,
     status: {
       color: Colors.textSecondary,
       fontSize: Font.sm,

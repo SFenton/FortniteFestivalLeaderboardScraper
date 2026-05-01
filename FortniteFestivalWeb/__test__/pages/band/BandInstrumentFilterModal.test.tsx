@@ -61,13 +61,19 @@ function renderModal(overrides: Partial<{
 }
 
 describe('BandInstrumentFilterModal', () => {
-  it('renders one selector row per bandmate with no initial selection', async () => {
+  it('renders one selector section per instrument slot with no bandmate names', async () => {
     renderModal();
 
-    expect(await screen.findByText('Bandmate #1')).toBeInTheDocument();
-    expect(screen.getByText('Bandmate #2')).toBeInTheDocument();
-    expect(screen.getByText('Alpha')).toBeInTheDocument();
-    expect(screen.getByText('Bravo')).toBeInTheDocument();
+    const firstSlot = await screen.findByText('Instrument #1');
+    expect(firstSlot).toBeInTheDocument();
+    expect(screen.getByText('Select the first instrument played in your band.')).toBeInTheDocument();
+    expect(screen.getByText('Instrument #2')).toBeInTheDocument();
+    expect(screen.getByText('Select the second instrument played in your band.')).toBeInTheDocument();
+    expect(screen.queryByText('Bandmate #1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bandmate #2')).not.toBeInTheDocument();
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+    expect(screen.queryByText('Bravo')).not.toBeInTheDocument();
+    expect(firstSlot.parentElement?.style.getPropertyValue('--frosted-card')).toBe('');
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 

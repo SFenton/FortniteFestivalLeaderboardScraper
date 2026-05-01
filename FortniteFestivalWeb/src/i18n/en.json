@@ -610,6 +610,14 @@
   "bandFilter": {
     "modalTitle": "Filter Band Type",
     "bandmateLabel": "Bandmate #{{index}}",
+    "instrumentSlotTitle": "Instrument #{{index}}",
+    "instrumentSlotSubtitle": "Select the {{ordinal}} instrument played in your band.",
+    "instrumentSlotOrdinals": {
+      "first": "first",
+      "second": "second",
+      "third": "third",
+      "fourth": "fourth"
+    },
     "resetTitle": "Reset Instruments",
     "loadFailed": "Could not load band configurations.",
     "noInstruments": "No instruments found",
