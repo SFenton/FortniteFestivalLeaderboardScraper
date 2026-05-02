@@ -30,6 +30,8 @@ interface FilterSortOptions {
   filterInvalidScoresEnabled?: boolean;
   /** Whether the Item Shop feature is visible (gates shopInShop/shopLeavingTomorrow filters). */
   shopVisible?: boolean;
+  /** App-visible instruments that are allowed to participate in per-instrument filters. */
+  visibleInstruments?: readonly InstrumentKey[] | null;
 }
 
 const PCT_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -52,34 +54,38 @@ export function useFilteredSongs({
   isScoreValid,
   filterInvalidScoresEnabled,
   shopVisible,
+  visibleInstruments,
 }: FilterSortOptions): Song[] {
   return useMemo(() => {
     const hasPlayerData = allScoreMap.size > 0;
+    const visibleInstrumentSet = visibleInstruments ? new Set<InstrumentKey>(visibleInstruments) : null;
+    const canUseInstrument = (key: InstrumentKey) => !visibleInstrumentSet || visibleInstrumentSet.has(key);
+    const effectiveInstrument = inst && canUseInstrument(inst) ? inst : null;
 
     // Pre-compute which instruments have any missing/has filter active
     const filterInstruments = new Set<InstrumentKey>();
-    for (const [k, v] of Object.entries(f.missingScores)) { if (v) filterInstruments.add(k as InstrumentKey); }
-    for (const [k, v] of Object.entries(f.missingFCs)) { if (v) filterInstruments.add(k as InstrumentKey); }
-    for (const [k, v] of Object.entries(f.hasScores)) { if (v) filterInstruments.add(k as InstrumentKey); }
-    for (const [k, v] of Object.entries(f.hasFCs)) { if (v) filterInstruments.add(k as InstrumentKey); }
+    for (const [k, v] of Object.entries(f.missingScores)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
+    for (const [k, v] of Object.entries(f.missingFCs)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
+    for (const [k, v] of Object.entries(f.hasScores)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
+    for (const [k, v] of Object.entries(f.hasFCs)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
     if (filterInvalidScoresEnabled) {
-      for (const [k, v] of Object.entries(f.overThreshold ?? {})) { if (v) filterInstruments.add(k as InstrumentKey); }
+      for (const [k, v] of Object.entries(f.overThreshold ?? {})) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
     }
-    const activeFilterInstruments = inst
-      ? (filterInstruments.has(inst) ? [inst] : [])
+    const activeFilterInstruments = effectiveInstrument
+      ? (filterInstruments.has(effectiveInstrument) ? [effectiveInstrument] : [])
       : [...filterInstruments];
 
     // Pre-compute which filter checks are active
     // Season/percentile/stars/difficulty filters are instrument-specific — skip them when no instrument is selected
     // so stale filter values from a previously selected instrument don't hide songs.
     const seasonKeys = Object.keys(f.seasonFilter);
-    const checkSeason = inst != null && hasPlayerData && seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false);
+    const checkSeason = effectiveInstrument != null && hasPlayerData && seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false);
     const pctKeys = Object.keys(f.percentileFilter);
-    const checkPct = inst != null && hasPlayerData && pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false);
+    const checkPct = effectiveInstrument != null && hasPlayerData && pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false);
     const starKeys = Object.keys(f.starsFilter);
-    const checkStars = inst != null && hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
+    const checkStars = effectiveInstrument != null && hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
     const diffKeys = Object.keys(f.difficultyFilter);
-    const checkDiff = inst != null && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
+    const checkDiff = effectiveInstrument != null && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
 
     const list = songs.filter(s => {
       if (!songMatchesSearch(s, search)) return false;
@@ -91,11 +97,11 @@ export function useFilteredSongs({
         if (f.shopLeavingTomorrow && !leavingTomorrowIds?.has(s.songId)) return false;
       }
 
-      if (inst && !songSupportsInstrument(s, inst)) return false;
+      if (effectiveInstrument && !songSupportsInstrument(s, effectiveInstrument)) return false;
 
       if (!hasPlayerData) {
         if (checkDiff) {
-          const diff = getSongIntensity(s, inst);
+          const diff = getSongIntensity(s, effectiveInstrument);
           const difficultyBucket = diff == null ? 0 : Math.max(1, Math.min(7, Math.trunc(diff) + 1));
           if (f.difficultyFilter[difficultyBucket] === false) return false;
         }
@@ -161,7 +167,7 @@ export function useFilteredSongs({
         if (f.starsFilter[stars] === false) return false;
       }
       if (checkDiff) {
-        const diff = getSongIntensity(s, inst);
+        const diff = getSongIntensity(s, effectiveInstrument);
         const difficultyBucket = diff == null ? 0 : Math.max(1, Math.min(7, Math.trunc(diff) + 1));
         if (f.difficultyFilter[difficultyBucket] === false) return false;
       }
@@ -182,8 +188,8 @@ export function useFilteredSongs({
         case 'duration':
           cmp = (a.durationSeconds ?? 0) - (b.durationSeconds ?? 0); break;
         case 'intensity': {
-          const ia = getSongIntensity(a, inst);
-          const ib = getSongIntensity(b, inst);
+          const ia = getSongIntensity(a, effectiveInstrument);
+          const ib = getSongIntensity(b, effectiveInstrument);
           if (ia != null && ib != null) {
             cmp = ia - ib;
           } else if (ia != null) {
@@ -203,7 +209,7 @@ export function useFilteredSongs({
           if (cmp === 0) {
             // Tiebreaker chain: if instrument filtered + has scores, use score comparison;
             // otherwise use title → artist → year
-            if (inst && scoreMap.size > 0) {
+            if (effectiveInstrument && scoreMap.size > 0) {
               cmp = compareByMode('score', scoreMap.get(a.songId), scoreMap.get(b.songId));
             }
             if (cmp === 0) cmp = a.title.localeCompare(b.title);
@@ -216,8 +222,8 @@ export function useFilteredSongs({
         case 'maxdistance': {
           const sa = scoreMap.get(a.songId);
           const sb = scoreMap.get(b.songId);
-          const ma = inst ? a.maxScores?.[inst] : undefined;
-          const mb = inst ? b.maxScores?.[inst] : undefined;
+          const ma = effectiveInstrument ? a.maxScores?.[effectiveInstrument] : undefined;
+          const mb = effectiveInstrument ? b.maxScores?.[effectiveInstrument] : undefined;
           const ra = sa && sa.score > 0 && ma ? sa.score / ma : undefined;
           const rb = sb && sb.score > 0 && mb ? sb.score / mb : undefined;
           if (ra != null && rb != null) {
@@ -235,8 +241,8 @@ export function useFilteredSongs({
         case 'maxscorediff': {
           const sa = scoreMap.get(a.songId);
           const sb = scoreMap.get(b.songId);
-          const ma = inst ? a.maxScores?.[inst] : undefined;
-          const mb = inst ? b.maxScores?.[inst] : undefined;
+          const ma = effectiveInstrument ? a.maxScores?.[effectiveInstrument] : undefined;
+          const mb = effectiveInstrument ? b.maxScores?.[effectiveInstrument] : undefined;
           const da = sa && sa.score > 0 && ma ? sa.score - ma : undefined;
           const db = sb && sb.score > 0 && mb ? sb.score - mb : undefined;
           if (da != null && db != null) {
@@ -251,7 +257,7 @@ export function useFilteredSongs({
           break;
         }
         case 'lastplayed': {
-          if (inst) {
+          if (effectiveInstrument) {
             // Filtered: compare the single instrument's lastPlayedAt
             cmp = compareByMode('lastplayed', scoreMap.get(a.songId), scoreMap.get(b.songId));
           } else {
@@ -283,5 +289,5 @@ export function useFilteredSongs({
       }
       return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
     });
-  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, isScoreValid, filterInvalidScoresEnabled]);
+  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, leavingTomorrowIds, isScoreValid, filterInvalidScoresEnabled, shopVisible, visibleInstruments]);
 }

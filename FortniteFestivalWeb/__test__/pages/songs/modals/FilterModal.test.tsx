@@ -63,6 +63,8 @@ describe('FilterModal', () => {
     expect(screen.getByText('Has Scores')).toBeDefined();
     expect(screen.getByText('Missing FCs')).toBeDefined();
     expect(screen.getByText('Has FCs')).toBeDefined();
+    expect(screen.getByText('Songs missing FCs on any visible instrument.')).toBeDefined();
+    expect(screen.getByText('Songs with FCs on any visible instrument.')).toBeDefined();
   });
 
   it('toggles global missingScores on for all visible instruments', () => {
@@ -134,7 +136,7 @@ describe('FilterModal', () => {
     expect(screen.getByText('Lead')).toBeDefined();
     expect(screen.getByText('Bass')).toBeDefined();
     expect(screen.getByText('Drums')).toBeDefined();
-    expect(screen.getByText('Vocals')).toBeDefined();
+    expect(screen.getByText('Tap Vocals')).toBeDefined();
     expect(screen.getByText('Pro Lead')).toBeDefined();
     expect(screen.getByText('Pro Bass')).toBeDefined();
   });
@@ -195,7 +197,7 @@ describe('FilterModal', () => {
     expect(screen.getByTitle('Lead')).toBeDefined();
     expect(screen.getByTitle('Bass')).toBeDefined();
     expect(screen.getByTitle('Drums')).toBeDefined();
-    expect(screen.getByTitle('Vocals')).toBeDefined();
+    expect(screen.getByTitle('Tap Vocals')).toBeDefined();
     expect(screen.getByTitle('Pro Lead')).toBeDefined();
     expect(screen.getByTitle('Pro Bass')).toBeDefined();
   });

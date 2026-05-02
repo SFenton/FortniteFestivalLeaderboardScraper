@@ -260,6 +260,92 @@ describe('useFilteredSongs', () => {
     expect(result.current.map(s => s.songId)).toContain('s3');
   });
 
+  it('ignores hidden missingFCs keys when visible instruments are supplied', () => {
+    const visibleInstruments: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'];
+    const byInst = new Map<InstrumentKey, PlayerScore>(
+      visibleInstruments.map(inst => [inst, score('s1', { instrument: inst, isFullCombo: true })]),
+    );
+    const allScoreMap = new Map<string, Map<InstrumentKey, PlayerScore>>([['s1', byInst]]);
+    const filters = {
+      ...emptyFilters,
+      missingFCs: {
+        Solo_Guitar: true,
+        Solo_Bass: true,
+        Solo_Drums: true,
+        Solo_Vocals: true,
+        Solo_PeripheralVocals: true,
+        Solo_PeripheralCymbals: true,
+        Solo_PeripheralDrums: true,
+      },
+    };
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: [songs[0]!], search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap: new Map(), allScoreMap,
+      visibleInstruments,
+    }));
+
+    expect(result.current).toHaveLength(0);
+  });
+
+  it('keeps songs missing a visible FC when hidden missingFCs keys are present', () => {
+    const visibleInstruments: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'];
+    const byInst = new Map<InstrumentKey, PlayerScore>([
+      ['Solo_Guitar', score('s1', { instrument: 'Solo_Guitar' as InstrumentKey, isFullCombo: true })],
+      ['Solo_Bass', score('s1', { instrument: 'Solo_Bass' as InstrumentKey, isFullCombo: false })],
+      ['Solo_Drums', score('s1', { instrument: 'Solo_Drums' as InstrumentKey, isFullCombo: true })],
+      ['Solo_Vocals', score('s1', { instrument: 'Solo_Vocals' as InstrumentKey, isFullCombo: true })],
+    ]);
+    const allScoreMap = new Map<string, Map<InstrumentKey, PlayerScore>>([['s1', byInst]]);
+    const filters = {
+      ...emptyFilters,
+      missingFCs: {
+        Solo_Guitar: true,
+        Solo_Bass: true,
+        Solo_Drums: true,
+        Solo_Vocals: true,
+        Solo_PeripheralVocals: true,
+      },
+    };
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: [songs[0]!], search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap: new Map(), allScoreMap,
+      visibleInstruments,
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s1']);
+  });
+
+  it('ignores hidden-only per-instrument filters when visible instruments are supplied', () => {
+    const visibleInstruments: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'];
+    const filters = { ...emptyFilters, missingScores: { Solo_PeripheralVocals: true } };
+    const allScoreMap = new Map<string, Map<InstrumentKey, PlayerScore>>([['s1', new Map()]]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap: new Map(), allScoreMap,
+      visibleInstruments,
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s1', 's2', 's3']);
+  });
+
+  it('treats a hidden selected instrument as no selected instrument', () => {
+    const visibleInstruments: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'];
+    const filters = { ...emptyFilters, difficultyFilter: { 4: false } };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: 'Solo_PeripheralVocals' as InstrumentKey,
+      scoreMap: new Map(), allScoreMap: new Map(),
+      visibleInstruments,
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s1', 's2', 's3']);
+  });
+
   it('filters with single instrument scope', () => {
     const scoreMap = new Map([['s1', score('s1')]]);
     const allScoreMap = new Map([['s1', new Map([['guitar' as InstrumentKey, score('s1')]])]]);

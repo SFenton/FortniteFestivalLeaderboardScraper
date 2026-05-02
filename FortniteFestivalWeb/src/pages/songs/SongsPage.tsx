@@ -58,6 +58,8 @@ import {
   saveSongSettings,
   SONG_SETTINGS_CHANGED_EVENT,
   isFilterActive,
+  isVisibleInstrumentFilter,
+  sanitizeSongFiltersForInstruments,
 } from '../../utils/songSettings';
 import { resolveCompactRowMode } from './layoutMode';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
@@ -313,6 +315,15 @@ export default function SongsPage() {
   const isMobileChrome = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
+  const enabledInstruments = useMemo(
+    () => visibleInstruments(appSettings),
+    [appSettings],
+  );
+  const activeSongInstrumentFilter = isVisibleInstrumentFilter(settings.instrument, enabledInstruments) ? settings.instrument : null;
+  const scopedFilters = useMemo(
+    () => sanitizeSongFiltersForInstruments(settings.filters, enabledInstruments),
+    [enabledInstruments, settings.filters],
+  );
   
   // Filter metadata keys by visibility settings (computed early for container-width detection)
   /* v8 ignore start � metadata visibility: settings-dependent presentation filter */
@@ -424,8 +435,18 @@ export default function SongsPage() {
   }, []);
   /* v8 ignore stop */
   const [instrument, setInstrument] = useState<InstrumentKey>(
-    () => settings.instrument ?? DEFAULT_INSTRUMENT,
+    () => activeSongInstrumentFilter ?? DEFAULT_INSTRUMENT,
   );
+
+  useEffect(() => {
+    if (!settings.instrument || activeSongInstrumentFilter) return;
+
+    setInstrument(DEFAULT_INSTRUMENT);
+    setSettings(s => s.instrument === settings.instrument
+      ? normalizeSongSettings({ ...s, instrument: null })
+      : s,
+    );
+  }, [activeSongInstrumentFilter, settings.instrument]);
 
   // Sort/Filter modal state
   const sortModal = useModalState<SortDraft>(() => ({
@@ -435,8 +456,8 @@ export default function SongsPage() {
     instrumentOrder: settings.instrumentOrder,
   }));
   const filterModal = useModalState<FilterDraft>(() => ({
-    ...settings.filters,
-    instrumentFilter: settings.instrument,
+    ...scopedFilters,
+    instrumentFilter: activeSongInstrumentFilter,
   }));
 
   // Persist settings on change
@@ -460,12 +481,13 @@ export default function SongsPage() {
   };
 
   const openFilter = () => {
-    filterModal.open({ ...settings.filters, instrumentFilter: settings.instrument });
+    filterModal.open({ ...scopedFilters, instrumentFilter: activeSongInstrumentFilter });
   };
   const applyFilter = () => {
     const { instrumentFilter, ...filters } = filterModal.draft;
-    setInstrument(instrumentFilter ?? DEFAULT_INSTRUMENT);
-    setSettings(s => normalizeSongSettings({ ...s, filters, instrument: instrumentFilter }));
+    const nextInstrument = isVisibleInstrumentFilter(instrumentFilter, enabledInstruments) ? instrumentFilter : null;
+    setInstrument(nextInstrument ?? DEFAULT_INSTRUMENT);
+    setSettings(s => normalizeSongSettings({ ...s, filters: sanitizeSongFiltersForInstruments(filters, enabledInstruments), instrument: nextInstrument }));
     filterModal.close();
   };
   const resetFilter = () => {
@@ -507,7 +529,7 @@ export default function SongsPage() {
 
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
-  const filtersActive = isFilterActive(settings.filters, settings.instrument, isShopVisible) || settings.instrument != null;
+  const filtersActive = isFilterActive(settings.filters, activeSongInstrumentFilter, isShopVisible, enabledInstruments) || activeSongInstrumentFilter != null;
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
 
   const { isScoreValid, enabled: scoreFilterEnabled, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
@@ -522,7 +544,7 @@ export default function SongsPage() {
     if (!playerData) return empty;
     if (!scoreFilterEnabled) return { effectiveScores: playerData.scores, invalidScoreMap: empty.invalidScoreMap };
 
-    const overThreshold = settings.filters.overThreshold ?? {};
+    const overThreshold = scopedFilters.overThreshold ?? {};
     const scores: PlayerScore[] = [];
     const invalids = new Map<string, Map<InstrumentKey, InvalidReason>>();
 
@@ -584,7 +606,7 @@ export default function SongsPage() {
       }
     }
     return { effectiveScores: scores, invalidScoreMap: invalids };
-  }, [playerData, scoreFilterEnabled, isScoreValid, userLeeway, getFilteredRank, getFilteredTotal, settings.filters.overThreshold]);
+  }, [playerData, scoreFilterEnabled, isScoreValid, userLeeway, getFilteredRank, getFilteredTotal, scopedFilters.overThreshold]);
   /* v8 ignore stop */
 
   // Build lookup: songId ? PlayerScore for the selected instrument
@@ -623,8 +645,8 @@ export default function SongsPage() {
     search: debouncedSearch,
     sortMode: settings.sortMode,
     sortAscending: settings.sortAscending,
-    filters: settings.filters,
-    instrument: settings.instrument,
+    filters: scopedFilters,
+    instrument: activeSongInstrumentFilter,
     scoreMap,
     allScoreMap,
     shopSongIds: shopCtx.shopSongIds,
@@ -632,18 +654,19 @@ export default function SongsPage() {
     isScoreValid,
     filterInvalidScoresEnabled: scoreFilterEnabled,
     shopVisible: isShopVisible,
+    visibleInstruments: enabledInstruments,
   });
 
   const sectionModel = useMemo(() => buildSongQuickLinkSections({
     songs: filtered,
     sortMode: settings.sortMode,
-    instrument: settings.instrument,
+    instrument: activeSongInstrumentFilter,
     scoreMap,
     allScoreMap,
     shopSongIds: shopCtx.shopSongIds,
     leavingTomorrowIds: shopCtx.leavingTomorrowIds,
     t,
-  }), [allScoreMap, filtered, scoreMap, settings.instrument, settings.sortMode, shopCtx.leavingTomorrowIds, shopCtx.shopSongIds, t]);
+  }), [activeSongInstrumentFilter, allScoreMap, filtered, scoreMap, settings.sortMode, shopCtx.leavingTomorrowIds, shopCtx.shopSongIds, t]);
 
   const hasQuickLinkSections = sectionModel.sections.length >= 2;
   const sortLabel = t(SONG_SORT_LABEL_KEYS[settings.sortMode] ?? 'sort.title');
@@ -663,11 +686,6 @@ export default function SongsPage() {
   }, [hasQuickLinkSections, isWideDesktop, sectionModel.sections, settings.sortMode]);
 
   const hasPlayer = !!playerData;
-
-  const enabledInstruments = useMemo(
-    () => visibleInstruments(appSettings),
-    [appSettings],
-  );
 
   // Derive available seasons from player scores
   const availableSeasons = useMemo(() => {
@@ -699,7 +717,7 @@ export default function SongsPage() {
   if (loadPhase === LoadPhase.ContentIn) toolbarShownRef.current = true;
 
   // Fingerprint of sort/filter/search settings — when it changes, re-stagger the list
-  const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${instrument}|${JSON.stringify(settings.filters)}|${debouncedSearch}`;
+  const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${activeSongInstrumentFilter ?? ''}|${JSON.stringify(scopedFilters)}|${debouncedSearch}`;
   const prevSettingsKeyRef = useRef(settingsKey);
 
   /* v8 ignore start � animation: stagger/re-stagger effects */
@@ -963,7 +981,7 @@ export default function SongsPage() {
                   <SongsToolbar
                     search={search}
                     onSearchChange={setSearch}
-                    instrument={settings.instrument}
+                    instrument={activeSongInstrumentFilter}
                     sortActive={sortActive}
                     filtersActive={filtersActive}
                     hasSongs={songs.length > 0 && !isLoading}
@@ -991,7 +1009,7 @@ export default function SongsPage() {
             metadataOrder: settings.metadataOrder,
             instrumentOrder: settings.instrumentOrder,
           }}
-          instrumentFilter={settings.instrument}
+          instrumentFilter={activeSongInstrumentFilter}
           hasPlayer={!!playerData}
           hideItemShop={!isShopVisible}
           metadataVisibility={{
@@ -1013,7 +1031,7 @@ export default function SongsPage() {
         <FilterModal
           visible={filterModal.visible}
           draft={filterModal.draft}
-          savedDraft={{ ...settings.filters, instrumentFilter: settings.instrument }}
+          savedDraft={{ ...scopedFilters, instrumentFilter: activeSongInstrumentFilter }}
           availableSeasons={availableSeasons}
           onChange={filterModal.setDraft}
           onCancel={filterModal.close}
@@ -1106,7 +1124,7 @@ export default function SongsPage() {
                         song={row.song}
                         score={hasPlayer ? scoreMap.get(row.song.songId) : undefined}
                         instrument={instrument}
-                        instrumentFilter={settings.instrument}
+                        instrumentFilter={activeSongInstrumentFilter}
                         allScoreMap={hasPlayer ? allScoreMap.get(row.song.songId) : undefined}
                         showInstrumentIcons={hasPlayer && !appSettings.songsHideInstrumentIcons}
                         enabledInstruments={enabledInstruments}

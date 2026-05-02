@@ -6,9 +6,11 @@ import {
   DEFAULT_METADATA_ORDER,
   defaultSongFilters,
   isFilterActive,
+  isVisibleInstrumentFilter,
   defaultSongSettings,
   loadSongSettings,
   normalizeSongSettings,
+  sanitizeSongFiltersForInstruments,
   saveSongSettings,
   resetSongSettingsForDeselect,
   SONG_SETTINGS_CHANGED_EVENT,
@@ -100,6 +102,33 @@ describe('songSettings', () => {
     it('returns false when all explicit values are default-ish', () => {
       const f = { ...defaultSongFilters(), missingScores: { Solo_Guitar: false } };
       expect(isFilterActive(f)).toBe(false);
+    });
+
+    it('ignores hidden-only per-instrument values when visible instruments are supplied', () => {
+      const f = { ...defaultSongFilters(), missingFCs: { Solo_PeripheralVocals: true } };
+      expect(isFilterActive(f, null, false, ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'])).toBe(false);
+    });
+
+    it('keeps visible per-instrument values active when visible instruments are supplied', () => {
+      const f = { ...defaultSongFilters(), missingFCs: { Solo_Guitar: true, Solo_PeripheralVocals: true } };
+      expect(isFilterActive(f, null, false, ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'])).toBe(true);
+    });
+
+    it('sanitizes hidden per-instrument filter values', () => {
+      const f = {
+        ...defaultSongFilters(),
+        missingFCs: { Solo_Guitar: true, Solo_PeripheralVocals: true },
+        overThreshold: { Solo_PeripheralDrums: true },
+      };
+      expect(sanitizeSongFiltersForInstruments(f, ['Solo_Guitar', 'Solo_Bass']).missingFCs).toEqual({ Solo_Guitar: true });
+      expect(sanitizeSongFiltersForInstruments(f, ['Solo_Guitar', 'Solo_Bass']).overThreshold).toEqual({});
+    });
+
+    it('detects whether a selected instrument is still visible', () => {
+      const visible = ['Solo_Guitar', 'Solo_Bass'] as const;
+      expect(isVisibleInstrumentFilter('Solo_Guitar', visible)).toBe(true);
+      expect(isVisibleInstrumentFilter('Solo_PeripheralVocals', visible)).toBe(false);
+      expect(isVisibleInstrumentFilter(null, visible)).toBe(false);
     });
   });
 

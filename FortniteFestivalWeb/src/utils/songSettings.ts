@@ -95,18 +95,48 @@ export const defaultSongFilters = (): SongFilters => ({
   shopLeavingTomorrow: false,
 });
 
-export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean): boolean => {
+const scopedFilterRecord = (map: Record<string, boolean> | undefined, visibleSet: ReadonlySet<string> | null): Record<string, boolean> => {
+  if (!visibleSet) return map ?? {};
+
+  const filtered: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(map ?? {})) {
+    if (visibleSet.has(key)) filtered[key] = value;
+  }
+  return filtered;
+};
+
+export const sanitizeSongFiltersForInstruments = (f: SongFilters, visibleInstruments?: readonly InstrumentKey[] | null): SongFilters => {
+  if (!visibleInstruments) return f;
+
+  const visibleSet = new Set<string>(visibleInstruments);
+  return {
+    ...f,
+    missingScores: scopedFilterRecord(f.missingScores, visibleSet),
+    missingFCs: scopedFilterRecord(f.missingFCs, visibleSet),
+    hasScores: scopedFilterRecord(f.hasScores, visibleSet),
+    hasFCs: scopedFilterRecord(f.hasFCs, visibleSet),
+    overThreshold: scopedFilterRecord(f.overThreshold, visibleSet),
+  };
+};
+
+export const isVisibleInstrumentFilter = (instrument: InstrumentKey | null | undefined, visibleInstruments?: readonly InstrumentKey[] | null): instrument is InstrumentKey => {
+  if (!instrument) return false;
+  return !visibleInstruments || visibleInstruments.includes(instrument);
+};
+
+export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean, visibleInstruments?: readonly InstrumentKey[] | null): boolean => {
   if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) return true;
+  const scoped = sanitizeSongFiltersForInstruments(f, visibleInstruments);
   const hasPerInstrument =
-    Object.values(f.missingScores).some(v => v === true) ||
-    Object.values(f.missingFCs).some(v => v === true) ||
-    Object.values(f.hasScores).some(v => v === true) ||
-    Object.values(f.hasFCs).some(v => v === true) ||
-    Object.values(f.overThreshold ?? {}).some(v => v === true);
+    Object.values(scoped.missingScores).some(v => v === true) ||
+    Object.values(scoped.missingFCs).some(v => v === true) ||
+    Object.values(scoped.hasScores).some(v => v === true) ||
+    Object.values(scoped.hasFCs).some(v => v === true) ||
+    Object.values(scoped.overThreshold ?? {}).some(v => v === true);
   if (hasPerInstrument) return true;
   // When instrument is explicitly null, ignore instrument-dependent filters
   // (season/percentile/stars/difficulty) since they won't be applied.
-  if (instrument === null) return false;
+  if (instrument === null || (visibleInstruments && !isVisibleInstrumentFilter(instrument, visibleInstruments))) return false;
   return (
     Object.values(f.seasonFilter).some(v => v === false) ||
     Object.values(f.percentileFilter).some(v => v === false) ||
