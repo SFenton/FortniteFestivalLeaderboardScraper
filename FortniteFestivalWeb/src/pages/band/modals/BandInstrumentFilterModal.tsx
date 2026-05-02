@@ -137,14 +137,16 @@ export default function BandInstrumentFilterModal({
 
   const apply = useCallback(() => {
     if (applyDisabled || !matchingConfiguration) return;
+    const matchingConfigurations = configurations.filter(configuration => configuration.comboId === matchingConfiguration.comboId);
     onApply({
       comboId: matchingConfiguration.comboId,
+      configurations: matchingConfigurations,
       assignments: members.map((member, index) => ({
         accountId: member.accountId,
         instrument: draft[index]!,
       })),
     });
-  }, [applyDisabled, draft, matchingConfiguration, members, onApply]);
+  }, [applyDisabled, configurations, draft, matchingConfiguration, members, onApply]);
 
   return (
     <Modal
@@ -225,11 +227,12 @@ function InstrumentSlotSection({
   const allowed = new Set(availableInstruments);
   const hiddenInstruments = SERVER_INSTRUMENT_KEYS.filter(instrument => !allowed.has(instrument));
   const ordinalKey = INSTRUMENT_SLOT_ORDINAL_KEYS[index] ?? INSTRUMENT_SLOT_ORDINAL_KEYS[INSTRUMENT_SLOT_ORDINAL_KEYS.length - 1];
+  const ordinalLabel = t(`bandFilter.instrumentSlotOrdinals.${ordinalKey}`);
 
   return (
     <ModalSection
       title={t('bandFilter.instrumentSlotTitle', { index: index + 1 })}
-      hint={t('bandFilter.instrumentSlotSubtitle', { ordinal: t(`bandFilter.instrumentSlotOrdinals.${ordinalKey}`) })}
+      hint={t('bandFilter.instrumentSlotSubtitle', { replace: { ordinal: ordinalLabel } })}
     >
       {availableInstruments.length > 0 ? (
         <InstrumentSelector

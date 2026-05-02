@@ -83,6 +83,12 @@ export default function BandRankingsPage() {
   const data = leaderboardQuery.data;
   const entries = data?.entries ?? [];
   const totalTeams = data?.totalTeams;
+  const activeFilterInstruments = bandType === 'Band_Duets' && appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+    ? appliedBandComboFilter.assignments.map(assignment => assignment.instrument)
+    : undefined;
+  const activeFilterConfigurations = bandType === 'Band_Duets' && appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+    ? appliedBandComboFilter.configurations
+    : undefined;
   const totalPages = data ? Math.max(1, Math.ceil(data.totalTeams / LEADERBOARD_PAGE_SIZE)) : 1;
   const loading = leaderboardQuery.isFetching && !data;
   const hasPagination = !!data && !leaderboardQuery.error && totalPages > 1;
@@ -174,6 +180,10 @@ export default function BandRankingsPage() {
                   bandType={bandType}
                   metric={metric}
                   totalTeams={totalTeams}
+                  activeFilterComboId={activeComboId}
+                  activeFilterTeamKey={appliedBandComboFilter?.teamKey}
+                  activeFilterInstruments={activeFilterInstruments}
+                  activeFilterConfigurations={activeFilterConfigurations}
                   testId={`band-rankings-entry-${index}`}
                   style={stagger(index)}
                   onAnimationEnd={clearAnim}

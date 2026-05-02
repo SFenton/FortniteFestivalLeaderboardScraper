@@ -57,8 +57,8 @@ function ShellRefInjector({ children }: { children: ReactNode }) {
   );
 }
 
-export function TestProviders({ children, route = '/', accountId, bandFilter }: { children: ReactNode; route?: string; accountId?: string; bandFilter?: AppliedBandComboFilter | null }) {
-  const qc = createTestQueryClient();
+export function TestProviders({ children, route = '/', accountId, bandFilter, queryClient }: { children: ReactNode; route?: string; accountId?: string; bandFilter?: AppliedBandComboFilter | null; queryClient?: QueryClient }) {
+  const qc = queryClient ?? createTestQueryClient();
   return (
     <QueryClientProvider client={qc}>
     <FeatureFlagsProvider>

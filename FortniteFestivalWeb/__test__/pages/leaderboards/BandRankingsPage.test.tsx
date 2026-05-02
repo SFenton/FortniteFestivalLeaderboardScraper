@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
-import type { BandRankingEntry, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, BandRankingEntry, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import BandRankingsPage from '../../../src/pages/leaderboards/BandRankingsPage';
@@ -22,11 +22,12 @@ vi.mock('../../../src/hooks/ui/useStagger', () => ({
   useStagger: () => ({ forIndex: () => ({}), clearAnim: vi.fn() }),
 }));
 
-function makeBandEntry(rank: number, names: string[]): BandRankingEntry {
+function makeBandEntry(rank: number, names: string[], configurations?: BandConfiguration[]): BandRankingEntry {
   return {
     bandId: `band-${rank}`,
     teamKey: names.map(name => name.toLowerCase()).join(':'),
     teamMembers: names.map((name, index) => ({ accountId: `acct-${rank}-${index}`, displayName: name })),
+    configurations,
     members: names.map((name, index) => ({
       accountId: `acct-${rank}-${index}`,
       displayName: name,
@@ -138,5 +139,75 @@ describe('BandRankingsPage', () => {
     await waitFor(() => {
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25);
     });
+  });
+
+  it('renders observed Duos assignments as compact possibilities on the full band rankings page', async () => {
+    const configurations: BandConfiguration[] = [
+      {
+        rawInstrumentCombo: '0:2',
+        comboId: 'Solo_Guitar+Solo_Vocals',
+        instruments: ['Solo_Guitar', 'Solo_Vocals'],
+        assignmentKey: 'acct-1-0=Solo_Guitar|acct-1-1=Solo_Vocals',
+        appearanceCount: 5,
+        memberInstruments: { 'acct-1-0': 'Solo_Guitar', 'acct-1-1': 'Solo_Vocals' },
+      },
+      {
+        rawInstrumentCombo: '2:0',
+        comboId: 'Solo_Guitar+Solo_Vocals',
+        instruments: ['Solo_Guitar', 'Solo_Vocals'],
+        assignmentKey: 'acct-1-0=Solo_Vocals|acct-1-1=Solo_Guitar',
+        appearanceCount: 1,
+        memberInstruments: { 'acct-1-0': 'Solo_Vocals', 'acct-1-1': 'Solo_Guitar' },
+      },
+      {
+        rawInstrumentCombo: '0:1',
+        comboId: 'Solo_Guitar+Solo_Bass',
+        instruments: ['Solo_Guitar', 'Solo_Bass'],
+        assignmentKey: 'acct-1-0=Solo_Guitar|acct-1-1=Solo_Bass',
+        appearanceCount: 1,
+        memberInstruments: { 'acct-1-0': 'Solo_Guitar', 'acct-1-1': 'Solo_Bass' },
+      },
+    ];
+    mockApi.getBandRankings.mockResolvedValue({
+      bandType: 'Band_Duets',
+      comboId: 'Solo_Guitar+Solo_Vocals',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalTeams: 42,
+      entries: [makeBandEntry(1, ['Alpha', 'Beta'], configurations)],
+    });
+
+    render(
+      <TestProviders
+        route="/leaderboards/bands/Band_Duets?rankBy=totalscore"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'acct-a:acct-b',
+          comboId: 'Solo_Guitar+Solo_Vocals',
+          assignments: [
+            { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+            { accountId: 'acct-b', instrument: 'Solo_Vocals' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const row = await screen.findByTestId('band-rankings-entry-0');
+    expect(within(row).queryByTestId('band-member-lineup')).toBeNull();
+    const rows = within(row).getAllByTestId('band-member-row');
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]!).getByText('Alpha')).toBeTruthy();
+    expect(within(rows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(rows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(rows[1]!).getByText('Beta')).toBeTruthy();
+    expect(within(rows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(rows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(row).toHaveAttribute('href', '/bands/band-1?bandType=Band_Duets&teamKey=alpha%3Abeta&names=Alpha%20%2B%20Beta');
   });
 });

@@ -2,7 +2,7 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import type { BandRankingEntry, BandRankingMetric, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { staggerDelay } from '@festival/ui-utils';
 import { Border, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Overflow, Cursor, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, border, frostedCard, flexColumn, flexRow, transition } from '@festival/theme';
 import { Routes } from '../../../routes';
@@ -19,7 +19,10 @@ type BandRankingCardProps = {
   selectedPlayerEntry?: BandRankingEntry | null;
   selectedBandEntry?: BandRankingEntry | null;
   selectedAccountId?: string;
+  activeFilterComboId?: string;
+  activeFilterTeamKey?: string;
   activeFilterInstruments?: readonly ServerInstrumentKey[];
+  activeFilterConfigurations?: readonly BandConfiguration[];
   totalTeams: number;
   error?: string | null;
   shouldStagger?: boolean;
@@ -33,7 +36,10 @@ export default memo(function BandRankingCard({
   selectedPlayerEntry,
   selectedBandEntry,
   selectedAccountId,
+  activeFilterComboId,
+  activeFilterTeamKey,
   activeFilterInstruments,
+  activeFilterConfigurations,
   totalTeams,
   error,
   shouldStagger,
@@ -96,7 +102,10 @@ export default memo(function BandRankingCard({
               metric={metric}
               totalTeams={totalTeams}
               sourceAccountId={entryHasAccount(entry, selectedAccountId) ? selectedAccountId : undefined}
+              activeFilterComboId={activeFilterComboId}
+              activeFilterTeamKey={activeFilterTeamKey}
               activeFilterInstruments={activeFilterInstruments}
+              activeFilterConfigurations={activeFilterConfigurations}
               rankWidth={rankWidth}
               testId={`band-ranking-entry-${bandType}-${index}`}
               style={rowStaggerStyle}
@@ -116,7 +125,10 @@ export default memo(function BandRankingCard({
             metric={metric}
             totalTeams={totalTeams}
             sourceAccountId={selectedBandEntry ? undefined : selectedAccountId}
+            activeFilterComboId={activeFilterComboId}
+            activeFilterTeamKey={activeFilterTeamKey}
             activeFilterInstruments={activeFilterInstruments}
+            activeFilterConfigurations={activeFilterConfigurations}
             rankWidth={rankWidth}
             testId={`band-ranking-selected-entry-${bandType}`}
             style={{ ...styles.selectedCard, ...selectedStaggerStyle }}
@@ -178,7 +190,7 @@ function useStyles() {
     } as CSSProperties,
     cardError: {
       fontSize: Font.sm,
-      color: Colors.danger,
+      color: Colors.statusRed,
     } as CSSProperties,
     viewAllButton: {
       ...frostedCard,

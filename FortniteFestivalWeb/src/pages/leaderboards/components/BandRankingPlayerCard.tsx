@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- shared card footer uses inline theme styles */
 import { type AnimationEventHandler, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { BandRankingEntry, BandRankingMetric, BandType, PlayerBandEntry, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, PlayerBandEntry, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { Gap } from '@festival/theme';
 import { rankColor } from '@festival/core';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
@@ -15,7 +15,10 @@ type BandRankingPlayerCardProps = {
   metric: BandRankingMetric;
   totalTeams?: number;
   sourceAccountId?: string;
+  activeFilterComboId?: string;
+  activeFilterTeamKey?: string;
   activeFilterInstruments?: readonly ServerInstrumentKey[];
+  activeFilterConfigurations?: readonly BandConfiguration[];
   rankWidth?: number;
   testId?: string;
   style?: CSSProperties;
@@ -28,14 +31,22 @@ export default function BandRankingPlayerCard({
   metric,
   totalTeams,
   sourceAccountId,
+  activeFilterComboId,
+  activeFilterTeamKey,
   activeFilterInstruments,
+  activeFilterConfigurations,
   rankWidth,
   testId,
   style,
   onAnimationEnd,
 }: BandRankingPlayerCardProps) {
   const { t } = useTranslation();
-  const playerBandEntry = bandRankingToPlayerBandEntry(entry, bandType, activeFilterInstruments);
+  const configurations = entry.configurations?.length
+    ? entry.configurations
+    : entry.teamKey === activeFilterTeamKey
+      ? activeFilterConfigurations
+      : undefined;
+  const playerBandEntry = bandRankingToPlayerBandEntry(entry, bandType, activeFilterInstruments, activeFilterComboId, configurations);
   const names = formatPlayerBandNames(playerBandEntry);
   const rank = getBandRankForMetric(entry, metric);
 
@@ -55,7 +66,7 @@ export default function BandRankingPlayerCard({
   );
 }
 
-export function bandRankingToPlayerBandEntry(entry: BandRankingEntry, bandType: BandType, activeFilterInstruments?: readonly ServerInstrumentKey[]): PlayerBandEntry {
+export function bandRankingToPlayerBandEntry(entry: BandRankingEntry, bandType: BandType, activeFilterInstruments?: readonly ServerInstrumentKey[], activeFilterComboId?: string, configurations?: readonly BandConfiguration[]): PlayerBandEntry {
   const members = entry.members && entry.members.length > 0
     ? entry.members
     : entry.teamMembers.map(member => ({
@@ -68,8 +79,57 @@ export function bandRankingToPlayerBandEntry(entry: BandRankingEntry, bandType: 
     bandId: entry.bandId,
     teamKey: entry.teamKey,
     bandType,
-    members: filterMemberInstruments(members, activeFilterInstruments),
+    members: resolveDisplayedMembers(members, bandType, activeFilterInstruments, activeFilterComboId, configurations ?? entry.configurations),
   };
+}
+
+function resolveDisplayedMembers(
+  members: readonly PlayerBandMember[],
+  bandType: BandType,
+  activeFilterInstruments?: readonly ServerInstrumentKey[],
+  activeFilterComboId?: string,
+  configurations?: readonly BandConfiguration[],
+): PlayerBandMember[] {
+  if (bandType === 'Band_Duets' && activeFilterInstruments?.length) {
+    const configuredMembers = buildDuosConfiguredMembers(members, configurations, activeFilterInstruments, activeFilterComboId);
+    return configuredMembers ?? filterDuoMemberInstruments(members, activeFilterInstruments);
+  }
+
+  return filterMemberInstruments(members, activeFilterInstruments);
+}
+
+function buildDuosConfiguredMembers(
+  members: readonly PlayerBandMember[],
+  configurations: readonly BandConfiguration[] | undefined,
+  activeFilterInstruments: readonly ServerInstrumentKey[],
+  activeFilterComboId?: string,
+): PlayerBandMember[] | null {
+  if (members.length !== 2 || !configurations?.length) return null;
+
+  const matchingConfigurations = activeFilterComboId
+    ? configurations.filter(configuration => configuration.comboId === activeFilterComboId)
+    : configurations;
+  const memberInstrumentSets = members.map(() => new Set<ServerInstrumentKey>());
+  const seenAssignments = new Set<string>();
+
+  for (const configuration of matchingConfigurations) {
+    const assignedInstruments = members.map(member => configuration.memberInstruments[member.accountId]);
+    if (assignedInstruments.some(instrument => !instrument)) continue;
+
+    const assignmentKey = assignedInstruments.map((instrument, index) => `${members[index]!.accountId}:${instrument}`).join('|');
+    if (seenAssignments.has(assignmentKey)) continue;
+
+    seenAssignments.add(assignmentKey);
+    assignedInstruments.forEach((instrument, index) => memberInstrumentSets[index]!.add(instrument!));
+  }
+
+  if (memberInstrumentSets.some(instruments => instruments.size === 0)) return null;
+
+  const configuredMembers = members.map((member, index) => ({
+    ...member,
+    instruments: orderFilteredInstruments(memberInstrumentSets[index]!, activeFilterInstruments),
+  }));
+  return constrainDuoMemberInstruments(configuredMembers, activeFilterInstruments);
 }
 
 function filterMemberInstruments(members: readonly PlayerBandMember[], activeFilterInstruments?: readonly ServerInstrumentKey[]): PlayerBandMember[] {
@@ -80,6 +140,53 @@ function filterMemberInstruments(members: readonly PlayerBandMember[], activeFil
     ...member,
     instruments: member.instruments.filter(instrument => allowed.has(instrument)),
   }));
+}
+
+function filterDuoMemberInstruments(members: readonly PlayerBandMember[], activeFilterInstruments: readonly ServerInstrumentKey[]): PlayerBandMember[] {
+  return constrainDuoMemberInstruments(filterMemberInstruments(members, activeFilterInstruments), activeFilterInstruments);
+}
+
+function constrainDuoMemberInstruments(members: readonly PlayerBandMember[], activeFilterInstruments: readonly ServerInstrumentKey[]): PlayerBandMember[] {
+  if (members.length !== 2) return [...members];
+
+  const activeDistinctInstruments = Array.from(new Set(activeFilterInstruments));
+  if (activeDistinctInstruments.length !== 2) {
+    return members.map(member => ({
+      ...member,
+      instruments: orderFilteredInstruments(member.instruments, activeFilterInstruments),
+    }));
+  }
+
+  const [firstInstrument, secondInstrument] = activeDistinctInstruments;
+  const constrainedSets = members.map(member => new Set(member.instruments.filter(instrument => instrument === firstInstrument || instrument === secondInstrument)));
+  constrainOtherDuoMember(constrainedSets, 0, 1, firstInstrument!, secondInstrument!);
+  constrainOtherDuoMember(constrainedSets, 1, 0, firstInstrument!, secondInstrument!);
+
+  return members.map((member, index) => ({
+    ...member,
+    instruments: orderFilteredInstruments(constrainedSets[index]!, activeFilterInstruments),
+  }));
+}
+
+function constrainOtherDuoMember(memberInstrumentSets: Set<ServerInstrumentKey>[], fixedIndex: number, otherIndex: number, firstInstrument: ServerInstrumentKey, secondInstrument: ServerInstrumentKey) {
+  const fixedInstruments = memberInstrumentSets[fixedIndex]!;
+  const otherInstruments = memberInstrumentSets[otherIndex]!;
+  if (fixedInstruments.size !== 1 || otherInstruments.size <= 1) return;
+
+  const fixedInstrument = Array.from(fixedInstruments)[0]!;
+  const remainingInstrument = fixedInstrument === firstInstrument ? secondInstrument : firstInstrument;
+  if (otherInstruments.has(remainingInstrument)) {
+    memberInstrumentSets[otherIndex] = new Set([remainingInstrument]);
+  }
+}
+
+function orderFilteredInstruments(instruments: Iterable<ServerInstrumentKey>, activeFilterInstruments: readonly ServerInstrumentKey[]): ServerInstrumentKey[] {
+  const instrumentSet = new Set(instruments);
+  const orderedActiveInstruments = Array.from(new Set(activeFilterInstruments));
+  return [
+    ...orderedActiveInstruments.filter(instrument => instrumentSet.has(instrument)),
+    ...Array.from(instrumentSet).filter(instrument => !orderedActiveInstruments.includes(instrument)),
+  ];
 }
 
 function BandRankingFooter({ entry, metric, rank, totalTeams }: { entry: BandRankingEntry; metric: BandRankingMetric; rank: number; totalTeams?: number }) {

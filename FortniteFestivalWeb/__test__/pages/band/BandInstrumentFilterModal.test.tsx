@@ -98,13 +98,17 @@ describe('BandInstrumentFilterModal', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
-    expect(onApply).toHaveBeenCalledWith({
+    expect(onApply).toHaveBeenCalledWith(expect.objectContaining({
       comboId: 'Solo_Guitar+Solo_Bass',
       assignments: [
         { accountId: 'acct-a', instrument: 'Solo_Bass' },
         { accountId: 'acct-b', instrument: 'Solo_Guitar' },
       ],
-    });
+      configurations: expect.arrayContaining([
+        expect.objectContaining({ assignmentKey: 'acct-a=Solo_Guitar|acct-b=Solo_Bass' }),
+        expect.objectContaining({ assignmentKey: 'acct-a=Solo_Bass|acct-b=Solo_Guitar' }),
+      ]),
+    }));
   });
 
   it('applies a repeated-instrument combo when the band has played it', async () => {
@@ -119,13 +123,14 @@ describe('BandInstrumentFilterModal', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
-    expect(onApply).toHaveBeenCalledWith({
+    expect(onApply).toHaveBeenCalledWith(expect.objectContaining({
       comboId: 'Solo_Guitar+Solo_Guitar',
       assignments: [
         { accountId: 'acct-a', instrument: 'Solo_Guitar' },
         { accountId: 'acct-b', instrument: 'Solo_Guitar' },
       ],
-    });
+      configurations: [expect.objectContaining({ assignmentKey: 'acct-a=Solo_Guitar|acct-b=Solo_Guitar' })],
+    }));
   });
 
   it('confirms a selection that cannot match the current partial assignment', async () => {

@@ -1,4 +1,4 @@
-import type { PlayerBandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, PlayerBandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 
 export type BandInstrumentFilterAssignment = {
   accountId: string;
@@ -8,6 +8,7 @@ export type BandInstrumentFilterAssignment = {
 export type BandInstrumentFilterApplyPayload = {
   comboId: string;
   assignments: BandInstrumentFilterAssignment[];
+  configurations?: BandConfiguration[];
 };
 
 export type AppliedBandComboFilter = {
@@ -16,4 +17,5 @@ export type AppliedBandComboFilter = {
   teamKey: string;
   comboId: string;
   assignments: BandInstrumentFilterAssignment[];
+  configurations?: BandConfiguration[];
 };

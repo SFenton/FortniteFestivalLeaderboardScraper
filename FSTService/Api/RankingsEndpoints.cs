@@ -621,7 +621,8 @@ public static partial class ApiEndpoints
             string teamKey,
             string? combo,
             string? rankBy,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            GlobalLeaderboardPersistence persistence) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -636,6 +637,7 @@ public static partial class ApiEndpoints
             var ranking = metaDb.GetBandTeamRanking(bandType, teamKey, comboValidation.ComboId);
             if (ranking is null)
                 return Results.NotFound(new { error = "Team not found in this band ranking." });
+            ranking.Configurations.AddRange(persistence.GetBandConfigurations(bandType, teamKey));
 
             var names = metaDb.GetDisplayNames(ranking.TeamMembers);
 
@@ -657,6 +659,7 @@ public static partial class ApiEndpoints
                     displayName = names.GetValueOrDefault(member.AccountId),
                     member.Instruments,
                 }).ToList(),
+                configurations = MapBandConfigurations(ranking),
                 ranking.SongsPlayed,
                 ranking.TotalChartedSongs,
                 ranking.Coverage,
@@ -925,6 +928,7 @@ public static partial class ApiEndpoints
     private static object MapBandRanking(BandTeamRankingDto ranking, IReadOnlyDictionary<string, string> names) => new
     {
         ranking.BandId,
+        comboId = ranking.ComboId,
         ranking.TeamKey,
         teamMembers = ranking.TeamMembers.Select(accountId => new
         {
@@ -937,6 +941,7 @@ public static partial class ApiEndpoints
             displayName = names.GetValueOrDefault(member.AccountId),
             member.Instruments,
         }).ToList(),
+        configurations = MapBandConfigurations(ranking),
         ranking.SongsPlayed,
         ranking.TotalChartedSongs,
         ranking.Coverage,
@@ -957,5 +962,15 @@ public static partial class ApiEndpoints
         ranking.RawWeightedRating,
         ranking.ComputedAt,
     };
+
+    private static List<object> MapBandConfigurations(BandTeamRankingDto ranking) => ranking.Configurations.Select(configuration => (object)new
+    {
+        configuration.RawInstrumentCombo,
+        configuration.ComboId,
+        configuration.Instruments,
+        configuration.AssignmentKey,
+        configuration.AppearanceCount,
+        configuration.MemberInstruments,
+    }).ToList();
 
 }

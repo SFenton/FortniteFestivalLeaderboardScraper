@@ -1,10 +1,10 @@
 /* eslint-disable react/forbid-dom-props -- page-level dynamic styles use inline style objects */
 import { useCallback, useEffect, useMemo, useRef, useState, type AnimationEvent, type CSSProperties, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { IoChevronForward, IoPeople } from 'react-icons/io5';
-import type { BandRankingDto, BandType, PlayerBandEntry, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandDetailResponse, BandRankingDto, BandType, PlayerBandEntry, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { ACCURACY_SCALE, LoadPhase } from '@festival/core';
 import { Colors, Font, Gap, IconSize, Layout, Radius, TRANSITION_MS, Weight, flexColumn, flexRow, frostedCard, transition, transitions } from '@festival/theme';
 import { api } from '../../api/client';
@@ -46,6 +46,7 @@ export default function BandPage() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { profile, selectBand } = useSelectedProfile();
 
   const lookupAccountId = searchParams.get('accountId') ?? undefined;
@@ -108,10 +109,21 @@ export default function BandPage() {
   const error = missingLookupParams
     ? new Error(t('band.missingId'))
     : (!contextBand ? (lookupQuery.error ?? rankingQuery.error ?? detailQuery.error ?? null) : null);
-  const payload = contextBand ? { band: contextBand, ranking: rankingQuery.data ?? null } : (detailQuery.data ?? null);
+  const payload = useMemo(() => contextBand
+    ? { band: contextBand, ranking: rankingQuery.data ?? null, configurations: rankingQuery.data?.configurations ?? [] }
+    : (detailQuery.data ?? null), [contextBand, detailQuery.data, rankingQuery.data]);
   const genericBandTitle = t('band.title');
   const unknownMemberName = t('common.unknownUser');
   const resolvedTitle = payload ? formatBandTitle(payload.band, unknownMemberName, genericBandTitle) : undefined;
+
+  useEffect(() => {
+    if (!effectiveBandId || !contextBand || !rankingQuery.data || !Array.isArray(rankingQuery.data.configurations)) return;
+    queryClient.setQueryData<BandDetailResponse>(queryKeys.bandDetail(effectiveBandId), {
+      band: contextBand,
+      ranking: rankingQuery.data,
+      configurations: rankingQuery.data.configurations,
+    });
+  }, [contextBand, effectiveBandId, queryClient, rankingQuery.data]);
 
   useEffect(() => {
     if (!payload || routeNames || (!bandId && contextBand?.bandId)) return;

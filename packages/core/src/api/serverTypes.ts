@@ -666,9 +666,11 @@ export type BandTeamMember = {
 
 export type BandRankingEntry = {
   bandId: string;
+  comboId?: string | null;
   teamKey: string;
   teamMembers: BandTeamMember[];
   members?: PlayerBandMember[];
+  configurations?: BandConfiguration[];
   songsPlayed: number;
   totalChartedSongs: number;
   coverage: number;

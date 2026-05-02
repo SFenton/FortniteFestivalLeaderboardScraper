@@ -758,6 +758,7 @@ public sealed class BandTeamRankingDto
     public string TeamKey { get; init; } = "";
     public string[] TeamMembers { get; init; } = [];
     public List<PlayerBandMemberDto> Members { get; init; } = [];
+    public List<BandConfigurationDto> Configurations { get; set; } = [];
     public int SongsPlayed { get; init; }
     public int TotalChartedSongs { get; init; }
     public double Coverage { get; init; }

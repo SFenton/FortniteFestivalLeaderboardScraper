@@ -263,6 +263,15 @@ export default function LeaderboardsOverviewPage() {
                 const activeFilterInstruments = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
                   ? appliedBandComboFilter.assignments.map(assignment => assignment.instrument)
                   : undefined;
+                const activeFilterComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+                  ? appliedBandComboFilter.comboId
+                  : undefined;
+                const activeFilterTeamKey = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+                  ? appliedBandComboFilter.teamKey
+                  : undefined;
+                const activeFilterConfigurations = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+                  ? appliedBandComboFilter.configurations
+                  : undefined;
                 return (
                   <BandRankingCard
                     key={bandType}
@@ -272,7 +281,10 @@ export default function LeaderboardsOverviewPage() {
                     selectedPlayerEntry={bandQuery?.data?.selectedPlayerEntry ?? null}
                     selectedBandEntry={bandQuery?.data?.selectedBandEntry ?? (selectedBandType === bandType ? selectedBandRankingQuery.data ?? null : null)}
                     selectedAccountId={selectedAccountId}
+                    activeFilterComboId={activeFilterComboId}
+                    activeFilterTeamKey={activeFilterTeamKey}
                     activeFilterInstruments={activeFilterInstruments}
+                    activeFilterConfigurations={activeFilterConfigurations}
                     totalTeams={bandQuery?.data?.totalTeams ?? 0}
                     error={bandQuery?.error ? String(bandQuery.error) : null}
                     shouldStagger={shouldStagger}

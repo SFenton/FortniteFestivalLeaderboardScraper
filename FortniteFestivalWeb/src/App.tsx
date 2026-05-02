@@ -483,6 +483,7 @@ function AppShell() {
       teamKey: selectedProfile.teamKey,
       comboId: payload.comboId,
       assignments: payload.assignments,
+      configurations: payload.configurations,
     });
     setBandFilterModalOpen(false);
   }, [selectedProfile]);

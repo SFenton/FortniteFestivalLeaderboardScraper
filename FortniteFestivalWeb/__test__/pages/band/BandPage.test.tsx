@@ -3,7 +3,9 @@ import { render, screen, act, fireEvent } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import { ACCURACY_SCALE } from '@festival/core';
 import { Colors } from '@festival/theme';
-import { TestProviders } from '../../helpers/TestProviders';
+import type { BandDetailResponse } from '@festival/core/api/serverTypes';
+import { queryKeys } from '../../../src/api/queryKeys';
+import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => ({
@@ -18,6 +20,16 @@ const mockApi = vi.hoisted(() => ({
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
 
 const SELECTED_PROFILE_STORAGE_KEY = 'fst:selectedProfile';
+const DEFAULT_CONFIGURATIONS = [
+  {
+    rawInstrumentCombo: '0:1',
+    comboId: 'Solo_Guitar+Solo_Bass',
+    instruments: ['Solo_Guitar', 'Solo_Bass'],
+    assignmentKey: 'p1=Solo_Guitar|p2=Solo_Bass',
+    appearanceCount: 2,
+    memberInstruments: { p1: 'Solo_Guitar', p2: 'Solo_Bass' },
+  },
+];
 
 beforeAll(() => {
   stubScrollTo();
@@ -80,7 +92,9 @@ beforeEach(() => {
       rawWeightedRating: 9,
       computedAt: '2026-04-24T00:00:00Z',
       totalRankedTeams: 50,
+      configurations: DEFAULT_CONFIGURATIONS,
     },
+    configurations: DEFAULT_CONFIGURATIONS,
   });
   mockApi.getPlayerBandsByType.mockResolvedValue({
     accountId: 'p1',
@@ -129,6 +143,7 @@ beforeEach(() => {
     rawWeightedRating: 9,
     computedAt: '2026-04-24T00:00:00Z',
     totalRankedTeams: 50,
+    configurations: DEFAULT_CONFIGURATIONS,
   });
   mockApi.getBandRankHistory.mockResolvedValue({
     bandType: 'Band_Duets',
@@ -205,9 +220,9 @@ function LocationProbe() {
   return <div data-testid="current-location">{`${location.pathname}${location.search}`}</div>;
 }
 
-function renderBandPage(route: string) {
+function renderBandPage(route: string, queryClient = createTestQueryClient()) {
   return render(
-    <TestProviders route={route}>
+    <TestProviders route={route} queryClient={queryClient}>
       <LocationProbe />
       <Routes>
         <Route path="/bands" element={<BandPage />} />
@@ -426,6 +441,19 @@ describe('BandPage', () => {
     expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
     expect(screen.getByText('Band Summary')).toBeTruthy();
     expect(screen.getByText('2 / 10')).toBeTruthy();
+  });
+
+  it('seeds band detail cache from contextual ranking configurations', async () => {
+    const queryClient = createTestQueryClient();
+    renderBandPage('/bands/band-guid-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two', queryClient);
+    await advancePastSpinner();
+
+    const cached = queryClient.getQueryData<BandDetailResponse>(queryKeys.bandDetail('band-guid-1'));
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expect(mockApi.getBandDetail).not.toHaveBeenCalled();
+    expect(cached?.band.bandId).toBe('band-guid-1');
+    expect(cached?.ranking.bandId).toBe('band-guid-1');
+    expect(cached?.configurations).toEqual(DEFAULT_CONFIGURATIONS);
   });
 
   it('uses route names as member fallbacks for ranking-only band context', async () => {

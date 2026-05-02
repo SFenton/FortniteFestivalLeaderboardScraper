@@ -3763,9 +3763,13 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize);
 
         var entries = new List<BandTeamRankingDto>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            entries.Add(ReadBandTeamRanking(reader, totalTeams));
+        using (var reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+                entries.Add(ReadBandTeamRanking(reader, totalTeams));
+        }
+
+        AttachBandRankingConfigurations(conn, entries, bandType, normalizedComboId);
 
         return (entries, totalTeams);
     }
@@ -3796,8 +3800,14 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("scope", rankingScope);
         cmd.Parameters.AddWithValue("comboId", normalizedComboId);
         cmd.Parameters.AddWithValue("teamKey", teamKey);
-        using var reader = cmd.ExecuteReader();
-        return reader.Read() ? ReadBandTeamRanking(reader, totalTeams) : null;
+        BandTeamRankingDto? ranking;
+        using (var reader = cmd.ExecuteReader())
+        {
+            ranking = reader.Read() ? ReadBandTeamRanking(reader, totalTeams) : null;
+        }
+        if (ranking is not null)
+            AttachBandRankingConfigurations(conn, [ranking], bandType, normalizedComboId);
+        return ranking;
     }
 
     public BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted")
@@ -3833,8 +3843,14 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("comboId", normalizedComboId);
         cmd.Parameters.AddWithValue("accountId", accountId);
 
-        using var reader = cmd.ExecuteReader();
-        return reader.Read() ? ReadBandTeamRanking(reader, totalTeams) : null;
+        BandTeamRankingDto? ranking;
+        using (var reader = cmd.ExecuteReader())
+        {
+            ranking = reader.Read() ? ReadBandTeamRanking(reader, totalTeams) : null;
+        }
+        if (ranking is not null)
+            AttachBandRankingConfigurations(conn, [ranking], bandType, normalizedComboId);
+        return ranking;
     }
 
     public List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30)
@@ -5860,6 +5876,63 @@ public sealed class MetaDatabase : IMetaDatabase
         }).ToList();
     }
 
+    private static void AttachBandRankingConfigurations(NpgsqlConnection conn, IReadOnlyCollection<BandTeamRankingDto> rankings, string bandType, string comboId)
+    {
+        if (!ShouldAttachBandRankingConfigurations(bandType, comboId) || rankings.Count == 0)
+            return;
+
+        var rawCombos = BandComboIds.ToEpicRawComboCandidates(comboId).ToArray();
+        if (rawCombos.Length == 0)
+            return;
+
+        var rankingsByTeamKey = rankings
+            .GroupBy(static ranking => ranking.TeamKey, StringComparer.Ordinal)
+            .ToDictionary(static group => group.Key, static group => group.ToList(), StringComparer.Ordinal);
+        var teamKeys = rankingsByTeamKey.Keys.ToArray();
+        if (teamKeys.Length == 0)
+            return;
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT team_key, instrument_combo, assignment_key, appearance_count, member_assignments_json::text
+            FROM {BandLeaderboardPersistence.BandTeamConfigurationTable}
+            WHERE band_type = @bandType
+              AND team_key = ANY(@teamKeys)
+              AND instrument_combo = ANY(@rawCombos)
+            ORDER BY team_key, appearance_count DESC, assignment_key
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKeys", NpgsqlDbType.Array | NpgsqlDbType.Text, teamKeys);
+        cmd.Parameters.AddWithValue("rawCombos", NpgsqlDbType.Array | NpgsqlDbType.Text, rawCombos);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var teamKey = reader.GetString(0);
+            if (!rankingsByTeamKey.TryGetValue(teamKey, out var matchingRankings))
+                continue;
+
+            var rawCombo = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+            var observedComboId = BandComboIds.FromEpicRawCombo(rawCombo);
+            var configuration = new BandConfigurationDto
+            {
+                RawInstrumentCombo = rawCombo,
+                ComboId = observedComboId,
+                Instruments = BandComboIds.ToInstruments(observedComboId).ToList(),
+                AssignmentKey = reader.GetString(2),
+                AppearanceCount = reader.GetInt32(3),
+                MemberInstruments = ParseMemberAssignmentJson(reader.IsDBNull(4) ? "{}" : reader.GetString(4)),
+            };
+
+            foreach (var ranking in matchingRankings)
+                ranking.Configurations.Add(configuration);
+        }
+    }
+
+    private static bool ShouldAttachBandRankingConfigurations(string bandType, string comboId) =>
+        !string.IsNullOrWhiteSpace(comboId)
+        && string.Equals(bandType, "Band_Duets", StringComparison.OrdinalIgnoreCase);
+
     private static Dictionary<string, List<string>> ParseMemberInstrumentsJson(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -5879,6 +5952,26 @@ public sealed class MetaDatabase : IMetaDatabase
                 : [];
 
             result[property.Name] = instruments;
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, string> ParseMemberAssignmentJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        using var document = JsonDocument.Parse(json);
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String)
+                continue;
+
+            var instrument = property.Value.GetString();
+            if (!string.IsNullOrWhiteSpace(instrument))
+                result[property.Name] = instrument;
         }
 
         return result;

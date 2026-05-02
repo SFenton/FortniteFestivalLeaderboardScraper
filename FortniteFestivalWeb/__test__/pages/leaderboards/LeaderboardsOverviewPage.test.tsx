@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
-import type { BandRankingEntry, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandConfiguration, BandRankingEntry, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import LeaderboardsOverviewPage from '../../../src/pages/leaderboards/LeaderboardsOverviewPage';
@@ -25,12 +25,14 @@ function makeBandEntry(
   names: string[],
   accountIds?: string[],
   memberInstruments?: ServerInstrumentKey[][],
+  configurations?: BandConfiguration[],
 ): BandRankingEntry {
   const ids = accountIds ?? names.map((_, index) => `${bandType}-${rank}-${index}`);
   return {
     bandId: `${bandType}-${rank}`,
     teamKey: ids.join(':'),
     teamMembers: names.map((name, index) => ({ accountId: ids[index]!, displayName: name })),
+    configurations,
     members: names.map((name, index) => ({
       accountId: ids[index]!,
       displayName: name,
@@ -268,8 +270,8 @@ describe('LeaderboardsOverviewPage band rankings', () => {
       totalTeams: 42,
       entries: [bandType === 'Band_Duets'
         ? makeBandEntry(1, bandType, ['Alpha', 'Beta'], ['duo-a', 'duo-b'], [
-          ['Solo_Guitar', 'Solo_Vocals', 'Solo_Drums', 'Solo_PeripheralGuitar'],
-          ['Solo_Bass', 'Solo_Drums'],
+          ['Solo_Vocals'],
+          ['Solo_Guitar', 'Solo_Vocals', 'Solo_Drums'],
         ])
         : makeBandEntry(1, bandType, ['Gamma', 'Delta'], undefined, [
           ['Solo_Guitar', 'Solo_Vocals'],
@@ -287,10 +289,10 @@ describe('LeaderboardsOverviewPage band rankings', () => {
           bandId: 'selected-band',
           bandType: 'Band_Duets',
           teamKey: 'selected-a:selected-b',
-          comboId: 'Solo_Guitar+Solo_Bass',
+          comboId: 'Solo_Guitar+Solo_Vocals',
           assignments: [
             { accountId: 'selected-a', instrument: 'Solo_Guitar' },
-            { accountId: 'selected-b', instrument: 'Solo_Bass' },
+            { accountId: 'selected-b', instrument: 'Solo_Vocals' },
           ],
         }}
       >
@@ -302,11 +304,12 @@ describe('LeaderboardsOverviewPage band rankings', () => {
 
     const duosEntry = await screen.findByTestId('band-ranking-entry-Band_Duets-0');
     const duosRows = within(duosEntry).getAllByTestId('band-member-row');
-    expect(within(duosRows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
-    expect(within(duosRows[0]!).queryByAltText('Solo_Vocals')).toBeNull();
+    expect(within(duosRows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(duosRows[0]!).queryByAltText('Solo_Guitar')).toBeNull();
     expect(within(duosRows[0]!).queryByAltText('Solo_Drums')).toBeNull();
     expect(within(duosRows[0]!).queryByAltText('Solo_PeripheralGuitar')).toBeNull();
-    expect(within(duosRows[1]!).getByAltText('Solo_Bass')).toBeTruthy();
+    expect(within(duosRows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(duosRows[1]!).queryByAltText('Solo_Vocals')).toBeNull();
     expect(within(duosRows[1]!).queryByAltText('Solo_Drums')).toBeNull();
 
     const triosEntry = await screen.findByTestId('band-ranking-entry-Band_Trios-0');
@@ -317,9 +320,186 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(within(triosRows[1]!).getByAltText('Solo_Drums')).toBeTruthy();
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
     });
+  });
+
+  it('renders observed Duos assignments as compact side-by-side possibilities', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'selected-a:selected-b',
+      displayName: 'Selected Duo',
+      members: [
+        { accountId: 'selected-a', displayName: 'Selected A' },
+        { accountId: 'selected-b', displayName: 'Selected B' },
+      ],
+    }));
+
+    const configurations: BandConfiguration[] = [
+      {
+        rawInstrumentCombo: '0:2',
+        comboId: 'Solo_Guitar+Solo_Vocals',
+        instruments: ['Solo_Guitar', 'Solo_Vocals'],
+        assignmentKey: 'duo-a=Solo_Guitar|duo-b=Solo_Vocals',
+        appearanceCount: 7,
+        memberInstruments: { 'duo-a': 'Solo_Guitar', 'duo-b': 'Solo_Vocals' },
+      },
+      {
+        rawInstrumentCombo: '2:0',
+        comboId: 'Solo_Guitar+Solo_Vocals',
+        instruments: ['Solo_Guitar', 'Solo_Vocals'],
+        assignmentKey: 'duo-a=Solo_Vocals|duo-b=Solo_Guitar',
+        appearanceCount: 2,
+        memberInstruments: { 'duo-a': 'Solo_Vocals', 'duo-b': 'Solo_Guitar' },
+      },
+      {
+        rawInstrumentCombo: '0:1',
+        comboId: 'Solo_Guitar+Solo_Bass',
+        instruments: ['Solo_Guitar', 'Solo_Bass'],
+        assignmentKey: 'duo-a=Solo_Guitar|duo-b=Solo_Bass',
+        appearanceCount: 1,
+        memberInstruments: { 'duo-a': 'Solo_Guitar', 'duo-b': 'Solo_Bass' },
+      },
+    ];
+
+    mockApi.getBandRankings.mockImplementation((bandType: BandType, comboId: string | undefined, rankBy: string, page: number, pageSize: number, selectedAccountId?: string, selectedTeamKey?: string) => Promise.resolve({
+      bandType,
+      comboId: comboId ?? null,
+      rankBy,
+      page,
+      pageSize,
+      totalTeams: 42,
+      entries: [bandType === 'Band_Duets'
+        ? makeBandEntry(1, bandType, ['Alpha', 'Beta'], ['duo-a', 'duo-b'], [
+          ['Solo_Guitar', 'Solo_Vocals', 'Solo_Drums'],
+          ['Solo_Guitar', 'Solo_Vocals'],
+        ], configurations)
+        : makeBandEntry(1, bandType, ['Gamma', 'Delta'])],
+      selectedBandEntry: bandType === 'Band_Duets' && selectedAccountId == null && selectedTeamKey === 'selected-a:selected-b'
+        ? makeBandEntry(17, bandType, ['Selected A', 'Selected B'], ['selected-a', 'selected-b'])
+        : null,
+    }));
+
+    render(
+      <TestProviders
+        route="/leaderboards?rankBy=weighted"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'selected-a:selected-b',
+          comboId: 'Solo_Guitar+Solo_Vocals',
+          assignments: [
+            { accountId: 'selected-a', instrument: 'Solo_Guitar' },
+            { accountId: 'selected-b', instrument: 'Solo_Vocals' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const duosEntry = await screen.findByTestId('band-ranking-entry-Band_Duets-0');
+    expect(within(duosEntry).queryByTestId('band-member-lineup')).toBeNull();
+    const duosRows = within(duosEntry).getAllByTestId('band-member-row');
+    expect(duosRows).toHaveLength(2);
+
+    expect(within(duosRows[0]!).getByText('Alpha')).toBeTruthy();
+    expect(within(duosRows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(duosRows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(duosRows[0]!).queryByAltText('Solo_Drums')).toBeNull();
+
+    expect(within(duosRows[1]!).getByText('Beta')).toBeTruthy();
+    expect(within(duosRows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(duosRows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(duosRows[1]!).queryByAltText('Solo_Drums')).toBeNull();
+
+    expect(duosEntry).toHaveAttribute('href', '/bands/Band_Duets-1?bandType=Band_Duets&teamKey=duo-a%3Aduo-b&names=Alpha%20%2B%20Beta');
+  });
+
+  it('uses selected-band applied configurations when the ranking response omits configurations', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'selected-a:selected-b',
+      displayName: 'Selected Duo',
+      members: [
+        { accountId: 'selected-a', displayName: 'Selected A' },
+        { accountId: 'selected-b', displayName: 'Selected B' },
+      ],
+    }));
+
+    const selectedConfigurations: BandConfiguration[] = [
+      {
+        rawInstrumentCombo: '0:2',
+        comboId: 'Solo_Guitar+Solo_Vocals',
+        instruments: ['Solo_Guitar', 'Solo_Vocals'],
+        assignmentKey: 'selected-a=Solo_Guitar|selected-b=Solo_Vocals',
+        appearanceCount: 14,
+        memberInstruments: { 'selected-a': 'Solo_Guitar', 'selected-b': 'Solo_Vocals' },
+      },
+      {
+        rawInstrumentCombo: '0:2',
+        comboId: 'Solo_Guitar+Solo_Vocals',
+        instruments: ['Solo_Guitar', 'Solo_Vocals'],
+        assignmentKey: 'selected-a=Solo_Vocals|selected-b=Solo_Guitar',
+        appearanceCount: 6,
+        memberInstruments: { 'selected-a': 'Solo_Vocals', 'selected-b': 'Solo_Guitar' },
+      },
+    ];
+
+    mockApi.getBandRankings.mockImplementation((bandType: BandType, comboId: string | undefined, rankBy: string, page: number, pageSize: number, selectedAccountId?: string, selectedTeamKey?: string) => Promise.resolve({
+      bandType,
+      comboId: comboId ?? null,
+      rankBy,
+      page,
+      pageSize,
+      totalTeams: 42,
+      entries: [makeBandEntry(1, bandType, ['Alpha', 'Beta'])],
+      selectedBandEntry: bandType === 'Band_Duets' && selectedAccountId == null && selectedTeamKey === 'selected-a:selected-b'
+        ? makeBandEntry(17, bandType, ['Selected A', 'Selected B'], ['selected-a', 'selected-b'], [
+          ['Solo_Guitar', 'Solo_Vocals', 'Solo_Drums'],
+          ['Solo_Guitar', 'Solo_Vocals'],
+        ])
+        : null,
+    }));
+
+    render(
+      <TestProviders
+        route="/leaderboards?rankBy=weighted"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'selected-a:selected-b',
+          comboId: 'Solo_Guitar+Solo_Vocals',
+          assignments: [
+            { accountId: 'selected-a', instrument: 'Solo_Guitar' },
+            { accountId: 'selected-b', instrument: 'Solo_Vocals' },
+          ],
+          configurations: selectedConfigurations,
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const selectedRow = await screen.findByTestId('band-ranking-selected-entry-Band_Duets');
+    expect(within(selectedRow).queryByTestId('band-member-lineup')).toBeNull();
+    const selectedRows = within(selectedRow).getAllByTestId('band-member-row');
+    expect(selectedRows).toHaveLength(2);
+    expect(within(selectedRows[0]!).getByText('Selected A')).toBeTruthy();
+    expect(within(selectedRows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(selectedRows[0]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(selectedRows[1]!).getByText('Selected B')).toBeTruthy();
+    expect(within(selectedRows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(selectedRows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
   });
 
   it('falls back to the exact band ranking endpoint when the overview response has no selected band field', async () => {

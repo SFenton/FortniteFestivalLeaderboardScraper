@@ -95,14 +95,25 @@ function estimateBandMemberRowHeight(member: PlayerBandMember, layout: BandMembe
     + Math.max(layout.instrumentRowCount - 1, 0) * BAND_MEMBER_ICON_GAP;
 }
 
+function estimateBandMemberRowsHeight(members: readonly PlayerBandMember[], contentWidth?: number): number {
+  const memberLayouts = resolveBandCardMemberLayouts(members, contentWidth);
+  return members.reduce((total, member, index) => total + estimateBandMemberRowHeight(member, memberLayouts[index] ?? { stacked: false, instrumentRowCount: 1 }), 0);
+}
+
 export function estimatePlayerBandCardHeight(entry: PlayerBandEntry, showAppearanceCount = false, contentWidth?: number): number {
-  const memberLayouts = resolveBandCardMemberLayouts(entry.members, contentWidth);
-  const membersHeight = entry.members.reduce((total, member, index) => total + estimateBandMemberRowHeight(member, memberLayouts[index] ?? { stacked: false, instrumentRowCount: 1 }), 0);
+  const membersHeight = estimateBandMemberRowsHeight(entry.members, contentWidth);
   return ENTRY_CARD_BASE_HEIGHT + membersHeight + (showAppearanceCount ? APPEARANCE_FOOTER_HEIGHT : 0);
 }
 
 export function formatPlayerBandNames(entry: PlayerBandEntry): string | undefined {
-  const names = entry.members.map(member => member.displayName || member.accountId.slice(0, 8));
+  const seen = new Set<string>();
+  const names = entry.members
+    .filter((member) => {
+      if (seen.has(member.accountId)) return false;
+      seen.add(member.accountId);
+      return true;
+    })
+    .map(member => member.displayName || member.accountId.slice(0, 8));
   return names.length > 0 ? names.join(' + ') : undefined;
 }
 
@@ -157,7 +168,7 @@ export default function PlayerBandCard({
   const memberContent = (
     <div ref={contentRef} style={bandCardStyles.entryCardContent}>
       <div style={bandCardStyles.memberList}>
-        {entry.members.map((member, index) => <BandMemberRow key={`${entry.teamKey}:${member.accountId}`} member={member} layout={memberLayouts[index] ?? { stacked: false, instrumentRowCount: 1 }} metadata={renderMemberMetadata?.(member)} />)}
+        {entry.members.map((member, index) => <BandMemberRow key={`${entry.teamKey}:${member.accountId}:${index}`} member={member} layout={memberLayouts[index] ?? { stacked: false, instrumentRowCount: 1 }} metadata={renderMemberMetadata?.(member)} />)}
       </div>
     </div>
   );
