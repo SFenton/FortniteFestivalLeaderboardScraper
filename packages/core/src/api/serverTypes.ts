@@ -807,6 +807,7 @@ export type BandSongPerformance = {
   accuracy?: number | null;
   isFullCombo?: boolean | null;
   stars?: number | null;
+  season?: number | null;
   endTime?: string | null;
 };
 
@@ -817,6 +818,14 @@ export type BandSongsResponse = {
   limit: number;
   best: BandSongPerformance[];
   worst: BandSongPerformance[];
+};
+
+export type BandSongRowsResponse = {
+  bandType: BandType;
+  teamKey: string;
+  comboId?: string | null;
+  count: number;
+  entries: BandSongPerformance[];
 };
 
 export type BandComboCatalogEntry = {

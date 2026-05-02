@@ -347,6 +347,18 @@ describe('api/client', () => {
     });
   });
 
+  describe('getBandSongRows', () => {
+    it('fetches encoded band song rows with combo', async () => {
+      const data = { bandType: 'Band_Duets', teamKey: 'p1:p2', comboId: 'Solo_Guitar+Solo_Bass', count: 1, entries: [] };
+      mockFetchOk(data);
+
+      const result = await api.getBandSongRows('Band_Duets', 'p1:p2', 'Solo_Guitar+Solo_Bass');
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/rankings/bands/Band_Duets/p1%3Ap2/song-rows?combo=Solo_Guitar%2BSolo_Bass', { headers: {} });
+    });
+  });
+
   describe('getPlayerBandsList', () => {
     it('fetches paged player bands for a selected group', async () => {
       const data = { accountId: 'p1', group: 'duos', totalCount: 26, entries: [] };

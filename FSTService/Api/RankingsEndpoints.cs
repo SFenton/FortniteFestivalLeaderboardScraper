@@ -613,6 +613,38 @@ public static partial class ApiEndpoints
         .WithTags("Rankings")
         .RequireRateLimiting("public");
 
+        // ─── Band team song rows ──────────────────────────────
+
+        app.MapGet("/api/rankings/bands/{bandType}/{teamKey}/song-rows", (
+            HttpContext httpContext,
+            string bandType,
+            string teamKey,
+            string? combo,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            if (!BandComboIds.IsValidBandType(bandType))
+                return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
+
+            var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
+            if (comboValidation.Error is not null)
+                return Results.BadRequest(new { error = comboValidation.Error });
+
+            var entries = metaDb.GetBandSongPerformances(bandType, teamKey, comboValidation.ComboId);
+
+            return Results.Ok(new
+            {
+                bandType,
+                teamKey,
+                comboId = comboValidation.ComboId,
+                count = entries.Count,
+                entries,
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
         // ─── Single band team ranking ─────────────────────────
 
         app.MapGet("/api/rankings/bands/{bandType}/{teamKey}", (

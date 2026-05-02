@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties, 
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useQuery } from '@tanstack/react-query';
 import { IoCompass } from 'react-icons/io5';
 import { staggerDelay, estimateVisibleCount, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import { useStaggerStyle, buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
@@ -18,9 +19,11 @@ import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
 import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useShopState } from '../../hooks/data/useShopState';
 import { useShop } from '../../contexts/ShopContext';
+import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
+import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
-import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
+import { type BandSongPerformance, type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { accuracyBgColor, maxScoreColor, LoadPhase } from '@festival/core';
 import { Gap, Colors, Font, Layout, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, FADE_DURATION, STAGGER_INTERVAL, border, flexCenter, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
@@ -64,6 +67,8 @@ import {
 import { resolveCompactRowMode } from './layoutMode';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 import { buildSongQuickLinkSections, type SongQuickLinkSection } from './songQuickLinks';
+import { api } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
 
 /**
  * Estimated minimum width (px) for each metadata element in desktop row layout.
@@ -81,6 +86,27 @@ const METADATA_MIN_WIDTH: Record<string, number> = {
   maxdistance: 76,  // PercentilePill with % (~60px) + gap share
   maxscorediff: 92,  // PercentilePill with -XXX,XXX (~76px) + gap share
 };
+
+const BAND_SONG_METADATA_KEYS = new Set<string>(['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'lastplayed']);
+const BAND_SAFE_SORT_MODES = new Set<SongSortMode>(['title', 'artist', 'year', 'duration', 'shop', 'hasfc', 'score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'lastplayed']);
+
+function bandPerformanceToPlayerScore(performance: BandSongPerformance): PlayerScore {
+  return {
+    songId: performance.songId,
+    instrument: DEFAULT_INSTRUMENT,
+    score: performance.score,
+    rank: performance.rank,
+    totalEntries: performance.totalEntries,
+    percentile: performance.percentile,
+    accuracy: performance.accuracy ?? undefined,
+    isFullCombo: performance.isFullCombo ?? undefined,
+    stars: performance.stars ?? undefined,
+    season: performance.season ?? undefined,
+    endTime: performance.endTime ?? undefined,
+    lastPlayedAt: performance.endTime ?? undefined,
+    validLastPlayedAt: performance.endTime ?? undefined,
+  };
+}
 
 /** Fixed overhead: row padding (32px) + SongInfo (albumArt 48 + gap 16 + min title 150) + gap to metadata (16). */
 const ROW_FIXED_OVERHEAD = 262;
@@ -315,11 +341,20 @@ export default function SongsPage() {
   const isMobileChrome = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
+  const { profile } = useTrackedPlayer();
+  const selectedBand = profile?.type === 'band' ? profile : null;
+  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const activeBandComboId = selectedBand && appliedBandComboFilter?.bandType === selectedBand.bandType
+    ? appliedBandComboFilter.comboId
+    : undefined;
+  const isSelectedBand = selectedBand != null;
+  const effectiveSortMode: SongSortMode = isSelectedBand && !BAND_SAFE_SORT_MODES.has(settings.sortMode) ? 'title' : settings.sortMode;
   const enabledInstruments = useMemo(
     () => visibleInstruments(appSettings),
     [appSettings],
   );
   const activeSongInstrumentFilter = isVisibleInstrumentFilter(settings.instrument, enabledInstruments) ? settings.instrument : null;
+  const displayInstrumentFilter = isSelectedBand ? null : activeSongInstrumentFilter;
   const scopedFilters = useMemo(
     () => sanitizeSongFiltersForInstruments(settings.filters, enabledInstruments),
     [enabledInstruments, settings.filters],
@@ -336,7 +371,7 @@ export default function SongsPage() {
     if (!appSettings.metadataShowIntensity) hidden.add('intensity');
     if (!appSettings.metadataShowGameDifficulty) hidden.add('difficulty');
     if (!appSettings.metadataShowStars) hidden.add('stars');
-    if (!appSettings.metadataShowLastPlayed || settings.sortMode !== 'lastplayed') hidden.add('lastplayed');
+    if (!appSettings.metadataShowLastPlayed || effectiveSortMode !== 'lastplayed') hidden.add('lastplayed');
 
     let order: string[];
     if (appSettings.songRowVisualOrderEnabled) {
@@ -350,19 +385,24 @@ export default function SongsPage() {
     }
 
     // Auto-inject maxdistance/maxscorediff only when max-score sort is active
-    if (settings.sortMode === 'maxdistance' && !order.includes('maxdistance')) {
+    if (isSelectedBand) {
+      order = order.filter(k => BAND_SONG_METADATA_KEYS.has(k));
+    }
+
+    if (!isSelectedBand && effectiveSortMode === 'maxdistance' && !order.includes('maxdistance')) {
       order = [...order, 'maxdistance'];
     }
-    if (settings.sortMode === 'maxscorediff' && !order.includes('maxscorediff')) {
+    if (!isSelectedBand && effectiveSortMode === 'maxscorediff' && !order.includes('maxscorediff')) {
       order = [...order, 'maxscorediff'];
     }
-    if (settings.sortMode === 'lastplayed' && !order.includes('lastplayed')) {
+    if (effectiveSortMode === 'lastplayed' && !order.includes('lastplayed')) {
       order = [...order, 'lastplayed'];
     }
     return order;
   }, [
     settings.metadataOrder,
-    settings.sortMode,
+    effectiveSortMode,
+    isSelectedBand,
     appSettings.songRowVisualOrderEnabled,
     appSettings.songRowVisualOrder,
     appSettings.metadataShowScore,
@@ -382,8 +422,8 @@ export default function SongsPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const containerWidth = useContainerWidth(containerRef);
   const minDesktopWidth = useMemo(
-    () => getMinDesktopRowWidth(visibleMetadataOrder, settings.sortMode),
-    [visibleMetadataOrder, settings.sortMode],
+    () => getMinDesktopRowWidth(visibleMetadataOrder, effectiveSortMode),
+    [visibleMetadataOrder, effectiveSortMode],
   );
   const compactRowRef = useRef(typeof window !== 'undefined' ? window.innerWidth <= 1100 : false);
   const effectiveRowWidth = containerWidth > 0
@@ -509,6 +549,13 @@ export default function SongsPage() {
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted, syncBannerDismissed, dismissSyncBanner } = usePlayerData();
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
 
+  const bandSongRowsQuery = useQuery({
+    queryKey: queryKeys.bandSongRows(selectedBand?.bandType ?? '', selectedBand?.teamKey ?? '', activeBandComboId),
+    queryFn: () => api.getBandSongRows(selectedBand!.bandType, selectedBand!.teamKey, activeBandComboId),
+    enabled: !!selectedBand,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // Show completion banner when sync finishes (unless already globally dismissed)
   useEffect(() => {
     if (ctxJustCompleted) {
@@ -529,7 +576,7 @@ export default function SongsPage() {
 
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
-  const filtersActive = isFilterActive(settings.filters, activeSongInstrumentFilter, isShopVisible, enabledInstruments) || activeSongInstrumentFilter != null;
+  const filtersActive = isFilterActive(settings.filters, displayInstrumentFilter, isShopVisible, enabledInstruments) || displayInstrumentFilter != null;
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
 
   const { isScoreValid, enabled: scoreFilterEnabled, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
@@ -640,15 +687,35 @@ export default function SongsPage() {
   }, [playerData, effectiveScores]);
   /* v8 ignore stop */
 
+  const bandScoreMap = useMemo(() => {
+    const map = new Map<string, PlayerScore>();
+    for (const performance of bandSongRowsQuery.data?.entries ?? []) {
+      map.set(performance.songId, bandPerformanceToPlayerScore(performance));
+    }
+    return map;
+  }, [bandSongRowsQuery.data]);
+
+  const bandAllScoreMap = useMemo(() => {
+    const map = new Map<string, Map<InstrumentKey, PlayerScore>>();
+    for (const [songId, score] of bandScoreMap) {
+      map.set(songId, new Map<InstrumentKey, PlayerScore>([[DEFAULT_INSTRUMENT, score]]));
+    }
+    return map;
+  }, [bandScoreMap]);
+
+  const displayScoreMap = isSelectedBand ? bandScoreMap : scoreMap;
+  const displayAllScoreMap = isSelectedBand ? bandAllScoreMap : allScoreMap;
+  const hasDisplayScores = isSelectedBand ? bandScoreMap.size > 0 : !!playerData;
+
   const filtered = useFilteredSongs({
     songs,
     search: debouncedSearch,
-    sortMode: settings.sortMode,
+    sortMode: effectiveSortMode,
     sortAscending: settings.sortAscending,
     filters: scopedFilters,
-    instrument: activeSongInstrumentFilter,
-    scoreMap,
-    allScoreMap,
+    instrument: displayInstrumentFilter,
+    scoreMap: displayScoreMap,
+    allScoreMap: displayAllScoreMap,
     shopSongIds: shopCtx.shopSongIds,
     leavingTomorrowIds: shopCtx.leavingTomorrowIds,
     isScoreValid,
@@ -659,17 +726,17 @@ export default function SongsPage() {
 
   const sectionModel = useMemo(() => buildSongQuickLinkSections({
     songs: filtered,
-    sortMode: settings.sortMode,
-    instrument: activeSongInstrumentFilter,
-    scoreMap,
-    allScoreMap,
+    sortMode: effectiveSortMode,
+    instrument: displayInstrumentFilter,
+    scoreMap: displayScoreMap,
+    allScoreMap: displayAllScoreMap,
     shopSongIds: shopCtx.shopSongIds,
     leavingTomorrowIds: shopCtx.leavingTomorrowIds,
     t,
-  }), [activeSongInstrumentFilter, allScoreMap, filtered, scoreMap, settings.sortMode, shopCtx.leavingTomorrowIds, shopCtx.shopSongIds, t]);
+  }), [displayAllScoreMap, displayInstrumentFilter, displayScoreMap, effectiveSortMode, filtered, shopCtx.leavingTomorrowIds, shopCtx.shopSongIds, t]);
 
   const hasQuickLinkSections = sectionModel.sections.length >= 2;
-  const sortLabel = t(SONG_SORT_LABEL_KEYS[settings.sortMode] ?? 'sort.title');
+  const sortLabel = t(SONG_SORT_LABEL_KEYS[effectiveSortMode] ?? 'sort.title');
   const quickLinksTitle = t('songs.quickLinksTitle', { sort: sortLabel });
   const quickLinkItems = useMemo<SongQuickLink[]>(() => {
     if (!hasQuickLinkSections) {
@@ -678,27 +745,35 @@ export default function SongsPage() {
 
     return sectionModel.sections.map((section) => ({
       id: section.id,
-      label: renderSongQuickLinkLabel(settings.sortMode, section, isWideDesktop),
+      label: renderSongQuickLinkLabel(effectiveSortMode, section, isWideDesktop),
       landmarkLabel: section.landmarkLabel,
       icon: null,
       rowIndex: section.rowIndex,
     }));
-  }, [hasQuickLinkSections, isWideDesktop, sectionModel.sections, settings.sortMode]);
+  }, [effectiveSortMode, hasQuickLinkSections, isWideDesktop, sectionModel.sections]);
 
   const hasPlayer = !!playerData;
+  const hasSongRowScoreData = hasDisplayScores;
 
   // Derive available seasons from player scores
   const availableSeasons = useMemo(() => {
+    if (isSelectedBand) {
+      const set = new Set<number>();
+      for (const score of bandScoreMap.values()) {
+        if (score.season != null) set.add(score.season);
+      }
+      return Array.from(set).sort((a, b) => a - b);
+    }
     if (!playerData) return [];
     const set = new Set<number>();
     for (const s of playerData.scores) {
       if (s.season != null) set.add(s.season);
     }
     return Array.from(set).sort((a, b) => a - b);
-  }, [playerData]);
+  }, [bandScoreMap, isSelectedBand, playerData]);
 
   // ── Spinner → staggered-content transition ──
-  const dataReady = !isLoading && !playerLoading;
+  const dataReady = !isLoading && !playerLoading && !(isSelectedBand && bandSongRowsQuery.isLoading);
   // Capture "first visit this session" before marking as rendered
   const skipAnimRef = useRef((hasVisitedPage('songs') || isBackNav) && !forceRestagger);
   const skipAnim = skipAnimRef.current;
@@ -717,7 +792,7 @@ export default function SongsPage() {
   if (loadPhase === LoadPhase.ContentIn) toolbarShownRef.current = true;
 
   // Fingerprint of sort/filter/search settings — when it changes, re-stagger the list
-  const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${activeSongInstrumentFilter ?? ''}|${JSON.stringify(scopedFilters)}|${debouncedSearch}`;
+  const settingsKey = `${effectiveSortMode}|${settings.sortAscending}|${displayInstrumentFilter ?? ''}|${activeBandComboId ?? ''}|${JSON.stringify(scopedFilters)}|${debouncedSearch}`;
   const prevSettingsKeyRef = useRef(settingsKey);
 
   /* v8 ignore start � animation: stagger/re-stagger effects */
@@ -981,7 +1056,7 @@ export default function SongsPage() {
                   <SongsToolbar
                     search={search}
                     onSearchChange={setSearch}
-                    instrument={activeSongInstrumentFilter}
+                    instrument={displayInstrumentFilter}
                     sortActive={sortActive}
                     filtersActive={filtersActive}
                     hasSongs={songs.length > 0 && !isLoading}
@@ -1009,7 +1084,7 @@ export default function SongsPage() {
             metadataOrder: settings.metadataOrder,
             instrumentOrder: settings.instrumentOrder,
           }}
-          instrumentFilter={activeSongInstrumentFilter}
+          instrumentFilter={displayInstrumentFilter}
           hasPlayer={!!playerData}
           hideItemShop={!isShopVisible}
           metadataVisibility={{
@@ -1031,7 +1106,7 @@ export default function SongsPage() {
         <FilterModal
           visible={filterModal.visible}
           draft={filterModal.draft}
-          savedDraft={{ ...scopedFilters, instrumentFilter: activeSongInstrumentFilter }}
+          savedDraft={{ ...scopedFilters, instrumentFilter: displayInstrumentFilter }}
           availableSeasons={availableSeasons}
           onChange={filterModal.setDraft}
           onCancel={filterModal.close}
@@ -1116,20 +1191,20 @@ export default function SongsPage() {
                       >
                         <div style={songsStyles.sectionDivider} />
                         <div style={songsStyles.sectionLabelRow}>
-                          {renderSongSectionLabel(settings.sortMode, row.section, songsStyles.sectionLabel)}
+                          {renderSongSectionLabel(effectiveSortMode, row.section, songsStyles.sectionLabel)}
                         </div>
                       </div>
                     ) : (
                       <SongRow
                         song={row.song}
-                        score={hasPlayer ? scoreMap.get(row.song.songId) : undefined}
+                        score={hasSongRowScoreData ? displayScoreMap.get(row.song.songId) : undefined}
                         instrument={instrument}
-                        instrumentFilter={activeSongInstrumentFilter}
-                        allScoreMap={hasPlayer ? allScoreMap.get(row.song.songId) : undefined}
-                        showInstrumentIcons={hasPlayer && !appSettings.songsHideInstrumentIcons}
+                        instrumentFilter={displayInstrumentFilter}
+                        allScoreMap={isSelectedBand ? undefined : hasSongRowScoreData ? displayAllScoreMap.get(row.song.songId) : undefined}
+                        showInstrumentIcons={!isSelectedBand && hasSongRowScoreData && !appSettings.songsHideInstrumentIcons}
                         enabledInstruments={enabledInstruments}
                         metadataOrder={visibleMetadataOrder}
-                        sortMode={settings.sortMode}
+                        sortMode={effectiveSortMode}
                         isMobile={songRowMobile}
                         staggerDelay={rowDelay}
                         shopHighlight={isShopHighlighted(row.song.songId)}

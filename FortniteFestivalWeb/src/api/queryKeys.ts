@@ -45,6 +45,8 @@ export const queryKeys = {
     ['bandRankHistory', bandType, teamKey, { days, comboId }] as const,
   bandSongs: (bandType: string, teamKey: string, limit?: number, comboId?: string) =>
     ['bandSongs', bandType, teamKey, { limit, comboId }] as const,
+  bandSongRows: (bandType: string, teamKey: string, comboId?: string) =>
+    ['bandSongRows', bandType, teamKey, { comboId }] as const,
   bandDetail: (bandId: string) => ['bandDetail', bandId] as const,
   bandLookup: (accountId: string, bandType: string, teamKey: string) =>
     ['bandLookup', accountId, bandType, teamKey] as const,

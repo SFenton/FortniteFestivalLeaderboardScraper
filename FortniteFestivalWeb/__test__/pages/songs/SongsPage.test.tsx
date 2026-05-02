@@ -25,6 +25,7 @@ const mockApi = vi.hoisted(() => {
     getAllLeaderboards: fn().mockResolvedValue({ songId: 's1', instruments: [] }),
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'test-player-1', stats: [] }),
+    getBandSongRows: fn().mockResolvedValue({ bandType: 'Band_Duets', teamKey: 'p1:p2', count: 0, entries: [] }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' }),
   };
@@ -51,6 +52,7 @@ function resetMocks() {
   mockApi.getAllLeaderboards.mockResolvedValue({ songId: 's1', instruments: [] });
   mockApi.getPlayerHistory.mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] });
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'test-player-1', stats: [] });
+  mockApi.getBandSongRows.mockResolvedValue({ bandType: 'Band_Duets', teamKey: 'p1:p2', count: 0, entries: [] });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' });
 }
@@ -346,6 +348,45 @@ describe('SongsPage', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     await act(async () => { await vi.advanceTimersByTimeAsync(600); });
     expect(container.textContent).toContain('Alpha Song');
+  });
+
+  it('renders selected band song row scores without solo-only metadata', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'Test Duo',
+      members: [],
+    }));
+    mockApi.getBandSongRows.mockResolvedValue({
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      comboId: null,
+      count: 1,
+      entries: [{
+        songId: 's1',
+        comboId: null,
+        rank: 1,
+        totalEntries: 10,
+        percentile: 10,
+        score: 123456,
+        accuracy: 980000,
+        isFullCombo: true,
+        stars: 5,
+        season: 5,
+        endTime: '2026-05-01T00:00:00Z',
+      }],
+    });
+
+    const { container } = renderSongsPage('/songs');
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+
+    expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', 'p1:p2', undefined);
+    expect(container.textContent).toContain('123,456');
+    expect(container.querySelector('[data-metadata-key="difficulty"]')).toBeNull();
+    expect(container.querySelector('[data-metadata-key="intensity"]')).toBeNull();
   });
 
   it('opens sort modal when Sort button is clicked', async () => {

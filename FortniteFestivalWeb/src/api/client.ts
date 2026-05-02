@@ -35,6 +35,7 @@ import type {
   BandRankHistoryResponse,
   BandRankingsPageResponse,
   BandRankingMetric,
+  BandSongRowsResponse,
   BandSongsResponse,
   BandType,
   RankingMetric,
@@ -401,6 +402,15 @@ export const api = {
     if (comboId) params.set('combo', comboId);
     return get<BandSongsResponse>(
       `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/songs?${params.toString()}`,
+    );
+  },
+
+  getBandSongRows: (bandType: BandType, teamKey: string, comboId?: string) => {
+    const params = new URLSearchParams();
+    if (comboId) params.set('combo', comboId);
+    const qs = params.toString();
+    return get<BandSongRowsResponse>(
+      `/api/rankings/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/song-rows${qs ? `?${qs}` : ''}`,
     );
   },
 

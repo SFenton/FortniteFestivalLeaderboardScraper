@@ -618,6 +618,7 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(2, song0.TotalEntries);
         Assert.Equal(50.0, song0.Percentile, 3);
         Assert.Equal(1100, song0.Score);
+        Assert.Equal(1, song0.Season);
         Assert.Equal(2, song1.Rank);
         Assert.Equal(3, song1.TotalEntries);
         Assert.Equal(66.667, song1.Percentile, 3);

@@ -819,6 +819,7 @@ public sealed class BandSongPerformanceDto
     public int? Accuracy { get; init; }
     public bool? IsFullCombo { get; init; }
     public int? Stars { get; init; }
+    public int? Season { get; init; }
     public string? EndTime { get; init; }
 }
 

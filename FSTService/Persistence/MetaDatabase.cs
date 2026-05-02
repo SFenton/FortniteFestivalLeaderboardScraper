@@ -4299,6 +4299,9 @@ public sealed class MetaDatabase : IMetaDatabase
 
     public List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null)
     {
+        if (TryGetBandSongPerformancesFromCurrentProjection(bandType, teamKey, comboId, out var projectedPerformances))
+            return projectedPerformances;
+
         var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
         var normalizedComboId = comboId ?? string.Empty;
 
@@ -4313,6 +4316,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     be.accuracy,
                     be.is_full_combo,
                     be.stars,
+                    be.season,
                     COALESCE(be.end_time, '') AS end_time,
                     COALESCE((
                         SELECT string_agg(mapped.instrument, '+' ORDER BY mapped.sort_order, mapped.instrument)
@@ -4388,6 +4392,7 @@ public sealed class MetaDatabase : IMetaDatabase
                 accuracy,
                 is_full_combo,
                 stars,
+                season,
                 NULLIF(end_time, '') AS end_time
             FROM RankedEntries
             WHERE team_key = @teamKey
@@ -4403,6 +4408,74 @@ public sealed class MetaDatabase : IMetaDatabase
             performances.Add(ReadBandSongPerformance(reader));
 
         return performances;
+    }
+
+    private bool TryGetBandSongPerformancesFromCurrentProjection(
+        string bandType,
+        string teamKey,
+        string? comboId,
+        out List<BandSongPerformanceDto> performances)
+    {
+        var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
+        var normalizedComboId = comboId ?? string.Empty;
+        performances = [];
+
+        using var conn = _ds.OpenConnection();
+
+        using (var tableCmd = conn.CreateCommand())
+        {
+            tableCmd.CommandText = "SELECT to_regclass('public.current_band_leaderboard_entries') IS NOT NULL;";
+            if (tableCmd.ExecuteScalar() is not bool tableExists || !tableExists)
+                return false;
+        }
+
+        using (var scopeCmd = conn.CreateCommand())
+        {
+            scopeCmd.CommandText = @"
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM current_band_leaderboard_entries
+                    WHERE band_type = @bandType
+                      AND ranking_scope = @scope
+                      AND scope_combo_id = @comboId
+                );";
+            scopeCmd.Parameters.AddWithValue("bandType", bandType);
+            scopeCmd.Parameters.AddWithValue("scope", rankingScope);
+            scopeCmd.Parameters.AddWithValue("comboId", normalizedComboId);
+            if (scopeCmd.ExecuteScalar() is not bool hasScopeRows || !hasScopeRows)
+                return false;
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT
+                song_id,
+                NULLIF(entry_combo_id, '') AS combo_id,
+                rank AS effective_rank,
+                total_entries,
+                percentile,
+                score,
+                accuracy,
+                is_full_combo,
+                stars,
+                season,
+                end_time
+            FROM current_band_leaderboard_entries
+            WHERE band_type = @bandType
+              AND ranking_scope = @scope
+              AND scope_combo_id = @comboId
+              AND team_key = @teamKey
+            ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            performances.Add(ReadBandSongPerformance(reader));
+
+        return true;
     }
 
     public (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5)
@@ -4465,6 +4538,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     accuracy,
                     is_full_combo,
                     stars,
+                    NULL::INTEGER AS season,
                     end_time
                 FROM band_song_team_rankings
                 WHERE band_type = @bandType
@@ -4490,6 +4564,7 @@ public sealed class MetaDatabase : IMetaDatabase
                         accuracy,
                         is_full_combo,
                         stars,
+                        season,
                         end_time
                     FROM TeamRows
                     ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC
@@ -4509,6 +4584,7 @@ public sealed class MetaDatabase : IMetaDatabase
                         accuracy,
                         is_full_combo,
                         stars,
+                        season,
                         end_time
                     FROM TeamRows
                     WHERE (SELECT total FROM TeamPerformanceCount) > @limit
@@ -4568,6 +4644,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     be.accuracy,
                     be.is_full_combo,
                     be.stars,
+                    be.season,
                     COALESCE(be.end_time, '') AS end_time,
                     {BandSongComboIdExpression} AS combo_id
                 FROM band_entries be
@@ -4614,6 +4691,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     accuracy,
                     is_full_combo,
                     stars,
+                    season,
                     NULLIF(end_time, '') AS end_time
                 FROM RankedEntries
                 WHERE team_key = @teamKey
@@ -4636,6 +4714,7 @@ public sealed class MetaDatabase : IMetaDatabase
                         accuracy,
                         is_full_combo,
                         stars,
+                        season,
                         end_time
                     FROM TeamPerformances
                     ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC
@@ -4655,6 +4734,7 @@ public sealed class MetaDatabase : IMetaDatabase
                         accuracy,
                         is_full_combo,
                         stars,
+                        season,
                         end_time
                     FROM TeamPerformances
                     WHERE (SELECT total FROM TeamPerformanceCount) > @limit
@@ -4702,7 +4782,8 @@ public sealed class MetaDatabase : IMetaDatabase
         Accuracy = reader.IsDBNull(offset + 6) ? null : reader.GetInt32(offset + 6),
         IsFullCombo = reader.IsDBNull(offset + 7) ? null : reader.GetBoolean(offset + 7),
         Stars = reader.IsDBNull(offset + 8) ? null : reader.GetInt32(offset + 8),
-        EndTime = reader.IsDBNull(offset + 9) ? null : reader.GetString(offset + 9),
+        Season = reader.IsDBNull(offset + 9) ? null : reader.GetInt32(offset + 9),
+        EndTime = reader.IsDBNull(offset + 10) ? null : reader.GetString(offset + 10),
     };
 
     private const string SongBandLeaderboardBaseCtes = """
