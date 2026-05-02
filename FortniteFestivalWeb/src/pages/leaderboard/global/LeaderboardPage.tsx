@@ -1,10 +1,12 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useParams, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useFestival } from '../../../contexts/FestivalContext';
 import { usePlayerData } from '../../../contexts/PlayerDataContext';
 import { api } from '../../../api/client';
+import { queryKeys } from '../../../api/queryKeys';
 import {
   type ServerInstrumentKey as InstrumentKey,
   type LeaderboardEntry as LeaderboardEntryType,
@@ -24,8 +26,12 @@ import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
+import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
+import { useAppliedBandComboFilter } from '../../../contexts/BandFilterActionContext';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
+import { formatBandTeamName } from '../../leaderboards/helpers/bandRankingHelpers';
 import Page, { PageBackground } from '../../Page';
+import { Routes } from '../../../routes';
 
 const PAGE_SIZE = 25;
 
@@ -65,12 +71,42 @@ export default function LeaderboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { playerData } = usePlayerData();
+  const { profile } = useSelectedProfile();
+  const selectedBand = profile?.type === 'band' ? profile : null;
+  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const activeBandComboId = selectedBand && appliedBandComboFilter?.bandType === selectedBand.bandType
+    ? appliedBandComboFilter.comboId
+    : undefined;
   const playerScore = useMemo(() => {
     if (!playerData || !songId) return null;
     return playerData.scores.find(
       (s) => s.songId === songId && s.instrument === instKey,
     ) ?? null;
   }, [playerData, songId, instKey]);
+
+  const { data: selectedBandSongScore } = useQuery({
+    queryKey: selectedBand && songId
+      ? queryKeys.songBandLeaderboard(songId, selectedBand.bandType, 1, 0, undefined, selectedBand.teamKey, activeBandComboId)
+      : ['songBandLeaderboard', 'selectedBand', 'disabled', songId, instKey],
+    queryFn: () => api.getSongBandLeaderboard(songId!, selectedBand!.bandType, 1, 0, undefined, selectedBand!.teamKey, activeBandComboId),
+    enabled: !!songId && !!selectedBand,
+    select: (data) => data.selectedBandEntry ?? null,
+    retry: false,
+  });
+
+  const selectedBandFooterName = useMemo(() => {
+    if (!selectedBand) return undefined;
+    return formatBandTeamName(selectedBandSongScore?.members ?? selectedBand.members, selectedBand.displayName);
+  }, [selectedBand, selectedBandSongScore?.members]);
+
+  const selectedBandFooterRoute = useMemo(() => {
+    if (!selectedBand || !selectedBandFooterName) return undefined;
+    return Routes.band(selectedBand.bandId, {
+      bandType: selectedBand.bandType,
+      teamKey: selectedBand.teamKey,
+      names: selectedBandFooterName,
+    });
+  }, [selectedBand, selectedBandFooterName]);
 
   const [entries, setEntries] = useState<LeaderboardEntryType[]>(hasCached ? cached.entries : []);
   const [totalEntries, setTotalEntries] = useState(hasCached ? cached.totalEntries : 0);
@@ -159,8 +195,10 @@ export default function LeaderboardPage() {
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
-  const hasPlayerFooter = !!(effectivePlayerScore && playerData && songId
+  const hasPlayerFooter = !selectedBand && !!(effectivePlayerScore && playerData && songId
     && (isScoreValid(songId, instKey, effectivePlayerScore.score) || resolvedPlayerScore));
+  const hasBandFooter = !!(selectedBand && selectedBandSongScore && selectedBandFooterRoute && selectedBandFooterName);
+  const hasFooter = hasPlayerFooter || hasBandFooter;
 
   const fetchPage = useCallback(
     async (pageNum: number, mode: 'first' | 'paginate' = 'paginate') => {
@@ -307,12 +345,15 @@ export default function LeaderboardPage() {
     if (!isMobile && effectivePlayerScore?.score != null) {
       scoreLengths.push(effectivePlayerScore.score.toLocaleString().length);
     }
+    if (!isMobile && selectedBandSongScore?.score != null) {
+      scoreLengths.push(selectedBandSongScore.score.toLocaleString().length);
+    }
     const maxLen = Math.max(
       ...scoreLengths,
       1,
     );
     return `${maxLen}ch`;
-  }, [effectivePlayerScore?.score, entries, isMobile]);
+  }, [effectivePlayerScore?.score, entries, isMobile, selectedBandSongScore?.score]);
 
   // On desktop, let the tracked player row influence the scroll-row rank width.
   const rankWidth = useMemo(() => {
@@ -321,8 +362,11 @@ export default function LeaderboardPage() {
     if (!isMobile && effectivePlayerScore?.rank != null) {
       ranks.push(effectivePlayerScore.rank);
     }
+    if (!isMobile && selectedBandSongScore?.rank != null) {
+      ranks.push(selectedBandSongScore.rank);
+    }
     return computeRankWidth(ranks);
-  }, [effectivePlayerScore?.rank, entries, isMobile, page]);
+  }, [effectivePlayerScore?.rank, entries, isMobile, page, selectedBandSongScore?.rank]);
 
   const playerRankWidth = useMemo(() => {
     if (!effectivePlayerScore?.rank) return undefined;
@@ -333,6 +377,16 @@ export default function LeaderboardPage() {
     if (!effectivePlayerScore?.score) return undefined;
     return `${effectivePlayerScore.score.toLocaleString().length}ch`;
   }, [effectivePlayerScore?.score]);
+
+  const selectedBandRankWidth = useMemo(() => {
+    if (!selectedBandSongScore?.rank) return undefined;
+    return computeRankWidth([selectedBandSongScore.rank]);
+  }, [selectedBandSongScore?.rank]);
+
+  const selectedBandScoreWidth = useMemo(() => {
+    if (!selectedBandSongScore?.score) return undefined;
+    return `${selectedBandSongScore.score.toLocaleString().length}ch`;
+  }, [selectedBandSongScore?.score]);
 
   if (!songId || !instrument) {
     return <PageMessage>{t('leaderboard.notFound')}</PageMessage>;
@@ -408,8 +462,30 @@ export default function LeaderboardPage() {
                 entryLinkTo={(e, isPlayer) => isPlayer ? '/statistics' : `/player/${e.accountId}`}
                 linkState={{ backTo: location.pathname }}
                 playerRowRef={playerRowRef}
-                hasPlayerFooter={hasPlayerFooter}
-                renderPlayerFooter={({ className, style }) => (
+                hasPlayerFooter={hasFooter}
+                renderPlayerFooter={({ className, style }) => selectedBand && selectedBandSongScore && selectedBandFooterRoute && selectedBandFooterName ? (
+                  <Link to={selectedBandFooterRoute} className={className} style={{ ...style, cursor: 'pointer' }}>
+                    <LeaderboardEntry
+                      rank={selectedBandSongScore.rank}
+                      displayName={selectedBandFooterName}
+                      score={selectedBandSongScore.score}
+                      season={selectedBandSongScore.season}
+                      accuracy={selectedBandSongScore.accuracy}
+                      isFullCombo={!!selectedBandSongScore.isFullCombo}
+                      stars={selectedBandSongScore.stars}
+                      isPlayer
+                      difficulty={normalizeSoloDifficulty(selectedBandSongScore.difficulty)}
+                      showDifficulty={showSeason}
+                      showSeason={showSeason}
+                      showAccuracy={showAccuracy}
+                      showStars={showStars}
+                      starsAfterScore
+                      showScore={showFooterScore}
+                      scoreWidth={selectedBandScoreWidth}
+                      rankWidth={isMobile ? selectedBandRankWidth : rankWidth}
+                    />
+                  </Link>
+                ) : (
                   <div onClick={() => navigate('/statistics')} role="button" tabIndex={0}>
                     <div className={className} style={{ ...style, cursor: 'pointer' }}>
                       <LeaderboardEntry
@@ -446,5 +522,9 @@ export default function LeaderboardPage() {
         )}
     </Page>
   );
+}
+
+function normalizeSoloDifficulty(difficulty: number | null | undefined): number | undefined {
+  return difficulty != null && difficulty >= 0 && difficulty <= 3 ? difficulty : undefined;
 }
 

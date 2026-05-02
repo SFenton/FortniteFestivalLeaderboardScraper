@@ -24,10 +24,12 @@ import type {
   AccountRankingDto,
   ComboRankingEntry,
   AccountRankingEntry,
+  BandRankingDto,
 } from '@festival/core/api/serverTypes';
 import { InstrumentHeaderSize, rankColor } from '@festival/core';
 import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { LEADERBOARD_PAGE_SIZE, getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth, computePillMinWidth, formatBayesianRatingDisplay, formatRankingValueDisplay, getRatingPillTier, usesPercentileValueDisplay } from './helpers/rankingHelpers';
+import { coerceBandRankingMetric, formatBandTeamName, getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel } from './helpers/bandRankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -42,6 +44,8 @@ import InstrumentPickerModal from './modals/InstrumentPickerModal';
 import RankByModal from './modals/RankByModal';
 import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScopes';
 import { coerceRankingMetric } from './helpers/rankingHelpers';
+import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
+import { Routes } from '../../routes';
 
 type FullRankingsData = RankingsPageResponse | ComboPageResponse;
 type FullPlayerRanking = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
@@ -58,9 +62,17 @@ export default function FullRankingsPage() {
   const instrument = (searchParams.get('instrument') ?? 'Solo_Guitar') as InstrumentKey;
   const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
   const metric = coerceRankingMetric(rawMetric, experimentalRanksEnabled);
+  const bandMetric = coerceBandRankingMetric(metric, experimentalRanksEnabled);
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
 
-  const { player } = useTrackedPlayer();
+  const { profile, player } = useTrackedPlayer();
+  const selectedBand = profile?.type === 'band' ? profile : null;
+  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const selectedBandComboId = isCombo
+    ? comboId!
+    : selectedBand && appliedBandComboFilter?.bandType === selectedBand.bandType
+      ? appliedBandComboFilter.comboId
+      : undefined;
   const isMobileChrome = useIsMobileChrome();
   const hasFab = isMobileChrome;
   const fabSearch = useFabSearch();
@@ -138,6 +150,29 @@ export default function FullRankingsPage() {
     enabled: !!player,
   });
 
+  const { data: selectedBandRanking } = useQuery<BandRankingDto | null>({
+    queryKey: selectedBand
+      ? queryKeys.bandRanking(selectedBand.bandType, selectedBand.teamKey, selectedBandComboId, bandMetric)
+      : ['bandRanking', 'selectedBand', 'disabled'],
+    queryFn: () => api.getBandRanking(selectedBand!.bandType, selectedBand!.teamKey, selectedBandComboId, bandMetric),
+    enabled: !!selectedBand,
+    retry: false,
+  });
+
+  const selectedBandFooterName = useMemo(() => {
+    if (!selectedBand) return undefined;
+    return formatBandTeamName(selectedBandRanking?.teamMembers ?? selectedBand.members, selectedBand.displayName);
+  }, [selectedBand, selectedBandRanking?.teamMembers]);
+
+  const selectedBandFooterRoute = useMemo(() => {
+    if (!selectedBand || !selectedBandFooterName) return undefined;
+    return Routes.band(selectedBand.bandId, {
+      bandType: selectedBand.bandType,
+      teamKey: selectedBand.teamKey,
+      names: selectedBandFooterName,
+    });
+  }, [selectedBand, selectedBandFooterName]);
+
   const totalPages = data ? Math.ceil(data.totalAccounts / LEADERBOARD_PAGE_SIZE) : 0;
   const entries = data?.entries ?? [];
   const reserveTenDigitScoreWidth = metric === 'totalscore';
@@ -177,34 +212,46 @@ export default function FullRankingsPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
 
-  const hasPlayerFooter = !!playerRanking;
+  const hasPlayerFooter = !selectedBand && !!playerRanking;
+  const hasBandFooter = !!(selectedBand && selectedBandRanking && selectedBandFooterName && selectedBandFooterRoute);
+  const hasFooter = hasPlayerFooter || hasBandFooter;
 
   const rankWidth = useMemo(() => {
     const allRanks = entries.map((entry) => getDisplayRank(entry, metric));
     if (!isMobile && playerRanking) {
       allRanks.push(getDisplayRank(playerRanking, metric));
     }
+    if (!isMobile && selectedBandRanking) {
+      allRanks.push(getBandRankForMetric(selectedBandRanking, bandMetric));
+    }
     return computeRankWidth(allRanks);
-  }, [entries, isMobile, metric, playerRanking]);
+  }, [bandMetric, entries, isMobile, metric, playerRanking, selectedBandRanking]);
 
   const playerRankWidth = useMemo(() => {
     if (!playerRanking) return undefined;
     return computeRankWidth([getDisplayRank(playerRanking, metric)]);
   }, [metric, playerRanking]);
 
+  const selectedBandRankWidth = useMemo(() => {
+    if (!selectedBandRanking) return undefined;
+    return computeRankWidth([getBandRankForMetric(selectedBandRanking, bandMetric)]);
+  }, [bandMetric, selectedBandRanking]);
+
   const percentileValueMinWidth = useMemo(() => {
     if (!usePercentileMetric) return undefined;
     const labels = entries.map((entry) => formatRankingValueDisplay(getDisplayRating(entry, metric), metric));
     if (playerRanking) labels.push(formatRankingValueDisplay(getDisplayRating(playerRanking, metric), metric));
+    if (selectedBandRanking) labels.push(formatRankingValueDisplay(getBandRatingForMetric(selectedBandRanking, bandMetric), bandMetric));
     return computePillMinWidth(labels);
-  }, [entries, metric, playerRanking, usePercentileMetric]);
+  }, [bandMetric, entries, metric, playerRanking, selectedBandRanking, usePercentileMetric]);
 
   const bayesianRankMinWidth = useMemo(() => {
     if (!usePercentileMetric) return undefined;
     const labels = entries.map((entry) => formatBayesianRatingDisplay(getDisplayBayesianRating(entry, metric), metric));
     if (playerRanking) labels.push(formatBayesianRatingDisplay(getDisplayBayesianRating(playerRanking, metric), metric));
+    if (selectedBandRanking) labels.push(formatBayesianRatingDisplay(getBandBayesianRatingForMetric(selectedBandRanking, bandMetric), bandMetric));
     return computePillMinWidth(labels);
-  }, [entries, metric, playerRanking, usePercentileMetric]);
+  }, [bandMetric, entries, metric, playerRanking, selectedBandRanking, usePercentileMetric]);
 
   const pageLabel = isCombo ? comboScopeLabel(comboId!) : serverInstrumentLabel(instrument);
   const showMobilePageHeader = !isMobileChrome || settings.showButtonsInHeaderMobile;
@@ -309,8 +356,29 @@ export default function FullRankingsPage() {
           );
         }}
         entryLinkTo={(entry) => `/player/${entry.accountId}`}
-        hasPlayerFooter={hasPlayerFooter}
-        renderPlayerFooter={playerRanking ? ({ className, style }) => (
+        hasPlayerFooter={hasFooter}
+        renderPlayerFooter={selectedBand && selectedBandRanking && selectedBandFooterRoute && selectedBandFooterName ? ({ className, style }) => (
+          <Link to={selectedBandFooterRoute} className={className} style={style}>
+            <RankingEntry
+              rank={getBandRankForMetric(selectedBandRanking, bandMetric)}
+              displayName={selectedBandFooterName}
+              ratingLabel={formatRating(getBandRatingForMetric(selectedBandRanking, bandMetric), bandMetric)}
+              songsLabel={getBandSongsLabel(selectedBandRanking, bandMetric)}
+              percentileValueDisplay={usesPercentileValueDisplay(bandMetric) ? formatRankingValueDisplay(getBandRatingForMetric(selectedBandRanking, bandMetric), bandMetric) : undefined}
+              percentileValueMinWidth={percentileValueMinWidth}
+              bayesianRankDisplay={usesPercentileValueDisplay(bandMetric) ? formatBayesianRatingDisplay(getBandBayesianRatingForMetric(selectedBandRanking, bandMetric), bandMetric) : undefined}
+              bayesianRankColor={usesPercentileValueDisplay(bandMetric) ? rankColor(getBandRankForMetric(selectedBandRanking, bandMetric), selectedBandRanking.totalRankedTeams) : undefined}
+              bayesianRankMinWidth={bayesianRankMinWidth}
+              twoRowPercentileMetadata={useTwoRowPercentile}
+              ratingPillTier={getRatingPillTier(getBandRatingForMetric(selectedBandRanking, bandMetric), bandMetric)}
+              songsLabelPrimary={bandMetric === 'fcrate'}
+              songsLabelGoldPrefix={bandMetric === 'fcrate'}
+              isPlayer
+              rankWidth={isMobile ? selectedBandRankWidth : rankWidth}
+              reserveTenDigitScoreWidth={reserveTenDigitScoreWidth && !(isMobile && hasFab)}
+            />
+          </Link>
+        ) : playerRanking ? ({ className, style }) => (
           <Link to={`/player/${playerRanking.accountId}`} className={className} style={style}>
             <RankingEntry
               rank={getDisplayRank(playerRanking, metric)}

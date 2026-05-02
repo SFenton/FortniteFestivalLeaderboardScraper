@@ -39,6 +39,16 @@ const mockApi = vi.hoisted(() => {
     getVersion: fn().mockResolvedValue({ version: '1.0.0' }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 'song-1', instruments: [] }),
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] }),
+    getSongBandLeaderboard: fn().mockResolvedValue({
+      songId: 'song-1',
+      bandType: 'Band_Duets',
+      count: 0,
+      totalEntries: 0,
+      localEntries: 0,
+      entries: [],
+      selectedPlayerEntry: null,
+      selectedBandEntry: null,
+    }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'test-player-1', stats: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' }),
@@ -102,6 +112,16 @@ function resetMocks() {
   mockApi.getVersion.mockResolvedValue({ version: '1.0.0' });
   mockApi.getAllLeaderboards.mockResolvedValue({ songId: 'song-1', instruments: [] });
   mockApi.getPlayerHistory.mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] });
+  mockApi.getSongBandLeaderboard.mockResolvedValue({
+    songId: 'song-1',
+    bandType: 'Band_Duets',
+    count: 0,
+    totalEntries: 0,
+    localEntries: 0,
+    entries: [],
+    selectedPlayerEntry: null,
+    selectedBandEntry: null,
+  });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'test-player-1', stats: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' });
@@ -123,6 +143,43 @@ function renderLeaderboard(route = '/songs/song-1/Solo_Guitar', accountId?: stri
       </Routes>
     </TestProviders>,
   );
+}
+
+const selectedBandProfile = {
+  type: 'band',
+  bandId: 'band-selected-1',
+  bandType: 'Band_Duets',
+  teamKey: 'band-a:band-b',
+  displayName: 'Alpha + Beta',
+  members: [
+    { accountId: 'band-a', displayName: 'Alpha' },
+    { accountId: 'band-b', displayName: 'Beta' },
+  ],
+} as const;
+
+function selectBandProfile() {
+  localStorage.setItem('fst:selectedProfile', JSON.stringify(selectedBandProfile));
+}
+
+function makeSelectedSongBandEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    bandId: selectedBandProfile.bandId,
+    bandType: selectedBandProfile.bandType,
+    teamKey: selectedBandProfile.teamKey,
+    comboId: null,
+    members: [
+      { accountId: 'band-a', displayName: 'Alpha', instruments: ['Solo_Guitar'] },
+      { accountId: 'band-b', displayName: 'Beta', instruments: ['Solo_Drums'] },
+    ],
+    rank: 7,
+    score: 98765,
+    season: 5,
+    accuracy: 98.7,
+    isFullCombo: true,
+    stars: 6,
+    difficulty: 4,
+    ...overrides,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -630,6 +687,98 @@ describe('LeaderboardPage — coverage: player footer with tracked score', () =>
 
     expect(pageRank).toHaveStyle({ width: `${expectedWidth}px` });
     expect(footerRank).toHaveStyle({ width: `${expectedWidth}px` });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coverage: selected band footer
+// ---------------------------------------------------------------------------
+
+describe('LeaderboardPage — selected band footer', () => {
+  it('renders selected band score in the fixed footer', async () => {
+    stubViewportWidth(1024);
+    selectBandProfile();
+    mockApi.getSongBandLeaderboard.mockResolvedValue({
+      songId: 'song-1',
+      bandType: 'Band_Duets',
+      count: 0,
+      totalEntries: 1,
+      localEntries: 1,
+      entries: [],
+      selectedPlayerEntry: null,
+      selectedBandEntry: makeSelectedSongBandEntry({ accuracy: 987_654, isFullCombo: false, stars: 5 }),
+    });
+
+    renderLeaderboard();
+
+    expect(await screen.findByText('Alpha + Beta')).toBeTruthy();
+    expect(await screen.findByText('#7')).toBeTruthy();
+    const score = await screen.findByText('98,765');
+    const stars = screen.getByTestId('leaderboard-stars-after-score');
+    const accuracy = await screen.findByText('98.8%');
+    expect(stars.querySelectorAll('img')).toHaveLength(5);
+    expect(score.compareDocumentPosition(stars) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(stars.compareDocumentPosition(accuracy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByText('?')).toBeNull();
+    expect(mockApi.getSongBandLeaderboard).toHaveBeenCalledWith('song-1', 'Band_Duets', 1, 0, undefined, 'band-a:band-b', undefined);
+  });
+
+  it('links the selected band footer to the band route', async () => {
+    selectBandProfile();
+    mockApi.getSongBandLeaderboard.mockResolvedValue({
+      songId: 'song-1',
+      bandType: 'Band_Duets',
+      count: 0,
+      totalEntries: 1,
+      localEntries: 1,
+      entries: [],
+      selectedPlayerEntry: null,
+      selectedBandEntry: makeSelectedSongBandEntry(),
+    });
+
+    renderLeaderboard();
+
+    const footerName = await screen.findByText('Alpha + Beta');
+    const link = footerName.closest('a');
+    expect(link?.getAttribute('href')).toContain('/bands/band-selected-1');
+    expect(link?.getAttribute('href')).toContain('bandType=Band_Duets');
+    expect(link?.getAttribute('href')).toContain('teamKey=band-a%3Aband-b');
+  });
+
+  it('does not render the solo footer while a band is selected', async () => {
+    selectBandProfile();
+    mockApi.getSongBandLeaderboard.mockResolvedValue({
+      songId: 'song-1',
+      bandType: 'Band_Duets',
+      count: 0,
+      totalEntries: 1,
+      localEntries: 1,
+      entries: [],
+      selectedPlayerEntry: null,
+      selectedBandEntry: makeSelectedSongBandEntry(),
+    });
+
+    renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
+
+    expect(await screen.findByText('Alpha + Beta')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('TestPlayer');
+  });
+
+  it('does not query selected band scores for a selected solo player', async () => {
+    renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
+
+    await screen.findByText('Player One');
+    expect(mockApi.getSongBandLeaderboard).not.toHaveBeenCalled();
+  });
+
+  it('does not render a band footer when the selected band has no song score', async () => {
+    selectBandProfile();
+
+    renderLeaderboard();
+
+    await screen.findByText('Player One');
+    await waitFor(() => expect(mockApi.getSongBandLeaderboard).toHaveBeenCalled());
+    expect(document.body.textContent).not.toContain('Alpha + Beta');
   });
 });
 

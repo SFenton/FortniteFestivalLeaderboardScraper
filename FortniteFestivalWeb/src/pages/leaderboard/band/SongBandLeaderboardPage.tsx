@@ -1,6 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- page-level dynamic styles use inline style objects */
 import { useCallback, useEffect, useMemo, type AnimationEvent, type CSSProperties } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { LoadPhase } from '@festival/core';
@@ -9,7 +9,7 @@ import { Display, Gap, flexColumn } from '@festival/theme';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';
 import EmptyState from '../../../components/common/EmptyState';
-import { FixedLeaderboardPagination, useLeaderboardFooterScrollMargin } from '../../../components/leaderboard/LeaderboardPaginationFooter';
+import { FixedLeaderboardPagination, FixedLeaderboardPlayerFooter, useLeaderboardFooterScrollMargin } from '../../../components/leaderboard/LeaderboardPaginationFooter';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import SongBandScoreFooter, { SongBandMemberMetadata, formatSongBandAccuracy, getSongBandMemberScoreWidth, getSongBandScoreWidth, hasSongBandMemberAccuracy, hasSongBandMemberStars } from '../../../components/bands/SongBandScoreFooter';
 import { useFestival } from '../../../contexts/FestivalContext';
@@ -19,11 +19,16 @@ import { useStagger } from '../../../hooks/ui/useStagger';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { useAppliedBandComboFilter } from '../../../contexts/BandFilterActionContext';
+import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { parseApiError } from '../../../utils/apiError';
 import { coerceSongBandType, songBandToPlayerBandEntry, songBandTypeLabel } from '../../../utils/songBandLeaderboards';
 import Page, { PageBackground } from '../../Page';
 import { PageMessage } from '../../PageMessage';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
+import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
+import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
+import { formatBandTeamName } from '../../leaderboards/helpers/bandRankingHelpers';
+import { Routes } from '../../../routes';
 
 const PAGE_SIZE = 25;
 
@@ -40,15 +45,17 @@ export default function SongBandLeaderboardPage() {
 
   const song = songs.find((s) => s.songId === songId);
   const bandType = coerceSongBandType(rawBandType);
+  const { profile } = useSelectedProfile();
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const activeComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType ? appliedBandComboFilter.comboId : undefined;
+  const selectedBandTeamKey = profile?.type === 'band' && profile.bandType === bandType ? profile.teamKey : undefined;
   const bandLabel = bandType ? songBandTypeLabel(bandType, t) : '';
   const page = Math.max(1, Number(searchParams.get('page')) || 1);
   const goToSongDetail = useNavigateToSongDetail(songId);
 
   const leaderboardQuery = useQuery({
-    queryKey: queryKeys.songBandLeaderboard(songId, bandType ?? 'unknown', PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, undefined, activeComboId),
-    queryFn: () => api.getSongBandLeaderboard(songId, bandType!, PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, undefined, activeComboId),
+    queryKey: queryKeys.songBandLeaderboard(songId, bandType ?? 'unknown', PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, selectedBandTeamKey, activeComboId),
+    queryFn: () => api.getSongBandLeaderboard(songId, bandType!, PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, selectedBandTeamKey, activeComboId),
     enabled: !!songId && !!bandType,
     staleTime: 5 * 60_000,
   });
@@ -56,10 +63,29 @@ export default function SongBandLeaderboardPage() {
   const data = leaderboardQuery.data;
   const loading = leaderboardQuery.isFetching && !data;
   const entries = data?.entries ?? [];
-  const scoreWidth = useMemo(() => getSongBandScoreWidth(entries), [entries]);
-  const memberScoreWidth = useMemo(() => getSongBandMemberScoreWidth(entries), [entries]);
-  const showMemberStars = useMemo(() => hasSongBandMemberStars(entries), [entries]);
-  const showMemberAccuracy = useMemo(() => hasSongBandMemberAccuracy(entries), [entries]);
+  const selectedBandEntry = data?.selectedBandEntry ?? null;
+  const hasSelectedBandFooter = !!selectedBandEntry;
+  const widthEntries = hasSelectedBandFooter && selectedBandEntry ? [...entries, selectedBandEntry] : entries;
+  const scoreWidth = useMemo(() => getSongBandScoreWidth(widthEntries), [widthEntries]);
+  const memberScoreWidth = useMemo(() => getSongBandMemberScoreWidth(widthEntries), [widthEntries]);
+  const showMemberStars = useMemo(() => hasSongBandMemberStars(widthEntries), [widthEntries]);
+  const showMemberAccuracy = useMemo(() => hasSongBandMemberAccuracy(widthEntries), [widthEntries]);
+  const selectedBandFooterName = useMemo(() => {
+    if (!selectedBandEntry) return undefined;
+    return formatBandTeamName(selectedBandEntry.members, profile?.type === 'band' ? profile.displayName : selectedBandEntry.teamKey);
+  }, [profile, selectedBandEntry]);
+  const selectedBandFooterRoute = useMemo(() => {
+    if (!selectedBandEntry || !selectedBandFooterName) return undefined;
+    return Routes.band(selectedBandEntry.bandId, {
+      bandType: selectedBandEntry.bandType,
+      teamKey: selectedBandEntry.teamKey,
+      names: selectedBandFooterName,
+    });
+  }, [selectedBandEntry, selectedBandFooterName]);
+  const selectedBandFooterRankWidth = useMemo(() => {
+    if (!selectedBandEntry) return undefined;
+    return computeRankWidth([selectedBandEntry.rank]);
+  }, [selectedBandEntry]);
   const totalEntries = data?.totalEntries ?? 0;
   const localEntries = data?.localEntries ?? totalEntries;
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
@@ -79,9 +105,9 @@ export default function SongBandLeaderboardPage() {
     }
   }, [data, goToPage, localEntries, page, totalPages]);
 
-  const { phase, shouldStagger } = usePageTransition(`songBandLeaderboard:${songId}:${bandType}:${activeComboId ?? 'all'}:${page}`, !loading);
+  const { phase, shouldStagger } = usePageTransition(`songBandLeaderboard:${songId}:${bandType}:${activeComboId ?? 'all'}:${selectedBandTeamKey ?? 'none'}:${page}`, !loading);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
-  useLeaderboardFooterScrollMargin({ hasFab, hasPagination });
+  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter: hasSelectedBandFooter });
   const styles = useStyles();
 
   if (!songId || !bandType) {
@@ -158,12 +184,43 @@ export default function SongBandLeaderboardPage() {
               onGoToPage={goToPage}
               isMobile={isMobile}
               hasFab={hasFab}
+              hasPlayerFooter={hasSelectedBandFooter}
             />
+          )}
+          {hasSelectedBandFooter && selectedBandEntry && selectedBandFooterName && selectedBandFooterRoute && (
+            <FixedLeaderboardPlayerFooter hasFab={hasFab}>
+              {({ className, style }) => (
+                <Link to={selectedBandFooterRoute} className={className} style={style}>
+                  <LeaderboardEntry
+                    rank={selectedBandEntry.rank}
+                    displayName={selectedBandFooterName}
+                    score={selectedBandEntry.score}
+                    season={selectedBandEntry.season}
+                    accuracy={selectedBandEntry.accuracy}
+                    isFullCombo={!!selectedBandEntry.isFullCombo}
+                    stars={selectedBandEntry.stars}
+                    difficulty={normalizeSoloDifficulty(selectedBandEntry.difficulty)}
+                    showDifficulty={!isMobile}
+                    showSeason={!isMobile}
+                    showAccuracy={!isMobile}
+                    showStars={!isMobile}
+                    starsAfterScore
+                    scoreWidth={scoreWidth}
+                    rankWidth={selectedBandFooterRankWidth}
+                    isPlayer
+                  />
+                </Link>
+              )}
+            </FixedLeaderboardPlayerFooter>
           )}
         </div>
       )}
     </Page>
   );
+}
+
+function normalizeSoloDifficulty(difficulty: number | null | undefined): number | undefined {
+  return difficulty != null && difficulty >= 0 && difficulty <= 3 ? difficulty : undefined;
 }
 
 function SongBandLeaderboardRow({

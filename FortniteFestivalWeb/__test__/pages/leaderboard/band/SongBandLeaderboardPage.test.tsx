@@ -6,7 +6,9 @@ import type { ReactNode } from 'react';
 import type { SongBandLeaderboardResponse } from '@festival/core/api/serverTypes';
 import SongBandLeaderboardPage from '../../../../src/pages/leaderboard/band/SongBandLeaderboardPage';
 import { BandFilterActionProvider } from '../../../../src/contexts/BandFilterActionContext';
+import { FeatureFlagsProvider } from '../../../../src/contexts/FeatureFlagsContext';
 import type { AppliedBandComboFilter } from '../../../../src/types/bandFilter';
+import { SELECTED_PROFILE_STORAGE_KEY } from '../../../../src/state/selectedProfile';
 
 const mockGetSongBandLeaderboard = vi.hoisted(() => vi.fn());
 const mockScrollTo = vi.hoisted(() => vi.fn());
@@ -136,6 +138,7 @@ function renderPage(bandFilter?: AppliedBandComboFilter | null) {
 
   return render(
     <QueryClientProvider client={queryClient}>
+      <FeatureFlagsProvider>
       <BandFilterActionProvider value={{
         visible: false,
         label: 'Filter Band Type',
@@ -149,12 +152,14 @@ function renderPage(bandFilter?: AppliedBandComboFilter | null) {
         </Routes>
       </MemoryRouter>
       </BandFilterActionProvider>
+      </FeatureFlagsProvider>
     </QueryClientProvider>,
   );
 }
 
 describe('SongBandLeaderboardPage', () => {
   beforeEach(() => {
+    localStorage.clear();
     mockScrollTo.mockClear();
     mockScrollElement.style.marginBottom = '';
     mockGetSongBandLeaderboard.mockResolvedValue(response);
@@ -244,5 +249,57 @@ describe('SongBandLeaderboardPage', () => {
     await waitFor(() => {
       expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
     });
+  });
+
+  it('requests and renders the selected band entry when it is outside the visible page', async () => {
+    localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'acct-selected:acct-partner',
+      displayName: 'Selected + Partner',
+      members: [
+        { accountId: 'acct-selected', displayName: 'Selected' },
+        { accountId: 'acct-partner', displayName: 'Partner' },
+      ],
+    }));
+    mockGetSongBandLeaderboard.mockResolvedValue({
+      ...response,
+      selectedBandEntry: {
+        bandId: 'selected-band',
+        bandType: 'Band_Duets',
+        teamKey: 'acct-selected:acct-partner',
+        comboId: 'Solo_Guitar+Solo_Bass',
+        score: 777_777,
+        rank: 13,
+        accuracy: 912_345,
+        stars: 5,
+        season: 9,
+        difficulty: 3,
+        members: [
+          { accountId: 'acct-selected', displayName: 'Selected', instruments: ['Solo_Guitar'], score: 400_000, accuracy: 910_000, difficulty: 3, season: 9, stars: 5, isFullCombo: false },
+          { accountId: 'acct-partner', displayName: 'Partner', instruments: ['Solo_Bass'], score: 377_777, accuracy: 914_000, difficulty: 3, season: 9, stars: 5, isFullCombo: false },
+        ],
+      },
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, 'acct-selected:acct-partner', undefined);
+    });
+
+    const list = await screen.findByTestId('song-band-leaderboard-list');
+    expect(within(list).queryByText('Selected')).toBeNull();
+    const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
+    expect(footer).toHaveStyle({ position: 'fixed' });
+    expect(within(footer).getByText('Selected + Partner')).toBeTruthy();
+    expect(within(footer).getByText('#13')).toBeTruthy();
+    const score = within(footer).getByText('777,777');
+    const stars = within(footer).getByTestId('leaderboard-stars-after-score');
+    const accuracy = within(footer).getByText('91.2%');
+    expect(stars.querySelectorAll('img')).toHaveLength(5);
+    expect(score.compareDocumentPosition(stars) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(stars.compareDocumentPosition(accuracy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

@@ -38,6 +38,8 @@ export interface LeaderboardEntryProps {
   showAccuracy?: boolean;
   /** Show the stars column. */
   showStars?: boolean;
+  /** When true, place stars inside the score metadata group before accuracy. */
+  starsAfterScore?: boolean;
   /** Show the score pill. Defaults to true. */
   showScore?: boolean;
   /** Width string for the score column (e.g. '6ch'). */
@@ -61,6 +63,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   showSeason,
   showAccuracy,
   showStars,
+  starsAfterScore,
   showScore = true,
   scoreWidth,
   rankWidth,
@@ -86,13 +89,20 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
             : <span style={s.hidden} aria-hidden="true"><SeasonPill season={0} /></span>
         )}
         {showScore && <ScorePill score={score} width={scoreWidth} />}
+        {showStars && starsAfterScore && (
+          <span data-testid="leaderboard-stars-after-score" style={s.inlineStars}>
+            {stars != null && stars > 0
+              ? <MiniStars starsCount={stars} isFullCombo={!!isFullCombo} align="start" />
+              : '\u2014'}
+          </span>
+        )}
       </span>
       {showAccuracy && (
         <span style={s.colAcc}>
           <AccuracyDisplay accuracy={accuracy ?? null} isFullCombo={isFullCombo} />
         </span>
       )}
-      {showStars && (
+      {showStars && !starsAfterScore && (
         <span style={s.colStars}>
           {stars != null && stars > 0
             ? <MiniStars starsCount={stars} isFullCombo={!!isFullCombo} />
@@ -139,6 +149,13 @@ function useStyles(isPlayer?: boolean, rankWidth?: number) {
       display: Display.inlineFlex,
       alignItems: Align.center,
       justifyContent: Justify.end,
+    },
+    inlineStars: {
+      flexShrink: 0,
+      width: StarSize.rowWidth,
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.start,
     },
     hidden: {
       visibility: 'hidden' as const,

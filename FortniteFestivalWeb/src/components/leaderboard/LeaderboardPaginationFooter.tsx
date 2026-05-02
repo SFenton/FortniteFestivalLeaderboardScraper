@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- fixed footer uses shared inline shell styles */
-import { useEffect, type CSSProperties } from 'react';
+import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { IS_PWA } from '@festival/ui-utils';
 import { Gap, Layout } from '@festival/theme';
@@ -23,6 +23,12 @@ type FixedLeaderboardPaginationProps = {
   hasFab: boolean;
   hasPlayerFooter?: boolean;
   rowHeight?: number;
+};
+
+type FixedLeaderboardPlayerFooterProps = {
+  hasFab: boolean;
+  rowHeight?: number;
+  children: (props: { className: string; style: CSSProperties }) => ReactNode;
 };
 
 export function getLeaderboardPwaOffset(): number {
@@ -97,6 +103,29 @@ export function FixedLeaderboardPagination({
           {page.toLocaleString()} / {totalPages.toLocaleString()}
         </span>
       </Paginator>
+    </div>,
+    document.body,
+  );
+}
+
+export function FixedLeaderboardPlayerFooter({
+  hasFab,
+  rowHeight = Layout.entryRowHeight,
+  children,
+}: FixedLeaderboardPlayerFooterProps) {
+  const isWideDesktop = useIsWideDesktop();
+  const pwaOffset = getLeaderboardPwaOffset();
+  const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
+  const rowHeightStyle: CSSProperties | undefined = rowHeight !== Layout.entryRowHeight
+    ? { height: rowHeight, boxSizing: 'border-box' }
+    : undefined;
+
+  return createPortal(
+    <div data-testid="leaderboard-fixed-player-footer" style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight, pwaOffset), ...wideOverride }}>
+      {children({
+        className: hasFab ? 'fab-player-footer' : '',
+        style: { ...s.playerFooterRow, ...rowHeightStyle },
+      })}
     </div>,
     document.body,
   );

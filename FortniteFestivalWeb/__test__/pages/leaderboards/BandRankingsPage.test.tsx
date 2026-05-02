@@ -5,6 +5,7 @@ import type { BandConfiguration, BandRankingEntry, BandType, ServerInstrumentKey
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import BandRankingsPage from '../../../src/pages/leaderboards/BandRankingsPage';
+import { SELECTED_PROFILE_STORAGE_KEY } from '../../../src/state/selectedProfile';
 
 const mockApi = vi.hoisted(() => ({
   getBandRankings: vi.fn(),
@@ -89,7 +90,7 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25);
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
     });
 
     expect(await screen.findByText('Duos Leaderboards')).toBeTruthy();
@@ -111,7 +112,7 @@ describe('BandRankingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 2, 25);
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 2, 25, undefined, undefined);
     });
   });
 
@@ -137,8 +138,51 @@ describe('BandRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25);
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25, undefined, undefined);
     });
+  });
+
+  it('requests and renders the selected band entry when it is outside the current page', async () => {
+    localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'selected:partner',
+      displayName: 'Selected + Partner',
+      members: [
+        { accountId: 'selected', displayName: 'Selected' },
+        { accountId: 'partner', displayName: 'Partner' },
+      ],
+    }));
+    mockApi.getBandRankings.mockResolvedValue({
+      bandType: 'Band_Duets',
+      comboId: null,
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalTeams: 42,
+      entries: [makeBandEntry(1, ['Alpha', 'Beta'])],
+      selectedBandEntry: makeBandEntry(13, ['Selected', 'Partner']),
+    });
+
+    render(
+      <TestProviders route="/leaderboards/bands/Band_Duets?rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, 'selected:partner');
+    });
+
+    const list = await screen.findByTestId('band-rankings-card-list');
+    expect(within(list).queryByText('Selected')).toBeNull();
+    const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
+    expect(footer).toHaveStyle({ position: 'fixed' });
+    expect(within(footer).getByText('Selected + Partner')).toBeTruthy();
+    expect(within(footer).getByText('#13')).toBeTruthy();
   });
 
   it('renders observed Duos assignments as compact possibilities on the full band rankings page', async () => {

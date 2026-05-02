@@ -1,11 +1,11 @@
 /* eslint-disable react/forbid-dom-props -- page-level dynamic styles use inline style objects */
 import { useCallback, useEffect, useMemo, useRef, type CSSProperties } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { IoOptions } from 'react-icons/io5';
 import type { BandRankingMetric } from '@festival/core/api/serverTypes';
-import { LoadPhase } from '@festival/core';
+import { LoadPhase, rankColor } from '@festival/core';
 import { Colors, Display, Font, Gap, Size, Weight, flexColumn } from '@festival/theme';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
@@ -13,7 +13,7 @@ import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { ActionPill } from '../../components/common/ActionPill';
-import { FixedLeaderboardPagination, useLeaderboardFooterScrollMargin } from '../../components/leaderboard/LeaderboardPaginationFooter';
+import { FixedLeaderboardPagination, FixedLeaderboardPlayerFooter, useLeaderboardFooterScrollMargin } from '../../components/leaderboard/LeaderboardPaginationFooter';
 import Page from '../Page';
 import { PageMessage } from '../PageMessage';
 import RankByModal from './modals/RankByModal';
@@ -21,6 +21,7 @@ import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { useSelectedProfile } from '../../hooks/data/useSelectedProfile';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
@@ -29,9 +30,11 @@ import { useStagger } from '../../hooks/ui/useStagger';
 import { bandTypeLabel, coerceBandType } from '../../utils/bandTypes';
 import { parseApiError } from '../../utils/apiError';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
-import { LEADERBOARD_PAGE_SIZE } from './helpers/rankingHelpers';
-import { coerceBandRankingMetric, getEnabledBandRankingMetrics } from './helpers/bandRankingHelpers';
+import { computeRankWidth, formatBayesianRatingDisplay, formatRankingValueDisplay, formatRating, getRatingPillTier, LEADERBOARD_PAGE_SIZE, usesPercentileValueDisplay } from './helpers/rankingHelpers';
+import { coerceBandRankingMetric, formatBandTeamName, getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel, getEnabledBandRankingMetrics } from './helpers/bandRankingHelpers';
 import BandRankingPlayerCard from './components/BandRankingPlayerCard';
+import { RankingEntry } from './components/RankingEntry';
+import { Routes } from '../../routes';
 
 export default function BandRankingsPage() {
   const { t } = useTranslation();
@@ -45,8 +48,10 @@ export default function BandRankingsPage() {
   const fabSearch = useFabSearch();
   const scrollContainerRef = useScrollContainer();
   const bandType = coerceBandType(rawBandType);
+  const { profile } = useSelectedProfile();
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const activeComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType ? appliedBandComboFilter.comboId : undefined;
+  const selectedBandTeamKey = profile?.type === 'band' && profile.bandType === bandType ? profile.teamKey : undefined;
   const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
   const metric = coerceBandRankingMetric(rawMetric, experimentalRanksEnabled);
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
@@ -74,15 +79,34 @@ export default function BandRankingsPage() {
   }, [experimentalRanksEnabled, fabSearch, openMetricModal]);
 
   const leaderboardQuery = useQuery({
-    queryKey: queryKeys.bandRankings(bandType ?? 'unknown', activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE),
-    queryFn: () => api.getBandRankings(bandType!, activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE),
+    queryKey: queryKeys.bandRankings(bandType ?? 'unknown', activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE, undefined, selectedBandTeamKey),
+    queryFn: () => api.getBandRankings(bandType!, activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE, undefined, selectedBandTeamKey),
     enabled: !!bandType,
     placeholderData: (previous) => previous,
   });
 
   const data = leaderboardQuery.data;
   const entries = data?.entries ?? [];
+  const selectedBandEntry = data?.selectedBandEntry ?? null;
+  const hasSelectedBandFooter = !!selectedBandEntry;
   const totalTeams = data?.totalTeams;
+  const selectedBandFooterName = useMemo(() => {
+    if (!selectedBandEntry) return undefined;
+    return formatBandTeamName(selectedBandEntry.teamMembers, profile?.type === 'band' ? profile.displayName : selectedBandEntry.teamKey);
+  }, [profile, selectedBandEntry]);
+  const selectedBandFooterRoute = useMemo(() => {
+    if (!selectedBandEntry || !selectedBandFooterName) return undefined;
+    return Routes.band(selectedBandEntry.bandId, {
+      bandType,
+      teamKey: selectedBandEntry.teamKey,
+      names: selectedBandFooterName,
+    });
+  }, [bandType, selectedBandEntry, selectedBandFooterName]);
+  const selectedBandFooterRankWidth = useMemo(() => {
+    if (!selectedBandEntry) return undefined;
+    return computeRankWidth([getBandRankForMetric(selectedBandEntry, metric)]);
+  }, [metric, selectedBandEntry]);
+  const selectedBandUsesPercentile = usesPercentileValueDisplay(metric);
   const activeFilterInstruments = bandType === 'Band_Duets' && appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
     ? appliedBandComboFilter.assignments.map(assignment => assignment.instrument)
     : undefined;
@@ -113,9 +137,9 @@ export default function BandRankingsPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [goToPage, pageParam, totalPages]);
 
-  const { phase, shouldStagger } = usePageTransition(`bandRankings:${bandType}:${activeComboId ?? 'all'}:${metric}:${pageParam}`, !loading);
+  const { phase, shouldStagger } = usePageTransition(`bandRankings:${bandType}:${activeComboId ?? 'all'}:${metric}:${selectedBandTeamKey ?? 'none'}:${pageParam}`, !loading);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
-  useLeaderboardFooterScrollMargin({ hasFab, hasPagination });
+  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter: hasSelectedBandFooter });
   const styles = useStyles();
 
   if (!bandType) {
@@ -130,7 +154,7 @@ export default function BandRankingsPage() {
       scrollRef={scrollRef}
       staggerRushRef={staggerRushRef}
       scrollRestoreKey={`bandRankings:${bandType}:${activeComboId ?? 'all'}:${metric}:${pageParam}`}
-      scrollDeps={[phase, entries.length, pageParam, metric, bandType, activeComboId]}
+      scrollDeps={[phase, entries.length, hasSelectedBandFooter, pageParam, metric, bandType, activeComboId, selectedBandTeamKey]}
       loadPhase={phase}
       fabSpacer="none"
       before={isMobileChrome ? (
@@ -199,7 +223,31 @@ export default function BandRankingsPage() {
               onGoToPage={goToPage}
               isMobile={isMobile}
               hasFab={hasFab}
+              hasPlayerFooter={hasSelectedBandFooter}
             />
+          )}
+          {hasSelectedBandFooter && selectedBandEntry && selectedBandFooterName && selectedBandFooterRoute && (
+            <FixedLeaderboardPlayerFooter hasFab={hasFab}>
+              {({ className, style }) => (
+                <Link to={selectedBandFooterRoute} className={className} style={style}>
+                  <RankingEntry
+                    rank={getBandRankForMetric(selectedBandEntry, metric)}
+                    displayName={selectedBandFooterName}
+                    ratingLabel={formatRating(getBandRatingForMetric(selectedBandEntry, metric), metric)}
+                    songsLabel={getBandSongsLabel(selectedBandEntry, metric)}
+                    percentileValueDisplay={selectedBandUsesPercentile ? formatRankingValueDisplay(getBandRatingForMetric(selectedBandEntry, metric), metric) : undefined}
+                    bayesianRankDisplay={selectedBandUsesPercentile ? formatBayesianRatingDisplay(getBandBayesianRatingForMetric(selectedBandEntry, metric), metric) : undefined}
+                    bayesianRankColor={selectedBandUsesPercentile ? rankColor(getBandRankForMetric(selectedBandEntry, metric), totalTeams ?? 0) : undefined}
+                    ratingPillTier={getRatingPillTier(getBandRatingForMetric(selectedBandEntry, metric), metric)}
+                    songsLabelPrimary={metric === 'fcrate'}
+                    songsLabelGoldPrefix={metric === 'fcrate'}
+                    isPlayer
+                    rankWidth={selectedBandFooterRankWidth}
+                    reserveTenDigitScoreWidth={metric === 'totalscore' && !(isMobile && hasFab)}
+                  />
+                </Link>
+              )}
+            </FixedLeaderboardPlayerFooter>
           )}
         </div>
       )}
