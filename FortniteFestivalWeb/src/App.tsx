@@ -126,6 +126,7 @@ import SuspenseFallback from './components/common/SuspenseFallback';
 import RouteErrorFallback from './components/page/RouteErrorFallback';
 import { createPreserveShellScrollState, type PreserveShellScrollState } from './utils/quietNavigation';
 import { getBandFilterActionLabel } from './utils/bandFilterDisplay';
+import { bandTypeLabel } from './utils/bandTypes';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -174,6 +175,11 @@ const EMPTY_BAND_FILTER_ASSIGNMENTS: BandInstrumentFilterAssignment[] = [];
 
 export function getFabQuickLinksActionLabel(t: TFunction): string {
   return t('common.quickLinks', 'Quick Links');
+}
+
+export function getEmptyBandFilterActionLabel(selectedProfile: SelectedProfile | null, t: TFunction): string {
+  if (selectedProfile?.type === 'band') return bandTypeLabel(selectedProfile.bandType, t);
+  return t('common.filterBandType', 'Filter Band Type');
 }
 
 export function shouldShowBandFilterAction(selectedProfile: SelectedProfile | null, pathname: string): boolean {
@@ -461,7 +467,7 @@ function AppShell() {
 
   const wideDesktop = !isMobile && isWideDesktop;
   const profileType = selectedProfile?.type ?? 'none';
-  const emptyBandFilterLabel = t('common.filterBandType', 'Filter Band Type');
+  const emptyBandFilterLabel = getEmptyBandFilterActionLabel(selectedProfile, t);
   const activeBandFilter = selectedProfile?.type === 'band' && appliedBandFilter?.bandId === selectedProfile.bandId
     ? appliedBandFilter
     : null;
