@@ -155,7 +155,7 @@ const mockApi = vi.hoisted(() => {
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
-import App, { getFabQuickLinksActionLabel, mergePageQuickLinksIntoFabGroups, prependFabActionGroup, shouldShowBandFilterAction } from '../../src/App';
+import App, { getEmptyBandFilterActionLabel, getFabQuickLinksActionLabel, mergePageQuickLinksIntoFabGroups, prependFabActionGroup, shouldShowBandFilterAction } from '../../src/App';
 import type { SelectedProfile } from '../../src/hooks/data/useSelectedProfile';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
@@ -279,6 +279,28 @@ describe('App — mobile FAB branches', () => {
     expect(shouldShowBandFilterAction(bandProfile, '/settings')).toBe(false);
     expect(shouldShowBandFilterAction(playerProfile, '/songs')).toBe(false);
     expect(shouldShowBandFilterAction(null, '/songs')).toBe(false);
+  });
+
+  it('labels inactive band filter actions by selected band type', () => {
+    const t = vi.fn().mockImplementation((key: string, fallback?: string) => {
+      const labels: Record<string, string> = {
+        'bandList.groups.duos': 'Duos',
+        'bandList.groups.trios': 'Trios',
+        'bandList.groups.quads': 'Quads',
+      };
+      return labels[key] ?? fallback ?? key;
+    });
+    const bandProfile: SelectedProfile = {
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'Lead + Bass',
+      members: [],
+    };
+
+    expect(getEmptyBandFilterActionLabel(bandProfile, t as any)).toBe('Duos');
+    expect(getEmptyBandFilterActionLabel(null, t as any)).toBe('Filter Band Type');
   });
 
   it('uses a generic label for shell FAB quick links instead of a page-specific title', () => {

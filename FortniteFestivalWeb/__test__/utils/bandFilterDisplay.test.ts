@@ -3,7 +3,7 @@ import { getBandFilterActionLabel } from '../../src/utils/bandFilterDisplay';
 
 describe('getBandFilterActionLabel', () => {
   it('uses the empty label when no filter is applied', () => {
-    expect(getBandFilterActionLabel([], 'Filter Band Type')).toBe('Filter Band Type');
+    expect(getBandFilterActionLabel([], 'Duos')).toBe('Duos');
   });
 
   it('joins selected instrument labels with slashes', () => {
