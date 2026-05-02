@@ -127,6 +127,12 @@ import RouteErrorFallback from './components/page/RouteErrorFallback';
 import { createPreserveShellScrollState, type PreserveShellScrollState } from './utils/quietNavigation';
 import { getBandFilterActionLabel } from './utils/bandFilterDisplay';
 import { bandTypeLabel } from './utils/bandTypes';
+import {
+  clearAppliedBandFilter,
+  isBandFilterForSelectedProfile,
+  readAppliedBandFilterForSelectedProfile,
+  writeAppliedBandFilter,
+} from './state/bandFilter';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 import { QueryClientProvider } from '@tanstack/react-query';
@@ -323,7 +329,7 @@ function AppShell() {
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [bandFilterModalOpen, setBandFilterModalOpen] = useState(false);
-  const [appliedBandFilter, setAppliedBandFilter] = useState<AppliedBandComboFilter | null>(null);
+  const [appliedBandFilter, setAppliedBandFilter] = useState<AppliedBandComboFilter | null>(() => readAppliedBandFilterForSelectedProfile(selectedProfile));
   const [hasNewChangelog] = useState(() => {
     try {
       const stored = localStorage.getItem(CHANGELOG_STORAGE_KEY);
@@ -371,6 +377,9 @@ function AppShell() {
 
   /* v8 ignore start — deep AppInner: routing/navigation logic embedded in render */
   const handleSelect = (p: TrackedPlayer) => {
+    clearAppliedBandFilter();
+    setAppliedBandFilter(null);
+    setBandFilterModalOpen(false);
     setPlayer(p);
     // Tracked profiles live on the statistics tab root; rewrite detail URLs quietly.
     if (location.pathname !== AppRoutes.statistics) {
@@ -388,6 +397,9 @@ function AppShell() {
   /* v8 ignore start — deep AppInner: deselect callback */
   const [showDeselectConfirm, setShowDeselectConfirm] = useState(false);
   const handleDeselect = useCallback(() => {
+    clearAppliedBandFilter();
+    setAppliedBandFilter(null);
+    setBandFilterModalOpen(false);
     if (selectedProfile?.type === 'band') {
       clearPlayer();
       return;
@@ -395,6 +407,9 @@ function AppShell() {
     setShowDeselectConfirm(true);
   }, [clearPlayer, selectedProfile?.type]);
   const confirmDeselect = useCallback(() => {
+    clearAppliedBandFilter();
+    setAppliedBandFilter(null);
+    setBandFilterModalOpen(false);
     resetSongSettingsForDeselect();
     clearPlayer();
     setShowDeselectConfirm(false);
@@ -468,7 +483,10 @@ function AppShell() {
   const wideDesktop = !isMobile && isWideDesktop;
   const profileType = selectedProfile?.type ?? 'none';
   const emptyBandFilterLabel = getEmptyBandFilterActionLabel(selectedProfile, t);
-  const activeBandFilter = selectedProfile?.type === 'band' && appliedBandFilter?.bandId === selectedProfile.bandId
+  const selectedBandIdentity = selectedProfile?.type === 'band'
+    ? `${selectedProfile.bandId}|${selectedProfile.bandType}|${selectedProfile.teamKey}`
+    : selectedProfile?.type ?? 'none';
+  const activeBandFilter = isBandFilterForSelectedProfile(appliedBandFilter, selectedProfile)
     ? appliedBandFilter
     : null;
   const activeBandFilterAssignments = activeBandFilter
@@ -483,7 +501,7 @@ function AppShell() {
   const handleBandFilterPress = useCallback(() => setBandFilterModalOpen(true), []);
   const handleApplyBandFilter = useCallback((payload: BandInstrumentFilterApplyPayload) => {
     if (selectedProfile?.type !== 'band') return;
-    setAppliedBandFilter({
+    const nextFilter = writeAppliedBandFilter({
       bandId: selectedProfile.bandId,
       bandType: selectedProfile.bandType,
       teamKey: selectedProfile.teamKey,
@@ -491,17 +509,20 @@ function AppShell() {
       assignments: payload.assignments,
       configurations: payload.configurations,
     });
+    setAppliedBandFilter(nextFilter);
     setBandFilterModalOpen(false);
   }, [selectedProfile]);
   const handleResetBandFilter = useCallback(() => {
+    clearAppliedBandFilter();
     setAppliedBandFilter(null);
     setBandFilterModalOpen(false);
   }, []);
   useEffect(() => {
-    if (selectedProfile?.type === 'band') return;
+    if (!appliedBandFilter || isBandFilterForSelectedProfile(appliedBandFilter, selectedProfile)) return;
+    clearAppliedBandFilter();
     setAppliedBandFilter(null);
     setBandFilterModalOpen(false);
-  }, [selectedProfile?.type]);
+  }, [appliedBandFilter, selectedBandIdentity, selectedProfile]);
   const bandFilterActionValue = useMemo<BandFilterActionContextValue>(() => ({
     visible: showBandFilterAction && !isMobile,
     label: bandFilterLabel,
