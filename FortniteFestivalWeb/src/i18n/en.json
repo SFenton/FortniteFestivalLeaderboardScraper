@@ -619,6 +619,7 @@
       "fourth": "fourth"
     },
     "resetTitle": "Reset Instruments",
+    "resetHint": "Clear the selected instrument combination.",
     "loadFailed": "Could not load band configurations.",
     "noInstruments": "No instruments found",
     "invalidTitle": "Invalid Configuration",

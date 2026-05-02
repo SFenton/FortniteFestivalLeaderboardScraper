@@ -36,6 +36,11 @@ const selectedBand: SelectedBandProfile = {
   ],
 };
 
+const appliedAssignments: BandInstrumentFilterAssignment[] = [
+  { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+  { accountId: 'acct-b', instrument: 'Solo_Bass' },
+];
+
 function renderModal(overrides: Partial<{
   appliedAssignments: BandInstrumentFilterAssignment[];
   onApply: (payload: BandInstrumentFilterApplyPayload) => void;
@@ -60,6 +65,10 @@ function renderModal(overrides: Partial<{
   };
 }
 
+function instrumentSelectionScale(title: string, index = 0) {
+  return screen.getAllByTitle(title)[index]?.querySelector('div')?.style.transform;
+}
+
 describe('BandInstrumentFilterModal', () => {
   it('renders one selector section per instrument slot with no bandmate names', async () => {
     renderModal();
@@ -75,6 +84,14 @@ describe('BandInstrumentFilterModal', () => {
     expect(screen.queryByText('Bravo')).not.toBeInTheDocument();
     expect(firstSlot.parentElement?.style.getPropertyValue('--frosted-card')).toBe('');
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+  });
+
+  it('renders reset title and hint copy above the reset button', async () => {
+    renderModal();
+
+    expect(await screen.findByText('Reset Instruments')).toBeInTheDocument();
+    expect(screen.getByText('Clear the selected instrument combination.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument();
   });
 
   it('shows the complete unique instrument set for every combo slot', async () => {
@@ -143,6 +160,50 @@ describe('BandInstrumentFilterModal', () => {
 
     expect(await screen.findByText('Invalid Configuration')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Keep Selection' }));
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+  });
+
+  it('resets to a cleared draft without immediately applying or closing', async () => {
+    const onApply = vi.fn();
+    const onReset = vi.fn();
+    renderModal({ appliedAssignments, onApply, onReset });
+
+    await screen.findByText('Instrument #1');
+    await waitFor(() => expect(instrumentSelectionScale('Lead', 0)).toBe('scale(1)'));
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
+    expect(onReset).not.toHaveBeenCalled();
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await waitFor(() => expect(instrumentSelectionScale('Lead', 0)).toBe('scale(0)'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled());
+  });
+
+  it('applies a cleared draft through the reset callback', async () => {
+    const onApply = vi.fn();
+    const onReset = vi.fn();
+    renderModal({ appliedAssignments, onApply, onReset });
+
+    await screen.findByText('Instrument #1');
+    await waitFor(() => expect(instrumentSelectionScale('Lead', 0)).toBe('scale(1)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Apply' })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it('keeps Apply disabled when reset is a no-op with no applied filter', async () => {
+    const onReset = vi.fn();
+    renderModal({ onReset });
+
+    await screen.findByText('Instrument #1');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
+    expect(onReset).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 });

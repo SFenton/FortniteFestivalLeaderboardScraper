@@ -90,7 +90,11 @@ export default function BandInstrumentFilterModal({
   );
   const complete = draft.length === members.length && draft.length > 0 && draft.every(Boolean);
   const matchingConfiguration = complete ? findMatchingConfiguration(configurations, draft) : null;
-  const applyDisabled = !complete || !matchingConfiguration;
+  const draftClearsAppliedFilter = draft.length === members.length
+    && draft.length > 0
+    && draft.every(instrument => instrument === null)
+    && savedDraft.some(Boolean);
+  const applyDisabled = !draftClearsAppliedFilter && (!complete || !matchingConfiguration);
   const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(
     draft,
     savedDraft,
@@ -132,10 +136,15 @@ export default function BandInstrumentFilterModal({
 
   const resetDraft = useCallback(() => {
     setDraft(members.map(() => null));
-    if (appliedAssignments.length > 0) onReset();
-  }, [appliedAssignments.length, members, onReset]);
+    setPendingInvalidSelection(null);
+    setConfirmOpen(false);
+  }, [members, setConfirmOpen]);
 
   const apply = useCallback(() => {
+    if (draftClearsAppliedFilter) {
+      onReset();
+      return;
+    }
     if (applyDisabled || !matchingConfiguration) return;
     const matchingConfigurations = configurations.filter(configuration => configuration.comboId === matchingConfiguration.comboId);
     onApply({
@@ -146,7 +155,7 @@ export default function BandInstrumentFilterModal({
         instrument: draft[index]!,
       })),
     });
-  }, [applyDisabled, configurations, draft, matchingConfiguration, members, onApply]);
+  }, [applyDisabled, configurations, draft, draftClearsAppliedFilter, matchingConfiguration, members, onApply, onReset]);
 
   return (
     <Modal
@@ -156,6 +165,7 @@ export default function BandInstrumentFilterModal({
       onApply={apply}
       onReset={resetDraft}
       resetLabel={t('bandFilter.resetTitle')}
+      resetHint={t('bandFilter.resetHint')}
       applyDisabled={applyDisabled || !hasChanges}
       afterPanel={(
         pendingInvalidSelection ? (
