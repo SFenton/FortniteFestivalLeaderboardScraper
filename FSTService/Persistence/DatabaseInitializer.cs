@@ -13,7 +13,7 @@ public static class DatabaseInitializer
         await using var conn = await dataSource.OpenConnectionAsync(ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandTimeout = 0; // No timeout — schema init must complete before the service can start
-        cmd.CommandText = $"{Schema}{Environment.NewLine}{Environment.NewLine}{BandRankingStorageNames.GetCurrentSchemaSql()}";
+        cmd.CommandText = $"{Schema}{Environment.NewLine}{Environment.NewLine}{BandRankingStorageNames.GetCurrentSchemaSql()}{Environment.NewLine}{Environment.NewLine}{ImprovementNotificationSchema.Sql}";
         await cmd.ExecuteNonQueryAsync(ct);
 
         // Reset SERIAL sequences to max(id)+1 — needed after COPY migration inserts explicit IDs
@@ -247,6 +247,80 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_leo_song_priority_score
             ON leaderboard_entries_overlay (song_id, instrument, source_priority DESC, score DESC);
+
+        -- =====================================================================
+        -- SOLO CURRENT PROJECTION (incremental snapshot + overlay read model)
+        -- =====================================================================
+
+        CREATE SEQUENCE IF NOT EXISTS solo_current_projection_generation_seq;
+
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries (
+            song_id               TEXT        NOT NULL,
+            instrument            TEXT        NOT NULL,
+            account_id            TEXT        NOT NULL,
+            score                 INTEGER     NOT NULL,
+            accuracy              INTEGER,
+            is_full_combo         BOOLEAN,
+            stars                 INTEGER,
+            season                INTEGER,
+            percentile            REAL,
+            rank                  INTEGER     NOT NULL DEFAULT 0,
+            api_rank              INTEGER,
+            source                TEXT        NOT NULL DEFAULT 'projection',
+            difficulty            INTEGER     DEFAULT -1,
+            end_time              TEXT,
+            first_seen_at         TIMESTAMPTZ NOT NULL,
+            last_updated_at       TIMESTAMPTZ NOT NULL,
+            projection_generation BIGINT      NOT NULL DEFAULT 0,
+            computed_at           TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (song_id, instrument, account_id)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_solo_guitar    PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_solo_bass      PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_solo_drums     PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_solo_vocals    PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_pro_guitar     PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_pro_bass       PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_PeripheralBass');
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_pro_vocals     PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_PeripheralVocals');
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_pro_cymbals    PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_PeripheralCymbals');
+        CREATE TABLE IF NOT EXISTS current_leaderboard_entries_pro_drums      PARTITION OF current_leaderboard_entries FOR VALUES IN ('Solo_PeripheralDrums');
+
+        CREATE INDEX IF NOT EXISTS ix_cle_account_instrument_song
+            ON current_leaderboard_entries (account_id, instrument, song_id);
+
+        CREATE INDEX IF NOT EXISTS ix_cle_song_rank
+            ON current_leaderboard_entries (song_id, instrument, rank);
+
+        CREATE INDEX IF NOT EXISTS ix_cle_song_score
+            ON current_leaderboard_entries (song_id, instrument, score DESC);
+
+        CREATE TABLE IF NOT EXISTS solo_current_projection_state (
+            id                    BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            current_generation    BIGINT      NOT NULL DEFAULT 0,
+            row_count             BIGINT      NOT NULL DEFAULT 0,
+            scope_count           BIGINT      NOT NULL DEFAULT 0,
+            failed_scope_count    BIGINT      NOT NULL DEFAULT 0,
+            full_rebuilt_at       TIMESTAMPTZ,
+            last_scope_rebuilt_at TIMESTAMPTZ,
+            updated_at            TIMESTAMPTZ NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS solo_current_projection_scope (
+            song_id               TEXT        NOT NULL,
+            instrument            TEXT        NOT NULL,
+            projection_generation BIGINT      NOT NULL DEFAULT 0,
+            row_count             BIGINT      NOT NULL DEFAULT 0,
+            source_snapshot_id    BIGINT,
+            status                TEXT        NOT NULL DEFAULT 'ready',
+            error_message         TEXT,
+            last_rebuilt_at       TIMESTAMPTZ,
+            updated_at            TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (song_id, instrument)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_scps_status_updated
+            ON solo_current_projection_scope (status, updated_at DESC);
 
         -- =====================================================================
         -- SONG STATS (partitioned by instrument)
@@ -1598,6 +1672,74 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_bstr_team_worst
             ON band_song_team_rankings (band_type, ranking_scope, scope_combo_id, team_key, percentile DESC, rank DESC, score ASC, song_id ASC);
+
+        CREATE SEQUENCE IF NOT EXISTS band_current_projection_generation_seq;
+
+        -- Per-song current band leaderboard projection. Song band leaderboard
+        -- pages can read these rows instead of ranking band_entries at request time.
+        CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries (
+            song_id               TEXT             NOT NULL,
+            band_type             TEXT             NOT NULL,
+            ranking_scope         TEXT             NOT NULL DEFAULT 'overall',
+            scope_combo_id        TEXT             NOT NULL DEFAULT '',
+            team_key              TEXT             NOT NULL,
+            entry_combo_id        TEXT             NOT NULL DEFAULT '',
+            entry_instrument_combo TEXT            NOT NULL DEFAULT '',
+            team_members          TEXT[]           NOT NULL,
+            score                 INTEGER          NOT NULL,
+            accuracy              INTEGER,
+            is_full_combo         BOOLEAN,
+            stars                 INTEGER,
+            difficulty            INTEGER,
+            season                INTEGER,
+            rank                  INTEGER          NOT NULL DEFAULT 0,
+            total_entries         INTEGER          NOT NULL DEFAULT 0,
+            percentile            DOUBLE PRECISION NOT NULL DEFAULT 0,
+            end_time              TEXT,
+            first_seen_at         TIMESTAMPTZ      NOT NULL,
+            last_updated_at       TIMESTAMPTZ      NOT NULL,
+            projection_generation BIGINT           NOT NULL DEFAULT 0,
+            computed_at           TIMESTAMPTZ      NOT NULL,
+            PRIMARY KEY (song_id, band_type, ranking_scope, scope_combo_id, team_key)
+        ) PARTITION BY LIST (band_type);
+
+        CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_duets PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Duets');
+        CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_trios PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Trios');
+        CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_quad  PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Quad');
+
+        CREATE INDEX IF NOT EXISTS ix_cble_scope_rank
+            ON current_band_leaderboard_entries (song_id, band_type, ranking_scope, scope_combo_id, rank);
+
+        CREATE INDEX IF NOT EXISTS ix_cble_team_song
+            ON current_band_leaderboard_entries (band_type, team_key, song_id, ranking_scope, scope_combo_id);
+
+        CREATE TABLE IF NOT EXISTS band_current_projection_state (
+            id                    BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            current_generation    BIGINT      NOT NULL DEFAULT 0,
+            row_count             BIGINT      NOT NULL DEFAULT 0,
+            scope_count           BIGINT      NOT NULL DEFAULT 0,
+            failed_scope_count    BIGINT      NOT NULL DEFAULT 0,
+            full_rebuilt_at       TIMESTAMPTZ,
+            last_scope_rebuilt_at TIMESTAMPTZ,
+            updated_at            TIMESTAMPTZ NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS band_current_projection_scope (
+            song_id               TEXT        NOT NULL,
+            band_type             TEXT        NOT NULL,
+            ranking_scope         TEXT        NOT NULL DEFAULT 'overall',
+            scope_combo_id        TEXT        NOT NULL DEFAULT '',
+            projection_generation BIGINT      NOT NULL DEFAULT 0,
+            row_count             BIGINT      NOT NULL DEFAULT 0,
+            status                TEXT        NOT NULL DEFAULT 'ready',
+            error_message         TEXT,
+            last_rebuilt_at       TIMESTAMPTZ,
+            updated_at            TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (song_id, band_type, ranking_scope, scope_combo_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_bcps_status_updated
+            ON band_current_projection_scope (status, updated_at DESC);
 
         -- Aggregate band-team rankings are stored in per-band current tables.
 

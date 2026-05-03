@@ -514,14 +514,22 @@ public sealed class MetaDatabase : IMetaDatabase
         using var cmd = conn.CreateCommand();
         var normalizedQuery = query.Trim().ToLowerInvariant();
         var escapedQuery = EscapeLikePattern(normalizedQuery);
+        cmd.CommandTimeout = 2;
         cmd.CommandText = "SELECT account_id, display_name FROM account_names WHERE display_name IS NOT NULL AND LOWER(display_name) LIKE @pattern ESCAPE '!' ORDER BY CASE WHEN LOWER(display_name) LIKE @prefix ESCAPE '!' THEN 0 ELSE 1 END, LENGTH(display_name), display_name LIMIT @limit";
         cmd.Parameters.AddWithValue("pattern", $"%{escapedQuery}%");
         cmd.Parameters.AddWithValue("prefix", $"{escapedQuery}%");
         cmd.Parameters.AddWithValue("limit", limit);
         var list = new List<(string, string)>();
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
-            list.Add((r.GetString(0), r.GetString(1)));
+        try
+        {
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+                list.Add((r.GetString(0), r.GetString(1)));
+        }
+        catch (Exception ex) when (ex is NpgsqlException or TimeoutException)
+        {
+            _log.LogWarning(ex, "Account search timed out for query length {Length}; returning an empty fast-fail result.", normalizedQuery.Length);
+        }
         return list;
     }
 
@@ -1631,10 +1639,9 @@ public sealed class MetaDatabase : IMetaDatabase
         return (above, self, below);
     }
 
-    public void SnapshotCompositeRankHistory(int retentionDays = 365)
+    public void SnapshotCompositeRankHistory(int retentionDays = 365, bool cleanupRetention = true)
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var cutoff = today.AddDays(-retentionDays);
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
 
@@ -1676,24 +1683,40 @@ public sealed class MetaDatabase : IMetaDatabase
             c.ExecuteNonQuery();
         }
 
-        // Step C: Look-back trim retention
-        using (var c = conn.CreateCommand())
-        {
-            c.Transaction = tx;
-            c.CommandText = @"
-                DELETE FROM composite_rank_history crh
-                WHERE crh.snapshot_date < @cutoff
-                  AND EXISTS (
-                    SELECT 1 FROM composite_rank_history crh2
-                    WHERE crh2.account_id = crh.account_id
-                      AND crh2.snapshot_date > crh.snapshot_date
-                      AND crh2.snapshot_date <= @cutoff
-                  )";
-            c.Parameters.AddWithValue("cutoff", cutoff);
-            c.ExecuteNonQuery();
-        }
+        if (cleanupRetention)
+            CleanupCompositeRankHistoryRetention(conn, tx, retentionDays);
 
         tx.Commit();
+    }
+
+    public int CleanupCompositeRankHistoryRetention(int retentionDays = 365)
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        var deleted = CleanupCompositeRankHistoryRetention(conn, tx, retentionDays);
+        tx.Commit();
+        return deleted;
+    }
+
+    private static int CleanupCompositeRankHistoryRetention(NpgsqlConnection conn, NpgsqlTransaction tx, int retentionDays)
+    {
+        if (retentionDays <= 0)
+            return 0;
+
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
+        using var c = conn.CreateCommand();
+        c.Transaction = tx;
+        c.CommandText = @"
+            DELETE FROM composite_rank_history crh
+            WHERE crh.snapshot_date < @cutoff
+              AND EXISTS (
+                SELECT 1 FROM composite_rank_history crh2
+                WHERE crh2.account_id = crh.account_id
+                  AND crh2.snapshot_date > crh.snapshot_date
+                  AND crh2.snapshot_date <= @cutoff
+              )";
+        c.Parameters.AddWithValue("cutoff", cutoff);
+        return c.ExecuteNonQuery();
     }
 
     // ── Composite ranking deltas ─────────────────────────────────────
@@ -2889,7 +2912,8 @@ public sealed class MetaDatabase : IMetaDatabase
                     options.CommandTimeoutSeconds);
         }
 
-        CleanupBandRankHistoryRetention(conn, bandType, options.RetentionDays, options.CommandTimeoutSeconds, ct);
+        if (options.CleanupRetention)
+            CleanupBandRankHistoryRetention(conn, bandType, options.RetentionDays, options.CommandTimeoutSeconds, ct);
 
         return new BandRankHistorySnapshotResult
         {
@@ -3224,7 +3248,17 @@ public sealed class MetaDatabase : IMetaDatabase
         return result;
     }
 
-    private static void CleanupBandRankHistoryRetention(
+    public int CleanupBandRankHistoryRetention(
+        string bandType,
+        int retentionDays = 365,
+        int commandTimeoutSeconds = 0,
+        CancellationToken ct = default)
+    {
+        using var conn = _ds.OpenConnection();
+        return CleanupBandRankHistoryRetention(conn, bandType, retentionDays, commandTimeoutSeconds, ct);
+    }
+
+    private static int CleanupBandRankHistoryRetention(
         NpgsqlConnection conn,
         string bandType,
         int retentionDays,
@@ -3232,7 +3266,7 @@ public sealed class MetaDatabase : IMetaDatabase
         CancellationToken ct)
     {
         if (retentionDays <= 0)
-            return;
+            return 0;
 
         var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
         using var cmd = conn.CreateCommand();
@@ -3283,7 +3317,7 @@ public sealed class MetaDatabase : IMetaDatabase
         using var registration = ct.Register(static state => ((NpgsqlCommand)state!).Cancel(), cmd);
         try
         {
-            cmd.ExecuteNonQuery();
+            return cmd.ExecuteNonQuery();
         }
         catch (Exception) when (ct.IsCancellationRequested)
         {
@@ -4902,6 +4936,9 @@ public sealed class MetaDatabase : IMetaDatabase
         var effectiveOffset = Math.Max(0, offset);
 
         using var conn = _ds.OpenConnection();
+        if (TryGetSongBandLeaderboardFromCurrentProjection(conn, songId, bandType, effectiveLimit, effectiveOffset, comboId, out var projected))
+            return projected;
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             WITH {SongBandLeaderboardBaseCtes}
@@ -4949,6 +4986,9 @@ public sealed class MetaDatabase : IMetaDatabase
     public SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId, string? comboId = null)
     {
         using var conn = _ds.OpenConnection();
+        if (TryGetSongBandLeaderboardEntryForAccountFromCurrentProjection(conn, songId, bandType, accountId, comboId, out var projected))
+            return projected;
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             WITH {SongBandLeaderboardBaseCtes},
@@ -4983,6 +5023,9 @@ public sealed class MetaDatabase : IMetaDatabase
     public SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey, string? comboId = null)
     {
         using var conn = _ds.OpenConnection();
+        if (TryGetSongBandLeaderboardEntryForTeamFromCurrentProjection(conn, songId, bandType, teamKey, comboId, out var projected))
+            return projected;
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             WITH {SongBandLeaderboardBaseCtes},
@@ -5012,6 +5055,229 @@ public sealed class MetaDatabase : IMetaDatabase
 
         using var reader = cmd.ExecuteReader();
         return ReadSongBandLeaderboardEntries(reader, bandType).FirstOrDefault();
+    }
+
+    private bool TryGetSongBandLeaderboardFromCurrentProjection(
+        NpgsqlConnection conn,
+        string songId,
+        string bandType,
+        int limit,
+        int offset,
+        string? comboId,
+        out (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) result)
+    {
+        result = ([], 0);
+
+        if (!TryGetCurrentBandProjectionScope(bandType, comboId, out var rankingScope, out var scopeComboId) ||
+            !TryGetReadyCurrentBandProjectionScopeRowCount(conn, songId, bandType, rankingScope, scopeComboId, out var totalEntries))
+            return false;
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH PagedEntries AS (
+                SELECT
+                    cble.song_id,
+                    cble.band_type,
+                    cble.team_key,
+                    cble.entry_instrument_combo AS instrument_combo,
+                    cble.team_members,
+                    cble.score,
+                    cble.accuracy,
+                    cble.is_full_combo,
+                    cble.stars,
+                    cble.difficulty,
+                    cble.season,
+                    COALESCE(cble.end_time, '') AS end_time,
+                    cble.rank AS effective_rank,
+                    cble.total_entries
+                FROM current_band_leaderboard_entries cble
+                WHERE cble.song_id = @songId
+                  AND cble.band_type = @bandType
+                  AND cble.ranking_scope = @rankingScope
+                  AND cble.scope_combo_id = @scopeComboId
+                ORDER BY cble.rank ASC
+                LIMIT @limit OFFSET @offset
+            )
+            {SongBandLeaderboardEntryRowsSql};
+            """;
+        AddCurrentBandProjectionScopeParameters(cmd, songId, bandType, rankingScope, scopeComboId);
+        cmd.Parameters.AddWithValue("limit", limit);
+        cmd.Parameters.AddWithValue("offset", offset);
+
+        using var reader = cmd.ExecuteReader();
+        result = (ReadSongBandLeaderboardEntries(reader, bandType), totalEntries);
+        return true;
+    }
+
+    private bool TryGetSongBandLeaderboardEntryForAccountFromCurrentProjection(
+        NpgsqlConnection conn,
+        string songId,
+        string bandType,
+        string accountId,
+        string? comboId,
+        out SongBandLeaderboardEntryDto? entry)
+    {
+        entry = null;
+
+        if (!TryGetCurrentBandProjectionScope(bandType, comboId, out var rankingScope, out var scopeComboId) ||
+            !TryGetReadyCurrentBandProjectionScopeRowCount(conn, songId, bandType, rankingScope, scopeComboId, out _))
+            return false;
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH PagedEntries AS (
+                SELECT
+                    cble.song_id,
+                    cble.band_type,
+                    cble.team_key,
+                    cble.entry_instrument_combo AS instrument_combo,
+                    cble.team_members,
+                    cble.score,
+                    cble.accuracy,
+                    cble.is_full_combo,
+                    cble.stars,
+                    cble.difficulty,
+                    cble.season,
+                    COALESCE(cble.end_time, '') AS end_time,
+                    cble.rank AS effective_rank,
+                    cble.total_entries
+                FROM current_band_leaderboard_entries cble
+                WHERE cble.song_id = @songId
+                  AND cble.band_type = @bandType
+                  AND cble.ranking_scope = @rankingScope
+                  AND cble.scope_combo_id = @scopeComboId
+                  AND @accountId = ANY(cble.team_members)
+                ORDER BY cble.rank ASC
+                LIMIT 1
+            )
+            {SongBandLeaderboardEntryRowsSql};
+            """;
+        AddCurrentBandProjectionScopeParameters(cmd, songId, bandType, rankingScope, scopeComboId);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+
+        using var reader = cmd.ExecuteReader();
+        entry = ReadSongBandLeaderboardEntries(reader, bandType).FirstOrDefault();
+        return true;
+    }
+
+    private bool TryGetSongBandLeaderboardEntryForTeamFromCurrentProjection(
+        NpgsqlConnection conn,
+        string songId,
+        string bandType,
+        string teamKey,
+        string? comboId,
+        out SongBandLeaderboardEntryDto? entry)
+    {
+        entry = null;
+
+        if (!TryGetCurrentBandProjectionScope(bandType, comboId, out var rankingScope, out var scopeComboId) ||
+            !TryGetReadyCurrentBandProjectionScopeRowCount(conn, songId, bandType, rankingScope, scopeComboId, out _))
+            return false;
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH PagedEntries AS (
+                SELECT
+                    cble.song_id,
+                    cble.band_type,
+                    cble.team_key,
+                    cble.entry_instrument_combo AS instrument_combo,
+                    cble.team_members,
+                    cble.score,
+                    cble.accuracy,
+                    cble.is_full_combo,
+                    cble.stars,
+                    cble.difficulty,
+                    cble.season,
+                    COALESCE(cble.end_time, '') AS end_time,
+                    cble.rank AS effective_rank,
+                    cble.total_entries
+                FROM current_band_leaderboard_entries cble
+                WHERE cble.song_id = @songId
+                  AND cble.band_type = @bandType
+                  AND cble.ranking_scope = @rankingScope
+                  AND cble.scope_combo_id = @scopeComboId
+                  AND cble.team_key = @teamKey
+                ORDER BY cble.rank ASC
+                LIMIT 1
+            )
+            {SongBandLeaderboardEntryRowsSql};
+            """;
+        AddCurrentBandProjectionScopeParameters(cmd, songId, bandType, rankingScope, scopeComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+
+        using var reader = cmd.ExecuteReader();
+        entry = ReadSongBandLeaderboardEntries(reader, bandType).FirstOrDefault();
+        return true;
+    }
+
+    private static bool TryGetCurrentBandProjectionScope(string bandType, string? comboId, out string rankingScope, out string scopeComboId)
+    {
+        rankingScope = "overall";
+        scopeComboId = string.Empty;
+
+        if (!IsCurrentBandProjectionReadBandType(bandType))
+            return false;
+
+        if (string.IsNullOrWhiteSpace(comboId))
+            return true;
+
+        var normalized = BandComboIds.TryNormalizeForBandType(bandType, comboId);
+        if (normalized.Error is not null || string.IsNullOrWhiteSpace(normalized.ComboId))
+            return false;
+
+        rankingScope = "combo";
+        scopeComboId = normalized.ComboId;
+        return true;
+    }
+
+    private static bool IsCurrentBandProjectionReadBandType(string bandType) =>
+        string.Equals(bandType, "Band_Duets", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(bandType, "Band_Trios", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(bandType, "Band_Quad", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryGetReadyCurrentBandProjectionScopeRowCount(
+        NpgsqlConnection conn,
+        string songId,
+        string bandType,
+        string rankingScope,
+        string scopeComboId,
+        out int rowCount)
+    {
+        rowCount = 0;
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT row_count
+            FROM band_current_projection_scope
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId
+              AND status = 'ready'
+            LIMIT 1;
+            """;
+        AddCurrentBandProjectionScopeParameters(cmd, songId, bandType, rankingScope, scopeComboId);
+
+        var value = cmd.ExecuteScalar();
+        if (value is null or DBNull)
+            return false;
+
+        var count = Convert.ToInt64(value);
+        rowCount = count > int.MaxValue ? int.MaxValue : (int)count;
+        return true;
+    }
+
+    private static void AddCurrentBandProjectionScopeParameters(
+        NpgsqlCommand cmd,
+        string songId,
+        string bandType,
+        string rankingScope,
+        string scopeComboId)
+    {
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
+        cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
     }
 
     public IReadOnlyList<string> GetBandLeaderboardSongIds()

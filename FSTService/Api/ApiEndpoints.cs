@@ -17,6 +17,7 @@ public static partial class ApiEndpoints
         app.MapRivalsEndpoints();
         app.MapLeaderboardRivalsEndpoints();
         app.MapRankingsEndpoints();
+        app.MapImprovementNotificationEndpoints();
         app.MapAdminEndpoints();
         app.MapDiagEndpoints();
         app.MapWebSocketEndpoints();

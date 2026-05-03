@@ -33,6 +33,7 @@ public sealed class ScrapeProgressTracker
         Precomputing,
         BandScraping,
         Finalizing,
+        Cleanup,
     }
 
     private volatile ScrapePhase _phase = ScrapePhase.Idle;
@@ -184,7 +185,7 @@ public sealed class ScrapeProgressTracker
     // ─── Branch tracking (parallel branches inside a phase) ──
     // Each branch is a named, independently-tracked unit of work that runs
     // alongside other branches in the same phase (e.g. rank_recompute,
-    // first_seen, name_resolution, pruning during PostScrapeEnrichment).
+    // first_seen, name_resolution during PostScrapeEnrichment; database cleanup during Cleanup).
     // Branches are reset on every SetPhase call. Their snapshot is included
     // in the phase OperationSnapshot and contributes to ProgressPercent.
 
@@ -992,6 +993,7 @@ public sealed class ScrapeProgressTracker
             ScrapePhase.ComputingRivals or
             ScrapePhase.Precomputing or
             ScrapePhase.Finalizing or
+            ScrapePhase.Cleanup or
             ScrapePhase.SongMachine or
             ScrapePhase.BandScraping => BuildGenericPhaseSnapshot(phase.ToString(), elapsed),
             ScrapePhase.PostScrapeEnrichment => BuildPostScrapeEnrichmentSnapshot(elapsed),

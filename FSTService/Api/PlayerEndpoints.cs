@@ -221,6 +221,7 @@ public static partial class ApiEndpoints
             TokenManager tokenManager,
             GlobalLeaderboardPersistence persistence,
             RivalsOrchestrator rivalsOrchestrator,
+            ScrapeTimePrecomputer precomputer,
             ILoggerFactory loggerFactory) =>
         {
             if (string.IsNullOrWhiteSpace(accountId))
@@ -298,6 +299,7 @@ public static partial class ApiEndpoints
                         metaDb.CompleteHistoryRecon(accountId);
                         _ = notifications.NotifyHistoryReconCompleteAsync(accountId);
 
+                        precomputer.PrecomputeUser(accountId);
                         syncTracker.Complete(accountId);
                         log.LogInformation("Track-triggered backfill for {AccountId} completed via cyclical machine.", accountId);
                     }
@@ -452,6 +454,7 @@ public static partial class ApiEndpoints
             IPathDataStore pathStore,
             ScrapeTimePrecomputer precomputer,
             IOptions<FeatureOptions> featureOptions,
+            ImprovementNotificationService improvementNotifications,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
@@ -549,6 +552,7 @@ public static partial class ApiEndpoints
                     compositeRanks,
                     instrumentRanks = instrumentRanks.Count > 0 ? instrumentRanks : null,
                     bands,
+                    notifications = improvementNotifications.GetPlayerNotifications(accountId, 20),
                     instruments = tierRows.Select(r => new
                     {
                         ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),
@@ -567,11 +571,17 @@ public static partial class ApiEndpoints
             // Legacy fallback (PlayerStats table — rarely populated)
             var stats = metaDb.GetPlayerStats(accountId);
             if (stats.Count == 0)
-                return Results.Ok(new { accountId, stats = Array.Empty<object>() });
+                return Results.Ok(new
+                {
+                    accountId,
+                    notifications = improvementNotifications.GetPlayerNotifications(accountId, 20),
+                    stats = Array.Empty<object>(),
+                });
 
             return Results.Ok(new
             {
                 accountId,
+                notifications = improvementNotifications.GetPlayerNotifications(accountId, 20),
                 stats = stats.Select(s => new
                 {
                     s.Instrument,

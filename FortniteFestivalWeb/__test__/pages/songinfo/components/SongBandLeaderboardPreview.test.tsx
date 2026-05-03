@@ -207,6 +207,7 @@ describe('SongBandLeaderboardPreview', () => {
     );
 
     expect(screen.queryByTestId('song-band-selected-entry-Band_Duets')).toBeNull();
+    expect(screen.getByTestId('song-band-entry-Band_Duets-0')).toHaveStyle({ backgroundColor: 'rgba(75, 15, 99, 0.75)' });
     expect(screen.getAllByText('Alpha')).toHaveLength(1);
   });
 });

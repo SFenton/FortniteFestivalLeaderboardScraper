@@ -518,10 +518,12 @@ public sealed class ScraperWorker : BackgroundService
             catch (OperationCanceledException) { /* expected on shutdown */ }
             catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
 
-            // ── Post-pass: enrichment, refresh, backfill, history recon, cleanup ──
+            // ── Post-pass: enrichment, refresh, rankings, rivals, derived publication ──
+            var postProcessCompleted = false;
             try
             {
                 await _postScrapeOrchestrator.RunAsync(ctx, service, resolvedPhases, ct);
+                postProcessCompleted = true;
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -533,6 +535,24 @@ public sealed class ScraperWorker : BackgroundService
 
             // Unfreeze all response caches and invalidate — API consumers now see fresh data atomically.
             _lifecycle.ScrapeCompleted();
+
+            // ── Cleanup: storage/query-health work that must not delay fresh data publication ──
+            if (postProcessCompleted)
+            {
+                try
+                {
+                    await _postScrapeOrchestrator.RunCleanupAsync(ctx, resolvedPhases, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Post-scrape cleanup failed. Will retry next pass.");
+                }
+            }
+            else
+            {
+                _log.LogWarning("Skipping post-scrape cleanup because post-process orchestration did not complete cleanly.");
+            }
 
             var endMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
             _log.LogInformation("Scrape pass complete. (Process memory: {MemoryMB} MB)", endMemMb);

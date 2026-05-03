@@ -1057,8 +1057,8 @@ public sealed class RankingsCalculatorTests : IDisposable
             .Do(call => inner.WriteComboRankingDeltas(call.Arg<IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,
                 double AdjustedRating, double WeightedRating, double FcRate,
                 long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)>>()));
-        proxy.When(x => x.SnapshotCompositeRankHistory(Arg.Any<int>()))
-            .Do(call => inner.SnapshotCompositeRankHistory(call.Arg<int>()));
+        proxy.When(x => x.SnapshotCompositeRankHistory(Arg.Any<int>(), Arg.Any<bool>()))
+            .Do(call => inner.SnapshotCompositeRankHistory(call.ArgAt<int>(0), call.ArgAt<bool>(1)));
         proxy.When(x => x.SnapshotBandRankHistory(Arg.Any<string>(), Arg.Any<int>()))
             .Do(call => inner.SnapshotBandRankHistory(call.Arg<string>(), call.Arg<int>()));
         proxy.SnapshotBandRankHistoryChunked(

@@ -1,5 +1,6 @@
 using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
+using FSTService;
 using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
@@ -10,7 +11,7 @@ namespace FSTService.Scraping;
 
 /// <summary>
 /// Orchestrates the post-scrape enrichment phases: parallel rank/firstSeen/nameRes,
-/// refresh of registered users, and session cleanup.
+/// refresh of registered users, derived-state publication, and deferred cleanup.
 /// Extracted from <see cref="ScraperWorker"/> to reduce its dependency count and
 /// make each phase independently testable.
 /// </summary>
@@ -37,6 +38,11 @@ public sealed class PostScrapeOrchestrator
     private readonly BandLeaderboardPersistence _bandPersistence;
     private readonly RegisteredBandProcessingOrchestrator? _registeredBandProcessingOrchestrator;
     private readonly BandSearchProjectionBuilder? _bandSearchProjectionBuilder;
+    private readonly BandCurrentProjectionBuilder? _bandCurrentProjectionBuilder;
+    private readonly ImprovementNotificationService? _improvementNotifications;
+    private readonly SoloCurrentProjectionBuilder? _soloCurrentProjectionBuilder;
+    private readonly IOptions<ImprovementNotificationOptions> _improvementNotificationOptions;
+    private readonly IOptions<BandRankHistoryOptions> _bandRankHistoryOptions;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
@@ -63,7 +69,12 @@ public sealed class PostScrapeOrchestrator
         IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log,
         BandSearchProjectionBuilder? bandSearchProjectionBuilder,
-        RegisteredBandProcessingOrchestrator? registeredBandProcessingOrchestrator = null)
+        RegisteredBandProcessingOrchestrator? registeredBandProcessingOrchestrator = null,
+        BandCurrentProjectionBuilder? bandCurrentProjectionBuilder = null,
+        ImprovementNotificationService? improvementNotifications = null,
+        SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
+        IOptions<ImprovementNotificationOptions>? improvementNotificationOptions = null,
+        IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -86,6 +97,11 @@ public sealed class PostScrapeOrchestrator
         _bandPersistence = bandPersistence;
         _registeredBandProcessingOrchestrator = registeredBandProcessingOrchestrator;
         _bandSearchProjectionBuilder = bandSearchProjectionBuilder;
+        _bandCurrentProjectionBuilder = bandCurrentProjectionBuilder;
+        _improvementNotifications = improvementNotifications;
+        _soloCurrentProjectionBuilder = soloCurrentProjectionBuilder;
+        _improvementNotificationOptions = improvementNotificationOptions ?? Options.Create(new ImprovementNotificationOptions());
+        _bandRankHistoryOptions = bandRankHistoryOptions ?? Options.Create(new BandRankHistoryOptions());
         _options = options;
         _log = log;
     }
@@ -101,8 +117,12 @@ public sealed class PostScrapeOrchestrator
             await RunPhaseAsync("Enrichment", () => RunEnrichmentAsync(ctx, service, ct));
 
         // ── Solo refresh registered users ──
+        var registeredUserRefreshResult = new SongProcessingMachine.MachineResult();
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
-            await RunPhaseAsync("RefreshRegisteredUsers", () => RefreshRegisteredUsersAsync(ctx, ct));
+            registeredUserRefreshResult = await RunPhaseAsync(
+                "RefreshRegisteredUsers",
+                () => RefreshRegisteredUsersAsync(ctx, ct),
+                new SongProcessingMachine.MachineResult());
 
         var expectedSnapshotPairs = BuildExpectedSnapshotPairs(ctx);
         if (ShouldActivateShadowSnapshotsBeforeDerived(ctx, resolvedPhases))
@@ -216,6 +236,9 @@ public sealed class PostScrapeOrchestrator
                 ImpactedTeamsByBandType = MergeImpactedTeams(
                     bandExtractionResult.ImpactedTeamsByBandType,
                     registeredBandProcessingResult.ImpactedTeamsByBandType),
+                ImpactedCurrentProjectionScopes = MergeCurrentProjectionScopes(
+                    bandExtractionResult.ImpactedCurrentProjectionScopes,
+                    registeredBandProcessingResult.ImpactedCurrentProjectionScopes),
             };
             await RunPhaseAsync("BandMaintenance", () => RunBandMaintenanceAsync(ctx, mergedExtractionResult, ct));
         }
@@ -224,6 +247,14 @@ public sealed class PostScrapeOrchestrator
         var rankingsSucceeded = false;
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
             rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
+
+        if (rankingsSucceeded && ShouldRunImprovementNotifications())
+        {
+            await RunPhaseAsync(
+                "ImprovementNotifications",
+                () => RunImprovementNotificationDetectionAsync(ctx, registeredUserRefreshResult, ct),
+                rethrowOnFailure: _improvementNotificationOptions.Value.FailScrapeOnError);
+        }
 
         // ── Solo rivals ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
@@ -290,6 +321,147 @@ public sealed class PostScrapeOrchestrator
         }
     }
 
+    /// <summary>
+    /// Run best-effort database cleanup after derived state has been published.
+    /// This phase must not include scrape writer resource cleanup; spool disposal
+    /// stays with the writer lifecycle so disk is released as soon as possible.
+    /// </summary>
+    public async Task RunCleanupAsync(ScrapePassContext ctx, ScrapePhase resolvedPhases, CancellationToken ct)
+    {
+        var cleanupItems = 0;
+        var cleanupSoloExcessEntries = resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment);
+        var cleanupRankHistoryRetention = resolvedPhases.HasFlag(ScrapePhase.SoloRankings);
+        var cleanupBandRankHistoryRetention = resolvedPhases.HasFlag(ScrapePhase.SoloRankings);
+
+        if (cleanupSoloExcessEntries)
+            cleanupItems++;
+        if (cleanupRankHistoryRetention)
+            cleanupItems += GlobalLeaderboardScraper.AllInstruments.Count + 1;
+        if (cleanupBandRankHistoryRetention)
+            cleanupItems += BandInstrumentMapping.AllBandTypes.Count;
+
+        if (cleanupItems == 0)
+            return;
+
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Cleanup);
+        _progress.SetSubOperation("database_cleanup");
+        _progress.BeginPhaseProgress(cleanupItems);
+
+        if (cleanupSoloExcessEntries)
+        {
+            await RunPhaseAsync("Cleanup.SoloExcessEntries", () => Task.Run(() =>
+            {
+                try
+                {
+                    _progress.SetSubOperation("cleanup_solo_excess_entries");
+                    PruneExcessEntries(ctx);
+                }
+                finally
+                {
+                    _progress.ReportPhaseItemComplete();
+                }
+            }, ct));
+        }
+
+        if (cleanupRankHistoryRetention)
+        {
+            await RunPhaseAsync("Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
+        }
+
+        if (cleanupBandRankHistoryRetention)
+        {
+            await RunPhaseAsync("Cleanup.BandRankHistoryRetention", () => CleanupBandRankHistoryRetentionAsync(ct));
+        }
+    }
+
+    private async Task CleanupRankHistoryRetentionAsync(CancellationToken ct)
+    {
+        foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
+        {
+            ct.ThrowIfCancellationRequested();
+            _progress.SetSubOperation($"cleanup_rank_history_{instrument}");
+            try
+            {
+                var db = _persistence.GetOrCreateInstrumentDb(instrument);
+                var deleted = await Task.Run(() => db.CleanupRankHistoryRetention(), ct);
+                if (deleted > 0)
+                {
+                    _log.LogInformation(
+                        "Rank history retention cleanup for {Instrument} deleted {Deleted:N0} row(s).",
+                        instrument,
+                        deleted);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex,
+                    "Rank history retention cleanup failed for {Instrument}. Continuing without blocking fresh data publication.",
+                    instrument);
+            }
+            finally
+            {
+                _progress.ReportPhaseItemComplete();
+            }
+        }
+
+        ct.ThrowIfCancellationRequested();
+        _progress.SetSubOperation("cleanup_composite_rank_history");
+        try
+        {
+            var deleted = await Task.Run(() => _persistence.Meta.CleanupCompositeRankHistoryRetention(), ct);
+            if (deleted > 0)
+            {
+                _log.LogInformation(
+                    "Composite rank history retention cleanup deleted {Deleted:N0} row(s).",
+                    deleted);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex,
+                "Composite rank history retention cleanup failed. Continuing without blocking fresh data publication.");
+        }
+        finally
+        {
+            _progress.ReportPhaseItemComplete();
+        }
+    }
+
+    private async Task CleanupBandRankHistoryRetentionAsync(CancellationToken ct)
+    {
+        var options = _bandRankHistoryOptions.Value;
+        foreach (var bandType in BandInstrumentMapping.AllBandTypes)
+        {
+            ct.ThrowIfCancellationRequested();
+            _progress.SetSubOperation($"cleanup_band_rank_history_{bandType}");
+            try
+            {
+                var deleted = await Task.Run(() => _persistence.Meta.CleanupBandRankHistoryRetention(
+                    bandType,
+                    options.RetentionDays,
+                    options.CommandTimeoutSeconds,
+                    ct), ct);
+                if (deleted > 0)
+                {
+                    _log.LogInformation(
+                        "Band rank history retention cleanup for {BandType} deleted {Deleted:N0} row(s).",
+                        bandType,
+                        deleted);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex,
+                    "Band rank history retention cleanup failed for {BandType}. Continuing without blocking fresh data publication.",
+                    bandType);
+            }
+            finally
+            {
+                _progress.ReportPhaseItemComplete();
+            }
+        }
+    }
+
     private static bool ShouldRunBandMaintenance(ScrapePhase resolvedPhases) =>
         resolvedPhases.HasFlag(ScrapePhase.BandScrape) ||
         resolvedPhases.HasFlag(ScrapePhase.BandScrapePhase) ||
@@ -304,31 +476,72 @@ public sealed class PostScrapeOrchestrator
          resolvedPhases.HasFlag(ScrapePhase.BandExtraction) ||
          resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers));
 
+    private bool ShouldRunImprovementNotifications() =>
+        _improvementNotifications is not null &&
+        _improvementNotificationOptions.Value.Enabled;
+
     private async Task RunBandMaintenanceAsync(ScrapePassContext ctx, BandExtractionResult extractionResult, CancellationToken ct)
     {
         var pruneResult = PruneBandEntries(ctx);
         var impactedTeams = MergeImpactedTeams(
             extractionResult.ImpactedTeamsByBandType,
             pruneResult.AffectedTeamsByBandType);
+        var impactedCurrentProjectionScopes = MergeCurrentProjectionScopes(
+            extractionResult.ImpactedCurrentProjectionScopes,
+            pruneResult.AffectedCurrentProjectionScopes);
 
-        if (_bandSearchProjectionBuilder is null)
+        if (_bandSearchProjectionBuilder is not null)
+        {
+            var refreshResult = await _bandSearchProjectionBuilder.RefreshIncrementalAsync(impactedTeams, ct);
+            if (!refreshResult.ProjectionAvailable)
+            {
+                _log.LogDebug("Band search projection refresh skipped because no published projection state exists.");
+            }
+            else
+            {
+                _log.LogInformation(
+                    "Band search projection maintenance complete: {ImpactedTeams:N0} impacted team(s), " +
+                    "teams {DeletedTeams:N0}->{InsertedTeams:N0}, members {DeletedMembers:N0}->{InsertedMembers:N0}.",
+                    refreshResult.ImpactedTeams,
+                    refreshResult.DeletedTeamRows,
+                    refreshResult.InsertedTeamRows,
+                    refreshResult.DeletedMemberRows,
+                    refreshResult.InsertedMemberRows);
+            }
+        }
+
+        if (_bandCurrentProjectionBuilder is not null)
+            await RefreshBandCurrentProjectionScopesAsync(impactedCurrentProjectionScopes, ct);
+    }
+
+    private async Task RefreshBandCurrentProjectionScopesAsync(
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
+        CancellationToken ct)
+    {
+        if (scopes.Count == 0)
             return;
 
-        var refreshResult = await _bandSearchProjectionBuilder.RefreshIncrementalAsync(impactedTeams, ct);
-        if (!refreshResult.ProjectionAvailable)
+        _log.LogInformation("Refreshing band current projection for {ScopeCount:N0} impacted scope(s).", scopes.Count);
+
+        BandCurrentProjectionIncrementalRefreshResult result;
+        try
         {
-            _log.LogDebug("Band search projection refresh skipped because no published projection state exists.");
+            result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(scopes, ct: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Band current projection maintenance skipped after a batch-level failure.");
             return;
         }
 
         _log.LogInformation(
-            "Band search projection maintenance complete: {ImpactedTeams:N0} impacted team(s), " +
-            "teams {DeletedTeams:N0}->{InsertedTeams:N0}, members {DeletedMembers:N0}->{InsertedMembers:N0}.",
-            refreshResult.ImpactedTeams,
-            refreshResult.DeletedTeamRows,
-            refreshResult.InsertedTeamRows,
-            refreshResult.DeletedMemberRows,
-            refreshResult.InsertedMemberRows);
+            "Band current projection maintenance complete in {ElapsedMs:N3} ms: {SuccessfulScopes:N0}/{ScopeCount:N0} scope(s), {DeletedRows:N0}->{InsertedRows:N0} rows, {FailedScopes:N0} failed.",
+            result.TotalElapsedMs,
+            result.SuccessfulScopes,
+            result.ScopeCount,
+            result.DeletedRows,
+            result.InsertedRows,
+            result.FailedScopes);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> MergeImpactedTeams(
@@ -355,6 +568,10 @@ public sealed class PostScrapeOrchestrator
             static kvp => (IReadOnlyCollection<string>)kvp.Value.ToArray(),
             StringComparer.OrdinalIgnoreCase);
     }
+
+    private static IReadOnlyCollection<BandCurrentProjectionScopeKey> MergeCurrentProjectionScopes(
+        params IReadOnlyCollection<BandCurrentProjectionScopeKey>[] sources) =>
+        BandCurrentProjectionScopeTracker.OrderedDistinct(sources.SelectMany(static source => source));
 
     private void StartBestEffortCacheWarm(IReadOnlyCollection<string> registeredIds)
     {
@@ -411,7 +628,7 @@ public sealed class PostScrapeOrchestrator
     /// Run a post-scrape phase with timing and heap telemetry.
     /// Logs phase name, duration, and heap delta so the peak memory owner is identifiable.
     /// </summary>
-    private async Task RunPhaseAsync(string phaseName, Func<Task> phase)
+    private async Task RunPhaseAsync(string phaseName, Func<Task> phase, bool rethrowOnFailure = false)
     {
         var heapBefore = GC.GetTotalMemory(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -423,6 +640,8 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex)
         {
             _log.LogWarning(ex, "PostScrape phase [{Phase}] failed. Will retry next pass.", phaseName);
+            if (rethrowOnFailure)
+                throw;
         }
         sw.Stop();
         var heapAfter = GC.GetTotalMemory(false);
@@ -434,7 +653,7 @@ public sealed class PostScrapeOrchestrator
     /// <summary>
     /// Run a post-scrape phase that returns a result, with timing and heap telemetry.
     /// </summary>
-    private async Task<T> RunPhaseAsync<T>(string phaseName, Func<Task<T>> phase, T defaultValue = default!)
+    private async Task<T> RunPhaseAsync<T>(string phaseName, Func<Task<T>> phase, T defaultValue = default!, bool rethrowOnFailure = false)
     {
         var heapBefore = GC.GetTotalMemory(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -447,6 +666,8 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex)
         {
             _log.LogWarning(ex, "PostScrape phase [{Phase}] failed. Will retry next pass.", phaseName);
+            if (rethrowOnFailure)
+                throw;
         }
         sw.Stop();
         var heapAfter = GC.GetTotalMemory(false);
@@ -465,7 +686,7 @@ public sealed class PostScrapeOrchestrator
     internal async Task RunEnrichmentAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
     {
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
-        _progress.RegisterBranches(new[] { "rank_recompute", "first_seen", "name_resolution", "pruning" });
+        _progress.RegisterBranches(new[] { "rank_recompute", "first_seen", "name_resolution" });
         _progress.SetSubOperation("enriching_parallel_rank_recompute");
 
         var rankTask = Task.Run(() =>
@@ -541,27 +762,9 @@ public sealed class PostScrapeOrchestrator
             }
         }, ct);
 
-        // Wait for ranks first — pruning needs fresh ranks in the DB, but does not
-        // need firstSeen or account names.  Fire pruning in parallel with the tail.
         await rankTask;
         _progress.SetSubOperation("enriching_parallel_tail");
-
-        var pruneTask = Task.Run(() =>
-        {
-            _progress.SetSubOperation("pruning_excess_entries");
-            _progress.StartBranch("pruning");
-            try
-            {
-                PruneExcessEntries(ctx);
-                _progress.CompleteBranch("pruning", "complete");
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _progress.CompleteBranch("pruning", "failed", ex.Message);
-            }
-        }, ct);
-
-        await Task.WhenAll(firstSeenTask, nameResTask, pruneTask);
+        await Task.WhenAll(firstSeenTask, nameResTask);
     }
 
     /// <summary>
@@ -597,7 +800,7 @@ public sealed class PostScrapeOrchestrator
     /// Also processes pending backfill and history recon users in the same run.
     /// All songs are processed in parallel, bounded by the shared DOP pool.
     /// </summary>
-    internal async Task RefreshRegisteredUsersAsync(ScrapePassContext ctx, CancellationToken ct)
+    internal async Task<SongProcessingMachine.MachineResult> RefreshRegisteredUsersAsync(ScrapePassContext ctx, CancellationToken ct)
     {
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
 
@@ -607,7 +810,7 @@ public sealed class PostScrapeOrchestrator
             if (refreshToken is null)
             {
                 _log.LogWarning("No access token for post-scrape refresh. Will retry next pass.");
-                return;
+                return new SongProcessingMachine.MachineResult();
             }
 
             var callerAccountId = _tokenManager.AccountId!;
@@ -653,7 +856,7 @@ public sealed class PostScrapeOrchestrator
             }
 
             if (ctx.RegisteredIds.Count == 0)
-                return;
+                return new SongProcessingMachine.MachineResult();
 
             var chartedSongIds = ctx.ScrapeRequests.Select(r => r.SongId).ToList();
             var currentSeason = instrumentMaxSeason ?? 1;
@@ -763,11 +966,123 @@ public sealed class PostScrapeOrchestrator
                     _log.LogWarning(ex, "Post-history-recon actions failed for {AccountId}.", user.AccountId);
                 }
             }
+
+            return result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Song processing machine failed. Will retry next pass.");
+            return new SongProcessingMachine.MachineResult();
         }
+    }
+
+    private async Task RunImprovementNotificationDetectionAsync(
+        ScrapePassContext ctx,
+        SongProcessingMachine.MachineResult registeredUserRefreshResult,
+        CancellationToken ct)
+    {
+        var service = _improvementNotifications;
+        if (service is null)
+            return;
+
+        var options = _improvementNotificationOptions.Value;
+        if (options.IncludePlayers && options.IncludeSongEvents && options.RefreshSoloProjection)
+        {
+            if (_soloCurrentProjectionBuilder is null)
+            {
+                _log.LogWarning("Improvement notifications skipped because solo current projection builder is unavailable.");
+                return;
+            }
+
+            var scopes = await BuildSoloProjectionScopesForNotificationsAsync(ctx, registeredUserRefreshResult, options, ct);
+            if (scopes.Count > 0)
+            {
+                var refreshResult = await _soloCurrentProjectionBuilder.RefreshScopesAsync(
+                    scopes,
+                    new SoloCurrentProjectionRebuildOptions
+                    {
+                        CommandTimeoutSeconds = options.SoloProjectionCommandTimeoutSeconds,
+                    },
+                    ct);
+
+                _log.LogInformation(
+                    "Solo current projection refreshed for notifications: {Scopes:N0} scope(s), {Succeeded:N0} succeeded, {Failed:N0} failed, rows {Deleted:N0}->{Inserted:N0}, elapsed {ElapsedMs:N0}ms.",
+                    refreshResult.ScopeCount,
+                    refreshResult.SucceededScopeCount,
+                    refreshResult.FailedScopeCount,
+                    refreshResult.DeletedRows,
+                    refreshResult.InsertedRows,
+                    refreshResult.TotalElapsedMs);
+
+                if (refreshResult.FailedScopeCount > 0)
+                    throw new InvalidOperationException($"Solo current projection refresh failed for {refreshResult.FailedScopeCount} notification scope(s).");
+            }
+            else
+            {
+                _log.LogInformation("Solo current projection refresh for notifications skipped because no impacted scopes were found.");
+            }
+        }
+
+        ct.ThrowIfCancellationRequested();
+        var report = await Task.Run(() => service.Precompute(new ImprovementNotificationPrecomputeOptions(
+            Scope: options.Scope,
+            Execute: true,
+            BaselineOnly: false,
+            IncludePlayers: options.IncludePlayers,
+            IncludeBands: options.IncludeBands,
+            IncludeSongEvents: options.IncludeSongEvents,
+            IncludeRankings: options.IncludeRankings,
+            PruneExpired: options.PruneExpired,
+            CommandTimeoutSeconds: options.CommandTimeoutSeconds,
+            Source: "post-scrape")), ct);
+
+        _log.LogInformation(
+            "Improvement notification detection complete: run={RunId}, scope={Scope}, player events song={PlayerSongEvents:N0}/rank={PlayerRankEvents:N0}, band events song={BandSongEvents:N0}/rank={BandRankEvents:N0}, expired pruned player={ExpiredPlayer:N0}/band={ExpiredBand:N0}.",
+            report.RunId,
+            report.Scope,
+            report.PlayerSongEventsInserted,
+            report.PlayerRankEventsInserted,
+            report.BandSongEventsInserted,
+            report.BandRankEventsInserted,
+            report.ExpiredPlayerEventsDeleted,
+            report.ExpiredBandEventsDeleted);
+    }
+
+    private async Task<IReadOnlyCollection<SoloCurrentProjectionScopeKey>> BuildSoloProjectionScopesForNotificationsAsync(
+        ScrapePassContext ctx,
+        SongProcessingMachine.MachineResult registeredUserRefreshResult,
+        ImprovementNotificationOptions options,
+        CancellationToken ct)
+    {
+        var scopes = new HashSet<SoloCurrentProjectionScopeKey>();
+
+        foreach (var request in ctx.ScrapeRequests)
+        {
+            if (string.IsNullOrWhiteSpace(request.SongId))
+                continue;
+
+            foreach (var instrument in request.Instruments)
+            {
+                if (string.IsNullOrWhiteSpace(instrument) || ScrapeOrchestrator.IsBandInstrument(instrument))
+                    continue;
+
+                scopes.Add(new SoloCurrentProjectionScopeKey(request.SongId, instrument));
+            }
+        }
+
+        foreach (var entry in ctx.Aggregates.SeenRegisteredEntries)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.SongId) && !string.IsNullOrWhiteSpace(entry.Instrument))
+                scopes.Add(new SoloCurrentProjectionScopeKey(entry.SongId, entry.Instrument));
+        }
+
+        foreach (var scope in registeredUserRefreshResult.UpdatedScopes)
+            scopes.Add(scope);
+
+        if (scopes.Count == 0 && options.RefreshAllSoloScopesWhenNoImpactedScopes && _soloCurrentProjectionBuilder is not null)
+            return await _soloCurrentProjectionBuilder.LoadCurrentScopesAsync(ct);
+
+        return scopes.ToArray();
     }
 
     /// <summary>
@@ -854,8 +1169,8 @@ public sealed class PostScrapeOrchestrator
     /// preserving registered users. When CHOpt max scores are available, entries above
     /// the over-threshold boundary are exempt from pruning so that deep-scraped valid
     /// entries are not discarded along with exploited scores.
-    /// Only depends on CHOpt max scores and registered IDs — runs in parallel with
-    /// FirstSeenSeason and account name resolution during enrichment.
+    /// Only depends on CHOpt max scores and registered IDs. It runs in the deferred
+    /// cleanup phase after fresh derived state has been published.
     /// </summary>
     internal void PruneExcessEntries(ScrapePassContext ctx)
     {

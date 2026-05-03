@@ -7,6 +7,8 @@ import { songInfoSlides } from '../../../src/pages/songinfo/firstRun';
 import { contentHash } from '../../../src/firstRun/types';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
+import type { PlayerBandType } from '@festival/core/api/serverTypes';
+import { SONG_BAND_TYPES } from '../../../src/utils/songBandLeaderboards';
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -164,6 +166,40 @@ function renderSongDetail(route = '/songs/song-1', accountId?: string) {
       </Routes>
     </TestProviders>,
   );
+}
+
+function writeSelectedBandProfile(bandType: PlayerBandType) {
+  localStorage.setItem('fst:selectedProfile', JSON.stringify({
+    type: 'band',
+    bandId: `selected-${bandType}`,
+    bandType,
+    teamKey: 'acct-band-a:acct-band-b',
+    displayName: 'Selected Band',
+    members: [
+      { accountId: 'acct-band-a', displayName: 'Band Alpha' },
+      { accountId: 'acct-band-b', displayName: 'Band Beta' },
+    ],
+  }));
+}
+
+function expectBefore(first: Element, second: Element) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+}
+
+function getAnimationDelayMs(element: HTMLElement): number {
+  const match = element.style.animation.match(/ease-out\s+(\d+(?:\.\d+)?)ms\s+forwards/);
+  expect(match?.[1]).toBeDefined();
+  return Number(match![1]);
+}
+
+function getSongBandHeader(bandType: PlayerBandType): HTMLElement {
+  return screen.getByTestId(`song-band-preview-${bandType}`).firstElementChild as HTMLElement;
+}
+
+function getFirstInstrumentHeader(): HTMLElement {
+  const card = document.getElementById('instrument-card-Solo_Guitar');
+  expect(card).toBeTruthy();
+  return card!.firstElementChild!.firstElementChild as HTMLElement;
 }
 
 function SettingsLeewayButton({ leeway }: { leeway: number; }) {
@@ -346,6 +382,31 @@ describe('SongDetailPage', () => {
         'Solo_Guitar+Solo_Bass',
       );
     });
+  });
+
+  it('renders song band previews after solo instruments when no band is selected', async () => {
+    renderSongDetail();
+
+    const grid = await screen.findByTestId('song-detail-instrument-grid');
+    const duosPreview = await screen.findByTestId('song-band-preview-Band_Duets');
+    expectBefore(grid, duosPreview);
+    expect(getAnimationDelayMs(getFirstInstrumentHeader())).toBeLessThan(getAnimationDelayMs(getSongBandHeader('Band_Duets')));
+  });
+
+  it.each(SONG_BAND_TYPES)('renders selected %s preview before solo instruments and staggers it first', async (bandType) => {
+    writeSelectedBandProfile(bandType);
+
+    renderSongDetail();
+
+    const selectedPreview = await screen.findByTestId(`song-band-preview-${bandType}`);
+    const grid = screen.getByTestId('song-detail-instrument-grid');
+    expectBefore(selectedPreview, grid);
+
+    for (const trailingBandType of SONG_BAND_TYPES.filter(type => type !== bandType)) {
+      expectBefore(grid, screen.getByTestId(`song-band-preview-${trailingBandType}`));
+    }
+
+    expect(getAnimationDelayMs(getSongBandHeader(bandType))).toBeLessThan(getAnimationDelayMs(getFirstInstrumentHeader()));
   });
 
   it('refetches all leaderboards when leeway changes', async () => {

@@ -509,7 +509,8 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string bandId,
             GlobalLeaderboardPersistence persistence,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            ImprovementNotificationService improvementNotifications) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -533,6 +534,7 @@ public static partial class ApiEndpoints
                 band,
                 ranking = ranking is null ? null : MapBandRanking(ranking, names),
                 configurations = persistence.GetBandConfigurations(band.BandType, band.TeamKey),
+                notifications = improvementNotifications.GetBandNotificationsByTeamKey(band.BandType, band.TeamKey, 20),
             }, jsonOpts);
         })
         .WithTags("Rankings")

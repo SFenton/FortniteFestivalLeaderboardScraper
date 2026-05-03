@@ -1,3 +1,4 @@
+using FSTService.Persistence;
 using FSTService.Scraping;
 
 namespace FSTService.Tests.Unit;
@@ -55,5 +56,39 @@ public sealed class BandComboIdsTests
 
         Assert.Equal(["0:1", "1:0"], leadBass);
         Assert.Equal(["0:0"], doubleLead);
+    }
+
+    [Fact]
+    public void CurrentProjectionScopeTracker_AddsOverallAndMatchingComboScopes()
+    {
+        var scopes = new HashSet<BandCurrentProjectionScopeKey>();
+
+        BandCurrentProjectionScopeTracker.AddScopes(scopes, "song-1", "Band_Duets", "1:0");
+
+        Assert.Contains(scopes, scope =>
+            scope.SongId == "song-1"
+            && scope.BandType == "Band_Duets"
+            && scope.RankingScope == "overall"
+            && scope.ScopeComboId == string.Empty);
+        Assert.Contains(scopes, scope =>
+            scope.SongId == "song-1"
+            && scope.BandType == "Band_Duets"
+            && scope.RankingScope == "combo"
+            && scope.ScopeComboId == "Solo_Guitar+Solo_Bass");
+    }
+
+    [Fact]
+    public void CurrentProjectionScopeTracker_IgnoresMismatchedComboScope()
+    {
+        var scopes = new HashSet<BandCurrentProjectionScopeKey>();
+
+        BandCurrentProjectionScopeTracker.AddScopes(scopes, "song-1", "Band_Trios", "0:1");
+
+        Assert.Single(scopes);
+        Assert.Contains(scopes, scope =>
+            scope.SongId == "song-1"
+            && scope.BandType == "Band_Trios"
+            && scope.RankingScope == "overall"
+            && scope.ScopeComboId == string.Empty);
     }
 }

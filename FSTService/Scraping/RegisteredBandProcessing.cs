@@ -78,6 +78,7 @@ public sealed class RegisteredBandProcessingResult
     public int EntriesPersisted { get; init; }
     public IReadOnlyDictionary<string, IReadOnlyCollection<string>> ImpactedTeamsByBandType { get; init; } =
         new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyCollection<BandCurrentProjectionScopeKey> ImpactedCurrentProjectionScopes { get; init; } = [];
 
     public static RegisteredBandProcessingResult Empty { get; } = new();
 }
@@ -141,6 +142,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         _progress.SetPhaseAccounts(registeredBands.Count);
 
         var impactedTeams = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var impactedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
         int bandsProcessed = 0;
         int lookupsCheckedTotal = 0;
         int entriesFoundTotal = 0;
@@ -171,6 +173,9 @@ public sealed class RegisteredBandProcessingOrchestrator
                     impactedTeams[registeredBand.BandType] = teams;
                 }
                 teams.Add(registeredBand.TeamKey);
+
+                foreach (var scope in bandResult.ImpactedCurrentProjectionScopes)
+                    impactedCurrentProjectionScopes.Add(scope);
             }
 
             _progress.ReportPhaseItemComplete();
@@ -192,6 +197,7 @@ public sealed class RegisteredBandProcessingOrchestrator
                 static kvp => kvp.Key,
                 static kvp => (IReadOnlyCollection<string>)kvp.Value.ToArray(),
                 StringComparer.OrdinalIgnoreCase),
+            ImpactedCurrentProjectionScopes = BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes),
         };
     }
 
@@ -238,7 +244,7 @@ public sealed class RegisteredBandProcessingOrchestrator
                     entriesFound);
             }
 
-            return new BandProcessingRunResult(0, 0, 0);
+            return new BandProcessingRunResult(0, 0, 0, []);
         }
 
         _metaDb.StartRegisteredBandProcessing(
@@ -261,6 +267,7 @@ public sealed class RegisteredBandProcessingOrchestrator
 
         int lookupsChecked = 0;
         int entriesPersisted = 0;
+        var impactedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
         foreach (var intent in pendingIntents)
         {
             ct.ThrowIfCancellationRequested();
@@ -303,7 +310,11 @@ public sealed class RegisteredBandProcessingOrchestrator
                 entriesPersisted += persisted;
                 entriesFound += entries.Count;
                 if (persisted > 0)
+                {
                     _progress.ReportPhaseEntryUpdated(persisted);
+                    foreach (var entry in entries)
+                        BandCurrentProjectionScopeTracker.AddScopes(impactedCurrentProjectionScopes, intent.SongId, registeredBand.BandType, entry.InstrumentCombo);
+                }
             }
 
             _metaDb.MarkRegisteredBandLookupChecked(
@@ -336,7 +347,11 @@ public sealed class RegisteredBandProcessingOrchestrator
             }
         }
 
-        return new BandProcessingRunResult(lookupsChecked, entriesFound, entriesPersisted);
+        return new BandProcessingRunResult(
+            lookupsChecked,
+            entriesFound,
+            entriesPersisted,
+            BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes));
     }
 
     private static List<RegisteredBandLookupIntent> BuildLookupIntents(IReadOnlyList<string> songIds, int currentSeason)
@@ -351,5 +366,9 @@ public sealed class RegisteredBandProcessingOrchestrator
         return intents;
     }
 
-    private sealed record BandProcessingRunResult(int LookupsChecked, int EntriesFound, int EntriesPersisted);
+    private sealed record BandProcessingRunResult(
+        int LookupsChecked,
+        int EntriesFound,
+        int EntriesPersisted,
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> ImpactedCurrentProjectionScopes);
 }

@@ -19,6 +19,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     private const string LeaderboardEntriesSnapshotTable = "leaderboard_entries_snapshot";
     private const string LeaderboardSnapshotStateTable = "leaderboard_snapshot_state";
     private const string LeaderboardEntriesOverlayTable = "leaderboard_entries_overlay";
+    private const string SoloCurrentProjectionTable = "current_leaderboard_entries";
+    private const string SoloCurrentProjectionScopeTable = "solo_current_projection_scope";
     private const int OverlayPriorityNeighbor = 100;
     private const int OverlayPriorityPreservedCurrent = 200;
     private const string InstrumentScrapeStateTable = "instrument_scrape_state";
@@ -148,6 +150,105 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         while (reader.Read())
             counts[reader.GetString(0)] = reader.GetInt32(1);
         return counts;
+    }
+
+    private Dictionary<string, int>? TryGetCurrentProjectionSongCounts(NpgsqlConnection conn)
+    {
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT song_id, LEAST(row_count, @maxInt)::INT
+                FROM {SoloCurrentProjectionScopeTable}
+                WHERE instrument = @instrument
+                  AND status = 'ready'
+                """;
+            cmd.Parameters.AddWithValue("instrument", Instrument);
+            cmd.Parameters.AddWithValue("maxInt", int.MaxValue);
+            var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                counts[reader.GetString(0)] = reader.GetInt32(1);
+            return counts.Count > 0 ? counts : null;
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            return null;
+        }
+    }
+
+    private long? TryGetReadyCurrentProjectionRowCount(NpgsqlConnection conn, string songId)
+    {
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT row_count
+                FROM {SoloCurrentProjectionScopeTable}
+                WHERE song_id = @songId
+                  AND instrument = @instrument
+                  AND status = 'ready'
+                LIMIT 1
+                """;
+            cmd.Parameters.AddWithValue("songId", songId);
+            cmd.Parameters.AddWithValue("instrument", Instrument);
+            var result = cmd.ExecuteScalar();
+            return result is DBNull or null ? null : Convert.ToInt64(result);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            return null;
+        }
+    }
+
+    private bool HasAnyReadyCurrentProjectionScope(NpgsqlConnection conn)
+    {
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM {SoloCurrentProjectionScopeTable}
+                    WHERE instrument = @instrument
+                      AND status = 'ready')
+                """;
+            cmd.Parameters.AddWithValue("instrument", Instrument);
+            return Convert.ToBoolean(cmd.ExecuteScalar());
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            return false;
+        }
+    }
+
+    private bool AllRequestedScopesReady(NpgsqlConnection conn, IReadOnlyCollection<string> songIds)
+    {
+        var distinctSongIds = songIds
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (distinctSongIds.Length == 0)
+            return false;
+
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT COUNT(DISTINCT song_id)
+                FROM {SoloCurrentProjectionScopeTable}
+                WHERE instrument = @instrument
+                  AND status = 'ready'
+                  AND song_id = ANY(@songIds)
+                """;
+            cmd.Parameters.AddWithValue("instrument", Instrument);
+            cmd.Parameters.AddWithValue("songIds", distinctSongIds);
+            return Convert.ToInt32(cmd.ExecuteScalar()) == distinctSongIds.Length;
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            return false;
+        }
     }
 
     private void UpsertAccountRankingStats(
@@ -731,6 +832,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public Dictionary<string, int> GetCurrentStateAllSongCounts()
     {
         using var conn = _ds.OpenConnection();
+        var projectedCounts = TryGetCurrentProjectionSongCounts(conn);
+        if (projectedCounts is not null)
+            return projectedCounts;
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = BuildCurrentStateAllSongCountsSql();
         cmd.Parameters.AddWithValue("instrument", Instrument);
@@ -778,6 +883,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<(string AccountId, int Rank, int Score)> GetCurrentStateNeighborhood(string songId, int centerRank, int rankRadius, string excludeAccountId)
     {
         using var conn = _ds.OpenConnection();
+        var projected = TryGetProjectedCurrentStateNeighborhood(conn, songId, centerRank, rankRadius, excludeAccountId);
+        if (projected is not null)
+            return projected;
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = BuildCurrentStateNeighborhoodSql();
         cmd.CommandTimeout = 0;
@@ -787,6 +896,38 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.Parameters.AddWithValue("hi", centerRank + rankRadius);
         cmd.Parameters.AddWithValue("exclude", excludeAccountId);
         var list = new List<(string, int, int)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add((reader.GetString(0), reader.GetInt32(1), reader.GetInt32(2)));
+        return list;
+    }
+
+    private List<(string AccountId, int Rank, int Score)>? TryGetProjectedCurrentStateNeighborhood(
+        NpgsqlConnection conn,
+        string songId,
+        int centerRank,
+        int rankRadius,
+        string excludeAccountId)
+    {
+        if (!TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+            return null;
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT account_id, rank, score
+            FROM {SoloCurrentProjectionTable}
+            WHERE song_id = @songId
+              AND instrument = @instrument
+              AND rank BETWEEN @lo AND @hi
+              AND account_id != @exclude
+            ORDER BY rank
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("lo", Math.Max(1, centerRank - rankRadius));
+        cmd.Parameters.AddWithValue("hi", centerRank + rankRadius);
+        cmd.Parameters.AddWithValue("exclude", excludeAccountId);
+        var list = new List<(string AccountId, int Rank, int Score)>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             list.Add((reader.GetString(0), reader.GetInt32(1), reader.GetInt32(2)));
@@ -819,6 +960,25 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public HashSet<string> GetCurrentStateSongIdsForAccount(string accountId)
     {
         using var conn = _ds.OpenConnection();
+        if (HasAnyReadyCurrentProjectionScope(conn))
+        {
+            using var projectedCmd = conn.CreateCommand();
+            projectedCmd.CommandText = $"""
+                SELECT song_id
+                FROM {SoloCurrentProjectionTable}
+                WHERE account_id = @accountId
+                  AND instrument = @instrument
+                ORDER BY song_id
+                """;
+            projectedCmd.Parameters.AddWithValue("accountId", accountId);
+            projectedCmd.Parameters.AddWithValue("instrument", Instrument);
+            var projectedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using var projectedReader = projectedCmd.ExecuteReader();
+            while (projectedReader.Read())
+                projectedSet.Add(projectedReader.GetString(0));
+            return projectedSet;
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = BuildCurrentStateSongIdsForAccountSql();
         cmd.Parameters.AddWithValue("accountId", accountId);
@@ -850,6 +1010,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             return new();
 
         using var conn = _ds.OpenConnection();
+        if (AllRequestedScopesReady(conn, songIds))
+            return GetProjectedCurrentStatePlayerScores(conn, accountId, songIds);
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = BuildCurrentStatePlayerScoresForSongsSql(songIds.Count);
         cmd.CommandTimeout = 0;
@@ -887,6 +1050,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<PlayerScoreDto> GetCurrentStatePlayerScores(string accountId, string? songId = null)
     {
         using var conn = _ds.OpenConnection();
+        if (songId is null ? HasAnyReadyCurrentProjectionScope(conn) : TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+            return GetProjectedCurrentStatePlayerScores(conn, accountId, songId is null ? null : [songId]);
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = BuildCurrentStatePlayerScoresSql(songId is not null);
         cmd.CommandTimeout = 0;
@@ -894,6 +1060,33 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.Parameters.AddWithValue("instrument", Instrument);
         if (songId is not null)
             cmd.Parameters.AddWithValue("songId", songId);
+        var list = new List<PlayerScoreDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add(ReadPlayerScore(reader));
+        return list;
+    }
+
+    private List<PlayerScoreDto> GetProjectedCurrentStatePlayerScores(
+        NpgsqlConnection conn,
+        string accountId,
+        IReadOnlyCollection<string>? songIds)
+    {
+        using var cmd = conn.CreateCommand();
+        var songFilter = songIds is { Count: > 0 } ? "AND song_id = ANY(@songIds)" : string.Empty;
+        cmd.CommandText = $"""
+            SELECT song_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank
+            FROM {SoloCurrentProjectionTable}
+            WHERE account_id = @accountId
+              AND instrument = @instrument
+              {songFilter}
+            ORDER BY song_id
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        if (songIds is { Count: > 0 })
+            cmd.Parameters.AddWithValue("songIds", songIds.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+
         var list = new List<PlayerScoreDto>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -916,6 +1109,28 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public Dictionary<string, int> GetCurrentStatePlayerRankings(string accountId, string? songId = null)
     {
         using var conn = _ds.OpenConnection();
+        if (songId is null ? HasAnyReadyCurrentProjectionScope(conn) : TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        {
+            using var projectedCmd = conn.CreateCommand();
+            var projectedSongFilter = songId is not null ? "AND song_id = @songId" : string.Empty;
+            projectedCmd.CommandText = $"""
+                SELECT song_id, rank
+                FROM {SoloCurrentProjectionTable}
+                WHERE account_id = @accountId
+                  AND instrument = @instrument
+                  {projectedSongFilter}
+                """;
+            projectedCmd.Parameters.AddWithValue("accountId", accountId);
+            projectedCmd.Parameters.AddWithValue("instrument", Instrument);
+            if (songId is not null)
+                projectedCmd.Parameters.AddWithValue("songId", songId);
+            var projectedRanks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            using var projectedReader = projectedCmd.ExecuteReader();
+            while (projectedReader.Read())
+                projectedRanks[projectedReader.GetString(0)] = projectedReader.GetInt32(1);
+            return projectedRanks;
+        }
+
         using var cmd = conn.CreateCommand();
         var songFilter = songId is not null ? "AND song_id = @songId" : string.Empty;
         cmd.CommandText = $"""
@@ -970,6 +1185,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     {
         if (maxScores.Count == 0) return GetCurrentStatePlayerRankings(accountId, songId);
         using var conn = _ds.OpenConnection();
+        if (songId is null ? HasAnyReadyCurrentProjectionScope(conn) : TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+            return GetProjectedCurrentStatePlayerRankingsFiltered(conn, accountId, maxScores, songId);
+
         using var tx = conn.BeginTransaction();
         using (var c = conn.CreateCommand())
         {
@@ -1029,10 +1247,95 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return dict;
     }
 
+    private Dictionary<string, int> GetProjectedCurrentStatePlayerRankingsFiltered(
+        NpgsqlConnection conn,
+        string accountId,
+        Dictionary<string, int> maxScores,
+        string? songId)
+    {
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = "CREATE TEMP TABLE _max_thresholds_projected_current_state (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP";
+            c.ExecuteNonQuery();
+        }
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = "INSERT INTO _max_thresholds_projected_current_state VALUES (@sid, @ms)";
+            var songParam = c.Parameters.Add("sid", NpgsqlDbType.Text);
+            var maxParam = c.Parameters.Add("ms", NpgsqlDbType.Integer);
+            c.Prepare();
+            foreach (var (sid, maxScore) in maxScores)
+            {
+                songParam.Value = sid;
+                maxParam.Value = maxScore;
+                c.ExecuteNonQuery();
+            }
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        var songFilter = songId is not null ? "AND song_id = @songId" : string.Empty;
+        cmd.CommandText = $"""
+            WITH player_songs AS (
+                SELECT song_id
+                FROM {SoloCurrentProjectionTable}
+                WHERE account_id = @accountId
+                  AND instrument = @instrument
+                  {songFilter}
+            ),
+            ranked AS (
+                SELECT projection.account_id, projection.song_id,
+                       ROW_NUMBER() OVER (PARTITION BY projection.song_id ORDER BY projection.score DESC, COALESCE(projection.end_time, projection.first_seen_at::TEXT) ASC) AS rank
+                FROM {SoloCurrentProjectionTable} projection
+                LEFT JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
+                WHERE projection.instrument = @instrument
+                  AND projection.song_id IN (SELECT song_id FROM player_songs)
+                  AND projection.score <= COALESCE(mt.max_score, projection.score + 1)
+            )
+            SELECT song_id, rank
+            FROM ranked
+            WHERE account_id = @accountId
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        if (songId is not null)
+            cmd.Parameters.AddWithValue("songId", songId);
+        var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            dict[reader.GetString(0)] = (int)reader.GetInt64(1);
+        reader.Close();
+        tx.Commit();
+        return dict;
+    }
+
     public int GetRankForScore(string songId, int score, int? maxScore = null) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); var scoreFilter = maxScore.HasValue ? $"AND score <= {maxScore.Value}" : ""; cmd.CommandText = $"SELECT COUNT(*) + 1 FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND score > @score {scoreFilter}"; cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("score", score); return Convert.ToInt32(cmd.ExecuteScalar()); }
     public int GetCurrentStateRankForScore(string songId, int score, int? maxScore = null)
     {
         using var conn = _ds.OpenConnection();
+        if (TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        {
+            using var projectedCmd = conn.CreateCommand();
+            var projectedScoreFilter = maxScore.HasValue ? "AND score <= @maxScore" : string.Empty;
+            projectedCmd.CommandText = $"""
+                SELECT COUNT(*) + 1
+                FROM {SoloCurrentProjectionTable}
+                WHERE song_id = @songId
+                  AND instrument = @instrument
+                  AND score > @score
+                  {projectedScoreFilter}
+                """;
+            projectedCmd.Parameters.AddWithValue("songId", songId);
+            projectedCmd.Parameters.AddWithValue("instrument", Instrument);
+            projectedCmd.Parameters.AddWithValue("score", score);
+            if (maxScore.HasValue)
+                projectedCmd.Parameters.AddWithValue("maxScore", maxScore.Value);
+            return Convert.ToInt32(projectedCmd.ExecuteScalar());
+        }
+
         using var cmd = conn.CreateCommand();
         var scoreFilter = maxScore.HasValue ? "AND score <= @maxScore" : string.Empty;
         cmd.CommandText = $"""
@@ -1057,6 +1360,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     {
         if (maxScores.Count == 0) return GetCurrentStateAllSongCounts();
         using var conn = _ds.OpenConnection();
+        if (HasAnyReadyCurrentProjectionScope(conn))
+            return GetProjectedCurrentStateFilteredEntryCounts(conn, maxScores);
+
         using var tx = conn.BeginTransaction();
         using (var c = conn.CreateCommand())
         {
@@ -1090,6 +1396,52 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             LEFT JOIN _max_thresholds_current_state_counts mt ON mt.song_id = current_rows.song_id
             WHERE current_rows.score <= COALESCE(mt.max_score, current_rows.score + 1)
             GROUP BY current_rows.song_id
+            """;
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            dict[reader.GetString(0)] = reader.GetInt32(1);
+        reader.Close();
+        tx.Commit();
+        return dict;
+    }
+
+    private Dictionary<string, int> GetProjectedCurrentStateFilteredEntryCounts(
+        NpgsqlConnection conn,
+        Dictionary<string, int> maxScores)
+    {
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = "CREATE TEMP TABLE _max_thresholds_projected_current_state_counts (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP";
+            c.ExecuteNonQuery();
+        }
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = "INSERT INTO _max_thresholds_projected_current_state_counts VALUES (@sid, @ms)";
+            var songParam = c.Parameters.Add("sid", NpgsqlDbType.Text);
+            var maxParam = c.Parameters.Add("ms", NpgsqlDbType.Integer);
+            c.Prepare();
+            foreach (var (sid, maxScore) in maxScores)
+            {
+                songParam.Value = sid;
+                maxParam.Value = maxScore;
+                c.ExecuteNonQuery();
+            }
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"""
+            SELECT projection.song_id, COUNT(*)::INT
+            FROM {SoloCurrentProjectionTable} projection
+            LEFT JOIN _max_thresholds_projected_current_state_counts mt ON mt.song_id = projection.song_id
+            WHERE projection.instrument = @instrument
+              AND projection.score <= COALESCE(mt.max_score, projection.score + 1)
+            GROUP BY projection.song_id
             """;
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1214,6 +1566,29 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<int> GetCurrentStateScoresInBand(string songId, int lowerBound, int upperBound)
     {
         using var conn = _ds.OpenConnection();
+        if (TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        {
+            using var projectedCmd = conn.CreateCommand();
+            projectedCmd.CommandText = $"""
+                SELECT score
+                FROM {SoloCurrentProjectionTable}
+                WHERE song_id = @songId
+                  AND instrument = @instrument
+                  AND score > @lo
+                  AND score <= @hi
+                ORDER BY score ASC
+                """;
+            projectedCmd.Parameters.AddWithValue("songId", songId);
+            projectedCmd.Parameters.AddWithValue("instrument", Instrument);
+            projectedCmd.Parameters.AddWithValue("lo", lowerBound);
+            projectedCmd.Parameters.AddWithValue("hi", upperBound);
+            var projectedList = new List<int>();
+            using var projectedReader = projectedCmd.ExecuteReader();
+            while (projectedReader.Read())
+                projectedList.Add(projectedReader.GetInt32(0));
+            return projectedList;
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             WITH current_rows AS (
@@ -1250,6 +1625,22 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int GetCurrentStatePopulationAtOrBelow(string songId, int threshold)
     {
         using var conn = _ds.OpenConnection();
+        if (TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        {
+            using var projectedCmd = conn.CreateCommand();
+            projectedCmd.CommandText = $"""
+                SELECT COUNT(*)
+                FROM {SoloCurrentProjectionTable}
+                WHERE song_id = @songId
+                  AND instrument = @instrument
+                  AND score <= @threshold
+                """;
+            projectedCmd.Parameters.AddWithValue("songId", songId);
+            projectedCmd.Parameters.AddWithValue("instrument", Instrument);
+            projectedCmd.Parameters.AddWithValue("threshold", threshold);
+            return Convert.ToInt32(projectedCmd.ExecuteScalar());
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             WITH current_rows AS (
@@ -1988,6 +2379,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         bool includeTotalCount)
     {
         using var conn = _ds.OpenConnection();
+        var projected = TryGetProjectedCurrentStateLeaderboardCore(conn, songId, top, offset, maxScore, includeTotalCount);
+        if (projected is not null)
+            return projected.Value;
+
         using var cmd = conn.CreateCommand();
         var limitClause = top.HasValue ? $"LIMIT {top.Value} OFFSET {offset}" : "";
         cmd.CommandText = BuildCurrentStateLeaderboardSql(includeTotalCount, maxScore.HasValue, limitClause);
@@ -1995,6 +2390,73 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.Parameters.AddWithValue("instrument", Instrument);
         if (maxScore.HasValue)
             cmd.Parameters.AddWithValue("maxScore", maxScore.Value);
+
+        var list = new List<LeaderboardEntryDto>();
+        var total = 0;
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(ReadEntryDto(reader));
+            if (includeTotalCount && total == 0)
+                total = reader.GetInt32(10);
+        }
+
+        return (list, total);
+    }
+
+    private (List<LeaderboardEntryDto> Entries, int TotalCount)? TryGetProjectedCurrentStateLeaderboardCore(
+        NpgsqlConnection conn,
+        string songId,
+        int? top,
+        int offset,
+        int? maxScore,
+        bool includeTotalCount)
+    {
+        var rowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
+        if (!rowCount.HasValue)
+            return null;
+
+        using var cmd = conn.CreateCommand();
+        var limitClause = top.HasValue ? $"LIMIT {top.Value} OFFSET {offset}" : string.Empty;
+        if (maxScore.HasValue)
+        {
+            cmd.CommandText = $"""
+                WITH ranked_rows AS (
+                    SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
+                           ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rank,
+                           COUNT(*) OVER ()::INT AS total_count,
+                           api_rank,
+                           source
+                    FROM {SoloCurrentProjectionTable}
+                    WHERE song_id = @songId
+                      AND instrument = @instrument
+                      AND score <= @maxScore
+                )
+                SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
+                       rank, total_count, api_rank, source
+                FROM ranked_rows
+                ORDER BY rank
+                {limitClause}
+                """;
+            cmd.Parameters.AddWithValue("maxScore", maxScore.Value);
+        }
+        else
+        {
+            var totalCount = includeTotalCount ? (int)Math.Min(rowCount.Value, int.MaxValue) : 0;
+            cmd.CommandText = $"""
+                SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
+                       rank::BIGINT AS rank, @totalCount::INT AS total_count, api_rank, source
+                FROM {SoloCurrentProjectionTable}
+                WHERE song_id = @songId
+                  AND instrument = @instrument
+                ORDER BY rank
+                {limitClause}
+                """;
+            cmd.Parameters.AddWithValue("totalCount", totalCount);
+        }
+
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
 
         var list = new List<LeaderboardEntryDto>();
         var total = 0;

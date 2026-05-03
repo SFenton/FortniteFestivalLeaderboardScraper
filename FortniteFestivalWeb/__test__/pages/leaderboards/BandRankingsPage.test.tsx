@@ -5,7 +5,7 @@ import type { BandConfiguration, BandRankingEntry, BandType, ServerInstrumentKey
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import BandRankingsPage from '../../../src/pages/leaderboards/BandRankingsPage';
-import { SELECTED_PROFILE_STORAGE_KEY } from '../../../src/state/selectedProfile';
+import { SELECTED_PROFILE_STORAGE_KEY, writeSelectedProfile } from '../../../src/state/selectedProfile';
 
 const mockApi = vi.hoisted(() => ({
   getBandRankings: vi.fn(),
@@ -163,6 +163,7 @@ describe('BandRankingsPage', () => {
       totalTeams: 42,
       entries: [makeBandEntry(1, ['Alpha', 'Beta'])],
       selectedBandEntry: makeBandEntry(13, ['Selected', 'Partner']),
+      selectedPlayerEntry: makeBandEntry(14, ['Tracked Player', 'Other Partner']),
     });
 
     render(
@@ -183,6 +184,45 @@ describe('BandRankingsPage', () => {
     expect(footer).toHaveStyle({ position: 'fixed' });
     expect(within(footer).getByText('Selected + Partner')).toBeTruthy();
     expect(within(footer).getByText('#13')).toBeTruthy();
+    expect(within(footer).queryByText('Tracked Player + Other Partner')).toBeNull();
+  });
+
+  it('requests and renders the selected player best band in the fixed footer', async () => {
+    writeSelectedProfile({
+      type: 'player',
+      accountId: 'tracked-player',
+      displayName: 'Tracked Player',
+    });
+    mockApi.getBandRankings.mockResolvedValue({
+      bandType: 'Band_Duets',
+      comboId: null,
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalTeams: 42,
+      entries: [makeBandEntry(1, ['Alpha', 'Beta'])],
+      selectedPlayerEntry: makeBandEntry(13, ['Tracked Player', 'Partner'], undefined),
+    });
+
+    render(
+      <TestProviders route="/leaderboards/bands/Band_Duets?rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, 'tracked-player', undefined);
+    });
+
+    const list = await screen.findByTestId('band-rankings-card-list');
+    expect(within(list).queryByText('Tracked Player')).toBeNull();
+    const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
+    expect(footer).toHaveStyle({ position: 'fixed' });
+    expect(within(footer).getByText('Tracked Player + Partner')).toBeTruthy();
+    expect(within(footer).getByText('#13')).toBeTruthy();
+    expect(within(footer).getByRole('link')).toHaveAttribute('href', '/bands/band-13?accountId=tracked-player&bandType=Band_Duets&teamKey=tracked%20player%3Apartner&names=Tracked%20Player%20%2B%20Partner');
   });
 
   it('renders observed Duos assignments as compact possibilities on the full band rankings page', async () => {

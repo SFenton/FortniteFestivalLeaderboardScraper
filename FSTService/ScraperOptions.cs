@@ -114,6 +114,23 @@ public sealed class ScraperOptions
     /// </summary>
     public bool PrecomputeOnly { get; set; }
 
+    /// <summary>
+    /// When true, post-scrape precompute runs independent phases concurrently.
+    /// Keep false by default so public API latency wins over precompute throughput.
+    /// </summary>
+    public bool RunPrecomputePhasesInParallel { get; set; }
+
+    /// <summary>
+    /// Max concurrent songs for leaderboard-all precompute. This guards the DB from
+    /// nested fan-out while scrape/post-scrape work is active.
+    /// </summary>
+    public int PrecomputeLeaderboardSongParallelism { get; set; } = 1;
+
+    /// <summary>
+    /// Max concurrent instruments per song for leaderboard-all precompute.
+    /// </summary>
+    public int PrecomputeLeaderboardInstrumentParallelism { get; set; } = 1;
+
     // ─── Phase Selection ───────────────────────────────────────
 
     /// <summary>

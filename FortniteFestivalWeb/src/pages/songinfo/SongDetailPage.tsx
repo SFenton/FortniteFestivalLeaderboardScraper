@@ -93,6 +93,14 @@ export default function SongDetailPage() {
     () => song ? configuredInstruments.filter((instrument) => serverSongSupportsInstrument(song, instrument)) : configuredInstruments,
     [configuredInstruments, song],
   );
+  const promotedSongBandType = useMemo(
+    () => playerBandsEnabled && selectedBandType && SONG_BAND_TYPES.includes(selectedBandType) ? selectedBandType : undefined,
+    [playerBandsEnabled, selectedBandType],
+  );
+  const trailingSongBandTypes = useMemo(
+    () => promotedSongBandType ? SONG_BAND_TYPES.filter(bandType => bandType !== promotedSongBandType) : SONG_BAND_TYPES,
+    [promotedSongBandType],
+  );
   const resolvedDefaultInstrument = defaultInstrument && activeInstruments.includes(defaultInstrument) ? defaultInstrument : undefined;
 
   // First-run carousel
@@ -426,6 +434,26 @@ export default function SongDetailPage() {
   /* v8 ignore stop */
 
   const styles = useSongDetailStyles();
+  const promotedBandSectionCount = promotedSongBandType ? 1 : 0;
+  const instrumentRows = Math.ceil(activeInstruments.length / 2);
+  const getInstrumentBaseDelay = useCallback((cardIndex: number) => {
+    const rowIndex = Math.floor(cardIndex / 2);
+    return 300 + (promotedBandSectionCount + rowIndex) * 150;
+  }, [promotedBandSectionCount]);
+  const getTrailingBandBaseDelay = useCallback((bandIndex: number) => (
+    450 + (promotedBandSectionCount + instrumentRows) * 150 + bandIndex * 150
+  ), [instrumentRows, promotedBandSectionCount]);
+  const renderSongBandPreview = useCallback((bandType: PlayerBandType, baseDelay: number) => (
+    <SongBandLeaderboardPreview
+      key={bandType}
+      songId={songId!}
+      bandType={bandType}
+      data={bandData[bandType]}
+      selectedAccountId={selectedAccountId}
+      baseDelay={baseDelay}
+      skipAnimation={skipAnim}
+    />
+  ), [bandData, selectedAccountId, skipAnim, songId]);
 
   if (!songId) {
     return <div style={styles.center}>{t('songDetail.songNotFound')}</div>;
@@ -498,10 +526,14 @@ export default function SongDetailPage() {
               </div>
             ) : null}
           </CollapsePresence>
-          <div style={styles.instrumentGrid}>
+          {playerBandsEnabled && promotedSongBandType && (
+            <div data-testid="song-detail-promoted-band-sections" style={styles.promotedBandSections}>
+              {renderSongBandPreview(promotedSongBandType, 300)}
+            </div>
+          )}
+          <div data-testid="song-detail-instrument-grid" style={styles.instrumentGrid}>
             {activeInstruments.map((inst, idx) => {
-              const rowIndex = Math.floor(idx / 2);
-              const baseDelay = 300 + rowIndex * 150;
+              const baseDelay = getInstrumentBaseDelay(idx);
               return (
                   <div key={inst} id={`instrument-card-${inst}`}>
                     <InstrumentCard
@@ -525,22 +557,9 @@ export default function SongDetailPage() {
               );
             })}
           </div>
-          {playerBandsEnabled && (
+          {playerBandsEnabled && trailingSongBandTypes.length > 0 && (
             <div style={styles.bandSections}>
-              {SONG_BAND_TYPES.map((bandType, idx) => {
-                const baseDelay = 450 + Math.ceil(activeInstruments.length / 2) * 150 + idx * 150;
-                return (
-                  <SongBandLeaderboardPreview
-                    key={bandType}
-                    songId={songId}
-                    bandType={bandType}
-                    data={bandData[bandType]}
-                    selectedAccountId={selectedAccountId}
-                    baseDelay={baseDelay}
-                    skipAnimation={skipAnim}
-                  />
-                );
-              })}
+              {trailingSongBandTypes.map((bandType, idx) => renderSongBandPreview(bandType, getTrailingBandBaseDelay(idx)))}
             </div>
           )}
         </div>
@@ -568,6 +587,11 @@ function useSongDetailStyles() {
       ...flexColumn,
       gap: Gap.section,
       marginTop: Gap.section,
+    } as CSSProperties,
+    promotedBandSections: {
+      ...flexColumn,
+      gap: Gap.section,
+      marginBottom: Gap.section,
     } as CSSProperties,
     center: {
       ...flexCenter,

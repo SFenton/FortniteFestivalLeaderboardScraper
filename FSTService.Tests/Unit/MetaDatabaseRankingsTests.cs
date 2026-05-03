@@ -673,6 +673,89 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal("song_0", Assert.Single(comboWorst).SongId);
     }
 
+    [Fact]
+    public void GetSongBandLeaderboard_ReadsReadyDuetsCurrentProjection()
+    {
+        SeedBandRankingsSource();
+        RebuildCurrentBandProjectionScope("song_0", "Band_Duets", "overall", string.Empty);
+        DeleteBandEntries("Band_Duets");
+
+        var (entries, totalEntries) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+        var (secondPageEntries, secondPageTotalEntries) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 1, offset: 1);
+        var selectedPlayerEntry = Db.GetSongBandLeaderboardEntryForAccount("song_0", "Band_Duets", "p1");
+
+        Assert.Equal(2, totalEntries);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal("p1:p2", entries[0].TeamKey);
+        Assert.Equal(1100, entries[0].Score);
+        Assert.Equal(1, entries[0].Rank);
+        Assert.Equal(2, secondPageTotalEntries);
+        Assert.Equal("p3:p4", Assert.Single(secondPageEntries).TeamKey);
+        Assert.NotNull(selectedPlayerEntry);
+        Assert.Equal("p1:p2", selectedPlayerEntry.TeamKey);
+        Assert.Equal(1100, selectedPlayerEntry.Score);
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboard_ReadsReadyTriosComboCurrentProjection()
+    {
+        SeedTriosBandRankingsSource();
+        const string comboId = "Solo_Guitar+Solo_Bass+Solo_Drums";
+        RebuildCurrentBandProjectionScope("trio_song", "Band_Trios", "combo", comboId);
+        DeleteBandEntries("Band_Trios");
+
+        var (entries, totalEntries) = Db.GetSongBandLeaderboard("trio_song", "Band_Trios", limit: 10, comboId: comboId);
+        var selectedTeamEntry = Db.GetSongBandLeaderboardEntryForTeam("trio_song", "Band_Trios", "t1:t2:t3", comboId);
+
+        Assert.Equal(2, totalEntries);
+        Assert.Equal(2, entries.Count);
+        Assert.All(entries, entry => Assert.Equal(comboId, entry.ComboId));
+        Assert.Equal("t1:t2:t3", entries[0].TeamKey);
+        Assert.Equal(3000, entries[0].Score);
+        Assert.NotNull(selectedTeamEntry);
+        Assert.Equal(3000, selectedTeamEntry.Score);
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboard_ReadsReadyQuadCurrentProjection()
+    {
+        SeedQuadBandRankingsSource();
+        RebuildCurrentBandProjectionScope("quad_song", "Band_Quad", "overall", string.Empty);
+        DeleteBandEntries("Band_Quad");
+
+        var (entries, totalEntries) = Db.GetSongBandLeaderboard("quad_song", "Band_Quad", limit: 10);
+        var selectedPlayerEntry = Db.GetSongBandLeaderboardEntryForAccount("quad_song", "Band_Quad", "q1");
+        var selectedTeamEntry = Db.GetSongBandLeaderboardEntryForTeam("quad_song", "Band_Quad", "q5:q6:q7:q8");
+
+        Assert.Equal(2, totalEntries);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal("q1:q2:q3:q4", entries[0].TeamKey);
+        Assert.Equal(4000, entries[0].Score);
+        Assert.NotNull(selectedPlayerEntry);
+        Assert.Equal("q1:q2:q3:q4", selectedPlayerEntry.TeamKey);
+        Assert.NotNull(selectedTeamEntry);
+        Assert.Equal("q5:q6:q7:q8", selectedTeamEntry.TeamKey);
+        Assert.Equal(3500, selectedTeamEntry.Score);
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboard_FallsBackWhenProjectionScopeIsNotReady()
+    {
+        SeedBandRankingsSource();
+        RebuildCurrentBandProjectionScope("song_0", "Band_Duets", "overall", string.Empty);
+        ForceCurrentBandProjectionTopTeam("song_0", "Band_Duets", "overall", string.Empty, "p3:p4", 9999);
+        UpdateCurrentBandProjectionScopeStatus("song_0", "Band_Duets", "overall", string.Empty, "failed");
+
+        var (entries, totalEntries) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+        var selectedTeamEntry = Db.GetSongBandLeaderboardEntryForTeam("song_0", "Band_Duets", "p3:p4");
+
+        Assert.Equal(2, totalEntries);
+        Assert.Equal("p1:p2", entries[0].TeamKey);
+        Assert.Equal(1100, entries[0].Score);
+        Assert.NotNull(selectedTeamEntry);
+        Assert.Equal(900, selectedTeamEntry.Score);
+    }
+
     private int CountBandHistoryRows(string tableName, string bandType, DateOnly? snapshotDate = null)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -706,6 +789,87 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.CommandText = "DELETE FROM band_entries WHERE band_type = @bandType";
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.ExecuteNonQuery();
+    }
+
+    private void RebuildCurrentBandProjectionScope(string songId, string bandType, string rankingScope, string scopeComboId)
+    {
+        var builder = new BandCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandCurrentProjectionBuilder>>());
+
+        builder.RebuildScopeAsync(new BandCurrentProjectionScopeKey(songId, bandType, rankingScope, scopeComboId))
+            .GetAwaiter()
+            .GetResult();
+    }
+
+    private void UpdateCurrentBandProjectionScopeStatus(string songId, string bandType, string rankingScope, string scopeComboId, string status)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE band_current_projection_scope
+            SET status = @status,
+                updated_at = now()
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId;
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
+        cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
+        cmd.Parameters.AddWithValue("status", status);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void ForceCurrentBandProjectionTopTeam(string songId, string bandType, string rankingScope, string scopeComboId, string teamKey, int score)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE current_band_leaderboard_entries
+            SET score = CASE WHEN team_key = @teamKey THEN @score ELSE score END,
+                rank = CASE WHEN team_key = @teamKey THEN 1 ELSE rank + 1 END
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId;
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
+        cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SeedTriosBandRankingsSource()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+
+        persistence.UpsertBandEntries("trio_song", "Band_Trios",
+        [
+            MakeBandEntry(["t1", "t2", "t3"], "0:1:3", 3000, isFullCombo: true),
+            MakeBandEntry(["t4", "t5", "t6"], "3:1:0", 2500),
+            MakeBandEntry(["t1", "t2", "t3"], "0:1:2", 1000),
+        ]);
+    }
+
+    private void SeedQuadBandRankingsSource()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+
+        persistence.UpsertBandEntries("quad_song", "Band_Quad",
+        [
+            MakeBandEntry(["q1", "q2", "q3", "q4"], "0:1:3:2", 4000, isFullCombo: true),
+            MakeBandEntry(["q5", "q6", "q7", "q8"], "0:1:3:2", 3500),
+        ]);
     }
 
     private void BackdateBandHistory(string bandType, DateOnly snapshotDate)

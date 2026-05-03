@@ -76,6 +76,8 @@ builder.Services.Configure<ScraperOptions>(
     builder.Configuration.GetSection(ScraperOptions.Section));
 builder.Services.Configure<FeatureOptions>(
     builder.Configuration.GetSection(FeatureOptions.Section));
+builder.Services.Configure<ImprovementNotificationOptions>(
+    builder.Configuration.GetSection(ImprovementNotificationOptions.Section));
 builder.Services.Configure<BandRankHistoryOptions>(
     builder.Configuration.GetSection(BandRankHistoryOptions.Section));
 builder.Services.Configure<BandTeamRankingRebuildOptions>(
@@ -280,6 +282,7 @@ builder.Services.AddSingleton<IPathDataStore>(sp =>
 builder.Services.AddSingleton(sp => (FSTService.Scraping.PathDataStore)sp.GetRequiredService<IPathDataStore>());
 
 builder.Services.AddSingleton<FSTService.Api.DbStatsService>();
+builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 
 // ─── Shared services ────────────────────────────────────────
 
@@ -348,6 +351,8 @@ builder.Services.AddSingleton<RegisteredBandProcessingOrchestrator>(sp =>
         executor);
 });
 builder.Services.AddSingleton<BandSearchProjectionBuilder>();
+builder.Services.AddSingleton<SoloCurrentProjectionBuilder>();
+builder.Services.AddSingleton<BandCurrentProjectionBuilder>();
 builder.Services.AddSingleton<PostScrapeBandExtractor>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
 builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
@@ -363,6 +368,7 @@ builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
         sp.GetRequiredService<ILoggerFactory>(),
         jsonOpts,
         sp.GetRequiredService<IOptions<FeatureOptions>>().Value,
+        sp.GetRequiredService<IOptions<ScraperOptions>>().Value,
         sp.GetRequiredService<LeaderboardRivalsCalculator>());
 });
 

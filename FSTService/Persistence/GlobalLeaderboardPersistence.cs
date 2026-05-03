@@ -1007,8 +1007,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private static readonly string[] SoloIndexDefinitions =
     [
         "CREATE INDEX ix_le_song_score ON leaderboard_entries (song_id, instrument, score DESC)",
-        "CREATE INDEX ix_le_song_rank ON leaderboard_entries (song_id, instrument, rank)",
-        "CREATE INDEX ix_le_account ON leaderboard_entries (account_id, instrument)",
         "CREATE INDEX ix_le_account_song ON leaderboard_entries (account_id, song_id, instrument)",
         "CREATE INDEX ix_le_song_source ON leaderboard_entries (song_id, instrument, source)",
         "CREATE INDEX ix_le_band_members ON leaderboard_entries (song_id, instrument) WHERE (band_members_json IS NOT NULL)",
@@ -1026,11 +1024,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     private static readonly string[] BandIndexDefinitions =
     [
-        "CREATE INDEX ix_be_combo ON band_entries (song_id, band_type, instrument_combo)",
-        "CREATE INDEX ix_be_song_rank ON band_entries (song_id, band_type, rank)",
-        "CREATE INDEX ix_be_song_score ON band_entries (song_id, band_type, score DESC)",
-        "CREATE INDEX ix_bms_account ON band_member_stats (account_id)",
-        "CREATE INDEX ix_bm_song_type ON band_members (song_id, band_type)",
     ];
 
     /// <summary>All secondary indexes combined (for backward compat).</summary>

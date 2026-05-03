@@ -7,6 +7,7 @@ import { TestProviders } from '../../helpers/TestProviders';
 import LeaderboardsOverviewPage from '../../../src/pages/leaderboards/LeaderboardsOverviewPage';
 import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { writeSelectedProfile } from '../../../src/state/selectedProfile';
+import { BAND_TYPES } from '../../../src/utils/bandTypes';
 
 const mockApi = vi.hoisted(() => ({
   getRankings: vi.fn(),
@@ -60,6 +61,30 @@ function makeBandEntry(
   };
 }
 
+function writeSelectedBandProfile(bandType: BandType) {
+  writeSelectedProfile({
+    type: 'band',
+    bandId: `selected-${bandType}`,
+    bandType,
+    teamKey: 'selected-a:selected-b',
+    displayName: 'Selected Band',
+    members: [
+      { accountId: 'selected-a', displayName: 'Selected A' },
+      { accountId: 'selected-b', displayName: 'Selected B' },
+    ],
+  });
+}
+
+function expectBefore(first: Element, second: Element) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+}
+
+function getAnimationDelayMs(element: HTMLElement): number {
+  const match = element.style.animation.match(/ease-out\s+(\d+(?:\.\d+)?)ms\s+forwards/);
+  expect(match?.[1]).toBeDefined();
+  return Number(match![1]);
+}
+
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
@@ -103,6 +128,7 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(within(bandStack).getByTestId('band-ranking-card-Band_Trios')).toBeTruthy();
     expect(within(bandStack).getByTestId('band-ranking-card-Band_Quad')).toBeTruthy();
     expect(within(instrumentGrid).queryByTestId('band-ranking-card-Band_Duets')).toBeNull();
+    expectBefore(instrumentGrid, bandStack);
 
     const duosCard = within(bandStack).getByTestId('band-ranking-card-Band_Duets');
     expect(within(duosCard).getByText('Duos')).toBeTruthy();
@@ -122,6 +148,30 @@ describe('LeaderboardsOverviewPage band rankings', () => {
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'totalscore', 1, 10, undefined, undefined);
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'totalscore', 1, 10, undefined, undefined);
     });
+  });
+
+  it.each(BAND_TYPES)('renders selected %s before solo instruments and staggers it first', async (bandType) => {
+    writeSelectedBandProfile(bandType);
+
+    render(
+      <TestProviders route="/leaderboards">
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const selectedCard = await screen.findByTestId(`band-ranking-card-${bandType}`);
+    const instrumentGrid = screen.getByTestId('leaderboards-instrument-grid');
+    expectBefore(selectedCard, instrumentGrid);
+
+    for (const trailingBandType of BAND_TYPES.filter(type => type !== bandType)) {
+      expectBefore(instrumentGrid, screen.getByTestId(`band-ranking-card-${trailingBandType}`));
+    }
+
+    const selectedHeader = selectedCard.firstElementChild as HTMLElement;
+    const firstInstrumentHeader = instrumentGrid.firstElementChild?.firstElementChild as HTMLElement;
+    expect(getAnimationDelayMs(selectedHeader)).toBeLessThan(getAnimationDelayMs(firstInstrumentHeader));
   });
 
   it('requests and renders selected-player band rankings using the active metric', async () => {
@@ -157,6 +207,34 @@ describe('LeaderboardsOverviewPage band rankings', () => {
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, 'tracked-player', undefined);
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Quad', undefined, 'weighted', 1, 10, 'tracked-player', undefined);
     });
+  });
+
+  it('highlights a selected-player band ranking when it is already visible', async () => {
+    writeSelectedProfile({ type: 'player', accountId: 'tracked-player', displayName: 'Tracked Player' });
+    const selectedTopEntry = makeBandEntry(1, 'Band_Duets', ['Tracked Player', 'Partner'], ['tracked-player', 'partner-player']);
+    mockApi.getBandRankings.mockImplementation((bandType: BandType, _comboId: string | undefined, rankBy: string, page: number, pageSize: number, selectedAccountId?: string) => Promise.resolve({
+      bandType,
+      comboId: null,
+      rankBy,
+      page,
+      pageSize,
+      totalTeams: 42,
+      entries: [bandType === 'Band_Duets' ? selectedTopEntry : makeBandEntry(1, bandType, ['Gamma', 'Delta'])],
+      selectedPlayerEntry: bandType === 'Band_Duets' && selectedAccountId === 'tracked-player' ? selectedTopEntry : null,
+    }));
+
+    render(
+      <TestProviders route="/leaderboards?rankBy=weighted">
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const selectedTopRow = await screen.findByTestId('band-ranking-entry-Band_Duets-0');
+    expect(selectedTopRow).toHaveStyle({ backgroundColor: 'rgba(75, 15, 99, 0.75)' });
+    expect(within(selectedTopRow).getByText('Tracked Player')).toBeTruthy();
+    expect(screen.queryByTestId('band-ranking-selected-entry-Band_Duets')).toBeNull();
   });
 
   it('requests and renders an exact selected-band ranking only for the matching band type', async () => {

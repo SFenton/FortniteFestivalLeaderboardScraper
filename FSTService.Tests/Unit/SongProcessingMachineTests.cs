@@ -22,6 +22,7 @@ public class SongProcessingMachineTests : IDisposable
     private readonly ILogger<SongProcessingMachine> _machineLog = Substitute.For<ILogger<SongProcessingMachine>>();
     private readonly ILogger<BatchResultProcessor> _processorLog = Substitute.For<ILogger<BatchResultProcessor>>();
     private readonly SharedDopPool _pool;
+    private static readonly int AllInstrumentCount = GlobalLeaderboardScraper.AllInstruments.Count;
 
     public SongProcessingMachineTests()
     {
@@ -115,12 +116,13 @@ public class SongProcessingMachineTests : IDisposable
             ["song1", "song2"], users, TestSeasonWindows,
             "token", "caller", _pool, ct: CancellationToken.None);
 
-        // 2 songs × 6 instruments × 2 users = 24 entries
-        Assert.Equal(24, result.EntriesUpdated);
+        // 2 songs × all instruments × 2 users.
+        Assert.Equal(2 * AllInstrumentCount * 2, result.EntriesUpdated);
         Assert.Equal(2, result.UsersProcessed);
+        Assert.Equal(2 * AllInstrumentCount, result.UpdatedScopes.Count);
 
-        // Should have made 12 batch calls (2 songs × 6 instruments), each containing both users
-        await _scraper.Received(12).LookupMultipleAccountsAsync(
+        // Should have made one batch call per song/instrument, each containing both users.
+        await _scraper.Received(2 * AllInstrumentCount).LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Is<IReadOnlyList<string>>(l => l.Count == 2),
             "token", "caller", Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<CancellationToken>());
     }
@@ -186,8 +188,8 @@ public class SongProcessingMachineTests : IDisposable
             ["song1"], users, TestSeasonWindows,
             "token", "caller", _pool, batchSize: 3, ct: CancellationToken.None);
 
-        // 1 song × 6 instruments × 2 chunks = 12 calls
-        await _scraper.Received(12).LookupMultipleAccountsAsync(
+        // 1 song × all instruments × 2 chunks.
+        await _scraper.Received(AllInstrumentCount * 2).LookupMultipleAccountsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
             Arg.Any<CancellationToken>());
@@ -210,11 +212,9 @@ public class SongProcessingMachineTests : IDisposable
             new UserWorkItem
             {
                 AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true,
-                AlreadyChecked = new HashSet<(string, string)>
-                {
-                    ("song1", "Solo_Guitar"), ("song1", "Solo_Bass"), ("song1", "Solo_Vocals"),
-                    ("song1", "Solo_Drums"), ("song1", "Solo_PeripheralGuitar"), ("song1", "Solo_PeripheralBass"),
-                },
+                AlreadyChecked = GlobalLeaderboardScraper.AllInstruments
+                    .Select(instrument => ("song1", instrument))
+                    .ToHashSet(),
             },
         };
 
@@ -327,7 +327,7 @@ public class SongProcessingMachineTests : IDisposable
         var machine = CreateMachine();
         var users = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true } };
 
-        // 10 songs, maxConcurrentSongs=2. Each song has 6 instruments, so max concurrent calls = 2 × 6 = 12.
+        // 10 songs, maxConcurrentSongs=2. Each song fans out across all instruments.
         var songIds = Enumerable.Range(0, 10).Select(i => $"song{i}").ToList();
 
         var result = await machine.RunAsync(
@@ -336,10 +336,9 @@ public class SongProcessingMachineTests : IDisposable
             batchSize: 500, reportProgress: false,
             maxConcurrentSongs: 2, ct: CancellationToken.None);
 
-        // With 2 concurrent songs × 6 instruments = 12 max concurrent calls.
-        // Without the cap it would be 10 × 6 = 60.
-        Assert.True(peakConcurrency <= 12,
-            $"Peak concurrency was {peakConcurrency}, expected ≤ 12 (2 songs × 6 instruments)");
+        var expectedPeak = 2 * AllInstrumentCount;
+        Assert.True(peakConcurrency <= expectedPeak,
+            $"Peak concurrency was {peakConcurrency}, expected ≤ {expectedPeak} (2 songs × all instruments)");
         Assert.Equal(1, result.UsersProcessed);
     }
 

@@ -17,7 +17,7 @@ import BandRankingCard from './components/BandRankingCard';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
-import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { BandType, RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import RankByModal from './modals/RankByModal';
@@ -95,6 +95,14 @@ export default function LeaderboardsOverviewPage() {
   });
 
   const bandTypes = useMemo(() => playerBandsEnabled ? BAND_TYPES : [], [playerBandsEnabled]);
+  const promotedBandType = useMemo(
+    () => selectedBandType && bandTypes.includes(selectedBandType) ? selectedBandType : undefined,
+    [bandTypes, selectedBandType],
+  );
+  const trailingBandTypes = useMemo(
+    () => promotedBandType ? bandTypes.filter(bandType => bandType !== promotedBandType) : bandTypes,
+    [bandTypes, promotedBandType],
+  );
 
   const bandRankingQueries = useQueries({
     queries: bandTypes.map((bandType) => {
@@ -172,14 +180,50 @@ export default function LeaderboardsOverviewPage() {
   const firstLeaderboardError = leaderboardQueries.find(query => query.error)?.error;
   const chartSlots = player && rankHistoryEnabled ? 1 : 0;
   const instrumentRows = Math.ceil(instruments.length / cols);
+  const promotedBandRows = promotedBandType ? 1 : 0;
   const getInstrumentCardStaggerOffset = useCallback((cardIndex: number) => {
     const gridRow = Math.floor(cardIndex / cols);
     const gridCol = cardIndex % cols;
-    return chartSlots + gridRow * itemsPerCard + gridCol * COLUMN_STAGGER_OFFSET;
-  }, [chartSlots, cols, itemsPerCard]);
-  const getBandCardStaggerOffset = useCallback((bandIndex: number) => (
-    chartSlots + instrumentRows * itemsPerCard + bandIndex * itemsPerCard
-  ), [chartSlots, instrumentRows, itemsPerCard]);
+    return chartSlots + promotedBandRows * itemsPerCard + gridRow * itemsPerCard + gridCol * COLUMN_STAGGER_OFFSET;
+  }, [chartSlots, cols, itemsPerCard, promotedBandRows]);
+  const getTrailingBandCardStaggerOffset = useCallback((bandIndex: number) => (
+    chartSlots + promotedBandRows * itemsPerCard + instrumentRows * itemsPerCard + bandIndex * itemsPerCard
+  ), [chartSlots, instrumentRows, itemsPerCard, promotedBandRows]);
+
+  const renderBandRankingCard = useCallback((bandType: BandType, staggerOffset: number) => {
+    const bandQuery = bandRankingQueries[bandTypes.indexOf(bandType)];
+    const activeFilterInstruments = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+      ? appliedBandComboFilter.assignments.map(assignment => assignment.instrument)
+      : undefined;
+    const activeFilterComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+      ? appliedBandComboFilter.comboId
+      : undefined;
+    const activeFilterTeamKey = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+      ? appliedBandComboFilter.teamKey
+      : undefined;
+    const activeFilterConfigurations = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
+      ? appliedBandComboFilter.configurations
+      : undefined;
+    return (
+      <BandRankingCard
+        key={bandType}
+        bandType={bandType}
+        metric={bandMetric}
+        entries={bandQuery?.data?.entries ?? []}
+        selectedPlayerEntry={bandQuery?.data?.selectedPlayerEntry ?? null}
+        selectedBandEntry={bandQuery?.data?.selectedBandEntry ?? (selectedBandType === bandType ? selectedBandRankingQuery.data ?? null : null)}
+        selectedAccountId={selectedAccountId}
+        activeFilterComboId={activeFilterComboId}
+        activeFilterTeamKey={activeFilterTeamKey}
+        activeFilterInstruments={activeFilterInstruments}
+        activeFilterConfigurations={activeFilterConfigurations}
+        totalTeams={bandQuery?.data?.totalTeams ?? 0}
+        error={bandQuery?.error ? String(bandQuery.error) : null}
+        shouldStagger={shouldStagger}
+        staggerOffset={staggerOffset}
+      />
+    );
+  }, [appliedBandComboFilter, bandMetric, bandRankingQueries, bandTypes, selectedAccountId, selectedBandRankingQuery.data, selectedBandType, shouldStagger]);
 
   return (
     <Page
@@ -235,6 +279,11 @@ export default function LeaderboardsOverviewPage() {
       )}
       {loadPhase === LoadPhase.ContentIn && !allErrored && (
         <div style={s.contentStack}>
+          {promotedBandType && (
+            <div data-testid="leaderboards-promoted-band-section-stack" style={s.bandSectionStack}>
+              {renderBandRankingCard(promotedBandType, chartSlots)}
+            </div>
+          )}
           <div ref={gridRef} data-testid="leaderboards-instrument-grid" style={s.grid}>
             {instruments.map((inst, idx) => {
               const q = rankingQueries[idx];
@@ -256,42 +305,9 @@ export default function LeaderboardsOverviewPage() {
               );
             })}
           </div>
-          {bandTypes.length > 0 && (
+          {trailingBandTypes.length > 0 && (
             <div data-testid="leaderboards-band-section-stack" style={s.bandSectionStack}>
-              {bandTypes.map((bandType, idx) => {
-                const bandQuery = bandRankingQueries[idx];
-                const activeFilterInstruments = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
-                  ? appliedBandComboFilter.assignments.map(assignment => assignment.instrument)
-                  : undefined;
-                const activeFilterComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
-                  ? appliedBandComboFilter.comboId
-                  : undefined;
-                const activeFilterTeamKey = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
-                  ? appliedBandComboFilter.teamKey
-                  : undefined;
-                const activeFilterConfigurations = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType
-                  ? appliedBandComboFilter.configurations
-                  : undefined;
-                return (
-                  <BandRankingCard
-                    key={bandType}
-                    bandType={bandType}
-                    metric={bandMetric}
-                    entries={bandQuery?.data?.entries ?? []}
-                    selectedPlayerEntry={bandQuery?.data?.selectedPlayerEntry ?? null}
-                    selectedBandEntry={bandQuery?.data?.selectedBandEntry ?? (selectedBandType === bandType ? selectedBandRankingQuery.data ?? null : null)}
-                    selectedAccountId={selectedAccountId}
-                    activeFilterComboId={activeFilterComboId}
-                    activeFilterTeamKey={activeFilterTeamKey}
-                    activeFilterInstruments={activeFilterInstruments}
-                    activeFilterConfigurations={activeFilterConfigurations}
-                    totalTeams={bandQuery?.data?.totalTeams ?? 0}
-                    error={bandQuery?.error ? String(bandQuery.error) : null}
-                    shouldStagger={shouldStagger}
-                    staggerOffset={getBandCardStaggerOffset(idx)}
-                  />
-                );
-              })}
+              {trailingBandTypes.map((bandType, idx) => renderBandRankingCard(bandType, getTrailingBandCardStaggerOffset(idx)))}
             </div>
           )}
         </div>

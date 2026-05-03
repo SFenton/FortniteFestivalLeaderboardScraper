@@ -80,9 +80,11 @@ export default function SongBandLeaderboardPreview({
         <div data-testid={`song-band-preview-list-${bandType}`} style={styles.cardGrid}>
           {data.entries.map((entry, index) => {
             const names = formatPlayerBandNames(songBandToPlayerBandEntry(entry));
+            const isSelectedEntry = !!selectedEntry && isSameSongBandEntry(entry, selectedEntry);
             return (
               <PlayerBandCard
                 key={`${entry.bandType}:${entry.teamKey}:${entry.rank}`}
+                testId={`song-band-entry-${bandType}-${index}`}
                 entry={songBandToPlayerBandEntry(entry)}
                 sourceAccountId={entryHasAccount(entry, selectedAccountId) ? selectedAccountId : undefined}
                 rank={entry.rank}
@@ -96,7 +98,7 @@ export default function SongBandLeaderboardPreview({
                   stars: entry.stars ?? '-',
                   accuracy: formatSongBandAccuracy(entry.accuracy),
                 })}
-                style={anim(baseDelay + STAGGER_ENTRY_OFFSET + index * STAGGER_ROW_MS)}
+                style={{ ...(isSelectedEntry ? styles.selectedCard : {}), ...anim(baseDelay + STAGGER_ENTRY_OFFSET + index * STAGGER_ROW_MS) }}
                 onAnimationEnd={clearAnim}
               />
             );

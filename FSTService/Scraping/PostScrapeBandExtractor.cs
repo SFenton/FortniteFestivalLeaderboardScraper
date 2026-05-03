@@ -92,6 +92,7 @@ public sealed class PostScrapeBandExtractor
             _dataSource,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<BandLeaderboardPersistence>.Instance);
         var impactedTeamsByBandType = new ConcurrentDictionary<string, ConcurrentDictionary<string, byte>>(StringComparer.OrdinalIgnoreCase);
+        var impactedCurrentProjectionScopes = new ConcurrentDictionary<BandCurrentProjectionScopeKey, byte>();
 
         await Parallel.ForEachAsync(songIds,
             new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
@@ -99,7 +100,7 @@ public sealed class PostScrapeBandExtractor
             {
                 try
                 {
-                    var (bands, members, lookups, impactedTeams) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, innerCt);
+                    var (bands, members, lookups, impactedTeams, impactedScopes) = await ExtractSongBandDataAsync(songId, allMaxScores, persistence, innerCt);
                     Interlocked.Add(ref totalBandRows, bands);
                     Interlocked.Add(ref totalMemberStats, members);
                     Interlocked.Add(ref totalMemberLookups, lookups);
@@ -110,6 +111,8 @@ public sealed class PostScrapeBandExtractor
                             static _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
                         teams.TryAdd(teamKey, 0);
                     }
+                    foreach (var scope in impactedScopes)
+                        impactedCurrentProjectionScopes.TryAdd(scope, 0);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -136,10 +139,11 @@ public sealed class PostScrapeBandExtractor
             impactedTeamsByBandType.ToDictionary(
                 static kvp => kvp.Key,
                 static kvp => (IReadOnlyCollection<string>)kvp.Value.Keys.ToArray(),
-                StringComparer.OrdinalIgnoreCase));
+                StringComparer.OrdinalIgnoreCase),
+            BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes.Keys));
     }
 
-    private async Task<(int Bands, int Members, int Lookups, List<(string BandType, string TeamKey)> ImpactedTeams)> ExtractSongBandDataAsync(
+    private async Task<(int Bands, int Members, int Lookups, List<(string BandType, string TeamKey)> ImpactedTeams, List<BandCurrentProjectionScopeKey> ImpactedCurrentProjectionScopes)> ExtractSongBandDataAsync(
         string songId,
         IReadOnlyDictionary<string, SongMaxScores> allMaxScores,
         BandLeaderboardPersistence persistence,
@@ -184,7 +188,7 @@ public sealed class PostScrapeBandExtractor
             }
         }
 
-        if (entries.Count == 0) return (0, 0, 0, []);
+        if (entries.Count == 0) return (0, 0, 0, [], []);
 
         // Build band entries from the stored data
         var bandEntries = new Dictionary<(string BandType, string TeamKey, string Combo), BandLeaderboardEntry>();
@@ -254,11 +258,12 @@ public sealed class PostScrapeBandExtractor
             bandEntries[key] = bandEntry;
         }
 
-        if (bandEntries.Count == 0) return (0, 0, 0, []);
+        if (bandEntries.Count == 0) return (0, 0, 0, [], []);
 
         // Group by band type and upsert
         int totalBands = 0, totalMembers = 0, totalLookups = 0;
         var impactedTeams = new List<(string BandType, string TeamKey)>();
+        var impactedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
 
         foreach (var group in bandEntries.GroupBy(kv => kv.Key.BandType))
         {
@@ -280,6 +285,12 @@ public sealed class PostScrapeBandExtractor
                 totalBands += bands;
                 totalMembers += members;
                 totalLookups += lookups;
+
+                if (bands > 0)
+                {
+                    foreach (var entry in batchEntries)
+                        BandCurrentProjectionScopeTracker.AddScopes(impactedCurrentProjectionScopes, songId, bandType, entry.InstrumentCombo);
+                }
             }
             catch
             {
@@ -288,7 +299,7 @@ public sealed class PostScrapeBandExtractor
             }
         }
 
-        return (totalBands, totalMembers, totalLookups, impactedTeams);
+        return (totalBands, totalMembers, totalLookups, impactedTeams, BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes).ToList());
     }
 
     private void RebuildImpactedMembershipSummaries(
@@ -348,11 +359,13 @@ public sealed record BandExtractionResult(
     int BandRows,
     int MemberStats,
     int MemberLookups,
-    IReadOnlyDictionary<string, IReadOnlyCollection<string>> ImpactedTeamsByBandType)
+    IReadOnlyDictionary<string, IReadOnlyCollection<string>> ImpactedTeamsByBandType,
+    IReadOnlyCollection<BandCurrentProjectionScopeKey> ImpactedCurrentProjectionScopes)
 {
     public static BandExtractionResult Empty { get; } = new(
         0,
         0,
         0,
-        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase));
+        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase),
+        []);
 }

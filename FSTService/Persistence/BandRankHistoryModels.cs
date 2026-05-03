@@ -8,6 +8,7 @@ public sealed class BandRankHistorySnapshotOptions
     public bool SynchronousCommitOff { get; init; }
     public int CommandTimeoutSeconds { get; init; }
     public int RetentionDays { get; init; } = 365;
+    public bool CleanupRetention { get; init; } = true;
 }
 
 public sealed class BandRankHistorySnapshotResult

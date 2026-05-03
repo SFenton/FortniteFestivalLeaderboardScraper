@@ -1539,6 +1539,62 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task TrackPlayer_BackfillCompletion_PrecomputesPlayerPayloadWithFallbackTiers()
+    {
+        const string accountId = "trackPrecomputeAcct";
+        const string songId = "trackPrecomputeSong";
+
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<CyclicalSongMachine>();
+                services.AddSingleton<CyclicalSongMachine>(new ImmediateCyclicalSongMachine());
+            });
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-API-Key", FstWebApplicationFactory.TestApiKey);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+
+            metaDb.InsertAccountNames([(accountId, (string?)"Track Precompute")]);
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores { MaxLeadScore = 90_000 }, "hash_track_precompute");
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(songId, [
+                new LeaderboardEntry { AccountId = accountId, Score = 200_000, Accuracy = 100, Stars = 6, IsFullCombo = true },
+            ]);
+
+            metaDb.InsertScoreChange(songId, "Solo_Guitar", accountId, null, 80_000, null, 2,
+                accuracy: 95, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-01-01T00:00:00Z");
+            metaDb.InsertScoreChange(songId, "Solo_Guitar", accountId, 80_000, 200_000, 2, 1,
+                accuracy: 100, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-02-01T00:00:00Z");
+        }
+
+        var response = await client.PostAsync($"/api/player/{accountId}/track", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var cachedJson = await WaitForCachedPlayerPayloadAsync(
+            factory.Services,
+            $"player:{accountId}:::",
+            TimeSpan.FromSeconds(5));
+        var score = Assert.Single(cachedJson.GetProperty("scores").EnumerateArray(),
+            entry => entry.GetProperty("si").GetString() == songId
+                     && entry.GetProperty("ins").GetString() == "01");
+
+        Assert.True(score.GetProperty("ml").GetDouble() > 1.0);
+        var validScore = Assert.Single(score.GetProperty("vs").EnumerateArray(),
+            entry => entry.GetProperty("sc").GetInt32() == 80_000);
+        Assert.True(validScore.GetProperty("ml").GetDouble() <= 1.0);
+        Assert.True(validScore.GetProperty("fc").GetBoolean());
+    }
+
+    [Fact]
     public async Task TrackPlayer_UnknownAccount_ReturnsNotFound()
     {
         var response = await _authedClient.PostAsync("/api/player/nonexistent999/track", null);
@@ -2549,6 +2605,25 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         cmd.CommandText = "INSERT INTO songs (song_id, title) VALUES (@songId, 'Test Song') ON CONFLICT DO NOTHING";
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.ExecuteNonQuery();
+    }
+
+    private static async Task<JsonElement> WaitForCachedPlayerPayloadAsync(
+        IServiceProvider services,
+        string cacheKey,
+        TimeSpan timeout)
+    {
+        var precomputer = services.GetRequiredService<ScrapeTimePrecomputer>();
+        var deadline = DateTime.UtcNow.Add(timeout);
+        while (DateTime.UtcNow < deadline)
+        {
+            var cached = precomputer.TryGet(cacheKey);
+            if (cached.HasValue)
+                return JsonSerializer.Deserialize<JsonElement>(cached.Value.Json);
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException($"Timed out waiting for precomputed cache key {cacheKey}.");
     }
 
     private static void InsertSnapshotState(NpgsqlDataSource dataSource, string songId, string instrument, long snapshotId)
@@ -4349,6 +4424,25 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     // ═══════════════════════════════════════════════════════════════
     // Factory: sets up the test server with in-memory/temp dependencies
     // ═══════════════════════════════════════════════════════════════
+
+    private sealed class ImmediateCyclicalSongMachine : CyclicalSongMachine
+    {
+        public override Task<SongProcessingMachine.MachineResult> AttachAsync(
+            IReadOnlyList<UserWorkItem> users,
+            IReadOnlyList<string> songIds,
+            IReadOnlyList<SeasonWindowInfo> seasonWindows,
+            SongMachineSource source,
+            bool isHighPriority,
+            CancellationToken ct = default,
+            bool preserveProgressPhaseOnIdle = false)
+        {
+            return Task.FromResult(new SongProcessingMachine.MachineResult
+            {
+                EntriesUpdated = songIds.Count * GlobalLeaderboardScraper.AllInstruments.Count * users.Count,
+                UsersProcessed = users.Count,
+            });
+        }
+    }
 
     public sealed class FstWebApplicationFactory : WebApplicationFactory<Program>
     {

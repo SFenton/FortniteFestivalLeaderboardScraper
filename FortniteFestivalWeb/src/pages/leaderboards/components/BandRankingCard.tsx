@@ -90,6 +90,7 @@ export default memo(function BandRankingCard({
         {error && <span style={styles.cardError}>{parseApiError(error).title}</span>}
         {!error && !hasRows && <span style={styles.cardMuted}>{t('rankings.noBandRankings')}</span>}
         {!error && entries.map((entry, index) => {
+          const isSelectedEntry = !!selectedEntry && isSameBandRankingEntry(entry, selectedEntry);
           const rowDelay = shouldStagger ? staggerDelay(index + 1 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
           const rowStaggerStyle: CSSProperties | undefined = rowDelay != null
             ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${rowDelay}ms forwards` }
@@ -108,7 +109,7 @@ export default memo(function BandRankingCard({
               activeFilterConfigurations={activeFilterConfigurations}
               rankWidth={rankWidth}
               testId={`band-ranking-entry-${bandType}-${index}`}
-              style={rowStaggerStyle}
+              style={{ ...(isSelectedEntry ? styles.selectedCard : {}), ...rowStaggerStyle }}
               onAnimationEnd={(event) => {
                 const element = event.currentTarget;
                 element.style.opacity = '';

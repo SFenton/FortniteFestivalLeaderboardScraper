@@ -698,6 +698,7 @@ public sealed class RankingsCalculator
                         SynchronousCommitOff = _bandRankHistoryOptions.SynchronousCommitOff,
                         CommandTimeoutSeconds = _bandRankHistoryOptions.CommandTimeoutSeconds,
                         RetentionDays = _bandRankHistoryOptions.RetentionDays,
+                        CleanupRetention = false,
                     };
                     var result = _metaDb.SnapshotBandRankHistoryChunked(bandType, options, jobId: null, ct);
                     _progress.ReportBandRankHistoryProgress(
@@ -743,17 +744,6 @@ public sealed class RankingsCalculator
                 var db = _persistence.GetOrCreateInstrumentDb(instrument);
                 db.SnapshotRankHistory(cleanupRetention: false);
 
-                try
-                {
-                    db.CleanupRankHistoryRetention();
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _log.LogWarning(ex,
-                        "Rank history retention cleanup failed for {Instrument}. Continuing without blocking core rankings.",
-                        instrument);
-                }
-
                 instSw.Stop();
                 LogPhase("snapshots.per_instrument", instrument, instSw.Elapsed);
             }
@@ -778,7 +768,7 @@ public sealed class RankingsCalculator
         var compositeSnapSw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            _metaDb.SnapshotCompositeRankHistory();
+            _metaDb.SnapshotCompositeRankHistory(cleanupRetention: false);
             compositeSnapSw.Stop();
             LogPhase("snapshots.composite", instrument: null, compositeSnapSw.Elapsed);
         }

@@ -69,6 +69,7 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: apiTarget,
           changeOrigin: true,
+          ws: true,
           headers: env.VITE_API_KEY
             ? { 'X-API-Key': env.VITE_API_KEY }
             : {},

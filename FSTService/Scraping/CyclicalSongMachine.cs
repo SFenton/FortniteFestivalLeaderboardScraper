@@ -1012,6 +1012,7 @@ public class CyclicalSongMachine
         public int TotalEntriesUpdated;
         public int TotalSessionsInserted;
         public int TotalApiCalls;
+        public ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte> UpdatedScopes { get; } = [];
 
         private readonly ConcurrentDictionary<int, byte> _processedSongIndices = [];
         private readonly CancellationToken _callerCt;
@@ -1094,6 +1095,8 @@ public class CyclicalSongMachine
             Interlocked.Add(ref TotalEntriesUpdated, result.EntriesUpdated);
             Interlocked.Add(ref TotalSessionsInserted, result.SessionsInserted);
             Interlocked.Add(ref TotalApiCalls, result.ApiCalls);
+            foreach (var scope in result.UpdatedScopes)
+                UpdatedScopes.TryAdd(scope, 0);
         }
 
         public void MarkCyclePassComplete()
@@ -1112,6 +1115,7 @@ public class CyclicalSongMachine
                 SessionsInserted = TotalSessionsInserted,
                 ApiCalls = TotalApiCalls,
                 UsersProcessed = Users.Count,
+                UpdatedScopes = UpdatedScopes.Keys.ToArray(),
             });
         }
 

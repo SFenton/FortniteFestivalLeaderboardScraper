@@ -89,6 +89,7 @@ public class SongProcessingMachine
         int totalSessions = 0;
         int totalApiCalls = 0;
         int songsCompleted = 0;
+        var updatedScopes = new ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte>();
 
         // Users doing history recon get per-song progress via WebSocket
         var historyReconUsers = users
@@ -125,6 +126,8 @@ public class SongProcessingMachine
             Interlocked.Add(ref totalSessions, result.SessionsInserted);
             Interlocked.Add(ref totalApiCalls, result.ApiCalls);
             Interlocked.Increment(ref songsCompleted);
+            foreach (var scope in result.UpdatedScopes)
+                updatedScopes.TryAdd(scope, 0);
 
             // Report per-user progress for history recon users
             foreach (var user in historyReconUsers)
@@ -152,6 +155,7 @@ public class SongProcessingMachine
             SessionsInserted = totalSessions,
             ApiCalls = totalApiCalls,
             UsersProcessed = users.Count,
+            UpdatedScopes = updatedScopes.Keys.ToArray(),
         };
     }
 
@@ -193,6 +197,7 @@ public class SongProcessingMachine
         int entriesUpdated = 0;
         int sessionsInserted = 0;
         int apiCalls = 0;
+        var updatedScopes = new ConcurrentDictionary<SoloCurrentProjectionScopeKey, byte>();
 
         // Shared across all instruments: when a pad instrument discovers
         // that a season returns no data (BadRequest or empty), record it
@@ -209,6 +214,8 @@ public class SongProcessingMachine
             Interlocked.Add(ref entriesUpdated, result.EntriesUpdated);
             Interlocked.Add(ref sessionsInserted, result.SessionsInserted);
             Interlocked.Add(ref apiCalls, result.ApiCalls);
+            foreach (var scope in result.UpdatedScopes)
+                updatedScopes.TryAdd(scope, 0);
         }).ToList();
 
         await Task.WhenAll(instrumentTasks);
@@ -218,6 +225,7 @@ public class SongProcessingMachine
             EntriesUpdated = entriesUpdated,
             SessionsInserted = sessionsInserted,
             ApiCalls = apiCalls,
+            UpdatedScopes = updatedScopes.Keys.ToArray(),
         };
     }
 
@@ -269,6 +277,8 @@ public class SongProcessingMachine
             Interlocked.Add(ref apiCalls, r.ApiCalls);
         }
 
+        var updatedScopes = results.SelectMany(r => r.UpdatedScopes).Distinct().ToArray();
+
         // Mark history recon processed for users doing that work
         foreach (var user in users)
         {
@@ -281,6 +291,7 @@ public class SongProcessingMachine
             EntriesUpdated = entriesUpdated,
             SessionsInserted = sessionsInserted,
             ApiCalls = apiCalls,
+            UpdatedScopes = updatedScopes,
         };
     }
 
@@ -353,7 +364,12 @@ public class SongProcessingMachine
             }
         }
 
-        return new SongStepResult { EntriesUpdated = entriesUpdated, ApiCalls = apiCalls };
+        return new SongStepResult
+        {
+            EntriesUpdated = entriesUpdated,
+            ApiCalls = apiCalls,
+            UpdatedScopes = entriesUpdated > 0 ? [new SoloCurrentProjectionScopeKey(songId, instrument)] : [],
+        };
     }
 
     /// <summary>
@@ -542,6 +558,7 @@ public class SongProcessingMachine
         public int SessionsInserted { get; init; }
         public int ApiCalls { get; init; }
         public int UsersProcessed { get; init; }
+        public IReadOnlyList<SoloCurrentProjectionScopeKey> UpdatedScopes { get; init; } = [];
     }
 
     /// <summary>Result of processing one song step.</summary>
@@ -550,5 +567,6 @@ public class SongProcessingMachine
         public int EntriesUpdated { get; init; }
         public int SessionsInserted { get; init; }
         public int ApiCalls { get; init; }
+        public IReadOnlyList<SoloCurrentProjectionScopeKey> UpdatedScopes { get; init; } = [];
     }
 }

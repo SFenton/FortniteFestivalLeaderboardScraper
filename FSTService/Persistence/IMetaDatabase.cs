@@ -160,7 +160,8 @@ public interface IMetaDatabase : IDisposable
     (List<CompositeRankingDto> Entries, int TotalCount) GetCompositeRankings(int page = 1, int pageSize = 50);
     CompositeRankingDto? GetCompositeRanking(string accountId);
     (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(string accountId, int radius = 5);
-    void SnapshotCompositeRankHistory(int retentionDays = 365);
+    void SnapshotCompositeRankHistory(int retentionDays = 365, bool cleanupRetention = true);
+    int CleanupCompositeRankHistoryRetention(int retentionDays = 365);
 
     // ── Composite ranking deltas ─────────────────────────────────────
     void TruncateCompositeRankingDeltas();
@@ -181,6 +182,7 @@ public interface IMetaDatabase : IDisposable
     BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
     void SnapshotBandRankHistory(string bandType, int retentionDays = 365);
     BandRankHistorySnapshotResult SnapshotBandRankHistoryChunked(string bandType, BandRankHistorySnapshotOptions options, long? jobId = null, CancellationToken ct = default);
+    int CleanupBandRankHistoryRetention(string bandType, int retentionDays = 365, int commandTimeoutSeconds = 0, CancellationToken ct = default);
     BandRankHistoryJobInfo EnqueueBandRankHistoryJob(long scrapeId, string bandType, DateOnly snapshotDate, string mode, bool coalesceSameDay = true);
     BandRankHistoryJobInfo? GetNextBandRankHistoryJob();
     bool TryStartBandRankHistoryJob(long jobId);

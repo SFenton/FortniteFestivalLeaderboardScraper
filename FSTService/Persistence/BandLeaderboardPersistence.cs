@@ -639,6 +639,7 @@ public sealed class BandLeaderboardPersistence
         if (maxValidEntries <= 0) return BandPruneResult.Empty;
 
         var affectedTeamsByBandType = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var affectedCurrentProjectionScopes = new HashSet<BandCurrentProjectionScopeKey>();
         var affectedAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int deleted;
         int statsDeleted = 0;
@@ -734,16 +735,18 @@ public sealed class BandLeaderboardPersistence
                 {
                     affectedCmd.Transaction = tx;
                     affectedCmd.CommandText = """
-                        SELECT band_type, team_key
+                        SELECT song_id, band_type, team_key, instrument_combo
                         FROM _band_prune_deleted_keys
-                        GROUP BY band_type, team_key
-                        ORDER BY band_type, team_key
+                        GROUP BY song_id, band_type, team_key, instrument_combo
+                        ORDER BY band_type, song_id, team_key, instrument_combo
                         """;
                     using var reader = affectedCmd.ExecuteReader();
                     while (reader.Read())
                     {
-                        var bandType = reader.GetString(0);
-                        var teamKey = reader.GetString(1);
+                        var songId = reader.GetString(0);
+                        var bandType = reader.GetString(1);
+                        var teamKey = reader.GetString(2);
+                        var instrumentCombo = reader.GetString(3);
                         if (!affectedTeamsByBandType.TryGetValue(bandType, out var teamKeys))
                         {
                             teamKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -751,6 +754,7 @@ public sealed class BandLeaderboardPersistence
                         }
 
                         teamKeys.Add(teamKey);
+                        BandCurrentProjectionScopeTracker.AddScopes(affectedCurrentProjectionScopes, songId, bandType, instrumentCombo);
                         foreach (var accountId in SplitTeamKey(teamKey))
                             affectedAccounts.Add(accountId);
                     }
@@ -816,7 +820,8 @@ public sealed class BandLeaderboardPersistence
             affectedTeamsByBandType.ToDictionary(
                 static kvp => kvp.Key,
                 static kvp => (IReadOnlyCollection<string>)kvp.Value.ToArray(),
-                StringComparer.OrdinalIgnoreCase));
+                StringComparer.OrdinalIgnoreCase),
+            BandCurrentProjectionScopeTracker.OrderedDistinct(affectedCurrentProjectionScopes));
     }
 
     private void MarkBandTeamMembershipStateForAccounts(IReadOnlyCollection<string> accountIds)
@@ -1379,11 +1384,13 @@ public sealed record BandPruneResult(
     int DeletedEntries,
     int DeletedMemberStats,
     int DeletedMemberLookups,
-    IReadOnlyDictionary<string, IReadOnlyCollection<string>> AffectedTeamsByBandType)
+    IReadOnlyDictionary<string, IReadOnlyCollection<string>> AffectedTeamsByBandType,
+    IReadOnlyCollection<BandCurrentProjectionScopeKey> AffectedCurrentProjectionScopes)
 {
     public static BandPruneResult Empty { get; } = new(
         0,
         0,
         0,
-        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase));
+        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase),
+        []);
 }

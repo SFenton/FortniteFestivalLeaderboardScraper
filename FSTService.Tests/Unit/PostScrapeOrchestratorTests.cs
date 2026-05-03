@@ -515,6 +515,19 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RunCleanupAsync_WithSoloEnrichment_SetsCleanupPhase()
+    {
+        var ctx = CreateContext();
+
+        await _sut.RunCleanupAsync(ctx, ScrapePhase.SoloEnrichment, CancellationToken.None);
+
+        var progress = _progress.GetProgressResponse();
+        Assert.Equal("Cleanup", progress.Current?.Operation);
+        Assert.Equal("cleanup_solo_excess_entries", progress.Current?.SubOperation);
+        Assert.Equal(100, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
     public void PruneExcessEntries_WithDeepScrapeData_KeepsOverThresholdEntries()
     {
         // Simulate deep scrape scenario: many over-threshold (exploited) entries + valid entries.

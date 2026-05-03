@@ -23,6 +23,7 @@ public sealed class ScrapeTimePrecomputer
     private readonly ILoggerFactory _loggerFactory;
     private readonly JsonSerializerOptions _jsonOpts;
     private readonly FeatureOptions _features;
+    private readonly ScraperOptions _scraperOptions;
     private readonly LeaderboardRivalsCalculator? _leaderboardRivalsCalculator;
 
     /// <summary>
@@ -54,6 +55,21 @@ public sealed class ScrapeTimePrecomputer
         JsonSerializerOptions jsonOpts,
         FeatureOptions features,
         LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null)
+        : this(persistence, metaDb, pathStore, progress, log, loggerFactory, jsonOpts, features, new ScraperOptions(), leaderboardRivalsCalculator)
+    {
+    }
+
+    public ScrapeTimePrecomputer(
+        GlobalLeaderboardPersistence persistence,
+        IMetaDatabase metaDb,
+        IPathDataStore pathStore,
+        ScrapeProgressTracker progress,
+        ILogger<ScrapeTimePrecomputer> log,
+        ILoggerFactory loggerFactory,
+        JsonSerializerOptions jsonOpts,
+        FeatureOptions features,
+        ScraperOptions scraperOptions,
+        LeaderboardRivalsCalculator? leaderboardRivalsCalculator = null)
     {
         _persistence = persistence;
         _metaDb = metaDb;
@@ -63,6 +79,7 @@ public sealed class ScrapeTimePrecomputer
         _loggerFactory = loggerFactory;
         _jsonOpts = jsonOpts;
         _features = features;
+        _scraperOptions = scraperOptions;
         _leaderboardRivalsCalculator = leaderboardRivalsCalculator;
     }
 
@@ -122,28 +139,43 @@ public sealed class ScrapeTimePrecomputer
             tiers,
             bandScoresCache);
 
-        // ── Phases 2-7: Independent — run in parallel ───────────
+        // ── Phases 2-7: Independent. Run sequentially by default so API latency
+        // remains the priority while post-scrape work is active.
         _progress.SetSubOperation("parallel_precompute");
-        var phase2 = Task.Run(() =>
+        if (_scraperOptions.RunPrecomputePhasesInParallel)
         {
-            PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
-                tiers, bandScoresCache, ct).GetAwaiter().GetResult();
-        }, ct);
-        var phase3 = Task.Run(() =>
+            var phase2 = Task.Run(() =>
+            {
+                PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
+                    tiers, bandScoresCache, ct).GetAwaiter().GetResult();
+            }, ct);
+            var phase3 = Task.Run(() =>
+            {
+                PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
+                PrecomputeSongBandLeaderboardsAll();
+            }, ct);
+            var phase4 = Task.Run(() =>
+            {
+                PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct)
+                    .GetAwaiter().GetResult();
+            }, ct);
+            var phase5 = Task.Run(() => PrecomputeRankingsPages(instrumentKeys), ct);
+            var phase6 = Task.Run(() => PrecomputeNeighborhoods(registeredIds, instrumentKeys), ct);
+            var phase7 = Task.Run(() => PrecomputeFirstSeen(), ct);
+
+            await Task.WhenAll(phase2, phase3, phase4, phase5, phase6, phase7);
+        }
+        else
         {
+            await PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
+                tiers, bandScoresCache, ct);
             PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
             PrecomputeSongBandLeaderboardsAll();
-        }, ct);
-        var phase4 = Task.Run(() =>
-        {
-            PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct)
-                .GetAwaiter().GetResult();
-        }, ct);
-        var phase5 = Task.Run(() => PrecomputeRankingsPages(instrumentKeys), ct);
-        var phase6 = Task.Run(() => PrecomputeNeighborhoods(registeredIds, instrumentKeys), ct);
-        var phase7 = Task.Run(() => PrecomputeFirstSeen(), ct);
-
-        await Task.WhenAll(phase2, phase3, phase4, phase5, phase6, phase7);
+            await PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct);
+            PrecomputeRankingsPages(instrumentKeys);
+            PrecomputeNeighborhoods(registeredIds, instrumentKeys);
+            PrecomputeFirstSeen();
+        }
 
         // ── Signal channel completion and wait for drain to disk ──
         staging.Complete();
@@ -612,7 +644,8 @@ public sealed class ScrapeTimePrecomputer
             }
         }
 
-        Parallel.ForEach(allSongIds, new ParallelOptions { MaxDegreeOfParallelism = 4 }, songId =>
+        var songParallelism = Math.Max(1, _scraperOptions.PrecomputeLeaderboardSongParallelism);
+        Parallel.ForEach(allSongIds, new ParallelOptions { MaxDegreeOfParallelism = songParallelism }, songId =>
         {
             try
             {
@@ -637,7 +670,8 @@ public sealed class ScrapeTimePrecomputer
         var instrumentArr = instrumentKeys.ToArray();
         var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)?[instrumentArr.Length];
 
-        Parallel.For(0, instrumentArr.Length, i =>
+        var instrumentParallelism = Math.Max(1, _scraperOptions.PrecomputeLeaderboardInstrumentParallelism);
+        Parallel.For(0, instrumentArr.Length, new ParallelOptions { MaxDegreeOfParallelism = instrumentParallelism }, i =>
         {
             var instrument = instrumentArr[i];
             int? maxScore = null;

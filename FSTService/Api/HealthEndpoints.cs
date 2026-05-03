@@ -53,8 +53,8 @@ public static partial class ApiEndpoints
 
             var progress = tracker.GetProgressResponse();
             var current = progress.Current;
-            var lastCompletedUpdate = metaDb.GetLastCompletedScrapeRun();
             var isUpdating = current is not null;
+            var lastCompletedUpdate = isUpdating ? null : metaDb.GetLastCompletedScrapeRun();
             string? nextScheduledUpdateAt = null;
 
             if (!isUpdating

@@ -2,6 +2,7 @@
 import { useMemo, type ReactNode, type CSSProperties } from 'react';
 import { Colors, Font, Weight, Gap, MaxWidth, Layout, BoxSizing, CssValue, padding, flexBetween, flexRow } from '@festival/theme';
 import BandFilterPill from './BandFilterPill';
+import MarqueeText from './MarqueeText';
 import { useBandFilterAction } from '../../contexts/BandFilterActionContext';
 
 export interface PageHeaderProps {
@@ -59,18 +60,18 @@ export default function PageHeader({
     <div className={className} style={{ ...s.header, ...style }} onAnimationEnd={onAnimationEnd}>
       <div style={s.row}>
         {title && (
-        <div style={s.titleArea}>
-          {typeof title === 'string' ? (
-            <h1 style={s.title}>{title}</h1>
-          ) : (
-            title
-          )}
-          {(subtitle || reserveSubtitleSpace) && (
-            <div style={subtitle ? s.subtitle : s.subtitleReserved} aria-hidden={subtitle ? undefined : true}>
-              {subtitle || '\u00a0'}
+          <div style={s.titleArea}>
+            {typeof title === 'string' ? (
+              <MarqueeText text={title} as="h1" style={s.title} />
+            ) : (
+              title
+            )}
+            {(subtitle || reserveSubtitleSpace) && (
+              <div style={subtitle ? s.subtitle : s.subtitleReserved} aria-hidden={subtitle ? undefined : true}>
+                {subtitle || '\u00a0'}
+              </div>
+            )}
             </div>
-          )}
-        </div>
         )}
         {resolvedActions && <div style={actionsAlign === 'start' ? s.actionsTop : s.actions}>{resolvedActions}</div>}
       </div>
