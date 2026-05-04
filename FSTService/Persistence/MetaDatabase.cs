@@ -551,13 +551,45 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         var normalizedQuery = query.Trim().ToLowerInvariant();
+        var list = new List<(string, string)>();
+        if (string.IsNullOrWhiteSpace(normalizedQuery))
+            return list;
+
+        if (normalizedQuery.Length <= 2 && TryGetExclusiveUpperBound(normalizedQuery, out var upperBound))
+        {
+            cmd.CommandTimeout = 2;
+            cmd.CommandText = @"
+                SELECT account_id, display_name
+                FROM account_names
+                WHERE display_name IS NOT NULL
+                  AND LOWER(display_name) >= @prefix
+                  AND LOWER(display_name) < @upperBound
+                ORDER BY LOWER(display_name), display_name
+                LIMIT @limit";
+            cmd.Parameters.AddWithValue("prefix", normalizedQuery);
+            cmd.Parameters.AddWithValue("upperBound", upperBound);
+            cmd.Parameters.AddWithValue("limit", limit);
+
+            try
+            {
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                    list.Add((r.GetString(0), r.GetString(1)));
+            }
+            catch (Exception ex) when (ex is NpgsqlException or TimeoutException)
+            {
+                _log.LogWarning(ex, "Account prefix search timed out for query length {Length}; returning an empty fast-fail result.", normalizedQuery.Length);
+            }
+
+            return list;
+        }
+
         var escapedQuery = EscapeLikePattern(normalizedQuery);
         cmd.CommandTimeout = 2;
         cmd.CommandText = "SELECT account_id, display_name FROM account_names WHERE display_name IS NOT NULL AND LOWER(display_name) LIKE @pattern ESCAPE '!' ORDER BY CASE WHEN LOWER(display_name) LIKE @prefix ESCAPE '!' THEN 0 ELSE 1 END, LENGTH(display_name), display_name LIMIT @limit";
         cmd.Parameters.AddWithValue("pattern", $"%{escapedQuery}%");
         cmd.Parameters.AddWithValue("prefix", $"{escapedQuery}%");
         cmd.Parameters.AddWithValue("limit", limit);
-        var list = new List<(string, string)>();
         try
         {
             using var r = cmd.ExecuteReader();
@@ -569,6 +601,23 @@ public sealed class MetaDatabase : IMetaDatabase
             _log.LogWarning(ex, "Account search timed out for query length {Length}; returning an empty fast-fail result.", normalizedQuery.Length);
         }
         return list;
+    }
+
+    private static bool TryGetExclusiveUpperBound(string prefix, out string upperBound)
+    {
+        var chars = prefix.ToCharArray();
+        for (var i = chars.Length - 1; i >= 0; i--)
+        {
+            if (chars[i] == char.MaxValue)
+                continue;
+
+            chars[i]++;
+            upperBound = new string(chars, 0, i + 1);
+            return true;
+        }
+
+        upperBound = string.Empty;
+        return false;
     }
 
     private static string EscapeLikePattern(string value) => value
@@ -690,8 +739,9 @@ public sealed class MetaDatabase : IMetaDatabase
             bandCmd.ExecuteNonQuery();
         }
 
-        using (var identityCmd = conn.CreateCommand())
+        if (TableExists(conn, tx, BandIdentityPersistence.TableName))
         {
+            using var identityCmd = conn.CreateCommand();
             identityCmd.Transaction = tx;
             identityCmd.CommandText = """
                 INSERT INTO band_identity (band_id, band_type, team_key, member_account_ids, appearance_count, first_seen_at, last_seen_at, updated_at, source)
@@ -1847,7 +1897,40 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50) { using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT total_accounts FROM combo_stats WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); var r2 = c.ExecuteScalar(); total = r2 is DBNull or null ? 0 : Convert.ToInt32(r2); } var orderBy = ComboRankOrderBy(rankBy); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT ROW_NUMBER() OVER (ORDER BY {orderBy}) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id ORDER BY {orderBy} LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<ComboLeaderboardEntry>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadComboEntry(r)); return (list, total); }
-    public ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted") { var orderBy = ComboRankOrderBy(rankBy); using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM (SELECT ROW_NUMBER() OVER (ORDER BY {orderBy}) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id) sub WHERE account_id = @aid"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("aid", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadComboEntry(r) : null; }
+    public ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted")
+    {
+        var rankPredicate = ComboRankPrecedesPredicate(rankBy);
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            WITH target AS (
+                SELECT account_id, adjusted_rating, weighted_rating, fc_rate, total_score,
+                       max_score_percent, songs_played, full_combo_count, computed_at
+                FROM combo_leaderboard
+                WHERE combo_id = @id AND account_id = @aid
+            )
+            SELECT
+                (
+                    SELECT COUNT(*) + 1
+                    FROM combo_leaderboard other, target
+                    WHERE other.combo_id = @id
+                      AND ({rankPredicate})
+                ) AS rank,
+                target.account_id,
+                target.adjusted_rating,
+                target.weighted_rating,
+                target.fc_rate,
+                target.total_score,
+                target.max_score_percent,
+                target.songs_played,
+                target.full_combo_count,
+                target.computed_at
+            FROM target";
+        cmd.Parameters.AddWithValue("id", comboId);
+        cmd.Parameters.AddWithValue("aid", accountId);
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? ReadComboEntry(r) : null;
+    }
     public int GetComboTotalAccounts(string comboId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT total_accounts FROM combo_stats WHERE combo_id = @id"; cmd.Parameters.AddWithValue("id", comboId); var result = cmd.ExecuteScalar(); return result is DBNull or null ? 0 : Convert.ToInt32(result); }
 
     // ── Band team rankings ──────────────────────────────────────────
@@ -3748,29 +3831,30 @@ public sealed class MetaDatabase : IMetaDatabase
         var normalizedComboId = comboId ?? string.Empty;
 
         using var conn = _ds.OpenConnection();
-        using (var tx = conn.BeginTransaction())
-        {
-            EnsureBandRankHistoryTables(conn, tx);
-            tx.Commit();
-        }
+        var historyStatsExists = TableExists(conn, null, "band_team_ranking_stats_history");
+        var historyPointsExists = TableExists(conn, null, "band_team_rank_history_points");
+        var historyJobsExists = TableExists(conn, null, "band_rank_history_jobs");
 
         string? currentComputedAt = null;
         try
         {
             var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
-            using var current = conn.CreateCommand();
-            current.CommandText = $@"
-                SELECT max(computed_at)
-                FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)}
-                WHERE band_type = @bandType
-                                    AND ranking_scope = @scope
-                                    AND combo_id = @comboId";
-            current.Parameters.AddWithValue("bandType", bandType);
-                        current.Parameters.AddWithValue("scope", rankingScope);
-                        current.Parameters.AddWithValue("comboId", normalizedComboId);
-            var result = current.ExecuteScalar();
-            if (result is DateTime dt)
-                currentComputedAt = dt.ToString("o");
+            if (TableExists(conn, null, statsTable))
+            {
+                using var current = conn.CreateCommand();
+                current.CommandText = $@"
+                    SELECT max(computed_at)
+                    FROM {BandRankingStorageNames.QuoteIdentifier(statsTable)}
+                    WHERE band_type = @bandType
+                      AND ranking_scope = @scope
+                      AND combo_id = @comboId";
+                current.Parameters.AddWithValue("bandType", bandType);
+                current.Parameters.AddWithValue("scope", rankingScope);
+                current.Parameters.AddWithValue("comboId", normalizedComboId);
+                var result = current.ExecuteScalar();
+                if (result is DateTime dt)
+                    currentComputedAt = dt.ToString("o");
+            }
         }
         catch
         {
@@ -3778,17 +3862,18 @@ public sealed class MetaDatabase : IMetaDatabase
         }
 
         string? historyThrough = null;
-        using (var hist = conn.CreateCommand())
+        if (historyStatsExists)
         {
+            using var hist = conn.CreateCommand();
             hist.CommandText = @"
                 SELECT max(snapshot_date)
-                                FROM band_team_ranking_stats_history
+                FROM band_team_ranking_stats_history
                 WHERE band_type = @bandType
-                                    AND ranking_scope = @scope
-                                    AND combo_id = @comboId";
+                  AND ranking_scope = @scope
+                  AND combo_id = @comboId";
             hist.Parameters.AddWithValue("bandType", bandType);
-                        hist.Parameters.AddWithValue("scope", rankingScope);
-                        hist.Parameters.AddWithValue("comboId", normalizedComboId);
+            hist.Parameters.AddWithValue("scope", rankingScope);
+            hist.Parameters.AddWithValue("comboId", normalizedComboId);
             var result = hist.ExecuteScalar();
             historyThrough = result switch
             {
@@ -3798,7 +3883,7 @@ public sealed class MetaDatabase : IMetaDatabase
             };
         }
 
-        if (historyThrough is null)
+        if (historyThrough is null && historyPointsExists)
         {
             using var histFallback = conn.CreateCommand();
             histFallback.CommandText = @"
@@ -3820,8 +3905,9 @@ public sealed class MetaDatabase : IMetaDatabase
         }
 
         BandRankHistoryJobInfo? job = null;
-        using (var jobs = conn.CreateCommand())
+        if (historyJobsExists)
         {
+            using var jobs = conn.CreateCommand();
             jobs.CommandText = @"
                 SELECT job_id, scrape_id, snapshot_date, band_type, mode, status, started_at, completed_at,
                        failed_at, paused_at, superseded_at, last_error, attempts, chunks_total,
@@ -6465,6 +6551,26 @@ public sealed class MetaDatabase : IMetaDatabase
     }
     private static (string Column, string Direction) RankByColumn(string rankBy) => rankBy.ToLowerInvariant() switch { "weighted" => ("weighted_rating", "ASC"), "fcrate" => ("fc_rate", "DESC"), "totalscore" => ("total_score", "DESC"), "maxscore" => ("max_score_percent", "DESC"), _ => ("adjusted_rating", "ASC") };
     private static string ComboRankOrderBy(string rankBy) { var (col, dir) = RankByColumn(rankBy); return rankBy.Equals("fcrate", StringComparison.OrdinalIgnoreCase) ? $"{col} {dir}, total_score DESC, songs_played DESC, account_id ASC" : $"{col} {dir}, songs_played DESC, account_id ASC"; }
+    private static string ComboRankPrecedesPredicate(string rankBy)
+    {
+        var (column, direction) = RankByColumn(rankBy);
+        if (rankBy.Equals("fcrate", StringComparison.OrdinalIgnoreCase))
+        {
+            return """
+                other.fc_rate > target.fc_rate
+                OR (other.fc_rate = target.fc_rate AND other.total_score > target.total_score)
+                OR (other.fc_rate = target.fc_rate AND other.total_score = target.total_score AND other.songs_played > target.songs_played)
+                OR (other.fc_rate = target.fc_rate AND other.total_score = target.total_score AND other.songs_played = target.songs_played AND other.account_id < target.account_id)
+                """;
+        }
+
+        var comparison = direction.Equals("ASC", StringComparison.OrdinalIgnoreCase) ? "<" : ">";
+        return $"""
+            other.{column} {comparison} target.{column}
+            OR (other.{column} = target.{column} AND other.songs_played > target.songs_played)
+            OR (other.{column} = target.{column} AND other.songs_played = target.songs_played AND other.account_id < target.account_id)
+            """;
+    }
     private static string BandRankColumn(string rankBy) => rankBy switch { "weighted" => "weighted_rank", "fcrate" => "fc_rate_rank", "totalscore" => "total_score_rank", _ => "adjusted_skill_rank" };
     private static List<RivalSongSampleRow> ReadRivalSamples(NpgsqlCommand cmd) { var list = new List<RivalSongSampleRow>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadRivalSample(r)); return list; }
     private static RivalSongSampleRow ReadRivalSample(NpgsqlDataReader r) => new() { UserId = r.GetString(0), RivalAccountId = r.GetString(1), Instrument = r.GetString(2), SongId = r.GetString(3), UserRank = r.GetInt32(4), RivalRank = r.GetInt32(5), RankDelta = r.GetInt32(6), UserScore = r.IsDBNull(7) ? null : r.GetInt32(7), RivalScore = r.IsDBNull(8) ? null : r.GetInt32(8) };

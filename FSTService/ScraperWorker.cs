@@ -647,10 +647,8 @@ public sealed class ScraperWorker : BackgroundService
         if (now - _serviceStartedAtUtc < WebRegistrationStartupProtection)
             return;
 
-        var activityWindow = opts.ScrapeInterval > TimeSpan.Zero
-            ? opts.ScrapeInterval
-            : WebRegistrationStartupProtection;
-        var staleBeforeUtc = now - activityWindow;
+        var retentionWindow = TimeSpan.FromDays(Math.Max(1, opts.WebRegistrationRetentionDays));
+        var staleBeforeUtc = now - retentionWindow;
         var pruned = _persistence.Meta.PruneStaleWebRegistrations(staleBeforeUtc);
         if (pruned > 0)
         {

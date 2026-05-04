@@ -215,6 +215,28 @@ export function getProfileClickDestination(
   return 'modal';
 }
 
+export function getBackFallback(pathname: string, search = ''): string | null {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts[0] === 'songs' && parts.length === 4) return `/songs/${parts[1]}/${parts[2]}`;
+  if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
+  if (parts[0] === 'songs' && parts.length === 2) return AppRoutes.songs;
+  if (parts[0] === 'rivals' && parts.length === 4) return `/rivals/${parts[1]}`;
+  if (parts[0] === 'rivals' && parts.length >= 2) return AppRoutes.rivals;
+  if (parts[0] === 'player' && parts.length === 3) return `/player/${parts[1]}`;
+  if (parts[0] === 'player' && parts.length === 2) return AppRoutes.songs;
+  if (parts[0] === 'leaderboards' && parts.length === 2) return AppRoutes.leaderboards;
+  if (parts[0] === 'bands' && parts[1] === 'player' && parts[2]) return `/player/${parts[2]}`;
+  if (parts[0] === 'bands' && (parts.length === 1 || (parts.length === 2 && parts[1] !== 'player'))) {
+    const params = new URLSearchParams(search);
+    const accountId = params.get('accountId');
+    if (accountId) return AppRoutes.playerBands(accountId);
+    const bandType = params.get('bandType');
+    if (bandType) return AppRoutes.bandRankings(bandType);
+    return AppRoutes.leaderboards;
+  }
+  return null;
+}
+
 export function mergePageQuickLinksIntoFabGroups(
   quickLinksActions: ActionItem[],
   pageSpecificActions: ActionItem[],
@@ -454,19 +476,8 @@ function AppShell() {
   // Tab routes (songs, suggestions, statistics, settings) never show a back button.
   /* v8 ignore start — deep AppInner: route-aware memo + animation IIFE */
   const backFallback = useMemo(() => {
-    const path = location.pathname;
-    const parts = path.split('/').filter(Boolean);
-    if (parts[0] === 'songs' && parts.length === 4) return `/songs/${parts[1]}/${parts[2]}`;
-    if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
-    if (parts[0] === 'songs' && parts.length === 2) return AppRoutes.songs;
-    if (parts[0] === 'rivals' && parts.length === 4) return `/rivals/${parts[1]}`;
-    if (parts[0] === 'rivals' && parts.length >= 2) return '/rivals';
-    if (parts[0] === 'player' && parts.length === 3) return `/player/${parts[1]}`;
-    if (parts[0] === 'player' && parts.length === 2) return AppRoutes.songs;
-    if (parts[0] === 'leaderboards' && parts.length === 2) return AppRoutes.leaderboards;
-    if (parts[0] === 'bands' && parts[1] === 'player' && parts[2]) return `/player/${parts[2]}`;
-    return null;
-  }, [location.pathname]);
+    return getBackFallback(location.pathname, location.search);
+  }, [location.pathname, location.search]);
 
   // Animate header only on first push into a detail stack
   const shouldAnimateHeader = (() => {

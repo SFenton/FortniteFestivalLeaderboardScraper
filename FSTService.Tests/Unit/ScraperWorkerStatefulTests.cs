@@ -530,67 +530,49 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
     }
 
     [Fact]
-    public async Task RunScrapePass_WithinStartupProtection_PreservesStaleWebRegistrations()
+    public void PruneStaleWebRegistrations_WithinStartupProtection_PreservesStaleWebRegistrations()
     {
-        var service = CreateServiceWithSongs(("s1", "Song One", "Artist"));
-
         _metaDb.RegisterUser("web-tracker", "regAcct");
         SetWebRegistrationActivity("regAcct", DateTime.UtcNow.AddHours(-8));
-
-        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>("token"));
-        _tokenManager.AccountId.Returns("callerAcct");
-
-        _scraper.ScrapeManySongsAsync(
-            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
-            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
-            .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2, ScrapeInterval = TimeSpan.FromHours(4) };
         var worker = CreateWorker(opts);
 
         SetWorkerStartedAtUtc(worker, DateTime.UtcNow.AddHours(-2));
 
-        await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
+        InvokePrivate(worker, "PruneStaleWebRegistrationsIfEligible", opts);
 
         Assert.Contains("regAcct", _metaDb.GetRegisteredAccountIds());
     }
 
     [Fact]
-    public async Task RunScrapePass_AfterStartupProtection_PrunesStaleWebRegistrations()
+    public void PruneStaleWebRegistrations_AfterStartupProtection_PreservesWebRegistrationsInsideRetentionWindow()
     {
-        var service = CreateServiceWithSongs(("s1", "Song One", "Artist"));
-
         _metaDb.RegisterUser("web-tracker", "regAcct");
         SetWebRegistrationActivity("regAcct", DateTime.UtcNow.AddHours(-8));
-
-        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>("token"));
-        _tokenManager.AccountId.Returns("callerAcct");
-
-        _scraper.ScrapeManySongsAsync(
-            Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
-            Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
-            Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
-            .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2, ScrapeInterval = TimeSpan.FromHours(4) };
         var worker = CreateWorker(opts);
 
         SetWorkerStartedAtUtc(worker, DateTime.UtcNow.AddHours(-5));
 
-        await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
+        InvokePrivate(worker, "PruneStaleWebRegistrationsIfEligible", opts);
+
+        Assert.Contains("regAcct", _metaDb.GetRegisteredAccountIds());
+    }
+
+    [Fact]
+    public void PruneStaleWebRegistrations_AfterStartupProtection_PrunesWebRegistrationsOutsideRetentionWindow()
+    {
+        _metaDb.RegisterUser("web-tracker", "regAcct");
+        SetWebRegistrationActivity("regAcct", DateTime.UtcNow.AddDays(-8));
+
+        var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2, ScrapeInterval = TimeSpan.FromHours(4) };
+        var worker = CreateWorker(opts);
+
+        SetWorkerStartedAtUtc(worker, DateTime.UtcNow.AddHours(-5));
+
+        InvokePrivate(worker, "PruneStaleWebRegistrationsIfEligible", opts);
 
         Assert.DoesNotContain("regAcct", _metaDb.GetRegisteredAccountIds());
     }
@@ -617,6 +599,14 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         var field = typeof(ScraperWorker).GetField("_serviceStartedAtUtc", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("ScraperWorker startup field not found.");
         field.SetValue(worker, startedAtUtc);
+    }
+
+    private static void InvokePrivate(ScraperWorker worker, string methodName, params object[] args)
+    {
+        var method = typeof(ScraperWorker).GetMethod(methodName,
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        method!.Invoke(worker, args);
     }
 
     // ═══════════════════════════════════════════════════════════════

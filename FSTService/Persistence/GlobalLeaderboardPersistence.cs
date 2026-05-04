@@ -3069,25 +3069,32 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     private static BandIdentityLookup? ResolveBandIdentityFromIdentityTable(NpgsqlConnection conn, string bandId)
     {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT band_type, team_key, appearance_count, member_account_ids
-            FROM {BandIdentityPersistence.TableName}
-            WHERE band_id = @bandId
-            LIMIT 1
-            """;
-        cmd.Parameters.AddWithValue("bandId", bandId);
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                SELECT band_type, team_key, appearance_count, member_account_ids
+                FROM {BandIdentityPersistence.TableName}
+                WHERE band_id = @bandId
+                LIMIT 1
+                """;
+            cmd.Parameters.AddWithValue("bandId", bandId);
 
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read())
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read())
+                return null;
+
+            return new BandIdentityLookup(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                reader.GetFieldValue<string[]>(3).ToList(),
+                new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
             return null;
-
-        return new BandIdentityLookup(
-            reader.GetString(0),
-            reader.GetString(1),
-            reader.GetInt32(2),
-            reader.GetFieldValue<string[]>(3).ToList(),
-            new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase));
+        }
     }
 
     private static BandIdentityLookup? ResolveBandIdentityFromProjectionTeam(NpgsqlConnection conn, string bandType, string teamKey)

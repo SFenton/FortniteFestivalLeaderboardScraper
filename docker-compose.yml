@@ -46,11 +46,14 @@ services:
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       - Scraper__SongMachineDop=${SONG_MACHINE_DOP:-10}
+      - Scraper__WebRegistrationRetentionDays=${WEB_REGISTRATION_RETENTION_DAYS:-7}
       # ── Feature flags (default: all OFF in production) ──
       - Features__Shop=${FEATURE_SHOP:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
       - Features__FirstRun=${FEATURE_FIRST_RUN:-false}
+      - ImprovementNotifications__Enabled=${IMPROVEMENT_NOTIFICATIONS_ENABLED:-true}
+      - ImprovementNotifications__Scope=${IMPROVEMENT_NOTIFICATIONS_SCOPE:-registered}
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00

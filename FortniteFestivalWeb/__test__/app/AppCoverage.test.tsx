@@ -27,12 +27,52 @@ const mockApi = vi.hoisted(() => {
     trackPlayer: fn().mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' }),
     getRankings: fn().mockResolvedValue({ totalAccounts: 0, entries: [] }),
     getPlayerRanking: fn().mockResolvedValue(null),
+    getBandDetail: fn().mockResolvedValue({
+      band: {
+        bandId: 'band-1',
+        bandType: 'Band_Duets',
+        teamKey: 'p1:p2',
+        appearanceCount: 2,
+        members: [
+          { accountId: 'p1', displayName: 'TrackedP', instruments: ['Solo_Guitar'] },
+          { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+        ],
+      },
+      ranking: null,
+      configurations: [],
+    }),
+    getBandRanking: fn().mockResolvedValue({
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      teamMembers: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP', instruments: ['Solo_Guitar'] },
+        { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+      ],
+      configurations: [],
+      adjustedSkillRank: 1,
+      weightedRank: 2,
+      fcRateRank: 3,
+      totalScoreRank: 4,
+      songsPlayed: 2,
+      totalChartedSongs: 10,
+      totalScore: 123456,
+      fcRate: 0.5,
+      avgAccuracy: 9900,
+      totalRankedTeams: 100,
+    }),
+    getBandRankHistory: fn().mockResolvedValue({ history: [], historyStatus: 'current' }),
+    getBandSongs: fn().mockResolvedValue({ best: [], worst: [] }),
   };
 });
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
-import App from '../../src/App';
+import App, { getBackFallback } from '../../src/App';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
 import { songSlides } from '../../src/pages/songs/firstRun';
@@ -78,6 +118,46 @@ function resetMocks() {
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' });
   mockApi.getRankings.mockResolvedValue({ totalAccounts: 0, entries: [] });
   mockApi.getPlayerRanking.mockResolvedValue(null);
+  mockApi.getBandDetail.mockResolvedValue({
+    band: {
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      appearanceCount: 2,
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP', instruments: ['Solo_Guitar'] },
+        { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+      ],
+    },
+    ranking: null,
+    configurations: [],
+  });
+  mockApi.getBandRanking.mockResolvedValue({
+    bandId: 'band-1',
+    bandType: 'Band_Duets',
+    teamKey: 'p1:p2',
+    teamMembers: [
+      { accountId: 'p1', displayName: 'TrackedP' },
+      { accountId: 'p2', displayName: 'BandMate' },
+    ],
+    members: [
+      { accountId: 'p1', displayName: 'TrackedP', instruments: ['Solo_Guitar'] },
+      { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+    ],
+    configurations: [],
+    adjustedSkillRank: 1,
+    weightedRank: 2,
+    fcRateRank: 3,
+    totalScoreRank: 4,
+    songsPlayed: 2,
+    totalChartedSongs: 10,
+    totalScore: 123456,
+    fcRate: 0.5,
+    avgAccuracy: 9900,
+    totalRankedTeams: 100,
+  });
+  mockApi.getBandRankHistory.mockResolvedValue({ history: [], historyStatus: 'current' });
+  mockApi.getBandSongs.mockResolvedValue({ best: [], worst: [] });
 }
 
 beforeEach(() => {
@@ -154,6 +234,14 @@ describe('App — coverage: changelog modal', () => {
 });
 
 describe('App — coverage: backFallback for detail routes', () => {
+  it('resolves contextual back fallbacks for band detail routes', () => {
+    expect(getBackFallback('/bands/band-1', '?accountId=p1&bandType=Band_Duets&teamKey=p1%3Ap2')).toBe('/bands/player/p1?group=all');
+    expect(getBackFallback('/bands/band-1', '?bandType=Band_Duets&teamKey=p1%3Ap2')).toBe('/leaderboards/bands/Band_Duets');
+    expect(getBackFallback('/bands/band-1')).toBe('/leaderboards');
+    expect(getBackFallback('/bands', '?bandType=Band_Trios&teamKey=p1%3Ap2%3Ap3')).toBe('/leaderboards/bands/Band_Trios');
+    expect(getBackFallback('/songs')).toBeNull();
+  });
+
   it('preserves shell scroll when quietly rewriting the viewed player to /statistics', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
@@ -305,6 +393,34 @@ describe('App — coverage: backFallback for detail routes', () => {
     // The back link should point to /leaderboards
     const backLink = container.querySelector('a[href="#/leaderboards"]');
     expect(backLink).toBeTruthy();
+
+    window.location.hash = '';
+  });
+
+  it('shows back button on mobile band detail routes', async () => {
+    localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
+    window.location.hash = '#/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=TrackedP%20%2B%20BandMate';
+
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes('max-width'),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const { container } = render(<App />);
+
+    await waitFor(() => {
+      expect(container.querySelector('a[href="#/leaderboards/bands/Band_Duets"]')).toBeTruthy();
+    });
 
     window.location.hash = '';
   });

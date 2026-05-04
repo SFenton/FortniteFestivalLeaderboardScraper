@@ -60,6 +60,11 @@ public sealed class ScraperOptions
     public int StaleSpoolCleanupMinAgeHours { get; set; } = 24;
 
     /// <summary>
+    /// Number of days to keep web-selected registered players and bands without renewed activity.
+    /// </summary>
+    public int WebRegistrationRetentionDays { get; set; } = 7;
+
+    /// <summary>
     /// When true, post-scrape database cleanup begins by refreshing stale solo current projection scopes
     /// after snapshots have been finalized.
     /// </summary>
