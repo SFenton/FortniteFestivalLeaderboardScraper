@@ -106,6 +106,8 @@ public sealed class BackfillStatusInfo
     public string? CompletedAt { get; init; }
     public string? LastResumedAt { get; init; }
     public string? ErrorMessage { get; init; }
+    public bool RankingsPending { get; init; }
+    public string? DeferredReason { get; init; }
 }
 
 /// <summary>

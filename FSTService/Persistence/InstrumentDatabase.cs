@@ -156,6 +156,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     {
         try
         {
+            if (!HasAnyReadyCurrentProjectionScope(conn))
+                return null;
+
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
                 SELECT song_id, LEAST(row_count, @maxInt)::INT
@@ -183,11 +186,17 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                SELECT row_count
-                FROM {SoloCurrentProjectionScopeTable}
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND status = 'ready'
+                                SELECT scope.row_count
+                                FROM {SoloCurrentProjectionScopeTable} scope
+                                LEFT JOIN {LeaderboardSnapshotStateTable} state
+                                    ON state.song_id = scope.song_id
+                                 AND state.instrument = scope.instrument
+                                 AND state.is_finalized = TRUE
+                                 AND state.active_snapshot_id IS NOT NULL
+                                WHERE scope.song_id = @songId
+                                    AND scope.instrument = @instrument
+                                    AND scope.status = 'ready'
+                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM state.active_snapshot_id
                 LIMIT 1
                 """;
             cmd.Parameters.AddWithValue("songId", songId);
@@ -207,11 +216,27 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                SELECT EXISTS(
+                SELECT EXISTS (
                     SELECT 1
                     FROM {SoloCurrentProjectionScopeTable}
                     WHERE instrument = @instrument
-                      AND status = 'ready')
+                      AND status = 'ready'
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM {LeaderboardSnapshotStateTable} state
+                    LEFT JOIN {SoloCurrentProjectionScopeTable} scope
+                      ON scope.song_id = state.song_id
+                     AND scope.instrument = state.instrument
+                    WHERE state.instrument = @instrument
+                      AND state.is_finalized = TRUE
+                      AND state.active_snapshot_id IS NOT NULL
+                      AND (
+                          scope.song_id IS NULL
+                          OR scope.status <> 'ready'
+                          OR scope.source_snapshot_id IS DISTINCT FROM state.active_snapshot_id
+                      )
+                )
                 """;
             cmd.Parameters.AddWithValue("instrument", Instrument);
             return Convert.ToBoolean(cmd.ExecuteScalar());
@@ -235,11 +260,21 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                SELECT COUNT(DISTINCT song_id)
-                FROM {SoloCurrentProjectionScopeTable}
-                WHERE instrument = @instrument
-                  AND status = 'ready'
-                  AND song_id = ANY(@songIds)
+                                WITH requested AS (
+                                        SELECT unnest(@songIds::text[]) AS song_id
+                                )
+                                SELECT COUNT(*)
+                                FROM requested
+                                JOIN {SoloCurrentProjectionScopeTable} scope
+                                    ON scope.song_id = requested.song_id
+                                 AND scope.instrument = @instrument
+                                LEFT JOIN {LeaderboardSnapshotStateTable} state
+                                    ON state.song_id = scope.song_id
+                                 AND state.instrument = scope.instrument
+                                 AND state.is_finalized = TRUE
+                                 AND state.active_snapshot_id IS NOT NULL
+                                WHERE scope.status = 'ready'
+                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM state.active_snapshot_id
                 """;
             cmd.Parameters.AddWithValue("instrument", Instrument);
             cmd.Parameters.AddWithValue("songIds", distinctSongIds);

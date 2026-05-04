@@ -2,6 +2,7 @@ using FSTService.Tests.Helpers;
 using FSTService.Scraping;
 using FSTService.Persistence;
 using Microsoft.Extensions.Logging;
+using NSubstitute;
 
 namespace FSTService.Tests.Unit;
 
@@ -370,6 +371,37 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Equal(130_000, scores.Single(s => s.SongId == "song_B").Score);
         Assert.Equal(140_000, scores.Single(s => s.SongId == "song_C").Score);
         Assert.DoesNotContain(scores, s => s.SongId == "song_A");
+    }
+
+    [Fact]
+    public void GetCurrentStatePlayerScores_ignores_stale_projection_and_uses_snapshot_overlay_state()
+    {
+        InsertSnapshotEntry(42, "song_stale", "acct_user", 120_000, source: "scrape");
+        InsertSnapshotEntry(42, "song_stale", "acct_other", 110_000, source: "scrape");
+        InsertSnapshotState("song_stale", 42, isFinalized: true);
+        InsertOverlayEntry("song_stale", "acct_user", 150_000, source: "backfill", sourcePriority: 200, overlayReason: "preserved-backfill");
+        InsertProjectionScope("song_stale", sourceSnapshotId: 41);
+        InsertProjectionEntry("song_stale", "acct_user", 80_000, source: "stale-projection");
+
+        var scores = Db.GetCurrentStatePlayerScores("acct_user", "song_stale");
+
+        var score = Assert.Single(scores);
+        Assert.Equal("song_stale", score.SongId);
+        Assert.Equal(150_000, score.Score);
+    }
+
+    [Fact]
+    public void GetCurrentStatePlayerScores_uses_projection_when_source_snapshot_matches_active_snapshot()
+    {
+        InsertSnapshotEntry(42, "song_fresh", "acct_user", 120_000, source: "scrape");
+        InsertSnapshotState("song_fresh", 42, isFinalized: true);
+        InsertProjectionScope("song_fresh", sourceSnapshotId: 42);
+        InsertProjectionEntry("song_fresh", "acct_user", 130_000, source: "projection");
+
+        var scores = Db.GetCurrentStatePlayerScores("acct_user", "song_fresh");
+
+        var score = Assert.Single(scores);
+        Assert.Equal(130_000, score.Score);
     }
 
     [Fact]
@@ -1558,6 +1590,59 @@ public sealed class InstrumentDatabaseTests : IDisposable
         cmd.Parameters.AddWithValue("source", source);
         cmd.Parameters.AddWithValue("sourcePriority", sourcePriority);
         cmd.Parameters.AddWithValue("overlayReason", overlayReason);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertProjectionScope(string songId, long? sourceSnapshotId)
+    {
+        var logger = Substitute.For<ILogger<SoloCurrentProjectionBuilder>>();
+        var builder = new SoloCurrentProjectionBuilder(_fixture.DataSource, logger);
+        builder.EnsureSchemaAsync().GetAwaiter().GetResult();
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO solo_current_projection_scope
+            (song_id, instrument, projection_generation, row_count, source_snapshot_id, status, error_message, last_rebuilt_at, updated_at)
+            VALUES (@songId, @instrument, 1, 1, @sourceSnapshotId, 'ready', NULL, @now, @now)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                projection_generation = EXCLUDED.projection_generation,
+                row_count = EXCLUDED.row_count,
+                source_snapshot_id = EXCLUDED.source_snapshot_id,
+                status = EXCLUDED.status,
+                error_message = EXCLUDED.error_message,
+                last_rebuilt_at = EXCLUDED.last_rebuilt_at,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        cmd.Parameters.AddWithValue("sourceSnapshotId", sourceSnapshotId.HasValue ? sourceSnapshotId.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertProjectionEntry(string songId, string accountId, int score, string source)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO current_leaderboard_entries
+            (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank,
+             api_rank, source, difficulty, end_time, first_seen_at, last_updated_at, projection_generation, computed_at)
+            VALUES
+            (@songId, @instrument, @accountId, @score, 95, false, 5, 3, 99.0, 1,
+             1, @source, 3, '2025-01-15T12:00:00Z', @now, @now, 1, @now)
+            ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+                score = EXCLUDED.score,
+                source = EXCLUDED.source,
+                last_updated_at = EXCLUDED.last_updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("source", source);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }

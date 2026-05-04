@@ -99,6 +99,7 @@ export enum RowLayout {
 /** Sync status phase for backfill/history reconstruction/rivals. */
 export enum SyncPhase {
   Idle = 'idle',
+  Queued = 'queued',
   Backfill = 'backfill',
   History = 'history',
   Rivals = 'rivals',
@@ -110,6 +111,7 @@ export enum SyncPhase {
 /** Backfill/history reconstruction task status. */
 export enum BackfillStatus {
   Pending = 'pending',
+  Deferred = 'deferred',
   InProgress = 'in_progress',
   Complete = 'complete',
   Error = 'error',

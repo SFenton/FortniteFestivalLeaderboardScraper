@@ -17,6 +17,7 @@ public sealed class BandTeamRankingRebuildOptions
     public int CommandTimeoutSeconds { get; set; } = 0;
     public bool AnalyzeStagingTable { get; set; } = false;
     public bool DisableSynchronousCommit { get; set; } = true;
+    public int MaxParallelBandTypes { get; set; } = 1;
 
     /// <summary>
     /// Run standard rank-history snapshots concurrently with band ranking rebuilds, then await both
@@ -25,6 +26,21 @@ public sealed class BandTeamRankingRebuildOptions
     /// </summary>
     public bool OverlapRankHistorySnapshotsWithBandRankings { get; set; } = false;
 }
+
+public sealed record ScrapePhaseTimingRecord(
+    long ScrapeId,
+    string Phase,
+    string? Subphase,
+    string? ItemKey,
+    DateTime StartedAtUtc,
+    DateTime CompletedAtUtc,
+    long DurationMs,
+    long? RowsRead = null,
+    long? RowsWritten = null,
+    long? RowsDeleted = null,
+    long? ScopeCount = null,
+    bool Success = true,
+    string? ErrorMessage = null);
 
 public sealed record BandTeamRankingRebuildMetrics(
     string BandType,

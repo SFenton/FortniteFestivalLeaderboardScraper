@@ -54,6 +54,14 @@ public sealed class BandRankHistoryWorker : BackgroundService
             BandRankHistoryJobInfo? job = null;
             try
             {
+                var recoveredJobs = _metaDb.RecoverStaleBandRankHistoryJobs(
+                    staleAfter: TimeSpan.FromMinutes(15),
+                    maxCatchupAge: TimeSpan.FromHours(Math.Max(1, opts.MaxCatchupAgeHours)));
+                if (recoveredJobs > 0)
+                {
+                    _log.LogInformation("Recovered or superseded {JobCount:N0} stale band rank-history job(s).", recoveredJobs);
+                }
+
                 job = _metaDb.GetNextBandRankHistoryJob();
                 if (job is null)
                 {

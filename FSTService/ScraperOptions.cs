@@ -60,6 +60,22 @@ public sealed class ScraperOptions
     public int StaleSpoolCleanupMinAgeHours { get; set; } = 24;
 
     /// <summary>
+    /// When true, post-scrape database cleanup begins by refreshing stale solo current projection scopes
+    /// after snapshots have been finalized.
+    /// </summary>
+    public bool RefreshSoloProjectionDuringCleanup { get; set; } = true;
+
+    /// <summary>
+    /// Maximum number of solo current projection scopes refreshed concurrently during cleanup.
+    /// </summary>
+    public int SoloProjectionCleanupMaxDegreeOfParallelism { get; set; } = 4;
+
+    /// <summary>
+    /// Command timeout in seconds for cleanup-time solo projection refreshes. 0 means unlimited.
+    /// </summary>
+    public int SoloProjectionCleanupCommandTimeoutSeconds { get; set; }
+
+    /// <summary>
     /// Path to the device auth credentials file.
     /// </summary>
     public string DeviceAuthPath { get; set; } = "data/device-auth.json";

@@ -98,6 +98,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       lastWsMsgRef.current = Date.now();
 
       const phaseMap: Record<string, SyncPhase> = {
+        queued: SyncPhase.Queued,
         backfill: SyncPhase.Backfill,
         history: SyncPhase.History,
         rivals: SyncPhase.Rivals,
@@ -106,7 +107,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         error: SyncPhase.Error,
       };
       const phase = phaseMap[sp.phase] ?? SyncPhase.Idle;
-      const isSyncing = phase === SyncPhase.Backfill || phase === SyncPhase.History || phase === SyncPhase.Rivals || phase === SyncPhase.PostScrape;
+      const isSyncing = phase === SyncPhase.Queued || phase === SyncPhase.Backfill || phase === SyncPhase.History || phase === SyncPhase.Rivals || phase === SyncPhase.PostScrape;
       const phaseProgress = sp.totalItems > 0 ? Math.min(sp.itemsCompleted / sp.totalItems, 1) : 0;
 
       if (isSyncing) wasSyncingRef.current = true;
@@ -137,7 +138,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         return {
           isSyncing,
           phase,
-          backfillProgress: phase === SyncPhase.Backfill ? phaseProgress : (prev.backfillProgress > 0 ? 1 : prev.backfillProgress),
+          backfillProgress: phase === SyncPhase.Backfill ? phaseProgress : (phase === SyncPhase.Queued ? 0 : (prev.backfillProgress > 0 ? 1 : prev.backfillProgress)),
           historyProgress: phase === SyncPhase.History ? phaseProgress : (phase === SyncPhase.Rivals || phase === SyncPhase.Complete ? 1 : prev.historyProgress),
           rivalsProgress: phase === SyncPhase.Rivals ? phaseProgress : (phase === SyncPhase.Complete ? 1 : prev.rivalsProgress),
           entriesFound: sp.entriesFound,
@@ -241,8 +242,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       const bf = res.backfill;
       const hr = res.historyRecon;
       const rv = res.rivals;
+      const ps = res.postScrape;
 
       const bfStatus = bf?.status ?? null;
+      const bfDeferred = bfStatus === BackfillStatus.Deferred;
       const bfActive = bfStatus === BackfillStatus.Pending || bfStatus === BackfillStatus.InProgress;
       const bfProgress = bf && bf.totalSongsToCheck > 0
         ? Math.min(bf.songsChecked / bf.totalSongsToCheck, 1) : 0;
@@ -257,16 +260,20 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       const rvProgress = rv && rv.totalCombosToCompute > 0
         ? Math.min(rv.combosComputed / rv.totalCombosToCompute, 1) : 0;
 
-      const isSyncing = bfActive || hrActive || rvActive;
+      const psActive = ps?.status === BackfillStatus.Pending || ps?.status === BackfillStatus.InProgress;
+
+      const isSyncing = bfDeferred || bfActive || hrActive || rvActive || psActive;
 
       if (isSyncing) {
         wasSyncingRef.current = true;
       }
 
       let phase: SyncPhase;
-      if (bfActive) phase = SyncPhase.Backfill;
+      if (bfDeferred) phase = SyncPhase.Queued;
+      else if (bfActive) phase = SyncPhase.Backfill;
       else if (hrActive) phase = SyncPhase.History;
       else if (rvActive) phase = SyncPhase.Rivals;
+      else if (psActive) phase = SyncPhase.PostScrape;
       else if (bfStatus === BackfillStatus.Complete || hrStatus === BackfillStatus.Complete) phase = SyncPhase.Complete;
       else if (bfStatus === BackfillStatus.Error || hrStatus === BackfillStatus.Error) phase = SyncPhase.Error;
       else phase = SyncPhase.Idle;
@@ -278,15 +285,21 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       setSyncState(prev => ({
         isSyncing,
         phase,
-        backfillProgress: bfProgress,
+        backfillProgress: bfDeferred ? 0 : bfProgress,
         historyProgress: hrProgress,
         rivalsProgress: rvProgress,
-        entriesFound: bf?.entriesFound ?? prev.entriesFound,
-        itemsCompleted: bfActive ? (bf?.songsChecked ?? 0) : hrActive ? (hr?.songsProcessed ?? 0) : rvActive ? (rv?.combosComputed ?? 0) : prev.itemsCompleted,
-        totalItems: bfActive ? (bf?.totalSongsToCheck ?? 0) : hrActive ? (hr?.totalSongsToProcess ?? 0) : rvActive ? (rv?.totalCombosToCompute ?? 0) : prev.totalItems,
-        currentSongName: bf?.currentSongName ?? hr?.currentSongName ?? null,
+        entriesFound: psActive ? (ps?.entriesFound ?? prev.entriesFound) : (bf?.entriesFound ?? prev.entriesFound),
+        itemsCompleted: bfActive ? (bf?.songsChecked ?? 0) : hrActive ? (hr?.songsProcessed ?? 0) : rvActive ? (rv?.combosComputed ?? 0) : psActive ? (ps?.itemsCompleted ?? 0) : prev.itemsCompleted,
+        totalItems: bfDeferred ? (bf?.totalSongsToCheck ?? 0) : bfActive ? (bf?.totalSongsToCheck ?? 0) : hrActive ? (hr?.totalSongsToProcess ?? 0) : rvActive ? (rv?.totalCombosToCompute ?? 0) : psActive ? (ps?.totalItems ?? 0) : prev.totalItems,
+        currentSongName: ps?.currentSongName ?? bf?.currentSongName ?? hr?.currentSongName ?? null,
         seasonsQueried: hr?.seasonsQueried ?? prev.seasonsQueried,
         rivalsFound: rv?.rivalsFound ?? prev.rivalsFound,
+        isThrottled: false,
+        throttleStatusKey: null,
+        pendingRankUpdate: res.pendingRankUpdate ?? bf?.rankingsPending ?? false,
+        estimatedRankUpdateMinutes: null,
+        probeStatusKey: null,
+        nextRetrySeconds: null,
       }));
 
       if (!isSyncing && (phase === SyncPhase.Complete || phase === SyncPhase.Error)) {
@@ -330,7 +343,16 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       if (track) {
         try {
           const res = await api.trackPlayer(accountId);
-          if (res.backfillKicked) {
+          if (res.syncDeferred) {
+            syncKickedRef.current = true;
+            wasSyncingRef.current = true;
+            setSyncState(prev => ({
+              ...prev,
+              isSyncing: true,
+              phase: SyncPhase.Queued,
+              pendingRankUpdate: res.pendingRankUpdate ?? prev.pendingRankUpdate,
+            }));
+          } else if (res.backfillKicked) {
             syncKickedRef.current = true;
             wasSyncingRef.current = true;
             // Optimistic: show banner immediately so fast backfills don't race
@@ -389,6 +411,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     switch (syncState.phase) {
       case SyncPhase.Backfill:
         return syncState.backfillProgress * (1 / 3);
+      case SyncPhase.Queued:
+        return 0;
       case SyncPhase.History:
         return (1 / 3) + syncState.historyProgress * (1 / 3);
       case SyncPhase.Rivals:

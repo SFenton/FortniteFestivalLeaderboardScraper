@@ -269,7 +269,69 @@ describe('useSyncStatus', () => {
     expect(result.current.progress).toBeCloseTo(0.3);
   });
 
+  it('maps deferred HTTP backfill status to queued state', async () => {
+    mockGetStatus.mockResolvedValue({
+      pendingRankUpdate: false,
+      backfill: { status: 'deferred', songsChecked: 0, totalSongsToCheck: 100, entriesFound: 0, startedAt: null, completedAt: null, rankingsPending: false, deferredReason: 'server_update_in_progress' },
+      historyRecon: null,
+      rivals: null,
+      postScrape: null,
+    } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('queued');
+    expect(result.current.progress).toBe(0);
+  });
+
+  it('maps postscrape HTTP status to syncing state', async () => {
+    mockGetStatus.mockResolvedValue({
+      backfill: { status: 'complete', songsChecked: 100, totalSongsToCheck: 100, entriesFound: 3, startedAt: null, completedAt: null },
+      historyRecon: null,
+      rivals: null,
+      postScrape: { status: 'in_progress', itemsCompleted: 25, totalItems: 100, entriesFound: 4, currentSongName: 'Song A' },
+    } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('postscrape');
+    expect(result.current.progress).toBeCloseTo(0.25);
+    expect(result.current.entriesFound).toBe(4);
+    expect(result.current.currentSongName).toBe('Song A');
+  });
+
+  it('surfaces pending rank update from HTTP completion status', async () => {
+    mockGetStatus.mockResolvedValue({
+      pendingRankUpdate: true,
+      backfill: { status: 'complete', songsChecked: 100, totalSongsToCheck: 100, entriesFound: 10, startedAt: null, completedAt: null, rankingsPending: true },
+      historyRecon: null,
+      rivals: null,
+    } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    expect(result.current.phase).toBe('complete');
+    expect(result.current.pendingRankUpdate).toBe(true);
+  });
+
   // ── backfillKicked deferred poll ──
+
+  it('shows queued state when trackPlayer defers sync behind an active update', async () => {
+    mockTrackPlayer.mockResolvedValue({ syncDeferred: true } as any);
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('queued');
+    expect(mockGetStatus).not.toHaveBeenCalled();
+  });
 
   it('defers first checkStatus when backfillKicked to preserve optimistic banner', async () => {
     mockTrackPlayer.mockResolvedValue({ backfillKicked: true } as any);

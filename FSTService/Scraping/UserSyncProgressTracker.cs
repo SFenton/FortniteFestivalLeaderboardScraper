@@ -44,6 +44,19 @@ public sealed class UserSyncProgressTracker
 
     // ─── Begin phase ────────────────────────────────────────
 
+    public void BeginQueued(string accountId, int totalItems)
+    {
+        var p = GetOrCreate(accountId);
+        p.Phase = SyncProgressPhase.Queued;
+        p.ItemsCompleted = 0;
+        p.TotalItems = totalItems;
+        p.EntriesFound = 0;
+        p.CurrentSongName = null;
+        p.StartedAtUtc = DateTime.UtcNow;
+        p.Stopwatch.Restart();
+        PushProgress(accountId, p);
+    }
+
     public void BeginBackfill(string accountId, int totalItems)
     {
         var p = GetOrCreate(accountId);
@@ -190,13 +203,13 @@ public sealed class UserSyncProgressTracker
 
     /// <summary>
     /// Returns true if the account has an active phase that takes precedence over PostScrape
-    /// (Backfill, History, or Rivals). Used to avoid clobbering registration sync state.
+    /// (Queued, Backfill, History, or Rivals). Used to avoid clobbering registration sync state.
     /// </summary>
     public bool IsActiveHigherPriority(string accountId)
     {
         if (!_progress.TryGetValue(accountId, out var p)) return false;
         var phase = p.Phase;
-        return phase is SyncProgressPhase.Backfill or SyncProgressPhase.History or SyncProgressPhase.Rivals;
+        return phase is SyncProgressPhase.Queued or SyncProgressPhase.Backfill or SyncProgressPhase.History or SyncProgressPhase.Rivals;
     }
 
     // ─── Terminal states ────────────────────────────────────
@@ -325,6 +338,7 @@ public sealed class UserSyncProgressTracker
 public enum SyncProgressPhase
 {
     Idle,
+    Queued,
     Backfill,
     History,
     Rivals,

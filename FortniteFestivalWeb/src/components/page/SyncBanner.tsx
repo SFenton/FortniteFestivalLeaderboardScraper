@@ -29,6 +29,7 @@ interface SyncBannerProps {
 
 function getStepInfo(phase: SyncPhase): { step: number; totalSteps: number } {
   switch (phase) {
+    case 'queued': return { step: 0, totalSteps: 0 };
     case 'backfill': return { step: 1, totalSteps: 3 };
     case 'history': return { step: 2, totalSteps: 3 };
     case 'rivals': return { step: 3, totalSteps: 3 };
@@ -57,11 +58,12 @@ const SyncBanner = memo(function SyncBanner({
   const s = useSyncBannerStyles();
   const { step, totalSteps } = getStepInfo(phase);
   const isPostScrape = phase === 'postscrape';
+  const isQueued = phase === 'queued';
   const unified = isPostScrape
     ? (totalItems > 0 ? itemsCompleted / totalItems : 0)
     : getUnifiedProgress(phase, backfillProgress, historyProgress, rivalsProgress);
   const pct = Math.round(unified * 100);
-  const isIndeterminate = (itemsCompleted === 0 && totalItems === 0) || isThrottled || !!probeStatusKey;
+  const isIndeterminate = isQueued || (itemsCompleted === 0 && totalItems === 0) || isThrottled || !!probeStatusKey;
 
   // Probe status takes priority over throttle for display text
   const statusWarning = probeStatusKey
@@ -105,7 +107,7 @@ const SyncBanner = memo(function SyncBanner({
 
       {/* Counts row */}
       <div style={s.syncCounts}>
-        {totalItems > 0 && (
+        {!isQueued && totalItems > 0 && (
           <span>{itemsCompleted.toLocaleString()} / {totalItems.toLocaleString()}</span>
         )}
         {phase === 'backfill' && entriesFound > 0 && (

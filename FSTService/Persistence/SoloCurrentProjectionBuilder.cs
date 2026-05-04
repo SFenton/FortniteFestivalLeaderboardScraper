@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
+using System.Threading;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 
@@ -138,6 +140,42 @@ public sealed class SoloCurrentProjectionBuilder
         return scopes;
     }
 
+    public async Task<IReadOnlyList<SoloCurrentProjectionScopeKey>> LoadStaleScopesAsync(CancellationToken ct = default)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = $"""
+            WITH current_pairs AS ({CurrentScopeSql}), desired AS (
+                SELECT pair.song_id,
+                       pair.instrument,
+                       state.active_snapshot_id
+                FROM current_pairs pair
+                LEFT JOIN leaderboard_snapshot_state state
+                  ON state.song_id = pair.song_id
+                 AND state.instrument = pair.instrument
+                 AND state.is_finalized = TRUE
+                 AND state.active_snapshot_id IS NOT NULL
+            )
+            SELECT desired.song_id, desired.instrument
+            FROM desired
+            LEFT JOIN {ScopeTable} scope
+              ON scope.song_id = desired.song_id
+             AND scope.instrument = desired.instrument
+            WHERE scope.song_id IS NULL
+               OR scope.status <> 'ready'
+               OR scope.source_snapshot_id IS DISTINCT FROM desired.active_snapshot_id
+            ORDER BY desired.instrument, desired.song_id
+            """;
+
+        var scopes = new List<SoloCurrentProjectionScopeKey>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            scopes.Add(new SoloCurrentProjectionScopeKey(reader.GetString(0), reader.GetString(1)));
+
+        return scopes;
+    }
+
     public async Task<SoloCurrentProjectionRebuildResult> RebuildAllAsync(
         SoloCurrentProjectionRebuildOptions? options = null,
         CancellationToken ct = default)
@@ -202,33 +240,46 @@ public sealed class SoloCurrentProjectionBuilder
 
         var sw = Stopwatch.StartNew();
         var generation = await NextGenerationAsync(ct);
-        var results = new List<SoloCurrentProjectionScopeResult>(normalizedScopes.Length);
+        var maxDegreeOfParallelism = Math.Max(1, options.MaxDegreeOfParallelism);
+        var results = new ConcurrentBag<SoloCurrentProjectionScopeResult>();
         var failedScopes = 0;
 
-        foreach (var scope in normalizedScopes)
-        {
-            ct.ThrowIfCancellationRequested();
-            try
+        await Parallel.ForEachAsync(
+            normalizedScopes,
+            new ParallelOptions
             {
-                results.Add(await RebuildScopeAsync(scope, options, generation, updateGlobalState: false, ct));
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+                CancellationToken = ct,
+                MaxDegreeOfParallelism = maxDegreeOfParallelism,
+            },
+            async (scope, token) =>
             {
-                failedScopes++;
-            }
-        }
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    results.Add(await RebuildScopeAsync(scope, options, generation, updateGlobalState: false, token));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Interlocked.Increment(ref failedScopes);
+                }
+            });
+
+        var orderedResults = results
+            .OrderBy(static result => result.Instrument, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static result => result.SongId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         await RefreshGlobalStateFromScopesAsync(generation, fullRebuiltAt: null, ct);
         sw.Stop();
 
         return new SoloCurrentProjectionIncrementalRefreshResult(
             normalizedScopes.Length,
-            results.Count,
+            orderedResults.Length,
             failedScopes,
-            results.Sum(static result => result.InsertedRows),
-            results.Sum(static result => result.DeletedRows),
+            orderedResults.Sum(static result => result.InsertedRows),
+            orderedResults.Sum(static result => result.DeletedRows),
             Math.Round(sw.Elapsed.TotalMilliseconds, 3),
-            results);
+            orderedResults);
     }
 
     private async Task<SoloCurrentProjectionScopeResult> RebuildScopeAsync(
@@ -650,6 +701,7 @@ public sealed class SoloCurrentProjectionRebuildOptions
     public int CommandTimeoutSeconds { get; init; }
     public bool DisableSynchronousCommit { get; init; } = true;
     public bool ClearExisting { get; init; }
+    public int MaxDegreeOfParallelism { get; init; } = 1;
 }
 
 public sealed record SoloCurrentProjectionScopeKey(string SongId, string Instrument);

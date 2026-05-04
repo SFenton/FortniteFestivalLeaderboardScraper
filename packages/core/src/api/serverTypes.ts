@@ -162,7 +162,7 @@ export type ShopSnapshotMessage = {
 export type SyncProgressMessage = {
   type: 'sync_progress';
   accountId: string;
-  phase: 'backfill' | 'history' | 'rivals' | 'postscrape' | 'complete' | 'error';
+  phase: 'queued' | 'backfill' | 'history' | 'rivals' | 'postscrape' | 'complete' | 'error';
   itemsCompleted: number;
   totalItems: number;
   entriesFound: number;
@@ -337,11 +337,15 @@ export type TrackPlayerResponse = {
   trackingStarted: boolean;
   backfillStatus: string;
   backfillKicked: boolean;
+  syncDeferred?: boolean;
+  deferredReason?: string | null;
+  pendingRankUpdate?: boolean;
 };
 
 export type SyncStatusResponse = {
   accountId: string;
   isTracked: boolean;
+  pendingRankUpdate?: boolean;
   backfill: {
     status: string;
     songsChecked: number;
@@ -350,6 +354,8 @@ export type SyncStatusResponse = {
     currentSongName?: string;
     startedAt: string | null;
     completedAt: string | null;
+    rankingsPending?: boolean;
+    deferredReason?: string | null;
   } | null;
   historyRecon: {
     status: string;
@@ -368,6 +374,13 @@ export type SyncStatusResponse = {
     rivalsFound: number;
     startedAt: string | null;
     completedAt: string | null;
+  } | null;
+  postScrape?: {
+    status: string;
+    itemsCompleted: number;
+    totalItems: number;
+    entriesFound: number;
+    currentSongName?: string | null;
   } | null;
 };
 

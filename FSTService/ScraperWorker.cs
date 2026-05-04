@@ -531,6 +531,36 @@ public sealed class ScraperWorker : BackgroundService
                 _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
             }
 
+            if (postProcessCompleted)
+            {
+                try
+                {
+                    await _postScrapeOrchestrator.RunPublicationCleanupAsync(ctx, resolvedPhases, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Publication cleanup failed. Continuing to publish with live-read fallback where available.");
+                }
+            }
+            else
+            {
+                _log.LogWarning("Skipping publication cleanup because post-process orchestration did not complete cleanly.");
+            }
+
+            if (postProcessCompleted)
+            {
+                try
+                {
+                    await _postScrapeOrchestrator.RunDeferredRegistrationSyncAsync(ctx, service, resolvedPhases, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Deferred registration sync failed. Queued users will retry on a later pass.");
+                }
+            }
+
             PrimeSongsCache();
 
             // Unfreeze all response caches and invalidate — API consumers now see fresh data atomically.

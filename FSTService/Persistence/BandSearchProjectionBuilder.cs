@@ -120,6 +120,7 @@ public sealed class BandSearchProjectionBuilder
 
             var insertedTeamRows = await ExecuteNonQueryAsync(conn, tx, BuildTeamProjectionRefreshSql(), ct, ("refreshedAt", refreshedAt));
             var insertedMemberRows = await ExecuteNonQueryAsync(conn, tx, BuildMemberProjectionRefreshSql(), ct, ("refreshedAt", refreshedAt));
+            await UpsertBandIdentityFromRefreshAsync(conn, tx, refreshedAt, ct);
 
             await ExecuteNonQueryAsync(conn, tx, $"""
                 UPDATE {StateTable}
@@ -209,6 +210,7 @@ public sealed class BandSearchProjectionBuilder
 
             var insertedTeamRows = await ExecuteNonQueryAsync(conn, tx, BuildTeamProjectionRefreshSql(), ct, ("refreshedAt", refreshedAt));
             var insertedMemberRows = await ExecuteNonQueryAsync(conn, tx, BuildMemberProjectionRefreshSql(), ct, ("refreshedAt", refreshedAt));
+            await UpsertBandIdentityFromRefreshAsync(conn, tx, refreshedAt, ct);
 
             var (finalTeamRows, finalMemberRows) = await CountProjectionTablesAsync(conn, tx, ct);
             await UpdateProjectionStateCountsAsync(conn, tx, refreshedAt, finalTeamRows, finalMemberRows, ct);
@@ -349,6 +351,8 @@ public sealed class BandSearchProjectionBuilder
             WHERE member_projection.band_type = ids.band_type
               AND member_projection.team_key = ids.team_key
             """, ct);
+
+            await UpsertBandIdentityFromProjectionAsync(writeConn, tx, ct);
 
         await ExecuteNonQueryAsync(writeConn, tx, $"""
             INSERT INTO {StateTable} (id, rebuilt_at, refreshed_at, team_rows, member_rows)
@@ -635,6 +639,61 @@ public sealed class BandSearchProjectionBuilder
                   AND keys.team_key = batch.team_key
                 """, ct);
         }
+    }
+
+    private static async Task UpsertBandIdentityFromProjectionAsync(NpgsqlConnection conn, NpgsqlTransaction tx, CancellationToken ct)
+    {
+        await ExecuteNonQueryAsync(conn, tx, $"""
+            INSERT INTO {BandIdentityPersistence.TableName} (band_id, band_type, team_key, member_account_ids, appearance_count, first_seen_at, last_seen_at, updated_at, source)
+            SELECT team_projection.band_id,
+                   team_projection.band_type,
+                   team_projection.team_key,
+                   team_projection.member_account_ids,
+                   team_projection.appearance_count,
+                   NULL,
+                   team_projection.updated_at,
+                   team_projection.updated_at,
+                   'search_projection'
+            FROM {TeamProjectionTable} team_projection
+            WHERE team_projection.band_id <> ''
+            ON CONFLICT (band_id) DO UPDATE SET
+                band_type = EXCLUDED.band_type,
+                team_key = EXCLUDED.team_key,
+                member_account_ids = EXCLUDED.member_account_ids,
+                appearance_count = GREATEST({BandIdentityPersistence.TableName}.appearance_count, EXCLUDED.appearance_count),
+                last_seen_at = COALESCE(GREATEST({BandIdentityPersistence.TableName}.last_seen_at, EXCLUDED.last_seen_at), {BandIdentityPersistence.TableName}.last_seen_at, EXCLUDED.last_seen_at),
+                updated_at = EXCLUDED.updated_at,
+                source = EXCLUDED.source
+            """, ct);
+    }
+
+    private static async Task UpsertBandIdentityFromRefreshAsync(NpgsqlConnection conn, NpgsqlTransaction tx, DateTime refreshedAt, CancellationToken ct)
+    {
+        await ExecuteNonQueryAsync(conn, tx, $"""
+            INSERT INTO {BandIdentityPersistence.TableName} (band_id, band_type, team_key, member_account_ids, appearance_count, first_seen_at, last_seen_at, updated_at, source)
+            SELECT team_projection.band_id,
+                   team_projection.band_type,
+                   team_projection.team_key,
+                   team_projection.member_account_ids,
+                   team_projection.appearance_count,
+                   NULL,
+                   @refreshedAt,
+                   @refreshedAt,
+                   'search_projection'
+            FROM {TeamProjectionTable} team_projection
+            JOIN _band_search_refresh_keys keys
+              ON keys.band_type = team_projection.band_type
+             AND keys.team_key = team_projection.team_key
+            WHERE team_projection.band_id <> ''
+            ON CONFLICT (band_id) DO UPDATE SET
+                band_type = EXCLUDED.band_type,
+                team_key = EXCLUDED.team_key,
+                member_account_ids = EXCLUDED.member_account_ids,
+                appearance_count = GREATEST({BandIdentityPersistence.TableName}.appearance_count, EXCLUDED.appearance_count),
+                last_seen_at = COALESCE(GREATEST({BandIdentityPersistence.TableName}.last_seen_at, EXCLUDED.last_seen_at), {BandIdentityPersistence.TableName}.last_seen_at, EXCLUDED.last_seen_at),
+                updated_at = EXCLUDED.updated_at,
+                source = EXCLUDED.source
+            """, ct, ("refreshedAt", refreshedAt));
     }
 
     private static async Task<(long TeamRows, long MemberRows)> CountExistingProjectionRowsForRefreshAsync(

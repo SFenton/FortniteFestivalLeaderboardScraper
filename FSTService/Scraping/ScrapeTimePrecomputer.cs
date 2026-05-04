@@ -977,6 +977,7 @@ public sealed class ScrapeTimePrecomputer
         {
             accountId,
             isTracked = true,
+            pendingRankUpdate = backfill?.RankingsPending ?? false,
             backfill = backfill is null ? null : new
             {
                 status = backfill.Status,
@@ -985,6 +986,8 @@ public sealed class ScrapeTimePrecomputer
                 entriesFound = backfill.EntriesFound,
                 startedAt = backfill.StartedAt,
                 completedAt = backfill.CompletedAt,
+                rankingsPending = backfill.RankingsPending,
+                deferredReason = backfill.DeferredReason,
             },
             historyRecon = historyRecon is null ? null : new
             {

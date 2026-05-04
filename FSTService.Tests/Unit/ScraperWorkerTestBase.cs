@@ -177,7 +177,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _pool,
             _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, notifications,
-            _tokenManager, _progress, pathDataStore, precomputer,
+            _tokenManager, _progress, new FSTService.Scraping.UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<FSTService.Scraping.UserSyncProgressTracker>>()), pathDataStore, precomputer,
             new PostScrapeBandExtractor(null!, pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
                 _scraper, new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),

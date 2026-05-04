@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
@@ -269,33 +270,167 @@ public sealed class BandCurrentProjectionBuilder
 
         var sw = Stopwatch.StartNew();
         var generation = await NextGenerationAsync(ct);
-        var results = new List<BandCurrentProjectionScopeResult>(normalizedScopes.Length);
-        var failedScopes = 0;
+        var scopesToRefresh = options.SkipUnchangedScopes
+            ? await FilterScopesNeedingRefreshAsync(normalizedScopes, ct)
+            : normalizedScopes;
 
-        foreach (var scope in normalizedScopes)
+        if (scopesToRefresh.Length == 0)
         {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                results.Add(await RebuildScopeAsync(scope, options, generation, updateGlobalState: false, ct));
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                failedScopes++;
-            }
+            sw.Stop();
+            _log.LogInformation(
+                "Band current projection refresh skipped {SkippedScopes:N0}/{ScopeCount:N0} unchanged scope(s).",
+                normalizedScopes.Length,
+                normalizedScopes.Length);
+            return new BandCurrentProjectionIncrementalRefreshResult(0, 0, 0, 0, 0, Math.Round(sw.Elapsed.TotalMilliseconds, 3), []);
         }
+
+        var results = new ConcurrentBag<BandCurrentProjectionScopeResult>();
+        var failedScopes = 0;
+        var maxParallelBandTypes = Math.Clamp(options.MaxParallelBandTypes, 1, BandInstrumentMapping.AllBandTypes.Count);
+        var bandTypeGroups = scopesToRefresh
+            .GroupBy(static scope => scope.BandType, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.ToArray())
+            .ToArray();
+
+        await Parallel.ForEachAsync(
+            bandTypeGroups,
+            new ParallelOptions { MaxDegreeOfParallelism = maxParallelBandTypes, CancellationToken = ct },
+            async (group, innerCt) =>
+            {
+                foreach (var scope in group)
+                {
+                    innerCt.ThrowIfCancellationRequested();
+                    try
+                    {
+                        results.Add(await RebuildScopeAsync(scope, options, generation, updateGlobalState: false, innerCt));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Interlocked.Increment(ref failedScopes);
+                    }
+                }
+            });
 
         await RefreshGlobalStateFromScopesAsync(fullRebuiltAt: null, ct);
         sw.Stop();
 
-        return new BandCurrentProjectionIncrementalRefreshResult(
+        var orderedResults = results
+            .OrderBy(static result => result.BandType, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static result => result.RankingScope, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static result => result.ScopeComboId, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static result => result.SongId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        _log.LogInformation(
+            "Band current projection refresh selected {RefreshScopes:N0}/{ProvidedScopes:N0} scope(s) after unchanged-scope filtering; maxParallelBandTypes={MaxParallelBandTypes}.",
+            scopesToRefresh.Length,
             normalizedScopes.Length,
-            results.Count,
+            maxParallelBandTypes);
+
+        return new BandCurrentProjectionIncrementalRefreshResult(
+            scopesToRefresh.Length,
+            orderedResults.Length,
             failedScopes,
-            results.Sum(static result => result.InsertedRows),
-            results.Sum(static result => result.DeletedRows),
+            orderedResults.Sum(static result => result.InsertedRows),
+            orderedResults.Sum(static result => result.DeletedRows),
             Math.Round(sw.Elapsed.TotalMilliseconds, 3),
-            results);
+            orderedResults);
+    }
+
+    private async Task<BandCurrentProjectionScopeKey[]> FilterScopesNeedingRefreshAsync(
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
+        CancellationToken ct)
+    {
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+
+        await using (var create = conn.CreateCommand())
+        {
+            create.Transaction = tx;
+            create.CommandText = """
+                CREATE TEMP TABLE _band_current_refresh_scopes (
+                    song_id TEXT NOT NULL,
+                    band_type TEXT NOT NULL,
+                    ranking_scope TEXT NOT NULL,
+                    scope_combo_id TEXT NOT NULL,
+                    PRIMARY KEY (song_id, band_type, ranking_scope, scope_combo_id)
+                ) ON COMMIT DROP
+                """;
+            await create.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var writer = await conn.BeginBinaryImportAsync(
+            "COPY _band_current_refresh_scopes (song_id, band_type, ranking_scope, scope_combo_id) FROM STDIN (FORMAT BINARY)", ct))
+        {
+            foreach (var scope in scopes)
+            {
+                await writer.StartRowAsync(ct);
+                await writer.WriteAsync(scope.SongId, NpgsqlTypes.NpgsqlDbType.Text, ct);
+                await writer.WriteAsync(scope.BandType, NpgsqlTypes.NpgsqlDbType.Text, ct);
+                await writer.WriteAsync(scope.RankingScope, NpgsqlTypes.NpgsqlDbType.Text, ct);
+                await writer.WriteAsync(scope.ScopeComboId, NpgsqlTypes.NpgsqlDbType.Text, ct);
+            }
+
+            await writer.CompleteAsync(ct);
+        }
+
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = $"""
+            WITH source_scope AS (
+                SELECT requested.song_id,
+                       requested.band_type,
+                       requested.ranking_scope,
+                       requested.scope_combo_id,
+                       COUNT(DISTINCT be.team_key)::BIGINT AS projected_rows,
+                       MAX(be.last_updated_at) AS max_source_updated_at
+                FROM _band_current_refresh_scopes requested
+                LEFT JOIN band_entries be
+                  ON be.song_id = requested.song_id
+                 AND be.band_type = requested.band_type
+                 AND NOT be.is_over_threshold
+                 AND (
+                     requested.ranking_scope = 'overall'
+                     OR ({BandSongComboIdExpression}) = requested.scope_combo_id
+                 )
+                GROUP BY requested.song_id, requested.band_type, requested.ranking_scope, requested.scope_combo_id
+            )
+            SELECT source_scope.song_id,
+                   source_scope.band_type,
+                   source_scope.ranking_scope,
+                   source_scope.scope_combo_id
+            FROM source_scope
+            LEFT JOIN {ScopeTable} existing
+              ON existing.song_id = source_scope.song_id
+             AND existing.band_type = source_scope.band_type
+             AND existing.ranking_scope = source_scope.ranking_scope
+             AND existing.scope_combo_id = source_scope.scope_combo_id
+            WHERE (source_scope.projected_rows = 0 AND existing.song_id IS NOT NULL)
+               OR (source_scope.projected_rows > 0 AND (
+                    existing.song_id IS NULL
+                    OR existing.status <> 'ready'
+                    OR existing.last_rebuilt_at IS NULL
+                    OR existing.row_count <> source_scope.projected_rows
+                    OR source_scope.max_source_updated_at > existing.last_rebuilt_at
+               ))
+            ORDER BY source_scope.band_type, source_scope.ranking_scope, source_scope.scope_combo_id, source_scope.song_id
+            """;
+
+        var result = new List<BandCurrentProjectionScopeKey>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            result.Add(new BandCurrentProjectionScopeKey(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetString(3)));
+        }
+
+        await tx.CommitAsync(ct);
+        return result.ToArray();
     }
 
     private async Task<BandCurrentProjectionScopeResult> RebuildScopeAsync(
@@ -766,6 +901,8 @@ public sealed class BandCurrentProjectionRebuildOptions
 {
     public int CommandTimeoutSeconds { get; init; }
     public bool DisableSynchronousCommit { get; init; } = true;
+    public bool SkipUnchangedScopes { get; init; } = true;
+    public int MaxParallelBandTypes { get; init; } = 2;
     public bool ClearExisting { get; init; }
     public IReadOnlyCollection<string>? BandTypes { get; init; }
     public bool IncludeOverallScopes { get; init; } = true;

@@ -31,6 +31,7 @@ public sealed class PostScrapeOrchestrator
     private readonly NotificationService _notifications;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
+    private readonly UserSyncProgressTracker _syncTracker;
     private readonly IPathDataStore _pathDataStore;
     private readonly ScrapeTimePrecomputer _precomputer;
     private readonly PostScrapeBandExtractor _bandExtractor;
@@ -61,6 +62,7 @@ public sealed class PostScrapeOrchestrator
         NotificationService notifications,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
+        UserSyncProgressTracker syncTracker,
         IPathDataStore IPathDataStore,
         ScrapeTimePrecomputer precomputer,
         PostScrapeBandExtractor bandExtractor,
@@ -90,6 +92,7 @@ public sealed class PostScrapeOrchestrator
         _notifications = notifications;
         _tokenManager = tokenManager;
         _progress = progress;
+        _syncTracker = syncTracker;
         _pathDataStore = IPathDataStore;
         _precomputer = precomputer;
         _bandExtractor = bandExtractor;
@@ -262,15 +265,12 @@ public sealed class PostScrapeOrchestrator
             await RunPhaseAsync("Rivals", () => ComputeRivalsAsync(ctx, ct));
         }
 
-        // ── Solo player stats + precompute ──
+        // ── Solo player stats ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats))
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
             await RunPhaseAsync("PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
         }
-
-        if (resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute))
-            await RunPhaseAsync("PrecomputeAll", () => _precomputer.PrecomputeAllAsync(ct));
 
         // ── Solo finalize ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
@@ -317,6 +317,173 @@ public sealed class PostScrapeOrchestrator
             catch (Exception ex)
             {
                 _log.LogWarning(ex, "Background band scrape failed. Band data may be incomplete this cycle.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Run publication-critical cleanup after snapshots have been finalized but before
+    /// response caches are unfrozen. This keeps persisted precomputed API payloads
+    /// aligned with the current projections they are built from.
+    /// </summary>
+    public async Task RunPublicationCleanupAsync(ScrapePassContext ctx, ScrapePhase resolvedPhases, CancellationToken ct)
+    {
+        var cleanupItems = 0;
+        var refreshSoloCurrentProjection = ShouldRefreshSoloCurrentProjectionDuringCleanup(resolvedPhases);
+        var precomputeApiResponses = ShouldPrecomputeDuringPublicationCleanup(resolvedPhases);
+
+        if (refreshSoloCurrentProjection)
+            cleanupItems++;
+        if (precomputeApiResponses)
+            cleanupItems++;
+
+        if (cleanupItems == 0)
+            return;
+
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Cleanup);
+        _progress.SetSubOperation("publication_cleanup");
+        _progress.BeginPhaseProgress(cleanupItems);
+
+        if (refreshSoloCurrentProjection)
+        {
+            await RunPhaseAsync("Cleanup.SoloCurrentProjection", () => RefreshSoloCurrentProjectionForCleanupAsync(ct));
+        }
+
+        if (precomputeApiResponses)
+        {
+            _persistence.Meta.ClearBackfillRankingsPending(ctx.RegisteredIds);
+            await RunPhaseAsync("Cleanup.PrecomputeAll", () => PrecomputeAllForCleanupAsync(ct));
+        }
+    }
+
+    /// <summary>
+    /// Process users who registered during an active scrape/update after the current
+    /// cycle's ranking and precompute publication has already run. Their raw scores
+    /// and song-rivals become visible, while global rank-derived outputs remain
+    /// flagged as pending until the next ranking pass includes them in ctx.RegisteredIds.
+    /// </summary>
+    public async Task RunDeferredRegistrationSyncAsync(ScrapePassContext ctx, FestivalService service, ScrapePhase resolvedPhases, CancellationToken ct)
+    {
+        if (!resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
+            return;
+
+        var deferredBackfills = _persistence.Meta.GetDeferredBackfills();
+        if (deferredBackfills.Count == 0)
+            return;
+
+        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
+        if (accessToken is null)
+        {
+            _log.LogWarning("No access token for deferred registration sync. Will retry next pass.");
+            return;
+        }
+
+        if (service.Songs.Count == 0)
+            await service.InitializeAsync();
+
+        var chartedSongIds = service.Songs
+            .Select(static song => song.track?.su)
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Select(static songId => songId!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (chartedSongIds.Count == 0)
+        {
+            _log.LogWarning("Deferred registration sync skipped because no charted songs are loaded.");
+            return;
+        }
+
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
+        _progress.SetSubOperation("deferred_registration_sync");
+
+        IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
+        try
+        {
+            seasonWindows = await _historyReconstructor.DiscoverSeasonWindowsAsync(
+                accessToken, _tokenManager.AccountId!, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Season window discovery failed during deferred registration sync. Using stored season windows.");
+            seasonWindows = _persistence.Meta.GetSeasonWindows();
+        }
+
+        var instrumentMaxSeason = _persistence.GetMaxSeasonAcrossInstruments();
+        if (instrumentMaxSeason is int floor)
+        {
+            var known = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
+            for (int s = 1; s <= floor; s++)
+            {
+                if (known.Contains(s)) continue;
+                _persistence.Meta.UpsertSeasonWindow(s, eventId: "", windowId: "");
+            }
+
+            if (floor > (seasonWindows.Count == 0 ? 0 : seasonWindows.Max(w => w.SeasonNumber)))
+                seasonWindows = _persistence.Meta.GetSeasonWindows();
+        }
+
+        var currentSeason = instrumentMaxSeason
+            ?? (seasonWindows.Count == 0 ? 1 : seasonWindows.Max(w => w.SeasonNumber));
+        var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
+        if (allSeasons.Count == 0)
+            allSeasons.Add(currentSeason);
+
+        var users = new List<UserWorkItem>(deferredBackfills.Count);
+        foreach (var backfill in deferredBackfills)
+        {
+            var totalPairs = backfill.TotalSongsToCheck > 0
+                ? backfill.TotalSongsToCheck
+                : chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
+
+            _persistence.Meta.StartBackfill(backfill.AccountId);
+            _syncTracker.BeginBackfill(backfill.AccountId, totalPairs);
+
+            users.Add(new UserWorkItem
+            {
+                AccountId = backfill.AccountId,
+                Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+                AllTimeNeeded = true,
+                SeasonsNeeded = new HashSet<int>(allSeasons),
+                AlreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(backfill.AccountId),
+            });
+        }
+
+        _log.LogInformation(
+            "Running deferred registration sync for {Count} user(s) after current-cycle derived publication.",
+            users.Count);
+
+        var result = await _cyclicalMachine.AttachAsync(
+            users,
+            chartedSongIds,
+            seasonWindows,
+            SongMachineSource.PostScrape,
+            isHighPriority: true,
+            ct: ct,
+            preserveProgressPhaseOnIdle: true);
+
+        if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
+            _log.LogInformation("Deferred registration sync updated {Entries} entries, {Sessions} sessions for {Users} users.",
+                result.EntriesUpdated, result.SessionsInserted, result.UsersProcessed);
+
+        foreach (var user in users)
+        {
+            try
+            {
+                _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
+                _rivalsOrchestrator.ComputeForUser(user.AccountId, forceRecompute: true);
+                _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
+
+                var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
+                if (reconStatus is null)
+                    _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
+
+                _persistence.Meta.CompleteHistoryRecon(user.AccountId);
+                _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Deferred registration post-sync actions failed for {AccountId}.", user.AccountId);
             }
         }
     }
@@ -371,6 +538,88 @@ public sealed class PostScrapeOrchestrator
         if (cleanupBandRankHistoryRetention)
         {
             await RunPhaseAsync("Cleanup.BandRankHistoryRetention", () => CleanupBandRankHistoryRetentionAsync(ct));
+        }
+    }
+
+    private bool ShouldRefreshSoloCurrentProjectionDuringCleanup(ScrapePhase resolvedPhases) =>
+        _soloCurrentProjectionBuilder is not null &&
+        _options.Value.RefreshSoloProjectionDuringCleanup &&
+        resolvedPhases.HasFlag(ScrapePhase.SoloFinalize);
+
+    private static bool ShouldPrecomputeDuringPublicationCleanup(ScrapePhase resolvedPhases) =>
+        resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute);
+
+    private async Task PrecomputeAllForCleanupAsync(CancellationToken ct)
+    {
+        _progress.SetSubOperation("cleanup_api_precompute");
+        try
+        {
+            await _precomputer.PrecomputeAllAsync(ct);
+        }
+        finally
+        {
+            _progress.ReportPhaseItemComplete();
+        }
+    }
+
+    private async Task RefreshSoloCurrentProjectionForCleanupAsync(CancellationToken ct)
+    {
+        _progress.SetSubOperation("cleanup_solo_current_projection");
+        try
+        {
+            var builder = _soloCurrentProjectionBuilder;
+            if (builder is null)
+                return;
+
+            var staleScopes = await builder.LoadStaleScopesAsync(ct);
+            if (staleScopes.Count == 0)
+            {
+                _log.LogInformation("Cleanup solo current projection refresh skipped; no stale scopes found.");
+                return;
+            }
+
+            var options = _options.Value;
+            var refreshOptions = new SoloCurrentProjectionRebuildOptions
+            {
+                CommandTimeoutSeconds = Math.Max(0, options.SoloProjectionCleanupCommandTimeoutSeconds),
+                MaxDegreeOfParallelism = Math.Max(1, options.SoloProjectionCleanupMaxDegreeOfParallelism),
+            };
+
+            _log.LogInformation(
+                "Cleanup refreshing {ScopeCount:N0} stale solo current projection scope(s) with maxDegree={MaxDegree}.",
+                staleScopes.Count,
+                refreshOptions.MaxDegreeOfParallelism);
+
+            var result = await builder.RefreshScopesAsync(staleScopes, refreshOptions, ct);
+            if (result.FailedScopeCount > 0)
+            {
+                _log.LogWarning(
+                    "Cleanup solo current projection refresh completed with failures: {Succeeded:N0}/{ScopeCount:N0} scope(s), {Failed:N0} failed, rows {Deleted:N0}->{Inserted:N0}, elapsed {ElapsedMs:N0}ms.",
+                    result.SucceededScopeCount,
+                    result.ScopeCount,
+                    result.FailedScopeCount,
+                    result.DeletedRows,
+                    result.InsertedRows,
+                    result.TotalElapsedMs);
+            }
+            else
+            {
+                _log.LogInformation(
+                    "Cleanup solo current projection refresh complete: {Succeeded:N0}/{ScopeCount:N0} scope(s), rows {Deleted:N0}->{Inserted:N0}, elapsed {ElapsedMs:N0}ms.",
+                    result.SucceededScopeCount,
+                    result.ScopeCount,
+                    result.DeletedRows,
+                    result.InsertedRows,
+                    result.TotalElapsedMs);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Cleanup solo current projection refresh failed. Stale scopes will fall back to snapshot reads and retry next cleanup.");
+        }
+        finally
+        {
+            _progress.ReportPhaseItemComplete();
         }
     }
 

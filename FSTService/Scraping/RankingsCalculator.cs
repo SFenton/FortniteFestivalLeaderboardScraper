@@ -47,6 +47,7 @@ public sealed class RankingsCalculator
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
     private readonly BandTeamRankingRebuildOptions _bandTeamRankingOptions;
     private readonly ILogger<RankingsCalculator> _log;
+    private long _activeScrapeId;
 
     public RankingsCalculator(
         GlobalLeaderboardPersistence persistence,
@@ -81,6 +82,27 @@ public sealed class RankingsCalculator
             instrument ?? "-",
             (long)duration.TotalMilliseconds,
             rowCount?.ToString() ?? "-");
+
+        try
+        {
+            if (_activeScrapeId > 0)
+            {
+                var completedAt = DateTime.UtcNow;
+                _metaDb.RecordScrapePhaseTiming(new ScrapePhaseTimingRecord(
+                    _activeScrapeId,
+                    "Rankings",
+                    phase,
+                    instrument,
+                    completedAt - duration,
+                    completedAt,
+                    (long)duration.TotalMilliseconds,
+                    RowsWritten: rowCount));
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Failed to persist ranking phase timing for {Phase}.", phase);
+        }
     }
 
     /// <summary>
@@ -88,6 +110,7 @@ public sealed class RankingsCalculator
     /// </summary>
     public async Task ComputeAllAsync(FestivalService festivalService, CancellationToken ct = default, long scrapeId = 0)
     {
+        _activeScrapeId = scrapeId;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
         var instruments = GlobalLeaderboardScraper.AllInstruments;
@@ -580,8 +603,12 @@ public sealed class RankingsCalculator
             return;
         }
 
-        int successfulBandTypes = 0;
-        foreach (var bandType in bandTypes)
+        var successfulBandTypes = 0;
+        var maxParallelBandTypes = Math.Clamp(_bandTeamRankingOptions.MaxParallelBandTypes, 1, Math.Max(1, bandTypes.Count));
+        Parallel.ForEach(
+            bandTypes,
+            new ParallelOptions { MaxDegreeOfParallelism = maxParallelBandTypes, CancellationToken = ct },
+            bandType =>
         {
             ct.ThrowIfCancellationRequested();
             var perBandSw = System.Diagnostics.Stopwatch.StartNew();
@@ -612,7 +639,7 @@ public sealed class RankingsCalculator
 
                 perBandSw.Stop();
                 LogPhase("band_rankings.per_type", bandType, perBandSw.Elapsed);
-                successfulBandTypes++;
+                Interlocked.Increment(ref successfulBandTypes);
 
                 HandleBandRankHistoryAfterPublish(bandType, scrapeId, ct);
             }
@@ -630,7 +657,7 @@ public sealed class RankingsCalculator
                     _progress.IncrementBranchProgress(progressBranchId);
                 onBandComplete?.Invoke();
             }
-        }
+        });
 
         _log.LogInformation("Computed band rankings for {SuccessfulBandTypeCount}/{BandTypeCount} band types.",
             successfulBandTypes, bandTypes.Count);
@@ -763,28 +790,31 @@ public sealed class RankingsCalculator
             }
         }, ct)).ToList();
 
-        await Task.WhenAll(snapshotTasks);
+        var compositeTask = Task.Run(() =>
+        {
+            var compositeSnapSw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                _metaDb.SnapshotCompositeRankHistory(cleanupRetention: false);
+                compositeSnapSw.Stop();
+                LogPhase("snapshots.composite", instrument: null, compositeSnapSw.Elapsed);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                compositeSnapSw.Stop();
+                _log.LogWarning(ex,
+                    "Composite rank history snapshot maintenance failed. Continuing without blocking core rankings.");
+                LogPhase("snapshots.composite.failed", instrument: null, compositeSnapSw.Elapsed);
+            }
+            finally
+            {
+                if (progressBranchId is not null)
+                    _progress.IncrementBranchProgress(progressBranchId);
+                _progress.ReportPhaseItemComplete();
+            }
+        }, ct);
 
-        var compositeSnapSw = System.Diagnostics.Stopwatch.StartNew();
-        try
-        {
-            _metaDb.SnapshotCompositeRankHistory(cleanupRetention: false);
-            compositeSnapSw.Stop();
-            LogPhase("snapshots.composite", instrument: null, compositeSnapSw.Elapsed);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            compositeSnapSw.Stop();
-            _log.LogWarning(ex,
-                "Composite rank history snapshot maintenance failed. Continuing without blocking core rankings.");
-            LogPhase("snapshots.composite.failed", instrument: null, compositeSnapSw.Elapsed);
-        }
-        finally
-        {
-            if (progressBranchId is not null)
-                _progress.IncrementBranchProgress(progressBranchId);
-            _progress.ReportPhaseItemComplete();
-        }
+        await Task.WhenAll(snapshotTasks.Append(compositeTask));
 
         snapshotsSw.Stop();
         LogPhase("snapshots.total", instrument: null, snapshotsSw.Elapsed);

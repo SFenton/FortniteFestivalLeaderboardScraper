@@ -13,6 +13,7 @@ public interface IMetaDatabase : IDisposable
     long StartScrapeRun();
     void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes);
     ScrapeRunInfo? GetLastCompletedScrapeRun();
+    void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);
 
     // ── Score history ────────────────────────────────────────────────
     void InsertScoreChange(string songId, string instrument, string accountId,
@@ -77,10 +78,13 @@ public interface IMetaDatabase : IDisposable
 
     // ── Backfill ─────────────────────────────────────────────────────
     void EnqueueBackfill(string accountId, int totalSongsToCheck);
+    void DeferBackfill(string accountId, int totalSongsToCheck, string reason);
     List<BackfillStatusInfo> GetPendingBackfills();
+    List<BackfillStatusInfo> GetDeferredBackfills();
     BackfillStatusInfo? GetBackfillStatus(string accountId);
     void StartBackfill(string accountId);
-    void CompleteBackfill(string accountId);
+    void CompleteBackfill(string accountId, bool rankingsPending = false);
+    void ClearBackfillRankingsPending(IEnumerable<string> accountIds);
     void FailBackfill(string accountId, string errorMessage);
     void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound);
     void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound);
@@ -185,6 +189,7 @@ public interface IMetaDatabase : IDisposable
     int CleanupBandRankHistoryRetention(string bandType, int retentionDays = 365, int commandTimeoutSeconds = 0, CancellationToken ct = default);
     BandRankHistoryJobInfo EnqueueBandRankHistoryJob(long scrapeId, string bandType, DateOnly snapshotDate, string mode, bool coalesceSameDay = true);
     BandRankHistoryJobInfo? GetNextBandRankHistoryJob();
+    int RecoverStaleBandRankHistoryJobs(TimeSpan staleAfter, TimeSpan maxCatchupAge);
     bool TryStartBandRankHistoryJob(long jobId);
     void CompleteBandRankHistoryJob(long jobId, BandRankHistorySnapshotResult result);
     void PauseBandRankHistoryJob(long jobId, string? reason = null);

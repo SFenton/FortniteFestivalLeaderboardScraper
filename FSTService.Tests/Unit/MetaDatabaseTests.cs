@@ -345,6 +345,41 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void DeferredBackfill_is_excluded_from_pending_until_started()
+    {
+        Db.EnqueueBackfill("acct_pending", 100);
+        Db.DeferBackfill("acct_deferred", 200, "server_update_in_progress");
+
+        var pending = Db.GetPendingBackfills();
+        var deferred = Db.GetDeferredBackfills();
+
+        Assert.Contains(pending, p => p.AccountId == "acct_pending");
+        Assert.DoesNotContain(pending, p => p.AccountId == "acct_deferred");
+        Assert.Contains(deferred, p => p.AccountId == "acct_deferred" && p.DeferredReason == "server_update_in_progress");
+
+        Db.StartBackfill("acct_deferred");
+        pending = Db.GetPendingBackfills();
+
+        Assert.Contains(pending, p => p.AccountId == "acct_deferred");
+    }
+
+    [Fact]
+    public void CompleteBackfill_tracks_and_clears_rankings_pending()
+    {
+        Db.EnqueueBackfill("acct_1", 100);
+        Db.StartBackfill("acct_1");
+        Db.CompleteBackfill("acct_1", rankingsPending: true);
+
+        var status = Db.GetBackfillStatus("acct_1");
+        Assert.True(status!.RankingsPending);
+
+        Db.ClearBackfillRankingsPending(["acct_1"]);
+
+        status = Db.GetBackfillStatus("acct_1");
+        Assert.False(status!.RankingsPending);
+    }
+
+    [Fact]
     public void BackfillProgress_tracks_checked_pairs()
     {
         Db.MarkBackfillSongChecked("acct_1", "song_1", "Solo_Guitar", true);

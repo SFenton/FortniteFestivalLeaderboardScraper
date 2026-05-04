@@ -1,4 +1,5 @@
-﻿using FortniteFestival.Core.Scraping;
+﻿using System.Text.Json;
+using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
@@ -31,6 +32,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly ScrapeProgressTracker _progress;
     private readonly PathDataStore _pathDataStore;
     private readonly TestLogger<PostScrapeOrchestrator> _log;
+    private readonly SoloCurrentProjectionBuilder _soloCurrentProjectionBuilder;
 
     private readonly PostScrapeOrchestrator _sut;
 
@@ -102,6 +104,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         _progress = new ScrapeProgressTracker();
         _pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
         _log = new TestLogger<PostScrapeOrchestrator>();
+        _soloCurrentProjectionBuilder = new SoloCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
@@ -118,7 +123,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _pool,
             _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
-            _tokenManager, _progress, _pathDataStore,
+            _tokenManager, _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
@@ -127,7 +132,8 @@ public class PostScrapeOrchestratorTests : IDisposable
                 _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
-            Options.Create(new ScraperOptions()), _log, null);
+            Options.Create(new ScraperOptions()), _log, null,
+            soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder);
     }
 
     public void Dispose()
@@ -322,7 +328,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _pool,
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator2, leaderboardRivalsCalculator2, _notifications,
-            _tokenManager, _progress, _pathDataStore,
+            _tokenManager, _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
@@ -390,7 +396,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _pool,
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator3, leaderboardRivalsCalculator3, _notifications,
-            _tokenManager, _progress, _pathDataStore,
+            _tokenManager, _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
@@ -528,6 +534,67 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RunPublicationCleanupAsync_WithSoloFinalize_RefreshesStaleSoloCurrentProjectionFirst()
+    {
+        await _soloCurrentProjectionBuilder.EnsureSchemaAsync();
+        InsertSnapshotState("song_cleanup_projection", "Solo_Guitar", 42);
+        InsertSnapshotEntry(42, "song_cleanup_projection", "Solo_Guitar", "acct_user", 120_000);
+        InsertProjectionScope("song_cleanup_projection", "Solo_Guitar", sourceSnapshotId: 41);
+
+        var ctx = CreateContext(scrapeId: 42);
+
+        await _sut.RunPublicationCleanupAsync(ctx, ScrapePhase.SoloFinalize, CancellationToken.None);
+
+        Assert.Empty(await _soloCurrentProjectionBuilder.LoadStaleScopesAsync());
+        Assert.Equal(42, GetProjectionScopeSourceSnapshot("song_cleanup_projection", "Solo_Guitar"));
+        Assert.Equal(120_000, GetProjectedScore("song_cleanup_projection", "Solo_Guitar", "acct_user"));
+
+        var progress = _progress.GetProgressResponse();
+        Assert.Equal("Cleanup", progress.Current?.Operation);
+        Assert.Equal("cleanup_solo_current_projection", progress.Current?.SubOperation);
+        Assert.Equal(100, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public async Task RunPublicationCleanupAsync_WithSoloPrecompute_BuildsPlayerProfileAfterProjectionRefresh()
+    {
+        const string accountId = "acct-cache-fresh";
+        const string songId = "song_cache_projection";
+
+        await _soloCurrentProjectionBuilder.EnsureSchemaAsync();
+        _metaDb.RegisterUser("device-cache", accountId);
+        InsertSnapshotState(songId, "Solo_Vocals", 84);
+        InsertSnapshotEntry(84, songId, "Solo_Vocals", accountId, 93_189, isFullCombo: true);
+        InsertProjectionScope(songId, "Solo_Vocals", sourceSnapshotId: 83);
+
+        var ctx = CreateContext(scrapeId: 84, registeredIds: new HashSet<string> { accountId });
+
+        await _sut.RunPublicationCleanupAsync(
+            ctx,
+            ScrapePhase.SoloFinalize | ScrapePhase.SoloPrecompute,
+            CancellationToken.None);
+
+        Assert.Equal(84, GetProjectionScopeSourceSnapshot(songId, "Solo_Vocals"));
+
+        var cached = _metaDb.GetCachedResponse($"player:{accountId}:::");
+        Assert.NotNull(cached);
+
+        using var doc = JsonDocument.Parse(cached.Value.Json);
+        var scores = doc.RootElement.GetProperty("scores").EnumerateArray().ToList();
+        var score = Assert.Single(scores, entry =>
+            entry.GetProperty("si").GetString() == songId &&
+            entry.GetProperty("ins").GetString() == "08");
+        Assert.Equal(93_189, score.GetProperty("sc").GetInt32());
+        Assert.True(score.GetProperty("fc").GetBoolean());
+
+        var logs = _log.Entries.ToList();
+        var projectionIndex = logs.FindIndex(e => e.Message.Contains("[Cleanup.SoloCurrentProjection]", StringComparison.Ordinal));
+        var precomputeIndex = logs.FindIndex(e => e.Message.Contains("[Cleanup.PrecomputeAll]", StringComparison.Ordinal));
+        Assert.True(projectionIndex >= 0, "Expected projection refresh phase to be logged.");
+        Assert.True(precomputeIndex > projectionIndex, "Expected precompute to run after projection refresh.");
+    }
+
+    [Fact]
     public void PruneExcessEntries_WithDeepScrapeData_KeepsOverThresholdEntries()
     {
         // Simulate deep scrape scenario: many over-threshold (exploited) entries + valid entries.
@@ -552,7 +619,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _pool,
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
-            _tokenManager, _progress, _pathDataStore,
+            _tokenManager, _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),
             new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
@@ -617,6 +684,96 @@ public class PostScrapeOrchestratorTests : IDisposable
         cmd.CommandText = "INSERT INTO songs (song_id) VALUES (@sid) ON CONFLICT DO NOTHING";
         cmd.Parameters.AddWithValue("sid", songId);
         cmd.ExecuteNonQuery();
+    }
+
+    private void InsertSnapshotState(string songId, string instrument, long activeSnapshotId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_snapshot_state
+            (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, updated_at)
+            VALUES (@songId, @instrument, @activeSnapshotId, @activeSnapshotId, TRUE, @now)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                active_snapshot_id = EXCLUDED.active_snapshot_id,
+                scrape_id = EXCLUDED.scrape_id,
+                is_finalized = EXCLUDED.is_finalized,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("activeSnapshotId", activeSnapshotId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertSnapshotEntry(long snapshotId, string songId, string instrument, string accountId, int score, bool isFullCombo = false)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_entries_snapshot
+            (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+             season, percentile, rank, source, difficulty, api_rank, end_time, first_seen_at, last_updated_at)
+            VALUES
+            (@snapshotId, @songId, @instrument, @accountId, @score, 95, @isFullCombo, 5,
+             3, 99.0, 1, 'scrape', 3, 1, '2025-01-15T12:00:00Z', @now, @now)
+            """;
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("isFullCombo", isFullCombo);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertProjectionScope(string songId, string instrument, long? sourceSnapshotId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO solo_current_projection_scope
+            (song_id, instrument, projection_generation, row_count, source_snapshot_id, status, error_message, last_rebuilt_at, updated_at)
+            VALUES (@songId, @instrument, 1, 1, @sourceSnapshotId, 'ready', NULL, @now, @now)
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("sourceSnapshotId", sourceSnapshotId.HasValue ? sourceSnapshotId.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private long? GetProjectionScopeSourceSnapshot(string songId, string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT source_snapshot_id
+            FROM solo_current_projection_scope
+            WHERE song_id = @songId AND instrument = @instrument
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        var result = cmd.ExecuteScalar();
+        return result is null or DBNull ? null : Convert.ToInt64(result);
+    }
+
+    private int? GetProjectedScore(string songId, string instrument, string accountId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT score
+            FROM current_leaderboard_entries
+            WHERE song_id = @songId AND instrument = @instrument AND account_id = @accountId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        var result = cmd.ExecuteScalar();
+        return result is null ? null : Convert.ToInt32(result);
     }
 
     [Fact]

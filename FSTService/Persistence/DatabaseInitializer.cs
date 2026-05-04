@@ -670,8 +670,13 @@ public static class DatabaseInitializer
             started_at           TIMESTAMPTZ,
             completed_at         TIMESTAMPTZ,
             last_resumed_at      TIMESTAMPTZ,
-            error_message        TEXT
+            error_message        TEXT,
+            rankings_pending     BOOLEAN NOT NULL DEFAULT FALSE,
+            deferred_reason      TEXT
         );
+
+        ALTER TABLE backfill_status ADD COLUMN IF NOT EXISTS rankings_pending BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE backfill_status ADD COLUMN IF NOT EXISTS deferred_reason TEXT;
 
         CREATE INDEX IF NOT EXISTS ix_backfill_status
             ON backfill_status (status);
@@ -1131,20 +1136,25 @@ public static class DatabaseInitializer
                         PRIMARY KEY (instrument, snapshot_date)
                 );
 
-                INSERT INTO rank_history_snapshot_stats (instrument, snapshot_date, snapshot_taken_at, total_charted_songs, ranked_account_count)
-                SELECT
-                        instrument,
-                        snapshot_date,
-                        MAX(snapshot_taken_at) AS snapshot_taken_at,
-                        MAX(ROUND(songs_played / NULLIF(coverage, 0))::INTEGER) AS total_charted_songs,
-                        NULL::INTEGER AS ranked_account_count
-                FROM rank_history
-                WHERE songs_played IS NOT NULL
-                    AND coverage IS NOT NULL
-                    AND coverage > 0
-                GROUP BY instrument, snapshot_date
-                HAVING MAX(ROUND(songs_played / NULLIF(coverage, 0))::INTEGER) > 0
-                ON CONFLICT (instrument, snapshot_date) DO NOTHING;
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM rank_history_snapshot_stats LIMIT 1) THEN
+                        INSERT INTO rank_history_snapshot_stats (instrument, snapshot_date, snapshot_taken_at, total_charted_songs, ranked_account_count)
+                        SELECT
+                                instrument,
+                                snapshot_date,
+                                MAX(snapshot_taken_at) AS snapshot_taken_at,
+                                MAX(ROUND(songs_played / NULLIF(coverage, 0))::INTEGER) AS total_charted_songs,
+                                NULL::INTEGER AS ranked_account_count
+                        FROM rank_history
+                        WHERE songs_played IS NOT NULL
+                            AND coverage IS NOT NULL
+                            AND coverage > 0
+                        GROUP BY instrument, snapshot_date
+                        HAVING MAX(ROUND(songs_played / NULLIF(coverage, 0))::INTEGER) > 0
+                        ON CONFLICT (instrument, snapshot_date) DO NOTHING;
+                    END IF;
+                END $$;
 
         -- =====================================================================
         -- MIGRATION: deduplicate rank_history + enforce PRIMARY KEY
@@ -1153,15 +1163,6 @@ public static class DatabaseInitializer
         -- duplicates.  Clean up and retrofit the constraint.
         -- =====================================================================
 
-        DELETE FROM rank_history rh
-        WHERE EXISTS (
-            SELECT 1 FROM rank_history rh2
-            WHERE rh2.account_id = rh.account_id
-              AND rh2.instrument = rh.instrument
-              AND rh2.snapshot_date = rh.snapshot_date
-              AND rh2.ctid > rh.ctid
-        );
-
         DO $$
         BEGIN
             IF NOT EXISTS (
@@ -1169,6 +1170,15 @@ public static class DatabaseInitializer
                 WHERE conrelid = 'rank_history'::regclass
                   AND contype = 'p'
             ) THEN
+                DELETE FROM rank_history rh
+                WHERE EXISTS (
+                    SELECT 1 FROM rank_history rh2
+                    WHERE rh2.account_id = rh.account_id
+                      AND rh2.instrument = rh.instrument
+                      AND rh2.snapshot_date = rh.snapshot_date
+                      AND rh2.ctid > rh.ctid
+                );
+
                 ALTER TABLE rank_history
                     ADD PRIMARY KEY (account_id, instrument, snapshot_date);
             END IF;

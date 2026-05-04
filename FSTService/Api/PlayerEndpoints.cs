@@ -222,6 +222,7 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             RivalsOrchestrator rivalsOrchestrator,
             ScrapeTimePrecomputer precomputer,
+            ScrapeProgressTracker scrapeProgress,
             ILoggerFactory loggerFactory) =>
         {
             if (string.IsNullOrWhiteSpace(accountId))
@@ -239,83 +240,93 @@ public static partial class ApiEndpoints
             // Enqueue for backfill if not already completed
             var existingStatus = metaDb.GetBackfillStatus(accountId);
             bool backfillKicked = false;
-            if (existingStatus is null || existingStatus.Status == "error")
+            bool syncDeferred = false;
+            if (existingStatus is null || existingStatus.Status is "error" or "deferred")
             {
-                backfillKicked = true;
-
                 // Register live progress *before* Task.Run so the sync-status
                 // endpoint sees an active entry and bypasses the stale precomputed
                 // cache.  The estimate may be rough (Songs might not be initialized
                 // yet); Task.Run will call BeginBackfill again with the exact count.
                 var estimatedPairs = Math.Max(festivalService.Songs.Count, 200)
                     * GlobalLeaderboardScraper.AllInstruments.Count;
-                syncTracker.BeginBackfill(accountId, estimatedPairs);
 
-                // Fire-and-forget: attach to cyclical machine for backfill + history recon
-                _ = Task.Run(async () =>
+                if (scrapeProgress.Phase != ScrapeProgressTracker.ScrapePhase.Idle)
                 {
-                    var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");
-                    try
+                    syncDeferred = true;
+                    metaDb.DeferBackfill(accountId, estimatedPairs, "server_update_in_progress");
+                    syncTracker.BeginQueued(accountId, estimatedPairs);
+                }
+                else
+                {
+                    backfillKicked = true;
+                    syncTracker.BeginBackfill(accountId, estimatedPairs);
+
+                    // Fire-and-forget: attach to cyclical machine for backfill + history recon
+                    _ = Task.Run(async () =>
                     {
-                        if (festivalService.Songs.Count == 0)
-                            await festivalService.InitializeAsync();
-
-                        var chartedSongIds = festivalService.Songs
-                            .Where(s => s.track?.su is not null)
-                            .Select(s => s.track.su!)
-                            .ToList();
-
-                        // Enqueue inside Task.Run so Songs is guaranteed initialized and
-                        // the denominator matches the deduplicated pair count exactly.
-                        var totalPairs = chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
-                        metaDb.EnqueueBackfill(accountId, totalPairs);
-                        metaDb.StartBackfill(accountId);
-
-                        var alreadyChecked = metaDb.GetCheckedBackfillPairs(accountId);
-
-                        var user = new UserWorkItem
-                        {
-                            AccountId = accountId,
-                            Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
-                            AllTimeNeeded = true,
-                            SeasonsNeeded = [], // Season discovery handled by cyclical machine
-                            AlreadyChecked = alreadyChecked,
-                        };
-
-                        syncTracker.BeginBackfill(accountId, totalPairs);
-
-                        var result = await cyclicalMachine.AttachAsync(
-                            [user], chartedSongIds, seasonWindows: [],
-                            SongMachineSource.PlayerTrackCover, isHighPriority: false, ct: CancellationToken.None);
-
-                        // Per-user completion actions
-                        metaDb.CompleteBackfill(accountId);
-                        rivalsOrchestrator.ComputeForUser(accountId);
-                        _ = notifications.NotifyBackfillCompleteAsync(accountId);
-
-                        var reconStatus = metaDb.GetHistoryReconStatus(accountId);
-                        if (reconStatus is null)
-                            metaDb.EnqueueHistoryRecon(accountId, 0);
-                        metaDb.CompleteHistoryRecon(accountId);
-                        _ = notifications.NotifyHistoryReconCompleteAsync(accountId);
-
-                        precomputer.PrecomputeUser(accountId);
-                        syncTracker.Complete(accountId);
-                        log.LogInformation("Track-triggered backfill for {AccountId} completed via cyclical machine.", accountId);
-                    }
-                    catch (Exception ex)
-                    {
-                        log.LogWarning(ex, "Track-triggered backfill for {AccountId} failed.", accountId);
-                        syncTracker.Error(accountId, ex.Message);
+                        var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");
                         try
                         {
-                            var hrStatus = metaDb.GetHistoryReconStatus(accountId);
-                            if (hrStatus is not null && hrStatus.Status is "pending" or "in_progress")
-                                metaDb.FailHistoryRecon(accountId, ex.Message);
+                            if (festivalService.Songs.Count == 0)
+                                await festivalService.InitializeAsync();
+
+                            var chartedSongIds = festivalService.Songs
+                                .Where(s => s.track?.su is not null)
+                                .Select(s => s.track.su!)
+                                .ToList();
+
+                            // Enqueue inside Task.Run so Songs is guaranteed initialized and
+                            // the denominator matches the deduplicated pair count exactly.
+                            var totalPairs = chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
+                            metaDb.EnqueueBackfill(accountId, totalPairs);
+                            metaDb.StartBackfill(accountId);
+
+                            var alreadyChecked = metaDb.GetCheckedBackfillPairs(accountId);
+
+                            var user = new UserWorkItem
+                            {
+                                AccountId = accountId,
+                                Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+                                AllTimeNeeded = true,
+                                SeasonsNeeded = [], // Season discovery handled by cyclical machine
+                                AlreadyChecked = alreadyChecked,
+                            };
+
+                            syncTracker.BeginBackfill(accountId, totalPairs);
+
+                            var result = await cyclicalMachine.AttachAsync(
+                                [user], chartedSongIds, seasonWindows: [],
+                                SongMachineSource.PlayerTrackCover, isHighPriority: false, ct: CancellationToken.None);
+
+                            // Per-user completion actions
+                            metaDb.CompleteBackfill(accountId, rankingsPending: true);
+                            rivalsOrchestrator.ComputeForUser(accountId);
+                            _ = notifications.NotifyBackfillCompleteAsync(accountId);
+
+                            var reconStatus = metaDb.GetHistoryReconStatus(accountId);
+                            if (reconStatus is null)
+                                metaDb.EnqueueHistoryRecon(accountId, 0);
+                            metaDb.CompleteHistoryRecon(accountId);
+                            _ = notifications.NotifyHistoryReconCompleteAsync(accountId);
+
+                            precomputer.PrecomputeUser(accountId);
+                            syncTracker.Complete(accountId);
+                            log.LogInformation("Track-triggered backfill for {AccountId} completed via cyclical machine.", accountId);
                         }
-                        catch { /* best-effort */ }
-                    }
-                });
+                        catch (Exception ex)
+                        {
+                            log.LogWarning(ex, "Track-triggered backfill for {AccountId} failed.", accountId);
+                            syncTracker.Error(accountId, ex.Message);
+                            try
+                            {
+                                var hrStatus = metaDb.GetHistoryReconStatus(accountId);
+                                if (hrStatus is not null && hrStatus.Status is "pending" or "in_progress")
+                                    metaDb.FailHistoryRecon(accountId, ex.Message);
+                            }
+                            catch { /* best-effort */ }
+                        }
+                    });
+                }
             }
 
             var status = metaDb.GetBackfillStatus(accountId);
@@ -326,6 +337,9 @@ public static partial class ApiEndpoints
                 trackingStarted = true,
                 backfillStatus = status?.Status ?? "pending",
                 backfillKicked,
+                syncDeferred,
+                deferredReason = status?.DeferredReason,
+                pendingRankUpdate = status?.RankingsPending ?? false,
             });
         })
         .WithTags("Players")
@@ -403,6 +417,7 @@ public static partial class ApiEndpoints
             {
                 accountId,
                 isTracked = isRegistered,
+                pendingRankUpdate = backfill?.RankingsPending ?? false,
                 backfill = backfill is null ? null : new
                 {
                     status = backfill.Status,
@@ -412,6 +427,8 @@ public static partial class ApiEndpoints
                     startedAt = backfill.StartedAt,
                     completedAt = backfill.CompletedAt,
                     currentSongName = liveBfSongName,
+                    rankingsPending = backfill.RankingsPending,
+                    deferredReason = backfill.DeferredReason,
                 },
                 historyRecon = historyRecon is null ? null : new
                 {

@@ -229,8 +229,10 @@ public sealed class BandLeaderboardPersistence
                         rank = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.rank ELSE band_entries.rank END,
                         percentile = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.percentile ELSE band_entries.percentile END,
                         end_time = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.end_time ELSE band_entries.end_time END,
-                        is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
+                        is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
                         last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
+                    WHERE EXCLUDED.score > band_entries.score
+                       OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold
                     """;
                 merged = cmd.ExecuteNonQuery();
             }
@@ -473,8 +475,10 @@ public sealed class BandLeaderboardPersistence
                     rank = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.rank ELSE band_entries.rank END,
                     percentile = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.percentile ELSE band_entries.percentile END,
                     end_time = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.end_time ELSE band_entries.end_time END,
-                    is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
+                    is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
                     last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
+                WHERE EXCLUDED.score > band_entries.score
+                   OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold
                 """;
             merged = cmd.ExecuteNonQuery();
         }

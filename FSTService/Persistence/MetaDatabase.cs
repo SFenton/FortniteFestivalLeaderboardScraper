@@ -78,6 +78,44 @@ public sealed class MetaDatabase : IMetaDatabase
         };
     }
 
+    public void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing)
+    {
+        if (timing.ScrapeId <= 0 || string.IsNullOrWhiteSpace(timing.Phase))
+            return;
+
+        try
+        {
+            using var conn = _ds.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO scrape_phase_timings (
+                    scrape_id, phase, subphase, item_key, started_at, completed_at, duration_ms,
+                    rows_read, rows_written, rows_deleted, scope_count, success, error_message)
+                VALUES (
+                    @scrapeId, @phase, @subphase, @itemKey, @startedAt, @completedAt, @durationMs,
+                    @rowsRead, @rowsWritten, @rowsDeleted, @scopeCount, @success, @errorMessage)
+                """;
+            cmd.Parameters.AddWithValue("scrapeId", timing.ScrapeId);
+            cmd.Parameters.AddWithValue("phase", timing.Phase);
+            cmd.Parameters.AddWithValue("subphase", (object?)timing.Subphase ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("itemKey", (object?)timing.ItemKey ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("startedAt", timing.StartedAtUtc);
+            cmd.Parameters.AddWithValue("completedAt", timing.CompletedAtUtc);
+            cmd.Parameters.AddWithValue("durationMs", timing.DurationMs);
+            cmd.Parameters.AddWithValue("rowsRead", (object?)timing.RowsRead ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("rowsWritten", (object?)timing.RowsWritten ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("rowsDeleted", (object?)timing.RowsDeleted ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("scopeCount", (object?)timing.ScopeCount ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("success", timing.Success);
+            cmd.Parameters.AddWithValue("errorMessage", (object?)timing.ErrorMessage ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Failed to record scrape phase timing for {Phase}. Continuing.", timing.Phase);
+        }
+    }
+
     // ── Score history ────────────────────────────────────────────────
 
     public void InsertScoreChange(string songId, string instrument, string accountId,
@@ -652,6 +690,28 @@ public sealed class MetaDatabase : IMetaDatabase
             bandCmd.ExecuteNonQuery();
         }
 
+        using (var identityCmd = conn.CreateCommand())
+        {
+            identityCmd.Transaction = tx;
+            identityCmd.CommandText = """
+                INSERT INTO band_identity (band_id, band_type, team_key, member_account_ids, appearance_count, first_seen_at, last_seen_at, updated_at, source)
+                VALUES (@bandId, @bandType, @teamKey, @memberAccountIds, 0, @now, @now, @now, 'registered_bands')
+                ON CONFLICT (band_id) DO UPDATE SET
+                    band_type = EXCLUDED.band_type,
+                    team_key = EXCLUDED.team_key,
+                    member_account_ids = EXCLUDED.member_account_ids,
+                    last_seen_at = COALESCE(GREATEST(band_identity.last_seen_at, EXCLUDED.last_seen_at), band_identity.last_seen_at, EXCLUDED.last_seen_at),
+                    updated_at = EXCLUDED.updated_at,
+                    source = EXCLUDED.source
+                """;
+            identityCmd.Parameters.AddWithValue("bandId", canonicalBandId);
+            identityCmd.Parameters.AddWithValue("bandType", normalizedBandType);
+            identityCmd.Parameters.AddWithValue("teamKey", normalizedTeamKey);
+            identityCmd.Parameters.Add("memberAccountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = memberAccountIds.ToArray();
+            identityCmd.Parameters.AddWithValue("now", now);
+            identityCmd.ExecuteNonQuery();
+        }
+
         using (var membersCmd = conn.CreateCommand())
         {
             membersCmd.Transaction = tx;
@@ -1023,12 +1083,17 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── Backfill ─────────────────────────────────────────────────────
 
-    public void EnqueueBackfill(string accountId, int totalSongsToCheck) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check) VALUES (@id, 'pending', @total) ON CONFLICT(account_id) DO UPDATE SET status = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.status ELSE 'pending' END, total_songs_to_check = EXCLUDED.total_songs_to_check WHERE backfill_status.status != 'complete'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.ExecuteNonQuery(); }
-    public List<BackfillStatusInfo> GetPendingBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_checked, entries_found, total_songs_to_check, started_at, completed_at, last_resumed_at, error_message FROM backfill_status WHERE status IN ('pending', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
-    public BackfillStatusInfo? GetBackfillStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_checked, entries_found, total_songs_to_check, started_at, completed_at, last_resumed_at, error_message FROM backfill_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadBackfillStatus(r) : null; }
-    public void StartBackfill(string accountId) { SimpleUpdate("UPDATE backfill_status SET status = 'in_progress', started_at = COALESCE(started_at, @now), last_resumed_at = @now WHERE account_id = @id", accountId); }
-    public void CompleteBackfill(string accountId) { SimpleUpdate("UPDATE backfill_status SET status = 'complete', completed_at = @now WHERE account_id = @id", accountId); }
-    public void FailBackfill(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'error', error_message = @err WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.ExecuteNonQuery(); }
+    private const string BackfillStatusColumns = "account_id, status, songs_checked, entries_found, total_songs_to_check, started_at, completed_at, last_resumed_at, error_message, rankings_pending, deferred_reason";
+
+    public void EnqueueBackfill(string accountId, int totalSongsToCheck) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'pending', @total, FALSE, NULL) ON CONFLICT(account_id) DO UPDATE SET status = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.status ELSE 'pending' END, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.rankings_pending ELSE FALSE END, deferred_reason = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.deferred_reason ELSE NULL END WHERE backfill_status.status != 'complete'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.ExecuteNonQuery(); }
+    public void DeferBackfill(string accountId, int totalSongsToCheck, string reason) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'deferred', @total, FALSE, @reason) ON CONFLICT(account_id) DO UPDATE SET status = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.status ELSE 'deferred' END, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.rankings_pending ELSE FALSE END, deferred_reason = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.deferred_reason ELSE EXCLUDED.deferred_reason END WHERE backfill_status.status != 'complete'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.Parameters.AddWithValue("reason", reason); cmd.ExecuteNonQuery(); }
+    public List<BackfillStatusInfo> GetPendingBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('pending', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
+    public List<BackfillStatusInfo> GetDeferredBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status = 'deferred'"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
+    public BackfillStatusInfo? GetBackfillStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadBackfillStatus(r) : null; }
+    public void StartBackfill(string accountId) { SimpleUpdate("UPDATE backfill_status SET status = 'in_progress', started_at = COALESCE(started_at, @now), last_resumed_at = @now, deferred_reason = NULL WHERE account_id = @id", accountId); }
+    public void CompleteBackfill(string accountId, bool rankingsPending = false) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'complete', completed_at = @now, rankings_pending = @rankingsPending, deferred_reason = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.Parameters.AddWithValue("rankingsPending", rankingsPending); cmd.ExecuteNonQuery(); }
+    public void ClearBackfillRankingsPending(IEnumerable<string> accountIds) { var ids = accountIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(); if (ids.Length == 0) return; using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET rankings_pending = FALSE WHERE rankings_pending = TRUE AND account_id = ANY(@ids)"; cmd.Parameters.AddWithValue("ids", ids); cmd.ExecuteNonQuery(); }
+    public void FailBackfill(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'error', error_message = @err, deferred_reason = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.ExecuteNonQuery(); }
     public void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET songs_checked = @checked, entries_found = @found WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("checked", songsChecked); cmd.Parameters.AddWithValue("found", entriesFound); cmd.ExecuteNonQuery(); }
     public void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_progress (account_id, song_id, instrument, checked, entry_found, checked_at) VALUES (@acct, @song, @inst, 1, @found, @now) ON CONFLICT(account_id, song_id, instrument) DO UPDATE SET checked = 1, entry_found = EXCLUDED.entry_found, checked_at = EXCLUDED.checked_at"; cmd.Parameters.AddWithValue("acct", accountId); cmd.Parameters.AddWithValue("song", songId); cmd.Parameters.AddWithValue("inst", instrument); cmd.Parameters.AddWithValue("found", entryFound ? 1 : 0); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
     public HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument FROM backfill_progress WHERE account_id = @acct AND checked = 1"; cmd.Parameters.AddWithValue("acct", accountId); var set = new HashSet<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add((r.GetString(0), r.GetString(1))); return set; }
@@ -3398,6 +3463,51 @@ public sealed class MetaDatabase : IMetaDatabase
         return reader.Read() ? ReadBandRankHistoryJob(reader) : null;
     }
 
+    public int RecoverStaleBandRankHistoryJobs(TimeSpan staleAfter, TimeSpan maxCatchupAge)
+    {
+        using var conn = _ds.OpenConnection();
+        using (var tx = conn.BeginTransaction())
+        {
+            EnsureBandRankHistoryTables(conn, tx);
+            tx.Commit();
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            WITH stale_running AS (
+                UPDATE band_rank_history_jobs
+                SET status = 'paused',
+                    paused_at = now(),
+                    updated_at = now(),
+                    last_error = 'Recovered stale running job after worker inactivity.'
+                WHERE status = 'running'
+                  AND updated_at < now() - @staleAfter::interval
+                RETURNING job_id
+            ), stale_chunks AS (
+                UPDATE band_rank_history_job_chunks chunks
+                SET status = 'queued',
+                    updated_at = now(),
+                    last_error = 'Recovered stale running chunk after worker inactivity.'
+                FROM stale_running jobs
+                WHERE chunks.job_id = jobs.job_id
+                  AND chunks.status = 'running'
+                RETURNING chunks.job_id
+            ), aged_jobs AS (
+                UPDATE band_rank_history_jobs
+                SET status = 'superseded',
+                    superseded_at = now(),
+                    updated_at = now(),
+                    last_error = 'Superseded because catch-up age exceeded the configured window.'
+                WHERE status IN ('queued', 'paused', 'failed')
+                  AND snapshot_date < (CURRENT_DATE - @maxCatchupAge::interval)::date
+                RETURNING job_id
+            )
+            SELECT (SELECT count(*) FROM stale_running) + (SELECT count(*) FROM aged_jobs)";
+        cmd.Parameters.AddWithValue("staleAfter", staleAfter);
+        cmd.Parameters.AddWithValue("maxCatchupAge", maxCatchupAge);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     public bool TryStartBandRankHistoryJob(long jobId)
     {
         using var conn = _ds.OpenConnection();
@@ -4262,8 +4372,17 @@ public sealed class MetaDatabase : IMetaDatabase
             {
                 ConfigureBandRebuildCommand(cmd, tx, resolvedOptions);
                 cmd.CommandText = @"
-                    DELETE FROM band_song_team_rankings
-                    WHERE band_type = @bandType;
+                                        DELETE FROM band_song_team_rankings existing
+                                        WHERE existing.band_type = @bandType
+                                            AND NOT EXISTS (
+                                                    SELECT 1
+                                                    FROM _band_song_rank_results fresh
+                                                    WHERE fresh.band_type = existing.band_type
+                                                        AND fresh.ranking_scope = existing.ranking_scope
+                                                        AND fresh.scope_combo_id = existing.scope_combo_id
+                                                        AND fresh.team_key = existing.team_key
+                                                        AND fresh.song_id = existing.song_id
+                                            );
 
                     INSERT INTO band_song_team_rankings (
                         band_type, ranking_scope, scope_combo_id, team_key, song_id,
@@ -4274,7 +4393,28 @@ public sealed class MetaDatabase : IMetaDatabase
                         entry_combo_id, rank, total_entries, percentile, score, accuracy,
                         is_full_combo, stars, end_time, computed_at
                     FROM _band_song_rank_results
-                    ORDER BY ranking_scope, scope_combo_id, team_key, percentile ASC, rank ASC, score DESC, song_id ASC;";
+                    ORDER BY ranking_scope, scope_combo_id, team_key, percentile ASC, rank ASC, score DESC, song_id ASC
+                    ON CONFLICT (band_type, ranking_scope, scope_combo_id, team_key, song_id)
+                    DO UPDATE SET
+                        entry_combo_id = EXCLUDED.entry_combo_id,
+                        rank = EXCLUDED.rank,
+                        total_entries = EXCLUDED.total_entries,
+                        percentile = EXCLUDED.percentile,
+                        score = EXCLUDED.score,
+                        accuracy = EXCLUDED.accuracy,
+                        is_full_combo = EXCLUDED.is_full_combo,
+                        stars = EXCLUDED.stars,
+                        end_time = EXCLUDED.end_time,
+                        computed_at = EXCLUDED.computed_at
+                    WHERE band_song_team_rankings.entry_combo_id IS DISTINCT FROM EXCLUDED.entry_combo_id
+                       OR band_song_team_rankings.rank IS DISTINCT FROM EXCLUDED.rank
+                       OR band_song_team_rankings.total_entries IS DISTINCT FROM EXCLUDED.total_entries
+                       OR band_song_team_rankings.percentile IS DISTINCT FROM EXCLUDED.percentile
+                       OR band_song_team_rankings.score IS DISTINCT FROM EXCLUDED.score
+                       OR band_song_team_rankings.accuracy IS DISTINCT FROM EXCLUDED.accuracy
+                       OR band_song_team_rankings.is_full_combo IS DISTINCT FROM EXCLUDED.is_full_combo
+                       OR band_song_team_rankings.stars IS DISTINCT FROM EXCLUDED.stars
+                       OR band_song_team_rankings.end_time IS DISTINCT FROM EXCLUDED.end_time;";
                 cmd.Parameters.AddWithValue("bandType", bandType);
                 cmd.ExecuteNonQuery();
             }
@@ -6175,7 +6315,7 @@ public sealed class MetaDatabase : IMetaDatabase
     // ── Private helpers ──────────────────────────────────────────────
 
     private void SimpleUpdate(string sql, string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = sql; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
-    private static BackfillStatusInfo ReadBackfillStatus(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Status = r.GetString(1), SongsChecked = r.GetInt32(2), EntriesFound = r.GetInt32(3), TotalSongsToCheck = r.GetInt32(4), StartedAt = r.IsDBNull(5) ? null : r.GetDateTime(5).ToString("o"), CompletedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), LastResumedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8) };
+    private static BackfillStatusInfo ReadBackfillStatus(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Status = r.GetString(1), SongsChecked = r.GetInt32(2), EntriesFound = r.GetInt32(3), TotalSongsToCheck = r.GetInt32(4), StartedAt = r.IsDBNull(5) ? null : r.GetDateTime(5).ToString("o"), CompletedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), LastResumedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8), RankingsPending = !r.IsDBNull(9) && r.GetBoolean(9), DeferredReason = r.IsDBNull(10) ? null : r.GetString(10) };
     private static HistoryReconStatusInfo ReadHistoryReconStatus(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Status = r.GetString(1), SongsProcessed = r.GetInt32(2), TotalSongsToProcess = r.GetInt32(3), SeasonsQueried = r.GetInt32(4), HistoryEntriesFound = r.GetInt32(5), StartedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), CompletedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8) };
     private static CompositeRankingDto ReadCompositeRanking(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), InstrumentsPlayed = r.GetInt32(1), TotalSongsPlayed = r.GetInt32(2), CompositeRating = r.GetDouble(3), CompositeRank = r.GetInt32(4), GuitarAdjustedSkill = r.IsDBNull(5) ? null : r.GetDouble(5), GuitarSkillRank = r.IsDBNull(6) ? null : r.GetInt32(6), BassAdjustedSkill = r.IsDBNull(7) ? null : r.GetDouble(7), BassSkillRank = r.IsDBNull(8) ? null : r.GetInt32(8), DrumsAdjustedSkill = r.IsDBNull(9) ? null : r.GetDouble(9), DrumsSkillRank = r.IsDBNull(10) ? null : r.GetInt32(10), VocalsAdjustedSkill = r.IsDBNull(11) ? null : r.GetDouble(11), VocalsSkillRank = r.IsDBNull(12) ? null : r.GetInt32(12), ProGuitarAdjustedSkill = r.IsDBNull(13) ? null : r.GetDouble(13), ProGuitarSkillRank = r.IsDBNull(14) ? null : r.GetInt32(14), ProBassAdjustedSkill = r.IsDBNull(15) ? null : r.GetDouble(15), ProBassSkillRank = r.IsDBNull(16) ? null : r.GetInt32(16), ProVocalsAdjustedSkill = r.IsDBNull(17) ? null : r.GetDouble(17), ProVocalsSkillRank = r.IsDBNull(18) ? null : r.GetInt32(18), ProCymbalsAdjustedSkill = r.IsDBNull(19) ? null : r.GetDouble(19), ProCymbalsSkillRank = r.IsDBNull(20) ? null : r.GetInt32(20), ProDrumsAdjustedSkill = r.IsDBNull(21) ? null : r.GetDouble(21), ProDrumsSkillRank = r.IsDBNull(22) ? null : r.GetInt32(22), CompositeRatingWeighted = r.IsDBNull(23) ? null : r.GetDouble(23), CompositeRankWeighted = r.IsDBNull(24) ? null : r.GetInt32(24), CompositeRatingFcRate = r.IsDBNull(25) ? null : r.GetDouble(25), CompositeRankFcRate = r.IsDBNull(26) ? null : r.GetInt32(26), CompositeRatingTotalScore = r.IsDBNull(27) ? null : r.GetDouble(27), CompositeRankTotalScore = r.IsDBNull(28) ? null : r.GetInt32(28), CompositeRatingMaxScore = r.IsDBNull(29) ? null : r.GetDouble(29), CompositeRankMaxScore = r.IsDBNull(30) ? null : r.GetInt32(30), ComputedAt = r.GetDateTime(31).ToString("o") };
     private static ComboLeaderboardEntry ReadComboEntry(NpgsqlDataReader r) => new() { Rank = (int)r.GetInt64(0), AccountId = r.GetString(1), AdjustedRating = r.GetDouble(2), WeightedRating = r.GetDouble(3), FcRate = r.GetDouble(4), TotalScore = r.GetInt32(5), MaxScorePercent = r.GetDouble(6), SongsPlayed = r.GetInt32(7), FullComboCount = r.GetInt32(8), ComputedAt = r.GetDateTime(9).ToString("o") };

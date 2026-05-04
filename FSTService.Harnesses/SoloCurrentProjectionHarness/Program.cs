@@ -18,7 +18,9 @@ bool execute = false;
 bool allowProd = false;
 bool skipSchema = false;
 bool clearExisting = false;
+bool staleOnly = false;
 int timeoutSeconds = 0;
+int maxDegreeOfParallelism = 1;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -51,8 +53,14 @@ for (int i = 0; i < args.Length; i++)
         case "--clear-existing":
             clearExisting = true;
             break;
+        case "--stale-only":
+            staleOnly = true;
+            break;
         case "--timeout-seconds":
             timeoutSeconds = int.Parse(args[++i]);
+            break;
+        case "--max-degree":
+            maxDegreeOfParallelism = int.Parse(args[++i]);
             break;
         default:
             return Fail($"Unknown argument: {args[i]}");
@@ -70,20 +78,33 @@ if (execute && !allowProd)
 if (clearExisting && !execute)
     return Fail("--clear-existing is only valid with --execute");
 
+var scoped = !string.IsNullOrWhiteSpace(songId) && !string.IsNullOrWhiteSpace(instrument);
+
+if (staleOnly && scoped)
+    return Fail("--stale-only cannot be combined with --song-id/--instrument scoped rebuild");
+
+if (staleOnly && clearExisting)
+    return Fail("--stale-only cannot be combined with --clear-existing");
+
+if (maxDegreeOfParallelism < 1)
+    return Fail("--max-degree must be at least 1");
+
 if (!string.IsNullOrWhiteSpace(songId) ^ !string.IsNullOrWhiteSpace(instrument))
     return Fail("--song-id and --instrument must be provided together for scoped rebuild");
 
-var scoped = !string.IsNullOrWhiteSpace(songId) && !string.IsNullOrWhiteSpace(instrument);
 var ensureSchema = execute && !skipSchema;
 var target = new NpgsqlConnectionStringBuilder(pg);
 Console.WriteLine($"Target: host={target.Host} database={target.Database} user={target.Username}");
-Console.WriteLine($"Mode: {(execute ? scoped ? "execute-scope" : "execute-full" : "status")}");
+Console.WriteLine($"Mode: {(execute ? scoped ? "execute-scope" : staleOnly ? "execute-stale" : "execute-full" : staleOnly ? "status-stale" : "status")}");
 Console.WriteLine($"Ensure schema: {ensureSchema}");
 Console.WriteLine($"Timeout seconds: {(timeoutSeconds <= 0 ? "unlimited" : timeoutSeconds)}");
+Console.WriteLine($"Max degree: {maxDegreeOfParallelism}");
 if (scoped)
     Console.WriteLine($"Scope: {songId}/{instrument}");
 if (clearExisting)
     Console.WriteLine("Clear existing projection rows before full rebuild: true");
+if (staleOnly)
+    Console.WriteLine("Refresh stale or missing projection scopes only: true");
 
 await using var dataSource = NpgsqlDataSource.Create(pg);
 using var loggerFactory = LoggerFactory.Create(builder =>
@@ -111,9 +132,11 @@ var options = new SoloCurrentProjectionRebuildOptions
     CommandTimeoutSeconds = timeoutSeconds,
     DisableSynchronousCommit = true,
     ClearExisting = clearExisting,
+    MaxDegreeOfParallelism = maxDegreeOfParallelism,
 };
 
 SoloCurrentProjectionRebuildResult? rebuildResult = null;
+SoloCurrentProjectionIncrementalRefreshResult? staleRefreshResult = null;
 SoloCurrentProjectionScopeResult? scopeResult = null;
 
 if (execute && scoped)
@@ -124,6 +147,16 @@ if (execute && scoped)
     Console.WriteLine($"  rows: {scopeResult.DeletedRows:N0} deleted / {scopeResult.InsertedRows:N0} inserted");
     var source = !scopeResult.SourceScopeExists ? "missing" : scopeResult.SourceSnapshotId?.ToString() ?? "live";
     Console.WriteLine($"  generation: {scopeResult.Generation:N0} source: {source}");
+}
+else if (execute && staleOnly)
+{
+    var staleScopes = await builder.LoadStaleScopesAsync();
+    Console.WriteLine();
+    Console.WriteLine($"Found {staleScopes.Count:N0} stale or missing solo current projection scope(s).");
+    staleRefreshResult = await builder.RefreshScopesAsync(staleScopes, options);
+    Console.WriteLine($"Refreshed stale solo current projection scopes in {staleRefreshResult.TotalElapsedMs / 1000.0:F2}s");
+    Console.WriteLine($"  scopes: {staleRefreshResult.SucceededScopeCount:N0}/{staleRefreshResult.ScopeCount:N0} succeeded, {staleRefreshResult.FailedScopeCount:N0} failed");
+    Console.WriteLine($"  rows: {staleRefreshResult.DeletedRows:N0} deleted / {staleRefreshResult.InsertedRows:N0} inserted");
 }
 else if (execute)
 {
@@ -138,8 +171,18 @@ else if (execute)
 else
 {
     Console.WriteLine();
-    Console.WriteLine("Status mode only. Re-run with --execute --allow-prod to rebuild the full projection.");
-    Console.WriteLine("Add --song-id <id> --instrument <instrument> for a scoped rebuild.");
+    if (staleOnly)
+    {
+        var staleScopes = await builder.LoadStaleScopesAsync();
+        Console.WriteLine($"Status mode only. Found {staleScopes.Count:N0} stale or missing solo current projection scope(s).");
+        Console.WriteLine("Re-run with --execute --allow-prod --stale-only to refresh only those scopes.");
+    }
+    else
+    {
+        Console.WriteLine("Status mode only. Re-run with --execute --allow-prod to rebuild the full projection.");
+        Console.WriteLine("Add --song-id <id> --instrument <instrument> for a scoped rebuild.");
+        Console.WriteLine("Add --stale-only to inspect or refresh stale/missing projection scopes.");
+    }
 }
 
 var after = builder.Inspect();
@@ -151,13 +194,16 @@ var payload = new
     target = new { host = target.Host, database = target.Database, username = target.Username },
     execute,
     scoped,
+    staleOnly,
     ensuredSchema = ensureSchema,
     clearExisting,
     timeoutSeconds,
+    maxDegreeOfParallelism,
     scope = scoped ? new { songId, instrument } : null,
     before,
     after,
     scopeResult,
+    staleRefreshResult,
     rebuildResult,
 };
 
@@ -178,6 +224,8 @@ static void PrintUsage()
           SoloCurrentProjectionHarness --pg <connection-string> [--out <path>]
           SoloCurrentProjectionHarness --pg-env <env-var-name> [--out <path>]
           SoloCurrentProjectionHarness --pg <connection-string> --execute --allow-prod [--timeout-seconds <seconds>] [--clear-existing] [--out <path>]
+          SoloCurrentProjectionHarness --pg <connection-string> --stale-only [--out <path>]
+          SoloCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --stale-only [--timeout-seconds <seconds>] [--max-degree <workers>] [--out <path>]
           SoloCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --song-id <song-id> --instrument <instrument> [--timeout-seconds <seconds>] [--out <path>]
 
         Notes:
@@ -187,6 +235,7 @@ static void PrintUsage()
           - Status mode is read-only and does not run schema migrations.
           - Execute mode ensures schema unless --skip-schema is provided.
           - Full rebuild uses the same scoped updater as normal incremental projection maintenance.
+                    - --stale-only refreshes scopes whose stored source snapshot is missing or behind the active finalized snapshot.
           - Run full rebuild before deploying API code that reads current_leaderboard_entries.
         """);
 }
