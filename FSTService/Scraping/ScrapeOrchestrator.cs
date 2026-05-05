@@ -180,6 +180,7 @@ public sealed class ScrapeOrchestrator
 
                 if (result.EntriesCount == 0) continue;
                 hasData = true;
+                aggregates.IncrementSoloLeaderboardsWithData();
 
                 if (result.Entries.Count > 0)
                 {

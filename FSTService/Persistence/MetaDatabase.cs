@@ -767,12 +767,17 @@ public sealed class MetaDatabase : IMetaDatabase
             membersCmd.Transaction = tx;
             membersCmd.CommandText = """
                 INSERT INTO registered_users (device_id, account_id, registered_at, last_activity_at)
-                SELECT @deviceId, account_id, @now, @now
+                SELECT device_id, account_id, @now, @now
                 FROM unnest(@memberAccountIds::text[]) AS selected_member(account_id)
+                CROSS JOIN unnest(@deviceIds::text[]) AS selected_device(device_id)
                 ON CONFLICT (device_id, account_id)
                 DO UPDATE SET last_activity_at = EXCLUDED.last_activity_at
                 """;
-            membersCmd.Parameters.AddWithValue("deviceId", WebBandTrackerDeviceId);
+            membersCmd.Parameters.Add("deviceIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = new[]
+            {
+                WebBandTrackerDeviceId,
+                WebTrackerDeviceId,
+            };
             membersCmd.Parameters.AddWithValue("now", now);
             membersCmd.Parameters.Add("memberAccountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = memberAccountIds.ToArray();
             membersCmd.ExecuteNonQuery();
@@ -816,6 +821,203 @@ public sealed class MetaDatabase : IMetaDatabase
 
         tx.Commit();
         return new SelectedBandRegistrationResult(true, canonicalBandId, memberAccountIds);
+    }
+
+    public int RegisterKnownBandsForAccountActivity(string accountId)
+    {
+        if (string.IsNullOrWhiteSpace(accountId))
+            return 0;
+
+        var normalizedAccountId = accountId.Trim();
+        using var conn = _ds.OpenConnection();
+
+        var knownBands = new List<(string BandType, string TeamKey)>();
+        using (var lookupCmd = conn.CreateCommand())
+        {
+            lookupCmd.CommandText = """
+                SELECT DISTINCT band_type, team_key
+                FROM (
+                    SELECT band_type, team_key
+                    FROM band_team_membership
+                    WHERE account_id = @accountId
+                    UNION
+                    SELECT band_type, team_key
+                    FROM band_members
+                    WHERE account_id = @accountId
+                    UNION
+                    SELECT band_type, team_key
+                    FROM band_search_team_projection
+                    WHERE @accountId = ANY(member_account_ids)
+                ) AS known_band
+                ORDER BY band_type, team_key
+                """;
+            lookupCmd.Parameters.AddWithValue("accountId", normalizedAccountId);
+
+            using var reader = lookupCmd.ExecuteReader();
+            while (reader.Read())
+            {
+                var bandType = reader.GetString(0);
+                var teamKey = reader.GetString(1);
+                var memberAccountIds = teamKey.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (!memberAccountIds.Contains(normalizedAccountId, StringComparer.OrdinalIgnoreCase))
+                    continue;
+
+                knownBands.Add((bandType, teamKey));
+            }
+        }
+
+        if (knownBands.Count == 0)
+            return 0;
+
+        using var tx = conn.BeginTransaction();
+        var now = DateTime.UtcNow;
+        var registered = 0;
+
+        foreach (var (bandType, teamKey) in knownBands)
+        {
+            var memberAccountIds = teamKey.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var bandId = BandIdentity.CreateBandId(bandType, teamKey);
+
+            using (var bandCmd = conn.CreateCommand())
+            {
+                bandCmd.Transaction = tx;
+                bandCmd.CommandText = """
+                    INSERT INTO registered_bands (source_id, band_type, team_key, band_id, registered_at, last_activity_at, last_member_sync_at)
+                    VALUES (@sourceId, @bandType, @teamKey, @bandId, @now, @now, @now)
+                    ON CONFLICT (source_id, band_type, team_key)
+                    DO UPDATE SET band_id = EXCLUDED.band_id,
+                                  last_activity_at = EXCLUDED.last_activity_at,
+                                  last_member_sync_at = EXCLUDED.last_member_sync_at
+                    """;
+                bandCmd.Parameters.AddWithValue("sourceId", WebBandTrackerDeviceId);
+                bandCmd.Parameters.AddWithValue("bandType", bandType);
+                bandCmd.Parameters.AddWithValue("teamKey", teamKey);
+                bandCmd.Parameters.AddWithValue("bandId", bandId);
+                bandCmd.Parameters.AddWithValue("now", now);
+                bandCmd.ExecuteNonQuery();
+            }
+
+            if (TableExists(conn, tx, BandIdentityPersistence.TableName))
+            {
+                using var identityCmd = conn.CreateCommand();
+                identityCmd.Transaction = tx;
+                identityCmd.CommandText = """
+                    INSERT INTO band_identity (band_id, band_type, team_key, member_account_ids, appearance_count, first_seen_at, last_seen_at, updated_at, source)
+                    VALUES (@bandId, @bandType, @teamKey, @memberAccountIds, 0, @now, @now, @now, 'registered_player_bands')
+                    ON CONFLICT (band_id) DO UPDATE SET
+                        band_type = EXCLUDED.band_type,
+                        team_key = EXCLUDED.team_key,
+                        member_account_ids = EXCLUDED.member_account_ids,
+                        last_seen_at = COALESCE(GREATEST(band_identity.last_seen_at, EXCLUDED.last_seen_at), band_identity.last_seen_at, EXCLUDED.last_seen_at),
+                        updated_at = EXCLUDED.updated_at,
+                        source = EXCLUDED.source
+                    """;
+                identityCmd.Parameters.AddWithValue("bandId", bandId);
+                identityCmd.Parameters.AddWithValue("bandType", bandType);
+                identityCmd.Parameters.AddWithValue("teamKey", teamKey);
+                identityCmd.Parameters.Add("memberAccountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = memberAccountIds;
+                identityCmd.Parameters.AddWithValue("now", now);
+                identityCmd.ExecuteNonQuery();
+            }
+
+            using (var processingCmd = conn.CreateCommand())
+            {
+                processingCmd.Transaction = tx;
+                processingCmd.CommandText = """
+                    INSERT INTO registered_band_processing_status (source_id, band_type, team_key, status, total_lookups_to_check)
+                    VALUES (@sourceId, @bandType, @teamKey, 'pending', 0)
+                    ON CONFLICT (source_id, band_type, team_key) DO NOTHING
+                    """;
+                processingCmd.Parameters.AddWithValue("sourceId", WebBandTrackerDeviceId);
+                processingCmd.Parameters.AddWithValue("bandType", bandType);
+                processingCmd.Parameters.AddWithValue("teamKey", teamKey);
+                processingCmd.ExecuteNonQuery();
+            }
+
+            registered++;
+        }
+
+        tx.Commit();
+        return registered;
+    }
+
+    public void RegisterDiscoveredBandActivity(string bandType, string teamKey, IReadOnlyList<string> memberAccountIds)
+    {
+        var normalizedBandType = bandType.Trim();
+        var normalizedTeamKey = teamKey.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedBandType) || string.IsNullOrWhiteSpace(normalizedTeamKey) || memberAccountIds.Count == 0)
+            return;
+
+        var members = memberAccountIds
+            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Select(static accountId => accountId.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (members.Length == 0)
+            return;
+
+        var bandId = BandIdentity.CreateBandId(normalizedBandType, normalizedTeamKey);
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        var now = DateTime.UtcNow;
+
+        using (var bandCmd = conn.CreateCommand())
+        {
+            bandCmd.Transaction = tx;
+            bandCmd.CommandText = """
+                INSERT INTO registered_bands (source_id, band_type, team_key, band_id, registered_at, last_activity_at, last_member_sync_at)
+                VALUES (@sourceId, @bandType, @teamKey, @bandId, @now, @now, @now)
+                ON CONFLICT (source_id, band_type, team_key)
+                DO UPDATE SET band_id = EXCLUDED.band_id,
+                              last_activity_at = EXCLUDED.last_activity_at,
+                              last_member_sync_at = EXCLUDED.last_member_sync_at
+                """;
+            bandCmd.Parameters.AddWithValue("sourceId", WebBandTrackerDeviceId);
+            bandCmd.Parameters.AddWithValue("bandType", normalizedBandType);
+            bandCmd.Parameters.AddWithValue("teamKey", normalizedTeamKey);
+            bandCmd.Parameters.AddWithValue("bandId", bandId);
+            bandCmd.Parameters.AddWithValue("now", now);
+            bandCmd.ExecuteNonQuery();
+        }
+
+        if (TableExists(conn, tx, BandIdentityPersistence.TableName))
+        {
+            using var identityCmd = conn.CreateCommand();
+            identityCmd.Transaction = tx;
+            identityCmd.CommandText = """
+                INSERT INTO band_identity (band_id, band_type, team_key, member_account_ids, appearance_count, first_seen_at, last_seen_at, updated_at, source)
+                VALUES (@bandId, @bandType, @teamKey, @memberAccountIds, 0, @now, @now, @now, 'registered_player_band_discovery')
+                ON CONFLICT (band_id) DO UPDATE SET
+                    band_type = EXCLUDED.band_type,
+                    team_key = EXCLUDED.team_key,
+                    member_account_ids = EXCLUDED.member_account_ids,
+                    last_seen_at = COALESCE(GREATEST(band_identity.last_seen_at, EXCLUDED.last_seen_at), band_identity.last_seen_at, EXCLUDED.last_seen_at),
+                    updated_at = EXCLUDED.updated_at,
+                    source = EXCLUDED.source
+                """;
+            identityCmd.Parameters.AddWithValue("bandId", bandId);
+            identityCmd.Parameters.AddWithValue("bandType", normalizedBandType);
+            identityCmd.Parameters.AddWithValue("teamKey", normalizedTeamKey);
+            identityCmd.Parameters.Add("memberAccountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = members;
+            identityCmd.Parameters.AddWithValue("now", now);
+            identityCmd.ExecuteNonQuery();
+        }
+
+        using (var processingCmd = conn.CreateCommand())
+        {
+            processingCmd.Transaction = tx;
+            processingCmd.CommandText = """
+                INSERT INTO registered_band_processing_status (source_id, band_type, team_key, status, total_lookups_to_check)
+                VALUES (@sourceId, @bandType, @teamKey, 'pending', 0)
+                ON CONFLICT (source_id, band_type, team_key) DO NOTHING
+                """;
+            processingCmd.Parameters.AddWithValue("sourceId", WebBandTrackerDeviceId);
+            processingCmd.Parameters.AddWithValue("bandType", normalizedBandType);
+            processingCmd.Parameters.AddWithValue("teamKey", normalizedTeamKey);
+            processingCmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
     }
 
     public List<RegisteredBandInfo> GetRegisteredBands()
@@ -998,6 +1200,53 @@ public sealed class MetaDatabase : IMetaDatabase
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             rows.Add(new RegisteredBandLookupProgressInfo(reader.GetString(0), reader.GetString(1), reader.GetInt32(2), reader.GetInt32(3) != 0));
+        return rows;
+    }
+
+    public void MarkRegisteredPlayerBandDiscoveryChecked(string accountId, string songId, string bandType, string scope, int season, bool entryFound)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO registered_player_band_discovery_progress
+                (account_id, song_id, band_type, scope, season, checked, entry_found, checked_at)
+            VALUES (@accountId, @songId, @bandType, @scope, @season, 1, @found, @now)
+            ON CONFLICT (account_id, song_id, band_type, scope, season) DO UPDATE SET
+                checked = 1,
+                entry_found = EXCLUDED.entry_found,
+                checked_at = EXCLUDED.checked_at
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", scope);
+        cmd.Parameters.AddWithValue("season", season);
+        cmd.Parameters.AddWithValue("found", entryFound ? 1 : 0);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<RegisteredPlayerBandDiscoveryProgressInfo> GetCheckedRegisteredPlayerBandDiscoveryLookups(string accountId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT song_id, band_type, scope, season, entry_found
+            FROM registered_player_band_discovery_progress
+            WHERE account_id = @accountId AND checked = 1
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        var rows = new List<RegisteredPlayerBandDiscoveryProgressInfo>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new RegisteredPlayerBandDiscoveryProgressInfo(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                reader.GetInt32(4) != 0));
+        }
         return rows;
     }
 

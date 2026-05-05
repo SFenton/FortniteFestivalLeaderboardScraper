@@ -236,6 +236,7 @@ public static partial class ApiEndpoints
             // Register with a synthetic device ID for web tracking
             const string webDeviceId = "web-tracker";
             metaDb.RegisterUser(webDeviceId, accountId);
+            metaDb.RegisterKnownBandsForAccountActivity(accountId);
 
             // Enqueue for backfill if not already completed
             var existingStatus = metaDb.GetBackfillStatus(accountId);
@@ -286,15 +287,15 @@ public static partial class ApiEndpoints
                             var user = new UserWorkItem
                             {
                                 AccountId = accountId,
-                                Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+                                Purposes = WorkPurpose.Backfill,
                                 AllTimeNeeded = true,
-                                SeasonsNeeded = [], // Season discovery handled by cyclical machine
+                                SeasonsNeeded = [],
                                 AlreadyChecked = alreadyChecked,
                             };
 
                             syncTracker.BeginBackfill(accountId, totalPairs);
 
-                            var result = await cyclicalMachine.AttachAsync(
+                            await cyclicalMachine.AttachAsync(
                                 [user], chartedSongIds, seasonWindows: [],
                                 SongMachineSource.PlayerTrackCover, isHighPriority: false, ct: CancellationToken.None);
 
@@ -304,10 +305,8 @@ public static partial class ApiEndpoints
                             _ = notifications.NotifyBackfillCompleteAsync(accountId);
 
                             var reconStatus = metaDb.GetHistoryReconStatus(accountId);
-                            if (reconStatus is null)
-                                metaDb.EnqueueHistoryRecon(accountId, 0);
-                            metaDb.CompleteHistoryRecon(accountId);
-                            _ = notifications.NotifyHistoryReconCompleteAsync(accountId);
+                            if (reconStatus?.Status != "complete")
+                                metaDb.EnqueueHistoryRecon(accountId, chartedSongIds.Count);
 
                             precomputer.PrecomputeUser(accountId);
                             syncTracker.Complete(accountId);

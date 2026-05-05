@@ -689,6 +689,10 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("Band_Duets", registeredBand.BandType);
         Assert.Equal("acct1:acct2", registeredBand.TeamKey);
         Assert.Equal(result.BandId, registeredBand.BandId);
+        Assert.NotNull(GetRegistrationActivity("acct1", "web-tracker"));
+        Assert.NotNull(GetRegistrationActivity("acct2", "web-tracker"));
+        Assert.NotNull(GetRegistrationActivity("acct1", "web-band-tracker"));
+        Assert.NotNull(GetRegistrationActivity("acct2", "web-band-tracker"));
 
         var acct1Backfill = Db.GetBackfillStatus("acct1");
         var acct2Backfill = Db.GetBackfillStatus("acct2");
@@ -699,6 +703,80 @@ public sealed class MetaDatabaseTests : IDisposable
 
         var processingStatus = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2");
         Assert.Equal("pending", processingStatus?.Status);
+    }
+
+    [Fact]
+    public void RegisterSelectedBandActivity_refreshes_independent_member_activity_on_reselect()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+        Db.RegisterSelectedBandActivity("Band_Duets", "acct1:acct2");
+        var staleAt = DateTime.UtcNow.AddHours(-8);
+        SetRegistrationActivity("acct1", "web-tracker", staleAt);
+        SetRegistrationActivity("acct2", "web-tracker", staleAt);
+        SetRegistrationActivity("acct1", "web-band-tracker", staleAt);
+        SetRegistrationActivity("acct2", "web-band-tracker", staleAt);
+
+        var result = Db.RegisterSelectedBandActivity("Band_Duets", "acct1:acct2");
+
+        Assert.True(result.Registered);
+        Assert.True(GetRegistrationActivity("acct1", "web-tracker").GetValueOrDefault() > staleAt);
+        Assert.True(GetRegistrationActivity("acct2", "web-tracker").GetValueOrDefault() > staleAt);
+        Assert.True(GetRegistrationActivity("acct1", "web-band-tracker").GetValueOrDefault() > staleAt);
+        Assert.True(GetRegistrationActivity("acct2", "web-band-tracker").GetValueOrDefault() > staleAt);
+    }
+
+    [Fact]
+    public void RegisterKnownBandsForAccountActivity_registers_known_player_bands_without_member_backfills()
+    {
+        InsertBandProjection("Band_Duets", "acct1:acct2", ["acct1", "acct2"]);
+        Db.RegisterUser("web-tracker", "acct1");
+
+        var registered = Db.RegisterKnownBandsForAccountActivity("acct1");
+
+        Assert.Equal(1, registered);
+        var registeredBand = Assert.Single(Db.GetRegisteredBands());
+        Assert.Equal("web-band-tracker", registeredBand.SourceId);
+        Assert.Equal("Band_Duets", registeredBand.BandType);
+        Assert.Equal("acct1:acct2", registeredBand.TeamKey);
+        Assert.Contains("acct1", Db.GetRegisteredAccountIds());
+        Assert.DoesNotContain("acct2", Db.GetRegisteredAccountIds());
+
+        var processingStatus = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Duets", "acct1:acct2");
+        Assert.Equal("pending", processingStatus?.Status);
+        Assert.Null(Db.GetBackfillStatus("acct2"));
+    }
+
+    [Fact]
+    public void RegisterDiscoveredBandActivity_registers_exact_band_without_member_backfills()
+    {
+        Db.RegisterUser("web-tracker", "acct1");
+
+        Db.RegisterDiscoveredBandActivity("Band_Quad", "acct1:acct2:acct3:acct4", ["acct1", "acct2", "acct3", "acct4"]);
+
+        var registeredBand = Assert.Single(Db.GetRegisteredBands());
+        Assert.Equal("web-band-tracker", registeredBand.SourceId);
+        Assert.Equal("Band_Quad", registeredBand.BandType);
+        Assert.Equal("acct1:acct2:acct3:acct4", registeredBand.TeamKey);
+        Assert.Contains("acct1", Db.GetRegisteredAccountIds());
+        Assert.DoesNotContain("acct2", Db.GetRegisteredAccountIds());
+
+        var processingStatus = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Quad", "acct1:acct2:acct3:acct4");
+        Assert.Equal("pending", processingStatus?.Status);
+        Assert.Null(Db.GetBackfillStatus("acct2"));
+    }
+
+    [Fact]
+    public void RegisteredPlayerBandDiscoveryProgress_tracks_checked_lookup()
+    {
+        Db.MarkRegisteredPlayerBandDiscoveryChecked("acct1", "song-a", "Band_Duets", "alltime", 0, true);
+        Db.MarkRegisteredPlayerBandDiscoveryChecked("acct1", "song-a", "Band_Trios", "season", 14, false);
+
+        var progress = Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct1");
+
+        Assert.Equal(2, progress.Count);
+        Assert.Contains(progress, row => row.SongId == "song-a" && row.BandType == "Band_Duets" && row.Scope == "alltime" && row.Season == 0 && row.EntryFound);
+        Assert.Contains(progress, row => row.SongId == "song-a" && row.BandType == "Band_Trios" && row.Scope == "season" && row.Season == 14 && !row.EntryFound);
+        Assert.Empty(Db.GetCheckedRegisteredPlayerBandDiscoveryLookups("acct2"));
     }
 
     [Fact]
@@ -774,7 +852,8 @@ public sealed class MetaDatabaseTests : IDisposable
 
         Assert.Equal(3, pruned);
         Assert.Empty(Db.GetRegisteredBands());
-        Assert.Empty(Db.GetRegisteredAccountIds());
+        Assert.Contains("acct1", Db.GetRegisteredAccountIds());
+        Assert.Contains("acct2", Db.GetRegisteredAccountIds());
     }
 
     private void SetWebRegistrationActivity(string accountId, DateTime lastActivityAt)
@@ -790,6 +869,17 @@ public sealed class MetaDatabaseTests : IDisposable
         cmd.Parameters.AddWithValue("lastActivityAt", lastActivityAt);
         cmd.Parameters.AddWithValue("registeredAt", lastActivityAt);
         cmd.ExecuteNonQuery();
+    }
+
+    private DateTime? GetRegistrationActivity(string accountId, string deviceId)
+    {
+        using var conn = DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT last_activity_at FROM registered_users WHERE device_id = @deviceId AND account_id = @accountId";
+        cmd.Parameters.AddWithValue("deviceId", deviceId);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        var result = cmd.ExecuteScalar();
+        return result is DBNull or null ? null : (DateTime)result;
     }
 
     private void SetRegisteredBandActivity(string bandType, string teamKey, DateTime lastActivityAt)

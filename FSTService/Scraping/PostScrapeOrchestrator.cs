@@ -37,6 +37,7 @@ public sealed class PostScrapeOrchestrator
     private readonly PostScrapeBandExtractor _bandExtractor;
     private readonly BandScrapePhase _bandScrapePhase;
     private readonly BandLeaderboardPersistence _bandPersistence;
+    private readonly RegisteredPlayerBandDiscoveryOrchestrator? _registeredPlayerBandDiscoveryOrchestrator;
     private readonly RegisteredBandProcessingOrchestrator? _registeredBandProcessingOrchestrator;
     private readonly BandSearchProjectionBuilder? _bandSearchProjectionBuilder;
     private readonly BandCurrentProjectionBuilder? _bandCurrentProjectionBuilder;
@@ -72,6 +73,7 @@ public sealed class PostScrapeOrchestrator
         ILogger<PostScrapeOrchestrator> log,
         BandSearchProjectionBuilder? bandSearchProjectionBuilder,
         RegisteredBandProcessingOrchestrator? registeredBandProcessingOrchestrator = null,
+        RegisteredPlayerBandDiscoveryOrchestrator? registeredPlayerBandDiscoveryOrchestrator = null,
         BandCurrentProjectionBuilder? bandCurrentProjectionBuilder = null,
         ImprovementNotificationService? improvementNotifications = null,
         SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
@@ -98,6 +100,7 @@ public sealed class PostScrapeOrchestrator
         _bandExtractor = bandExtractor;
         _bandScrapePhase = bandScrapePhase;
         _bandPersistence = bandPersistence;
+        _registeredPlayerBandDiscoveryOrchestrator = registeredPlayerBandDiscoveryOrchestrator;
         _registeredBandProcessingOrchestrator = registeredBandProcessingOrchestrator;
         _bandSearchProjectionBuilder = bandSearchProjectionBuilder;
         _bandCurrentProjectionBuilder = bandCurrentProjectionBuilder;
@@ -197,6 +200,39 @@ public sealed class PostScrapeOrchestrator
             }
         }
 
+        var registeredPlayerBandDiscoveryResult = RegisteredPlayerBandDiscoveryResult.Empty;
+        if (ShouldRunRegisteredPlayerBandDiscovery(resolvedPhases))
+        {
+            var registeredPlayerBandDiscoveryOrchestrator = _registeredPlayerBandDiscoveryOrchestrator!;
+            var bandAccessToken = await _tokenManager.GetAccessTokenAsync(ct);
+            if (bandAccessToken is not null)
+            {
+                var chartedSongIds = service.Songs
+                    .Select(static song => song.track?.su)
+                    .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+                    .Select(static songId => songId!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var seasonWindows = _persistence.Meta.GetSeasonWindows();
+                _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+                _progress.SetSubOperation("registered_player_band_discovery");
+                registeredPlayerBandDiscoveryResult = await RunPhaseAsync(
+                    "RegisteredPlayerBandDiscovery",
+                    () => registeredPlayerBandDiscoveryOrchestrator.RunAsync(
+                        chartedSongIds,
+                        seasonWindows,
+                        bandAccessToken,
+                        _tokenManager.AccountId!,
+                        _pool,
+                        ct),
+                    RegisteredPlayerBandDiscoveryResult.Empty);
+            }
+            else
+            {
+                _log.LogWarning("No access token for registered-player band discovery. Will retry next pass.");
+            }
+        }
+
         var registeredBandProcessingResult = RegisteredBandProcessingResult.Empty;
         if (ShouldRunRegisteredBandProcessing(resolvedPhases))
         {
@@ -230,7 +266,9 @@ public sealed class PostScrapeOrchestrator
             }
         }
 
-        if (ShouldRunBandMaintenance(resolvedPhases) || registeredBandProcessingResult.ImpactedTeamsByBandType.Count > 0)
+        if (ShouldRunBandMaintenance(resolvedPhases)
+            || registeredPlayerBandDiscoveryResult.ImpactedTeamsByBandType.Count > 0
+            || registeredBandProcessingResult.ImpactedTeamsByBandType.Count > 0)
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BandScraping);
             _progress.SetSubOperation("maintaining_band_projection");
@@ -238,9 +276,11 @@ public sealed class PostScrapeOrchestrator
             {
                 ImpactedTeamsByBandType = MergeImpactedTeams(
                     bandExtractionResult.ImpactedTeamsByBandType,
+                    registeredPlayerBandDiscoveryResult.ImpactedTeamsByBandType,
                     registeredBandProcessingResult.ImpactedTeamsByBandType),
                 ImpactedCurrentProjectionScopes = MergeCurrentProjectionScopes(
                     bandExtractionResult.ImpactedCurrentProjectionScopes,
+                    registeredPlayerBandDiscoveryResult.ImpactedCurrentProjectionScopes,
                     registeredBandProcessingResult.ImpactedCurrentProjectionScopes),
             };
             await RunPhaseAsync("BandMaintenance", () => RunBandMaintenanceAsync(ctx, mergedExtractionResult, ct));
@@ -250,14 +290,6 @@ public sealed class PostScrapeOrchestrator
         var rankingsSucceeded = false;
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
             rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
-
-        if (rankingsSucceeded && ShouldRunImprovementNotifications())
-        {
-            await RunPhaseAsync(
-                "ImprovementNotifications",
-                () => RunImprovementNotificationDetectionAsync(ctx, registeredUserRefreshResult, ct),
-                rethrowOnFailure: _improvementNotificationOptions.Value.FailScrapeOnError);
-        }
 
         // ── Solo rivals ──
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
@@ -303,6 +335,14 @@ public sealed class PostScrapeOrchestrator
                     return Task.CompletedTask;
                 });
             }
+        }
+
+        if (rankingsSucceeded && ShouldRunImprovementNotifications(ctx, resolvedPhases))
+        {
+            await RunPhaseAsync(
+                "ImprovementNotifications",
+                () => RunImprovementNotificationDetectionAsync(ctx, registeredUserRefreshResult, ct),
+                rethrowOnFailure: _improvementNotificationOptions.Value.FailScrapeOnError);
         }
 
         // ── Await background band scrape for exception observation ──
@@ -725,9 +765,52 @@ public sealed class PostScrapeOrchestrator
          resolvedPhases.HasFlag(ScrapePhase.BandExtraction) ||
          resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers));
 
-    private bool ShouldRunImprovementNotifications() =>
-        _improvementNotifications is not null &&
-        _improvementNotificationOptions.Value.Enabled;
+    private bool ShouldRunRegisteredPlayerBandDiscovery(ScrapePhase resolvedPhases) =>
+        _registeredPlayerBandDiscoveryOrchestrator is not null &&
+        _options.Value.EnableRegisteredPlayerBandDiscovery &&
+        (resolvedPhases.HasFlag(ScrapePhase.BandScrape) ||
+         resolvedPhases.HasFlag(ScrapePhase.BandScrapePhase) ||
+         resolvedPhases.HasFlag(ScrapePhase.BandExtraction) ||
+         resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers));
+
+    private bool ShouldRunImprovementNotifications(ScrapePassContext ctx, ScrapePhase resolvedPhases)
+    {
+        var options = _improvementNotificationOptions.Value;
+        if (_improvementNotifications is null || !options.Enabled)
+            return false;
+
+        return HasSufficientSoloScrapeCoverageForNotifications(ctx, resolvedPhases, options);
+    }
+
+    internal bool HasSufficientSoloScrapeCoverageForNotifications(
+        ScrapePassContext ctx,
+        ScrapePhase resolvedPhases,
+        ImprovementNotificationOptions options)
+    {
+        if (!resolvedPhases.HasFlag(ScrapePhase.SoloScrape))
+            return true;
+
+        var minimumCoverage = options.MinimumSoloLeaderboardCoverageRatio;
+        if (minimumCoverage <= 0)
+            return true;
+
+        var expectedSoloLeaderboards = BuildExpectedSnapshotPairs(ctx).Count;
+        if (expectedSoloLeaderboards == 0)
+            return true;
+
+        var actualSoloLeaderboards = ctx.Aggregates.SoloLeaderboardsWithData;
+        var coverage = actualSoloLeaderboards / (double)expectedSoloLeaderboards;
+        if (coverage >= minimumCoverage)
+            return true;
+
+        _log.LogWarning(
+            "Improvement notifications skipped because solo scrape coverage was below threshold: {Actual:N0}/{Expected:N0} leaderboards with data ({Coverage:P1}) below required {Required:P1}.",
+            actualSoloLeaderboards,
+            expectedSoloLeaderboards,
+            coverage,
+            minimumCoverage);
+        return false;
+    }
 
     private async Task RunBandMaintenanceAsync(ScrapePassContext ctx, BandExtractionResult extractionResult, CancellationToken ct)
     {
@@ -1080,6 +1163,9 @@ public sealed class PostScrapeOrchestrator
                 seasonWindows = [];
             }
 
+            if (seasonWindows.Count == 0)
+                seasonWindows = _persistence.Meta.GetSeasonWindows();
+
             // Backstop: if the scraper has observed higher-numbered seasons in the
             // instrument DBs than the events API advertised (e.g. Epic renamed a
             // window and our regex missed the current season), persist a window
@@ -1110,6 +1196,9 @@ public sealed class PostScrapeOrchestrator
             var chartedSongIds = ctx.ScrapeRequests.Select(r => r.SongId).ToList();
             var currentSeason = instrumentMaxSeason ?? 1;
             var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
+            var canRunCompleteHistoryRecon = allSeasons.Count > 0;
+            var pendingBackfills = _persistence.Meta.GetPendingBackfills();
+            RegisterKnownBandsForAccounts(ctx.RegisteredIds.Concat(pendingBackfills.Select(static bf => bf.AccountId)));
 
             // ── Build user list ──────────────────────────────────
             var users = new List<UserWorkItem>();
@@ -1131,16 +1220,17 @@ public sealed class PostScrapeOrchestrator
             }
 
             // Pending backfill users
-            var pendingBackfills = _persistence.Meta.GetPendingBackfills();
             foreach (var bf in pendingBackfills)
             {
                 var alreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(bf.AccountId);
                 users.Add(new UserWorkItem
                 {
                     AccountId = bf.AccountId,
-                    Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+                    Purposes = canRunCompleteHistoryRecon
+                        ? WorkPurpose.Backfill | WorkPurpose.HistoryRecon
+                        : WorkPurpose.Backfill,
                     AllTimeNeeded = true,
-                    SeasonsNeeded = new HashSet<int>(allSeasons),
+                    SeasonsNeeded = canRunCompleteHistoryRecon ? new HashSet<int>(allSeasons) : [],
                     AlreadyChecked = alreadyChecked,
                 });
             }
@@ -1153,6 +1243,12 @@ public sealed class PostScrapeOrchestrator
 
                 var reconStatus = _persistence.Meta.GetHistoryReconStatus(accountId);
                 if (reconStatus?.Status == "complete") continue;
+
+                if (!canRunCompleteHistoryRecon)
+                {
+                    _persistence.Meta.EnqueueHistoryRecon(accountId, chartedSongIds.Count);
+                    continue;
+                }
 
                 if (pendingBackfills.Any(b => b.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase)))
                     continue;
@@ -1190,6 +1286,9 @@ public sealed class PostScrapeOrchestrator
                     _persistence.Meta.CompleteBackfill(user.AccountId);
                     _rivalsOrchestrator.ComputeForUser(user.AccountId);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
+
+                    if (!user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+                        EnsureHistoryReconPending(user.AccountId, chartedSongIds.Count);
                 }
                 catch (Exception ex)
                 {
@@ -1223,6 +1322,23 @@ public sealed class PostScrapeOrchestrator
             _log.LogWarning(ex, "Song processing machine failed. Will retry next pass.");
             return new SongProcessingMachine.MachineResult();
         }
+    }
+
+    private void RegisterKnownBandsForAccounts(IEnumerable<string> accountIds)
+    {
+        var registeredBands = 0;
+        foreach (var accountId in accountIds.Distinct(StringComparer.OrdinalIgnoreCase))
+            registeredBands += _persistence.Meta.RegisterKnownBandsForAccountActivity(accountId);
+
+        if (registeredBands > 0)
+            _log.LogDebug("Registered or refreshed {BandCount} known band(s) for tracked player history processing.", registeredBands);
+    }
+
+    private void EnsureHistoryReconPending(string accountId, int totalSongsToProcess)
+    {
+        var reconStatus = _persistence.Meta.GetHistoryReconStatus(accountId);
+        if (reconStatus?.Status != "complete")
+            _persistence.Meta.EnqueueHistoryRecon(accountId, totalSongsToProcess);
     }
 
     private async Task RunImprovementNotificationDetectionAsync(

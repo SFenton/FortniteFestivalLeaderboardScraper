@@ -366,6 +366,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         private int _totalEntries;
         private int _totalChanges;
         private int _songsWithData;
+        private int _soloLeaderboardsWithData;
         private readonly ConcurrentHashSet _changedAccountIds = new();
         private readonly ConcurrentDictionary<(string AccountId, string SongId, string Instrument), RivalDirtySongRow>
             _dirtyRivalSongs = new();
@@ -378,6 +379,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         public int TotalEntries => _totalEntries;
         public int TotalChanges => _totalChanges;
         public int SongsWithData => _songsWithData;
+        public int SoloLeaderboardsWithData => _soloLeaderboardsWithData;
         public IReadOnlyCollection<string> ChangedAccountIds => _changedAccountIds;
         public IReadOnlyCollection<RivalDirtySongRow> DirtyRivalSongs => _dirtyRivalSongs.Values.ToArray();
 
@@ -401,6 +403,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         public void AddEntries(int count) => Interlocked.Add(ref _totalEntries, count);
         public void AddChanges(int count) => Interlocked.Add(ref _totalChanges, count);
         public void IncrementSongsWithData() => Interlocked.Increment(ref _songsWithData);
+        public void IncrementSoloLeaderboardsWithData() => Interlocked.Increment(ref _soloLeaderboardsWithData);
         public void AddChangedAccountIds(IEnumerable<string> ids) => _changedAccountIds.AddRange(ids);
 
         public void AddDirtyRivalSongs(IEnumerable<RivalDirtySongRow> rows)

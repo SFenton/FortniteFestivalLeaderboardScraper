@@ -34,6 +34,12 @@ public sealed class ImprovementNotificationOptions
     /// <summary>Optional timeout for solo projection refresh SQL. 0 means unlimited.</summary>
     public int SoloProjectionCommandTimeoutSeconds { get; set; }
 
+    /// <summary>
+    /// Minimum fraction of expected solo leaderboard scopes that must return data before
+    /// post-scrape detection runs. Set to 0 to disable the coverage guard.
+    /// </summary>
+    public double MinimumSoloLeaderboardCoverageRatio { get; set; } = 0.95;
+
     /// <summary>When true, notification failures fail the post-scrape pass.</summary>
     public bool FailScrapeOnError { get; set; }
 }

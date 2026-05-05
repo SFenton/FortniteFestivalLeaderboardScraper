@@ -66,4 +66,10 @@ public interface ILeaderboardQuerier
         string songId, string bandType, IReadOnlyList<string> teamAccountIds,
         string windowId, string accessToken, string callerAccountId,
         AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
+
+    /// <summary>Discover band teams containing one account via V2 <c>findTeams=true</c>.</summary>
+    Task<List<BandLeaderboardEntry>> FindBandsForAccountAsync(
+        string songId, string bandType, string targetAccountId,
+        string windowId, string accessToken, string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
 }

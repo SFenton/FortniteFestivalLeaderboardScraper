@@ -636,6 +636,21 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_registered_band_processing_progress_band
             ON registered_band_processing_progress (source_id, band_type, team_key);
 
+        CREATE TABLE IF NOT EXISTS registered_player_band_discovery_progress (
+            account_id  TEXT        NOT NULL,
+            song_id     TEXT        NOT NULL,
+            band_type   TEXT        NOT NULL,
+            scope       TEXT        NOT NULL,
+            season      INTEGER     NOT NULL DEFAULT 0,
+            checked     INTEGER     NOT NULL DEFAULT 0,
+            entry_found INTEGER     NOT NULL DEFAULT 0,
+            checked_at  TIMESTAMPTZ,
+            PRIMARY KEY (account_id, song_id, band_type, scope, season)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_registered_player_band_discovery_progress_account
+            ON registered_player_band_discovery_progress (account_id);
+
         -- =====================================================================
         -- USER SESSIONS (from fst-meta.db)
         -- =====================================================================

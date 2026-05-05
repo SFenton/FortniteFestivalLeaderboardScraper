@@ -150,4 +150,16 @@ public sealed class InstrumentedQuerier : ILeaderboardQuerier
         string targetAccountId, string accessToken, string callerAccountId,
         AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default)
         => _inner.LookupSeasonalSessionsAsync(songId, instrument, windowId, targetAccountId, accessToken, callerAccountId, limiter, ct);
+
+    public Task<BandLeaderboardEntry?> LookupBandAsync(
+        string songId, string bandType, IReadOnlyList<string> teamAccountIds,
+        string windowId, string accessToken, string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default)
+        => _inner.LookupBandAsync(songId, bandType, teamAccountIds, windowId, accessToken, callerAccountId, limiter, ct);
+
+    public Task<List<BandLeaderboardEntry>> FindBandsForAccountAsync(
+        string songId, string bandType, string targetAccountId,
+        string windowId, string accessToken, string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default)
+        => _inner.FindBandsForAccountAsync(songId, bandType, targetAccountId, windowId, accessToken, callerAccountId, limiter, ct);
 }

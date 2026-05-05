@@ -179,6 +179,55 @@ public class PostScrapeOrchestratorTests : IDisposable
         };
     }
 
+    private PostScrapeOrchestrator CreateOrchestratorWithImprovementNotifications(
+        ImprovementNotificationOptions? improvementOptions = null)
+    {
+        var scraper = Substitute.For<GlobalLeaderboardScraper>(
+            new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null);
+        var serviceProvider = Substitute.For<IServiceProvider>();
+        serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(
+            rivalsCalculator,
+            _persistence,
+            new NotificationService(Substitute.For<ILogger<NotificationService>>()),
+            _progress,
+            new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            new ResponseCacheService(TimeSpan.FromMinutes(5)),
+            Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Options.Create(new FeatureOptions()), Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
+
+        return new PostScrapeOrchestrator(
+            _persistence, _firstSeenCalculator, _nameResolver,
+            _refresher,
+            serviceProvider,
+            Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
+            _pool,
+            _cyclicalMachine,
+            rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
+            _tokenManager, _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _pathDataStore,
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new JsonSerializerOptions(), new FeatureOptions()),
+            new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                scraper,
+                new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
+                Substitute.For<ILogger<BandScrapePhase>>()),
+            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+            Options.Create(new ScraperOptions()), _log, null,
+            improvementNotifications: new ImprovementNotificationService(_metaFixture.DataSource, Substitute.For<ILogger<ImprovementNotificationService>>()),
+            soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
+            improvementNotificationOptions: Options.Create(improvementOptions ?? new ImprovementNotificationOptions
+            {
+                Enabled = true,
+                IncludePlayers = false,
+                IncludeBands = false,
+                IncludeSongEvents = false,
+                IncludeRankings = false,
+            }));
+    }
+
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // RefreshRegisteredUsersAsync
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -474,6 +523,111 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal(42, reader.GetInt64(0));
         Assert.Equal(42, reader.GetInt64(1));
         Assert.True(reader.GetBoolean(2));
+    }
+
+    [Fact]
+    public async Task RunAsync_RunsImprovementNotificationsAfterDerivedSoloPhases()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.IncrementSoloLeaderboardsWithData();
+        aggregates.IncrementSongsWithData();
+        var ctx = CreateContext(
+            scrapeId: 43,
+            aggregates: aggregates,
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song_notify_order",
+                    Instruments = ["Solo_Guitar"],
+                    Label = "Song Notify Order",
+                },
+            ]);
+
+        await sut.RunAsync(
+            ctx,
+            service,
+            ScrapePhase.SoloRankings | ScrapePhase.SoloRivals | ScrapePhase.SoloPlayerStats | ScrapePhase.SoloFinalize,
+            CancellationToken.None);
+
+        var logs = _log.Entries.ToList();
+        var rankingsIndex = logs.FindIndex(e => e.Message.Contains("[ComputeRankings]", StringComparison.Ordinal));
+        var rivalsIndex = logs.FindIndex(e => e.Message.Contains("[Rivals]", StringComparison.Ordinal));
+        var playerStatsIndex = logs.FindIndex(e => e.Message.Contains("[PlayerStatsTiers]", StringComparison.Ordinal));
+        var checkpointIndex = logs.FindIndex(e => e.Message.Contains("[Checkpoint]", StringComparison.Ordinal));
+        var activateIndex = logs.FindIndex(e => e.Message.Contains("[ActivateShadowSnapshots]", StringComparison.Ordinal));
+        var notificationsIndex = logs.FindIndex(e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
+
+        Assert.True(rankingsIndex >= 0, "Expected rankings to run.");
+        Assert.True(rivalsIndex > rankingsIndex, "Expected rivals to run after rankings.");
+        Assert.True(playerStatsIndex > rivalsIndex, "Expected player stats to run after rivals.");
+        Assert.True(checkpointIndex > playerStatsIndex, "Expected checkpoint to run after player stats.");
+        Assert.True(activateIndex > checkpointIndex, "Expected final snapshot activation to run after checkpoint.");
+        Assert.True(notificationsIndex > activateIndex, "Expected notifications to run after final derived solo phases.");
+    }
+
+    [Fact]
+    public async Task RunAsync_SkipsImprovementNotificationsWhenSoloScrapeCoverageIsLow()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.IncrementSoloLeaderboardsWithData();
+        var ctx = CreateContext(
+            scrapeId: 44,
+            aggregates: aggregates,
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song_notify_partial",
+                    Instruments = ["Solo_Guitar", "Solo_Bass"],
+                    Label = "Song Notify Partial",
+                },
+            ]);
+
+        await sut.RunAsync(
+            ctx,
+            service,
+            ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
+            CancellationToken.None);
+
+        Assert.DoesNotContain(_log.Entries, e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
+        Assert.Contains(_log.Entries, e => e.Message.Contains("solo scrape coverage was below threshold", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunAsync_RunsImprovementNotificationsWhenSoloScrapeCoverageIsHealthy()
+    {
+        var sut = CreateOrchestratorWithImprovementNotifications();
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.IncrementSoloLeaderboardsWithData();
+        aggregates.IncrementSoloLeaderboardsWithData();
+        aggregates.IncrementSongsWithData();
+        var ctx = CreateContext(
+            scrapeId: 45,
+            aggregates: aggregates,
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song_notify_healthy",
+                    Instruments = ["Solo_Guitar", "Solo_Bass"],
+                    Label = "Song Notify Healthy",
+                },
+            ]);
+
+        await sut.RunAsync(
+            ctx,
+            service,
+            ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
+            CancellationToken.None);
+
+        Assert.Contains(_log.Entries, e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log.Entries, e => e.Message.Contains("solo scrape coverage was below threshold", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -918,6 +1072,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns("test-tok");
         _tokenManager.AccountId.Returns("caller-1");
+        _metaDb.UpsertSeasonWindow(14, "", "");
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "acct-hr" });
         await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
@@ -937,6 +1092,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns("test-tok");
         _tokenManager.AccountId.Returns("caller-1");
+        _metaDb.UpsertSeasonWindow(14, "", "");
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "acct-combo" });
         await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
@@ -950,6 +1106,28 @@ public class PostScrapeOrchestratorTests : IDisposable
         var hrStatus = _metaDb.GetHistoryReconStatus("acct-combo");
         Assert.NotNull(hrStatus);
         Assert.Equal("complete", hrStatus.Status);
+    }
+
+    [Fact]
+    public async Task RefreshRegisteredUsers_PendingBackfill_withoutSeasonWindows_keepsHistoryReconPending()
+    {
+        _metaDb.RegisterUser("dev-combo", "acct-combo");
+        _metaDb.EnqueueBackfill("acct-combo", 10);
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-tok");
+        _tokenManager.AccountId.Returns("caller-1");
+
+        var ctx = CreateContext(registeredIds: new HashSet<string> { "acct-combo" });
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+
+        var bfStatus = _metaDb.GetBackfillStatus("acct-combo");
+        Assert.NotNull(bfStatus);
+        Assert.Equal("complete", bfStatus.Status);
+
+        var hrStatus = _metaDb.GetHistoryReconStatus("acct-combo");
+        Assert.NotNull(hrStatus);
+        Assert.Equal("pending", hrStatus.Status);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

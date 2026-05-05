@@ -336,6 +336,20 @@ builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
 builder.Services.AddSingleton<BandScrapePhase>();
 builder.Services.AddSingleton<BandLeaderboardPersistence>();
+builder.Services.AddSingleton<IRegisteredPlayerBandDiscoveryStrategy, DirectRegisteredPlayerBandDiscoveryStrategy>();
+builder.Services.AddSingleton<RegisteredPlayerBandDiscoveryOrchestrator>(sp =>
+{
+    var scraper = sp.GetRequiredService<ILeaderboardQuerier>();
+    var executor = (scraper as GlobalLeaderboardScraper)?.Executor;
+    return new RegisteredPlayerBandDiscoveryOrchestrator(
+        sp.GetRequiredService<IMetaDatabase>(),
+        sp.GetRequiredService<BandLeaderboardPersistence>(),
+        sp.GetRequiredService<IRegisteredPlayerBandDiscoveryStrategy>(),
+        sp.GetRequiredService<ScrapeProgressTracker>(),
+        sp.GetRequiredService<IOptions<ScraperOptions>>(),
+        sp.GetRequiredService<ILogger<RegisteredPlayerBandDiscoveryOrchestrator>>(),
+        executor);
+});
 builder.Services.AddSingleton<IRegisteredBandLookupStrategy, DirectRegisteredBandLookupStrategy>();
 builder.Services.AddSingleton<RegisteredBandProcessingOrchestrator>(sp =>
 {

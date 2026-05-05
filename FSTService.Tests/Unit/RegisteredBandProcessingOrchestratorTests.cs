@@ -64,6 +64,57 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
         Assert.Equal(123456, Convert.ToInt32(cmd.ExecuteScalar()));
     }
 
+    [Fact]
+    public async Task RunAsync_checks_all_discovered_seasons_for_registered_band()
+    {
+        InsertBandProjection("Band_Quad", "acct1:acct2:acct3:acct4", ["acct1", "acct2", "acct3", "acct4"]);
+        Db.RegisterSelectedBandActivity("Band_Quad", "acct1:acct2:acct3:acct4");
+        Db.UpsertSeasonWindow(12, "", "");
+        Db.UpsertSeasonWindow(14, "", "");
+        Db.UpsertSeasonWindow(13, "", "");
+
+        var strategy = new CapturingRegisteredBandLookupStrategy();
+        var orchestrator = CreateOrchestrator(strategy, maxLookupsPerBand: 10);
+        using var pool = new SharedDopPool(1, 1, 1, 100, Substitute.For<ILogger>());
+
+        var result = await orchestrator.RunAsync(["song-a"], Db.GetSeasonWindows(), "token", "caller", pool);
+
+        Assert.Equal(1, result.BandsProcessed);
+        Assert.Equal(4, result.LookupsChecked);
+        Assert.Equal(0, result.EntriesFound);
+
+        var status = Db.GetRegisteredBandProcessingStatus("web-band-tracker", "Band_Quad", "acct1:acct2:acct3:acct4");
+        Assert.Equal("complete", status?.Status);
+        Assert.Equal(4, status?.LookupsChecked);
+        Assert.Equal(4, status?.TotalLookupsToCheck);
+
+        Assert.Collection(strategy.Intents,
+            intent =>
+            {
+                Assert.Equal("song-a", intent.SongId);
+                Assert.Equal(RegisteredBandLookupScope.AllTime, intent.Scope);
+                Assert.Equal(0, intent.Season);
+            },
+            intent =>
+            {
+                Assert.Equal("song-a", intent.SongId);
+                Assert.Equal(RegisteredBandLookupScope.Season, intent.Scope);
+                Assert.Equal(14, intent.Season);
+            },
+            intent =>
+            {
+                Assert.Equal("song-a", intent.SongId);
+                Assert.Equal(RegisteredBandLookupScope.Season, intent.Scope);
+                Assert.Equal(13, intent.Season);
+            },
+            intent =>
+            {
+                Assert.Equal("song-a", intent.SongId);
+                Assert.Equal(RegisteredBandLookupScope.Season, intent.Scope);
+                Assert.Equal(12, intent.Season);
+            });
+    }
+
     private RegisteredBandProcessingOrchestrator CreateOrchestrator(IRegisteredBandLookupStrategy strategy, int maxLookupsPerBand)
     {
         var bandPersistence = new BandLeaderboardPersistence(
@@ -122,6 +173,23 @@ public sealed class RegisteredBandProcessingOrchestratorTests : IDisposable
             if (intent.Scope == RegisteredBandLookupScope.AllTime)
                 return Task.FromResult(new RegisteredBandLookupResult([_entry]));
 
+            return Task.FromResult(RegisteredBandLookupResult.Empty);
+        }
+    }
+
+    private sealed class CapturingRegisteredBandLookupStrategy : IRegisteredBandLookupStrategy
+    {
+        public List<RegisteredBandLookupIntent> Intents { get; } = [];
+
+        public Task<RegisteredBandLookupResult> FetchAsync(
+            BandWorkItem band,
+            RegisteredBandLookupIntent intent,
+            string accessToken,
+            string callerAccountId,
+            AdaptiveConcurrencyLimiter? limiter,
+            CancellationToken ct)
+        {
+            Intents.Add(intent);
             return Task.FromResult(RegisteredBandLookupResult.Empty);
         }
     }

@@ -64,6 +64,8 @@ public interface IMetaDatabase : IDisposable
     bool UnregisterUser(string deviceId, string accountId);
     void TouchWebRegistrationActivity(string accountId);
     SelectedBandRegistrationResult RegisterSelectedBandActivity(string bandType, string teamKey, string? bandId = null);
+    int RegisterKnownBandsForAccountActivity(string accountId);
+    void RegisterDiscoveredBandActivity(string bandType, string teamKey, IReadOnlyList<string> memberAccountIds);
     List<RegisteredBandInfo> GetRegisteredBands();
     void EnsureRegisteredBandProcessingStatus(string sourceId, string bandType, string teamKey, int totalLookupsToCheck);
     RegisteredBandProcessingStatusInfo? GetRegisteredBandProcessingStatus(string sourceId, string bandType, string teamKey);
@@ -73,6 +75,8 @@ public interface IMetaDatabase : IDisposable
     void UpdateRegisteredBandProcessingProgress(string sourceId, string bandType, string teamKey, int lookupsChecked, int entriesFound, int totalLookupsToCheck);
     void MarkRegisteredBandLookupChecked(string sourceId, string bandType, string teamKey, string songId, string scope, int season, bool entryFound);
     List<RegisteredBandLookupProgressInfo> GetCheckedRegisteredBandLookups(string sourceId, string bandType, string teamKey);
+    void MarkRegisteredPlayerBandDiscoveryChecked(string accountId, string songId, string bandType, string scope, int season, bool entryFound);
+    List<RegisteredPlayerBandDiscoveryProgressInfo> GetCheckedRegisteredPlayerBandDiscoveryLookups(string accountId);
     int PruneStaleWebRegistrations(DateTime staleBeforeUtc);
     string? GetAccountIdForUsername(string username);
 

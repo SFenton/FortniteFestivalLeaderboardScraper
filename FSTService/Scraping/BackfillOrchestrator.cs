@@ -104,7 +104,11 @@ public sealed class BackfillOrchestrator
             seasonWindows = [];
         }
 
+        if (seasonWindows.Count == 0)
+            seasonWindows = _persistence.Meta.GetSeasonWindows();
+
         var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
+        var canRunCompleteHistoryRecon = allSeasons.Count > 0;
 
         // Get all charted song IDs
         var chartedSongIds = service.Songs
@@ -117,6 +121,8 @@ public sealed class BackfillOrchestrator
             _log.LogWarning("No charted songs available for backfill.");
             return;
         }
+
+        RegisterKnownBandsForAccounts(accountIds);
 
         // Build user work list — combine backfill + history recon
         _progress.SetSubOperation("building_work_list");
@@ -131,9 +137,11 @@ public sealed class BackfillOrchestrator
             users.Add(new UserWorkItem
             {
                 AccountId = accountId,
-                Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+                Purposes = canRunCompleteHistoryRecon
+                    ? WorkPurpose.Backfill | WorkPurpose.HistoryRecon
+                    : WorkPurpose.Backfill,
                 AllTimeNeeded = true,
-                SeasonsNeeded = new HashSet<int>(allSeasons),
+                SeasonsNeeded = canRunCompleteHistoryRecon ? new HashSet<int>(allSeasons) : [],
                 AlreadyChecked = alreadyChecked,
             });
         }
@@ -167,6 +175,9 @@ public sealed class BackfillOrchestrator
                     _rivalsOrchestrator.ComputeForUser(user.AccountId);
                     _precomputer.PrecomputeUser(user.AccountId);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
+
+                    if (!user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+                        EnsureHistoryReconPending(user.AccountId, chartedSongIds.Count);
                 }
                 catch (Exception ex)
                 {
@@ -176,6 +187,9 @@ public sealed class BackfillOrchestrator
                 // History recon completion
                 try
                 {
+                    if (!user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+                        continue;
+
                     var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
                     if (reconStatus is null)
                         _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
@@ -266,6 +280,8 @@ public sealed class BackfillOrchestrator
 
         if (chartedSongIds.Count == 0) return;
 
+        RegisterKnownBandsForAccounts(accountsToReconstruct);
+
         _progress.SetSubOperation("building_work_list");
         var users = new List<UserWorkItem>();
         foreach (var accountId in accountsToReconstruct)
@@ -319,5 +335,22 @@ public sealed class BackfillOrchestrator
         {
             _log.LogError(ex, "History recon via SongProcessingMachine failed. Will retry next pass.");
         }
+    }
+
+    private void RegisterKnownBandsForAccounts(IEnumerable<string> accountIds)
+    {
+        var registeredBands = 0;
+        foreach (var accountId in accountIds.Distinct(StringComparer.OrdinalIgnoreCase))
+            registeredBands += _persistence.Meta.RegisterKnownBandsForAccountActivity(accountId);
+
+        if (registeredBands > 0)
+            _log.LogDebug("Registered or refreshed {BandCount} known band(s) for tracked player history processing.", registeredBands);
+    }
+
+    private void EnsureHistoryReconPending(string accountId, int totalSongsToProcess)
+    {
+        var reconStatus = _persistence.Meta.GetHistoryReconStatus(accountId);
+        if (reconStatus?.Status != "complete")
+            _persistence.Meta.EnqueueHistoryRecon(accountId, totalSongsToProcess);
     }
 }

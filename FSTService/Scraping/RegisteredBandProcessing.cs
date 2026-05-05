@@ -128,8 +128,7 @@ public sealed class RegisteredBandProcessingOrchestrator
         if (registeredBands.Count == 0)
             return RegisteredBandProcessingResult.Empty;
 
-        var currentSeason = seasonWindows.Count == 0 ? 0 : seasonWindows.Max(static window => window.SeasonNumber);
-        var intents = BuildLookupIntents(songIds, currentSeason);
+        var intents = BuildLookupIntents(songIds, seasonWindows);
         if (intents.Count == 0)
             return RegisteredBandProcessingResult.Empty;
 
@@ -354,15 +353,26 @@ public sealed class RegisteredBandProcessingOrchestrator
             BandCurrentProjectionScopeTracker.OrderedDistinct(impactedCurrentProjectionScopes));
     }
 
-    private static List<RegisteredBandLookupIntent> BuildLookupIntents(IReadOnlyList<string> songIds, int currentSeason)
+    internal static List<RegisteredBandLookupIntent> BuildLookupIntents(
+        IReadOnlyList<string> songIds,
+        IReadOnlyList<SeasonWindowInfo> seasonWindows)
     {
-        var intents = new List<RegisteredBandLookupIntent>(songIds.Count * (currentSeason > 0 ? 2 : 1));
-        foreach (var songId in songIds.Distinct(StringComparer.OrdinalIgnoreCase))
-        {
+        var distinctSongIds = songIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var seasons = seasonWindows
+            .Select(static window => window.SeasonNumber)
+            .Where(static season => season > 0)
+            .Distinct()
+            .OrderDescending()
+            .ToList();
+
+        var intents = new List<RegisteredBandLookupIntent>(distinctSongIds.Count * (1 + seasons.Count));
+        foreach (var songId in distinctSongIds)
             intents.Add(new RegisteredBandLookupIntent(songId, RegisteredBandLookupScope.AllTime, 0));
-            if (currentSeason > 0)
-                intents.Add(new RegisteredBandLookupIntent(songId, RegisteredBandLookupScope.Season, currentSeason));
-        }
+
+        foreach (var season in seasons)
+        foreach (var songId in distinctSongIds)
+            intents.Add(new RegisteredBandLookupIntent(songId, RegisteredBandLookupScope.Season, season));
+
         return intents;
     }
 

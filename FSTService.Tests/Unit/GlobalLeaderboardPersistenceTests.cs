@@ -553,11 +553,13 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             agg.AddEntries(1);
             agg.AddChanges(1);
             agg.IncrementSongsWithData();
+            agg.IncrementSoloLeaderboardsWithData();
         });
 
         Assert.Equal(100, agg.TotalEntries);
         Assert.Equal(100, agg.TotalChanges);
         Assert.Equal(100, agg.SongsWithData);
+        Assert.Equal(100, agg.SoloLeaderboardsWithData);
     }
 
     [Fact]

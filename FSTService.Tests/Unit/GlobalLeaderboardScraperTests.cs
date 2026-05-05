@@ -373,6 +373,65 @@ public class GlobalLeaderboardScraperTests
         Assert.Equal("{\"teams\":[[\"acct1\",\"acct2\"]]}", body);
     }
 
+    [Fact]
+    public async Task FindBandsForAccountAsync_UsesFindTeamsWithOnlyTargetAccountInBody()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        handler.EnqueueJsonOk("""
+        [
+            {
+                "teamAccountIds": ["target_acct", "teammate1", "teammate2", "teammate3"],
+                "rank": 1,
+                "percentile": 1.0,
+                "sessionHistory": [
+                    {
+                        "endTime": "2026-04-27T00:00:00Z",
+                        "trackedStats": {
+                            "SCORE": 6874798,
+                            "B_SCORE": 6874798,
+                            "B_ACCURACY": 1000000,
+                            "B_FULL_COMBO": 1,
+                            "B_STARS": 6,
+                            "SEASON": 13,
+                            "M_0_ID_target_acct": 0,
+                            "M_0_INSTRUMENT": 0,
+                            "M_0_SCORE": 1700000,
+                            "M_1_ID_teammate1": 1,
+                            "M_1_INSTRUMENT": 1,
+                            "M_1_SCORE": 1700000,
+                            "M_2_ID_teammate2": 2,
+                            "M_2_INSTRUMENT": 2,
+                            "M_2_SCORE": 1700000,
+                            "M_3_ID_teammate3": 3,
+                            "M_3_INSTRUMENT": 3,
+                            "M_3_SCORE": 1774798
+                        }
+                    }
+                ]
+            }
+        ]
+        """);
+
+        var entries = await scraper.FindBandsForAccountAsync(
+            "song1", "Band_Quad", "target_acct", "S13Window1", "token", "caller_acct");
+
+        var entry = Assert.Single(entries);
+        Assert.Equal("target_acct:teammate1:teammate2:teammate3", entry.TeamKey);
+        Assert.Equal(6874798, entry.Score);
+        Assert.Equal("findteams", entry.Source);
+
+        var request = handler.Requests[0];
+        var url = request.RequestUri!.ToString();
+        Assert.Contains("/api/v2/games/FNFestival/leaderboards/S13Window1_song1/song1_Band_Quad/scores", url);
+        Assert.Contains("accountId=caller_acct", url);
+        Assert.Contains("findTeams=true", url);
+        var body = await request.Content!.ReadAsStringAsync();
+        Assert.Equal("{\"teams\":[[\"target_acct\"]]}", body);
+        Assert.DoesNotContain("caller_acct", body);
+        Assert.DoesNotContain("teammate1", body);
+    }
+
     // ─── ScrapeLeaderboardAsync ─────────────────────────
 
     [Fact]

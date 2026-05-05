@@ -287,6 +287,25 @@ public sealed class ScraperOptions
     public bool EnableRegisteredBandTargetedProcessing { get; set; } = true;
 
     /// <summary>
+    /// Enables per-registered-player V2 <c>findTeams=true</c> discovery for
+    /// Band_Duets, Band_Trios, and Band_Quad. Each request asks Epic for bands
+    /// containing exactly one registered account; returned exact teams are then
+    /// persisted and registered for targeted band processing.
+    /// </summary>
+    public bool EnableRegisteredPlayerBandDiscovery { get; set; } = true;
+
+    /// <summary>
+    /// Maximum registered accounts whose band discovery probes are processed in one pass.
+    /// Set to 0 for no limit.
+    /// </summary>
+    public int RegisteredPlayerBandDiscoveryMaxAccountsPerPass { get; set; } = 10;
+
+    /// <summary>
+    /// Maximum band discovery probes per registered account in one pass. Set to 0 for no limit.
+    /// </summary>
+    public int RegisteredPlayerBandDiscoveryMaxLookupsPerAccount { get; set; } = 50;
+
+    /// <summary>
     /// Maximum registered bands processed in one post-scrape pass. Set to 0 for no limit.
     /// </summary>
     public int RegisteredBandProcessingMaxBandsPerPass { get; set; } = 10;
