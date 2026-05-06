@@ -173,9 +173,9 @@ public sealed class BandScrapePhase
         // Process page 0 entries
         foreach (var entry in page0.Entries)
         {
-            ApplyChOptValidation(entry, maxScores);
+            ApplyChOptValidation(entry, maxScores, opts.OverThresholdMultiplier);
             allEntries.Add(entry);
-            if (!entry.IsOverThreshold)
+            if (IsWithinChOptValidCutoff(entry, maxScores, opts.ValidCutoffMultiplier))
                 validCount++;
         }
 
@@ -194,9 +194,9 @@ public sealed class BandScrapePhase
 
             foreach (var entry in parsed.Entries)
             {
-                ApplyChOptValidation(entry, maxScores);
+                ApplyChOptValidation(entry, maxScores, opts.OverThresholdMultiplier);
                 allEntries.Add(entry);
-                if (!entry.IsOverThreshold)
+                if (IsWithinChOptValidCutoff(entry, maxScores, opts.ValidCutoffMultiplier))
                     validCount++;
             }
 
@@ -223,9 +223,9 @@ public sealed class BandScrapePhase
 
                 foreach (var entry in parsed.Entries)
                 {
-                    ApplyChOptValidation(entry, maxScores);
+                    ApplyChOptValidation(entry, maxScores, opts.OverThresholdMultiplier);
                     allEntries.Add(entry);
-                    if (!entry.IsOverThreshold)
+                    if (IsWithinChOptValidCutoff(entry, maxScores, opts.ValidCutoffMultiplier))
                         validCount++;
                 }
 
@@ -253,9 +253,12 @@ public sealed class BandScrapePhase
 
     /// <summary>
     /// Check each member's individual score against the CHOpt max for their instrument.
-    /// Sets <see cref="BandLeaderboardEntry.IsOverThreshold"/> if any member exceeds 0.95× CHOpt max.
+    /// Sets <see cref="BandLeaderboardEntry.IsOverThreshold"/> if any member exceeds the over-threshold multiplier.
     /// </summary>
-    internal static void ApplyChOptValidation(BandLeaderboardEntry entry, SongMaxScores? maxScores)
+    internal static void ApplyChOptValidation(
+        BandLeaderboardEntry entry,
+        SongMaxScores? maxScores,
+        double overThresholdMultiplier = 1.05)
     {
         if (maxScores is null || entry.MemberStats.Count == 0)
             return;
@@ -270,13 +273,41 @@ public sealed class BandScrapePhase
             if (choptMax is null or <= 0)
                 continue;
 
-            // 0.95× threshold matches solo ValidCutoffMultiplier default
-            if (member.Score > (int)(choptMax.Value * 0.95))
+            if (member.Score > (int)(choptMax.Value * overThresholdMultiplier))
             {
                 entry.IsOverThreshold = true;
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Returns whether an entry counts toward the target of safely rankable rows collected during scraping.
+    /// This is intentionally stricter than <see cref="BandLeaderboardEntry.IsOverThreshold"/>.
+    /// </summary>
+    internal static bool IsWithinChOptValidCutoff(
+        BandLeaderboardEntry entry,
+        SongMaxScores? maxScores,
+        double validCutoffMultiplier = 0.95)
+    {
+        if (maxScores is null || entry.MemberStats.Count == 0)
+            return true;
+
+        foreach (var member in entry.MemberStats)
+        {
+            var leaderboardType = BandInstrumentMapping.ToLeaderboardType(member.InstrumentId);
+            if (leaderboardType is null)
+                continue;
+
+            var choptMax = maxScores.GetByInstrument(leaderboardType);
+            if (choptMax is null or <= 0)
+                continue;
+
+            if (member.Score > (int)(choptMax.Value * validCutoffMultiplier))
+                return false;
+        }
+
+        return true;
     }
 }
 

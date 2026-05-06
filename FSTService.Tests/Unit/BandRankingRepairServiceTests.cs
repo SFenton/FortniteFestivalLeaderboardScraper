@@ -56,6 +56,45 @@ public sealed class BandRankingRepairServiceTests : IDisposable
         Assert.True(result.Metrics.ResultRowCount > 0);
     }
 
+    [Fact]
+    public void RecomputeOverThresholdFlags_UsesMultiplierAndKnownChoptInstruments()
+    {
+        SeedSongWithMaxScores("song_threshold", maxVocalsScore: 100_000);
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+
+        persistence.UpsertBandEntries("song_threshold", "Band_Duets",
+        [
+            MakeBandEntry(
+                ["under-a", "under-b"],
+                "2:7",
+                100_000,
+                isOverThreshold: true,
+                memberStats:
+                [
+                    MakeMember(0, "under-a", instrumentId: 2, score: 100_000),
+                    MakeMember(1, "under-b", instrumentId: 7, score: 500_000),
+                ]),
+            MakeBandEntry(
+                ["over-a", "over-b"],
+                "2:7",
+                106_000,
+                isOverThreshold: false,
+                memberStats:
+                [
+                    MakeMember(0, "over-a", instrumentId: 2, score: 106_000),
+                    MakeMember(1, "over-b", instrumentId: 7, score: 500_000),
+                ]),
+        ]);
+
+        var changed = _sut.RecomputeOverThresholdFlags(["Band_Duets"], overThresholdMultiplier: 1.05);
+
+        Assert.Equal(2, changed);
+        Assert.False(GetIsOverThreshold("song_threshold", "Band_Duets", "under-a:under-b", "2:7"));
+        Assert.True(GetIsOverThreshold("song_threshold", "Band_Duets", "over-a:over-b", "2:7"));
+    }
+
     private void SeedSongs(params string[] songIds)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -68,6 +107,21 @@ public sealed class BandRankingRepairServiceTests : IDisposable
             cmd.Parameters.AddWithValue("artist", "artist");
             cmd.ExecuteNonQuery();
         }
+    }
+
+    private void SeedSongWithMaxScores(string songId, int? maxVocalsScore = null)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO songs (song_id, title, artist, max_vocals_score)
+            VALUES (@songId, @title, @artist, @maxVocalsScore)
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("title", songId);
+        cmd.Parameters.AddWithValue("artist", "artist");
+        cmd.Parameters.AddWithValue("maxVocalsScore", maxVocalsScore.HasValue ? maxVocalsScore.Value : DBNull.Value);
+        cmd.ExecuteNonQuery();
     }
 
     private void SeedBandEntries()
@@ -90,7 +144,32 @@ public sealed class BandRankingRepairServiceTests : IDisposable
         ]);
     }
 
-    private static BandLeaderboardEntry MakeBandEntry(string[] teamMembers, string instrumentCombo, int score, bool isFullCombo = false)
+    private bool GetIsOverThreshold(string songId, string bandType, string teamKey, string instrumentCombo)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT is_over_threshold
+            FROM band_entries
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND team_key = @teamKey
+              AND instrument_combo = @instrumentCombo
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("instrumentCombo", instrumentCombo);
+        return (bool)cmd.ExecuteScalar()!;
+    }
+
+    private static BandLeaderboardEntry MakeBandEntry(
+        string[] teamMembers,
+        string instrumentCombo,
+        int score,
+        bool isFullCombo = false,
+        bool isOverThreshold = false,
+        List<BandMemberStats>? memberStats = null)
     {
         var sortedMembers = teamMembers.OrderBy(static member => member, StringComparer.OrdinalIgnoreCase).ToArray();
         return new BandLeaderboardEntry
@@ -107,6 +186,19 @@ public sealed class BandRankingRepairServiceTests : IDisposable
             Rank = 1,
             Percentile = 0.5,
             Source = "scrape",
+            IsOverThreshold = isOverThreshold,
+            MemberStats = memberStats ?? [],
         };
     }
+
+    private static BandMemberStats MakeMember(int memberIndex, string accountId, int instrumentId, int score) => new()
+    {
+        MemberIndex = memberIndex,
+        AccountId = accountId,
+        InstrumentId = instrumentId,
+        Score = score,
+        Accuracy = 950000,
+        Stars = 5,
+        Difficulty = 3,
+    };
 }

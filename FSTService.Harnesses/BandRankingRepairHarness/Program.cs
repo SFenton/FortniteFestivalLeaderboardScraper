@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -16,6 +17,8 @@ string? bandTypesArg = null;
 string? outPath = null;
 bool execute = false;
 bool allowProd = false;
+bool recomputeOverThreshold = false;
+double overThresholdMultiplier = 1.05;
 int pauseMs = 0;
 
 for (int i = 0; i < args.Length; i++)
@@ -40,6 +43,12 @@ for (int i = 0; i < args.Length; i++)
         case "--execute":
             execute = true;
             break;
+        case "--recompute-over-threshold":
+            recomputeOverThreshold = true;
+            break;
+        case "--over-threshold-multiplier":
+            overThresholdMultiplier = double.Parse(args[++i], CultureInfo.InvariantCulture);
+            break;
         case "--allow-prod":
             allowProd = true;
             break;
@@ -58,6 +67,7 @@ var target = new NpgsqlConnectionStringBuilder(pg);
 Console.WriteLine($"Target: host={target.Host} database={target.Database} user={target.Username}");
 Console.WriteLine($"Band types: {string.Join(", ", bandTypes)}");
 Console.WriteLine($"Mode: {(execute ? "execute" : "status")}");
+Console.WriteLine($"Recompute over-threshold flags: {(recomputeOverThreshold ? $"true ({overThresholdMultiplier:F3}x)" : "false")}");
 
 await using var dataSource = NpgsqlDataSource.Create(pg);
 using var loggerFactory = LoggerFactory.Create(builder =>
@@ -85,9 +95,16 @@ if (!string.IsNullOrWhiteSpace(serviceUrl))
 
 var results = new List<BandRankingRepairResult>();
 var apiAfterEach = new List<BandApiProbe>();
+int? overThresholdRowsChanged = null;
 
 if (execute)
 {
+    if (recomputeOverThreshold)
+    {
+        overThresholdRowsChanged = repair.RecomputeOverThresholdFlags(bandTypes, overThresholdMultiplier);
+        Console.WriteLine($"Recomputed over-threshold flags: {overThresholdRowsChanged.Value:N0} rows changed");
+    }
+
     foreach (var result in repair.Rebuild(bandTypes))
     {
         results.Add(result);
@@ -113,6 +130,9 @@ var payload = new
     capturedAtUtc = DateTime.UtcNow.ToString("o"),
     target = new { host = target.Host, database = target.Database, username = target.Username },
     execute,
+    recomputeOverThreshold,
+    overThresholdMultiplier,
+    overThresholdRowsChanged,
     serviceUrl,
     bandTypes,
     before,
@@ -144,11 +164,12 @@ static void PrintUsage()
     Console.Error.WriteLine("""
         Usage:
           BandRankingRepairHarness --pg <connection-string> [--band-types <csv>] [--service-url <url>] [--out <path>]
-          BandRankingRepairHarness --pg <connection-string> --execute --allow-prod [--band-types <csv>] [--service-url <url>] [--pause-ms <ms>] [--out <path>]
+          BandRankingRepairHarness --pg <connection-string> --execute --allow-prod [--recompute-over-threshold] [--over-threshold-multiplier <value>] [--band-types <csv>] [--service-url <url>] [--pause-ms <ms>] [--out <path>]
 
         Notes:
           - Default mode is read-only status/inspection.
           - Writes require both --execute and --allow-prod.
+          - --recompute-over-threshold repairs band_entries.is_over_threshold before rebuilding rankings.
           - --service-url probes /api/rankings/bands/{bandType} before and after rebuilds.
         """);
 }

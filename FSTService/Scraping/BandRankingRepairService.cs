@@ -56,6 +56,78 @@ public sealed class BandRankingRepairService
         return results;
     }
 
+    public int RecomputeOverThresholdFlags(IReadOnlyList<string>? bandTypes = null, double overThresholdMultiplier = 1.05)
+    {
+        var resolved = ResolveBandTypes(bandTypes);
+
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = """
+            WITH member_thresholds AS (
+                SELECT
+                    bms.song_id,
+                    bms.band_type,
+                    bms.team_key,
+                    bms.instrument_combo,
+                    BOOL_OR(bms.score > FLOOR(max_scores.max_score * @overThresholdMultiplier)::INT) AS is_over_threshold
+                FROM band_member_stats bms
+                JOIN songs s ON s.song_id = bms.song_id
+                CROSS JOIN LATERAL (
+                    SELECT CASE bms.instrument_id
+                        WHEN 0 THEN s.max_lead_score
+                        WHEN 1 THEN s.max_bass_score
+                        WHEN 2 THEN s.max_vocals_score
+                        WHEN 3 THEN s.max_drums_score
+                        WHEN 4 THEN s.max_pro_lead_score
+                        WHEN 5 THEN s.max_pro_bass_score
+                        ELSE NULL
+                    END AS max_score
+                ) max_scores
+                WHERE bms.band_type = ANY(@bandTypes)
+                  AND bms.score IS NOT NULL
+                  AND max_scores.max_score IS NOT NULL
+                  AND max_scores.max_score > 0
+                GROUP BY bms.song_id, bms.band_type, bms.team_key, bms.instrument_combo
+            ),
+            recalculated AS (
+                SELECT
+                    be.song_id,
+                    be.band_type,
+                    be.team_key,
+                    be.instrument_combo,
+                    COALESCE(mt.is_over_threshold, FALSE) AS is_over_threshold
+                FROM band_entries be
+                LEFT JOIN member_thresholds mt
+                  ON mt.song_id = be.song_id
+                 AND mt.band_type = be.band_type
+                 AND mt.team_key = be.team_key
+                 AND mt.instrument_combo = be.instrument_combo
+                WHERE be.band_type = ANY(@bandTypes)
+            )
+            UPDATE band_entries be
+            SET is_over_threshold = r.is_over_threshold,
+                last_updated_at = NOW()
+            FROM recalculated r
+            WHERE be.song_id = r.song_id
+              AND be.band_type = r.band_type
+              AND be.team_key = r.team_key
+              AND be.instrument_combo = r.instrument_combo
+              AND be.is_over_threshold IS DISTINCT FROM r.is_over_threshold
+            """;
+        cmd.Parameters.AddWithValue("bandTypes", resolved.ToArray());
+        cmd.Parameters.AddWithValue("overThresholdMultiplier", overThresholdMultiplier);
+
+        var updated = cmd.ExecuteNonQuery();
+        _log.LogInformation(
+            "Recomputed band over-threshold flags for {BandTypes} at multiplier {Multiplier:F3}: {Updated:N0} rows changed.",
+            string.Join(", ", resolved),
+            overThresholdMultiplier,
+            updated);
+
+        return updated;
+    }
+
     public int GetTotalChartedSongs()
     {
         using var conn = _dataSource.OpenConnection();
