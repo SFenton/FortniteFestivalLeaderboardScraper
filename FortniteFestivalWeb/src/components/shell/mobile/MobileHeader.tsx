@@ -1,15 +1,16 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { IoChevronBack } from 'react-icons/io5';
+import { IoChevronBack, IoSearch } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import HamburgerButton from '../HamburgerButton';
 import BackLink from './BackLink';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
   Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
-  Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue,
-  flexRow, padding, TRANSITION_MS,
+  Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue, Size, Radius,
+  flexRow, flexCenter, padding, TRANSITION_MS,
 } from '@festival/theme';
 
 export interface MobileHeaderProps {
@@ -23,6 +24,8 @@ export interface MobileHeaderProps {
   isSongsRoute: boolean;
   /** Callback to open the navigation sidebar (shown on root pages). */
   onOpenSidebar?: () => void;
+  /** Callback to open the unified search modal. */
+  onOpenSearch?: () => void;
 }
 
 export default function MobileHeader({
@@ -33,9 +36,21 @@ export default function MobileHeader({
   songInstrument,
   isSongsRoute,
   onOpenSidebar,
+  onOpenSearch,
 }: MobileHeaderProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const s = useStyles();
+  const searchAction = (
+    <button
+      type="button"
+      style={s.iconButton}
+      onClick={onOpenSearch}
+      aria-label={t('common.searchAction')}
+    >
+      <IoSearch size={IconSize.nav} />
+    </button>
+  );
 
   /* v8 ignore start — conditional rendering tested via AppMobile integration */
   if (navTitle) {
@@ -58,15 +73,18 @@ export default function MobileHeader({
             <span style={s.title}>{navTitle}</span>
           </>
         )}
-        {isSongsRoute && songInstrument && (
-          <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={{ marginLeft: CssValue.auto }} />
-        )}
+        <div style={s.rightActions}>
+          {isSongsRoute && songInstrument && (
+            <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={s.instrumentIcon} />
+          )}
+          {searchAction}
+        </div>
       </div>
     );
   }
 
   if (backFallback) {
-    return <BackLink key={locationKey} fallback={backFallback} animate={shouldAnimate} />;
+    return <BackLink key={locationKey} fallback={backFallback} animate={shouldAnimate} rightAction={<span style={s.backLinkRightAction}>{searchAction}</span>} />;
   }
 
   return null;
@@ -113,6 +131,32 @@ function useStyles() {
       justifyContent: Justify.center,
       width: Layout.headerIconSlot,
       height: Layout.headerIconSlot,
+      flexShrink: 0,
+    } as CSSProperties,
+    rightActions: {
+      ...flexRow,
+      alignItems: Align.center,
+      gap: Gap.sm,
+      marginLeft: CssValue.auto,
+      flexShrink: 0,
+    } as CSSProperties,
+    instrumentIcon: {
+      flexShrink: 0,
+    } as CSSProperties,
+    iconButton: {
+      ...flexCenter,
+      width: Size.iconMd,
+      height: Size.iconMd,
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      borderRadius: Radius.xs,
+      color: Colors.textSecondary,
+      padding: 0,
+      flexShrink: 0,
+    } as CSSProperties,
+    backLinkRightAction: {
+      marginLeft: CssValue.auto,
       flexShrink: 0,
     } as CSSProperties,
   }), []);

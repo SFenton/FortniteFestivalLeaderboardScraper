@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoCompass, IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
+import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -556,7 +556,6 @@ function AppShell() {
 
   /** Shared FAB action group for player navigation (Find Player + Profile/Select + optionally Item Shop). */
   const playerActions = (includeShop = true) => [
-    { label: t('common.searchAction'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setSearchOpen(true) },
     player
       ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
       : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
@@ -596,6 +595,7 @@ function AppShell() {
             songInstrument={songInstrument}
             isSongsRoute={location.pathname === AppRoutes.songs}
             onOpenSidebar={() => setSidebarOpen(true)}
+            onOpenSearch={() => setSearchOpen(true)}
           />
         ) : (
           <DesktopNav

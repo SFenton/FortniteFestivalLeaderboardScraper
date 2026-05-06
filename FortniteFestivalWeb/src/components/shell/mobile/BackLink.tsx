@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { IoChevronBack } from 'react-icons/io5';
@@ -10,7 +10,7 @@ import {
   TRANSITION_MS,
 } from '@festival/theme';
 
-export default function BackLink({ fallback, animate = true }: { fallback: string; animate?: boolean }) {
+export default function BackLink({ fallback, animate = true, rightAction }: { fallback: string; animate?: boolean; rightAction?: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -30,6 +30,7 @@ export default function BackLink({ fallback, animate = true }: { fallback: strin
         <span style={s.iconSlot}><IoChevronBack size={IconSize.back} /></span>
         {t('common.back')}
       </Link>
+      {rightAction}
     </div>
   );
 }

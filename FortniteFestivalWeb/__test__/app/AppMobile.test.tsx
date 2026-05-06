@@ -223,12 +223,12 @@ describe('App — mobile FAB branches', () => {
     const groups = mergePageQuickLinksIntoFabGroups(
       [createAction('Quick Links')],
       [createAction('Leaderboard Rivals')],
-      [createAction('Search')],
+      [createAction('Profile')],
     );
 
     expect(groups.map(group => group.map(action => action.label))).toEqual([
       ['Quick Links', 'Leaderboard Rivals'],
-      ['Search'],
+      ['Profile'],
     ]);
   });
 
@@ -238,12 +238,12 @@ describe('App — mobile FAB branches', () => {
     const groups = mergePageQuickLinksIntoFabGroups(
       [createAction('Quick Links')],
       [],
-      [createAction('Search')],
+      [createAction('Profile')],
     );
 
     expect(groups.map(group => group.map(action => action.label))).toEqual([
       ['Quick Links'],
-      ['Search'],
+      ['Profile'],
     ]);
   });
 
@@ -252,7 +252,7 @@ describe('App — mobile FAB branches', () => {
     const quickLinksGroups = mergePageQuickLinksIntoFabGroups(
       [createAction('Quick Links')],
       [createAction('Sort Songs')],
-      [createAction('Search')],
+      [createAction('Profile')],
     );
 
     const groups = prependFabActionGroup([createAction('Filter Band Type')], quickLinksGroups);
@@ -260,7 +260,7 @@ describe('App — mobile FAB branches', () => {
     expect(groups.map(group => group.map(action => action.label))).toEqual([
       ['Filter Band Type'],
       ['Quick Links', 'Sort Songs'],
-      ['Search'],
+      ['Profile'],
     ]);
   });
 
@@ -542,10 +542,9 @@ describe('App — mobile FAB branches', () => {
     });
 
     fireEvent.click(screen.getByLabelText('Actions'));
-    await waitFor(() => {
-      expect(screen.getByText('Search')).toBeDefined();
-    });
-    expect(screen.getByText('View Paths')).toBeDefined();
+    const menu = await screen.findByTestId('fab-menu');
+    expect(within(menu).queryByText('Search')).toBeNull();
+    expect(within(menu).getByText('View Paths')).toBeDefined();
     window.location.hash = '';
   });
 
@@ -570,10 +569,9 @@ describe('App — mobile FAB branches', () => {
     });
 
     fireEvent.click(screen.getByLabelText('Actions'));
-    await waitFor(() => {
-      expect(screen.getByText('Search')).toBeDefined();
-    });
-    expect(screen.queryByText('View Paths')).toBeNull();
+    const menu = await screen.findByTestId('fab-menu');
+    expect(within(menu).queryByText('Search')).toBeNull();
+    expect(within(menu).queryByText('View Paths')).toBeNull();
     window.location.hash = '';
   });
 
