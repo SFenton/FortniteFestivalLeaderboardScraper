@@ -705,7 +705,7 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(screen.getAllByText('Alpha')).toHaveLength(1);
   });
 
-  it('does not fetch or render band ranking cards when player bands are disabled', async () => {
+  it('fetches and renders band ranking cards even when legacy player-band overrides are disabled', async () => {
     localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ playerBands: false }));
 
     render(
@@ -717,8 +717,8 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     );
 
     await waitFor(() => expect(mockApi.getRankings).toHaveBeenCalled());
-    expect(mockApi.getBandRankings).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('band-ranking-card-Band_Duets')).toBeNull();
-    expect(screen.queryByTestId('leaderboards-band-section-stack')).toBeNull();
+    expect(mockApi.getBandRankings).toHaveBeenCalled();
+    expect(await screen.findByTestId('band-ranking-card-Band_Duets')).toBeDefined();
+    expect(screen.getByTestId('leaderboards-band-section-stack')).toBeDefined();
   });
 });

@@ -2,35 +2,37 @@ import { test, expect } from '../fixtures/fre';
 import { goto } from '../fixtures/navigation';
 
 /*
- * Remaining feature-gate tests for leaderboards-driven routes.
- * Rivals and first-run are always-on; Compete stays gated by Leaderboards.
+ * Legacy feature-flag override checks. UI feature gates are removed, so stale
+ * dev overrides must not hide routes or first-run eligibility.
  */
 
-test.describe('Leaderboards Feature Gates', () => {
+test.describe('Legacy Feature Flag Overrides', () => {
 
   test.beforeEach(async ({ freState }) => {
     await freState.resetAppState();
   });
 
-  test('leaderboards flag OFF — /leaderboards redirects', async ({ page, freState }) => {
-    await freState.setFeatureFlags({ leaderboards: false });
+  test('legacy leaderboards override does not hide /leaderboards', async ({ page, freState }) => {
+    await freState.setLegacyFeatureFlagOverrides({ leaderboards: false });
     await goto(page, '/leaderboards');
 
-    await page.waitForURL(/#\/songs/, { timeout: 5000 });
+    await page.waitForURL(/#\/leaderboards/, { timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Leaderboards' })).toBeVisible();
   });
 
-  test('leaderboards flag OFF — /compete redirects because Compete is derived from Leaderboards', async ({ page, freState }) => {
+  test('legacy leaderboards override does not hide /compete', async ({ page, freState }) => {
     await freState.setTrackedPlayer();
-    await freState.setFeatureFlags({ leaderboards: false });
+    await freState.setLegacyFeatureFlagOverrides({ leaderboards: false });
     await goto(page, '/compete');
 
-    await page.waitForURL(/#\/songs/, { timeout: 5000 });
+    await page.waitForURL(/#\/compete/, { timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Compete' })).toBeVisible();
   });
 
-  test('leaderboards flag OFF still leaves always-on pages eligible for FRE', async ({ page, fre, freState }) => {
+  test('legacy leaderboards override leaves formerly gated pages eligible for FRE', async ({ page, fre, freState }) => {
     await freState.setTrackedPlayer();
     await freState.setSettings({ hideItemShop: true });
-    await freState.setFeatureFlags({ leaderboards: false });
+    await freState.setLegacyFeatureFlagOverrides({ leaderboards: false });
 
     await goto(page, '/songs');
     await fre.waitForVisible();
@@ -42,6 +44,7 @@ test.describe('Leaderboards Feature Gates', () => {
     await fre.dismiss();
 
     await goto(page, '/compete');
-    await page.waitForURL(/#\/songs/, { timeout: 5000 });
+    await page.waitForURL(/#\/compete/, { timeout: 5000 });
+    await fre.waitForVisible();
   });
 });

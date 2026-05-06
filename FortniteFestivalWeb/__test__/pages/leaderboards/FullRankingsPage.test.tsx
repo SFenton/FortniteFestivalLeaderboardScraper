@@ -155,9 +155,7 @@ beforeEach(() => {
 const { default: FullRankingsPage } = await import('../../../src/pages/leaderboards/FullRankingsPage');
 
 describe('FullRankingsPage', () => {
-  it('coerces experimental metric deep links to totalscore when the feature flag is off', async () => {
-    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ experimentalRanks: false }));
-
+  it('keeps experimental metric deep links available', async () => {
     render(
       <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted" accountId="test-player">
         <Routes>
@@ -167,7 +165,7 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'totalscore', 1, 25);
+      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'adjusted', 1, 25);
     });
   });
 

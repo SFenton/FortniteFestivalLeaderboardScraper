@@ -17,7 +17,6 @@ import { FixedLeaderboardPagination, FixedLeaderboardPlayerFooter, useLeaderboar
 import Page from '../Page';
 import { PageMessage } from '../PageMessage';
 import RankByModal from './modals/RankByModal';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -40,7 +39,6 @@ export default function BandRankingsPage() {
   const { t } = useTranslation();
   const { bandType: rawBandType } = useParams<{ bandType: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
@@ -54,30 +52,29 @@ export default function BandRankingsPage() {
   const selectedPlayerAccountId = profile?.type === 'player' ? profile.accountId : undefined;
   const selectedBandTeamKey = profile?.type === 'band' && profile.bandType === bandType ? profile.teamKey : undefined;
   const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
-  const metric = coerceBandRankingMetric(rawMetric, experimentalRanksEnabled);
+  const metric = coerceBandRankingMetric(rawMetric, true);
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
   const metricModal = useModalState<BandRankingMetric>(() => 'totalscore');
   const scrollRef = useRef<HTMLDivElement>(null);
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
 
   const openMetricModal = useCallback(() => {
-    if (!experimentalRanksEnabled) return;
     metricModal.open(metric);
-  }, [experimentalRanksEnabled, metric, metricModal]);
+  }, [metric, metricModal]);
 
   const applyMetric = useCallback(() => {
     if (!bandType) return;
-    const nextMetric = coerceBandRankingMetric(metricModal.draft, experimentalRanksEnabled);
+    const nextMetric = coerceBandRankingMetric(metricModal.draft, true);
     metricModal.close();
     saveLeaderboardRankBy(nextMetric);
     scrollContainerRef.current?.scrollTo(0, 0);
     setSearchParams({ rankBy: nextMetric, page: '1' }, { replace: true });
-  }, [bandType, experimentalRanksEnabled, metricModal, scrollContainerRef, setSearchParams]);
+  }, [bandType, metricModal, scrollContainerRef, setSearchParams]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: experimentalRanksEnabled ? openMetricModal : () => {}, openInstrument: () => {} });
+    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: () => {} });
     return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
-  }, [experimentalRanksEnabled, fabSearch, openMetricModal]);
+  }, [fabSearch, openMetricModal]);
 
   const leaderboardQuery = useQuery({
     queryKey: queryKeys.bandRankings(bandType ?? 'unknown', activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE, selectedPlayerAccountId, selectedBandTeamKey),
@@ -168,25 +165,25 @@ export default function BandRankingsPage() {
       ) : showMobilePageHeader ? (
         <PageHeader
           title={renderPageTitle(bandLabel, t('rankings.title'), totalTeams, t)}
-          actions={experimentalRanksEnabled ? (
+          actions={(
             <ActionPill
               icon={<IoOptions size={Size.iconAction} />}
               label={t(`rankings.metric.${metric}`)}
               onClick={openMetricModal}
               active={metric !== 'totalscore'}
             />
-          ) : undefined}
+          )}
         />
       ) : undefined}
       after={<RankByModal
-        visible={metricModal.visible && experimentalRanksEnabled}
+        visible={metricModal.visible}
         draft={metricModal.draft}
-        onDraftChange={(nextMetric) => metricModal.setDraft(coerceBandRankingMetric(nextMetric, experimentalRanksEnabled))}
+        onDraftChange={(nextMetric) => metricModal.setDraft(coerceBandRankingMetric(nextMetric, true))}
         onClose={metricModal.close}
         onApply={applyMetric}
         onReset={metricModal.reset}
-        experimentalRanksEnabled={experimentalRanksEnabled}
-        metrics={getEnabledBandRankingMetrics(experimentalRanksEnabled)}
+        experimentalRanksEnabled={true}
+        metrics={getEnabledBandRankingMetrics(true)}
         subject="bands"
       />}
     >

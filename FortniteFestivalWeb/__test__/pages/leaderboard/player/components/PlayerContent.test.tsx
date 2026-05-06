@@ -397,7 +397,7 @@ describe('PlayerContent', () => {
     expect(screen.getAllByText('View all bands (6)')).toHaveLength(1);
   });
 
-  it('hides the player bands section when the flag is disabled', async () => {
+  it('shows the player bands section even when legacy player-band overrides are disabled', async () => {
     localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ playerBands: false }));
 
     render(
@@ -434,8 +434,7 @@ describe('PlayerContent', () => {
       </Providers>,
     );
 
-    await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
-    expect(screen.queryByText("TestPlayer's Bands")).toBeNull();
+    await waitFor(() => { expect(screen.getByText("TestPlayer's Bands")).toBeDefined(); });
   });
 
   it('uses a single-column player grid on mobile widths above the narrow breakpoint', async () => {

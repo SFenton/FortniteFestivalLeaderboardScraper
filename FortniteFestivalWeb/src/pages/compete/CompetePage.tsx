@@ -9,7 +9,6 @@ import { queryKeys } from '../../api/queryKeys';
 import { rankingsCache } from '../../api/pageCache';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -85,7 +84,6 @@ export default function CompetePage() {
   const navigate = useNavigate();
   const { player } = useTrackedPlayer();
   const { settings } = useSettings();
-  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
   const isMobile = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
   const scrollContainerRef = useScrollContainer();
@@ -196,8 +194,8 @@ export default function CompetePage() {
     },
   ], [t]);
   const firstRunGateCtx = useMemo(
-    () => ({ hasPlayer: !!player, experimentalRanksEnabled }),
-    [experimentalRanksEnabled, player],
+    () => ({ hasPlayer: !!player, experimentalRanksEnabled: true }),
+    [player],
   );
 
   useEffect(() => {

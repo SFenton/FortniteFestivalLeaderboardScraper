@@ -515,7 +515,7 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
-  it('redirects player bands pages to songs when the bands feature flag is disabled', async () => {
+  it('keeps player bands pages accessible when legacy player-band overrides are disabled', async () => {
     setMobile();
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
     localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ playerBands: false }));
@@ -524,10 +524,10 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(window.location.hash).toBe('#/songs');
+      expect(window.location.hash).toBe('#/bands/player/p1?group=all&page=1&name=TrackedP');
+      expect(mockApi.getPlayerBandsList).toHaveBeenCalled();
+      expect(screen.getByText('BandMate')).toBeDefined();
     }, { timeout: 5000 });
-    expect(mockApi.getPlayerBandsList).not.toHaveBeenCalled();
-    expect(await screen.findByText('Test Song')).toBeDefined();
 
     window.location.hash = '';
   });

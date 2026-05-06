@@ -169,14 +169,12 @@ async function advancePastSpinner() {
 /* ── RivalsPage ── */
 
 describe('RivalsPage', () => {
-  it('coerces experimental leaderboard rankBy to totalscore when the feature flag is off', async () => {
-    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ experimentalRanks: false }));
-
+  it('keeps experimental leaderboard rankBy values available', async () => {
     renderPage('/rivals?tab=leaderboard&rankBy=adjusted', <RivalsPage />, '/rivals');
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(mockApi.getLeaderboardRivals).toHaveBeenCalledWith('Solo_Guitar', 'test-1', 'totalscore');
+    expect(mockApi.getLeaderboardRivals).toHaveBeenCalledWith('Solo_Guitar', 'test-1', 'adjusted');
   });
 
   it('renders the page', async () => {
@@ -397,7 +395,7 @@ describe('RivalsPage quick links', () => {
     expect(within(list).queryByTestId('rivals-quick-link-combo')).toBeNull();
   });
 
-  it('shows only the quick links pill on mobile when leaderboards are disabled', async () => {
+  it('shows the leaderboard toggle and quick links pill on mobile even when legacy overrides disable leaderboards', async () => {
     setViewportQueries({ mobile: true, wide: false });
     localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ leaderboards: false }));
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-mobile-no-leaderboards', displayName: 'TestPlayer' }));
@@ -406,10 +404,9 @@ describe('RivalsPage quick links', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    expect(screen.queryByRole('heading', { name: 'Song Rivals' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Leaderboard Rivals' })).toBeNull();
-
+    const toggleButton = await screen.findByRole('button', { name: 'Leaderboard Rivals' });
     const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
+    expect(toggleButton.parentElement).toBe(quickLinksButton.parentElement);
     expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
   });
 

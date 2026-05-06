@@ -139,16 +139,16 @@ export class FreState {
     );
   }
 
-  /** Set feature flag overrides (dev-mode only). */
-  async setFeatureFlags(overrides: Record<string, boolean>) {
+  /** Set legacy feature flag overrides. The app should now ignore these. */
+  async setLegacyFeatureFlagOverrides(overrides: Record<string, boolean>) {
     await this.page.evaluate(
       (o) => localStorage.setItem('fst:featureFlagOverrides', JSON.stringify(o)),
       overrides,
     );
   }
 
-  /** Clear feature flag overrides. */
-  async clearFeatureFlags() {
+  /** Clear legacy feature flag overrides. */
+  async clearLegacyFeatureFlagOverrides() {
     await this.page.evaluate(() => localStorage.removeItem('fst:featureFlagOverrides'));
   }
 

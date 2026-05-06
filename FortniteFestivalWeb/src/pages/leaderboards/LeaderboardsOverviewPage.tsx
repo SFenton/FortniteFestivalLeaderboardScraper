@@ -6,7 +6,6 @@ import { useSearchParams } from 'react-router-dom';
 import { IoOptions } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
@@ -46,7 +45,6 @@ const COLUMN_STAGGER_OFFSET = 1;
 export default function LeaderboardsOverviewPage() {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const { experimentalRanks: experimentalRanksEnabled = false, leaderboards: rankHistoryEnabled = false, playerBands: playerBandsEnabled = false } = useFeatureFlags();
   const { profile, player } = useTrackedPlayer();
   const selectedAccountId = player?.accountId;
   const selectedBandTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
@@ -57,15 +55,14 @@ export default function LeaderboardsOverviewPage() {
   const scrollContainerRef = useScrollContainer();
   const [searchParams, setSearchParams] = useSearchParams();
   const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
-  const metric = coerceRankingMetric(rawMetric, experimentalRanksEnabled);
-  const bandMetric = coerceBandRankingMetric(metric, experimentalRanksEnabled);
+  const metric = coerceRankingMetric(rawMetric, true);
+  const bandMetric = coerceBandRankingMetric(metric, true);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
 
   const openMetricModal = useCallback(() => {
-    if (!experimentalRanksEnabled) return;
     metricModal.open(metric);
-  }, [experimentalRanksEnabled, metricModal, metric]);
+  }, [metricModal, metric]);
 
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
   const resetRush = useCallback(() => staggerRushRef.current?.(), []);
@@ -80,9 +77,9 @@ export default function LeaderboardsOverviewPage() {
   }, [metricModal, setSearchParams, scrollContainerRef, resetRush]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: experimentalRanksEnabled ? openMetricModal : () => {}, openInstrument: () => {} });
+    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: () => {} });
     return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
-  }, [experimentalRanksEnabled, fabSearch, openMetricModal]);
+  }, [fabSearch, openMetricModal]);
 
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
 
@@ -94,7 +91,7 @@ export default function LeaderboardsOverviewPage() {
     })),
   });
 
-  const bandTypes = useMemo(() => playerBandsEnabled ? BAND_TYPES : [], [playerBandsEnabled]);
+  const bandTypes = useMemo(() => BAND_TYPES, []);
   const promotedBandType = useMemo(
     () => selectedBandType && bandTypes.includes(selectedBandType) ? selectedBandType : undefined,
     [bandTypes, selectedBandType],
@@ -124,7 +121,7 @@ export default function LeaderboardsOverviewPage() {
       ? queryKeys.bandRanking(selectedBandType, selectedBandTeamKey, selectedBandComboId, bandMetric)
       : ['bandRanking', 'none'],
     queryFn: () => api.getBandRanking(selectedBandType!, selectedBandTeamKey!, selectedBandComboId, bandMetric),
-    enabled: playerBandsEnabled && !!selectedBandType && !!selectedBandTeamKey,
+    enabled: !!selectedBandType && !!selectedBandTeamKey,
     retry: false,
   });
 
@@ -139,10 +136,9 @@ export default function LeaderboardsOverviewPage() {
   });
 
   // Hoist rank-history loading so the page waits for graph data before staggering.
-  // When the rank-history flag is off, pass [] so no queries are issued.
-  const allHistory = useRankHistoryAll(rankHistoryEnabled ? instruments : [], player?.accountId, metric);
-  const historyLoading = rankHistoryEnabled && player ? instruments.some(inst => allHistory[inst]?.loading) : false;
-  const historyAllCached = !rankHistoryEnabled || !player || instruments.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
+  const allHistory = useRankHistoryAll(instruments, player?.accountId, metric);
+  const historyLoading = player ? instruments.some(inst => allHistory[inst]?.loading) : false;
+  const historyAllCached = !player || instruments.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
 
   const leaderboardQueries = useMemo(() => [...rankingQueries, ...bandRankingQueries], [rankingQueries, bandRankingQueries]);
   const isLoading = leaderboardQueries.some(query => query.isLoading) || historyLoading;
@@ -168,17 +164,17 @@ export default function LeaderboardsOverviewPage() {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
     const instrumentRows = Math.ceil(instruments.length / cols);
     const totalRows = instrumentRows + bandTypes.length;
-    const chartSlot = player && rankHistoryEnabled ? 1 : 0;
+    const chartSlot = player ? 1 : 0;
     const totalAnimTime =
       (chartSlot + totalRows * itemsPerCard + (cols - 1) * COLUMN_STAGGER_OFFSET) * STAGGER_INTERVAL + FADE_DURATION;
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
-  }, [bandTypes.length, cols, instruments.length, itemsPerCard, loadPhase, player, rankHistoryEnabled, shouldStagger]);
+  }, [bandTypes.length, cols, instruments.length, itemsPerCard, loadPhase, player, shouldStagger]);
 
   const s = useLeaderboardsStyles();
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled }), [experimentalRanksEnabled, player]);
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled: true }), [player]);
   const firstLeaderboardError = leaderboardQueries.find(query => query.error)?.error;
-  const chartSlots = player && rankHistoryEnabled ? 1 : 0;
+  const chartSlots = player ? 1 : 0;
   const instrumentRows = Math.ceil(instruments.length / cols);
   const promotedBandRows = promotedBandType ? 1 : 0;
   const getInstrumentCardStaggerOffset = useCallback((cardIndex: number) => {
@@ -238,7 +234,7 @@ export default function LeaderboardsOverviewPage() {
         <PageHeader
           title={t('rankings.title')}
           actions={
-            !isMobile && !allErrored && experimentalRanksEnabled ? (
+            !isMobile && !allErrored ? (
               <ActionPill
                 icon={<IoOptions size={Size.iconAction} />}
                 label={t(`rankings.metric.${metric}`)}
@@ -252,13 +248,13 @@ export default function LeaderboardsOverviewPage() {
       }
       after={
         <RankByModal
-          visible={metricModal.visible && experimentalRanksEnabled}
+          visible={metricModal.visible}
           draft={metricModal.draft}
           onDraftChange={metricModal.setDraft}
           onClose={metricModal.close}
           onApply={applyMetric}
           onReset={metricModal.reset}
-          experimentalRanksEnabled={experimentalRanksEnabled}
+          experimentalRanksEnabled={true}
         />
       }
     >
@@ -266,7 +262,7 @@ export default function LeaderboardsOverviewPage() {
         const parsed = parseApiError(String(firstLeaderboardError));
         return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
       })()}
-      {loadPhase === LoadPhase.ContentIn && !allErrored && player && rankHistoryEnabled && (
+      {loadPhase === LoadPhase.ContentIn && !allErrored && player && (
         <div style={{ ...s.chartWrapper, ...buildStaggerStyle(shouldStagger ? 0 : null) }} onAnimationEnd={clearStaggerStyle}>
           <RankHistoryChart
             accountId={player.accountId}

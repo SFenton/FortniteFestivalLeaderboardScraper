@@ -4,8 +4,8 @@ import { coerceRankingMetric, DEFAULT_METRICS } from './rankingHelpers';
 export const BAND_EXPERIMENTAL_METRICS: BandRankingMetric[] = ['adjusted', 'weighted', 'fcrate'];
 export const BAND_RANKING_METRICS: BandRankingMetric[] = [...DEFAULT_METRICS, ...BAND_EXPERIMENTAL_METRICS] as BandRankingMetric[];
 
-export function getEnabledBandRankingMetrics(experimentalRanksEnabled: boolean): BandRankingMetric[] {
-  return experimentalRanksEnabled ? BAND_RANKING_METRICS : ['totalscore'];
+export function getEnabledBandRankingMetrics(_experimentalRanksEnabled: boolean): BandRankingMetric[] {
+  return BAND_RANKING_METRICS;
 }
 
 export function coerceBandRankingMetric(metric: string | RankingMetric | BandRankingMetric | null | undefined, experimentalRanksEnabled: boolean): BandRankingMetric {

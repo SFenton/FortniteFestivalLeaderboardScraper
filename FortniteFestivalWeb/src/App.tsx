@@ -44,7 +44,7 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
       <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
       <Route path="/songs" element={<SongsPage />} />
       <Route path="/songs/:songId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongDetailPage /></ErrorBoundary>} />
-      <Route path="/songs/:songId/bands/:bandType" element={<FeatureGate flag="playerBands"><ErrorBoundary fallback={<RouteErrorFallback />}><SongBandLeaderboardPage /></ErrorBoundary></FeatureGate>} />
+      <Route path="/songs/:songId/bands/:bandType" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongBandLeaderboardPage /></ErrorBoundary>} />
       <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
       <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
       <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
@@ -81,8 +81,8 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
       <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
       <Route path="/leaderboards" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary>} />
       <Route path="/leaderboards/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary>} />
-      <Route path="/leaderboards/bands/:bandType" element={<FeatureGate flag="playerBands"><ErrorBoundary fallback={<RouteErrorFallback />}><BandRankingsPage /></ErrorBoundary></FeatureGate>} />
-      <Route path="/bands/player/:accountId" element={<FeatureGate flag="playerBands"><ErrorBoundary fallback={<RouteErrorFallback />}><PlayerBandsPage /></ErrorBoundary></FeatureGate>} />
+      <Route path="/leaderboards/bands/:bandType" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandRankingsPage /></ErrorBoundary>} />
+      <Route path="/bands/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerBandsPage /></ErrorBoundary>} />
       <Route path="/bands" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandPage /></ErrorBoundary>} />
       <Route path="/bands/:bandId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><BandPage /></ErrorBoundary>} />
       {player ? (
@@ -104,7 +104,6 @@ import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/
 import { BandFilterActionProvider, type BandFilterActionContextValue } from './contexts/BandFilterActionContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visiblePathInstruments } from './contexts/SettingsContext';
-import { useFeatureFlags } from './contexts/FeatureFlagsContext';
 import { useProximityGlow } from './hooks/ui/useProximityGlow';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
@@ -143,7 +142,6 @@ import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext
 import { useShopState } from './hooks/data/useShopState';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
-import FeatureGate from './components/routing/FeatureGate';
 
 export default function App() {
   return (
@@ -327,7 +325,6 @@ function AppShell() {
   const { profile: selectedProfile, player, setPlayer, clearPlayer } = useTrackedPlayer();
   const { state: { songs } } = useFestival();
   const { settings } = useSettings();
-  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
 
   // Proximity glow for frosted cards — document-level for full coverage
   useProximityGlow(!settings.disableLightTrails);
@@ -714,7 +711,7 @@ function AppShell() {
       {isMobile && RoutePatterns.leaderboards.test(location.pathname) && (() => {
         const leaderboardActions = [
           ...(location.pathname === '/leaderboards/all' ? [{ label: t('rankings.changeInstrument'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
-          ...(experimentalRanksEnabled ? [{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
+          { label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() },
         ];
         return (
         <FloatingActionButton

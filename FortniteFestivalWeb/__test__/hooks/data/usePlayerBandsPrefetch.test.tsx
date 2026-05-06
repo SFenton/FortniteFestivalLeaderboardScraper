@@ -8,20 +8,7 @@ const mockApi = vi.hoisted(() => ({
   getPlayerBandsList: vi.fn(),
 }));
 
-const featureFlags = vi.hoisted(() => ({
-  playerBands: true,
-}));
-
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
-vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({
-    compete: true,
-    leaderboards: true,
-    difficulty: true,
-    playerBands: featureFlags.playerBands,
-    experimentalRanks: true,
-  }),
-}));
 
 const { usePlayerBandsPrefetch } = await import('../../../src/hooks/data/usePlayerBandsPrefetch');
 
@@ -64,7 +51,7 @@ function emptyBands(accountId = 'p1', group = 'all') {
 describe('usePlayerBandsPrefetch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    featureFlags.playerBands = true;
+    localStorage.clear();
     mockApi.getPlayerBandsList.mockImplementation((accountId: string, group: string) => Promise.resolve(emptyBands(accountId, group)));
     idleCallbacks = new Map();
     nextIdleHandle = 1;
@@ -91,14 +78,14 @@ describe('usePlayerBandsPrefetch', () => {
     expect(idleCallbacks.size).toBe(0);
   });
 
-  it('does not prefetch when player bands are disabled', () => {
-    featureFlags.playerBands = false;
+  it('prefetches when legacy player-band overrides are disabled', async () => {
+    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ playerBands: false }));
     const queryClient = createClient();
 
     renderHook(() => usePlayerBandsPrefetch('p1'), { wrapper: makeWrapper(queryClient) });
 
-    expect(mockApi.getPlayerBandsList).not.toHaveBeenCalled();
-    expect(idleCallbacks.size).toBe(0);
+    await waitFor(() => expect(mockApi.getPlayerBandsList).toHaveBeenCalledTimes(1));
+    expect(idleCallbacks.size).toBe(1);
   });
 
   it('prefetches all bands immediately and filtered groups during idle time', async () => {

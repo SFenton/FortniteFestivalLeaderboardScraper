@@ -1,0 +1,1 @@
+import{j as t,r as n,L as o,F as r,C as i,aN as g,p,G as e}from"./index-C6Li_E7C.js";function m({children:s}){const a=u();return t.jsx("div",{style:a.message,children:s})}function u(){return n.useMemo(()=>({message:{...g,padding:p(e.section,e.none),color:i.textSecondary,fontSize:r.lg,minHeight:o.pageMessageMinHeight}}),[])}export{m as P};

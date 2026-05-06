@@ -18,7 +18,6 @@ const competeLeaderboardsSlide: FirstRunSlideDef = {
   version: 2,
   title: 'firstRun.compete.leaderboards.title',
   description: 'firstRun.compete.leaderboards.description',
-  gate: (ctx) => !!ctx.experimentalRanksEnabled,
   render: () => createElement(CompeteLeaderboardsDemo),
   contentStaggerCount: 6,
 };

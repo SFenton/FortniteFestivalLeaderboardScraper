@@ -8,7 +8,6 @@
  */
 import { memo, useMemo } from 'react';
 import { Align, Colors, Display, Font, FontVariant, Gap, Justify, Layout, StarSize, TextAlign, Weight, flexRow, transition, TRANSITION_MS, truncate } from '@festival/theme';
-import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import ScorePill from '../../../../components/songs/metadata/ScorePill';
 import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
@@ -69,8 +68,6 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   rankWidth,
 }: LeaderboardEntryProps) {
   const s = useStyles(isPlayer, rankWidth);
-  const { difficulty: difficultyEnabled } = useFeatureFlags();
-
   return (
     <>
       {rank != null
@@ -78,7 +75,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
         : null}
       <span style={s.colName}>{label ?? displayName}</span>
       <span style={s.seasonScoreGroup}>
-        {difficultyEnabled && showDifficulty && (
+        {showDifficulty && (
           difficulty != null && difficulty >= 0
             ? <DifficultyPill difficulty={difficulty} />
             : <span style={s.hidden} aria-hidden="true"><DifficultyPill difficulty={0} /></span>

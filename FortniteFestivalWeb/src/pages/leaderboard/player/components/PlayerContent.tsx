@@ -48,7 +48,6 @@ import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
 import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
 import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRankingDto, PlayerStatsResponse } from '@festival/core/api/serverTypes';
-import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import type { PageQuickLinksConfig } from '../../../../components/page/PageQuickLinks';
 import { createPreserveShellScrollState } from '../../../../utils/quietNavigation';
@@ -210,11 +209,6 @@ export default function PlayerContent({
 }: PlayerContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const {
-    leaderboards: leaderboardsEnabled,
-    playerBands: playerBandsEnabled,
-    experimentalRanks: experimentalRanksEnabled = false,
-  } = useFeatureFlags();
   const scrollContainerRef = useScrollContainer();
   const location = useLocation();
   const navigate = useNavigate();
@@ -436,7 +430,7 @@ export default function PlayerContent({
   }
 
   // --- Overall summary stat boxes ---
-  const overallSummaryItems = buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, statsData?.compositeRanks, experimentalRanksEnabled, navigateToLeaderboard);
+  const overallSummaryItems = buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, statsData?.compositeRanks, true, navigateToLeaderboard);
   items.push(...overallSummaryItems);
 
   // --- Instrument Statistics heading ---
@@ -470,7 +464,7 @@ export default function PlayerContent({
     const totalRanked = hasRankTiers
       ? (statsData!.instrumentRanks as InstrumentRankEntry[])?.find(e => e.ins === comboIdFromInstruments([inst]))?.totalRanked
       : rankingDto?.totalRankedAccounts;
-    const instrumentItems = buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), experimentalRanksEnabled, navigateToLeaderboard, data.accountId, totalRanked, leaderboardsEnabled);
+    const instrumentItems = buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), true, navigateToLeaderboard, data.accountId, totalRanked, true);
     if (instrumentItems.length > 0) {
       instrumentSectionFirstKeys.set(inst, instrumentItems[0]!.key);
     }
@@ -498,8 +492,8 @@ export default function PlayerContent({
     items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === visibleKeys.length - 1, isNarrowGrid));
   }
 
-  const hasBandsSection = playerBandsEnabled && !!statsData;
-  if (playerBandsEnabled && statsData) {
+  const hasBandsSection = !!statsData;
+  if (statsData) {
     items.push(...buildPlayerBandsItems(t, data.displayName, statsData.bands ?? EMPTY_PLAYER_BANDS, data.accountId));
   }
 

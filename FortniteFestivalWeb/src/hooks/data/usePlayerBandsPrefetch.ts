@@ -4,7 +4,6 @@ import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import type { PlayerBandListGroup } from '@festival/core/api/serverTypes';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 
 const PREFETCH_PAGE = 1;
 const PREFETCH_PAGE_SIZE = 25;
@@ -43,10 +42,9 @@ function prefetchBandsGroup(queryClient: QueryClient, accountId: string, group: 
 
 export function usePlayerBandsPrefetch(accountId: string | undefined) {
   const queryClient = useQueryClient();
-  const { playerBands: playerBandsEnabled } = useFeatureFlags();
 
   useEffect(() => {
-    if (!accountId || !playerBandsEnabled) return;
+    if (!accountId) return;
 
     prefetchBandsGroup(queryClient, accountId, PRIMARY_GROUP);
     const cancelIdlePrefetch = scheduleIdle(() => {
@@ -61,5 +59,5 @@ export function usePlayerBandsPrefetch(accountId: string | undefined) {
       void queryClient.cancelQueries({ queryKey, type: 'inactive' });
       queryClient.removeQueries({ queryKey, type: 'inactive' });
     };
-  }, [accountId, playerBandsEnabled, queryClient]);
+  }, [accountId, queryClient]);
 }

@@ -13,14 +13,13 @@ import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { LoadPhase } from '@festival/core';
-import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
 import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS, CONTENT_OUT_MS } from '@festival/theme';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
 import { useRankHistoryAll } from '../../hooks/chart/useRankHistory';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
@@ -153,10 +152,8 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   });
 
   // Prefetch rank-history so charts warm in background, but do not block initial player content.
-  // When the rank-history flag is off, pass [] so no queries are issued.
-  const { leaderboards: rankHistoryEnabled = false } = useFeatureFlags();
-  const allHistory = useRankHistoryAll(rankHistoryEnabled ? visibleKeys : [], accountId, 'totalscore');
-  const historyAllCached = !rankHistoryEnabled || !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
+  const allHistory = useRankHistoryAll(visibleKeys, accountId, 'totalscore');
+  const historyAllCached = !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
 
   // Skip stagger if we've rendered this account before.
   const hasRendered = isTrackedPlayer

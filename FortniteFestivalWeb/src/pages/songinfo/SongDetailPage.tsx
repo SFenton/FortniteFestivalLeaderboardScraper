@@ -37,7 +37,6 @@ import InstrumentCard from './components/InstrumentCard';
 import SongBandLeaderboardPreview from './components/SongBandLeaderboardPreview';
 import IntensityCard from './components/IntensityCard';
 import { songInfoSlides } from './firstRun';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { SONG_BAND_TYPES } from '../../utils/songBandLeaderboards';
 
 import { songDetailCache } from '../../api/pageCache';
@@ -86,7 +85,6 @@ export default function SongDetailPage() {
   const activeBandComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType ? appliedBandComboFilter.comboId : undefined;
   const bandSelectionKey = getBandSelectionKey(selectedBandType, selectedTeamKey, activeBandComboId);
   const { settings } = useSettings();
-  const { playerBands: playerBandsEnabled } = useFeatureFlags();
   const song = songs.find((s) => s.songId === songId);
   const configuredInstruments = visibleInstruments(settings);
   const activeInstruments = useMemo(
@@ -94,8 +92,8 @@ export default function SongDetailPage() {
     [configuredInstruments, song],
   );
   const promotedSongBandType = useMemo(
-    () => playerBandsEnabled && selectedBandType && SONG_BAND_TYPES.includes(selectedBandType) ? selectedBandType : undefined,
-    [playerBandsEnabled, selectedBandType],
+    () => selectedBandType && SONG_BAND_TYPES.includes(selectedBandType) ? selectedBandType : undefined,
+    [selectedBandType],
   );
   const trailingSongBandTypes = useMemo(
     () => promotedSongBandType ? SONG_BAND_TYPES.filter(bandType => bandType !== promotedSongBandType) : SONG_BAND_TYPES,
@@ -126,7 +124,7 @@ export default function SongDetailPage() {
   const location = useLocation();
   const cached = songId ? songDetailCache.get(songId) : undefined;
   const hasCachedScoreHistory = cached && cached.scoreHistoryAccountId === selectedAccountId;
-  const hasCachedBandData = !playerBandsEnabled || (!!cached?.bandData && cached.bandSelectionKey === bandSelectionKey);
+  const hasCachedBandData = !!cached?.bandData && cached.bandSelectionKey === bandSelectionKey;
 
   const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>(hasCachedScoreHistory ? cached.scoreHistory : []);
   const [scoreHistoryReady, setScoreHistoryReady] = useState(!!hasCachedScoreHistory);
@@ -138,7 +136,7 @@ export default function SongDetailPage() {
         ) as unknown as Record<InstrumentKey, InstrumentData>,
   );
   const [bandData, setBandData] = useState<Record<PlayerBandType, SongBandData>>(
-    () => cached?.bandData ?? createSongBandData(playerBandsEnabled),
+    () => cached?.bandData ?? createSongBandData(true),
   );
 
   // Track whether the component mounted with cached data so effects can skip the initial fetch.
@@ -232,10 +230,10 @@ export default function SongDetailPage() {
     return () => { cancelled = true; };
   }, [songId, leewayParam]);
 
-  // Fetch generic band leaderboards in a single request while the bands feature is enabled.
+  // Fetch generic band leaderboards in a single request.
   useEffect(() => {
     if (mountedWithCacheRef.current) return;
-    if (!songId || !playerBandsEnabled) {
+    if (!songId) {
       setBandData(createSongBandData(false));
       return;
     }
@@ -272,7 +270,7 @@ export default function SongDetailPage() {
     });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- cache presence is intentionally frozen at mount
-  }, [activeBandComboId, songId, playerBandsEnabled, selectedAccountId, selectedBandType, selectedTeamKey]);
+  }, [activeBandComboId, songId, selectedAccountId, selectedBandType, selectedTeamKey]);
   /* v8 ignore stop */
 
   // Clear the cache-skip flag after all fetch effects have had a chance to check it.
@@ -282,7 +280,7 @@ export default function SongDetailPage() {
   // No player means no player-specific data to wait for
   const playerDataReady = !player || scoreHistoryReady;
   const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
-  const bandsReady = !playerBandsEnabled || SONG_BAND_TYPES.every((bandType) => !bandData[bandType].loading);
+  const bandsReady = SONG_BAND_TYPES.every((bandType) => !bandData[bandType].loading);
   const allReady = playerDataReady && instrumentsReady && bandsReady;
 
   // Apply invalid score filtering
@@ -320,19 +318,17 @@ export default function SongDetailPage() {
     for (const h of filteredScoreHistory) {
       maxLen = Math.max(maxLen, h.newScore.toLocaleString().length);
     }
-    if (playerBandsEnabled) {
-      for (const bandType of SONG_BAND_TYPES) {
-        for (const e of bandData[bandType].entries) {
-          maxLen = Math.max(maxLen, e.score.toLocaleString().length);
-        }
-        const selectedEntry = bandData[bandType].selectedBandEntry ?? bandData[bandType].selectedPlayerEntry;
-        if (selectedEntry) {
-          maxLen = Math.max(maxLen, selectedEntry.score.toLocaleString().length);
-        }
+    for (const bandType of SONG_BAND_TYPES) {
+      for (const e of bandData[bandType].entries) {
+        maxLen = Math.max(maxLen, e.score.toLocaleString().length);
+      }
+      const selectedEntry = bandData[bandType].selectedBandEntry ?? bandData[bandType].selectedPlayerEntry;
+      if (selectedEntry) {
+        maxLen = Math.max(maxLen, selectedEntry.score.toLocaleString().length);
       }
     }
     return `${maxLen}ch`;
-  }, [activeInstruments, instrumentData, filteredPlayerScores, filteredScoreHistory, playerBandsEnabled, bandData]);
+  }, [activeInstruments, instrumentData, filteredPlayerScores, filteredScoreHistory, bandData]);
 
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
@@ -385,13 +381,13 @@ export default function SongDetailPage() {
     if (!songId || !allReady) return;
     songDetailCache.set(songId, {
       instrumentData,
-      bandData: playerBandsEnabled ? bandData : undefined,
+      bandData,
       scoreHistory,
       scoreHistoryAccountId: player?.accountId,
       bandSelectionKey,
       scrollTop: scrollContainerRef.current?.scrollTop ?? 0,
     });
-  }, [allReady, songId, instrumentData, bandData, playerBandsEnabled, scoreHistory, player?.accountId, bandSelectionKey]);
+  }, [allReady, songId, instrumentData, bandData, scoreHistory, player?.accountId, bandSelectionKey]);
   /* v8 ignore stop */
 
   // Restore scroll position when returning from cache (not on fresh PUSH navigations)
@@ -461,7 +457,7 @@ export default function SongDetailPage() {
 
   return (
     <Page
-      scrollDeps={[phase, activeInstruments.length, playerBandsEnabled ? SONG_BAND_TYPES.length : 0]}
+      scrollDeps={[phase, activeInstruments.length, SONG_BAND_TYPES.length]}
       variant="withBgClip"
       fabSpacer={phase === LoadPhase.ContentIn && allErrored ? 'none' : 'end'}
       headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
@@ -526,7 +522,7 @@ export default function SongDetailPage() {
               </div>
             ) : null}
           </CollapsePresence>
-          {playerBandsEnabled && promotedSongBandType && (
+          {promotedSongBandType && (
             <div data-testid="song-detail-promoted-band-sections" style={styles.promotedBandSections}>
               {renderSongBandPreview(promotedSongBandType, 300)}
             </div>
@@ -557,7 +553,7 @@ export default function SongDetailPage() {
               );
             })}
           </div>
-          {playerBandsEnabled && trailingSongBandTypes.length > 0 && (
+          {trailingSongBandTypes.length > 0 && (
             <div style={styles.bandSections}>
               {trailingSongBandTypes.map((bandType, idx) => renderSongBandPreview(bandType, getTrailingBandBaseDelay(idx)))}
             </div>

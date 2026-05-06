@@ -1,33 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
-// Dynamic flag values that individual tests can override
-const flagValues = vi.hoisted(() => ({
-  compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true,
-}));
-
-// Track whether fetch should fail
-const fetchShouldFail = vi.hoisted(() => ({ value: false }));
-
 beforeEach(() => {
-  flagValues.compete = true;
-  flagValues.leaderboards = true;
-  flagValues.difficulty = true;
-  flagValues.playerBands = true;
-  flagValues.experimentalRanks = true;
-  fetchShouldFail.value = false;
-
-  vi.stubGlobal('fetch', vi.fn(() => {
-    if (fetchShouldFail.value) {
-      return Promise.resolve({ ok: false, status: 500, statusText: 'Internal Server Error' });
-    }
-    return Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve({ ...flagValues }),
-    });
-  }));
+  vi.stubGlobal('fetch', vi.fn());
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -48,77 +26,26 @@ function makeWrapper() {
 }
 
 describe('FeatureFlagsContext', () => {
-  describe('dev mode (default in vitest)', () => {
-    it('returns all flags ON without fetching', () => {
-      const wrapper = makeWrapper();
-      const { result } = renderHook(() => useFeatureFlags(), { wrapper });
+  it('returns all flags ON without fetching', () => {
+    const wrapper = makeWrapper();
+    const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
-      expect(result.current.compete).toBe(true);
-      expect(result.current.leaderboards).toBe(true);
-      expect(result.current.difficulty).toBe(true);
-      expect(result.current.playerBands).toBe(true);
-      expect(result.current.experimentalRanks).toBe(true);
-      expect(fetch).not.toHaveBeenCalled();
-    });
+    expect(result.current.compete).toBe(true);
+    expect(result.current.leaderboards).toBe(true);
+    expect(result.current.difficulty).toBe(true);
+    expect(result.current.playerBands).toBe(true);
+    expect(result.current.experimentalRanks).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  describe('prod mode', () => {
-    beforeEach(() => {
-      (import.meta.env as Record<string, unknown>).DEV = false;
-    });
-    afterEach(() => {
-      (import.meta.env as Record<string, unknown>).DEV = true;
-    });
+  it('ignores legacy local overrides', () => {
+    localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ playerBands: false, experimentalRanks: false }));
 
-    it('fetches flags from /api/features', async () => {
-      const wrapper = makeWrapper();
-      const { result } = renderHook(() => useFeatureFlags(), { wrapper });
+    const wrapper = makeWrapper();
+    const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
-      await waitFor(() => {
-        expect(result.current.leaderboards).toBe(true);
-      });
-
-      expect(result.current.compete).toBe(true);
-      expect(result.current.leaderboards).toBe(true);
-      expect(result.current.difficulty).toBe(true);
-      expect(result.current.playerBands).toBe(true);
-      expect(result.current.experimentalRanks).toBe(true);
-      expect(fetch).toHaveBeenCalledWith('/api/features');
-    });
-
-    it('keeps compete enabled regardless of leaderboards response', async () => {
-      flagValues.leaderboards = false;
-      flagValues.compete = false;
-
-      const wrapper = makeWrapper();
-      const { result } = renderHook(() => useFeatureFlags(), { wrapper });
-
-      await waitFor(() => {
-        expect(result.current.playerBands).toBe(true);
-      });
-
-      expect(result.current.compete).toBe(true);
-      expect(result.current.leaderboards).toBe(false);
-      expect(result.current.playerBands).toBe(true);
-      expect(result.current.experimentalRanks).toBe(true);
-    });
-
-    it('returns all flags OFF when fetch fails (except compete, which is always on)', async () => {
-      fetchShouldFail.value = true;
-
-      const wrapper = makeWrapper();
-      const { result } = renderHook(() => useFeatureFlags(), { wrapper });
-
-      await waitFor(() => {
-        expect(fetch).toHaveBeenCalled();
-      });
-
-      expect(result.current.compete).toBe(true);
-      expect(result.current.leaderboards).toBe(false);
-      expect(result.current.difficulty).toBe(false);
-      expect(result.current.playerBands).toBe(false);
-      expect(result.current.experimentalRanks).toBe(false);
-    });
+    expect(result.current.playerBands).toBe(true);
+    expect(result.current.experimentalRanks).toBe(true);
   });
 
   it('throws when used outside provider', () => {

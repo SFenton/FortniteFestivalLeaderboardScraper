@@ -3,7 +3,6 @@ import { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
-import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useSongLookups } from '../../hooks/data/useSongLookups';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
@@ -36,7 +35,6 @@ export default function RivalDetailPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { settings } = useSettings();
-  const { experimentalRanks: experimentalRanksEnabled = false } = useFeatureFlags();
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
@@ -55,7 +53,7 @@ export default function RivalDetailPage() {
   // Leaderboard rival source: comes from navigation state set by LeaderboardRivalsTab
   const source = (navState?.source as 'song' | 'leaderboard') ?? 'song';
   const lbInstrument = navState?.instrument as string | undefined;
-  const lbRankBy = coerceRankingMetric(navState?.rankBy as string | undefined, experimentalRanksEnabled);
+  const lbRankBy = coerceRankingMetric(navState?.rankBy as string | undefined, true);
   /* v8 ignore stop */
 
   /* v8 ignore start -- cache-based state initialization */
