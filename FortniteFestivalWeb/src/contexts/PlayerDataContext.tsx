@@ -39,6 +39,8 @@ type PlayerDataContextValue = {
   playerLoading: boolean;
   playerError: string | null;
   refreshPlayer: () => Promise<void>;
+  isTracked: boolean;
+  syncStatusLoaded: boolean;
   isSyncing: boolean;
   syncPhase: SyncPhase;
   backfillProgress: number;
@@ -81,7 +83,7 @@ export function PlayerDataProvider({
     enabled: !!accountId,
   });
 
-  const { isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted, clearCompleted } =
+  const { isTracked, syncStatusLoaded, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted, clearCompleted } =
     useSyncStatus(accountId);
 
   // Separate flag that consumers can read independently of the one-shot justCompleted
@@ -124,6 +126,8 @@ export function PlayerDataProvider({
     playerError: error ? (error instanceof Error ? error.message : 'Failed to load player') : null,
     /* v8 ignore stop */
     refreshPlayer,
+    isTracked,
+    syncStatusLoaded,
     isSyncing,
     syncPhase: phase,
     backfillProgress,
@@ -145,7 +149,7 @@ export function PlayerDataProvider({
     clearCompleted: clearSyncCompleted,
     syncBannerDismissed,
     dismissSyncBanner,
-  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, syncCompleted, clearSyncCompleted, syncBannerDismissed, dismissSyncBanner]);
+  }), [data, isLoading, error, refreshPlayer, isTracked, syncStatusLoaded, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, syncCompleted, clearSyncCompleted, syncBannerDismissed, dismissSyncBanner]);
 
   return (
     <PlayerDataContext.Provider value={value}>

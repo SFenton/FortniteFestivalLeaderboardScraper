@@ -821,6 +821,64 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.Null(result);
     }
 
+    [Fact]
+    public void GetCurrentStatePlayerProfiles_reads_projected_current_rows_for_multiple_accounts()
+    {
+        using var glp = CreatePersistence();
+        SeedCurrentLeaderboardEntry("acct_a", "song_1", "Solo_Guitar", 123_456, rank: 7);
+        SeedCurrentLeaderboardEntry("acct_a", "song_2", "Solo_Bass", 234_567, rank: 11);
+        SeedCurrentLeaderboardEntry("acct_b", "song_1", "Solo_Guitar", 345_678, rank: 3);
+
+        var profiles = glp.GetCurrentStatePlayerProfiles(["acct_a", "acct_b", "missing"]);
+
+        Assert.Equal(2, profiles.Count);
+        Assert.Equal(2, profiles["acct_a"].Count);
+        Assert.Single(profiles["acct_b"]);
+        Assert.Contains(profiles["acct_a"], score => score is
+        {
+            SongId: "song_1",
+            Instrument: "Solo_Guitar",
+            Score: 123_456,
+            Rank: 7,
+            ApiRank: 7,
+        });
+        Assert.Contains(profiles["acct_a"], score => score is
+        {
+            SongId: "song_2",
+            Instrument: "Solo_Bass",
+            Score: 234_567,
+            Rank: 11,
+        });
+    }
+
+    private void SeedCurrentLeaderboardEntry(string accountId, string songId, string instrument, int score, int rank)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO current_leaderboard_entries (
+                song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+                season, percentile, rank, api_rank, source, difficulty, end_time,
+                first_seen_at, last_updated_at, projection_generation, computed_at)
+            VALUES (
+                @songId, @instrument, @accountId, @score, 987000, TRUE, 5,
+                9, 0.12, @rank, @rank, 'test', 3, '2026-05-05T00:00:00Z',
+                @now, @now, 1, @now)
+            ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+                score = EXCLUDED.score,
+                rank = EXCLUDED.rank,
+                api_rank = EXCLUDED.api_rank,
+                last_updated_at = EXCLUDED.last_updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("rank", rank);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
     // ═══ RecomputeAllRanks ══════════════════════════════════════
 
     [Fact]

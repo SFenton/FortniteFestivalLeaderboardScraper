@@ -492,8 +492,8 @@ public static partial class ApiEndpoints
             var tierRows = metaDb.GetPlayerStatsTiers(accountId);
             if (tierRows.Count == 0)
             {
-                var allScores = persistence.GetCurrentStatePlayerProfile(accountId);
-                if (allScores.Count > 0)
+                var profilesByAccount = persistence.GetCurrentStatePlayerProfiles([accountId]);
+                if (profilesByAccount.TryGetValue(accountId, out var allScores) && allScores.Count > 0)
                 {
                     ComputeAndStorePlayerStats(accountId, allScores, pathStore, persistence, metaDb);
                     tierRows = metaDb.GetPlayerStatsTiers(accountId);
@@ -740,7 +740,7 @@ public static partial class ApiEndpoints
     /// </summary>
     private static void ComputeAndStorePlayerStats(
         string accountId,
-        List<PlayerScoreDto> allScores,
+        IReadOnlyList<PlayerScoreDto> allScores,
         IPathDataStore pathStore,
         GlobalLeaderboardPersistence persistence,
         IMetaDatabase metaDb)
@@ -750,43 +750,19 @@ public static partial class ApiEndpoints
         int totalSongs = persistence.GetTotalSongCount();
         var population = metaDb.GetAllLeaderboardPopulation();
 
-        var byInstrument = new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var s in allScores)
-        {
-            if (!byInstrument.TryGetValue(s.Instrument, out var list))
-            {
-                list = new List<PlayerScoreDto>();
-                byInstrument[s.Instrument] = list;
-            }
-            list.Add(s);
-        }
+        Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null;
+        var maxThresholds = PlayerStatsTierRowBuilder.BuildAboveMaxThresholds(allScores, allMaxScores);
+        if (maxThresholds.Count > 0)
+            fallbacks = metaDb.GetAllValidScoreTiers(accountId, maxThresholds);
 
-        var rows = new List<PlayerStatsTiersRow>();
-        var perInstrumentTiers = new Dictionary<string, List<PlayerStatsTier>>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var inst in instrumentKeys)
-        {
-            if (!byInstrument.TryGetValue(inst, out var scores) || scores.Count == 0) continue;
-            var tiers = PlayerStatsCalculator.ComputeTiers(scores, allMaxScores, inst, totalSongs, population);
-            perInstrumentTiers[inst] = tiers;
-            rows.Add(new PlayerStatsTiersRow
-            {
-                AccountId = accountId,
-                Instrument = inst,
-                TiersJson = JsonSerializer.Serialize(tiers),
-            });
-        }
-
-        if (perInstrumentTiers.Count > 0)
-        {
-            var overallTiers = PlayerStatsCalculator.ComputeOverallTiers(perInstrumentTiers, totalSongs);
-            rows.Add(new PlayerStatsTiersRow
-            {
-                AccountId = accountId,
-                Instrument = "Overall",
-                TiersJson = JsonSerializer.Serialize(overallTiers),
-            });
-        }
+        var rows = PlayerStatsTierRowBuilder.BuildRows(
+            accountId,
+            allScores,
+            instrumentKeys,
+            totalSongs,
+            allMaxScores,
+            population,
+            fallbacks);
 
         if (rows.Count > 0)
             metaDb.UpsertPlayerStatsTiersBatch(rows);

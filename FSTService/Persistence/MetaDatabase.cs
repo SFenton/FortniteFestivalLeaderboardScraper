@@ -125,7 +125,10 @@ public sealed class MetaDatabase : IMetaDatabase
         int? seasonRank = null, int? allTimeRank = null, int? difficulty = null)
     {
         using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        var parsedScoreAchievedAt = scoreAchievedAt is not null ? ParseUtc(scoreAchievedAt) : (DateTime?)null;
         using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText =
             "INSERT INTO score_history (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at) " +
             "VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank, @accuracy, @isFullCombo, @stars, @percentile, @season, @scoreAchievedAt, @seasonRank, @allTimeRank, @difficulty, @now) " +
@@ -143,12 +146,19 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("stars", (object?)stars ?? DBNull.Value);
         cmd.Parameters.AddWithValue("percentile", (object?)percentile ?? DBNull.Value);
         cmd.Parameters.AddWithValue("season", (object?)season ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("scoreAchievedAt", scoreAchievedAt is not null ? ParseUtc(scoreAchievedAt) : DBNull.Value);
+        cmd.Parameters.AddWithValue("scoreAchievedAt", parsedScoreAchievedAt.HasValue ? parsedScoreAchievedAt.Value : (object)DBNull.Value);
         cmd.Parameters.AddWithValue("seasonRank", (object?)seasonRank ?? DBNull.Value);
         cmd.Parameters.AddWithValue("allTimeRank", (object?)allTimeRank ?? DBNull.Value);
         cmd.Parameters.AddWithValue("difficulty", (object?)difficulty ?? DBNull.Value);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
+
+        UpsertSoloScoreObservation(
+            conn, tx,
+            songId, instrument, accountId, newScore, accuracy, isFullCombo, stars,
+            percentile, season, parsedScoreAchievedAt, newRank, seasonRank, allTimeRank, difficulty);
+
+        tx.Commit();
     }
 
     public void BackfillScoreHistoryDifficulty(string accountId, string songId, string instrument, int score, int difficulty)
@@ -234,6 +244,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     "difficulty = COALESCE(EXCLUDED.difficulty, score_history.difficulty), changed_at = EXCLUDED.changed_at";
                 inserted = c.ExecuteNonQuery();
             }
+            UpsertSoloScoreObservationsFromStaging(conn, tx, "_sh_staging");
             tx.Commit();
             return inserted;
         }
@@ -286,8 +297,226 @@ public sealed class MetaDatabase : IMetaDatabase
             pNow.Value = now;
             loopInserted += cmd.ExecuteNonQuery();
         }
+        CreateScoreObservationStaging(conn, tx, changes, now);
+        UpsertSoloScoreObservationsFromStaging(conn, tx, "_pso_solo_staging");
         tx.Commit();
         return loopInserted;
+    }
+
+    private static void UpsertSoloScoreObservation(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string songId,
+        string instrument,
+        string accountId,
+        int score,
+        int? accuracy,
+        bool? isFullCombo,
+        int? stars,
+        double? percentile,
+        int? season,
+        DateTime? scoreAchievedAt,
+        int soloRank,
+        int? seasonRank,
+        int? allTimeRank,
+        int? difficulty)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO player_score_observations (
+                account_id, song_id, instrument, score, accuracy, is_full_combo, stars,
+                difficulty, season, score_achieved_at, source_kind, source_id, source_scope,
+                solo_rank, season_rank, all_time_rank, solo_percentile, observed_at)
+            VALUES (
+                @accountId, @songId, @instrument, @score, @accuracy, @isFullCombo, @stars,
+                @difficulty, @season, @scoreAchievedAt, 'solo-history', @sourceId, @sourceScope,
+                @soloRank, @seasonRank, @allTimeRank, @soloPercentile, @observedAt)
+            ON CONFLICT (account_id, song_id, instrument, source_kind, source_id) DO UPDATE SET
+                score = EXCLUDED.score,
+                accuracy = COALESCE(EXCLUDED.accuracy, player_score_observations.accuracy),
+                is_full_combo = COALESCE(EXCLUDED.is_full_combo, player_score_observations.is_full_combo),
+                stars = COALESCE(EXCLUDED.stars, player_score_observations.stars),
+                difficulty = COALESCE(EXCLUDED.difficulty, player_score_observations.difficulty),
+                season = COALESCE(EXCLUDED.season, player_score_observations.season),
+                score_achieved_at = COALESCE(EXCLUDED.score_achieved_at, player_score_observations.score_achieved_at),
+                source_scope = COALESCE(NULLIF(EXCLUDED.source_scope, ''), player_score_observations.source_scope),
+                solo_rank = COALESCE(EXCLUDED.solo_rank, player_score_observations.solo_rank),
+                season_rank = COALESCE(EXCLUDED.season_rank, player_score_observations.season_rank),
+                all_time_rank = COALESCE(EXCLUDED.all_time_rank, player_score_observations.all_time_rank),
+                solo_percentile = COALESCE(EXCLUDED.solo_percentile, player_score_observations.solo_percentile),
+                observed_at = GREATEST(player_score_observations.observed_at, EXCLUDED.observed_at)
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("accuracy", (object?)accuracy ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("isFullCombo", (object?)isFullCombo ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("stars", (object?)stars ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("difficulty", (object?)difficulty ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("season", (object?)season ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("scoreAchievedAt", scoreAchievedAt.HasValue ? scoreAchievedAt.Value : (object)DBNull.Value);
+        cmd.Parameters.AddWithValue("sourceId", BuildSoloObservationSourceId(accountId, songId, instrument, score, scoreAchievedAt, difficulty, season));
+        cmd.Parameters.AddWithValue("sourceScope", season.HasValue ? $"season:{season.Value}" : "alltime");
+        cmd.Parameters.AddWithValue("soloRank", soloRank > 0 ? soloRank : (object)DBNull.Value);
+        cmd.Parameters.AddWithValue("seasonRank", (object?)seasonRank ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("allTimeRank", (object?)allTimeRank ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("soloPercentile", (object?)percentile ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("observedAt", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void CreateScoreObservationStaging(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        IReadOnlyList<ScoreChangeRecord> changes,
+        DateTime observedAt)
+    {
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DROP TABLE IF EXISTS _pso_solo_staging";
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                CREATE TEMP TABLE _pso_solo_staging (
+                    song_id TEXT, instrument TEXT, account_id TEXT, new_score INTEGER,
+                    new_rank INTEGER, accuracy INTEGER, is_full_combo BOOLEAN, stars INTEGER,
+                    percentile DOUBLE PRECISION, season INTEGER, score_achieved_at TIMESTAMPTZ,
+                    season_rank INTEGER, all_time_rank INTEGER, difficulty INTEGER, changed_at TIMESTAMPTZ
+                ) ON COMMIT DROP
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        using var writer = conn.BeginBinaryImport(
+            "COPY _pso_solo_staging (song_id, instrument, account_id, new_score, new_rank, accuracy, " +
+            "is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, " +
+            "difficulty, changed_at) FROM STDIN (FORMAT BINARY)");
+        foreach (var change in changes)
+        {
+            writer.StartRow();
+            writer.Write(change.SongId, NpgsqlDbType.Text);
+            writer.Write(change.Instrument, NpgsqlDbType.Text);
+            writer.Write(change.AccountId, NpgsqlDbType.Text);
+            writer.Write(change.NewScore, NpgsqlDbType.Integer);
+            writer.Write(change.NewRank, NpgsqlDbType.Integer);
+            WriteNullableInt(writer, change.Accuracy);
+            if (change.IsFullCombo.HasValue) writer.Write(change.IsFullCombo.Value, NpgsqlDbType.Boolean);
+            else writer.WriteNull();
+            WriteNullableInt(writer, change.Stars);
+            if (change.Percentile.HasValue) writer.Write(change.Percentile.Value, NpgsqlDbType.Double);
+            else writer.WriteNull();
+            WriteNullableInt(writer, change.Season);
+            if (change.ScoreAchievedAt is not null) writer.Write(ParseUtc(change.ScoreAchievedAt), NpgsqlDbType.TimestampTz);
+            else writer.WriteNull();
+            WriteNullableInt(writer, change.SeasonRank);
+            WriteNullableInt(writer, change.AllTimeRank);
+            WriteNullableInt(writer, change.Difficulty);
+            writer.Write(observedAt, NpgsqlDbType.TimestampTz);
+        }
+        writer.Complete();
+    }
+
+    private static void UpsertSoloScoreObservationsFromStaging(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string stagingTable)
+    {
+        if (stagingTable is not "_sh_staging" and not "_pso_solo_staging")
+            throw new ArgumentOutOfRangeException(nameof(stagingTable));
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $$"""
+            WITH source_rows AS (
+                SELECT DISTINCT ON (account_id, song_id, instrument, source_id)
+                    account_id,
+                    song_id,
+                    instrument,
+                    new_score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    difficulty,
+                    season,
+                    score_achieved_at,
+                    source_id,
+                    CASE WHEN season IS NOT NULL THEN 'season:' || season::TEXT ELSE 'alltime' END AS source_scope,
+                    NULLIF(new_rank, 0) AS solo_rank,
+                    season_rank,
+                    all_time_rank,
+                    percentile,
+                    changed_at
+                FROM (
+                    SELECT *,
+                        CONCAT_WS(':',
+                            'solo-history', account_id, song_id, instrument, new_score::TEXT,
+                            COALESCE(TO_CHAR(score_achieved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'), 'no-time'),
+                            COALESCE(difficulty::TEXT, 'no-difficulty'),
+                            COALESCE(season::TEXT, 'no-season')) AS source_id
+                    FROM {{stagingTable}}
+                ) staged
+                ORDER BY account_id, song_id, instrument, source_id, changed_at DESC
+            )
+            INSERT INTO player_score_observations (
+                account_id, song_id, instrument, score, accuracy, is_full_combo, stars,
+                difficulty, season, score_achieved_at, source_kind, source_id, source_scope,
+                solo_rank, season_rank, all_time_rank, solo_percentile, observed_at)
+            SELECT
+                account_id,
+                song_id,
+                instrument,
+                new_score,
+                accuracy,
+                is_full_combo,
+                stars,
+                difficulty,
+                season,
+                score_achieved_at,
+                'solo-history',
+                source_id,
+                source_scope,
+                solo_rank,
+                season_rank,
+                all_time_rank,
+                percentile,
+                changed_at
+            FROM source_rows
+            ON CONFLICT (account_id, song_id, instrument, source_kind, source_id) DO UPDATE SET
+                score = EXCLUDED.score,
+                accuracy = COALESCE(EXCLUDED.accuracy, player_score_observations.accuracy),
+                is_full_combo = COALESCE(EXCLUDED.is_full_combo, player_score_observations.is_full_combo),
+                stars = COALESCE(EXCLUDED.stars, player_score_observations.stars),
+                difficulty = COALESCE(EXCLUDED.difficulty, player_score_observations.difficulty),
+                season = COALESCE(EXCLUDED.season, player_score_observations.season),
+                score_achieved_at = COALESCE(EXCLUDED.score_achieved_at, player_score_observations.score_achieved_at),
+                source_scope = COALESCE(NULLIF(EXCLUDED.source_scope, ''), player_score_observations.source_scope),
+                solo_rank = COALESCE(EXCLUDED.solo_rank, player_score_observations.solo_rank),
+                season_rank = COALESCE(EXCLUDED.season_rank, player_score_observations.season_rank),
+                all_time_rank = COALESCE(EXCLUDED.all_time_rank, player_score_observations.all_time_rank),
+                solo_percentile = COALESCE(EXCLUDED.solo_percentile, player_score_observations.solo_percentile),
+                observed_at = GREATEST(player_score_observations.observed_at, EXCLUDED.observed_at)
+            """;
+        cmd.ExecuteNonQuery();
+    }
+
+    private static string BuildSoloObservationSourceId(
+        string accountId,
+        string songId,
+        string instrument,
+        int score,
+        DateTime? scoreAchievedAt,
+        int? difficulty,
+        int? season)
+    {
+        var achievedAt = scoreAchievedAt.HasValue ? scoreAchievedAt.Value.ToString("O") : "no-time";
+        return $"solo-history:{accountId}:{songId}:{instrument}:{score}:{achievedAt}:{difficulty?.ToString() ?? "no-difficulty"}:{season?.ToString() ?? "no-season"}";
     }
 
     public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100, string? songId = null, string? instrument = null)
@@ -1423,6 +1652,8 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── Player stats tiers ───────────────────────────────────────────
 
+    private const int PlayerStatsTiersCopyThreshold = 32;
+
     public void UpsertPlayerStatsTiers(string accountId, string instrument, string tiersJson)
     {
         using var conn = _ds.OpenConnection();
@@ -1440,8 +1671,57 @@ public sealed class MetaDatabase : IMetaDatabase
         if (rows.Count == 0) return;
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+
+        if (rows.Count >= PlayerStatsTiersCopyThreshold)
+        {
+            using (var createCmd = conn.CreateCommand())
+            {
+                createCmd.Transaction = tx;
+                createCmd.CommandText = "CREATE TEMP TABLE _player_stats_tiers_staging (account_id TEXT NOT NULL, instrument TEXT NOT NULL, tiers_json TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL) ON COMMIT DROP";
+                createCmd.ExecuteNonQuery();
+            }
+
+            var copyNow = DateTime.UtcNow;
+            using (var writer = conn.BeginBinaryImport("COPY _player_stats_tiers_staging (account_id, instrument, tiers_json, updated_at) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var row in rows)
+                {
+                    writer.StartRow();
+                    writer.Write(row.AccountId, NpgsqlDbType.Text);
+                    writer.Write(row.Instrument, NpgsqlDbType.Text);
+                    writer.Write(row.TiersJson, NpgsqlDbType.Text);
+                    writer.Write(copyNow, NpgsqlDbType.TimestampTz);
+                }
+                writer.Complete();
+            }
+
+            using (var mergeCmd = conn.CreateCommand())
+            {
+                mergeCmd.Transaction = tx;
+                mergeCmd.CommandTimeout = 0;
+                mergeCmd.CommandText = """
+                    INSERT INTO player_stats_tiers (account_id, instrument, tiers_json, updated_at)
+                    SELECT DISTINCT ON (account_id, instrument)
+                           account_id,
+                           instrument,
+                           tiers_json::jsonb,
+                           updated_at
+                    FROM _player_stats_tiers_staging
+                    ORDER BY account_id, instrument, updated_at DESC
+                    ON CONFLICT(account_id, instrument) DO UPDATE SET
+                        tiers_json = EXCLUDED.tiers_json,
+                        updated_at = EXCLUDED.updated_at
+                    """;
+                mergeCmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            return;
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
+        cmd.CommandTimeout = 0;
         cmd.CommandText = "INSERT INTO player_stats_tiers (account_id, instrument, tiers_json, updated_at) VALUES (@accountId, @instrument, @tiers::jsonb, @now) ON CONFLICT(account_id, instrument) DO UPDATE SET tiers_json = EXCLUDED.tiers_json, updated_at = EXCLUDED.updated_at";
         var pAcct = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
         var pInst = cmd.Parameters.Add("instrument", NpgsqlTypes.NpgsqlDbType.Text);

@@ -530,6 +530,86 @@ public static class DatabaseInitializer
             ON score_history (account_id, song_id, instrument, new_score, score_achieved_at);
 
         -- =====================================================================
+        -- PLAYER SCORE OBSERVATIONS
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS player_score_observations (
+            id                  BIGSERIAL   PRIMARY KEY,
+            account_id          TEXT        NOT NULL,
+            song_id             TEXT        NOT NULL,
+            instrument          TEXT        NOT NULL,
+            score               INTEGER     NOT NULL,
+            accuracy            INTEGER,
+            is_full_combo       BOOLEAN,
+            stars               INTEGER,
+            difficulty          INTEGER,
+            season              INTEGER,
+            score_achieved_at   TIMESTAMPTZ,
+            source_kind         TEXT        NOT NULL,
+            source_id           TEXT        NOT NULL,
+            source_scope        TEXT        NOT NULL DEFAULT '',
+            solo_rank           INTEGER,
+            season_rank         INTEGER,
+            all_time_rank       INTEGER,
+            solo_percentile     DOUBLE PRECISION,
+            band_type           TEXT,
+            team_key            TEXT,
+            instrument_combo    TEXT,
+            band_score          INTEGER,
+            band_rank           INTEGER,
+            band_percentile     DOUBLE PRECISION,
+            band_source         TEXT,
+            member_index        INTEGER,
+            observed_at         TIMESTAMPTZ NOT NULL
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_pso_source
+            ON player_score_observations (account_id, song_id, instrument, source_kind, source_id);
+
+        CREATE INDEX IF NOT EXISTS ix_pso_union_lookup
+            ON player_score_observations (account_id, song_id, instrument, score DESC, score_achieved_at);
+
+        CREATE INDEX IF NOT EXISTS ix_pso_band_source
+            ON player_score_observations (band_type, team_key)
+            WHERE source_kind = 'band-member';
+
+        CREATE OR REPLACE VIEW player_score_observation_union AS
+        SELECT
+            account_id,
+            song_id,
+            instrument,
+            score,
+            difficulty,
+            score_achieved_at,
+            CASE
+                WHEN score_achieved_at IS NOT NULL THEN 'time:' || score_achieved_at::TEXT
+                ELSE 'source:' || source_kind || ':' || source_id
+            END AS performance_key,
+            MAX(accuracy) AS accuracy,
+            BOOL_OR(COALESCE(is_full_combo, FALSE)) AS is_full_combo,
+            MAX(stars) AS stars,
+            MIN(season) FILTER (WHERE season IS NOT NULL) AS first_season,
+            MIN(solo_rank) FILTER (WHERE solo_rank IS NOT NULL) AS best_solo_rank,
+            MIN(season_rank) FILTER (WHERE season_rank IS NOT NULL) AS best_season_rank,
+            MIN(all_time_rank) FILTER (WHERE all_time_rank IS NOT NULL) AS best_all_time_rank,
+            ARRAY_AGG(DISTINCT source_kind ORDER BY source_kind) AS source_kinds,
+            COUNT(*)::INTEGER AS source_count,
+            MIN(observed_at) AS first_observed_at,
+            MAX(observed_at) AS last_observed_at
+        FROM player_score_observations
+        GROUP BY
+            account_id,
+            song_id,
+            instrument,
+            score,
+            difficulty,
+            score_achieved_at,
+            CASE
+                WHEN score_achieved_at IS NOT NULL THEN 'time:' || score_achieved_at::TEXT
+                ELSE 'source:' || source_kind || ':' || source_id
+            END;
+
+        -- =====================================================================
         -- ACCOUNT NAMES (from fst-meta.db)
         -- =====================================================================
 

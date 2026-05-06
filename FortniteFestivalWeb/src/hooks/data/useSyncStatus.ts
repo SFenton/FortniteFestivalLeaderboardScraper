@@ -6,6 +6,10 @@ import { useAppWebSocket } from './useAppWebSocket';
 export type { SyncPhase };
 
 type SyncState = {
+  /** Whether the backend knows this account as a tracked/registered player. */
+  isTracked: boolean;
+  /** True after the first sync-status response for this account has loaded. */
+  syncStatusLoaded: boolean;
   /** Whether we're actively syncing (any phase in progress) */
   isSyncing: boolean;
   /** Current phase: backfill, history, rivals, complete, idle */
@@ -51,6 +55,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   const track = options?.track ?? true;
   const useWebSocket = options?.useWebSocket ?? true;
   const [syncState, setSyncState] = useState<SyncState>({
+    isTracked: false,
+    syncStatusLoaded: false,
     isSyncing: false,
     phase: SyncPhase.Idle,
     backfillProgress: 0,
@@ -136,6 +142,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         }
 
         return {
+          isTracked: prev.isTracked,
+          syncStatusLoaded: prev.syncStatusLoaded,
           isSyncing,
           phase,
           backfillProgress: phase === SyncPhase.Backfill ? phaseProgress : (phase === SyncPhase.Queued ? 0 : (prev.backfillProgress > 0 ? 1 : prev.backfillProgress)),
@@ -283,6 +291,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       /* v8 ignore stop */
 
       setSyncState(prev => ({
+        isTracked: res.isTracked,
+        syncStatusLoaded: true,
         isSyncing,
         phase,
         backfillProgress: bfDeferred ? 0 : bfProgress,
@@ -337,6 +347,11 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     syncKickedRef.current = false;
     lastWsMsgRef.current = 0;
     setJustCompleted(false);
+    setSyncState(prev => ({
+      ...prev,
+      isTracked: false,
+      syncStatusLoaded: false,
+    }));
 
     const init = async () => {
       // Fire track request (idempotent) and capture whether a sync was kicked
@@ -348,6 +363,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
             wasSyncingRef.current = true;
             setSyncState(prev => ({
               ...prev,
+              isTracked: true,
+              syncStatusLoaded: true,
               isSyncing: true,
               phase: SyncPhase.Queued,
               pendingRankUpdate: res.pendingRankUpdate ?? prev.pendingRankUpdate,
@@ -359,6 +376,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
             // past the first HTTP poll without the user ever seeing the banner.
             setSyncState(prev => ({
               ...prev,
+              isTracked: true,
+              syncStatusLoaded: true,
               isSyncing: true,
               phase: SyncPhase.Backfill,
             }));

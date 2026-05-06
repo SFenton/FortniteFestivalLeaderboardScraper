@@ -302,6 +302,8 @@ public sealed class BandLeaderboardPersistence
                         """;
                     cmd.ExecuteNonQuery();
                 }
+
+                UpsertBandMemberObservationsFromStaging(conn, tx, "_be_staging", "_bms_staging");
             }
 
             // ── 4. COPY band_members (denormalized lookup) ──
@@ -367,6 +369,100 @@ public sealed class BandLeaderboardPersistence
     {
         if (value.HasValue) writer.Write(value.Value, NpgsqlDbType.Integer);
         else writer.WriteNull();
+    }
+
+    internal static void UpsertBandMemberObservationsFromStaging(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        string bandEntryStagingTable,
+        string bandMemberStagingTable)
+    {
+        if (bandEntryStagingTable is not "_be_staging" || bandMemberStagingTable is not "_bms_staging")
+            throw new ArgumentOutOfRangeException(nameof(bandEntryStagingTable));
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $$"""
+            INSERT INTO player_score_observations (
+                account_id, song_id, instrument, score, accuracy, is_full_combo, stars,
+                difficulty, season, score_achieved_at, source_kind, source_id, source_scope,
+                band_type, team_key, instrument_combo, band_score, band_rank, band_percentile,
+                band_source, member_index, observed_at)
+            SELECT DISTINCT ON (bms.account_id, be.song_id, mapped.instrument, source_values.source_id)
+                bms.account_id,
+                be.song_id,
+                mapped.instrument,
+                bms.score,
+                bms.accuracy,
+                bms.is_full_combo,
+                bms.stars,
+                bms.difficulty,
+                NULLIF(be.season, 0),
+                CASE WHEN NULLIF(be.end_time, '') IS NULL THEN NULL ELSE be.end_time::TIMESTAMPTZ END,
+                'band-member',
+                source_values.source_id,
+                CASE WHEN be.season > 0 THEN 'season:' || be.season::TEXT ELSE COALESCE(NULLIF(be.source, ''), 'band') END,
+                be.band_type,
+                be.team_key,
+                be.instrument_combo,
+                be.score,
+                NULLIF(be.rank, 0),
+                be.percentile,
+                be.source,
+                bms.member_index,
+                be.ts
+            FROM {{bandMemberStagingTable}} bms
+            JOIN {{bandEntryStagingTable}} be
+              ON be.song_id = bms.song_id
+             AND be.band_type = bms.band_type
+             AND be.team_key = bms.team_key
+             AND be.instrument_combo = bms.instrument_combo
+            CROSS JOIN LATERAL (
+                VALUES (CASE bms.instrument_id
+                    WHEN 0 THEN 'Solo_Guitar'
+                    WHEN 1 THEN 'Solo_Bass'
+                    WHEN 2 THEN 'Solo_Vocals'
+                    WHEN 3 THEN 'Solo_Drums'
+                    WHEN 4 THEN 'Solo_PeripheralGuitar'
+                    WHEN 5 THEN 'Solo_PeripheralBass'
+                    WHEN 6 THEN 'Solo_PeripheralDrums'
+                    WHEN 7 THEN 'Solo_PeripheralVocals'
+                    WHEN 8 THEN 'Solo_PeripheralCymbals'
+                    ELSE NULL
+                END)
+            ) AS mapped(instrument)
+            CROSS JOIN LATERAL (
+                VALUES (CONCAT_WS(':',
+                    'band-member', bms.account_id, be.song_id, be.band_type, be.team_key,
+                    be.instrument_combo, bms.member_index::TEXT, bms.score::TEXT,
+                    COALESCE(NULLIF(be.end_time, ''), 'no-time'),
+                    COALESCE(bms.difficulty::TEXT, 'no-difficulty')))
+            ) AS source_values(source_id)
+            WHERE bms.account_id IS NOT NULL
+              AND bms.account_id <> ''
+              AND bms.score IS NOT NULL
+              AND mapped.instrument IS NOT NULL
+            ORDER BY bms.account_id, be.song_id, mapped.instrument, source_values.source_id, be.score DESC, be.ts DESC
+            ON CONFLICT (account_id, song_id, instrument, source_kind, source_id) DO UPDATE SET
+                score = EXCLUDED.score,
+                accuracy = COALESCE(EXCLUDED.accuracy, player_score_observations.accuracy),
+                is_full_combo = COALESCE(EXCLUDED.is_full_combo, player_score_observations.is_full_combo),
+                stars = COALESCE(EXCLUDED.stars, player_score_observations.stars),
+                difficulty = COALESCE(EXCLUDED.difficulty, player_score_observations.difficulty),
+                season = COALESCE(EXCLUDED.season, player_score_observations.season),
+                score_achieved_at = COALESCE(EXCLUDED.score_achieved_at, player_score_observations.score_achieved_at),
+                source_scope = COALESCE(NULLIF(EXCLUDED.source_scope, ''), player_score_observations.source_scope),
+                band_type = COALESCE(EXCLUDED.band_type, player_score_observations.band_type),
+                team_key = COALESCE(EXCLUDED.team_key, player_score_observations.team_key),
+                instrument_combo = COALESCE(EXCLUDED.instrument_combo, player_score_observations.instrument_combo),
+                band_score = COALESCE(EXCLUDED.band_score, player_score_observations.band_score),
+                band_rank = COALESCE(EXCLUDED.band_rank, player_score_observations.band_rank),
+                band_percentile = COALESCE(EXCLUDED.band_percentile, player_score_observations.band_percentile),
+                band_source = COALESCE(EXCLUDED.band_source, player_score_observations.band_source),
+                member_index = COALESCE(EXCLUDED.member_index, player_score_observations.member_index),
+                observed_at = GREATEST(player_score_observations.observed_at, EXCLUDED.observed_at)
+            """;
+        cmd.ExecuteNonQuery();
     }
 
     /// <summary>
@@ -557,6 +653,8 @@ public sealed class BandLeaderboardPersistence
                     """;
                 memberStatsCount = cmd.ExecuteNonQuery();
             }
+
+            UpsertBandMemberObservationsFromStaging(conn, tx, "_be_staging", "_bms_staging");
 
             using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _bms_staging"; cmd.ExecuteNonQuery(); }
         }

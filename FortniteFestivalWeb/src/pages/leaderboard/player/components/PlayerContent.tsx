@@ -172,6 +172,7 @@ export interface PlayerContentProps {
   pendingRankUpdate: boolean;
   estimatedRankUpdateMinutes: number | null;
   isTrackedPlayer: boolean;
+  showUntrackedHistoryNotice: boolean;
   skipAnim: boolean;
   showCompleteBanner?: boolean;
   onCompleteBannerDismissed?: () => void;
@@ -200,6 +201,7 @@ export default function PlayerContent({
   pendingRankUpdate,
   estimatedRankUpdateMinutes,
   isTrackedPlayer,
+  showUntrackedHistoryNotice,
   skipAnim,
   showCompleteBanner,
   onCompleteBannerDismissed,
@@ -232,6 +234,9 @@ export default function PlayerContent({
   const [bannerCollapsed, setBannerCollapsed] = useState(!bannerVisible);
   useEffect(() => { if (bannerVisible) setBannerCollapsed(false); }, [bannerVisible]);
   const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
+  const untrackedHistorySubtitle = showUntrackedHistoryNotice
+    ? t(filterInvalidScores ? 'player.untrackedHistorySubtitleWithScoreFilter' : 'player.untrackedHistorySubtitle')
+    : undefined;
   const { registerPlayerPageSelect } = usePlayerPageSelect();
   const pendingSelectProfileExitTimerRef = useRef<number | null>(null);
   const gridListRef = useRef<HTMLDivElement>(null);
@@ -696,11 +701,13 @@ export default function PlayerContent({
       before={hasFab ? (
         <PageHeader
           title={data.displayName}
+          subtitle={untrackedHistorySubtitle}
           actions={mobilePlayerHeaderActions}
         />
       ) : (
         <PageHeader
           title={data.displayName}
+          subtitle={untrackedHistorySubtitle}
           actions={playerHeaderActions ?? undefined}
         />
       )}

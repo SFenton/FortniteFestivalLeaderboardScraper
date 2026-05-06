@@ -2727,6 +2727,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         params (int MemberIndex, string AccountId, int InstrumentId)[] members)
     {
         using var conn = dataSource.OpenConnection();
+        var now = DateTime.UtcNow;
 
         foreach (var member in members)
         {
@@ -2760,6 +2761,209 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             lookupCmd.Parameters.AddWithValue("instrumentCombo", instrumentCombo);
             lookupCmd.ExecuteNonQuery();
         }
+
+        RefreshBandSearchProjectionForSeededTeam(conn, bandType, teamKey, now);
+    }
+
+    private static void RefreshBandSearchProjectionForSeededTeam(
+        NpgsqlConnection conn,
+        string bandType,
+        string teamKey,
+        DateTime updatedAt)
+    {
+        var bandId = BandIdentity.CreateBandId(bandType, teamKey);
+
+        using (var teamCmd = conn.CreateCommand())
+        {
+            teamCmd.CommandText = $"""
+                INSERT INTO {BandSearchProjectionBuilder.TeamProjectionTable} (
+                    band_type,
+                    team_key,
+                    band_id,
+                    appearance_count,
+                    member_account_ids,
+                    member_instruments_json,
+                    combo_appearances_json,
+                    updated_at)
+                WITH team_combo_counts AS (
+                    SELECT band_type,
+                           team_key,
+                           instrument_combo,
+                           COUNT(*)::integer AS appearance_count
+                    FROM (
+                        SELECT DISTINCT song_id, band_type, team_key, instrument_combo
+                        FROM band_members
+                        WHERE band_type = @bandType
+                          AND team_key = @teamKey
+                    ) team_appearances
+                    GROUP BY band_type, team_key, instrument_combo
+                ),
+                team_summary AS (
+                    SELECT band_type,
+                           team_key,
+                           SUM(appearance_count)::integer AS appearance_count,
+                           string_to_array(team_key, ':') AS member_account_ids,
+                           jsonb_object_agg(COALESCE(instrument_combo, ''), appearance_count ORDER BY instrument_combo) AS combo_appearances_json
+                    FROM team_combo_counts
+                    GROUP BY band_type, team_key
+                ),
+                mapped_member_instruments AS (
+                    SELECT DISTINCT
+                           band_type,
+                           team_key,
+                           account_id,
+                           CASE instrument_id
+                               WHEN 0 THEN 'Solo_Guitar'
+                               WHEN 1 THEN 'Solo_Bass'
+                               WHEN 2 THEN 'Solo_Vocals'
+                               WHEN 3 THEN 'Solo_Drums'
+                               WHEN 4 THEN 'Solo_PeripheralGuitar'
+                               WHEN 5 THEN 'Solo_PeripheralBass'
+                               WHEN 6 THEN 'Solo_PeripheralDrums'
+                               WHEN 7 THEN 'Solo_PeripheralVocals'
+                               WHEN 8 THEN 'Solo_PeripheralCymbals'
+                           END AS instrument,
+                           CASE instrument_id
+                               WHEN 0 THEN 0
+                               WHEN 1 THEN 1
+                               WHEN 3 THEN 2
+                               WHEN 2 THEN 3
+                               WHEN 4 THEN 4
+                               WHEN 5 THEN 5
+                               WHEN 7 THEN 6
+                               WHEN 8 THEN 7
+                               WHEN 6 THEN 8
+                               ELSE 99
+                           END AS instrument_order
+                    FROM band_member_stats
+                    WHERE band_type = @bandType
+                      AND team_key = @teamKey
+                      AND instrument_id BETWEEN 0 AND 8
+                ),
+                member_instruments AS (
+                    SELECT band_type,
+                           team_key,
+                           account_id,
+                           array_agg(instrument ORDER BY instrument_order, instrument) AS instruments
+                    FROM mapped_member_instruments
+                    WHERE instrument IS NOT NULL
+                    GROUP BY band_type, team_key, account_id
+                ),
+                team_instruments AS (
+                    SELECT band_type,
+                           team_key,
+                           jsonb_object_agg(account_id, to_jsonb(instruments) ORDER BY account_id) AS member_instruments_json
+                    FROM member_instruments
+                    GROUP BY band_type, team_key
+                )
+                SELECT team_summary.band_type,
+                       team_summary.team_key,
+                       @bandId,
+                       team_summary.appearance_count,
+                       team_summary.member_account_ids,
+                       COALESCE(team_instruments.member_instruments_json, jsonb_build_object()),
+                       COALESCE(team_summary.combo_appearances_json, jsonb_build_object()),
+                       @updatedAt
+                FROM team_summary
+                LEFT JOIN team_instruments
+                  ON team_instruments.band_type = team_summary.band_type
+                 AND team_instruments.team_key = team_summary.team_key
+                ON CONFLICT (band_type, team_key) DO UPDATE SET
+                    band_id = EXCLUDED.band_id,
+                    appearance_count = EXCLUDED.appearance_count,
+                    member_account_ids = EXCLUDED.member_account_ids,
+                    member_instruments_json = EXCLUDED.member_instruments_json,
+                    combo_appearances_json = EXCLUDED.combo_appearances_json,
+                    updated_at = EXCLUDED.updated_at
+                """;
+            teamCmd.Parameters.AddWithValue("bandType", bandType);
+            teamCmd.Parameters.AddWithValue("teamKey", teamKey);
+            teamCmd.Parameters.AddWithValue("bandId", bandId);
+            teamCmd.Parameters.AddWithValue("updatedAt", updatedAt);
+            teamCmd.ExecuteNonQuery();
+        }
+
+        using (var deleteMemberCmd = conn.CreateCommand())
+        {
+            deleteMemberCmd.CommandText = $"""
+                DELETE FROM {BandSearchProjectionBuilder.MemberProjectionTable}
+                WHERE band_type = @bandType
+                  AND team_key = @teamKey
+                """;
+            deleteMemberCmd.Parameters.AddWithValue("bandType", bandType);
+            deleteMemberCmd.Parameters.AddWithValue("teamKey", teamKey);
+            deleteMemberCmd.ExecuteNonQuery();
+        }
+
+        using (var memberProjectionCmd = conn.CreateCommand())
+        {
+            memberProjectionCmd.CommandText = $"""
+                INSERT INTO {BandSearchProjectionBuilder.MemberProjectionTable} (
+                    account_id,
+                    band_type,
+                    team_key,
+                    band_id,
+                    appearance_count,
+                    team_appearance_count,
+                    instrument_combos,
+                    updated_at)
+                WITH member_combo_counts AS (
+                    SELECT account_id,
+                           band_type,
+                           team_key,
+                           instrument_combo,
+                           COUNT(*)::integer AS appearance_count
+                    FROM band_members
+                    WHERE band_type = @bandType
+                      AND team_key = @teamKey
+                    GROUP BY account_id, band_type, team_key, instrument_combo
+                ),
+                member_summary AS (
+                    SELECT account_id,
+                           band_type,
+                           team_key,
+                           SUM(appearance_count)::integer AS appearance_count,
+                           array_agg(instrument_combo ORDER BY instrument_combo) AS instrument_combos
+                    FROM member_combo_counts
+                    GROUP BY account_id, band_type, team_key
+                )
+                SELECT member_summary.account_id,
+                       member_summary.band_type,
+                       member_summary.team_key,
+                       @bandId,
+                       member_summary.appearance_count,
+                       team_projection.appearance_count,
+                       member_summary.instrument_combos,
+                       @updatedAt
+                FROM member_summary
+                JOIN {BandSearchProjectionBuilder.TeamProjectionTable} team_projection
+                  ON team_projection.band_type = member_summary.band_type
+                 AND team_projection.team_key = member_summary.team_key
+                """;
+            memberProjectionCmd.Parameters.AddWithValue("bandType", bandType);
+            memberProjectionCmd.Parameters.AddWithValue("teamKey", teamKey);
+            memberProjectionCmd.Parameters.AddWithValue("bandId", bandId);
+            memberProjectionCmd.Parameters.AddWithValue("updatedAt", updatedAt);
+            memberProjectionCmd.ExecuteNonQuery();
+        }
+
+        using var stateCmd = conn.CreateCommand();
+        stateCmd.CommandText = $"""
+            INSERT INTO {BandSearchProjectionBuilder.StateTable} (id, rebuilt_at, refreshed_at, team_rows, member_rows)
+            VALUES (
+                TRUE,
+                @updatedAt,
+                @updatedAt,
+                (SELECT COUNT(*) FROM {BandSearchProjectionBuilder.TeamProjectionTable}),
+                (SELECT COUNT(*) FROM {BandSearchProjectionBuilder.MemberProjectionTable})
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                refreshed_at = EXCLUDED.refreshed_at,
+                team_rows = EXCLUDED.team_rows,
+                member_rows = EXCLUDED.member_rows
+            """;
+        stateCmd.Parameters.AddWithValue("updatedAt", updatedAt);
+        stateCmd.ExecuteNonQuery();
     }
 
     // ─── Sync Status ──────────────────────────────────────────

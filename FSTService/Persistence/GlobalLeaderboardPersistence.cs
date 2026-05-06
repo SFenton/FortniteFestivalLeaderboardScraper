@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace FSTService.Persistence;
 
@@ -1574,33 +1575,84 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Get current-state player scores for many accounts from the finalized current leaderboard projection.
+    /// </summary>
+    public Dictionary<string, List<PlayerScoreDto>> GetCurrentStatePlayerProfiles(
+        IReadOnlyCollection<string> accountIds,
+        string? songId = null,
+        HashSet<string>? instruments = null)
+    {
+        var normalizedAccountIds = accountIds
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalizedAccountIds.Length == 0)
+            return new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+
+        using var conn = _pgDataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var songFilter = songId is not null ? "\n  AND song_id = @songId" : string.Empty;
+        var instrumentFilter = instruments is { Count: > 0 } ? "\n  AND instrument = ANY(@instruments)" : string.Empty;
+        cmd.CommandText = $"""
+            SELECT account_id, song_id, instrument, score, accuracy, is_full_combo, stars,
+                   season, difficulty, percentile, end_time, rank, api_rank
+            FROM current_leaderboard_entries
+            WHERE account_id = ANY(@accountIds){songFilter}{instrumentFilter}
+            ORDER BY account_id, instrument, song_id
+            """;
+        cmd.CommandTimeout = 0;
+        cmd.Parameters.Add("accountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = normalizedAccountIds;
+        if (songId is not null)
+            cmd.Parameters.AddWithValue("songId", songId);
+        if (instruments is { Count: > 0 })
+            cmd.Parameters.Add("instruments", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = instruments.ToArray();
+
+        var result = new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var accountId = reader.GetString(0);
+            if (!result.TryGetValue(accountId, out var scores))
+            {
+                scores = [];
+                result[accountId] = scores;
+            }
+
+            scores.Add(new PlayerScoreDto
+            {
+                SongId = reader.GetString(1),
+                Instrument = reader.GetString(2),
+                Score = reader.GetInt32(3),
+                Accuracy = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+                IsFullCombo = !reader.IsDBNull(5) && reader.GetBoolean(5),
+                Stars = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                Season = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
+                Difficulty = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
+                Percentile = reader.IsDBNull(9) ? 0 : reader.GetDouble(9),
+                EndTime = reader.IsDBNull(10) ? null : reader.GetString(10),
+                Rank = reader.IsDBNull(11) ? 0 : reader.GetInt32(11),
+                ApiRank = reader.IsDBNull(12) ? 0 : reader.GetInt32(12),
+            });
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Get grouped unique band summaries for one player, deduped by team members.
     /// </summary>
     public PlayerBandsDto GetPlayerBands(string accountId, int previewCount = 6)
     {
-        var allEntries = GetPlayerBandEntries(accountId);
-
-        if (allEntries.Count == 0)
-        {
+        using var conn = _pgDataSource.OpenConnection();
+        if (!HasBandSearchProjection(conn))
             return CreateEmptyPlayerBands();
-        }
-
-        var duos = allEntries
-            .Where(entry => string.Equals(entry.BandType, "Band_Duets", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        var trios = allEntries
-            .Where(entry => string.Equals(entry.BandType, "Band_Trios", StringComparison.OrdinalIgnoreCase))
-            .ToList();
-        var quads = allEntries
-            .Where(entry => string.Equals(entry.BandType, "Band_Quad", StringComparison.OrdinalIgnoreCase))
-            .ToList();
 
         return new PlayerBandsDto
         {
-            All = BuildAllBandGroup(accountId, allEntries, previewCount),
-            Duos = BuildBandGroup(duos, previewCount),
-            Trios = BuildBandGroup(trios, previewCount),
-            Quads = BuildBandGroup(quads, previewCount),
+            All = GetPlayerBandProjectionGroup(conn, accountId, null, previewCount),
+            Duos = GetPlayerBandProjectionGroup(conn, accountId, "Band_Duets", previewCount),
+            Trios = GetPlayerBandProjectionGroup(conn, accountId, "Band_Trios", previewCount),
+            Quads = GetPlayerBandProjectionGroup(conn, accountId, "Band_Quad", previewCount),
         };
     }
 
@@ -1609,15 +1661,18 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public PlayerBandTypeResponseDto GetPlayerBandsByType(string accountId, string bandType, string? comboId = null)
     {
-        var entries = GetPlayerBandEntries(accountId, bandType, comboId);
+        using var conn = _pgDataSource.OpenConnection();
+        var page = HasBandSearchProjection(conn)
+            ? GetPlayerBandProjectionPage(conn, accountId, bandType, comboId, page: 1, pageSize: null)
+            : new PlayerBandProjectionPage(0, []);
 
         return new PlayerBandTypeResponseDto
         {
             AccountId = accountId,
             BandType = bandType,
             ComboId = comboId,
-            TotalCount = entries.Count,
-            Entries = entries,
+            TotalCount = page.TotalCount,
+            Entries = page.Entries,
         };
     }
 
@@ -1632,20 +1687,17 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             _ => throw new ArgumentOutOfRangeException(nameof(group), group, "Unknown band group."),
         };
 
-        var entries = GetPlayerBandEntries(accountId, bandTypeFilter);
-        var totalCount = entries.Count;
-        if (pageSize is > 0)
-        {
-            var skip = (Math.Max(1, page) - 1) * pageSize.Value;
-            entries = entries.Skip(skip).Take(pageSize.Value).ToList();
-        }
+        using var conn = _pgDataSource.OpenConnection();
+        var projectionPage = HasBandSearchProjection(conn)
+            ? GetPlayerBandProjectionPage(conn, accountId, bandTypeFilter, comboIdFilter: null, page, pageSize)
+            : new PlayerBandProjectionPage(0, []);
 
         return new PlayerBandListResponseDto
         {
             AccountId = accountId,
             Group = group,
-            TotalCount = totalCount,
-            Entries = entries,
+            TotalCount = projectionPage.TotalCount,
+            Entries = projectionPage.Entries,
         };
     }
 
@@ -1959,56 +2011,229 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         tx.Commit();
     }
 
-    private List<PlayerBandEntryDto> GetPlayerBandEntries(string accountId, string? bandTypeFilter = null, string? comboIdFilter = null)
+    private PlayerBandGroupDto GetPlayerBandProjectionGroup(NpgsqlConnection conn, string accountId, string? bandTypeFilter, int previewCount)
     {
-        using var conn = _pgDataSource.OpenConnection();
-
-        EnsureBandTeamMembershipSummary(conn, accountId);
-
-        var membershipRows = GetPlayerBandMembershipRows(conn, accountId, bandTypeFilter);
-        if (comboIdFilter is not null)
+        var page = GetPlayerBandProjectionPage(conn, accountId, bandTypeFilter, comboIdFilter: null, page: 1, pageSize: previewCount);
+        return new PlayerBandGroupDto
         {
-            membershipRows = membershipRows
-                .Where(row => string.Equals(
-                    BandComboIds.FromEpicRawCombo(row.InstrumentCombo),
-                    comboIdFilter,
-                    StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        }
+            TotalCount = page.TotalCount,
+            Entries = page.Entries,
+        };
+    }
 
-        if (membershipRows.Count == 0)
-            return [];
+    private PlayerBandProjectionPage GetPlayerBandProjectionPage(
+        NpgsqlConnection conn,
+        string accountId,
+        string? bandTypeFilter,
+        string? comboIdFilter,
+        int page,
+        int? pageSize)
+    {
+        var rawComboFilter = comboIdFilter is null
+            ? null
+            : BandComboIds.ToEpicRawComboCandidates(comboIdFilter).ToArray();
 
-        var allMemberAccountIds = membershipRows
-            .SelectMany(row => SplitTeamKey(row.TeamKey))
+        if (comboIdFilter is not null && rawComboFilter is { Length: 0 })
+            return new PlayerBandProjectionPage(0, []);
+
+        var totalCount = CountPlayerBandProjectionRows(conn, accountId, bandTypeFilter, rawComboFilter);
+        if (totalCount == 0)
+            return new PlayerBandProjectionPage(0, []);
+
+        var rows = GetPlayerBandProjectionRows(conn, accountId, bandTypeFilter, rawComboFilter, page, pageSize);
+        if (rows.Count == 0)
+            return new PlayerBandProjectionPage(totalCount, []);
+
+        var allMemberAccountIds = rows
+            .SelectMany(row => row.MemberAccountIds.Length > 0
+                ? (IEnumerable<string>)row.MemberAccountIds
+                : SplitTeamKey(row.TeamKey))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var displayNames = _metaDb.GetDisplayNames(allMemberAccountIds);
 
-        return membershipRows
-            .GroupBy(static row => (row.BandType, row.TeamKey))
-            .Select(group =>
-            {
-                var memberInstruments = BuildMemberInstrumentsForSummaryGroup(group);
-                return new PlayerBandEntryDto
-                {
-                    BandId = BandIdentity.CreateBandId(group.Key.BandType, group.Key.TeamKey),
-                    TeamKey = group.Key.TeamKey,
-                    BandType = group.Key.BandType,
-                    AppearanceCount = group.Sum(static row => row.AppearanceCount),
-                    Members = SplitTeamKey(group.Key.TeamKey)
-                        .Select(memberAccountId => new PlayerBandMemberDto
-                        {
-                            AccountId = memberAccountId,
-                            DisplayName = displayNames.GetValueOrDefault(memberAccountId),
-                            Instruments = memberInstruments.GetValueOrDefault(memberAccountId, []),
-                        })
-                        .ToList(),
-                };
-            })
-            .OrderByDescending(entry => entry.AppearanceCount)
-            .ThenBy(entry => entry.TeamKey, StringComparer.OrdinalIgnoreCase)
+        var entries = rows
+            .Select(row => BuildPlayerBandProjectionEntry(row, displayNames, rawComboFilter))
+            .Where(static entry => entry is not null)
+            .Select(static entry => entry!)
             .ToList();
+
+        return new PlayerBandProjectionPage(totalCount, entries);
+    }
+
+    private static int CountPlayerBandProjectionRows(
+        NpgsqlConnection conn,
+        string accountId,
+        string? bandTypeFilter,
+        string[]? rawComboFilter)
+    {
+        using var cmd = conn.CreateCommand();
+        var bandTypePredicate = bandTypeFilter is null ? string.Empty : "\n  AND member_projection.band_type = @bandType";
+        var comboPredicate = rawComboFilter is null ? string.Empty : "\n  AND member_projection.instrument_combos && @rawCombos";
+        cmd.CommandText = $"""
+            SELECT COUNT(*)
+            FROM {BandSearchProjectionBuilder.MemberProjectionTable} member_projection
+            WHERE member_projection.account_id = @accountId{bandTypePredicate}{comboPredicate}
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        if (bandTypeFilter is not null)
+            cmd.Parameters.AddWithValue("bandType", bandTypeFilter);
+        if (rawComboFilter is not null)
+            cmd.Parameters.AddWithValue("rawCombos", rawComboFilter);
+
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private static List<PlayerBandProjectionRow> GetPlayerBandProjectionRows(
+        NpgsqlConnection conn,
+        string accountId,
+        string? bandTypeFilter,
+        string[]? rawComboFilter,
+        int page,
+        int? pageSize)
+    {
+        using var cmd = conn.CreateCommand();
+        var bandTypePredicate = bandTypeFilter is null ? string.Empty : "\n      AND member_projection.band_type = @bandType";
+        var comboPredicate = rawComboFilter is null ? string.Empty : "\n      AND member_projection.instrument_combos && @rawCombos";
+        var appearanceExpression = rawComboFilter is null
+            ? "member_projection.team_appearance_count"
+            : """
+              COALESCE((
+                  SELECT SUM(combo_count.value::integer)::integer
+                  FROM jsonb_each_text(team_projection.combo_appearances_json) combo_count
+                  WHERE combo_count.key = ANY(@rawCombos)
+              ), 0)
+              """;
+        var limitClause = pageSize is > 0 ? "\n            LIMIT @limit OFFSET @offset" : string.Empty;
+
+        cmd.CommandText = $"""
+            WITH candidate_rows AS (
+                SELECT
+                    member_projection.band_type,
+                    member_projection.team_key,
+                    {appearanceExpression} AS effective_appearance_count
+                FROM {BandSearchProjectionBuilder.MemberProjectionTable} member_projection
+                JOIN {BandSearchProjectionBuilder.TeamProjectionTable} team_projection
+                  ON team_projection.band_type = member_projection.band_type
+                 AND team_projection.team_key = member_projection.team_key
+                WHERE member_projection.account_id = @accountId{bandTypePredicate}{comboPredicate}
+                ORDER BY effective_appearance_count DESC, member_projection.team_key{limitClause}
+            )
+            SELECT
+                team_projection.band_type,
+                team_projection.team_key,
+                team_projection.band_id,
+                team_projection.appearance_count,
+                candidate_rows.effective_appearance_count,
+                team_projection.member_account_ids,
+                team_projection.member_instruments_json::text,
+                team_projection.combo_appearances_json::text
+            FROM candidate_rows
+            JOIN {BandSearchProjectionBuilder.TeamProjectionTable} team_projection
+              ON team_projection.band_type = candidate_rows.band_type
+             AND team_projection.team_key = candidate_rows.team_key
+            ORDER BY candidate_rows.effective_appearance_count DESC, candidate_rows.team_key
+            """;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        if (bandTypeFilter is not null)
+            cmd.Parameters.AddWithValue("bandType", bandTypeFilter);
+        if (rawComboFilter is not null)
+            cmd.Parameters.AddWithValue("rawCombos", rawComboFilter);
+        if (pageSize is > 0)
+        {
+            cmd.Parameters.AddWithValue("limit", pageSize.Value);
+            cmd.Parameters.AddWithValue("offset", (Math.Max(1, page) - 1) * pageSize.Value);
+        }
+
+        var rows = new List<PlayerBandProjectionRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new PlayerBandProjectionRow(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                reader.GetInt32(3),
+                reader.GetInt32(4),
+                reader.GetFieldValue<string[]>(5),
+                ParseMemberInstrumentsJson(reader.IsDBNull(6) ? "{}" : reader.GetString(6)),
+                ParseComboAppearancesJson(reader.IsDBNull(7) ? "{}" : reader.GetString(7))));
+        }
+
+        return rows;
+    }
+
+    private static PlayerBandEntryDto? BuildPlayerBandProjectionEntry(
+        PlayerBandProjectionRow row,
+        IReadOnlyDictionary<string, string> displayNames,
+        string[]? rawComboFilter)
+    {
+        var memberAccountIds = row.MemberAccountIds.Length > 0
+            ? row.MemberAccountIds.ToList()
+            : SplitTeamKey(row.TeamKey);
+        var memberInstruments = rawComboFilter is null
+            ? row.MemberInstruments
+            : BuildMemberInstrumentsForRawCombos(memberAccountIds, row.ComboAppearances.Keys.Where(rawComboFilter.Contains));
+
+        var appearanceCount = rawComboFilter is null
+            ? row.AppearanceCount
+            : rawComboFilter.Sum(rawCombo => row.ComboAppearances.GetValueOrDefault(rawCombo));
+        if (appearanceCount <= 0)
+            return null;
+
+        var bandId = string.IsNullOrWhiteSpace(row.BandId)
+            ? BandIdentity.CreateBandId(row.BandType, row.TeamKey)
+            : row.BandId;
+
+        return new PlayerBandEntryDto
+        {
+            BandId = bandId,
+            TeamKey = row.TeamKey,
+            BandType = row.BandType,
+            AppearanceCount = appearanceCount,
+            Members = memberAccountIds
+                .Select(memberAccountId => new PlayerBandMemberDto
+                {
+                    AccountId = memberAccountId,
+                    DisplayName = displayNames.GetValueOrDefault(memberAccountId),
+                    Instruments = memberInstruments.GetValueOrDefault(memberAccountId, []),
+                })
+                .ToList(),
+        };
+    }
+
+    private static Dictionary<string, List<string>> BuildMemberInstrumentsForRawCombos(
+        IReadOnlyList<string> memberAccountIds,
+        IEnumerable<string> rawCombos)
+    {
+        var instrumentsByMember = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rawCombo in rawCombos)
+        {
+            var rawInstrumentIds = rawCombo.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            for (var index = 0; index < memberAccountIds.Count && index < rawInstrumentIds.Length; index++)
+            {
+                if (!int.TryParse(rawInstrumentIds[index], out var instrumentId))
+                    continue;
+
+                var instrument = BandInstrumentMapping.ToLeaderboardType(instrumentId);
+                if (instrument is null)
+                    continue;
+
+                if (!instrumentsByMember.TryGetValue(memberAccountIds[index], out var memberInstruments))
+                {
+                    memberInstruments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    instrumentsByMember[memberAccountIds[index]] = memberInstruments;
+                }
+
+                memberInstruments.Add(instrument);
+            }
+        }
+
+        return instrumentsByMember.ToDictionary(
+            static kvp => kvp.Key,
+            static kvp => BandComboIds.ToInstruments(BandComboIds.FromInstruments(kvp.Value)).ToList(),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private void EnsureBandTeamMembershipSummary(NpgsqlConnection conn, string accountId)
@@ -2842,6 +3067,24 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return result;
     }
 
+    private static Dictionary<string, int> ParseComboAppearancesJson(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        using var document = JsonDocument.Parse(json);
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            if (property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out var count))
+                result[property.Name] = count;
+            else if (property.Value.ValueKind == JsonValueKind.String && int.TryParse(property.Value.GetString(), out var parsedCount))
+                result[property.Name] = parsedCount;
+        }
+
+        return result;
+    }
+
     private static Dictionary<string, string> ParseMemberAssignmentJson(string json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -3540,24 +3783,6 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     private static PlayerBandsDto CreateEmptyPlayerBands() => new();
 
-    private static PlayerBandGroupDto BuildBandGroup(List<PlayerBandEntryDto> entries, int previewCount)
-    {
-        return new PlayerBandGroupDto
-        {
-            TotalCount = entries.Count,
-            Entries = entries.Take(previewCount).ToList(),
-        };
-    }
-
-    private static PlayerBandGroupDto BuildAllBandGroup(string accountId, List<PlayerBandEntryDto> entries, int previewCount)
-    {
-        return new PlayerBandGroupDto
-        {
-            TotalCount = entries.Count,
-            Entries = entries.Take(previewCount).ToList(),
-        };
-    }
-
     private static List<string> SplitTeamKey(string teamKey)
     {
         return teamKey
@@ -3571,6 +3796,16 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         int? AppearanceCount,
         List<string> MemberAccountIds,
         Dictionary<string, List<string>> MemberInstruments);
+    private sealed record PlayerBandProjectionPage(int TotalCount, List<PlayerBandEntryDto> Entries);
+    private sealed record PlayerBandProjectionRow(
+        string BandType,
+        string TeamKey,
+        string BandId,
+        int AppearanceCount,
+        int EffectiveAppearanceCount,
+        string[] MemberAccountIds,
+        Dictionary<string, List<string>> MemberInstruments,
+        Dictionary<string, int> ComboAppearances);
     private sealed record PlayerBandMembershipSummaryRow(
         string AccountId,
         string BandType,

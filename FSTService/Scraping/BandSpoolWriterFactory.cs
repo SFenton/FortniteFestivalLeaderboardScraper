@@ -251,6 +251,8 @@ public static class BandSpoolWriterFactory
                             """;
                         cmd.ExecuteNonQuery();
                     }
+
+                    BandLeaderboardPersistence.UpsertBandMemberObservationsFromStaging(conn, tx, "_be_staging", "_bms_staging");
                 }
                 using (var cmd = conn.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DROP TABLE IF EXISTS _bms_staging"; cmd.ExecuteNonQuery(); }
 
