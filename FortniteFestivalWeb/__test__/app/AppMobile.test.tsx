@@ -125,6 +125,7 @@ const mockApi = vi.hoisted(() => {
       above: [{ accountId: 'rival-1', displayName: 'RivalAbove', sharedSongCount: 5, rivalScore: 300, aheadCount: 2, behindCount: 3, avgSignedDelta: 1.5 }],
       below: [{ accountId: 'rival-2', displayName: 'RivalBelow', sharedSongCount: 4, rivalScore: 200, aheadCount: 1, behindCount: 4, avgSignedDelta: -1.2 }],
     }),
+    getRivalsAll: fn().mockResolvedValue({ accountId: 'p1', songs: [], combos: [] }),
     getLeaderboardRivals: fn().mockResolvedValue({
       instrument: 'Solo_Guitar',
       rankBy: 'totalscore',
@@ -462,14 +463,70 @@ describe('App — mobile FAB branches', () => {
     expect(container.innerHTML.length).toBeGreaterThan(200);
   });
 
-  it('renders suggestions route on mobile with tracked player', async () => {
+  it('opens Filter Suggestions directly from the mobile Suggestions FAB', async () => {
     setMobile();
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
     window.location.hash = '#/suggestions';
-    const { container } = render(<App />);
+    render(<App />);
     await waitFor(() => {
-      expect(container.innerHTML.length).toBeGreaterThan(200);
+      expect(screen.getByRole('button', { name: 'Filter Suggestions' })).toBeDefined();
     });
+    await waitFor(() => {
+      expect(mockApi.getRivalsAll).toHaveBeenCalled();
+    });
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filter Suggestions' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Filter Suggestions' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('opens Statistics quick links directly from the mobile FAB without a header quick links action', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/statistics';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    }, { timeout: 5000 });
+    expect(screen.queryByTestId('player-header-actions')).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('opens player detail quick links directly from the mobile FAB without moving Select as Profile', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', accountId: 'p1', displayName: 'TrackedP' }));
+    mockApi.getPlayer.mockResolvedValueOnce({
+      accountId: 'p2',
+      displayName: 'OtherP',
+      totalScores: 1,
+      scores: [{ songId: 's1', instrument: 'Solo_Guitar', score: 110000, rank: 4, percentile: 84, accuracy: 91, stars: 5, season: 5 }],
+    });
+    window.location.hash = '#/player/p2';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    }, { timeout: 5000 });
+    const headerActions = screen.getByTestId('player-header-actions');
+    expect(within(headerActions).queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(within(headerActions).getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
     window.location.hash = '';
   });
 

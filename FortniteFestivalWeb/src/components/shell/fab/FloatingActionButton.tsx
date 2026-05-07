@@ -19,7 +19,9 @@ interface Props {
   defaultOpen?: boolean;
   placeholder?: string;
   icon?: React.ReactNode;
+  ariaLabel?: string;
   actionGroups?: ActionItem[][];
+  directAction?: boolean;
   onPress: () => void;
 }
 
@@ -28,8 +30,10 @@ export default function FloatingActionButton({
   defaultOpen,
   placeholder,
   icon,
+  ariaLabel,
   actionGroups,
-  onPress: _onPress,
+  directAction,
+  onPress,
 }: Props) {
   const { t } = useTranslation();
   const searchVisible = !!defaultOpen;
@@ -49,6 +53,14 @@ export default function FloatingActionButton({
     setActionsOpen(false);
     setTimeout(() => { setPopupMounted(false); }, FAB_DISMISS_MS);
   }, []);
+
+  const handleFabPress = useCallback(() => {
+    if (directAction) {
+      onPress();
+      return;
+    }
+    actionsOpen ? closeActions() : openActions();
+  }, [actionsOpen, closeActions, directAction, onPress, openActions]);
   /* v8 ignore stop */
 
   const searchQuery = useSearchQuery();
@@ -97,13 +109,13 @@ export default function FloatingActionButton({
         <button
           style={s.fab}
           /* v8 ignore start -- action toggle */
-          onClick={() => actionsOpen ? closeActions() : openActions()}
+          onClick={handleFabPress}
           /* v8 ignore stop */
-          aria-label={t('common.actions')}
+          aria-label={ariaLabel ?? t('common.actions')}
         >
           {icon ?? <IoMenu size={IconSize.md} />}
         </button>
-        {popupMounted && (
+        {!directAction && popupMounted && (
           <FABMenu
             groups={actionGroups ?? []}
             visible={popupVisible}

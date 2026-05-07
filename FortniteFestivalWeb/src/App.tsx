@@ -257,7 +257,7 @@ export function mergePageQuickLinksIntoFabGroups(
 function MobileFloatingActionButton(props: React.ComponentProps<typeof FloatingActionButton>) {
   const actionGroups = props.actionGroups ?? [];
   const hasActions = actionGroups.some(group => group.length > 0);
-  if (!props.defaultOpen && !hasActions) return null;
+  if (!props.defaultOpen && !hasActions && !props.directAction) return null;
   return <FloatingActionButton {...props} actionGroups={actionGroups} />;
 }
 
@@ -677,10 +677,18 @@ function AppShell() {
       {isMobile && location.pathname === AppRoutes.suggestions && (
         <MobileFloatingActionButton
           mode="players"
-          actionGroups={withPageQuickLinks(
-            [{ label: t('common.filterSuggestions'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openSuggestionsFilter() }],
-          )}
-          onPress={() => {}}
+          icon={<IoFunnel size={Size.iconFab} />}
+          ariaLabel={t('common.filterSuggestions')}
+          directAction
+          onPress={() => fabSearch.openSuggestionsFilter()}
+        />
+      )}
+      {isMobile && (location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname)) && pageQuickLinks.hasPageQuickLinks && (
+        <MobileFloatingActionButton
+          mode="players"
+          ariaLabel={getFabQuickLinksActionLabel(t)}
+          directAction
+          onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
       {isMobile && RoutePatterns.history.test(location.pathname) && (
@@ -797,7 +805,7 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
+      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(

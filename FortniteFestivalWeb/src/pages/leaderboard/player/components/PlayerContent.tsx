@@ -629,7 +629,7 @@ export default function PlayerContent({
     testIdPrefix: 'player',
   }), [activeItemId, closeQuickLinks, desktopRailRevealDelayMs, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, quickLinks, quickLinksOpen, quickLinksTitle]);
 
-  const quickLinksAction = !isWideDesktop && quickLinks.length > 0
+  const quickLinksAction = !isWideDesktop && !hasFab && quickLinks.length > 0
     ? (
       <ActionPill
         icon={<IoCompass size={QUICK_LINK_PILL_ICON_SIZE} />}

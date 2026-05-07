@@ -111,6 +111,22 @@ describe('FloatingActionButton', () => {
     expect(screen.getByTestId('custom-icon')).toBeTruthy();
   });
 
+  it('calls onPress directly when directAction is true', () => {
+    const onPress = vi.fn();
+    renderFAB({
+      ariaLabel: 'Filter Suggestions',
+      directAction: true,
+      icon: <span data-testid="filter-icon">F</span>,
+      onPress,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filter Suggestions' }));
+
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(screen.getByTestId('filter-icon')).toBeTruthy();
+  });
+
   it('closes popup on outside click and prevents default', () => {
     const actionGroups: ActionItem[][] = [[
       { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
