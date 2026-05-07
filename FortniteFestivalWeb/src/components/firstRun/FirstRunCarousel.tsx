@@ -8,6 +8,7 @@ import type { FirstRunSlideDef } from '../../firstRun/types';
 import { SlideHeightContext } from '../../firstRun/SlideHeightContext';
 import FadeIn from '../page/FadeIn';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
+import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 
 type FirstRunCarouselProps = {
   slides: FirstRunSlideDef[];
@@ -270,7 +271,7 @@ function useCarouselStyles() {
     textArea: { flex: 1, ...flexColumn, alignItems: 'center', justifyContent: 'center', gap: Gap.lg, padding: padding(0, Gap.section, Gap.md), textAlign: 'center' as const, minHeight: 0 } as CSSProperties,
     slideTitle: { fontSize: Font.xl, fontWeight: Weight.bold, margin: 0, color: Colors.textPrimary } as CSSProperties,
     slideDescription: { fontSize: Font.md, color: Colors.textSecondary, lineHeight: 1.5, margin: 0 } as CSSProperties,
-    paginationRow: { ...flexCenter, gap: Gap.lg, padding: padding(Gap.xl, Gap.section), flexShrink: 0 } as CSSProperties,
+    paginationRow: { ...flexCenter, gap: Gap.lg, padding: paddingWithSafeAreaBottom(Gap.xl, Gap.section, Gap.xl), flexShrink: 0 } as CSSProperties,
     arrowBtn: {
       width: Layout.buttonNavSize, height: Layout.buttonNavSize,
       borderRadius: '50%', background: Colors.surfaceElevated,

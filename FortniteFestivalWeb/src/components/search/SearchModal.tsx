@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { LoadPhase } from '@festival/core';
-import { DEFAULT_INSTRUMENT, type AccountSearchResult, type BandSearchResult, type PlayerBandEntry, type ServerSong } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, type AccountSearchResult, type BandSearchResult, type PlayerBandEntry, type ServerInstrumentKey, type ServerSong } from '@festival/core/api/serverTypes';
 import { staggerDelay } from '@festival/ui-utils';
 import SearchBar, { type SearchBarRef } from '../common/SearchBar';
 import ArcSpinner, { SpinnerSize } from '../common/ArcSpinner';
@@ -16,6 +16,7 @@ import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { Routes } from '../../routes';
 import { SEARCH_TARGETS, type SearchTarget } from '../../types/search';
+import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 import {
   Align, Border, BoxSizing, Colors, Cursor, CssValue, Display, Font, Gap, Justify,
   LineHeight, Overflow, Radius, TextAlign, Weight, flexCenter, flexColumn,
@@ -33,8 +34,8 @@ const SEARCH_TARGET_LABEL_KEYS: Record<SearchTarget, string> = {
   bands: 'search.tabs.bands',
 };
 
-const EMPTY_INSTRUMENTS = [];
-const EMPTY_METADATA_ORDER = [];
+const EMPTY_INSTRUMENTS: ServerInstrumentKey[] = [];
+const EMPTY_METADATA_ORDER: string[] = [];
 
 interface SearchModalProps {
   visible: boolean;
@@ -366,6 +367,9 @@ function toPlayerBandEntry(band: BandSearchResult): PlayerBandEntry {
 function useStyles(isMobile: boolean) {
   return useMemo(() => {
     const selectorPad = padding(Gap.lg, Gap.md + 4);
+    const bodyPadding = isMobile
+      ? paddingWithSafeAreaBottom(Gap.sm, Gap.section, Gap.section)
+      : padding(Gap.sm, Gap.section, Gap.section);
     const tabBase: CSSProperties = {
       ...frostedCard,
       flex: 1,
@@ -383,7 +387,7 @@ function useStyles(isMobile: boolean) {
       body: {
         flex: 1,
         ...flexColumn,
-        padding: padding(Gap.sm, Gap.section, Gap.section),
+        padding: bodyPadding,
         gap: Gap.md,
         overflow: Overflow.hidden,
       } as CSSProperties,

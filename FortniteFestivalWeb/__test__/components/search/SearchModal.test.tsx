@@ -142,6 +142,13 @@ describe('SearchModal', () => {
     expect(tablist.getAttribute('style') ?? '').not.toContain('border-top');
   });
 
+  it('pads mobile target buttons above safe-area bottoms', () => {
+    setViewportQueries({ mobile: true });
+    renderModal();
+    const body = screen.getByRole('dialog').querySelector('h2')?.nextElementSibling as HTMLElement;
+    expect(body.style.padding).toContain('safe-area-inset-bottom');
+  });
+
   it('lays out the result panel so loading spinners can center vertically', () => {
     renderModal();
     const tabpanel = screen.getByRole('tabpanel');

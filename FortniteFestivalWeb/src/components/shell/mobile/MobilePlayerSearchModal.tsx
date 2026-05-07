@@ -9,6 +9,7 @@ import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
 import ArcSpinner, { SpinnerSize } from '../../common/ArcSpinner';
 import { useFadeSpinner } from '../../../hooks/ui/useFadeSpinner';
 import ModalShell from '../../modals/components/ModalShell';
+import { paddingWithSafeAreaBottom } from '../../../utils/safeAreaStyles';
 import {
   Gap, Radius, Font, Weight, Colors, Layout, Size, Display, Align, Justify,
   Overflow, CssValue, TextAlign, LineHeight, Cursor, WhiteSpace, PointerEvents, IconSize, BoxSizing,
@@ -46,10 +47,10 @@ interface Props {
 }
 
 export default function MobilePlayerSearchModal({
-  visible, onClose, onSelect, player, onDeselect, isMobile: _isMobile, title,
+  visible, onClose, onSelect, player, onDeselect, isMobile, title,
 }: Props) {
   const { t } = useTranslation();
-  const st = useModalSearchStyles();
+  const st = useModalSearchStyles(isMobile);
   const effectiveTitle = title ?? t('common.selectPlayerProfile');
   const [contentReady, setContentReady] = useState(false);
   const [dismissing, setDismissing] = useState(false);
@@ -152,12 +153,12 @@ export default function MobilePlayerSearchModal({
   );
 }
 
-function useModalSearchStyles() {
+function useModalSearchStyles(isMobile: boolean) {
   return useMemo(() => ({
     body: {
       flex: 1,
       ...flexColumn,
-      padding: padding(Gap.sm, Gap.section, Gap.section),
+      padding: isMobile ? paddingWithSafeAreaBottom(Gap.sm, Gap.section, Gap.section) : padding(Gap.sm, Gap.section, Gap.section),
       gap: Gap.md,
       overflow: Overflow.hidden,
     } as CSSProperties,
@@ -226,5 +227,5 @@ function useModalSearchStyles() {
       cursor: Cursor.pointer,
       textAlign: TextAlign.left,
     } as CSSProperties,
-  }), []);
+  }), [isMobile]);
 }

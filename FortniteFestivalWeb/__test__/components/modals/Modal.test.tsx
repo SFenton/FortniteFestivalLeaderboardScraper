@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import Modal from '../../../src/components/modals/Modal';
+import { modalStyles } from '../../../src/components/modals/modalStyles';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 
@@ -83,5 +84,9 @@ describe('Modal', () => {
     const resetBtn = screen.getAllByRole('button', { name: 'Reset' });
     fireEvent.click(resetBtn[resetBtn.length - 1]!);
     expect(onReset).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps footer actions above mobile safe-area bottoms', () => {
+    expect(String(modalStyles.footerWrap.padding)).toContain('safe-area-inset-bottom');
   });
 });

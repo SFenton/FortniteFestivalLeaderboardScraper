@@ -1,4 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
+import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { playerPageStyles as pps } from '../player/playerPageStyles';
 import ModalShell from '../modals/components/ModalShell';
@@ -6,6 +7,7 @@ import { modalStyles } from '../modals/modalStyles';
 import { FADE_DURATION, Gap } from '@festival/theme';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { getPageQuickLinkTestId, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
+import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 
 const QUICK_LINKS_MODAL_DESKTOP_STYLE = {
   width: 420,
@@ -19,6 +21,11 @@ const QUICK_LINKS_MODAL_LIST_STYLE = {
   flexDirection: 'column',
   gap: Gap.xs,
 } as const;
+
+const QUICK_LINKS_MODAL_CONTENT_STYLE = {
+  ...modalStyles.contentScroll,
+  padding: paddingWithSafeAreaBottom(Gap.xl, Gap.section, Gap.xl),
+} as CSSProperties;
 
 type PageQuickLinksButtonsProps<T extends PageQuickLinkItem> = {
   items: readonly T[];
@@ -152,7 +159,7 @@ export function PageQuickLinksModal<T extends PageQuickLinkItem>({ quickLinks }:
       onClose={quickLinks.onClose}
       desktopStyle={QUICK_LINKS_MODAL_DESKTOP_STYLE}
     >
-      <div ref={scrollRef} onScroll={handleContentScroll} style={modalStyles.contentScroll}>
+      <div ref={scrollRef} onScroll={handleContentScroll} style={QUICK_LINKS_MODAL_CONTENT_STYLE}>
         <nav aria-label={quickLinks.title} style={QUICK_LINKS_MODAL_LIST_STYLE} data-testid={`${testIdPrefix}-quick-links-modal-list`}>
           <PageQuickLinksButtons
             items={quickLinks.items}

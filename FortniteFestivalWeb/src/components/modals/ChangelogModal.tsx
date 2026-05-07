@@ -13,6 +13,7 @@ import {
 import { APP_VERSION } from '../../hooks/data/useVersions';
 import { changelog, type ChangelogEntry } from '../../changelog';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
+import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 
 export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismiss: () => void; onExitComplete?: () => void }) {
   const { t } = useTranslation();
@@ -160,7 +161,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
       marginBottom: Gap.sm,
     } as CSSProperties,
     footer: {
-      padding: padding(Gap.xl, Gap.section),
+      padding: paddingWithSafeAreaBottom(Gap.xl, Gap.section, Gap.xl),
       flexShrink: 0,
     } as CSSProperties,
     dismissBtn: {

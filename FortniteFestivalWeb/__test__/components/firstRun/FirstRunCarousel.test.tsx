@@ -169,4 +169,10 @@ describe('FirstRunCarousel', () => {
     const overlay = document.body.lastElementChild as HTMLElement;
     expect(overlay.hasAttribute('data-glow-scope')).toBe(true);
   });
+
+  it('keeps the navigation row above mobile safe-area bottoms', () => {
+    render(<FirstRunCarousel slides={makeSlides(2)} onDismiss={vi.fn()} />);
+    const paginationRow = screen.getByTestId('fre-dots').parentElement as HTMLElement;
+    expect(paginationRow.style.padding).toContain('safe-area-inset-bottom');
+  });
 });

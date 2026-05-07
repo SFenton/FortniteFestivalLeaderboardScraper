@@ -50,6 +50,7 @@ describe('ConfirmAlert', () => {
     expect(card.style.minWidth).toBe(`min(${Layout.confirmMinWidth}px, calc(100vw - ${Gap.section * 2}px))`);
     expect(card.style.width).toBe('fit-content');
     expect(card.style.maxWidth).toBe(`calc(100vw - ${Gap.section * 2}px)`);
+    expect(card.style.padding).toContain('safe-area-inset-bottom');
     expect(noButton.style.whiteSpace).toBe('nowrap');
     expect(yesButton.style.whiteSpace).toBe('nowrap');
   });

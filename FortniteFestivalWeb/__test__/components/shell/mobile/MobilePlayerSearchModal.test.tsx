@@ -127,6 +127,12 @@ describe('MobilePlayerSearchModal', () => {
     expect(screen.getByPlaceholderText('Search player…')).toBeTruthy();
   });
 
+  it('pads mobile modal content above safe-area bottoms', () => {
+    renderModal({ isMobile: true });
+    const body = screen.getByText('Select Player Profile').nextElementSibling as HTMLElement;
+    expect(body.style.padding).toContain('safe-area-inset-bottom');
+  });
+
   it('shows hint text when query is short', () => {
     renderModal();
     expect(screen.getByText('Enter a username to search for.')).toBeTruthy();

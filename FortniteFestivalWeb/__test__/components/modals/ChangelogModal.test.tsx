@@ -140,4 +140,10 @@ describe('ChangelogModal', () => {
     const overlay = container.firstElementChild as HTMLElement;
     expect(overlay.hasAttribute('data-glow-scope')).toBe(true);
   });
+
+  it('keeps the dismiss action above mobile safe-area bottoms', () => {
+    render(<ChangelogModal onDismiss={vi.fn()} />);
+    const footer = screen.getByText('Dismiss').parentElement as HTMLElement;
+    expect(footer.style.padding).toContain('safe-area-inset-bottom');
+  });
 });

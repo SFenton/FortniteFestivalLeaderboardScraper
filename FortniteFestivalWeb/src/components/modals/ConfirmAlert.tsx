@@ -9,6 +9,7 @@ import {
   modalOverlay, modalCard, btnPrimary, btnDanger, flexRow,
   TRANSITION_MS, MODAL_SCALE_ENTER,
 } from '@festival/theme';
+import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 
 export default function ConfirmAlert({
   title,
@@ -102,7 +103,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
     card: {
       ...modalCard,
       borderRadius: Radius.md,
-      padding: padding(Gap.section),
+      padding: paddingWithSafeAreaBottom(Gap.section, Gap.section, Gap.section),
       minWidth: `min(${Layout.confirmMinWidth}px, ${maxViewportWidth})`,
       width: 'fit-content',
       maxWidth: maxViewportWidth,

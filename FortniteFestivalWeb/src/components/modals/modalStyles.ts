@@ -5,6 +5,7 @@ import {
   flexColumn, flexCenter, modalOverlay, modalCard, btnPrimary, btnDanger,
   border, padding, transition, CssProp, TRANSITION_MS, QUICK_FADE_MS,
 } from '@festival/theme';
+import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 
 const panelZ = Layout.modalPanelZ;
 const modalTransition = transition(CssProp.opacity, TRANSITION_MS);
@@ -28,7 +29,7 @@ export const modalStyles = {
   contentScroll: { flex: 1, minHeight: 0, overflowY: Overflow.auto, padding: padding(Gap.xl, Gap.section) } as CSSProperties,
 
   /* ── Footer ── */
-  footerWrap: { display: Display.flex, flexDirection: 'column' as const, gap: Gap.md, padding: padding(Gap.xl, Gap.section), flexShrink: 0 } as CSSProperties,
+  footerWrap: { display: Display.flex, flexDirection: 'column' as const, gap: Gap.md, padding: paddingWithSafeAreaBottom(Gap.xl, Gap.section, Gap.xl), flexShrink: 0 } as CSSProperties,
   resetWrap: { marginTop: Gap.section } as CSSProperties,
   resetTitle: { fontSize: Font.lg, fontWeight: Weight.bold, marginBottom: Gap.sm, color: Colors.textPrimary } as CSSProperties,
   resetDesc: { fontSize: Font.sm, color: Colors.textSecondary, marginBottom: Gap.md, lineHeight: LineHeight.snug } as CSSProperties,
