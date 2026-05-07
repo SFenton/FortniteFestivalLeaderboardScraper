@@ -114,6 +114,28 @@ describe('MobileHeader', () => {
     expect(searchButton.style.height).toBe('40px');
   });
 
+  it('renders mobile header actions as bright white', () => {
+    renderWithRouter(
+      <MobileHeader
+        navTitle="Songs"
+        backFallback={null}
+        shouldAnimate={false}
+        locationKey="/songs"
+        songInstrument={null}
+        isSongsRoute={true}
+        profileType="none"
+        profileLabel="Select Player Profile"
+        onOpenSidebar={() => {}}
+        onProfileAction={() => {}}
+        onOpenSearch={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Open navigation' }).style.color).toBe('rgb(255, 255, 255)');
+    expect(screen.getByRole('button', { name: 'Search' }).style.color).toBe('rgb(255, 255, 255)');
+    expect(screen.getByRole('button', { name: 'Select Player Profile' }).style.color).toBe('rgb(255, 255, 255)');
+  });
+
   it('renders selected player profile action', () => {
     renderWithRouter(
       <MobileHeader

@@ -101,7 +101,7 @@ export default function MobileHeader({
           </a>
         ) : (
           <>
-            {onOpenSidebar && <HamburgerButton onClick={onOpenSidebar} size={IconSize.nav} style={{ marginLeft: Layout.headerIconNudge }} />}
+            {onOpenSidebar && <HamburgerButton onClick={onOpenSidebar} size={IconSize.nav} style={{ marginLeft: Layout.headerIconNudge, color: Colors.textPrimary }} />}
             <span style={s.title}>{navTitle}</span>
           </>
         )}
@@ -178,7 +178,7 @@ function useStyles() {
       border: 'none',
       cursor: 'pointer',
       borderRadius: Radius.xs,
-      color: Colors.textSecondary,
+      color: Colors.textPrimary,
       padding: 0,
       flexShrink: 0,
       marginTop: -Gap.xs,
@@ -192,7 +192,7 @@ function useStyles() {
       border: 'none',
       cursor: 'pointer',
       borderRadius: Radius.xs,
-      color: Colors.textSecondary,
+      color: Colors.textPrimary,
       padding: 0,
       flexShrink: 0,
       marginTop: -Gap.xs,

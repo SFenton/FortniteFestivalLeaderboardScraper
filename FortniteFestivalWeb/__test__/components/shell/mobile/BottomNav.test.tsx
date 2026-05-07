@@ -50,6 +50,7 @@ describe('BottomNav', () => {
     );
     const settingsBtn = screen.getByText('Settings').closest('button')!;
     expect(settingsBtn.style.fontWeight).toBe('700');
+    expect(settingsBtn.style.color).toBe('rgb(124, 58, 237)');
   });
 
   it('applies inactive style to non-active tab', () => {
@@ -60,6 +61,7 @@ describe('BottomNav', () => {
     );
     const settingsBtn = screen.getByText('Settings').closest('button')!;
     expect(settingsBtn.style.fontWeight).not.toBe('700');
+    expect(settingsBtn.style.color).toBe('rgb(154, 166, 178)');
   });
 
   it('extends the frosted nav through the bottom safe area', () => {
