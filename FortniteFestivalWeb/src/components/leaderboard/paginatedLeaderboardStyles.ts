@@ -6,9 +6,11 @@ import {
   frostedCard, flexRow, flexColumn, padding, border, transition,
   NAV_TRANSITION_MS,
 } from '@festival/theme';
-import { IS_PWA } from '@festival/ui-utils';
+import { safeAreaBottomOffset } from '../../utils/safeAreaStyles';
 
-const pwaOffset = IS_PWA ? Gap.section - Gap.md : 0;
+const mobilePaginationBottom = Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm;
+const mobilePaginationNoPlayerBottom = Layout.fabBottom + Layout.fabSize + Gap.sm;
+const playerFooterFabBottom = Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2;
 
 const entryBase: CSSProperties = {
   ...frostedCard,
@@ -117,13 +119,13 @@ export const plbStyles = {
   /* ── Fixed footer positioning (portaled to body) ── */
   mobilePagination: {
     position: Position.fixed,
-    bottom: Layout.fabBottom + pwaOffset + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm,
+    bottom: safeAreaBottomOffset(mobilePaginationBottom),
     ...fixedFooterBase,
   } as CSSProperties,
 
   mobilePaginationNoPlayer: {
     position: Position.fixed,
-    bottom: Layout.fabBottom + pwaOffset + Layout.fabSize + Gap.sm,
+    bottom: safeAreaBottomOffset(mobilePaginationNoPlayerBottom),
     ...fixedFooterBase,
   } as CSSProperties,
 
@@ -141,7 +143,7 @@ export const plbStyles = {
 
   playerFooterFab: {
     position: Position.fixed,
-    bottom: Layout.fabBottom + pwaOffset + (Layout.fabSize - Layout.entryRowHeight) / 2,
+    bottom: safeAreaBottomOffset(playerFooterFabBottom),
     ...fixedFooterBase,
   } as CSSProperties,
 

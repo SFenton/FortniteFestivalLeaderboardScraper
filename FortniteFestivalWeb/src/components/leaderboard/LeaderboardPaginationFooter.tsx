@@ -1,8 +1,8 @@
 /* eslint-disable react/forbid-dom-props -- fixed footer uses shared inline shell styles */
 import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { IS_PWA } from '@festival/ui-utils';
 import { Gap, Layout } from '@festival/theme';
+import { readSafeAreaBottomPx, safeAreaBottomOffset } from '../../utils/safeAreaStyles';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import Paginator from '../common/Paginator';
@@ -31,10 +31,6 @@ type FixedLeaderboardPlayerFooterProps = {
   children: (props: { className: string; style: CSSProperties }) => ReactNode;
 };
 
-export function getLeaderboardPwaOffset(): number {
-  return IS_PWA ? Gap.section - Gap.md : 0;
-}
-
 export function useLeaderboardFooterScrollMargin({
   hasFab,
   hasPagination,
@@ -42,19 +38,19 @@ export function useLeaderboardFooterScrollMargin({
   rowHeight = Layout.entryRowHeight,
 }: LeaderboardFooterScrollMarginOptions) {
   const scrollContainerRef = useScrollContainer();
-  const pwaOffset = getLeaderboardPwaOffset();
 
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
+    const safeAreaBottom = readSafeAreaBottomPx();
 
     let margin: number;
     if (hasFab) {
       margin = Layout.fabPaddingBottom;
       if (hasPagination) {
         const paginationCssBottom = hasPlayerFooter
-          ? Layout.fabBottom + pwaOffset + (Layout.fabSize - rowHeight) / 2 + rowHeight + Gap.sm
-          : Layout.fabBottom + pwaOffset + Layout.fabSize + Gap.sm;
+          ? Layout.fabBottom + safeAreaBottom + (Layout.fabSize - rowHeight) / 2 + rowHeight + Gap.sm
+          : Layout.fabBottom + safeAreaBottom + Layout.fabSize + Gap.sm;
         const paginationTop = paginationCssBottom + Layout.paginationHeight;
         const naturalHeight = el.clientHeight + (parseFloat(el.style.marginBottom) || 0);
         const headerHeight = el.getBoundingClientRect().top;
@@ -71,7 +67,7 @@ export function useLeaderboardFooterScrollMargin({
 
     el.style.marginBottom = `${margin}px`;
     return () => { el.style.marginBottom = ''; };
-  }, [hasFab, hasPagination, hasPlayerFooter, pwaOffset, rowHeight, scrollContainerRef]);
+  }, [hasFab, hasPagination, hasPlayerFooter, rowHeight, scrollContainerRef]);
 }
 
 export function FixedLeaderboardPagination({
@@ -84,11 +80,10 @@ export function FixedLeaderboardPagination({
   rowHeight = Layout.entryRowHeight,
 }: FixedLeaderboardPaginationProps) {
   const isWideDesktop = useIsWideDesktop();
-  const pwaOffset = getLeaderboardPwaOffset();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
 
   return createPortal(
-    <div data-testid="leaderboard-fixed-pagination" style={{ ...getFixedPaginationStyle(hasFab, hasPlayerFooter, rowHeight, pwaOffset), ...wideOverride }}>
+    <div data-testid="leaderboard-fixed-pagination" style={{ ...getFixedPaginationStyle(hasFab, hasPlayerFooter, rowHeight), ...wideOverride }}>
       <Paginator
         className={hasFab ? 'fab-player-footer' : ''}
         style={isMobile ? s.paginationMobile : s.pagination}
@@ -114,14 +109,13 @@ export function FixedLeaderboardPlayerFooter({
   children,
 }: FixedLeaderboardPlayerFooterProps) {
   const isWideDesktop = useIsWideDesktop();
-  const pwaOffset = getLeaderboardPwaOffset();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
   const rowHeightStyle: CSSProperties | undefined = rowHeight !== Layout.entryRowHeight
     ? { height: rowHeight, boxSizing: 'border-box' }
     : undefined;
 
   return createPortal(
-    <div data-testid="leaderboard-fixed-player-footer" style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight, pwaOffset), ...wideOverride }}>
+    <div data-testid="leaderboard-fixed-player-footer" style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight), ...wideOverride }}>
       {children({
         className: hasFab ? 'fab-player-footer' : '',
         style: { ...s.playerFooterRow, ...rowHeightStyle },
@@ -131,12 +125,12 @@ export function FixedLeaderboardPlayerFooter({
   );
 }
 
-export function getFixedPaginationStyle(hasFab: boolean, hasPlayerFooter: boolean, rowHeight: number, pwaOffset: number): CSSProperties {
+export function getFixedPaginationStyle(hasFab: boolean, hasPlayerFooter: boolean, rowHeight: number): CSSProperties {
   if (hasFab) {
     if (hasPlayerFooter) {
       return {
         ...s.mobilePagination,
-        bottom: Layout.fabBottom + pwaOffset + (Layout.fabSize - rowHeight) / 2 + rowHeight + Gap.sm,
+        bottom: safeAreaBottomOffset(Layout.fabBottom + (Layout.fabSize - rowHeight) / 2 + rowHeight + Gap.sm),
       };
     }
     return s.mobilePaginationNoPlayer;
@@ -152,11 +146,11 @@ export function getFixedPaginationStyle(hasFab: boolean, hasPlayerFooter: boolea
   return s.desktopPaginationNoPlayer;
 }
 
-export function getFixedPlayerFooterStyle(hasFab: boolean, rowHeight: number, pwaOffset: number): CSSProperties {
+export function getFixedPlayerFooterStyle(hasFab: boolean, rowHeight: number): CSSProperties {
   if (hasFab) {
     return {
       ...s.playerFooterFab,
-      bottom: Layout.fabBottom + pwaOffset + (Layout.fabSize - rowHeight) / 2,
+      bottom: safeAreaBottomOffset(Layout.fabBottom + (Layout.fabSize - rowHeight) / 2),
     };
   }
 

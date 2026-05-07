@@ -9,7 +9,7 @@ import { Gap, Layout, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@
 import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { LoadPhase } from '@festival/core';
 import { plbStyles as s, fixedFooterWide } from './paginatedLeaderboardStyles';
-import { FixedLeaderboardPagination, getFixedPlayerFooterStyle, getLeaderboardPwaOffset, useLeaderboardFooterScrollMargin } from './LeaderboardPaginationFooter';
+import { FixedLeaderboardPagination, getFixedPlayerFooterStyle, useLeaderboardFooterScrollMargin } from './LeaderboardPaginationFooter';
 
 export interface PaginatedLeaderboardProps<T> {
   /** Page entries to render. */
@@ -111,7 +111,6 @@ export function PaginatedLeaderboard<T>({
   const isWideDesktop = useIsWideDesktop();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
   const scrollContainerRef = useScrollContainer();
-  const pwaOffset = getLeaderboardPwaOffset();
   const rowHeightStyle: CSSProperties | undefined = rowHeight !== Layout.entryRowHeight
     ? { height: rowHeight, boxSizing: 'border-box' }
     : undefined;
@@ -289,7 +288,7 @@ export function PaginatedLeaderboard<T>({
       )}
       {hasPlayerFooter && renderPlayerFooter && createPortal(
         <div
-          style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight, pwaOffset), ...wideOverride, ...footerStaggerStyle }}
+          style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight), ...wideOverride, ...footerStaggerStyle }}
           onAnimationEnd={(ev) => {
             footerShownRef.current = true;
             const el = ev.currentTarget;

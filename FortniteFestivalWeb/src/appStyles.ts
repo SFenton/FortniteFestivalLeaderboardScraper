@@ -5,7 +5,7 @@ import { Layout, MaxWidth, Gap, ZIndex, Overflow, flexColumn, flexRow, CssValue,
 const wideMaxWidth = Layout.sidebarWidth * 2 + MaxWidth.card + Layout.paddingHorizontalPinned * 2;
 
 export const appStyles = {
-  shell: { ...flexColumn, height: '100dvh', overflow: Overflow.hidden } as CSSProperties,
+  shell: { ...flexColumn, height: '100vh', overflow: Overflow.hidden } as CSSProperties,
   /**
    * Wide-desktop body section: positioned container for overlays + scroll.
    * The scroll container is absolute-fill for native scroll everywhere.

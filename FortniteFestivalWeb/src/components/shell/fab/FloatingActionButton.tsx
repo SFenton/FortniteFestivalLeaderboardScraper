@@ -3,8 +3,8 @@ import { useState, useEffect, useCallback, useRef, useMemo, type CSSProperties }
 import { useTranslation } from 'react-i18next';
 import { IoMenu } from 'react-icons/io5';
 import { useSearchQuery } from '../../../contexts/SearchQueryContext';
-import { IS_PWA } from '@festival/ui-utils';
 import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, CssValue, FAB_DISMISS_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding } from '@festival/theme';
+import { safeAreaBottomOffset } from '../../../utils/safeAreaStyles';
 import SearchBar from '../../common/SearchBar';
 import FABMenu from './FABMenu';
 
@@ -87,8 +87,7 @@ export default function FloatingActionButton({
   return (
     <div ref={containerRef}>
       {searchVisible && (
-        /* v8 ignore start -- IS_PWA + searchBar interactions not available in jsdom */
-        <div style={{ ...s.searchBarOuter, ...(IS_PWA ? { bottom: Layout.fabBottom + Gap.section - Gap.md } : {}) }}>
+        <div style={s.searchBarOuter}>
           <div className="fab-search-bar" style={s.searchBar}>
             <SearchBar
               value={searchQuery.query}
@@ -101,11 +100,8 @@ export default function FloatingActionButton({
             />
           </div>
         </div>
-        /* v8 ignore stop */
       )}
-      {/* v8 ignore start -- IS_PWA: PWA detection not available in jsdom */}
-      <div style={{ ...s.container, ...(IS_PWA ? { bottom: Layout.fabBottom + Gap.section - Gap.md } : {}) }}>
-      {/* v8 ignore stop */}
+      <div style={s.container}>
         <button
           style={s.fab}
           /* v8 ignore start -- action toggle */
@@ -131,7 +127,7 @@ function useFABStyles() {
   return useMemo(() => ({
     container: {
       position: Position.fixed,
-      bottom: Layout.fabBottom,
+      bottom: safeAreaBottomOffset(Layout.fabBottom),
       right: Layout.paddingHorizontal,
       ...flexColumn,
       alignItems: Align.end,
@@ -152,7 +148,7 @@ function useFABStyles() {
     } as CSSProperties,
     searchBarOuter: {
       position: Position.fixed,
-      bottom: Layout.fabBottom,
+      bottom: safeAreaBottomOffset(Layout.fabBottom),
       left: Gap.none,
       right: Gap.none,
       maxWidth: MaxWidth.card,

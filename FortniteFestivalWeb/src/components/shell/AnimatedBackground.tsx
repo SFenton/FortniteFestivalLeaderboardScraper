@@ -2,10 +2,11 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { Colors, ZIndex, Overflow, PointerEvents, fixedFill, absoluteFill } from '@festival/theme';
 import { type ServerSong as Song } from '@festival/core/api/serverTypes';
+import { SAFE_AREA_BOTTOM_RAW_VAR } from '../../utils/safeAreaStyles';
 
 const BG_DURATION = 1000;
 const abStyles = {
-  container: { ...fixedFill, overflow: Overflow.hidden, zIndex: ZIndex.background, pointerEvents: PointerEvents.none } as CSSProperties,
+  container: { ...fixedFill, bottom: `calc(-1 * ${SAFE_AREA_BOTTOM_RAW_VAR})`, overflow: Overflow.hidden, zIndex: ZIndex.background, pointerEvents: PointerEvents.none } as CSSProperties,
   layer: { ...absoluteFill, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', willChange: 'transform, opacity' } as CSSProperties,
   dim: { ...absoluteFill, backgroundColor: Colors.backgroundBlack } as CSSProperties,
 };

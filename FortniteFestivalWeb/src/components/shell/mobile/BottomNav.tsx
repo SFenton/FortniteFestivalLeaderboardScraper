@@ -3,8 +3,8 @@ import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
-import { IS_PWA } from '@festival/ui-utils';
 import fx from '../../../styles/effects.module.css';
+import { paddingWithSafeAreaBottom } from '../../../utils/safeAreaStyles';
 import { TabKey } from '@festival/core';
 import {
   Colors, Font, Weight, Gap, ZIndex, Layout,
@@ -35,9 +35,7 @@ export default function BottomNav({ player, activeTab, onTabClick }: {
   ];
 
   return (
-    /* v8 ignore start -- IS_PWA: PWA detection not available in jsdom */
-    <nav className={fx.navFrosted} style={{ ...s.nav, ...(IS_PWA ? { paddingBottom: Gap.section } : undefined) }}>
-    {/* v8 ignore stop */}
+    <nav className={fx.navFrosted} style={s.nav}>
       {tabs.map((tab) => (
         <button
           key={tab.key}
@@ -81,7 +79,7 @@ function useStyles() {
         flexShrink: 0,
         zIndex: ZIndex.popover,
         position: Position.relative,
-        padding: padding(Gap.sm, Gap.none, Gap.md),
+        padding: paddingWithSafeAreaBottom(Gap.sm, Gap.none, Gap.md),
       } as CSSProperties,
       tab,
       tabActive: {

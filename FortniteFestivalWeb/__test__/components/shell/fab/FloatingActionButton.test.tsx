@@ -34,6 +34,12 @@ describe('FloatingActionButton', () => {
     expect(screen.getByRole('button', { name: /actions/i })).toBeTruthy();
   });
 
+  it('positions the FAB above the bottom safe area', () => {
+    renderFAB();
+    const fabContainer = screen.getByRole('button', { name: /actions/i }).parentElement!;
+    expect(fabContainer.style.bottom).toContain('var(--sab');
+  });
+
   it('opens the popup menu when clicked', () => {
     const actionGroups: ActionItem[][] = [[
       { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },

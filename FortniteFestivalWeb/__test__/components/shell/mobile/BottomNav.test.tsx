@@ -61,4 +61,15 @@ describe('BottomNav', () => {
     const settingsBtn = screen.getByText('Settings').closest('button')!;
     expect(settingsBtn.style.fontWeight).not.toBe('700');
   });
+
+  it('extends the frosted nav through the bottom safe area', () => {
+    render(
+      <MemoryRouter>
+        <BottomNav player={null} activeTab={TabKey.Songs} onTabClick={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    const nav = screen.getByRole('navigation');
+    expect(nav.style.padding).toContain('var(--sab');
+  });
 });
