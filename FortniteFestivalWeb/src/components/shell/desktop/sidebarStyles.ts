@@ -38,7 +38,7 @@ export const sidebarStyles = {
   overlay: { ...modalOverlay, zIndex: 200, backgroundColor: Colors.overlayDark } as CSSProperties,
   sidebar: { position: Position.fixed, top: 0, left: 0, bottom: 0, width: 280, backgroundColor: Colors.backgroundCard, backgroundImage: NOISE_BG, backgroundRepeat: 'repeat', borderRight: `1px solid ${Colors.glassBorder}`, boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), inset 0 0 30px rgba(255,255,255,0.02), 0 4px 20px rgba(0,0,0,0.4)', zIndex: 201, ...flexColumn, overflow: 'hidden' } as CSSProperties,
   sidebarHeader: { padding: paddingWithSafeAreaTop(Gap.section, Gap.section, Gap.xl), borderBottom: `1px solid ${Colors.borderSubtle}` } as CSSProperties,
-  brand: { fontSize: Font.lg, fontWeight: Weight.bold, color: Colors.accentPurple } as CSSProperties,
+  brand: { fontSize: Font.lg, fontWeight: Weight.bold, color: Colors.textPrimary } as CSSProperties,
   sidebarNav: { ...flexColumn, padding: padding(Gap.md, 0), gap: Gap.xs, flex: 1 } as CSSProperties,
   sidebarFooter: { borderTop: `1px solid ${Colors.borderSubtle}`, ...flexColumn, padding: paddingWithSafeAreaBottom(Gap.md, 0, Gap.md), gap: Gap.xs } as CSSProperties,
   sidebarLink,
