@@ -41,6 +41,16 @@ describe('Sidebar', () => {
     expect(screen.getByText('Songs')).toBeTruthy();
   });
 
+  it('keeps sidebar header and footer inside iOS safe areas', () => {
+    renderSidebar();
+
+    const header = screen.getByText('Festival Score Tracker').closest('div');
+    const footer = screen.getByText('Settings').closest('div');
+
+    expect(header?.style.padding).toContain('var(--sat');
+    expect(footer?.style.padding).toContain('var(--sab');
+  });
+
   it('renders Suggestions and Statistics links when player is set', () => {
     renderSidebar({ player: { accountId: 'a1', displayName: 'TestP' } });
     expect(screen.getByText('Suggestions')).toBeTruthy();
