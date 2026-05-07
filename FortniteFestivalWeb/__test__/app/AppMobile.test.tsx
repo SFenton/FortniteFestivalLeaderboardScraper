@@ -359,6 +359,7 @@ describe('App — mobile FAB branches', () => {
 
     expect(within(menu).queryByText('Select Player Profile')).toBeNull();
     expect(within(menu).queryByText('Search')).toBeNull();
+    expect(within(menu).queryByText('Item Shop')).toBeNull();
     expect(within(menu).getByText('Sort Songs')).toBeDefined();
   });
 
@@ -372,6 +373,7 @@ describe('App — mobile FAB branches', () => {
     const menu = await screen.findByTestId('fab-menu');
 
     expect(within(menu).queryByText('TrackedP')).toBeNull();
+    expect(within(menu).queryByText('Item Shop')).toBeNull();
     expect(within(menu).getByText('Filter Songs')).toBeDefined();
   });
 
@@ -396,6 +398,7 @@ describe('App — mobile FAB branches', () => {
 
     expect(within(menu).queryByText('Select Player Profile')).toBeNull();
     expect(within(menu).queryByText('TrackedP + BandMate')).toBeNull();
+    expect(within(menu).queryByText('Item Shop')).toBeNull();
     expect(within(menu).getByText('Duos')).toBeDefined();
   });
 
@@ -409,7 +412,7 @@ describe('App — mobile FAB branches', () => {
     expect(container.querySelector('nav')).toBeTruthy();
   });
 
-  it('renders settings route FAB on mobile', async () => {
+  it('does not render an empty settings route FAB on mobile', async () => {
     setMobile();
     // Navigate to settings via hash
     window.location.hash = '#/settings';
@@ -417,6 +420,7 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       expect(container.innerHTML.length).toBeGreaterThan(200);
     });
+    expect(screen.queryByLabelText('Actions')).toBeNull();
     window.location.hash = '';
   });
 
@@ -486,7 +490,8 @@ describe('App — mobile FAB branches', () => {
       expect(within(menu).getByText('Quick Links')).toBeDefined();
       expect(within(menu).getByText('Leaderboard Rivals')).toBeDefined();
     });
-    expect(within(menu).getAllByTestId('fab-menu-divider')).toHaveLength(1);
+    expect(within(menu).queryByText('Item Shop')).toBeNull();
+    expect(within(menu).queryAllByTestId('fab-menu-divider')).toHaveLength(0);
 
     window.location.hash = '';
   });
@@ -509,7 +514,8 @@ describe('App — mobile FAB branches', () => {
       expect(within(menu).getByText('Leaderboards')).toBeDefined();
       expect(within(menu).getByText('Rivals')).toBeDefined();
     });
-    expect(within(menu).getAllByTestId('fab-menu-divider')).toHaveLength(1);
+    expect(within(menu).queryByText('Item Shop')).toBeNull();
+    expect(within(menu).queryAllByTestId('fab-menu-divider')).toHaveLength(0);
 
     window.location.hash = '';
   });
@@ -608,6 +614,8 @@ describe('App — mobile FAB branches', () => {
     fireEvent.click(screen.getByLabelText('Actions'));
     const menu = await screen.findByTestId('fab-menu');
     expect(within(menu).queryByText('Search')).toBeNull();
+    expect(within(menu).queryByText('Item Shop')).toBeNull();
+    expect(within(menu).queryByText('View in Item Shop')).toBeNull();
     expect(within(menu).getByText('View Paths')).toBeDefined();
     window.location.hash = '';
   });
@@ -632,10 +640,7 @@ describe('App — mobile FAB branches', () => {
       expect(screen.getByText('Test Song')).toBeDefined();
     });
 
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
-    expect(within(menu).queryByText('Search')).toBeNull();
-    expect(within(menu).queryByText('View Paths')).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
     window.location.hash = '';
   });
 

@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
+import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -140,7 +140,6 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
-import { useShopState } from './hooks/data/useShopState';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
 
@@ -255,6 +254,13 @@ export function mergePageQuickLinksIntoFabGroups(
   ];
 }
 
+function MobileFloatingActionButton(props: React.ComponentProps<typeof FloatingActionButton>) {
+  const actionGroups = props.actionGroups ?? [];
+  const hasActions = actionGroups.some(group => group.length > 0);
+  if (!props.defaultOpen && !hasActions) return null;
+  return <FloatingActionButton {...props} actionGroups={actionGroups} />;
+}
+
 const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
@@ -339,7 +345,6 @@ function AppShell() {
   const hasVisiblePathInstruments = visiblePathInstruments(settings).length > 0;
   const fabSearch = useFabSearch();
   const pageQuickLinks = usePageQuickLinksController();
-  const { isShopVisible, getShopUrl } = useShopState();
   const {
     scrollRef: shellScrollRef,
     portalRefCallback: shellPortalRefCallback,
@@ -579,11 +584,6 @@ function AppShell() {
       mergePageQuickLinksIntoFabGroups(quickLinksActions, pageSpecificActions, ...groups),
     );
 
-  /** Shared FAB action group for global non-profile actions. */
-  const playerActions = (includeShop = true) => [
-    ...(includeShop && isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
-  ];
-
   return (
     <BandFilterActionProvider value={bandFilterActionValue}>
     <PlayerDataProvider accountId={player?.accountId}>
@@ -661,7 +661,7 @@ function AppShell() {
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}
       {isMobile && location.pathname === AppRoutes.songs && (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="songs"
           defaultOpen
           placeholder={t('songs.searchPlaceholder')}
@@ -670,57 +670,43 @@ function AppShell() {
               { label: t('common.sortSongs'), icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
               ...(player ? [{ label: t('common.filterSongs'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
             ],
-            playerActions(),
           )}
           onPress={() => {}}
         />
       )}
       {isMobile && location.pathname === AppRoutes.suggestions && (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             [{ label: t('common.filterSuggestions'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openSuggestionsFilter() }],
-            playerActions(),
           )}
           onPress={() => {}}
         />
       )}
       {isMobile && RoutePatterns.history.test(location.pathname) && (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             [
               { label: t('common.sortPlayerScores'), icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openPlayerHistorySort() },
             ],
-            playerActions(),
           )}
           onPress={() => {}}
         />
       )}
-      {isMobile && RoutePatterns.songDetail.test(location.pathname) && (() => {
-        const songIdMatch = location.pathname.match(/^\/songs\/([^/]+)$/);
-        const currentSongId = songIdMatch?.[1];
-        const currentShopUrl = currentSongId ? getShopUrl(currentSongId) : undefined;
-        return (
-        <FloatingActionButton
+      {isMobile && RoutePatterns.songDetail.test(location.pathname) && (
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             isNarrow && hasVisiblePathInstruments ? [{
               label: t('common.viewPaths'), icon: <IoFlash size={Size.iconFab} />, onPress: () => fabSearch.openPaths(),
-            },
-            ...(isShopVisible && currentShopUrl ? [{
-              label: t('common.viewInItemShop', 'View in Item Shop'), icon: <IoBagHandle size={Size.iconFab} />,
-              /* v8 ignore next */
-              onPress: () => window.open(currentShopUrl, '_blank', 'noopener,noreferrer'),
-            }] : [])] : [],
-            playerActions(),
+            }] : [],
           )}
           onPress={() => {}}
         />
-        );
-      })()}
+      )}
       {isMobile && location.pathname === AppRoutes.shop && (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             !isNarrowGrid ? [{
@@ -728,7 +714,6 @@ function AppShell() {
               icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
               onPress: () => fabSearch.shopToggleView(),
             }] : [],
-            playerActions(false),
           )}
           onPress={() => {}}
         />
@@ -739,18 +724,17 @@ function AppShell() {
           { label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() },
         ];
         return (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             leaderboardActions,
-            playerActions(),
           )}
           onPress={() => {}}
         />
         );
       })()}
       {isMobile && RoutePatterns.rivals.test(location.pathname) && (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             [{
@@ -758,30 +742,27 @@ function AppShell() {
               icon: fabSearch.rivalsActiveTab === 'song' ? <IoTrophy size={Size.iconFab} /> : <IoMusicalNotes size={Size.iconFab} />,
               onPress: () => fabSearch.rivalsToggleTab(),
             }],
-            playerActions(),
           )}
           onPress={() => {}}
         />
       )}
       {isMobile && RoutePatterns.playerBands.test(location.pathname) && (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             [{ label: t('common.filterBands'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openBandFilter() }],
-            playerActions(),
           )}
           onPress={() => {}}
         />
       )}
       {isMobile && location.pathname === AppRoutes.compete && (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             [
               { label: t('compete.leaderboards'), icon: <IoTrophy size={Size.iconFab} />, onPress: () => navigate(AppRoutes.leaderboards) },
               { label: t('compete.rivals'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => navigate(AppRoutes.rivals) },
             ],
-            playerActions(),
           )}
           onPress={() => {}}
         />
@@ -792,11 +773,10 @@ function AppShell() {
         const rivalName = new URLSearchParams(location.search).get('name');
         const profileLabel = rivalName ? t('common.viewNameProfile', { name: rivalName }) : t('common.viewProfile');
         return currentRivalId ? (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             [{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }],
-            playerActions(),
           )}
           onPress={() => {}}
         />
@@ -808,18 +788,17 @@ function AppShell() {
         const rivalName = new URLSearchParams(location.search).get('name');
         const profileLabel = rivalName ? t('common.viewNameProfile', { name: rivalName }) : t('common.viewProfile');
         return currentRivalId ? (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             [{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }],
-            playerActions(),
           )}
           onPress={() => {}}
         />
         ) : null;
       })()}
       {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
-        <FloatingActionButton
+        <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             pageQuickLinks.hasPageQuickLinks || fabSearch.playerPageSelect ? [
@@ -827,7 +806,6 @@ function AppShell() {
                 ? [{ label: t('common.selectAsProfile', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect }]
                 : []),
             ] : [],
-            playerActions(),
           )}
           onPress={() => {}}
         />
