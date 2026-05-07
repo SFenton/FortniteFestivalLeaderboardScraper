@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { LoadPhase } from '@festival/core';
@@ -11,7 +11,7 @@ import ModalShell from '../modals/components/ModalShell';
 import PlayerBandCard from '../../pages/player/components/PlayerBandCard';
 import { SongRow } from '../../pages/songs/components/SongRow';
 import { useUnifiedSearch } from '../../hooks/data/useUnifiedSearch';
-import { useIsMobile } from '../../hooks/ui/useIsMobile';
+import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { Routes } from '../../routes';
@@ -48,6 +48,7 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
   const { t } = useTranslation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  const isMobileChrome = useIsMobileChrome();
   const st = useStyles(isMobile);
   const inputRef = useRef<SearchBarRef>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -66,15 +67,27 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
     wasVisibleRef.current = visible;
   }, [defaultTarget, visible]);
 
-  const handleOpenComplete = useCallback(() => {
-    setTimeout(() => inputRef.current?.focus(), 50);
+  const focusSearchWithoutScroll = useCallback(() => {
+    inputRef.current?.focus({ preventScroll: true });
   }, []);
 
+  const handleOpenComplete = useCallback(() => {
+    if (isMobileChrome) return;
+    setTimeout(() => focusSearchWithoutScroll(), 50);
+  }, [focusSearchWithoutScroll, isMobileChrome]);
+
+  const handleSearchPressStart = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactTouchEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
+    if (document.activeElement === event.target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    focusSearchWithoutScroll();
+  }, [focusSearchWithoutScroll]);
+
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (isMobile && e.key === 'Enter') {
+    if (isMobileChrome && e.key === 'Enter') {
       inputRef.current?.blur();
     }
-  }, [isMobile]);
+  }, [isMobileChrome]);
 
   const handleCloseComplete = useCallback(() => {
     setQuery('');
@@ -151,6 +164,10 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
           onChange={setQuery}
           placeholder={t('search.placeholder')}
           onKeyDown={handleSearchKeyDown}
+          onPointerDownCapture={handleSearchPressStart}
+          onTouchStartCapture={handleSearchPressStart}
+          onMouseDownCapture={handleSearchPressStart}
+          onClickCapture={handleSearchPressStart}
           enterKeyHint="search"
           style={st.searchBar}
         />

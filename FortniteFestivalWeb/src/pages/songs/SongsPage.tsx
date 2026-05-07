@@ -25,10 +25,11 @@ import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
 import { type BandSongPerformance, type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { accuracyBgColor, maxScoreColor, LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Layout, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, FADE_DURATION, STAGGER_INTERVAL, border, flexCenter, padding } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, FADE_DURATION, STAGGER_INTERVAL, QUICK_FADE_MS, border, flexCenter, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
 import Page from '../Page';
-import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { HEADER_PORTAL_HEIGHT_VAR, useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../constants/keyboardLayoutVars';
 import SyncBanner from '../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../components/page/SyncCompleteBanner';
 import CollapseOnExit from '../../components/page/CollapseOnExit';
@@ -1026,6 +1027,7 @@ export default function SongsPage() {
   const emptyStagger = useStaggerStyle(200, { skip: !shouldStagger });
   const songsStyles = useSongsStyles();
   const showMobilePageHeader = !isMobileChrome || appSettings.showButtonsInHeaderMobile;
+  const loadingSpinnerStyle = isMobileChrome ? songsStyles.keyboardAwareSpinnerOverlay : undefined;
 
   if (error) {
     const parsed = parseApiError(error);
@@ -1042,7 +1044,7 @@ export default function SongsPage() {
       fabSpacer={isMobileChrome ? 'fixed' : 'end'}
       quickLinks={pageQuickLinks}
       before={<>
-        <LoadGate phase={loadPhase} overlay>
+        <LoadGate phase={loadPhase} overlay spinnerStyle={loadingSpinnerStyle} spinnerTestId="songs-loading-spinner">
           {isMobileChrome ? (
             <PageHeaderTransition visible={showMobilePageHeader}>
               <PageHeader
@@ -1261,6 +1263,11 @@ function useSongsStyles() {
       color: Colors.textSecondary,
       backgroundColor: Colors.backgroundApp,
       fontSize: Font.lg,
+    } as CSSProperties,
+    keyboardAwareSpinnerOverlay: {
+      top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`,
+      bottom: `var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px)`,
+      transition: `top ${QUICK_FADE_MS}ms ease, bottom ${QUICK_FADE_MS}ms ease`,
     } as CSSProperties,
   }), []);
 }

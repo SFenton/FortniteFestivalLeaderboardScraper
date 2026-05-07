@@ -163,6 +163,38 @@ describe('SearchModal', () => {
     expect(props.onClose).not.toHaveBeenCalled();
   });
 
+  it('auto-focuses with preventScroll when opened on desktop', async () => {
+    renderModal();
+    const input = screen.getByPlaceholderText('Search songs, players, or bands…');
+    const focusSpy = vi.spyOn(input, 'focus');
+
+    await advanceAndFlush(60);
+
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('does not auto-focus on mobile so first keyboard open comes from the tap gesture', async () => {
+    setViewportQueries({ mobile: true });
+    renderModal();
+    const input = screen.getByPlaceholderText('Search songs, players, or bands…');
+    const focusSpy = vi.spyOn(input, 'focus');
+
+    await advanceAndFlush(60);
+
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
+  it('focuses with preventScroll from the modal search tap gesture', () => {
+    setViewportQueries({ mobile: true });
+    renderModal();
+    const input = screen.getByPlaceholderText('Search songs, players, or bands…') as HTMLInputElement;
+    const focusSpy = vi.spyOn(input, 'focus');
+
+    fireEvent.pointerDown(input.parentElement as HTMLElement);
+
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
   it('keeps desktop Enter from blurring the search input', () => {
     renderModal();
     const input = screen.getByPlaceholderText('Search songs, players, or bands…');

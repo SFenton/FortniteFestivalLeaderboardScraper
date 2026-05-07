@@ -22,6 +22,7 @@ import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../hooks/ui/useScrollRestore';
 import { useScrollContainer, useHeaderPortal, useQuickLinksRailPortal } from '../contexts/ScrollContainerContext';
+import { SONGS_FAB_KEYBOARD_INSET_VAR } from '../constants/keyboardLayoutVars';
 import { usePageQuickLinksController } from '../contexts/PageQuickLinksContext';
 import { useRegisterFirstRun } from '../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../hooks/ui/useFirstRun';
@@ -294,7 +295,7 @@ export default function Page({
     if (fabSpacer !== 'fixed') return;
     const el = scrollContainerRef.current;
     if (!el) return;
-    el.style.marginBottom = `${Layout.fabPaddingBottom}px`;
+    el.style.marginBottom = `calc(${Layout.fabPaddingBottom}px + var(${SONGS_FAB_KEYBOARD_INSET_VAR}, 0px))`;
     return () => { el.style.marginBottom = ''; };
   }, [fabSpacer, scrollContainerRef]);
 

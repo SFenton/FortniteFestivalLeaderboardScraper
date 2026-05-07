@@ -12,6 +12,10 @@ export interface LoadGateProps {
   overlay?: boolean;
   /** Override spinner container class. */
   spinnerClassName?: string;
+  /** Extra inline style merged onto the spinner container. */
+  spinnerStyle?: CSSProperties;
+  /** Optional test id for page-level spinner assertions. */
+  spinnerTestId?: string;
   children: ReactNode;
 }
 
@@ -23,16 +27,23 @@ export function LoadGate({
   fadeDuration = SPINNER_FADE_MS,
   overlay,
   spinnerClassName,
+  spinnerStyle,
+  spinnerTestId,
   children,
 }: LoadGateProps) {
   const isContentIn = phase === CONTENT_IN;
   const isSpinnerOut = phase === SPINNER_OUT;
   const s = useStyles(!!overlay, isContentIn, isSpinnerOut, fadeDuration);
 
+  const resolvedSpinnerStyle = spinnerClassName
+    ? { ...(s.fadeOut ?? {}), ...spinnerStyle }
+    : { ...(overlay ? s.spinnerOverlay : s.spinnerContainer), ...spinnerStyle };
+
   const spinner = (
     <div
       className={spinnerClassName}
-      style={spinnerClassName ? s.fadeOut : (overlay ? s.spinnerOverlay : s.spinnerContainer)}
+      data-testid={spinnerTestId}
+      style={resolvedSpinnerStyle}
     >
       <ArcSpinner />
     </div>

@@ -7,6 +7,7 @@ import { useSearchQuery } from '../../../contexts/SearchQueryContext';
 import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, CssValue, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding } from '@festival/theme';
 import { safeAreaBottomOffset } from '../../../utils/safeAreaStyles';
 import { useIOSKeyboardPanGuard } from '../../../hooks/ui/useIOSKeyboardPanGuard';
+import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../constants/keyboardLayoutVars';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
 import FABMenu from './FABMenu';
 
@@ -30,7 +31,7 @@ interface Props {
 }
 
 export default function FloatingActionButton({
-  mode: _mode,
+  mode,
   defaultOpen,
   placeholder,
   icon,
@@ -48,6 +49,7 @@ export default function FloatingActionButton({
   const [keyboardInset, setKeyboardInset] = useState(0);
   const scrollContainerRef = useScrollContainer();
   const searchGuardActive = searchVisible && searchFocused;
+  const isSongsSearch = mode === 'songs' && searchVisible;
   useIOSKeyboardPanGuard({ active: searchGuardActive, mode: 'floating-page', scrollContainerRef });
 
   /* v8 ignore start — action menu open/close handlers (rAF/setTimeout) */
@@ -160,6 +162,26 @@ export default function FloatingActionButton({
     };
   }, [searchGuardActive, updateKeyboardInset]);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!isSongsSearch) {
+      root.style.removeProperty(SONGS_FAB_KEYBOARD_INSET_VAR);
+      root.style.removeProperty(SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR);
+      return undefined;
+    }
+
+    root.style.setProperty(SONGS_FAB_KEYBOARD_INSET_VAR, `${keyboardInset}px`);
+    root.style.setProperty(
+      SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR,
+      keyboardInset > 0 ? `calc(${keyboardInset}px + ${safeAreaBottomOffset(Layout.fabBottom + Layout.fabSize)})` : '0px',
+    );
+
+    return () => {
+      root.style.removeProperty(SONGS_FAB_KEYBOARD_INSET_VAR);
+      root.style.removeProperty(SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR);
+    };
+  }, [isSongsSearch, keyboardInset]);
+
   /* v8 ignore start — click-outside handler */
   useEffect(() => {
     if (!actionsOpen) return;
@@ -176,8 +198,10 @@ export default function FloatingActionButton({
   /* v8 ignore stop */
 
   const s = useFABStyles();
+  const keyboardOpen = keyboardInset > 0;
   const keyboardTransform = keyboardInset > 0 ? `translate3d(0, -${keyboardInset}px, 0)` : undefined;
   const keyboardTransition = `transform ${QUICK_FADE_MS}ms ease`;
+  const searchInputWrapStyle = keyboardOpen ? s.searchInputWrapKeyboard : s.searchInputWrap;
 
   return (
     <div ref={containerRef}>
@@ -200,7 +224,7 @@ export default function FloatingActionButton({
               onBlur={() => { setSearchFocused(false); clearKeyboardStateSoon(); }}
               placeholder={placeholder ?? t('songs.searchPlaceholder')}
               enterKeyHint="search"
-              style={s.searchInputWrap}
+              style={searchInputWrapStyle}
             />
           </div>
         </div>
@@ -278,6 +302,34 @@ function useFABStyles() {
       borderRadius: Radius.full,
       boxSizing: BoxSizing.borderBox,
       boxShadow: Shadow.tooltip,
+      opacity: 0.9,
+      transition: [
+        `opacity ${QUICK_FADE_MS}ms ease`,
+        `background-color ${QUICK_FADE_MS}ms ease`,
+        `border-color ${QUICK_FADE_MS}ms ease`,
+        `box-shadow ${QUICK_FADE_MS}ms ease`,
+      ].join(', '),
+      cursor: Cursor.text,
+    } as CSSProperties,
+    searchInputWrapKeyboard: {
+      ...frostedCard,
+      ...flexRow,
+      gap: Gap.sm,
+      width: CssValue.full,
+      height: Layout.fabSize,
+      padding: padding(0, Gap.section),
+      borderRadius: Radius.full,
+      boxSizing: BoxSizing.borderBox,
+      boxShadow: `${Shadow.tooltip}, 0 0 0 1px ${Colors.purpleHighlightBorder}`,
+      opacity: 1,
+      backgroundColor: 'rgba(18,24,38,0.96)',
+      border: `1px solid ${Colors.purpleHighlightBorder}`,
+      transition: [
+        `opacity ${QUICK_FADE_MS}ms ease`,
+        `background-color ${QUICK_FADE_MS}ms ease`,
+        `border-color ${QUICK_FADE_MS}ms ease`,
+        `box-shadow ${QUICK_FADE_MS}ms ease`,
+      ].join(', '),
       cursor: Cursor.text,
     } as CSSProperties,
   }), []);

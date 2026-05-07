@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent } from '@testing-library/react';
 import FloatingActionButton, { type ActionItem } from '../../../../src/components/shell/fab/FloatingActionButton';
+import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../../src/constants/keyboardLayoutVars';
 import { TestProviders } from '../../../helpers/TestProviders';
 
 vi.mock('@festival/ui-utils', async () => {
@@ -218,6 +219,37 @@ describe('FloatingActionButton', () => {
     expect(document.body.style.position).toBe('');
     expect(searchOuter.style.transform).toBe('translate3d(0, -300px, 0)');
     expect(fabContainer.style.transform).toBe('translate3d(0, -300px, 0)');
+    expect(document.documentElement.style.getPropertyValue(SONGS_FAB_KEYBOARD_INSET_VAR)).toBe('300px');
+    expect(document.documentElement.style.getPropertyValue(SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR)).toContain('300px');
+  });
+
+  it('strengthens the search bar opacity while the keyboard is open and restores it on dismiss', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...');
+    const inputWrap = input.parentElement as HTMLElement;
+    const searchOuter = input.closest('.fab-search-bar')?.parentElement as HTMLElement;
+
+    expect(inputWrap.style.opacity).toBe('0.9');
+
+    fireEvent.pointerDown(searchOuter);
+    fireEvent.focus(input);
+
+    act(() => {
+      visualViewport.set(544, 0);
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(inputWrap.style.opacity).toBe('1');
+    expect(inputWrap.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+
+    fireEvent.blur(input);
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(inputWrap.style.opacity).toBe('0.9');
+    expect(document.documentElement.style.getPropertyValue(SONGS_FAB_KEYBOARD_INSET_VAR)).toBe('0px');
   });
 
   it('focuses the search input with preventScroll from the tap gesture', () => {

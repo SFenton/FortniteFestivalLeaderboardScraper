@@ -4,6 +4,8 @@ import { Routes, Route } from 'react-router-dom';
 import { Colors, Gap, Layout, FADE_DURATION } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { HEADER_PORTAL_HEIGHT_VAR } from '../../../src/contexts/ScrollContainerContext';
+import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../src/constants/keyboardLayoutVars';
 import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../src/hooks/ui/usePageQuickLinks';
 import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
 import { clearPageTransitionCache } from '../../../src/hooks/ui/usePageTransition';
@@ -315,7 +317,19 @@ describe('SongsPage', () => {
     // SongsPage uses fabSpacer="fixed" which applies marginBottom on the scroll container
     const scrollContainer = container.querySelector('[data-testid="test-scroll-container"]');
     expect(scrollContainer).toBeTruthy();
-    expect((scrollContainer as HTMLElement).style.marginBottom).toBe('96px');
+    expect((scrollContainer as HTMLElement).style.marginBottom).toBe(`calc(96px + var(${SONGS_FAB_KEYBOARD_INSET_VAR}, 0px))`);
+  });
+
+  it('bounds the loading spinner between the header and raised Songs search controls on mobile chrome', async () => {
+    setViewportQueries({ mobile: true });
+    mockApi.getSongs.mockReturnValue(new Promise(() => {}));
+
+    renderSongsPage();
+
+    const spinner = await screen.findByTestId('songs-loading-spinner');
+    expect(spinner.style.top).toBe(`var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`);
+    expect(spinner.style.bottom).toBe(`var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px)`);
+    expect(spinner.style.transition).toContain('bottom');
   });
 
   it('re-synchs settings from localStorage on external event', async () => {

@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { forwardRef, useRef, useImperativeHandle, useLayoutEffect, useMemo, type KeyboardEventHandler } from 'react';
+import { forwardRef, useRef, useImperativeHandle, useLayoutEffect, useMemo, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler, type TouchEventHandler } from 'react';
 import { IoSearch } from 'react-icons/io5';
 import { IconSize, Colors, Font, Gap, Display, Align, Cursor, CssValue } from '@festival/theme';
 import fx from '../../styles/effects.module.css';
@@ -14,6 +14,10 @@ export interface SearchBarProps {
   onBlur?: () => void;
   /** HTML enterkeyhint attribute for mobile keyboards. */
   enterKeyHint?: 'done' | 'search' | 'go' | 'send' | 'next';
+  onPointerDownCapture?: PointerEventHandler<HTMLDivElement>;
+  onTouchStartCapture?: TouchEventHandler<HTMLDivElement>;
+  onMouseDownCapture?: MouseEventHandler<HTMLDivElement>;
+  onClickCapture?: MouseEventHandler<HTMLDivElement>;
   /** Hide the search icon. Default: false. */
   hideIcon?: boolean;
   /** Extra className to apply to the outer wrapper. */
@@ -40,6 +44,10 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
     onFocus,
     onBlur,
     enterKeyHint,
+    onPointerDownCapture,
+    onTouchStartCapture,
+    onMouseDownCapture,
+    onClickCapture,
     hideIcon,
     className,
     inputClassName,
@@ -66,6 +74,10 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
     <div
       className={wrapperClass}
       style={{ ...s.searchBar, ...style }}
+      onPointerDownCapture={onPointerDownCapture}
+      onTouchStartCapture={onTouchStartCapture}
+      onMouseDownCapture={onMouseDownCapture}
+      onClickCapture={onClickCapture}
       onClick={() => inputRef.current?.focus({ preventScroll: true })}
     >
       {!hideIcon && <IoSearch size={IconSize.xs} style={s.searchIcon} />}
