@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { forwardRef, useRef, useImperativeHandle, useMemo, type KeyboardEventHandler } from 'react';
+import { forwardRef, useRef, useImperativeHandle, useLayoutEffect, useMemo, type KeyboardEventHandler } from 'react';
 import { IoSearch } from 'react-icons/io5';
 import { IconSize, Colors, Font, Gap, Display, Align, Cursor, CssValue } from '@festival/theme';
 import fx from '../../styles/effects.module.css';
@@ -27,7 +27,7 @@ export interface SearchBarProps {
 }
 
 export interface SearchBarRef {
-  focus: () => void;
+  focus: (options?: FocusOptions) => void;
   blur: () => void;
 }
 
@@ -51,9 +51,13 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
   const inputRef = useRef<HTMLInputElement>(null);
 
   useImperativeHandle(ref, () => ({
-    focus: () => inputRef.current?.focus(),
+    focus: (options?: FocusOptions) => inputRef.current?.focus(options),
     blur: () => inputRef.current?.blur(),
   }));
+
+  useLayoutEffect(() => {
+    if (autoFocus) inputRef.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
 
   const s = useStyles();
   const wrapperClass = className;
@@ -62,7 +66,7 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
     <div
       className={wrapperClass}
       style={{ ...s.searchBar, ...style }}
-      onClick={() => inputRef.current?.focus()}
+      onClick={() => inputRef.current?.focus({ preventScroll: true })}
     >
       {!hideIcon && <IoSearch size={IconSize.xs} style={s.searchIcon} />}
       <input
@@ -76,7 +80,6 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
         onFocus={onFocus}
         onBlur={onBlur}
         enterKeyHint={enterKeyHint}
-        autoFocus={autoFocus}
       />
     </div>
   );

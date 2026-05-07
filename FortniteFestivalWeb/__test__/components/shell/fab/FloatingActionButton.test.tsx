@@ -1,19 +1,53 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import FloatingActionButton, { type ActionItem } from '../../../../src/components/shell/fab/FloatingActionButton';
 import { TestProviders } from '../../../helpers/TestProviders';
 
-// Mock IS_PWA
-vi.mock('../../../../src/utils/platform', () => ({
-  IS_PWA: false,
-  IS_IOS: false,
-  IS_ANDROID: false,
-  IS_MOBILE_DEVICE: false,
-}));
+vi.mock('@festival/ui-utils', async () => {
+  const actual = await vi.importActual<typeof import('@festival/ui-utils')>('@festival/ui-utils');
+  return {
+    ...actual,
+    IS_IOS: true,
+    IS_ANDROID: false,
+    IS_PWA: true,
+    IS_MOBILE_DEVICE: true,
+  };
+});
+
+class MockVisualViewport extends EventTarget {
+  height = 844;
+  offsetTop = 0;
+
+  set(height: number, offsetTop: number) {
+    this.height = height;
+    this.offsetTop = offsetTop;
+    this.dispatchEvent(new Event('resize'));
+    this.dispatchEvent(new Event('scroll'));
+  }
+}
+
+let visualViewport: MockVisualViewport;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  document.documentElement.removeAttribute('style');
+  document.body.removeAttribute('style');
+  visualViewport = new MockVisualViewport();
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: visualViewport });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 844 });
+  Object.defineProperty(window, 'scrollX', { configurable: true, value: 0 });
+  Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 });
+  Object.defineProperty(window, 'scrollTo', { configurable: true, value: vi.fn() });
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0; });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  document.documentElement.removeAttribute('style');
+  document.body.removeAttribute('style');
 });
 
 function renderFAB(props: Partial<React.ComponentProps<typeof FloatingActionButton>> = {}) {
@@ -162,8 +196,56 @@ describe('FloatingActionButton', () => {
     renderFAB({ defaultOpen: true });
     const input = screen.getByRole('textbox');
     const blurSpy = vi.spyOn(input, 'blur');
+    expect(input.getAttribute('enterkeyhint')).toBe('search');
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(blurSpy).toHaveBeenCalled();
+  });
+
+  it('moves only the floating search and FAB controls when the iOS keyboard opens', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...');
+    const searchOuter = input.closest('.fab-search-bar')?.parentElement as HTMLElement;
+    const fabContainer = screen.getByRole('button', { name: /actions/i }).parentElement as HTMLElement;
+
+    fireEvent.pointerDown(searchOuter);
+    fireEvent.focus(input);
+
+    act(() => {
+      visualViewport.set(544, 0);
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(document.body.style.position).toBe('');
+    expect(searchOuter.style.transform).toBe('translate3d(0, -300px, 0)');
+    expect(fabContainer.style.transform).toBe('translate3d(0, -300px, 0)');
+  });
+
+  it('focuses the search input with preventScroll from the tap gesture', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    const searchOuter = input.closest('.fab-search-bar')?.parentElement as HTMLElement;
+    const focusSpy = vi.spyOn(input, 'focus');
+
+    fireEvent.pointerDown(searchOuter);
+
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('uses the pre-keyboard baseline when PWA innerHeight shrinks with the keyboard', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...');
+    const searchOuter = input.closest('.fab-search-bar')?.parentElement as HTMLElement;
+
+    fireEvent.pointerDown(searchOuter);
+    fireEvent.focus(input);
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 544 });
+
+    act(() => {
+      visualViewport.set(544, 0);
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(searchOuter.style.transform).toBe('translate3d(0, -300px, 0)');
   });
 
   it('renders without action groups', () => {
