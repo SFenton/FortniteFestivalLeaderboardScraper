@@ -413,15 +413,21 @@ describe('App — mobile FAB branches', () => {
     expect(container.querySelector('nav')).toBeTruthy();
   });
 
-  it('does not render an empty settings route FAB on mobile', async () => {
+  it('opens Settings quick links directly from the mobile FAB', async () => {
     setMobile();
-    // Navigate to settings via hash
     window.location.hash = '#/settings';
-    const { container } = render(<App />);
+    render(<App />);
+
     await waitFor(() => {
-      expect(container.innerHTML.length).toBeGreaterThan(200);
-    });
+      expect(screen.getByText('App Settings')).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    }, { timeout: 5000 });
     expect(screen.queryByLabelText('Actions')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
     window.location.hash = '';
   });
 

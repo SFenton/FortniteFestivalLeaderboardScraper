@@ -177,7 +177,8 @@ describe('SettingsPage', () => {
     setViewportQueries({ mobile: true, wide: false });
     renderSettings();
     expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.getByTestId('test-header-portal').childElementCount).toBe(0);
     expect(screen.getByText('App Settings')).toBeDefined();
   });
 
@@ -208,13 +209,13 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('renders a mobile quick links trigger and opens the modal', async () => {
+  it('registers mobile quick links for the shell FAB and opens the modal through the shared controller', async () => {
     setViewportQueries({ mobile: true, wide: false });
 
-    renderSettings();
+    renderSettings({ withQuickLinksHarness: true });
 
-    const trigger = await screen.findByRole('button', { name: 'Quick Links' });
-    fireEvent.click(trigger);
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    fireEvent.click(await screen.findByTestId('test-open-page-quick-links'));
 
     const dialog = await screen.findByRole('dialog', { name: 'Quick Links' });
     expect(dialog).toBeDefined();
@@ -551,7 +552,7 @@ describe('SettingsPage', () => {
     expect(stored.defaultSearchTarget).toBe('bands');
   });
 
-  it('hides the mobile quick links header trigger when the setting is off', () => {
+  it('does not render a mobile quick links header trigger when the header setting is off', () => {
     setViewportQueries({ mobile: true, wide: false });
     localStorage.setItem('fst:appSettings', JSON.stringify({ showButtonsInHeaderMobile: false }));
 

@@ -38,7 +38,6 @@ import { api } from '../../api/client';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
-import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
@@ -669,7 +668,6 @@ export default function SettingsPage() {
   const headerStagger: CSSProperties = !skipAnimRef.current
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
     : {};
-  const showMobilePageHeader = !isMobile || settings.showButtonsInHeaderMobile;
   const settingsHeader = <PageHeader title={isMobile ? undefined : t('settings.title')} style={isMobile ? undefined : headerStagger} actions={compactQuickLinksAction} />;
 
   return (
@@ -677,9 +675,7 @@ export default function SettingsPage() {
       scrollRestoreKey="settings"
       containerStyle={st.container}
       quickLinks={pageQuickLinks}
-      before={isMobile
-        ? <PageHeaderTransition visible={showMobilePageHeader}>{settingsHeader}</PageHeaderTransition>
-        : settingsHeader}
+      before={isMobile ? undefined : settingsHeader}
       after={<>
         {showResetConfirm && (
           /* v8 ignore start — confirm dialog callbacks */

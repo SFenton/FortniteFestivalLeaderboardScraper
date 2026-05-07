@@ -683,6 +683,14 @@ function AppShell() {
           onPress={() => fabSearch.openSuggestionsFilter()}
         />
       )}
+      {isMobile && location.pathname === AppRoutes.settings && pageQuickLinks.hasPageQuickLinks && (
+        <MobileFloatingActionButton
+          mode="players"
+          ariaLabel={getFabQuickLinksActionLabel(t)}
+          directAction
+          onPress={() => pageQuickLinks.openPageQuickLinks()}
+        />
+      )}
       {isMobile && (location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname)) && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
           mode="players"
@@ -805,7 +813,7 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
+      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.settings && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
