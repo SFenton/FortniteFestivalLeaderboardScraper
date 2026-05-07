@@ -112,6 +112,7 @@ import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import SearchModal from './components/search/SearchModal';
+import type { SearchTarget } from './types/search';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
@@ -347,6 +348,7 @@ function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTargetOverride, setSearchTargetOverride] = useState<SearchTarget | null>(null);
   const [bandFilterModalOpen, setBandFilterModalOpen] = useState(false);
   const [appliedBandFilter, setAppliedBandFilter] = useState<AppliedBandComboFilter | null>(() => readAppliedBandFilterForSelectedProfile(selectedProfile));
   const [hasNewChangelog] = useState(() => {
@@ -368,6 +370,16 @@ function AppShell() {
   /* v8 ignore stop */
   const navigate = useNavigate();
   const navType = useNavigationType();
+
+  const openSearch = useCallback((defaultTarget?: SearchTarget) => {
+    setSearchTargetOverride(defaultTarget ?? null);
+    setSearchOpen(true);
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchTargetOverride(null);
+  }, []);
 
   // Track whether the back button has already appeared in the current detail stack.
   const backShownRef = useRef(false);
@@ -441,6 +453,14 @@ function AppShell() {
     else if (dest === 'modal') setPlayerModalOpen(true);
     else navigate(dest);
   }, [navigate, player, selectedProfile]);
+
+  const handleMobileHeaderProfileAction = useCallback(() => {
+    if (!selectedProfile) {
+      openSearch('players');
+      return;
+    }
+    handleProfileClick();
+  }, [handleProfileClick, openSearch, selectedProfile]);
   /* v8 ignore stop */
 
   /* v8 ignore start — deep AppInner: instrument sync event listener */
@@ -490,6 +510,11 @@ function AppShell() {
 
   const wideDesktop = !isMobile && isWideDesktop;
   const profileType = selectedProfile?.type ?? 'none';
+  const mobileHeaderProfileLabel = selectedProfile?.type === 'player'
+    ? t('common.viewNameProfile', { name: selectedProfile.displayName })
+    : selectedProfile?.type === 'band'
+      ? t('bandList.viewBand', { names: selectedProfile.displayName })
+      : t('common.selectPlayerProfile');
   const emptyBandFilterLabel = getEmptyBandFilterActionLabel(selectedProfile, t);
   const selectedBandIdentity = selectedProfile?.type === 'band'
     ? `${selectedProfile.bandId}|${selectedProfile.bandType}|${selectedProfile.teamKey}`
@@ -554,11 +579,8 @@ function AppShell() {
       mergePageQuickLinksIntoFabGroups(quickLinksActions, pageSpecificActions, ...groups),
     );
 
-  /** Shared FAB action group for player navigation (Find Player + Profile/Select + optionally Item Shop). */
+  /** Shared FAB action group for global non-profile actions. */
   const playerActions = (includeShop = true) => [
-    player
-      ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-      : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
     ...(includeShop && isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
   ];
 
@@ -595,7 +617,10 @@ function AppShell() {
             songInstrument={songInstrument}
             isSongsRoute={location.pathname === AppRoutes.songs}
             onOpenSidebar={() => setSidebarOpen(true)}
-            onOpenSearch={() => setSearchOpen(true)}
+            profileType={profileType}
+            profileLabel={mobileHeaderProfileLabel}
+            onProfileAction={handleMobileHeaderProfileAction}
+            onOpenSearch={() => openSearch()}
           />
         ) : (
           <DesktopNav
@@ -603,7 +628,7 @@ function AppShell() {
             profileType={profileType}
             onOpenSidebar={() => setSidebarOpen((o) => !o)}
             onProfileClick={handleProfileClick}
-            onOpenSearch={() => setSearchOpen(true)}
+            onOpenSearch={() => openSearch()}
             isWideDesktop={isWideDesktop}
           />
         )}
@@ -817,8 +842,8 @@ function AppShell() {
       />
       <SearchModal
         visible={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        defaultTarget={settings.defaultSearchTarget}
+        onClose={closeSearch}
+        defaultTarget={searchTargetOverride ?? settings.defaultSearchTarget}
       />
       <BandInstrumentFilterModal
         visible={bandFilterModalOpen && selectedProfile?.type === 'band'}

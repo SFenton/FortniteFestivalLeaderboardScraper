@@ -2,7 +2,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { IoChevronBack, IoSearch } from 'react-icons/io5';
+import { IoChevronBack, IoPeople, IoPerson, IoPersonAdd, IoSearch } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import HamburgerButton from '../HamburgerButton';
 import BackLink from './BackLink';
@@ -12,6 +12,8 @@ import {
   Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue, Size, Radius,
   flexRow, flexCenter, padding, TRANSITION_MS,
 } from '@festival/theme';
+
+export type MobileHeaderProfileType = 'none' | 'player' | 'band';
 
 export interface MobileHeaderProps {
   navTitle: string | null;
@@ -26,6 +28,12 @@ export interface MobileHeaderProps {
   onOpenSidebar?: () => void;
   /** Callback to open the unified search modal. */
   onOpenSearch?: () => void;
+  /** Selected profile state rendered immediately before Search. */
+  profileType?: MobileHeaderProfileType;
+  /** Accessible label for the selected-profile action. */
+  profileLabel?: string;
+  /** Callback for profile-state action presses. */
+  onProfileAction?: () => void;
 }
 
 export default function MobileHeader({
@@ -37,10 +45,25 @@ export default function MobileHeader({
   isSongsRoute,
   onOpenSidebar,
   onOpenSearch,
+  profileType = 'none',
+  profileLabel,
+  onProfileAction,
 }: MobileHeaderProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const s = useStyles();
+  const ProfileIcon = profileType === 'band' ? IoPeople : profileType === 'player' ? IoPerson : IoPersonAdd;
+  const profileAction = onProfileAction ? (
+    <button
+      type="button"
+      style={s.profileButton}
+      onClick={onProfileAction}
+      aria-label={profileLabel ?? t('aria.profile')}
+      data-profile-type={profileType}
+    >
+      <ProfileIcon size={IconSize.md} />
+    </button>
+  ) : null;
   const searchAction = (
     <button
       type="button"
@@ -48,8 +71,17 @@ export default function MobileHeader({
       onClick={onOpenSearch}
       aria-label={t('common.searchAction')}
     >
-      <IoSearch size={IconSize.nav} />
+      <IoSearch size={IconSize.md} />
     </button>
+  );
+  const rightActionGroup = (
+    <div style={s.rightActions}>
+      {isSongsRoute && songInstrument && (
+        <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={s.instrumentIcon} />
+      )}
+      {profileAction}
+      {searchAction}
+    </div>
   );
 
   /* v8 ignore start — conditional rendering tested via AppMobile integration */
@@ -73,18 +105,13 @@ export default function MobileHeader({
             <span style={s.title}>{navTitle}</span>
           </>
         )}
-        <div style={s.rightActions}>
-          {isSongsRoute && songInstrument && (
-            <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={s.instrumentIcon} />
-          )}
-          {searchAction}
-        </div>
+        {rightActionGroup}
       </div>
     );
   }
 
   if (backFallback) {
-    return <BackLink key={locationKey} fallback={backFallback} animate={shouldAnimate} rightAction={<span style={s.backLinkRightAction}>{searchAction}</span>} />;
+    return <BackLink key={locationKey} fallback={backFallback} animate={shouldAnimate} rightAction={rightActionGroup} />;
   }
 
   return null;
@@ -136,7 +163,7 @@ function useStyles() {
     rightActions: {
       ...flexRow,
       alignItems: Align.center,
-      gap: Gap.sm,
+      gap: Gap.md,
       marginLeft: CssValue.auto,
       flexShrink: 0,
     } as CSSProperties,
@@ -145,8 +172,8 @@ function useStyles() {
     } as CSSProperties,
     iconButton: {
       ...flexCenter,
-      width: Size.iconMd,
-      height: Size.iconMd,
+      width: Size.iconLg,
+      height: Size.iconLg,
       background: 'none',
       border: 'none',
       cursor: 'pointer',
@@ -154,10 +181,22 @@ function useStyles() {
       color: Colors.textSecondary,
       padding: 0,
       flexShrink: 0,
+      marginTop: -Gap.xs,
+      marginBottom: -Gap.xs,
     } as CSSProperties,
-    backLinkRightAction: {
-      marginLeft: CssValue.auto,
+    profileButton: {
+      ...flexCenter,
+      width: Size.iconLg,
+      height: Size.iconLg,
+      background: 'none',
+      border: 'none',
+      cursor: 'pointer',
+      borderRadius: Radius.xs,
+      color: Colors.textSecondary,
+      padding: 0,
       flexShrink: 0,
+      marginTop: -Gap.xs,
+      marginBottom: -Gap.xs,
     } as CSSProperties,
   }), []);
 }

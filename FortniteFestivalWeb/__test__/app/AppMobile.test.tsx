@@ -335,6 +335,70 @@ describe('App — mobile FAB branches', () => {
     expect(container.innerHTML).toBeTruthy();
   });
 
+  it('opens unified Search on Players from the unselected mobile header profile action', async () => {
+    setMobile();
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    fireEvent.click(screen.getByRole('button', { name: 'Select Player Profile' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Search' });
+    expect(within(dialog).getByRole('tab', { name: 'Players' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(dialog).getByRole('tab', { name: 'Songs' }).getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('does not include unselected profile access in the mobile FAB menu', async () => {
+    setMobile();
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    expect(screen.getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+
+    fireEvent.click(screen.getByLabelText('Actions'));
+    const menu = await screen.findByTestId('fab-menu');
+
+    expect(within(menu).queryByText('Select Player Profile')).toBeNull();
+    expect(within(menu).queryByText('Search')).toBeNull();
+    expect(within(menu).getByText('Sort Songs')).toBeDefined();
+  });
+
+  it('does not include the selected player in the mobile FAB menu', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    fireEvent.click(screen.getByLabelText('Actions'));
+    const menu = await screen.findByTestId('fab-menu');
+
+    expect(within(menu).queryByText('TrackedP')).toBeNull();
+    expect(within(menu).getByText('Filter Songs')).toBeDefined();
+  });
+
+  it('does not include selected band profile access in the mobile FAB menu', async () => {
+    setMobile();
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    }));
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    fireEvent.click(screen.getByLabelText('Actions'));
+    const menu = await screen.findByTestId('fab-menu');
+
+    expect(within(menu).queryByText('Select Player Profile')).toBeNull();
+    expect(within(menu).queryByText('TrackedP + BandMate')).toBeNull();
+    expect(within(menu).getByText('Duos')).toBeDefined();
+  });
+
   it('renders desktop nav on non-mobile', async () => {
     setDesktop();
     const { container } = render(<App />);
