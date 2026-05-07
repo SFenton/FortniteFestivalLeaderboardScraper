@@ -127,6 +127,7 @@ import RouteErrorFallback from './components/page/RouteErrorFallback';
 import { createPreserveShellScrollState, type PreserveShellScrollState } from './utils/quietNavigation';
 import { getBandFilterActionLabel } from './utils/bandFilterDisplay';
 import { bandTypeLabel } from './utils/bandTypes';
+import { getProfileClickDestination } from './utils/profileNavigation';
 import {
   clearAppliedBandFilter,
   isBandFilterForSelectedProfile,
@@ -142,6 +143,8 @@ import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
+
+export { getProfileClickDestination } from './utils/profileNavigation';
 
 export default function App() {
   return (
@@ -192,25 +195,6 @@ export function shouldShowBandFilterAction(selectedProfile: SelectedProfile | nu
 
 export function prependFabActionGroup(leadingActions: ActionItem[], actionGroups: ActionItem[][]): ActionItem[][] {
   return leadingActions.length > 0 ? [leadingActions, ...actionGroups] : actionGroups;
-}
-
-/**
- * Determines the destination action for the compact-desktop profile icon click.
- * Returns the navigation target string, 'sidebar', or 'modal'.
- */
-export function getProfileClickDestination(
-  player: TrackedPlayer | null,
-  selectedProfile: SelectedProfile | null,
-): string | 'sidebar' | 'modal' {
-  if (player) return AppRoutes.statistics;
-  if (selectedProfile?.type === 'band') {
-    const { bandId, bandType, teamKey, displayName } = selectedProfile;
-    if (bandId && bandType && teamKey) {
-      return AppRoutes.band(bandId, { bandType, teamKey, names: displayName });
-    }
-    return 'sidebar';
-  }
-  return 'modal';
 }
 
 export function getBackFallback(pathname: string, search = ''): string | null {
@@ -659,7 +643,7 @@ function AppShell() {
       )}
 
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
-      {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}
+      {isMobile && <BottomNav player={player} selectedProfile={selectedProfile} activeTab={activeTab} onTabClick={handleTabClick} />}
       {isMobile && location.pathname === AppRoutes.songs && (
         <MobileFloatingActionButton
           mode="songs"

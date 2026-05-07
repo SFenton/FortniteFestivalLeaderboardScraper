@@ -3,8 +3,10 @@ import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
+import type { SelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import fx from '../../../styles/effects.module.css';
 import { paddingWithSafeAreaBottom } from '../../../utils/safeAreaStyles';
+import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import { TabKey } from '@festival/core';
 import {
   Colors, Font, Weight, Gap, ZIndex, Layout,
@@ -14,13 +16,15 @@ import {
 } from '@festival/theme';
 export type { TabKey };
 
-export default function BottomNav({ player, activeTab, onTabClick }: {
+export default function BottomNav({ player, selectedProfile = null, activeTab, onTabClick }: {
   player: TrackedPlayer | null;
+  selectedProfile?: SelectedProfile | null;
   activeTab: TabKey;
   onTabClick: (tab: TabKey, path?: string) => void;
 }) {
   const { t } = useTranslation();
   const s = useStyles();
+  const statisticsPath = getStatisticsNavigationPath(player, selectedProfile);
   const tabs: { key: TabKey; label: string; icon: React.ReactNode; path?: string }[] = [
     { key: TabKey.Songs, label: t('nav.songs'), icon: <IoMusicalNotes size={20} /> },
     ...(player ? [{ key: TabKey.Suggestions, label: t('nav.suggestions'), icon: <IoSparkles size={20} /> }] : []),
@@ -30,7 +34,7 @@ export default function BottomNav({ player, activeTab, onTabClick }: {
       icon: <IoTrophy size={20} />,
       path: player ? '/compete' : '/leaderboards',
     },
-    ...(player ? [{ key: TabKey.Statistics, label: t('nav.statistics'), icon: <IoStatsChart size={20} /> }] : []),
+    ...(statisticsPath ? [{ key: TabKey.Statistics, label: t('nav.statistics'), icon: <IoStatsChart size={20} />, path: statisticsPath }] : []),
     { key: TabKey.Settings, label: t('nav.settings'), icon: <IoSettings size={20} /> },
   ];
 

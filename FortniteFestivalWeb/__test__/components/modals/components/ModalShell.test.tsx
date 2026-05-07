@@ -6,14 +6,18 @@ import ModalShell from '../../../../src/components/modals/components/ModalShell'
 const mockIsMobile = vi.fn(() => false);
 vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({ useIsMobile: () => mockIsMobile() }));
 
+let mockVisualViewportHeight = 800;
+let mockVisualViewportOffsetTop = 0;
 vi.mock('../../../../src/hooks/ui/useVisualViewport', () => ({
-  useVisualViewportHeight: () => 800,
-  useVisualViewportOffsetTop: () => 0,
+  useVisualViewportHeight: () => mockVisualViewportHeight,
+  useVisualViewportOffsetTop: () => mockVisualViewportOffsetTop,
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsMobile.mockReturnValue(false);
+  mockVisualViewportHeight = 800;
+  mockVisualViewportOffsetTop = 0;
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0; });
   vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
 });
@@ -165,6 +169,30 @@ describe('ModalShell', () => {
     // Mobile panel has left/right set to 0
     expect(dialog.style.left).toBe('0px');
     expect(dialog.style.right).toBe('0px');
+  });
+
+  it('keeps the mobile panel top stable while extending to the viewport bottom when visual viewport shrinks', () => {
+    mockIsMobile.mockReturnValue(true);
+    mockVisualViewportHeight = 844;
+    mockVisualViewportOffsetTop = 0;
+    const { rerender } = render(
+      <ModalShell visible={true} title="Mobile Modal" onClose={vi.fn()}>
+        <div>Content</div>
+      </ModalShell>,
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.style.top).toBe('168.8px');
+
+    mockVisualViewportHeight = 520;
+    rerender(
+      <ModalShell visible={true} title="Mobile Modal" onClose={vi.fn()}>
+        <div>Content</div>
+      </ModalShell>,
+    );
+
+    expect(dialog.style.top).toBe('168.8px');
+    expect(dialog.style.bottom).toBe('0px');
+    expect(dialog.style.height).toBe('');
   });
 
   it('renders desktop panel class when isMobile is false', () => {

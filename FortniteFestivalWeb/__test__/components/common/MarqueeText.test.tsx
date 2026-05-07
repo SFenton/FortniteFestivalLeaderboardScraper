@@ -138,4 +138,46 @@ describe('MarqueeText', () => {
     const dur = parseFloat(track.style.getPropertyValue('--marquee-duration'));
     expect(dur).toBe(8);
   });
+
+  it('keeps marquee phase stable across parent rerenders', () => {
+    const baseNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(baseNow + 1_000);
+    const { container, rerender } = render(<MarqueeText text="A long player name" cycleDuration={8} />);
+    const wrapper = container.firstElementChild as HTMLElement;
+
+    const inner = wrapper.querySelector('span')!;
+    mockWidths(wrapper, 50, 50);
+    mockWidths(inner, 200, 200);
+    fireResize();
+
+    const firstTrack = container.querySelector('[class*="track"]') as HTMLElement;
+    const firstDelay = firstTrack.style.getPropertyValue('--marquee-delay');
+
+    nowSpy.mockReturnValue(baseNow + 4_000);
+    rerender(<MarqueeText text="A long player name" cycleDuration={8} />);
+
+    const secondTrack = container.querySelector('[class*="track"]') as HTMLElement;
+    expect(secondTrack.style.getPropertyValue('--marquee-delay')).toBe(firstDelay);
+  });
+
+  it('recomputes marquee phase when the effective translate distance changes', () => {
+    const baseNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(baseNow + 1_000);
+    const { container, rerender } = render(<MarqueeText text="A long player name" cycleDuration={8} syncDistance={240} />);
+    const wrapper = container.firstElementChild as HTMLElement;
+
+    const inner = wrapper.querySelector('span')!;
+    mockWidths(wrapper, 50, 50);
+    mockWidths(inner, 200, 200);
+    fireResize();
+
+    const firstTrack = container.querySelector('[class*="track"]') as HTMLElement;
+    const firstDelay = firstTrack.style.getPropertyValue('--marquee-delay');
+
+    nowSpy.mockReturnValue(baseNow + 4_000);
+    rerender(<MarqueeText text="A long player name" cycleDuration={8} syncDistance={320} />);
+
+    const secondTrack = container.querySelector('[class*="track"]') as HTMLElement;
+    expect(secondTrack.style.getPropertyValue('--marquee-delay')).not.toBe(firstDelay);
+  });
 });

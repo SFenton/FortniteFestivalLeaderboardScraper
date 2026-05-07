@@ -149,6 +149,30 @@ describe('SearchModal', () => {
     expect(body.style.padding).toContain('safe-area-inset-bottom');
   });
 
+  it('dismisses the mobile keyboard when the Search key is pressed', () => {
+    setViewportQueries({ mobile: true });
+    const { props } = renderModal();
+    const input = screen.getByPlaceholderText('Search songs, players, or bands…');
+    input.focus();
+
+    expect(document.activeElement).toBe(input);
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(document.activeElement).not.toBe(input);
+    expect(screen.getByRole('dialog', { name: 'Search' })).toBeDefined();
+    expect(props.onClose).not.toHaveBeenCalled();
+  });
+
+  it('keeps desktop Enter from blurring the search input', () => {
+    renderModal();
+    const input = screen.getByPlaceholderText('Search songs, players, or bands…');
+    input.focus();
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(document.activeElement).toBe(input);
+  });
+
   it('lays out the result panel so loading spinners can center vertically', () => {
     renderModal();
     const tabpanel = screen.getByRole('tabpanel');

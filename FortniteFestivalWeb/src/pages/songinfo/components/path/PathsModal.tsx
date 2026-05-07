@@ -109,6 +109,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const mobilePanelTopRef = useRef<number | null>(null);
   const wasVisibleRef = useRef(false);
   const { settings, updateSettings } = useSettings();
   const instruments = visibleInstruments(settings);
@@ -175,6 +176,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
+      mobilePanelTopRef.current = null;
       setMounted(true);
       setSelected(initialInstrument);
       setDifficulty('expert');
@@ -214,7 +216,10 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
   }, [mounted, visible]);
 
   const handleTransitionEnd = useCallback(() => {
-    if (!animIn) setMounted(false);
+    if (!animIn) {
+      mobilePanelTopRef.current = null;
+      setMounted(false);
+    }
   }, [animIn]);
 
   useEffect(() => {
@@ -252,8 +257,8 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
     ...panelBase,
     left: 0,
     right: 0,
-    top: vvOffsetTop + vvHeight * 0.2,
-    height: vvHeight * 0.8,
+    top: mobilePanelTopRef.current ?? (mobilePanelTopRef.current = vvOffsetTop + vvHeight * 0.2),
+    bottom: 0,
     borderTopLeftRadius: Radius.lg,
     borderTopRightRadius: Radius.lg,
     transition: `transform ${TRANSITION_MS}ms ease`,

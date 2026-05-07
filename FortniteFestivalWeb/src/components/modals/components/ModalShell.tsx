@@ -52,10 +52,15 @@ export default function ModalShell({
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const mobilePanelTopRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (visible) setMounted(true);
-    else setAnimIn(false);
+    if (visible) {
+      if (!mounted) mobilePanelTopRef.current = null;
+      setMounted(true);
+    } else {
+      setAnimIn(false);
+    }
   }, [visible]);
 
   useLayoutEffect(() => {
@@ -70,6 +75,7 @@ export default function ModalShell({
     if (animIn) {
       onOpenComplete?.();
     } else {
+      mobilePanelTopRef.current = null;
       setMounted(false);
       onCloseComplete?.();
     }
@@ -79,6 +85,7 @@ export default function ModalShell({
     if (!mounted || visible) return;
 
     const id = window.setTimeout(() => {
+      mobilePanelTopRef.current = null;
       setMounted(false);
       onCloseComplete?.();
     }, transitionMs + 50);
@@ -99,9 +106,14 @@ export default function ModalShell({
   const overlayTransition = `opacity ${transMs} ease`;
   const mobileTransition = `transform ${transMs} ease`;
   const desktopTransition = `opacity ${transMs} ease, transform ${transMs} ease`;
+  const computedMobileTop = vvOffsetTop + vvHeight * 0.2;
+  if (isMobile && visible && mobilePanelTopRef.current === null) {
+    mobilePanelTopRef.current = computedMobileTop;
+  }
+  const mobilePanelTop = mobilePanelTopRef.current ?? computedMobileTop;
 
   const panelStyle: React.CSSProperties = isMobile
-    ? { ...css.panelMobile, transition: mobileTransition, top: vvOffsetTop + vvHeight * 0.2, height: vvHeight * 0.8, transform: animIn ? 'translateY(0)' : 'translateY(100%)' }
+    ? { ...css.panelMobile, transition: mobileTransition, top: mobilePanelTop, bottom: 0, transform: animIn ? 'translateY(0)' : 'translateY(100%)' }
     : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, ...desktopStyle };
 
   return createPortal(

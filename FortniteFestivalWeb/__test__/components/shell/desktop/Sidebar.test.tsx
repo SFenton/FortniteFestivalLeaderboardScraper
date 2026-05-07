@@ -30,6 +30,18 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   return { ...render(<MemoryRouter><SettingsProvider><Sidebar {...defaults} /></SettingsProvider></MemoryRouter>), props: defaults };
 }
 
+const selectedBandProfile = {
+  type: 'band' as const,
+  bandId: 'band-1',
+  bandType: 'Band_Duets' as const,
+  teamKey: 'p1:p2',
+  displayName: 'Player One + Player Two',
+  members: [
+    { accountId: 'p1', displayName: 'Player One' },
+    { accountId: 'p2', displayName: 'Player Two' },
+  ],
+};
+
 describe('Sidebar', () => {
   it('renders nothing when not open', () => {
     const { container } = renderSidebar({ open: false });
@@ -58,11 +70,21 @@ describe('Sidebar', () => {
     expect(screen.getByText('Rivals')).toBeTruthy();
   });
 
-  it('hides Suggestions and Statistics links when player is null', () => {
-    renderSidebar({ player: null });
+  it('hides Suggestions and Statistics links when no player or band is selected', () => {
+    renderSidebar({ player: null, selectedProfile: null });
     expect(screen.queryByText('Suggestions')).toBeNull();
     expect(screen.queryByText('Statistics')).toBeNull();
     expect(screen.queryByText('Rivals')).toBeNull();
+  });
+
+  it('renders Statistics link when a band is selected without a player', () => {
+    renderSidebar({ player: null, selectedProfile: selectedBandProfile });
+    const statisticsLink = screen.getByText('Statistics').closest('a');
+
+    expect(screen.queryByText('Suggestions')).toBeNull();
+    expect(screen.queryByText('Rivals')).toBeNull();
+    expect(statisticsLink?.getAttribute('href')).toContain('/bands/band-1');
+    expect(statisticsLink?.getAttribute('href')).toContain('teamKey=p1%3Ap2');
   });
 
   it('shows player displayName when player is set', () => {
@@ -90,17 +112,7 @@ describe('Sidebar', () => {
   it('shows selected band members in the sidebar footer', () => {
     renderSidebar({
       player: null,
-      selectedProfile: {
-        type: 'band',
-        bandId: 'band-1',
-        bandType: 'Band_Duets',
-        teamKey: 'p1:p2',
-        displayName: 'Player One + Player Two',
-        members: [
-          { accountId: 'p1', displayName: 'Player One' },
-          { accountId: 'p2', displayName: 'Player Two' },
-        ],
-      },
+      selectedProfile: selectedBandProfile,
     });
 
     expect(screen.getByTestId('sidebar-band-profile')).toBeTruthy();
@@ -207,6 +219,18 @@ describe('Sidebar — route-specific active styling', () => {
       <MemoryRouter initialEntries={['/statistics']}>
         <SettingsProvider>
         <Sidebar player={{ accountId: 'p1', displayName: 'P' } as any} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
+      </MemoryRouter>,
+    );
+    const link = screen.getByText('Statistics');
+    expect(link.closest('a')?.style.borderLeft).toContain('solid');
+  });
+
+  it('renders Statistics as active on the selected band route', () => {
+    render(
+      <MemoryRouter initialEntries={['/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two']}>
+        <SettingsProvider>
+        <Sidebar player={null} selectedProfile={selectedBandProfile} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
         </SettingsProvider>
       </MemoryRouter>,
     );

@@ -19,13 +19,15 @@ const STORAGE_KEY = 'fst:tabRoutes';
 
 /** Infer which tab owns a route. Detail pages under /songs belong to songs; /player belongs to the active tab. */
 export function inferTab(pathname: string): TabKey | null {
-  if (pathname === '/songs' || pathname.startsWith('/songs/')) return TabKey.Songs;
-  if (pathname === '/shop') return TabKey.Songs;
-  if (pathname === '/suggestions') return TabKey.Suggestions;
-  if (pathname === '/compete' || pathname.startsWith('/leaderboards')) return TabKey.Compete;
-  if (pathname === '/rivals' || pathname.startsWith('/rivals/')) return TabKey.Compete;
-  if (pathname === '/statistics') return TabKey.Statistics;
-  if (pathname === '/settings') return TabKey.Settings;
+  const path = pathname.split(/[?#]/, 1)[0] || '/';
+  if (path === '/songs' || path.startsWith('/songs/')) return TabKey.Songs;
+  if (path === '/shop') return TabKey.Songs;
+  if (path === '/suggestions') return TabKey.Suggestions;
+  if (path === '/compete' || path.startsWith('/leaderboards')) return TabKey.Compete;
+  if (path === '/rivals' || path.startsWith('/rivals/')) return TabKey.Compete;
+  if (path === '/statistics') return TabKey.Statistics;
+  if (path === '/bands' || (path.startsWith('/bands/') && !path.startsWith('/bands/player/'))) return TabKey.Statistics;
+  if (path === '/settings') return TabKey.Settings;
   return null; // /player/:id — ambiguous, owned by the currently active tab
 }
 
@@ -110,8 +112,7 @@ export function useTabNavigation() {
       [activeTab]: activeTab === TabKey.Statistics ? TAB_ROOTS.statistics : location.pathname,
     }));
     setActiveTab(tab);
-    // Statistics always navigates to root
-    const saved = tab === TabKey.Statistics ? TAB_ROOTS.statistics : tabRoutes[tab];
+    const saved = tab === TabKey.Statistics ? root : tabRoutes[tab];
     // If saved route is just the default root and caller provided an override, use the override
     const target = (rootOverride && saved === TAB_ROOTS[tab]) ? root : saved;
     // Guard: if the saved route belongs to a different tab (stale/corrupted), reset to tab root

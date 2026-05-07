@@ -9,6 +9,7 @@ import { useSettings } from '../../../contexts/SettingsContext';
 import MarqueeText from '../../common/MarqueeText';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { Routes } from '../../../routes';
+import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import {
   Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
   Display, Align, Justify, Cursor, BoxSizing, CssValue, CssProp,
@@ -29,6 +30,7 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
   const scrollRef = useScrollContainer();
   const s = useStyles();
   const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
+  const statisticsPath = getStatisticsNavigationPath(player, selectedProfile ?? null);
 
   const linkClass = (isActive: boolean) => isActive ? s.linkActive : s.link;
 
@@ -45,8 +47,8 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
             {t('nav.suggestions')}
           </NavLink>
         )}
-        {player && (
-          <NavLink to="/statistics" style={({ isActive }) => linkClass(isActive)}>
+        {statisticsPath && (
+          <NavLink to={statisticsPath} style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoStatsChart size={20} /></span>
             {t('nav.statistics')}
           </NavLink>

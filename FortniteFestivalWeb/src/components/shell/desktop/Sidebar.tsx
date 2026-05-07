@@ -9,6 +9,7 @@ import { useSettings } from '../../../contexts/SettingsContext';
 import MarqueeText from '../../common/MarqueeText';
 import { sidebarStyles as s } from './sidebarStyles';
 import { Routes } from '../../../routes';
+import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 
 const SIDEBAR_DURATION = 250;
 
@@ -58,6 +59,7 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
 
   if (!mounted) return null;
   const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
+  const statisticsPath = getStatisticsNavigationPath(player, selectedProfile ?? null);
 
   return (
     <>
@@ -84,8 +86,8 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
               {t('nav.suggestions')}
             </NavLink>
           )}
-          {player && (
-            <NavLink to="/statistics" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+          {statisticsPath && (
+            <NavLink to={statisticsPath} onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               <span style={s.sidebarLinkIcon}><IoStatsChart size={20} /></span>
               {t('nav.statistics')}
             </NavLink>

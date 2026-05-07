@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { TabKey } from '@festival/core';
@@ -11,6 +11,18 @@ import BottomNav from '../../../../src/components/shell/mobile/BottomNav';
 
 describe('BottomNav', () => {
   const onTabClick = vi.fn();
+  const bandProfile = {
+    type: 'band' as const,
+    bandId: 'band-1',
+    bandType: 'Band_Duets' as const,
+    teamKey: 'p1:p2',
+    displayName: 'Player One + Player Two',
+    members: [],
+  };
+
+  beforeEach(() => {
+    onTabClick.mockClear();
+  });
 
   it('renders tab buttons', () => {
     render(
@@ -30,6 +42,21 @@ describe('BottomNav', () => {
     );
     expect(screen.getByText('Suggestions')).toBeDefined();
     expect(screen.getByText('Statistics')).toBeDefined();
+  });
+
+  it('shows statistics tab when a band profile is selected without a player', () => {
+    render(
+      <MemoryRouter>
+        <BottomNav player={null} selectedProfile={bandProfile} activeTab={TabKey.Songs} onTabClick={onTabClick} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText('Suggestions')).toBeNull();
+    expect(screen.getByText('Statistics')).toBeDefined();
+
+    fireEvent.click(screen.getByText('Statistics'));
+    expect(onTabClick).toHaveBeenCalledWith(TabKey.Statistics, expect.stringContaining('/bands/band-1'));
+    expect(onTabClick).toHaveBeenCalledWith(TabKey.Statistics, expect.stringContaining('teamKey=p1%3Ap2'));
   });
 
   it('calls onTabClick when a tab is pressed', () => {

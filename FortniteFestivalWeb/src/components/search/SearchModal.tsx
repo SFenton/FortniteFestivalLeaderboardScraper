@@ -70,6 +70,12 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
     setTimeout(() => inputRef.current?.focus(), 50);
   }, []);
 
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isMobile && e.key === 'Enter') {
+      inputRef.current?.blur();
+    }
+  }, [isMobile]);
+
   const handleCloseComplete = useCallback(() => {
     setQuery('');
     setActiveTarget(defaultTarget);
@@ -144,6 +150,7 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
           value={query}
           onChange={setQuery}
           placeholder={t('search.placeholder')}
+          onKeyDown={handleSearchKeyDown}
           enterKeyHint="search"
           style={st.searchBar}
         />

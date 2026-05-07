@@ -48,6 +48,7 @@ export default function MarqueeText({
   const measureRef = useRef<HTMLElement>(null);
   const [overflows, setOverflows] = useState(false);
   const [textWidth, setTextWidth] = useState(0);
+  const phaseRef = useRef<{ key: string; delay: number } | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -59,8 +60,8 @@ export default function MarqueeText({
       const tw = measure.scrollWidth;
       const availableWidth = container.clientWidth;
       const nowOverflows = tw > availableWidth + 1;
-      setOverflows(nowOverflows);
-      setTextWidth(tw);
+      setOverflows(prev => prev === nowOverflows ? prev : nowOverflows);
+      setTextWidth(prev => prev === tw ? prev : tw);
       onMeasure?.(nowOverflows ? tw : 0);
     };
 
@@ -90,8 +91,12 @@ export default function MarqueeText({
   const duration = cycleDuration;
 
   // Compute negative animation-delay for cross-card phase alignment.
-  const elapsed = (Date.now() - MARQUEE_EPOCH) / 1000;
-  const animDelay = -(elapsed % duration);
+  const phaseKey = `${text}|${duration}|${translate}`;
+  if (phaseRef.current?.key !== phaseKey) {
+    const elapsed = (Date.now() - MARQUEE_EPOCH) / 1000;
+    phaseRef.current = { key: phaseKey, delay: -(elapsed % duration) };
+  }
+  const animDelay = phaseRef.current.delay;
 
   const trackStyle: CSSProperties = {
     '--marquee-duration': `${duration.toFixed(2)}s`,

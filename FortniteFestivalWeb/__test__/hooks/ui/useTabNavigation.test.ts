@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import React from 'react';
-import { MemoryRouter, useNavigate } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { useTabNavigation, inferTab, TAB_ROOTS } from '../../../src/hooks/ui/useTabNavigation';
 import { TabKey } from '@festival/core';
 
@@ -18,6 +18,9 @@ describe('inferTab', () => {
   it('returns compete for /rivals', () => expect(inferTab('/rivals')).toBe(TabKey.Compete));
   it('returns compete for /rivals/detail', () => expect(inferTab('/rivals/abc')).toBe(TabKey.Compete));
   it('returns statistics', () => expect(inferTab('/statistics')).toBe(TabKey.Statistics));
+  it('returns statistics for band lookup route', () => expect(inferTab('/bands?bandType=Band_Duets&teamKey=p1%3Ap2')).toBe(TabKey.Statistics));
+  it('returns statistics for band detail route', () => expect(inferTab('/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2')).toBe(TabKey.Statistics));
+  it('returns null for player bands route', () => expect(inferTab('/bands/player/p1')).toBeNull());
   it('returns settings', () => expect(inferTab('/settings')).toBe(TabKey.Settings));
   it('returns null for /player', () => expect(inferTab('/player/abc')).toBeNull());
   it('returns null for /', () => expect(inferTab('/')).toBeNull());
@@ -68,11 +71,27 @@ describe('useTabNavigation', () => {
     expect(JSON.parse(stored!)).toHaveProperty(TabKey.Songs);
   });
 
-  it('Statistics always navigates to root', () => {
+  it('Statistics navigates to root by default', () => {
     const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
     act(() => { result.current.handleTabClick(TabKey.Statistics); });
     expect(result.current.activeTab).toBe(TabKey.Statistics);
     expect(result.current.tabRoutes[TabKey.Statistics]).toBe('/statistics');
+  });
+
+  it('Statistics uses rootOverride for selected band destination', () => {
+    function useTestHook() {
+      const tab = useTabNavigation();
+      const location = useLocation();
+      return { tab, location };
+    }
+
+    const bandPath = '/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two';
+    const { result } = renderHook(() => useTestHook(), { wrapper: wrapper('/songs') });
+    act(() => { result.current.tab.handleTabClick(TabKey.Statistics, bandPath); });
+
+    expect(result.current.tab.activeTab).toBe(TabKey.Statistics);
+    expect(result.current.location.pathname).toBe('/bands/band-1');
+    expect(result.current.location.search).toContain('teamKey=p1%3Ap2');
   });
 
   it('loads routes from sessionStorage', () => {
