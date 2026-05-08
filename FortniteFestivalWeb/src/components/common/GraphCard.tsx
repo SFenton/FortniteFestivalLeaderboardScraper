@@ -140,6 +140,7 @@ function GraphCardInner<T>({
 
   const isOnCurrentPage = useCallback((idx: number) => idx >= pageStart && idx < pageEnd, [pageStart, pageEnd]);
   /* v8 ignore stop */
+  const showPageJumpButtons = maxBars > 1;
 
   // Card animation (selected point detail)
   const { displayedPoint, cardPhase, cardHeight, cardContentRef } = useCardAnimation(selectedPoint);
@@ -225,21 +226,23 @@ function GraphCardInner<T>({
         {/* v8 ignore start */}
         {!loading && needsPagination && (
           <div style={st.chartPagination}>
-            <button
-              style={backDisabled ? st.pageButtonDisabled : st.pageButton}
-              disabled={backDisabled}
-              onClick={() => {
-                const target = selectedIndex - maxBars;
-                const willChange = selectedPoint ? !isOnCurrentPage(Math.max(0, target)) : true;
-                paginateChart(() => {
-                  if (selectedPoint) { navigatePoint(target); }
-                  else { setChartOffset(o => Math.min(o + maxBars, maxOffset)); }
-                }, willChange);
-              }}
-              aria-label={t('aria.backOnePage')}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 3L4 8L9 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 3L9 8L14 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
+            {showPageJumpButtons && (
+              <button
+                style={backDisabled ? st.pageButtonDisabled : st.pageButton}
+                disabled={backDisabled}
+                onClick={() => {
+                  const target = selectedIndex - maxBars;
+                  const willChange = selectedPoint ? !isOnCurrentPage(Math.max(0, target)) : true;
+                  paginateChart(() => {
+                    if (selectedPoint) { navigatePoint(target); }
+                    else { setChartOffset(o => Math.min(o + maxBars, maxOffset)); }
+                  }, willChange);
+                }}
+                aria-label={t('aria.backOnePage')}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 3L4 8L9 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 3L9 8L14 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+            )}
             <button
               style={backDisabled ? st.pageButtonDisabled : st.pageButton}
               disabled={backDisabled}
@@ -270,21 +273,23 @@ function GraphCardInner<T>({
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button
-              style={forwardDisabled ? st.pageButtonDisabled : st.pageButton}
-              disabled={forwardDisabled}
-              onClick={() => {
-                const target = selectedIndex + maxBars;
-                const willChange = selectedPoint ? !isOnCurrentPage(Math.min(target, data.length - 1)) : true;
-                paginateChart(() => {
-                  if (selectedPoint) { navigatePoint(target); }
-                  else { setChartOffset(o => Math.max(o - maxBars, 0)); }
-                }, willChange);
-              }}
-              aria-label={t('aria.forwardOnePage')}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M7 3L12 8L7 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 3L7 8L2 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
+            {showPageJumpButtons && (
+              <button
+                style={forwardDisabled ? st.pageButtonDisabled : st.pageButton}
+                disabled={forwardDisabled}
+                onClick={() => {
+                  const target = selectedIndex + maxBars;
+                  const willChange = selectedPoint ? !isOnCurrentPage(Math.min(target, data.length - 1)) : true;
+                  paginateChart(() => {
+                    if (selectedPoint) { navigatePoint(target); }
+                    else { setChartOffset(o => Math.max(o - maxBars, 0)); }
+                  }, willChange);
+                }}
+                aria-label={t('aria.forwardOnePage')}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M7 3L12 8L7 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 3L7 8L2 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+            )}
           </div>
         )}
         {/* v8 ignore stop */}
