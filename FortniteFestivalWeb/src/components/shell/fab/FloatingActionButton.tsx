@@ -30,6 +30,8 @@ interface Props {
   onPress: () => void;
 }
 
+type SearchGestureEvent = ReactPointerEvent<HTMLDivElement> | ReactTouchEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>;
+
 export default function FloatingActionButton({
   mode,
   defaultOpen,
@@ -82,6 +84,8 @@ export default function FloatingActionButton({
   const searchInputRef = useRef<SearchBarRef>(null);
   const keyboardBaselineRef = useRef<number | null>(null);
   const keyboardInsetRef = useRef(0);
+  const searchFocusPendingRef = useRef(false);
+  const searchFocusCompletedRef = useRef(false);
 
   const captureKeyboardBaseline = useCallback(() => {
     const visualViewport = window.visualViewport;
@@ -108,12 +112,50 @@ export default function FloatingActionButton({
     searchInputRef.current?.focus({ preventScroll: true });
   }, [captureKeyboardBaseline]);
 
-  const handleSearchPressStart = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactTouchEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
-    if (document.activeElement === event.target) return;
+  const isSearchInputFocused = useCallback(() => {
+    const activeElement = document.activeElement;
+    return activeElement instanceof HTMLInputElement && !!searchOuterRef.current?.contains(activeElement);
+  }, []);
+
+  const stopSearchNativeGesture = useCallback((event: SearchGestureEvent) => {
     event.preventDefault();
     event.stopPropagation();
+  }, []);
+
+  const handleSearchPressStart = useCallback((event: SearchGestureEvent) => {
+    if (isSearchInputFocused()) {
+      searchFocusPendingRef.current = false;
+      searchFocusCompletedRef.current = true;
+      stopSearchNativeGesture(event);
+      return;
+    }
+
+    captureKeyboardBaseline();
+    searchFocusPendingRef.current = true;
+    searchFocusCompletedRef.current = false;
+    stopSearchNativeGesture(event);
+  }, [captureKeyboardBaseline, isSearchInputFocused, stopSearchNativeGesture]);
+
+  const handleSearchPressEnd = useCallback((event: SearchGestureEvent) => {
+    if (isSearchInputFocused()) {
+      searchFocusPendingRef.current = false;
+      searchFocusCompletedRef.current = true;
+      stopSearchNativeGesture(event);
+      return;
+    }
+
+    if (searchFocusCompletedRef.current) {
+      stopSearchNativeGesture(event);
+      return;
+    }
+
+    if (!searchFocusPendingRef.current && event.type !== 'click') return;
+
+    searchFocusPendingRef.current = false;
+    searchFocusCompletedRef.current = true;
+    stopSearchNativeGesture(event);
     focusSearchWithoutScroll();
-  }, [focusSearchWithoutScroll]);
+  }, [focusSearchWithoutScroll, isSearchInputFocused, stopSearchNativeGesture]);
 
   const updateKeyboardInset = useCallback(() => {
     if (!searchGuardActive) {
@@ -210,9 +252,12 @@ export default function FloatingActionButton({
           ref={searchOuterRef}
           style={{ ...s.searchBarOuter, transform: keyboardTransform, transition: keyboardTransition }}
           onPointerDownCapture={handleSearchPressStart}
+          onPointerUpCapture={handleSearchPressEnd}
           onTouchStartCapture={handleSearchPressStart}
+          onTouchEndCapture={handleSearchPressEnd}
           onMouseDownCapture={handleSearchPressStart}
-          onClickCapture={handleSearchPressStart}
+          onMouseUpCapture={handleSearchPressEnd}
+          onClickCapture={handleSearchPressEnd}
         >
           <div className="fab-search-bar" style={s.searchBar}>
             <SearchBar
@@ -221,7 +266,7 @@ export default function FloatingActionButton({
               onChange={searchQuery.setQuery}
               onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
               onFocus={() => { captureKeyboardBaseline(); setSearchFocused(true); }}
-              onBlur={() => { setSearchFocused(false); clearKeyboardStateSoon(); }}
+              onBlur={() => { searchFocusPendingRef.current = false; searchFocusCompletedRef.current = false; setSearchFocused(false); clearKeyboardStateSoon(); }}
               placeholder={placeholder ?? t('songs.searchPlaceholder')}
               enterKeyHint="search"
               style={searchInputWrapStyle}

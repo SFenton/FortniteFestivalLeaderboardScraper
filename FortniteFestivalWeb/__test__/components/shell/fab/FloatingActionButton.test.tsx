@@ -63,6 +63,14 @@ function renderFAB(props: Partial<React.ComponentProps<typeof FloatingActionButt
   );
 }
 
+function fireCancelableEvent(target: Element, type: string) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+  const stopPropagationSpy = vi.spyOn(event, 'stopPropagation');
+  fireEvent(target, event);
+  return { preventDefaultSpy, stopPropagationSpy };
+}
+
 describe('FloatingActionButton', () => {
   it('renders the FAB button', () => {
     renderFAB();
@@ -252,15 +260,140 @@ describe('FloatingActionButton', () => {
     expect(document.documentElement.style.getPropertyValue(SONGS_FAB_KEYBOARD_INSET_VAR)).toBe('0px');
   });
 
-  it('focuses the search input with preventScroll from the tap gesture', () => {
+  it('focuses the search input with preventScroll from the wrapper click gesture', () => {
     renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
     const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
     const searchOuter = input.closest('.fab-search-bar')?.parentElement as HTMLElement;
     const focusSpy = vi.spyOn(input, 'focus');
 
-    fireEvent.pointerDown(searchOuter);
+    const pointerEventSpies = fireCancelableEvent(searchOuter, 'pointerdown');
+
+    expect(focusSpy).not.toHaveBeenCalled();
+    expect(pointerEventSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(pointerEventSpies.stopPropagationSpy).toHaveBeenCalled();
+
+    const clickEventSpies = fireCancelableEvent(searchOuter, 'click');
 
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    expect(clickEventSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(clickEventSpies.stopPropagationSpy).toHaveBeenCalled();
+  });
+
+  it('focuses direct search input taps through the controlled no-scroll gesture path', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    const focusSpy = vi.spyOn(input, 'focus');
+
+    const pointerDownSpies = fireCancelableEvent(input, 'pointerdown');
+
+    expect(pointerDownSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(pointerDownSpies.stopPropagationSpy).toHaveBeenCalled();
+    expect(focusSpy).not.toHaveBeenCalled();
+
+    const pointerUpSpies = fireCancelableEvent(input, 'pointerup');
+    const clickSpies = fireCancelableEvent(input, 'click');
+
+    expect(pointerUpSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(pointerUpSpies.stopPropagationSpy).toHaveBeenCalled();
+    expect(clickSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(clickSpies.stopPropagationSpy).toHaveBeenCalled();
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('deduplicates touch and click completions for one search focus gesture', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    const focusSpy = vi.spyOn(input, 'focus').mockImplementation(() => undefined);
+
+    fireCancelableEvent(input, 'pointerdown');
+    fireCancelableEvent(input, 'touchend');
+    fireCancelableEvent(input, 'click');
+
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('does not rely on browser auto-scroll restoration for direct input focus', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    const focusSpy = vi.spyOn(input, 'focus');
+
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 180 });
+    document.documentElement.scrollTop = 180;
+    document.body.scrollTop = 90;
+
+    fireCancelableEvent(input, 'pointerdown');
+    fireCancelableEvent(input, 'click');
+
+    expect(window.scrollTo).not.toHaveBeenCalled();
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    expect(document.documentElement.scrollTop).toBe(180);
+    expect(document.body.scrollTop).toBe(90);
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('does not manually refocus an already-focused input on direct tap or click', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+
+    act(() => {
+      input.focus();
+      fireEvent.focus(input);
+    });
+    const focusSpy = vi.spyOn(input, 'focus');
+
+    const pointerEventSpies = fireCancelableEvent(input, 'pointerdown');
+    const clickEventSpies = fireCancelableEvent(input, 'click');
+
+    expect(pointerEventSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(pointerEventSpies.stopPropagationSpy).toHaveBeenCalled();
+    expect(clickEventSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(clickEventSpies.stopPropagationSpy).toHaveBeenCalled();
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
+  it('protects an already-focused input from wrapper edge taps without refocusing', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    const searchOuter = input.closest('.fab-search-bar')?.parentElement as HTMLElement;
+
+    act(() => {
+      input.focus();
+      fireEvent.focus(input);
+    });
+    const focusSpy = vi.spyOn(input, 'focus');
+
+    const pointerEventSpies = fireCancelableEvent(searchOuter, 'pointerdown');
+    const clickEventSpies = fireCancelableEvent(searchOuter, 'click');
+
+    expect(pointerEventSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(pointerEventSpies.stopPropagationSpy).toHaveBeenCalled();
+    expect(clickEventSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(clickEventSpies.stopPropagationSpy).toHaveBeenCalled();
+    expect(document.activeElement).toBe(input);
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves search input focus while the iOS keyboard viewport settles', () => {
+    renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    const blurSpy = vi.spyOn(input, 'blur');
+
+    act(() => {
+      input.focus();
+      fireEvent.focus(input);
+    });
+    expect(document.activeElement).toBe(input);
+
+    act(() => {
+      visualViewport.set(544, 0);
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(document.activeElement).toBe(input);
+    expect(blurSpy).not.toHaveBeenCalled();
+    expect(document.documentElement.style.getPropertyValue(SONGS_FAB_KEYBOARD_INSET_VAR)).toBe('300px');
   });
 
   it('uses the pre-keyboard baseline when PWA innerHeight shrinks with the keyboard', () => {

@@ -78,7 +78,10 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
       onTouchStartCapture={onTouchStartCapture}
       onMouseDownCapture={onMouseDownCapture}
       onClickCapture={onClickCapture}
-      onClick={() => inputRef.current?.focus({ preventScroll: true })}
+      onClick={event => {
+        if (event.target === inputRef.current) return;
+        inputRef.current?.focus({ preventScroll: true });
+      }}
     >
       {!hideIcon && <IoSearch size={IconSize.xs} style={s.searchIcon} />}
       <input
