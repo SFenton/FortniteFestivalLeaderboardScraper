@@ -155,11 +155,40 @@ describe('SongsPage', () => {
     expect(screen.getByText('No songs match your filters.')).toBeDefined();
   });
 
+  it('shrinks the mobile empty-state area above the raised Songs search controls', async () => {
+    setViewportQueries({ mobile: true });
+    mockApi.getSongs.mockResolvedValue({ songs: [], count: 0, currentSeason: 5 });
+    renderSongsPage();
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+
+    const emptyState = screen.getByText('No songs match your filters.').parentElement as HTMLElement;
+    expect(emptyState.style.position).toBe('fixed');
+    expect(emptyState.style.top).toBe(`var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`);
+    expect(emptyState.style.bottom).toBe(`max(200px, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`);
+    expect(emptyState.style.minHeight).toBe('auto');
+    expect(emptyState.style.transition).toContain('bottom');
+  });
+
   it('shows error message on API failure', async () => {
     mockApi.getSongs.mockRejectedValue(new Error('API Down'));
     renderSongsPage();
     await act(async () => { await vi.advanceTimersByTimeAsync(200); });
     expect(screen.getByText('Something Went Wrong')).toBeDefined();
+  });
+
+  it('shrinks the mobile error-state area above the raised Songs search controls', async () => {
+    setViewportQueries({ mobile: true });
+    mockApi.getSongs.mockRejectedValue(new Error('API Down'));
+    renderSongsPage();
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+
+    const errorState = screen.getByText('Something Went Wrong').parentElement as HTMLElement;
+    expect(errorState.style.position).toBe('fixed');
+    expect(errorState.style.top).toBe(`var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`);
+    expect(errorState.style.bottom).toBe(`max(200px, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`);
+    expect(errorState.style.minHeight).toBe('auto');
+    expect(errorState.style.transition).toContain('bottom');
   });
 
   it('shows song count in toolbar', async () => {

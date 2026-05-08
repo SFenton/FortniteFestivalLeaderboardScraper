@@ -1028,10 +1028,13 @@ export default function SongsPage() {
   const songsStyles = useSongsStyles();
   const showMobilePageHeader = !isMobileChrome || appSettings.showButtonsInHeaderMobile;
   const loadingSpinnerStyle = isMobileChrome ? songsStyles.keyboardAwareSpinnerOverlay : undefined;
+  const keyboardAwareMessageStyle = isMobileChrome ? songsStyles.keyboardAwareMessage : undefined;
+  const emptyStateStyle = keyboardAwareMessageStyle ? { ...emptyStagger.style, ...keyboardAwareMessageStyle } : emptyStagger.style;
 
   if (error) {
     const parsed = parseApiError(error);
-    return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
+    const errorStyle = keyboardAwareMessageStyle ? { ...buildStaggerStyle(200), ...keyboardAwareMessageStyle } : buildStaggerStyle(200);
+    return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={errorStyle} onAnimationEnd={clearStaggerStyle} />;
   }
 
   return (
@@ -1151,7 +1154,7 @@ export default function SongsPage() {
             fullPage
             title={t('songs.noResults')}
             subtitle={filtersActive ? t('songs.noResultsSubtitle') : t('common.serviceDown')}
-            style={emptyStagger.style}
+            style={emptyStateStyle}
             onAnimationEnd={emptyStagger.onAnimationEnd}
           />
         ) : (
@@ -1267,6 +1270,16 @@ function useSongsStyles() {
     keyboardAwareSpinnerOverlay: {
       top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`,
       bottom: `var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px)`,
+      transition: `top ${QUICK_FADE_MS}ms ease, bottom ${QUICK_FADE_MS}ms ease`,
+    } as CSSProperties,
+    keyboardAwareMessage: {
+      position: 'fixed',
+      top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`,
+      left: 0,
+      right: 0,
+      bottom: `max(${Layout.shellChromeHeight}px, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`,
+      minHeight: 'auto',
+      boxSizing: BoxSizing.borderBox,
       transition: `top ${QUICK_FADE_MS}ms ease, bottom ${QUICK_FADE_MS}ms ease`,
     } as CSSProperties,
   }), []);
