@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
+import type { QueryClient } from '@tanstack/react-query';
 import { ACCURACY_SCALE } from '@festival/core';
 import { Colors } from '@festival/theme';
-import type { BandDetailResponse } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, type BandDetailResponse } from '@festival/core/api/serverTypes';
 import { queryKeys } from '../../../src/api/queryKeys';
 import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
+import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 
 const mockApi = vi.hoisted(() => ({
   getSongs: vi.fn(),
@@ -30,11 +32,38 @@ const DEFAULT_CONFIGURATIONS = [
     memberInstruments: { p1: 'Solo_Guitar', p2: 'Solo_Bass' },
   },
 ];
+const DUET_COMBO_FILTER: AppliedBandComboFilter = {
+  bandId: 'selected-band-guid',
+  bandType: 'Band_Duets',
+  teamKey: 'selected-a:selected-b',
+  comboId: 'Solo_Guitar+Solo_Bass',
+  assignments: [
+    { accountId: 'selected-a', instrument: 'Solo_Guitar' },
+    { accountId: 'selected-b', instrument: 'Solo_Bass' },
+  ],
+  configurations: DEFAULT_CONFIGURATIONS,
+};
 
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
   stubElementDimensions(800);
+  const createRange = document.createRange.bind(document);
+  document.createRange = () => {
+    const range = createRange();
+    range.getBoundingClientRect = () => ({
+      top: 0,
+      left: 0,
+      bottom: 20,
+      right: 120,
+      width: 120,
+      height: 20,
+      x: 0,
+      y: 0,
+      toJSON() { return this; },
+    });
+    return range;
+  };
 });
 
 beforeEach(() => {
@@ -220,9 +249,9 @@ function LocationProbe() {
   return <div data-testid="current-location">{`${location.pathname}${location.search}`}</div>;
 }
 
-function renderBandPage(route: string, queryClient = createTestQueryClient()) {
+function renderBandPage(route: string, queryClient: QueryClient = createTestQueryClient(), bandFilter?: AppliedBandComboFilter | null) {
   return render(
-    <TestProviders route={route} queryClient={queryClient}>
+    <TestProviders route={route} queryClient={queryClient} bandFilter={bandFilter}>
       <LocationProbe />
       <Routes>
         <Route path="/bands" element={<BandPage />} />
@@ -283,16 +312,73 @@ describe('BandPage', () => {
     const statisticsSection = screen.getByTestId('band-section-statistics');
     expect(statisticsSection.querySelector('[style*="grid-template-columns"]')).toHaveStyle({ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
 
-    expect(screen.getAllByTestId('band-stat-card')).toHaveLength(11);
+    expect(screen.getAllByTestId('band-stat-card')).toHaveLength(15);
     expect(screen.getByText('Adjusted Percentile Rank')).toBeTruthy();
     expect(screen.getByText('Weighted Percentile Rank')).toBeTruthy();
     expect(screen.getByText('FC Rate Rank')).toBeTruthy();
     expect(screen.getByText('Total Score Rank')).toBeTruthy();
     expect(screen.getByText('Songs Played')).toBeTruthy();
     expect(screen.getByText('2 / 10')).toBeTruthy();
+    expect(screen.getByText('Full Combos')).toBeTruthy();
+    expect(screen.getByText('1 / 10')).toBeTruthy();
     expect(screen.getByText('98.5%')).toBeTruthy();
+    expect(screen.getByText('Avg Stars')).toBeTruthy();
+    expect(screen.getByText('5.5')).toBeTruthy();
+    expect(screen.getByText('Best Song Rank')).toBeTruthy();
+    expect(screen.getByText('Avg Rank')).toBeTruthy();
+    expect(screen.getByText('#4.5')).toBeTruthy();
     expect(screen.getByText('Song Alpha')).toBeTruthy();
     expect(screen.getByText('Song Zeta')).toBeTruthy();
+  });
+
+  it.each([
+    ['Adjusted Percentile Rank', '/leaderboards/bands/Band_Duets?rankBy=adjusted&page=1'],
+    ['Weighted Percentile Rank', '/leaderboards/bands/Band_Duets?rankBy=weighted&page=1'],
+    ['FC Rate Rank', '/leaderboards/bands/Band_Duets?rankBy=fcrate&page=1'],
+    ['Total Score Rank', '/leaderboards/bands/Band_Duets?rankBy=totalscore&page=1'],
+  ])('navigates from the %s card to the matching band leaderboard', async (label, expectedRoute) => {
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    fireEvent.click(screen.getByText(label));
+
+    expect(screen.getByTestId('current-location')).toHaveTextContent(expectedRoute);
+  });
+
+  it('selects the band and filters Songs when Songs Played is clicked', async () => {
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    fireEvent.click(screen.getByText('Songs Played'));
+
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/songs');
+    expect(JSON.parse(localStorage.getItem(SELECTED_PROFILE_STORAGE_KEY)!)).toMatchObject({
+      type: 'band',
+      bandId: 'band-guid-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+    });
+    expect(JSON.parse(localStorage.getItem('fst:songSettings')!)).toMatchObject({
+      instrument: null,
+      sortMode: 'title',
+      sortAscending: true,
+      filters: { hasScores: { [DEFAULT_INSTRUMENT]: true } },
+    });
+  });
+
+  it('selects the band and filters Songs when Full Combos is clicked', async () => {
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    fireEvent.click(screen.getByText('Full Combos'));
+
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/songs');
+    expect(JSON.parse(localStorage.getItem('fst:songSettings')!)).toMatchObject({
+      instrument: null,
+      sortMode: 'title',
+      sortAscending: true,
+      filters: { hasFCs: { [DEFAULT_INSTRUMENT]: true } },
+    });
   });
 
   it('does not select a band just because the band page loads', async () => {
@@ -441,6 +527,134 @@ describe('BandPage', () => {
     expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
     expect(screen.getByText('Band Summary')).toBeTruthy();
     expect(screen.getByText('2 / 10')).toBeTruthy();
+  });
+
+  it('applies a same-type combo filter to another viewed band page', async () => {
+    const identityRanking = {
+      bandId: 'band-guid-2',
+      bandType: 'Band_Duets',
+      teamKey: 'p3:p4',
+      teamMembers: [
+        { accountId: 'p3', displayName: 'Player Three' },
+        { accountId: 'p4', displayName: 'Player Four' },
+      ],
+      members: [
+        { accountId: 'p3', displayName: 'Player Three', instruments: ['Solo_Guitar'] },
+        { accountId: 'p4', displayName: 'Player Four', instruments: ['Solo_Bass'] },
+      ],
+      songsPlayed: 9,
+      totalChartedSongs: 10,
+      coverage: 0.9,
+      rawSkillRating: 12,
+      adjustedSkillRating: 10,
+      adjustedSkillRank: 6,
+      weightedRating: 9,
+      weightedRank: 7,
+      fcRate: 0.5,
+      fcRateRank: 8,
+      totalScore: 987654,
+      totalScoreRank: 9,
+      avgAccuracy: 99 * ACCURACY_SCALE,
+      fullComboCount: 5,
+      avgStars: 5.8,
+      bestRank: 2,
+      avgRank: 5.5,
+      rawWeightedRating: 9,
+      computedAt: '2026-04-24T00:00:00Z',
+      totalRankedTeams: 60,
+      configurations: DEFAULT_CONFIGURATIONS,
+    };
+    const scopedRanking = {
+      ...identityRanking,
+      songsPlayed: 4,
+      adjustedSkillRank: 26,
+      weightedRank: 27,
+      fcRateRank: 28,
+      totalScoreRank: 29,
+      totalScore: 432100,
+      fullComboCount: 3,
+      fcRate: 0.75,
+      avgStars: 6,
+      bestRank: 4,
+      avgRank: 8.25,
+    };
+    mockApi.getBandRanking.mockImplementation((bandType, teamKey, comboId) => {
+      if (bandType === 'Band_Duets' && teamKey === 'p3:p4' && comboId === DUET_COMBO_FILTER.comboId) return Promise.resolve(scopedRanking);
+      if (bandType === 'Band_Duets' && teamKey === 'p3:p4') return Promise.resolve(identityRanking);
+      return Promise.resolve(scopedRanking);
+    });
+
+    renderBandPage(
+      '/bands/band-guid-2?bandType=Band_Duets&teamKey=p3%3Ap4&names=Player%20Three%20%2B%20Player%20Four',
+      createTestQueryClient(),
+      DUET_COMBO_FILTER,
+    );
+    await advancePastSpinner();
+
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p3:p4');
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p3:p4', DUET_COMBO_FILTER.comboId);
+    expect(mockApi.getBandRankHistory).toHaveBeenCalledWith('Band_Duets', 'p3:p4', 30, DUET_COMBO_FILTER.comboId);
+    expect(mockApi.getBandSongs).toHaveBeenCalledWith('Band_Duets', 'p3:p4', 5, DUET_COMBO_FILTER.comboId);
+
+    const statisticsSection = screen.getByTestId('band-section-statistics');
+    expect(statisticsSection).toHaveTextContent('4 / 10');
+    expect(statisticsSection).toHaveTextContent('3 / 10');
+    expect(statisticsSection).toHaveTextContent('432,100');
+    expect(statisticsSection).toHaveTextContent('#26');
+    expect(statisticsSection).not.toHaveTextContent('987,654');
+  });
+
+  it('does not apply a duet combo filter to a different band type', async () => {
+    mockApi.getBandRanking.mockResolvedValueOnce({
+      bandId: 'quad-band-guid',
+      bandType: 'Band_Quad',
+      teamKey: 'q1:q2:q3:q4',
+      teamMembers: [
+        { accountId: 'q1', displayName: 'Quad One' },
+        { accountId: 'q2', displayName: 'Quad Two' },
+        { accountId: 'q3', displayName: 'Quad Three' },
+        { accountId: 'q4', displayName: 'Quad Four' },
+      ],
+      members: [
+        { accountId: 'q1', displayName: 'Quad One', instruments: ['Solo_Guitar'] },
+        { accountId: 'q2', displayName: 'Quad Two', instruments: ['Solo_Bass'] },
+        { accountId: 'q3', displayName: 'Quad Three', instruments: ['Solo_Drums'] },
+        { accountId: 'q4', displayName: 'Quad Four', instruments: ['Solo_Vocals'] },
+      ],
+      songsPlayed: 6,
+      totalChartedSongs: 10,
+      coverage: 0.6,
+      rawSkillRating: 12,
+      adjustedSkillRating: 10,
+      adjustedSkillRank: 11,
+      weightedRating: 9,
+      weightedRank: 12,
+      fcRate: 0.2,
+      fcRateRank: 13,
+      totalScore: 654321,
+      totalScoreRank: 14,
+      avgAccuracy: 97 * ACCURACY_SCALE,
+      fullComboCount: 2,
+      avgStars: 5,
+      bestRank: 3,
+      avgRank: 7,
+      rawWeightedRating: 9,
+      computedAt: '2026-04-24T00:00:00Z',
+      totalRankedTeams: 70,
+      configurations: [],
+    });
+
+    renderBandPage(
+      '/bands/quad-band-guid?bandType=Band_Quad&teamKey=q1%3Aq2%3Aq3%3Aq4&names=Quad%20One%20%2B%20Quad%20Two%20%2B%20Quad%20Three%20%2B%20Quad%20Four',
+      createTestQueryClient(),
+      DUET_COMBO_FILTER,
+    );
+    await advancePastSpinner();
+
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4');
+    expect(mockApi.getBandRanking).not.toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', DUET_COMBO_FILTER.comboId);
+    expect(mockApi.getBandRankHistory).toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', 30, undefined);
+    expect(mockApi.getBandSongs).toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', 5, undefined);
   });
 
   it('seeds band detail cache from contextual ranking configurations', async () => {

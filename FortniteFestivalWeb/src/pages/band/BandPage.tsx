@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { IoChevronForward, IoPeople } from 'react-icons/io5';
-import type { BandDetailResponse, BandRankingDto, BandType, PlayerBandEntry, PlayerBandMember, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, type BandDetailResponse, type BandRankingDto, type BandRankingMetric, type BandType, type PlayerBandEntry, type PlayerBandMember, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { ACCURACY_SCALE, LoadPhase } from '@festival/core';
 import { Colors, Font, Gap, IconSize, Layout, Radius, TRANSITION_MS, Weight, flexColumn, flexRow, frostedCard, transition, transitions } from '@festival/theme';
 import { api } from '../../api/client';
@@ -14,13 +14,17 @@ import PageHeader from '../../components/common/PageHeader';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { SelectProfilePill } from '../../components/player/SelectProfilePill';
 import StatBox from '../../components/player/StatBox';
+import GoldStars from '../../components/songs/metadata/GoldStars';
+import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useBandRankHistory } from '../../hooks/chart/useBandRankHistory';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useSelectedProfile } from '../../hooks/data/useSelectedProfile';
+import { defaultSongFilters, loadSongSettings, saveSongSettings, type SongSettings } from '../../utils/songSettings';
 import { Routes } from '../../routes';
 import Page from '../Page';
+import { getLeaderboardPageForRank } from '../leaderboards/helpers/rankingHelpers';
 import PlayerSectionHeading from '../player/sections/PlayerSectionHeading';
 import BandRankHistoryChart from './components/BandRankHistoryChart';
 import BandSongsSection, { useBandSongs } from './components/BandSongsSection';
@@ -48,6 +52,7 @@ export default function BandPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { profile, selectBand } = useSelectedProfile();
+  const appliedBandComboFilter = useAppliedBandComboFilter();
 
   const lookupAccountId = searchParams.get('accountId') ?? undefined;
   const lookupTeamKey = searchParams.get('teamKey') ?? undefined;
@@ -56,6 +61,9 @@ export default function BandPage() {
   const routeNames = searchParams.get('names')?.trim() || undefined;
   const hasTeamContext = !!lookupBandType && !!lookupTeamKey;
   const hasAccountLookupContext = !!lookupAccountId && hasTeamContext;
+  const contextualComboId = lookupBandType && appliedBandComboFilter?.bandType === lookupBandType
+    ? appliedBandComboFilter.comboId
+    : undefined;
 
   const lookupQuery = useQuery({
     queryKey: queryKeys.bandLookup(lookupAccountId ?? '', lookupBandType ?? '', lookupTeamKey ?? ''),
@@ -71,9 +79,17 @@ export default function BandPage() {
 
   const rankingQuery = useQuery({
     queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? ''),
-    queryFn: () => api.getBandRanking(lookupBandType!, lookupTeamKey!),
+    queryFn: () => getBandRanking(lookupBandType!, lookupTeamKey!),
     enabled: hasTeamContext,
     staleTime: 5 * 60_000,
+  });
+
+  const scopedRankingQuery = useQuery({
+    queryKey: queryKeys.bandRanking(lookupBandType ?? '', lookupTeamKey ?? '', contextualComboId),
+    queryFn: () => getBandRanking(lookupBandType!, lookupTeamKey!, contextualComboId),
+    enabled: hasTeamContext && !!contextualComboId,
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 
   const rankedContextBand = useMemo(
@@ -109,9 +125,36 @@ export default function BandPage() {
   const error = missingLookupParams
     ? new Error(t('band.missingId'))
     : (!contextBand ? (lookupQuery.error ?? rankingQuery.error ?? detailQuery.error ?? null) : null);
-  const payload = useMemo(() => contextBand
+  const basePayload = useMemo(() => contextBand
     ? { band: contextBand, ranking: rankingQuery.data ?? null, configurations: rankingQuery.data?.configurations ?? [] }
     : (detailQuery.data ?? null), [contextBand, detailQuery.data, rankingQuery.data]);
+  const activeBandType = basePayload?.band.bandType ?? lookupBandType;
+  const activeComboId = activeBandType && appliedBandComboFilter?.bandType === activeBandType
+    ? appliedBandComboFilter.comboId
+    : undefined;
+
+  const detailScopedRankingQuery = useQuery({
+    queryKey: queryKeys.bandRanking(basePayload?.band.bandType ?? '', basePayload?.band.teamKey ?? '', activeComboId),
+    queryFn: () => getBandRanking(basePayload!.band.bandType, basePayload!.band.teamKey, activeComboId),
+    enabled: !!basePayload?.band && !hasTeamContext && !!activeComboId,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+  const payload = useMemo(() => {
+    if (!basePayload) return null;
+    if (!activeComboId) return basePayload;
+
+    const scopedRanking = hasTeamContext
+      ? (scopedRankingQuery.data ?? null)
+      : (detailScopedRankingQuery.data ?? null);
+
+    return {
+      ...basePayload,
+      ranking: scopedRanking,
+      configurations: scopedRanking?.configurations ?? basePayload.configurations ?? [],
+    };
+  }, [activeComboId, basePayload, detailScopedRankingQuery.data, hasTeamContext, scopedRankingQuery.data]);
   const genericBandTitle = t('band.title');
   const unknownMemberName = t('common.unknownUser');
   const resolvedTitle = payload ? formatBandTitle(payload.band, unknownMemberName, genericBandTitle) : undefined;
@@ -134,11 +177,12 @@ export default function BandPage() {
   }, [bandId, contextBand?.bandId, genericBandTitle, location.pathname, location.state, navigate, payload, resolvedTitle, routeNames, searchParams]);
 
   const pageKey = effectiveBandId ?? `${lookupAccountId ?? 'missing'}:${lookupBandType ?? 'missing'}:${lookupTeamKey ?? 'missing'}`;
-  const bandRankHistory = useBandRankHistory(payload?.band.bandType, payload?.band.teamKey, 'adjusted', 30);
-  const bandSongsQuery = useBandSongs(payload?.band.bandType, payload?.band.teamKey);
-  const secondaryLoading = !!payload && (bandRankHistory.loading || bandSongsQuery.isLoading);
+  const scopedPageKey = `${pageKey}:${activeComboId ?? 'all'}`;
+  const bandRankHistory = useBandRankHistory(payload?.band.bandType, payload?.band.teamKey, 'adjusted', 30, activeComboId);
+  const bandSongsQuery = useBandSongs(payload?.band.bandType, payload?.band.teamKey, 5, activeComboId);
+  const secondaryLoading = !!payload && (bandRankHistory.loading || bandSongsQuery.isLoading || scopedRankingQuery.isLoading || detailScopedRankingQuery.isLoading);
   const hasCachedData = !!payload && bandRankHistory.hasData && bandSongsQuery.data != null;
-  const { phase, shouldStagger } = usePageTransition(`band:${pageKey}`, !loading && !secondaryLoading, hasCachedData);
+  const { phase, shouldStagger } = usePageTransition(`band:${scopedPageKey}`, !loading && !secondaryLoading, hasCachedData);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   const styles = useStyles();
 
@@ -183,10 +227,10 @@ export default function BandPage() {
     }, TRANSITION_MS);
   }, [clearSelectBandProfileExitTimer, selectBandProfileMounted, selectBandProfileVisible]);
 
-  const handleBandProfileClick = useCallback(() => {
+  const buildSelectedBand = useCallback(() => {
     if (!payload) return;
 
-    selectBand({
+    return {
       bandId: payload.band.bandId,
       bandType: payload.band.bandType,
       teamKey: payload.band.teamKey,
@@ -195,8 +239,32 @@ export default function BandPage() {
         accountId: member.accountId,
         displayName: formatMemberName(member, unknownMemberName),
       })),
-    });
-  }, [payload, selectBand, title, unknownMemberName]);
+    };
+  }, [payload, title, unknownMemberName]);
+
+  const handleBandProfileClick = useCallback(() => {
+    const selectedBand = buildSelectedBand();
+    if (selectedBand) selectBand(selectedBand);
+  }, [buildSelectedBand, selectBand]);
+
+  const navigateToBandLeaderboard = useCallback((metric: BandRankingMetric, rank: number) => {
+    if (!payload || rank <= 0) return;
+    navigate(Routes.bandRankings(payload.band.bandType, metric, getLeaderboardPageForRank(rank)));
+  }, [navigate, payload]);
+
+  const navigateToSongDetail = useCallback((songId: string) => {
+    navigate(Routes.songDetail(songId), { state: { backTo: location.pathname } });
+  }, [location.pathname, navigate]);
+
+  const navigateToBandSongs = useCallback((settingsUpdater: (settings: SongSettings) => SongSettings) => {
+    const selectedBand = buildSelectedBand();
+    if (!selectedBand) return;
+    selectBand(selectedBand);
+    saveSongSettings(settingsUpdater(loadSongSettings()));
+    navigate(Routes.songs, { state: { backTo: location.pathname, restagger: true } });
+  }, [buildSelectedBand, location.pathname, navigate, selectBand]);
+
+  const canNavigateToBandSongs = !!payload && (!activeComboId || isCurrentBandSelected);
 
   const bandProfileAction = selectBandProfileMounted ? (
     <div
@@ -220,8 +288,8 @@ export default function BandPage() {
 
   return (
     <Page
-      scrollRestoreKey={`band:${pageKey}`}
-      scrollDeps={[phase, effectiveBandId]}
+      scrollRestoreKey={`band:${scopedPageKey}`}
+      scrollDeps={[phase, effectiveBandId, activeComboId]}
       loadPhase={phase}
       containerStyle={styles.container}
       before={<PageHeader title={title} subtitle={subtitle} reserveSubtitleSpace={loading} actions={bandProfileAction} />}
@@ -240,9 +308,18 @@ export default function BandPage() {
         <div style={styles.content}>
           <MembersSection band={payload.band} style={stagger(0)} onAnimationEnd={clearAnim} />
           <BandSummarySection band={payload.band} style={stagger(1)} onAnimationEnd={clearAnim} />
-          <BandStatisticsSection ranking={payload.ranking ?? null} style={stagger(2)} onAnimationEnd={clearAnim} />
-          <BandRankHistorySection band={payload.band} ranking={payload.ranking ?? null} style={stagger(3)} onAnimationEnd={clearAnim} />
-          <BandSongsSection bandType={payload.band.bandType} teamKey={payload.band.teamKey} displayName={title} style={stagger(4)} onAnimationEnd={clearAnim} />
+          <BandStatisticsSection
+            ranking={payload.ranking ?? null}
+            bestSongId={bandSongsQuery.data?.best?.[0]?.songId}
+            canNavigateToBandSongs={canNavigateToBandSongs}
+            onNavigateToBandSongs={navigateToBandSongs}
+            onNavigateToBandLeaderboard={navigateToBandLeaderboard}
+            onNavigateToSongDetail={navigateToSongDetail}
+            style={stagger(2)}
+            onAnimationEnd={clearAnim}
+          />
+          <BandRankHistorySection band={payload.band} ranking={payload.ranking ?? null} comboId={activeComboId} style={stagger(3)} onAnimationEnd={clearAnim} />
+          <BandSongsSection bandType={payload.band.bandType} teamKey={payload.band.teamKey} displayName={title} comboId={activeComboId} style={stagger(4)} onAnimationEnd={clearAnim} />
         </div>
       )}
     </Page>
@@ -329,9 +406,34 @@ function BandMemberCard({ member, fallbackName }: { member: PlayerBandMember; fa
   );
 }
 
-function BandStatisticsSection({ ranking, style, onAnimationEnd }: { ranking: BandRankingDto | null; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
+function BandStatisticsSection({
+  ranking,
+  bestSongId,
+  canNavigateToBandSongs,
+  onNavigateToBandSongs,
+  onNavigateToBandLeaderboard,
+  onNavigateToSongDetail,
+  style,
+  onAnimationEnd,
+}: {
+  ranking: BandRankingDto | null;
+  bestSongId?: string;
+  canNavigateToBandSongs: boolean;
+  onNavigateToBandSongs: (settingsUpdater: (settings: SongSettings) => SongSettings) => void;
+  onNavigateToBandLeaderboard: (metric: BandRankingMetric, rank: number) => void;
+  onNavigateToSongDetail: (songId: string) => void;
+  style?: CSSProperties;
+  onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void;
+}) {
   const { t } = useTranslation();
   const styles = useStyles();
+
+  const songsPlayedClick = canNavigateToBandSongs && ranking && ranking.songsPlayed > 0
+    ? () => onNavigateToBandSongs(bandSongsPlayedUpdater)
+    : undefined;
+  const fullCombosClick = canNavigateToBandSongs && ranking && ranking.fullComboCount > 0
+    ? () => onNavigateToBandSongs(bandFullCombosUpdater)
+    : undefined;
 
   return (
     <section data-testid="band-section-statistics" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.statistics')}>
@@ -340,36 +442,68 @@ function BandStatisticsSection({ ranking, style, onAnimationEnd }: { ranking: Ba
         <div style={styles.emptyCard}><span style={styles.emptyText}>{t('band.noRanking')}</span></div>
       ) : (
         <div style={styles.statsGrid}>
-          <StatCard label={t('band.adjustedRank')} value={formatRank(ranking.adjustedSkillRank)} />
-          <StatCard label={t('band.weightedRank')} value={formatRank(ranking.weightedRank)} />
-          <StatCard label={t('band.fcRateRank')} value={formatRank(ranking.fcRateRank)} />
-          <StatCard label={t('band.totalScoreRank')} value={formatRank(ranking.totalScoreRank)} />
-          <StatCard label={t('band.songsPlayed')} value={`${ranking.songsPlayed.toLocaleString()} / ${ranking.totalChartedSongs.toLocaleString()}`} />
+          <StatCard label={t('band.adjustedRank')} value={formatRank(ranking.adjustedSkillRank)} onClick={rankClick(ranking.adjustedSkillRank, 'adjusted', onNavigateToBandLeaderboard)} />
+          <StatCard label={t('band.weightedRank')} value={formatRank(ranking.weightedRank)} onClick={rankClick(ranking.weightedRank, 'weighted', onNavigateToBandLeaderboard)} />
+          <StatCard label={t('band.fcRateRank')} value={formatRank(ranking.fcRateRank)} onClick={rankClick(ranking.fcRateRank, 'fcrate', onNavigateToBandLeaderboard)} />
+          <StatCard label={t('band.totalScoreRank')} value={formatRank(ranking.totalScoreRank)} onClick={rankClick(ranking.totalScoreRank, 'totalscore', onNavigateToBandLeaderboard)} />
+          <StatCard label={t('band.songsPlayed')} value={`${ranking.songsPlayed.toLocaleString()} / ${ranking.totalChartedSongs.toLocaleString()}`} onClick={songsPlayedClick} />
+          <StatCard label={t('band.fullCombos')} value={`${ranking.fullComboCount.toLocaleString()} / ${ranking.totalChartedSongs.toLocaleString()}`} onClick={fullCombosClick} />
           <StatCard label={t('band.totalScore')} value={ranking.totalScore.toLocaleString()} />
           <StatCard label={t('band.fcRate')} value={`${(ranking.fcRate * 100).toFixed(1)}%`} />
           <StatCard label={t('band.avgAccuracy')} value={formatAccuracy(ranking.avgAccuracy)} />
+          <StatCard label={t('band.avgStars')} value={formatStars(ranking.avgStars)} />
+          <StatCard label={t('band.bestSongRank')} value={formatRank(ranking.bestRank)} onClick={bestSongId && ranking.bestRank > 0 ? () => onNavigateToSongDetail(bestSongId) : undefined} />
+          <StatCard label={t('band.avgRank')} value={formatAverageRank(ranking.avgRank)} />
         </div>
       )}
     </section>
   );
 }
 
-function BandRankHistorySection({ band, ranking, style, onAnimationEnd }: { band: PlayerBandEntry; ranking: BandRankingDto | null; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
+function BandRankHistorySection({ band, ranking, comboId, style, onAnimationEnd }: { band: PlayerBandEntry; ranking: BandRankingDto | null; comboId?: string; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
   const styles = useStyles();
   return (
     <section data-testid="band-section-rank-history" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd}>
-      <BandRankHistoryChart bandType={band.bandType} teamKey={band.teamKey} totalRankedTeams={ranking?.totalRankedTeams} />
+      <BandRankHistoryChart bandType={band.bandType} teamKey={band.teamKey} comboId={comboId} totalRankedTeams={ranking?.totalRankedTeams} />
     </section>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: ReactNode }) {
+function StatCard({ label, value, onClick }: { label: string; value: ReactNode; onClick?: () => void }) {
   const styles = useStyles();
   return (
     <div data-testid="band-stat-card" style={styles.statCard}>
-      <StatBox label={label} value={value} />
+      <StatBox label={label} value={value} onClick={onClick} />
     </div>
   );
+}
+
+function getBandRanking(bandType: BandType, teamKey: string, comboId?: string): Promise<BandRankingDto> {
+  return comboId ? api.getBandRanking(bandType, teamKey, comboId) : api.getBandRanking(bandType, teamKey);
+}
+
+function rankClick(rank: number, metric: BandRankingMetric, onNavigate: (metric: BandRankingMetric, rank: number) => void): (() => void) | undefined {
+  return rank > 0 ? () => onNavigate(metric, rank) : undefined;
+}
+
+function bandSongsPlayedUpdater(settings: SongSettings): SongSettings {
+  return {
+    ...settings,
+    instrument: null,
+    sortMode: 'title',
+    sortAscending: true,
+    filters: { ...defaultSongFilters(), hasScores: { [DEFAULT_INSTRUMENT]: true } },
+  };
+}
+
+function bandFullCombosUpdater(settings: SongSettings): SongSettings {
+  return {
+    ...settings,
+    instrument: null,
+    sortMode: 'title',
+    sortAscending: true,
+    filters: { ...defaultSongFilters(), hasFCs: { [DEFAULT_INSTRUMENT]: true } },
+  };
 }
 
 function isBandType(value: string | undefined): value is BandType {
@@ -399,6 +533,15 @@ function formatRank(rank: number): string {
 
 function formatAccuracy(accuracy: number): string {
   return accuracy > 0 ? `${(accuracy / ACCURACY_SCALE).toFixed(1)}%` : '—';
+}
+
+function formatStars(stars: number): ReactNode {
+  if (stars === 6) return <GoldStars />;
+  return stars > 0 ? stars.toFixed(1) : '—';
+}
+
+function formatAverageRank(rank: number): string {
+  return rank > 0 ? `#${rank.toFixed(1)}` : '—';
 }
 
 function useStyles() {
