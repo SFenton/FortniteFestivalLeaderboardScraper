@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures/fre';
 import { changelogHash } from '../src/changelog';
+import { contentHash, type FirstRunStorage } from '../src/firstRun/types';
 
 const NOTIFICATION_SEEN_STORAGE_KEY = 'fst:notificationSeen:v1';
 const NOTIFICATION_FRESHNESS_STORAGE_KEY = 'fst:notificationFreshness:v1';
@@ -108,6 +109,29 @@ test.describe('Notification seen state', () => {
     await expect(page.getByTestId('mock-notification-row')).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
     await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
     await expectSoloInstrumentNotificationCopy(page);
+  });
+
+  test('player notification badge and modal rows respect hidden instruments', async ({ page }, testInfo) => {
+    await seedPlayerNotificationFilterState(page, testInfo.project.name.startsWith('mobile'));
+    await page.goto('/#/songs', { waitUntil: 'load' });
+    await dismissFirstRunIfVisible(page);
+
+    const headerPrefix = testInfo.project.name.startsWith('mobile') ? 'mobile-header' : 'desktop-header';
+    const notificationsButton = page.getByTestId(`${headerPrefix}-notifications`);
+    await expect(notificationsButton).toBeVisible({ timeout: 10_000 });
+    await expect(notificationsButton.getByText('2', { exact: true })).toBeVisible();
+
+    await notificationsButton.click();
+
+    const dialog = page.getByRole('dialog', { name: 'Notifications' });
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+
+    const rows = page.getByTestId('mock-notification-row');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0)).toHaveAttribute('data-notification-guid', 'visible-band-notification');
+    await expect(rows.nth(1)).toHaveAttribute('data-notification-guid', 'visible-guitar-notification');
+    await expect(page.locator('[data-testid="mock-notification-row"][data-notification-guid="hidden-drums-notification"]')).toHaveCount(0);
+    await expect(page.getByTestId('notification-unread-dot')).toHaveCount(2);
   });
 
   test('mobile notification card opens a solo song with the instrument selected', async ({ page }, testInfo) => {
@@ -384,6 +408,57 @@ async function seedAppState(page: Page) {
   );
 }
 
+async function seedPlayerNotificationFilterState(page: Page, isMobile: boolean) {
+  const seenSlides = seenRecordsForSlides(isMobile);
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.evaluate(
+    ({ hash, seenSlides }) => {
+      for (const key of Object.keys(localStorage).filter(key => key.startsWith('fst:'))) {
+        localStorage.removeItem(key);
+      }
+
+      const selectedProfile = { type: 'player', accountId: 'notification-filter-player', displayName: 'Notification Filter Player' };
+      localStorage.setItem('fst:appSettings', JSON.stringify({ hideItemShop: true, disableShopHighlighting: true, showDrums: false }));
+      localStorage.setItem('fst:firstRun', JSON.stringify(seenSlides));
+      localStorage.setItem('fst:selectedProfile', JSON.stringify(selectedProfile));
+      localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: selectedProfile.accountId, displayName: selectedProfile.displayName }));
+      localStorage.setItem('fst:changelog', JSON.stringify({ version: 'e2e', hash }));
+    },
+    { hash: changelogHash(), seenSlides },
+  );
+}
+
+type FirstRunSeenSlide = {
+  id: string;
+  version: number;
+  title: string;
+  description: string;
+  contentKey?: string;
+};
+
+function seenRecordsForSlides(isMobile: boolean): FirstRunStorage {
+  const navigationDescription = isMobile ? 'firstRun.songs.navigation.descriptionMobile' : 'firstRun.songs.navigation.descriptionDesktop';
+  const slides: FirstRunSeenSlide[] = [
+    { id: 'songs-song-list', version: 3, title: 'firstRun.songs.songList.title', description: 'firstRun.songs.songList.description' },
+    { id: 'songs-sort', version: 5, title: 'firstRun.songs.sort.title', description: 'firstRun.songs.sort.description' },
+    { id: 'songs-navigation', version: 5, title: 'firstRun.songs.navigation.title', description: navigationDescription, contentKey: 'songs-navigation' },
+    { id: 'songs-filter', version: 4, title: 'firstRun.songs.filter.title', description: 'firstRun.songs.filter.description' },
+    { id: 'songs-icons', version: 3, title: 'firstRun.songs.songIcons.title', description: 'firstRun.songs.songIcons.description' },
+    { id: 'songs-metadata', version: 3, title: 'firstRun.songs.metadata.title', description: 'firstRun.songs.metadata.description' },
+    { id: 'songs-shop-highlight', version: 1, title: 'firstRun.songs.shop.title', description: 'firstRun.songs.shop.description' },
+    { id: 'songs-leaving-tomorrow', version: 1, title: 'firstRun.songs.leaving.title', description: 'firstRun.songs.leaving.description' },
+  ];
+
+  return Object.fromEntries(slides.map(slide => [
+    slide.id,
+    {
+      version: slide.version,
+      hash: contentHash(slide.contentKey ?? (slide.title + slide.description)),
+      seenAt: '2026-05-09T00:00:00.000Z',
+    },
+  ]));
+}
+
 async function installApiMocks(page: Page) {
   await page.route(/^https?:\/\/[^/]+\/api\//, async (route) => {
     const url = new URL(route.request().url());
@@ -404,8 +479,45 @@ async function installApiMocks(page: Page) {
       return;
     }
 
+    if (/^\/api\/player\/[^/]+\/notifications$/.test(path)) {
+      await route.fulfill({ json: notificationResponse() });
+      return;
+    }
+
     await route.fulfill({ json: {} });
   });
+}
+
+function notificationResponse() {
+  return {
+    generatedAt: '2026-05-09T16:05:00Z',
+    expiresAfterHours: 72,
+    sourceRunId: 20260509,
+    sourceCompletedAt: '2026-05-09T16:04:00Z',
+    notificationsGenerated: true,
+    items: [
+      notificationItem({ eventId: 201, notificationGuid: 'hidden-drums-notification', eventKind: 'player_score_pb', instrument: 'Solo_Drums', detectedAt: '2026-05-09T16:00:00Z' }),
+      notificationItem({ eventId: 202, notificationGuid: 'visible-guitar-notification', eventKind: 'player_score_pb', instrument: 'Solo_Guitar', detectedAt: '2026-05-09T16:01:00Z' }),
+      notificationItem({ eventId: 203, notificationGuid: 'visible-band-notification', eventKind: 'band_score_pb', rankingScope: 'combo', comboId: 'Solo_Guitar+Solo_Drums', detectedAt: '2026-05-09T16:02:00Z' }),
+    ],
+  };
+}
+
+function notificationItem(overrides: Record<string, unknown>) {
+  return {
+    eventId: 0,
+    notificationGuid: '',
+    eventKind: 'player_score_pb',
+    songId: APPLE_SONG_ID,
+    metric: 'score',
+    oldNumeric: 100000,
+    newNumeric: 110000,
+    oldRank: 1200,
+    newRank: 900,
+    detectedAt: '2026-05-09T16:00:00Z',
+    expiresAt: '2026-05-12T16:00:00Z',
+    ...overrides,
+  };
 }
 
 function songsResponse() {

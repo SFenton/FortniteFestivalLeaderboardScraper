@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import MobileNotificationsModal, { mockEmptyMobileNotifications, mockMobileNotifications, sortNotificationsNewestFirst, type MobileNotification } from '../../../src/components/notifications/MobileNotificationsModal';
+import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import MobileNotificationsModal, {
+  filterSurfaceNotifications,
+  mockEmptyMobileNotifications,
+  mockMobileNotifications,
+  notificationSurfaceInstrument,
+  shouldSurfaceNotification,
+  sortNotificationsNewestFirst,
+  type MobileNotification,
+} from '../../../src/components/notifications/MobileNotificationsModal';
 
 const mockIsMobile = vi.fn(() => true);
 const BRIGHT_WHITE = 'rgb(255, 255, 255)';
@@ -49,6 +58,33 @@ function flushAnimationFrames(callbacks: FrameRequestCallback[]) {
 }
 
 describe('MobileNotificationsModal', () => {
+  it('filters surfaced notifications by active solo instruments while keeping band rows', () => {
+    const visibleInstruments = new Set<ServerInstrumentKey>(['Solo_Guitar', 'Solo_Bass']);
+
+    const surfacedNotifications = filterSurfaceNotifications(mockMobileNotifications, visibleInstruments);
+
+    expect(surfacedNotifications.map(notification => notification.eventId)).toEqual([5, 6]);
+    expect(surfacedNotifications.every(notification => !notification.eventKind.startsWith('player_'))).toBe(true);
+  });
+
+  it('does not filter notifications when no instrument filter is active', () => {
+    expect(filterSurfaceNotifications(mockMobileNotifications, null).map(notification => notification.eventId)).toEqual(
+      mockMobileNotifications.map(notification => notification.eventId),
+    );
+    expect(filterSurfaceNotifications(mockMobileNotifications, undefined).map(notification => notification.eventId)).toEqual(
+      mockMobileNotifications.map(notification => notification.eventId),
+    );
+  });
+
+  it('detects rank notification instruments from solo media fallbacks', () => {
+    const rankNotification = mockMobileNotifications.find(notification => notification.eventKind === 'player_weighted_rank_improved')!;
+
+    expect(rankNotification.instrument).toBeUndefined();
+    expect(notificationSurfaceInstrument(rankNotification)).toBe('Solo_Drums');
+    expect(shouldSurfaceNotification(rankNotification, new Set<ServerInstrumentKey>(['Solo_Guitar']))).toBe(false);
+    expect(shouldSurfaceNotification(rankNotification, new Set<ServerInstrumentKey>(['Solo_Drums']))).toBe(true);
+  });
+
   it('renders a compact empty state without notification sections', () => {
     render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockEmptyMobileNotifications} />);
 

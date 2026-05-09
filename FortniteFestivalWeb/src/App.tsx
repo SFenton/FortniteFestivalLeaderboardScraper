@@ -106,7 +106,7 @@ import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/PageQuickLinksContext';
 import { BandFilterActionProvider, type BandFilterActionContextValue } from './contexts/BandFilterActionContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
-import { useSettings, visiblePathInstruments } from './contexts/SettingsContext';
+import { useSettings, visibleInstruments, visiblePathInstruments } from './contexts/SettingsContext';
 import { useProximityGlow } from './hooks/ui/useProximityGlow';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
@@ -114,7 +114,7 @@ import DesktopNav from './components/shell/desktop/DesktopNav';
 import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
 import SearchModal from './components/search/SearchModal';
-import MobileNotificationsModal, { type MobileNotification } from './components/notifications/MobileNotificationsModal';
+import MobileNotificationsModal, { filterSurfaceNotifications, type MobileNotification } from './components/notifications/MobileNotificationsModal';
 import { getNotificationDestination } from './components/notifications/notificationDestination';
 import { useNotificationFreshnessState } from './components/notifications/notificationFreshnessState';
 import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
@@ -373,13 +373,34 @@ function AppShell() {
     useEmptyMock: useEmptyNotificationMock,
     mockSourceVersion: MOCK_NOTIFICATION_SOURCE_VERSION,
   });
+  const { settings } = useSettings();
   const notificationIds = notificationFeed.notificationIds;
-  const hasNotifications = notificationFeed.notifications.length > 0;
   const notificationFeedReadyForHeader = useNotificationMockData || notificationFeed.status !== 'loading';
   const notificationFeedKey = notificationFeed.feedKey;
-  const { unreadNotificationIds, unreadCount, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
+  const { unreadNotificationIds, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
   const { newNotificationIds } = useNotificationFreshnessState(notificationFeedKey, notificationIds, notificationFeed.sourceVersion);
-  const { settings } = useSettings();
+  const notificationInstrumentFilter = useMemo(() => {
+    if (notificationRequestProfile?.type !== 'player') return null;
+    return new Set(visibleInstruments(settings));
+  }, [notificationRequestProfile?.type, settings]);
+  const surfaceNotifications = useMemo(
+    () => filterSurfaceNotifications(notificationFeed.notifications, notificationInstrumentFilter),
+    [notificationFeed.notifications, notificationInstrumentFilter],
+  );
+  const surfaceNotificationIds = useMemo(
+    () => new Set(surfaceNotifications.map(notification => notification.notificationGuid)),
+    [surfaceNotifications],
+  );
+  const surfaceUnreadNotificationIds = useMemo(
+    () => new Set(Array.from(unreadNotificationIds).filter(id => surfaceNotificationIds.has(id))),
+    [surfaceNotificationIds, unreadNotificationIds],
+  );
+  const surfaceNewNotificationIds = useMemo(
+    () => new Set(Array.from(newNotificationIds).filter(id => surfaceNotificationIds.has(id))),
+    [newNotificationIds, surfaceNotificationIds],
+  );
+  const hasNotifications = surfaceNotifications.length > 0;
+  const surfaceUnreadCount = surfaceUnreadNotificationIds.size;
 
   // Proximity glow for frosted cards — document-level for full coverage
   useProximityGlow(!settings.disableLightTrails);
@@ -766,7 +787,7 @@ function AppShell() {
             onOpenSearch={() => openSearch()}
             onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
             hasNotifications={hasNotifications}
-            notificationCount={unreadCount}
+            notificationCount={surfaceUnreadCount}
             notificationVisualState={notificationHeaderVisualState}
           />
         ) : (
@@ -779,7 +800,7 @@ function AppShell() {
             onOpenSearch={() => openSearch()}
             onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
             hasNotifications={hasNotifications}
-            notificationCount={unreadCount}
+            notificationCount={surfaceUnreadCount}
             notificationVisualState={notificationHeaderVisualState}
             isWideDesktop={isWideDesktop}
           />
@@ -989,9 +1010,9 @@ function AppShell() {
         visible={notificationsOpen}
         onClose={() => setNotificationsOpen(false)}
         presentation={isMobile ? 'mobileModal' : 'desktopDrawer'}
-        notifications={notificationFeed.notifications}
-        unreadNotificationIds={unreadNotificationIds}
-        newNotificationIds={newNotificationIds}
+        notifications={surfaceNotifications}
+        unreadNotificationIds={surfaceUnreadNotificationIds}
+        newNotificationIds={surfaceNewNotificationIds}
         notificationsGenerated={notificationFeed.generationStatus === 'generated'}
         onNotificationsSeen={markNotificationsSeen}
         onNotificationOpen={handleNotificationOpen}

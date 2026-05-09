@@ -256,6 +256,33 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
 export const mockMobileNotifications = MOCK_NOTIFICATIONS;
 export const mockEmptyMobileNotifications: MobileNotification[] = [];
 
+export type NotificationInstrumentFilter = ReadonlySet<ServerInstrumentKey> | null | undefined;
+
+export function notificationSurfaceInstrument(
+  notification: Pick<MobileNotification, 'instrument' | 'media'>,
+): ServerInstrumentKey | null {
+  if (notification.instrument) return notification.instrument;
+  return notification.media.kind === 'soloInstrument' ? notification.media.instrument : null;
+}
+
+export function shouldSurfaceNotification(
+  notification: Pick<MobileNotification, 'instrument' | 'media'>,
+  visibleInstrumentFilter: NotificationInstrumentFilter,
+): boolean {
+  if (!visibleInstrumentFilter) return true;
+  const instrument = notificationSurfaceInstrument(notification);
+  if (!instrument) return true;
+  return visibleInstrumentFilter.has(instrument);
+}
+
+export function filterSurfaceNotifications<T extends Pick<MobileNotification, 'instrument' | 'media'>>(
+  notifications: readonly T[],
+  visibleInstrumentFilter: NotificationInstrumentFilter,
+): T[] {
+  if (!visibleInstrumentFilter) return [...notifications];
+  return notifications.filter(notification => shouldSurfaceNotification(notification, visibleInstrumentFilter));
+}
+
 type MobileNotificationsModalProps = {
   visible: boolean;
   onClose: () => void;

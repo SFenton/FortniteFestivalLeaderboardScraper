@@ -271,6 +271,37 @@ function storeSelectedProfile(profile: Record<string, unknown>) {
   window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
 }
 
+function playerNotificationItem(eventId: number, notificationGuid: string, instrument: string, eventKind = 'player_score_pb') {
+  return {
+    eventId,
+    notificationGuid,
+    eventKind,
+    songId: 's1',
+    instrument,
+    metric: 'score',
+    oldNumeric: 100000,
+    newNumeric: 110000 + eventId,
+    detectedAt: '2026-05-09T16:00:00Z',
+    expiresAt: '2026-05-12T16:00:00Z',
+  };
+}
+
+function bandNotificationItem(eventId: number, notificationGuid: string, eventKind = 'band_score_pb') {
+  return {
+    eventId,
+    notificationGuid,
+    eventKind,
+    songId: 's1',
+    rankingScope: 'combo',
+    comboId: 'Solo_Guitar+Solo_Drums',
+    metric: 'score',
+    oldNumeric: 200000,
+    newNumeric: 210000 + eventId,
+    detectedAt: '2026-05-09T16:00:00Z',
+    expiresAt: '2026-05-12T16:00:00Z',
+  };
+}
+
 describe('App — mobile FAB branches', () => {
   it('merges quick links into the page-specific FAB group', () => {
     const createAction = (label: string) => ({ label, icon: <span>{label}</span>, onPress: vi.fn() });
@@ -485,6 +516,74 @@ describe('App — mobile FAB branches', () => {
     });
     expect(within(screen.getByRole('button', { name: 'Notifications' })).queryByText('0')).toBeNull();
     expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('p-populated', 50, expect.any(Object));
+  });
+
+  it('filters selected player notification badge and modal rows by visible instruments', async () => {
+    setMobile();
+    mockApi.getPlayerNotifications.mockResolvedValueOnce(notificationResponse([
+      playerNotificationItem(201, 'hidden-drums-notification', 'Solo_Drums'),
+      playerNotificationItem(202, 'visible-guitar-notification', 'Solo_Guitar'),
+      bandNotificationItem(203, 'visible-band-notification'),
+    ]));
+    localStorage.setItem('fst:appSettings', JSON.stringify({ showDrums: false }));
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', accountId: 'p-filtered', displayName: 'TrackedP' }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p-filtered', displayName: 'TrackedP' }));
+
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    const notificationsButton = await screen.findByRole('button', { name: 'Notifications' });
+    await waitFor(() => {
+      expect(notificationsButton.getAttribute('data-notification-state')).toBe('populated');
+      expect(within(notificationsButton).getByText('2')).toBeDefined();
+    });
+
+    fireEvent.click(notificationsButton);
+
+    await screen.findByRole('dialog', { name: 'Notifications' });
+    const rows = screen.getAllByTestId('mock-notification-row');
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.getAttribute('data-notification-guid'))).toEqual([
+      'visible-band-notification',
+      'visible-guitar-notification',
+    ]);
+    expect(screen.queryByText('Test Song · Drums')).toBeNull();
+  });
+
+  it('does not apply instrument visibility filtering to selected band feeds', async () => {
+    setMobile();
+    mockApi.getBandNotificationsById.mockResolvedValueOnce(notificationResponse([
+      playerNotificationItem(301, 'band-feed-drums-notification', 'Solo_Drums'),
+      bandNotificationItem(302, 'band-feed-rank-notification', 'band_weighted_rank_improved'),
+    ]));
+    localStorage.setItem('fst:appSettings', JSON.stringify({ showDrums: false }));
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-filter-test',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'Tracked Band',
+      members: [],
+    }));
+    localStorage.removeItem('fst:trackedPlayer');
+
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    const notificationsButton = await screen.findByRole('button', { name: 'Notifications' });
+    await waitFor(() => {
+      expect(notificationsButton.getAttribute('data-notification-state')).toBe('populated');
+      expect(within(notificationsButton).getByText('2')).toBeDefined();
+    });
+
+    fireEvent.click(notificationsButton);
+
+    await screen.findByRole('dialog', { name: 'Notifications' });
+    expect(screen.getAllByTestId('mock-notification-row').map(row => row.getAttribute('data-notification-guid'))).toEqual([
+      'band-feed-rank-notification',
+      'band-feed-drums-notification',
+    ]);
+    expect(mockApi.getBandNotificationsById).toHaveBeenCalledWith('band-filter-test', 50, expect.any(Object));
   });
 
   it('delays the new profile notification request until the swap spinner has faded in', async () => {
