@@ -128,8 +128,19 @@ export function coerceRankingMetric(metric: string | RankingMetric | null | unde
 export function computeRankWidth(ranks: number[]): number {
   if (ranks.length === 0) return Layout.rankColumnWidth;
   const maxRank = Math.max(...ranks);
-  const longest = `#${maxRank.toLocaleString()}`;
+  const longest = formatRankLabel(maxRank);
   return Math.ceil(longest.length * Layout.rankCharWidth) + Layout.rankColumnPadding;
+}
+
+export function formatRankLabel(rank: number): string {
+  const normalizedRank = Number.isFinite(rank) ? Math.round(rank) : rank;
+  return `#${normalizedRank.toLocaleString()}`;
+}
+
+export function computeRankAxisWidth(ranks: number[], domain?: readonly [number, number]): number {
+  const domainRanks = domain?.filter(rank => Number.isFinite(rank) && rank > 0) ?? [];
+  const positiveRanks = ranks.filter(rank => Number.isFinite(rank) && rank > 0);
+  return computeRankWidth([...positiveRanks, ...domainRanks]) + Layout.axisLabelOffset;
 }
 
 /** Get the composite rank value for a given metric from a CompositeRankingEntry. */

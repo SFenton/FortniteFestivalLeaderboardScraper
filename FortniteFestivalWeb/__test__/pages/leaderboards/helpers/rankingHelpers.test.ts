@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LEADERBOARD_PAGE_SIZE, computePillMinWidth, computeRankWidth, formatBayesianRatingDisplay, formatRating, formatRankingValueDisplay, getBayesianRatingForMetric, getLeaderboardPageForRank, getRatingForMetric, getRatingPillTier, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { LEADERBOARD_PAGE_SIZE, computePillMinWidth, computeRankAxisWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankLabel, formatRating, formatRankingValueDisplay, getBayesianRatingForMetric, getLeaderboardPageForRank, getRatingForMetric, getRatingPillTier, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import type { AccountRankingEntry } from '@festival/core/api/serverTypes';
 import type { RankingMetric } from '@festival/core/api/serverTypes';
 import { Layout } from '@festival/theme';
@@ -31,6 +31,29 @@ describe('computeRankWidth', () => {
     const small = computeRankWidth([1]);
     const large = computeRankWidth([1, 999999]);
     expect(large).toBeGreaterThan(small);
+  });
+});
+
+describe('formatRankLabel', () => {
+  it('formats graph rank ticks with locale separators', () => {
+    expect(formatRankLabel(100000)).toBe('#100,000');
+    expect(formatRankLabel(3349832)).toBe('#3,349,832');
+  });
+});
+
+describe('computeRankAxisWidth', () => {
+  it('adds right-axis label spacing beyond the tick label width', () => {
+    const rankWidth = computeRankWidth([100000]);
+    const axisWidth = computeRankAxisWidth([100000], [1, 100000]);
+
+    expect(axisWidth).toBe(rankWidth + Layout.axisLabelOffset);
+    expect(axisWidth).toBeGreaterThan(rankWidth);
+  });
+
+  it('includes padded domain ranks when computing the widest axis tick', () => {
+    const axisWidth = computeRankAxisWidth([99999], [1, 100000]);
+
+    expect(axisWidth).toBe(computeRankWidth([100000]) + Layout.axisLabelOffset);
   });
 });
 

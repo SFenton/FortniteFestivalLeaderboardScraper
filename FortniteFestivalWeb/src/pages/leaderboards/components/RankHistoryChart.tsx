@@ -20,7 +20,7 @@ import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { parseSnapshotDate } from '../../../utils/fillRankHistoryGaps';
-import { computePillMinWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankingValueDisplay } from '../helpers/rankingHelpers';
+import { computePillMinWidth, computeRankAxisWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankLabel, formatRankingValueDisplay } from '../helpers/rankingHelpers';
 import {
   Colors, Font, FontVariant, Gap, Size, Layout, MetadataSize, Radius, Weight,
   frostedCard, padding, border, transition,
@@ -154,6 +154,11 @@ export default memo(function RankHistoryChart({
     return [padded, paddedMax || 100] as [number, number]; // reversed prop on YAxis puts rank 1 at top
   }, [chartData]);
 
+  const rankAxisWidth = useMemo(() => {
+    const ranks = chartData.map(p => p.rank).filter(r => r > 0);
+    return computeRankAxisWidth(ranks, rankDomain);
+  }, [chartData, rankDomain]);
+
   const usePercentile = metric === 'adjusted' || metric === 'weighted';
   const totalAccounts = totalAccountsByInstrument?.[selected] ?? 0;
   const showMobilePercentileDetails = isMobile && usePercentile;
@@ -213,9 +218,10 @@ export default memo(function RankHistoryChart({
           domain={rankDomain}
           reversed
           allowDecimals={false}
+          width={rankAxisWidth}
           tick={AXIS_TICK}
           stroke={Colors.borderSubtle}
-          tickFormatter={(v: number) => `#${v}`}
+          tickFormatter={(v: number) => formatRankLabel(v)}
           label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
             const cy = viewBox.y + viewBox.height / 2;
             const lx = viewBox.x + viewBox.width + Layout.axisLabelOffset;
@@ -289,7 +295,7 @@ export default memo(function RankHistoryChart({
         />
       </ComposedChart>
     </ResponsiveContainer>
-  ), [t, st, totalAccounts, metricLabel, rankDomain, valueTickFormatter]);
+  ), [t, st, totalAccounts, metricLabel, rankAxisWidth, rankDomain, valueTickFormatter]);
 
   const renderDetailCard = useCallback((point: RankHistoryChartPoint) => {
     const dateStr = formatSnapshotDisplayDate(point.date);

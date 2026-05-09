@@ -34,7 +34,7 @@ import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { formatDetailValue, formatValueTick, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
 import { useBandRankHistory } from '../../../hooks/chart/useBandRankHistory';
 import { parseSnapshotDate } from '../../../utils/fillRankHistoryGaps';
-import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
+import { computeRankAxisWidth, computeRankWidth, formatRankLabel } from '../../leaderboards/helpers/rankingHelpers';
 
 const AXIS_TICK = { fill: Colors.textPrimary, fontSize: Font.md };
 const X_AXIS_TICK = { ...AXIS_TICK, dy: 16 };
@@ -173,6 +173,11 @@ export default memo(function BandRankHistoryChart({
     return [padded, paddedMax || 100] as [number, number];
   }, [chartData]);
 
+  const rankAxisWidth = useMemo(() => {
+    const ranks = chartData.map(p => p.rank).filter(r => r > 0);
+    return computeRankAxisWidth(ranks, rankDomain);
+  }, [chartData, rankDomain]);
+
   const usePercentile = metric === 'adjusted' || metric === 'weighted';
 
   const renderChart = useCallback(({ visibleData, animating, selectedPoint, setSelectedPoint }: {
@@ -203,9 +208,10 @@ export default memo(function BandRankHistoryChart({
           domain={rankDomain}
           reversed
           allowDecimals={false}
+          width={rankAxisWidth}
           tick={AXIS_TICK}
           stroke={Colors.borderSubtle}
-          tickFormatter={(v: number) => `#${v}`}
+          tickFormatter={(v: number) => formatRankLabel(v)}
           label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
             const cy = viewBox.y + viewBox.height / 2;
             const lx = viewBox.x + viewBox.width + Layout.axisLabelOffset;
@@ -266,7 +272,7 @@ export default memo(function BandRankHistoryChart({
         />
       </ComposedChart>
     </ResponsiveContainer>
-  ), [metricLabel, rankDomain, st, t, totalTeams, valueTickFormatter]);
+  ), [metricLabel, rankAxisWidth, rankDomain, st, t, totalTeams, valueTickFormatter]);
 
   const renderDetailCard = useCallback((point: RankHistoryChartPoint) => {
     const dateStr = formatSnapshotDisplayDate(point.date);
