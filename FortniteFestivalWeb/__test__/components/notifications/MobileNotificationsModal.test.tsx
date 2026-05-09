@@ -50,7 +50,7 @@ function flushAnimationFrames(callbacks: FrameRequestCallback[]) {
 
 describe('MobileNotificationsModal', () => {
   it('renders hardcoded coalesced notification rows', () => {
-    render(<MobileNotificationsModal visible={true} onClose={() => {}} />);
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} onNotificationOpen={() => {}} />);
 
     expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
     expect(screen.queryByText('Latest')).toBeNull();
@@ -65,7 +65,9 @@ describe('MobileNotificationsModal', () => {
     expect(detectedTimes).toEqual([...detectedTimes].sort((left, right) => right - left));
     rows.forEach((row) => {
       expect(row.style.alignItems).toBe('center');
+      expect(row.getAttribute('data-actionable')).toBe('true');
     });
+    expect(screen.getAllByTestId('notification-chevron')).toHaveLength(mockMobileNotifications.length);
     const mediaRails = screen.getAllByTestId('notification-media-rail');
     expect(mediaRails).toHaveLength(mockMobileNotifications.length);
     expect(new Set(mediaRails.map((rail) => rail.getAttribute('data-media-size')))).toEqual(new Set(['64']));
@@ -120,6 +122,47 @@ describe('MobileNotificationsModal', () => {
 
     expect(sortedNotifications.map(notification => notification.eventId)).toEqual([2, 1, 3]);
     expect(notifications.map(notification => notification.eventId)).toEqual([1, 2, 3]);
+  });
+
+  it('opens actionable notification rows from the whole card surface', () => {
+    const onNotificationOpen = vi.fn();
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} onNotificationOpen={onNotificationOpen} />);
+
+    const firstRow = screen.getAllByTestId('mock-notification-row')[0]!;
+    expect(firstRow.tagName).toBe('BUTTON');
+
+    fireEvent.click(firstRow);
+
+    expect(onNotificationOpen).toHaveBeenCalledWith(mockMobileNotifications[0]);
+  });
+
+  it('hides the chevron and leaves rows inert when no destination exists', () => {
+    const onNotificationOpen = vi.fn();
+    const notification: MobileNotification = {
+      ...mockMobileNotifications[0]!,
+      eventId: 99,
+      notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0099',
+      songId: undefined,
+      instrument: undefined,
+      navigation: null,
+      eventKind: 'player_total_score_improved',
+      payload: {
+        coalescedEventCount: 1,
+        coalescedEventKinds: ['player_total_score_improved'],
+        coalescedEvents: [{ eventKind: 'player_total_score_improved', metric: 'score', oldNumeric: 1, newNumeric: 2 }],
+      },
+    };
+
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={[notification]} onNotificationOpen={onNotificationOpen} />);
+
+    const row = screen.getByTestId('mock-notification-row');
+    expect(row.tagName).toBe('ARTICLE');
+    expect(row.getAttribute('data-actionable')).toBe('false');
+    expect(screen.queryByTestId('notification-chevron')).toBeNull();
+
+    fireEvent.click(row);
+
+    expect(onNotificationOpen).not.toHaveBeenCalled();
   });
 
   it('keeps unread dots stable for the current modal session', () => {

@@ -1,6 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
+import { IoChevronForward } from 'react-icons/io5';
 import ModalShell from '../modals/components/ModalShell';
 import {
   Colors, Font, Weight, Gap, Radius, Border, LineHeight,
@@ -9,6 +10,7 @@ import {
 } from '@festival/theme';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../display/InstrumentIcons';
+import { getNotificationDestination, type NotificationNavigationContext } from './notificationDestination';
 import { formatNotificationPresentation, type NotificationFlagKind, type NotificationMessagePart, type NotificationTextEvent, type NotificationTextInput } from './notificationText';
 
 const NOTIFICATION_MODAL_DESKTOP: CSSProperties = { width: 460, height: 640, maxHeight: '90vh' };
@@ -28,6 +30,12 @@ const LIST_PADDING = `${LIST_TOP_PADDING}px 0 calc(${Gap.section}px + env(safe-a
 const VISIBLE_SEEN_THRESHOLD = 0.9;
 const EMPTY_UNREAD_IDS = new Set<string>();
 const NOOP_SEEN_HANDLER = () => {};
+const SFENTONX_ACCOUNT_ID = '195e93ef108143b2975ee46662d4d0e1';
+const KAHNYRI_ACCOUNT_ID = '4c2a1300df4c49a9b9d2b352d704bdf0';
+const THIRD_BAND_ACCOUNT_ID = 'db9342c9dd874c799b58f177ec899f5e';
+const APPLE_SONG_ID = 'e90125a8-742a-4be9-baa0-4d93f5fba556';
+const STAND_AND_FIGHT_REMIX_SONG_ID = '4e5b8da5-0891-4a5b-9386-85031fcdca08';
+const GHOSTS_N_STUFF_SONG_ID = 'e60b07e6-065a-4059-a7a4-4a88fe268108';
 const FLAG_COLORS: Record<NotificationFlagKind, string> = {
   improvement: '#4b5563',
   firstPlay: '#6d28d9',
@@ -50,10 +58,13 @@ export type MobileNotification = NotificationTextInput & {
   notificationGuid: string;
   detectedAt: string;
   eventKind: string;
+  songId?: string;
+  instrument?: ServerInstrumentKey;
   title: string;
   context: string;
   detectedLabel: string;
   media: NotificationMedia;
+  navigation?: NotificationNavigationContext | null;
   payload: {
     coalescedEventCount: number;
     coalescedEventKinds: string[];
@@ -67,12 +78,15 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0001',
     detectedAt: '2026-05-09T14:53:00Z',
     eventKind: 'player_score_pb',
+    songId: APPLE_SONG_ID,
+    instrument: 'Solo_Drums',
     title: 'Apple',
     songTitle: 'Apple',
     instrumentLabel: 'Pro Drums',
     context: 'SFentonX - Pro Drums',
     detectedLabel: 'Today 7:53 AM',
     media: { kind: 'song', albumArt: albumArt('tg9ervxpjbz6zww6-512x512-16b50aeec442.jpg'), alt: 'Apple album art' },
+    navigation: { songId: APPLE_SONG_ID, instrument: 'Solo_Drums' },
     payload: {
       coalescedEventCount: 4,
       coalescedEventKinds: ['player_score_pb', 'player_gold_stars_achieved', 'player_stars_improved', 'player_song_rank_improved'],
@@ -89,12 +103,15 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0002',
     detectedAt: '2026-05-09T14:52:00Z',
     eventKind: 'player_score_pb',
+    songId: STAND_AND_FIGHT_REMIX_SONG_ID,
+    instrument: 'Solo_Drums',
     title: 'Stand and Fight (Remix)',
     songTitle: 'Stand and Fight (Remix)',
     instrumentLabel: 'Drums',
     context: 'SFentonX - Drums',
     detectedLabel: 'Today 7:53 AM',
     media: { kind: 'song', albumArt: albumArt('9yu2qyo48olhpmev-512x512-ed189e21217f.jpg'), alt: 'Stand and Fight (Remix) album art' },
+    navigation: { songId: STAND_AND_FIGHT_REMIX_SONG_ID, instrument: 'Solo_Drums' },
     payload: {
       coalescedEventCount: 3,
       coalescedEventKinds: ['player_score_pb', 'player_fc_achieved', 'player_song_rank_improved'],
@@ -110,12 +127,15 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0003',
     detectedAt: '2026-05-09T14:51:00Z',
     eventKind: 'player_first_score',
+    songId: GHOSTS_N_STUFF_SONG_ID,
+    instrument: 'Solo_Drums',
     title: "Ghosts 'n' Stuff",
     songTitle: "Ghosts 'n' Stuff",
     instrumentLabel: 'Pro Drums',
     context: 'SFentonX - Pro Drums',
     detectedLabel: 'Today 7:53 AM',
     media: { kind: 'song', albumArt: albumArt('brc3mquv0rvjdlhz-512x512-cfb9e6ab2c73.jpg'), alt: "Ghosts 'n' Stuff album art" },
+    navigation: { songId: GHOSTS_N_STUFF_SONG_ID, instrument: 'Solo_Drums' },
     payload: {
       coalescedEventCount: 2,
       coalescedEventKinds: ['player_first_score', 'player_gold_stars_achieved'],
@@ -135,6 +155,7 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     context: 'SFentonX - Rankings',
     detectedLabel: 'Today 7:53 AM',
     media: { kind: 'soloInstrument', instrument: 'Solo_Drums', label: 'Drums' },
+    navigation: { rankBy: 'weighted' },
     payload: {
       coalescedEventCount: 1,
       coalescedEventKinds: ['player_weighted_rank_improved'],
@@ -153,6 +174,7 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     context: 'SFentonX + kahnyri - Guitar/Drums',
     detectedLabel: 'Today 7:53 AM',
     media: { kind: 'instrumentCombo', instruments: ['Solo_Guitar', 'Solo_Drums'], label: 'Guitar/Drums' },
+    navigation: { rankBy: 'weighted' },
     payload: {
       coalescedEventCount: 1,
       coalescedEventKinds: ['band_weighted_rank_improved'],
@@ -166,6 +188,7 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0006',
     detectedAt: '2026-05-09T14:48:00Z',
     eventKind: 'band_score_pb',
+    songId: APPLE_SONG_ID,
     title: 'Apple',
     songTitle: 'Apple',
     rankingScope: 'overall',
@@ -174,6 +197,28 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     context: 'SFentonX + kahnyri + db9342 - Bass/Bass/Drums',
     detectedLabel: 'Today 7:53 AM',
     media: { kind: 'instrumentCombo', instruments: ['Solo_Bass', 'Solo_Bass', 'Solo_Drums'], label: 'Bass/Bass/Drums' },
+    navigation: {
+      songId: APPLE_SONG_ID,
+      band: {
+        bandId: 'notification-band-trios-apple',
+        bandType: 'Band_Trios',
+        teamKey: `${SFENTONX_ACCOUNT_ID}:${KAHNYRI_ACCOUNT_ID}:${THIRD_BAND_ACCOUNT_ID}`,
+        displayName: 'SFentonX + kahnyri + db9342',
+        members: [
+          { accountId: SFENTONX_ACCOUNT_ID, displayName: 'SFentonX' },
+          { accountId: KAHNYRI_ACCOUNT_ID, displayName: 'kahnyri' },
+          { accountId: THIRD_BAND_ACCOUNT_ID, displayName: 'db9342' },
+        ],
+      },
+      bandFilter: {
+        comboId: 'Solo_Bass+Solo_Bass+Solo_Drums',
+        assignments: [
+          { accountId: SFENTONX_ACCOUNT_ID, instrument: 'Solo_Bass' },
+          { accountId: KAHNYRI_ACCOUNT_ID, instrument: 'Solo_Bass' },
+          { accountId: THIRD_BAND_ACCOUNT_ID, instrument: 'Solo_Drums' },
+        ],
+      },
+    },
     payload: {
       coalescedEventCount: 5,
       coalescedEventKinds: ['band_score_pb', 'band_fc_achieved', 'band_gold_stars_achieved', 'band_song_rank_improved', 'band_song_rank_improved'],
@@ -196,6 +241,7 @@ type MobileNotificationsModalProps = {
   notifications?: readonly MobileNotification[];
   unreadNotificationIds?: ReadonlySet<string>;
   onNotificationsSeen?: (notificationGuids: string[]) => void;
+  onNotificationOpen?: (notification: MobileNotification) => void;
 };
 
 export default function MobileNotificationsModal({
@@ -204,6 +250,7 @@ export default function MobileNotificationsModal({
   notifications = MOCK_NOTIFICATIONS,
   unreadNotificationIds = EMPTY_UNREAD_IDS,
   onNotificationsSeen = NOOP_SEEN_HANDLER,
+  onNotificationOpen,
 }: MobileNotificationsModalProps) {
   const { t } = useTranslation();
   const styles = useStyles();
@@ -298,21 +345,9 @@ export default function MobileNotificationsModal({
           {sortedNotifications.map((notification) => {
             const presentation = formatNotificationPresentation(t, notification);
             const isSessionUnread = sessionUnreadIds.has(notification.notificationGuid);
-            return (
-              <article
-                key={notification.notificationGuid}
-                ref={(element) => {
-                  if (element) rowRefs.current.set(notification.notificationGuid, element);
-                  else rowRefs.current.delete(notification.notificationGuid);
-                }}
-                style={styles.row}
-                data-testid="mock-notification-row"
-                data-notification-guid={notification.notificationGuid}
-                data-detected-at={notification.detectedAt}
-                data-event-kind={notification.eventKind}
-                data-unread={isSessionUnread ? 'true' : 'false'}
-                aria-label={presentation.accessibilityLabel}
-              >
+            const canOpenNotification = Boolean(onNotificationOpen && getNotificationDestination(notification));
+            const rowContent = (
+              <>
                 <NotificationMediaRail media={notification.media} styles={styles} />
                 <div style={styles.content}>
                   <div style={styles.titleRow}>
@@ -332,7 +367,38 @@ export default function MobileNotificationsModal({
                     ))}
                   </div>
                 </div>
-              </article>
+                {canOpenNotification && <IoChevronForward size={18} aria-hidden="true" style={styles.chevron} data-testid="notification-chevron" />}
+              </>
+            );
+            const rowProps = {
+              ref: (element: HTMLElement | null) => {
+                if (element) rowRefs.current.set(notification.notificationGuid, element);
+                else rowRefs.current.delete(notification.notificationGuid);
+              },
+              style: canOpenNotification ? { ...styles.row, ...styles.rowButton } : styles.row,
+              'data-testid': 'mock-notification-row',
+              'data-notification-guid': notification.notificationGuid,
+              'data-detected-at': notification.detectedAt,
+              'data-event-kind': notification.eventKind,
+              'data-unread': isSessionUnread ? 'true' : 'false',
+              'data-actionable': canOpenNotification ? 'true' : 'false',
+              'aria-label': canOpenNotification ? `${presentation.accessibilityLabel}. Open notification.` : presentation.accessibilityLabel,
+            };
+            return (
+              canOpenNotification ? (
+                <button
+                  key={notification.notificationGuid}
+                  type="button"
+                  onClick={() => onNotificationOpen?.(notification)}
+                  {...rowProps}
+                >
+                  {rowContent}
+                </button>
+              ) : (
+                <article key={notification.notificationGuid} {...rowProps}>
+                  {rowContent}
+                </article>
+              )
             );
           })}
         </div>
@@ -443,6 +509,15 @@ function useStyles() {
       background: Colors.surfaceSubtle,
       border: border(Border.thin, Colors.borderSubtle),
     } as CSSProperties,
+    rowButton: {
+      width: '100%',
+      appearance: 'none',
+      WebkitAppearance: 'none',
+      font: 'inherit',
+      color: 'inherit',
+      textAlign: 'left',
+      cursor: 'pointer',
+    } as CSSProperties,
     mediaRail: {
       ...flexRow,
       alignItems: Align.center,
@@ -481,6 +556,12 @@ function useStyles() {
       gap: Gap.sm,
       minWidth: 0,
       flex: 1,
+    } as CSSProperties,
+    chevron: {
+      color: 'rgba(255, 255, 255, 0.72)',
+      flexShrink: 0,
+      alignSelf: Align.center,
+      marginLeft: Gap.xs,
     } as CSSProperties,
     titleRow: {
       ...flexRow,

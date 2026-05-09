@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import DesktopNav from '../../../../src/components/shell/desktop/DesktopNav';
 
@@ -26,10 +26,13 @@ describe('DesktopNav', () => {
     expect(screen.getByLabelText('Open navigation')).toBeTruthy();
   });
 
-  it('renders profile button', () => {
-    renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={() => {}} onProfileClick={() => {}} />);
-    const buttons = screen.getAllByRole('button');
-    expect(buttons.length).toBeGreaterThanOrEqual(2); // hamburger + profile
+  it('renders the mobile-style profile, search, and notifications actions', () => {
+    renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={() => {}} onProfileClick={() => {}} onOpenSearch={() => {}} onOpenNotifications={() => {}} notificationCount={3} />);
+
+    expect(screen.getByTestId('desktop-header-profile')).toBeTruthy();
+    expect(screen.getByTestId('desktop-header-search')).toBeTruthy();
+    expect(screen.getByTestId('desktop-header-notifications')).toBeTruthy();
+    expect(screen.queryByText('Search')).toBeNull();
   });
 
   it('calls onOpenSidebar when hamburger clicked', () => {
@@ -43,9 +46,48 @@ describe('DesktopNav', () => {
   it('calls onProfileClick when profile button clicked', () => {
     const onProfile = vi.fn();
     renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={onProfile} />);
-    const buttons = screen.getAllByRole('button');
-    fireEvent.click(buttons[buttons.length - 1]!);
+    fireEvent.click(screen.getByTestId('desktop-header-profile'));
     expect(onProfile).toHaveBeenCalled();
+  });
+
+  it('calls onOpenSearch when the search icon is clicked', () => {
+    const onOpenSearch = vi.fn();
+    renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} onOpenSearch={onOpenSearch} />);
+
+    fireEvent.click(screen.getByTestId('desktop-header-search'));
+
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onOpenNotifications and renders badge state', () => {
+    const onOpenNotifications = vi.fn();
+    const { rerender } = renderWithRouter(
+      <DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} onOpenNotifications={onOpenNotifications} notificationCount={12} />,
+    );
+    const notificationsButton = screen.getByTestId('desktop-header-notifications');
+
+    expect(within(notificationsButton).getByText('9+')).toBeTruthy();
+    fireEvent.click(notificationsButton);
+    expect(onOpenNotifications).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <MemoryRouter>
+        <DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} onOpenNotifications={onOpenNotifications} notificationCount={0} />
+      </MemoryRouter>,
+    );
+
+    expect(within(screen.getByTestId('desktop-header-notifications')).queryByText('0')).toBeNull();
+  });
+
+  it('orders desktop actions as profile, search, notifications', () => {
+    renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} onOpenSearch={vi.fn()} onOpenNotifications={vi.fn()} />);
+
+    const profileButton = screen.getByTestId('desktop-header-profile');
+    const searchButton = screen.getByTestId('desktop-header-search');
+    const notificationsButton = screen.getByTestId('desktop-header-notifications');
+
+    expect(profileButton.compareDocumentPosition(searchButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(searchButton.compareDocumentPosition(notificationsButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
@@ -55,9 +97,12 @@ describe('DesktopNav — isWideDesktop', () => {
     expect(screen.queryByLabelText('Open navigation')).toBeNull();
   });
 
-  it('hides profile button when isWideDesktop is true', () => {
-    renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} isWideDesktop />);
-    expect(screen.queryByLabelText('Profile')).toBeNull();
+  it('keeps header actions available when isWideDesktop is true', () => {
+    renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} onOpenSearch={vi.fn()} onOpenNotifications={vi.fn()} isWideDesktop />);
+
+    expect(screen.getByTestId('desktop-header-profile')).toBeTruthy();
+    expect(screen.getByTestId('desktop-header-search')).toBeTruthy();
+    expect(screen.getByTestId('desktop-header-notifications')).toBeTruthy();
   });
 
   it('still renders a nav element when isWideDesktop is true', () => {
@@ -65,9 +110,8 @@ describe('DesktopNav — isWideDesktop', () => {
     expect(screen.getByRole('navigation')).toBeDefined();
   });
 
-  it('renders only spacer buttons when isWideDesktop — no hamburger or profile', () => {
+  it('renders no hamburger when isWideDesktop', () => {
     renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} isWideDesktop />);
-    // Should have no hamburger or profile buttons — only the search bar elements
     expect(screen.queryByLabelText('Open navigation')).toBeNull();
   });
 

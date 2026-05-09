@@ -5,6 +5,9 @@ import { changelogHash } from '../src/changelog';
 const NOTIFICATION_SEEN_STORAGE_KEY = 'fst:notificationSeen:v1';
 const EXPECTED_NOTIFICATION_COUNT = 6;
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
+const APPLE_SONG_ID = 'e90125a8-742a-4be9-baa0-4d93f5fba556';
+const STAND_AND_FIGHT_REMIX_SONG_ID = '4e5b8da5-0891-4a5b-9386-85031fcdca08';
+const GHOSTS_N_STUFF_SONG_ID = 'e60b07e6-065a-4059-a7a4-4a88fe268108';
 
 test.describe('Notification seen state', () => {
   test.beforeEach(async ({ page }) => {
@@ -76,6 +79,76 @@ test.describe('Notification seen state', () => {
     await expect(dialog).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('notification-unread-dot')).toHaveCount(0);
   });
+
+  test('desktop header notifications button opens the notifications modal', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'desktop header behavior is covered by the desktop project');
+
+    await page.goto('/#/songs', { waitUntil: 'load' });
+    await dismissFirstRunIfVisible(page);
+
+    const notificationsButton = page.getByTestId('desktop-header-notifications');
+    const notificationBadge = notificationsButton.locator('span');
+    await expect(notificationsButton).toBeVisible({ timeout: 10_000 });
+    await expect(notificationBadge).toHaveText(String(EXPECTED_NOTIFICATION_COUNT));
+
+    await notificationsButton.click();
+
+    const dialog = page.getByRole('dialog', { name: 'Notifications' });
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('mock-notification-row')).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
+  });
+
+  test('mobile notification card opens a solo song with the instrument selected', async ({ page }, testInfo) => {
+    test.skip(!testInfo.project.name.startsWith('mobile'), 'mobile-only notification shell behavior');
+
+    await page.goto('/#/songs', { waitUntil: 'load' });
+    await dismissFirstRunIfVisible(page);
+
+    await page.getByTestId('mobile-header-notifications').click();
+    const firstNotification = page.getByTestId('mock-notification-row').first();
+    await expect(firstNotification).toHaveAttribute('data-actionable', 'true');
+    await expect(firstNotification.getByTestId('notification-chevron')).toBeVisible();
+
+    await firstNotification.click();
+
+    await expect(page).toHaveURL(new RegExp(`#\\/songs\\/${APPLE_SONG_ID}\\?instrument=Solo_Drums`));
+  });
+
+  test('desktop validation mode opens a rank notification destination', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'desktop validation is covered by the desktop project');
+
+    await page.goto(`/?validation=${NOTIFICATIONS_VALIDATION_TOKEN}#/songs`, { waitUntil: 'load' });
+    await dismissFirstRunIfVisible(page);
+
+    const rankNotification = page.locator('[data-testid="mock-notification-row"][data-event-kind="player_weighted_rank_improved"]');
+    await expect(rankNotification.getByTestId('notification-chevron')).toBeVisible();
+    await rankNotification.click();
+
+    await expect(page).toHaveURL(/#\/leaderboards\?rankBy=weighted/);
+    await expect.poll(() => readLeaderboardRankBy(page)).toBe('weighted');
+  });
+
+  test('desktop validation mode opens a band song notification with played-instrument filters', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'desktop validation is covered by the desktop project');
+
+    await page.goto(`/?validation=${NOTIFICATIONS_VALIDATION_TOKEN}#/songs`, { waitUntil: 'load' });
+    await dismissFirstRunIfVisible(page);
+
+    const bandNotification = page.locator('[data-testid="mock-notification-row"][data-event-kind="band_score_pb"]');
+    await expect(bandNotification).toBeVisible({ timeout: 10_000 });
+    await page.evaluate(() => {
+      document.querySelector('[data-testid="mock-notification-row"][data-event-kind="band_score_pb"]')?.scrollIntoView({ block: 'center' });
+    });
+    await page.waitForTimeout(250);
+    await page.evaluate(() => {
+      const row = document.querySelector('[data-testid="mock-notification-row"][data-event-kind="band_score_pb"]');
+      if (!(row instanceof HTMLElement)) throw new Error('Band notification row was not available for click');
+      row.click();
+    });
+
+    await expect(page).toHaveURL(new RegExp(`#\\/songs\\/${APPLE_SONG_ID}`));
+    await expect.poll(() => readSelectedBandFilterCombo(page)).toBe('Solo_Bass+Solo_Bass+Solo_Drums');
+  });
 });
 
 async function expectRowsNewestFirst(rows: Locator) {
@@ -124,6 +197,25 @@ async function readMockSeenCount(page: Page): Promise<number> {
   }, NOTIFICATION_SEEN_STORAGE_KEY);
 }
 
+async function readLeaderboardRankBy(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('fst:leaderboardSettings');
+    if (!raw) return null;
+    return (JSON.parse(raw) as { rankBy?: string }).rankBy ?? null;
+  });
+}
+
+async function readSelectedBandFilterCombo(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const profileRaw = localStorage.getItem('fst:selectedProfile');
+    const filterRaw = localStorage.getItem('fst:bandFilter');
+    if (!profileRaw || !filterRaw) return null;
+    const profile = JSON.parse(profileRaw) as { type?: string; bandType?: string };
+    const filter = JSON.parse(filterRaw) as { bandType?: string; comboId?: string };
+    return profile.type === 'band' && profile.bandType === filter.bandType ? filter.comboId ?? null : null;
+  });
+}
+
 async function seedAppState(page: Page) {
   await page.goto('/', { waitUntil: 'commit' });
   await page.evaluate(
@@ -165,16 +257,36 @@ async function installApiMocks(page: Page) {
 
 function songsResponse() {
   return {
-    count: 1,
+    count: 3,
     currentSeason: 9,
-    songs: [{
-      songId: 'song-a',
-      title: 'Notification E2E Song',
-      artist: 'Festival QA',
-      year: 2026,
-      durationSeconds: 180,
-      difficulty: { guitar: 3, bass: 2, drums: 4, vocals: 1 },
-      maxScores: { Solo_Guitar: 100000, Solo_Bass: 90000, Solo_Drums: 110000, Solo_Vocals: 80000 },
-    }],
+    songs: [
+      {
+        songId: APPLE_SONG_ID,
+        title: 'Apple',
+        artist: 'Charli xcx',
+        year: 2024,
+        durationSeconds: 151,
+        difficulty: { guitar: 3, bass: 2, drums: 4, vocals: 2 },
+        maxScores: { Solo_Guitar: 100000, Solo_Bass: 90000, Solo_Drums: 110000, Solo_Vocals: 80000 },
+      },
+      {
+        songId: STAND_AND_FIGHT_REMIX_SONG_ID,
+        title: 'Stand and Fight (Remix)',
+        artist: 'Epic Games',
+        year: 2020,
+        durationSeconds: 234,
+        difficulty: { guitar: 4, bass: 3, drums: 5, vocals: 3 },
+        maxScores: { Solo_Guitar: 120000, Solo_Bass: 95000, Solo_Drums: 126978, Solo_Vocals: 90000 },
+      },
+      {
+        songId: GHOSTS_N_STUFF_SONG_ID,
+        title: "Ghosts 'n' Stuff",
+        artist: 'deadmau5, Rob Swire',
+        year: 2008,
+        durationSeconds: 328,
+        difficulty: { guitar: 4, bass: 4, drums: 6, vocals: 3 },
+        maxScores: { Solo_Guitar: 130000, Solo_Bass: 120000, Solo_Drums: 180005, Solo_Vocals: 100000 },
+      },
+    ],
   };
 }

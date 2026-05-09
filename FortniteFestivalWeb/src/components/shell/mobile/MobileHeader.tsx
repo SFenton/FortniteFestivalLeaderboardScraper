@@ -1,19 +1,19 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo, type CSSProperties } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { IoChevronBack, IoNotificationsOutline, IoPeople, IoPerson, IoPersonAdd, IoSearch } from 'react-icons/io5';
+import { IoChevronBack } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import HamburgerButton from '../HamburgerButton';
+import HeaderActions, { type HeaderActionProfileType } from '../HeaderActions';
 import BackLink from './BackLink';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
   Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
-  Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue, Size, Radius,
-  flexRow, flexCenter, padding, TRANSITION_MS,
+  Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue,
+  flexRow, padding, TRANSITION_MS,
 } from '@festival/theme';
 
-export type MobileHeaderProfileType = 'none' | 'player' | 'band';
+export type MobileHeaderProfileType = HeaderActionProfileType;
 
 export interface MobileHeaderProps {
   navTitle: string | null;
@@ -55,54 +55,21 @@ export default function MobileHeader({
   profileLabel,
   onProfileAction,
 }: MobileHeaderProps) {
-  const { t } = useTranslation();
   const navigate = useNavigate();
   const s = useStyles();
-  const notificationBadgeLabel = notificationCount > 9 ? '9+' : String(notificationCount);
-  const ProfileIcon = profileType === 'band' ? IoPeople : profileType === 'player' ? IoPerson : IoPersonAdd;
-  const profileAction = onProfileAction ? (
-    <button
-      type="button"
-      style={s.profileButton}
-      onClick={onProfileAction}
-      aria-label={profileLabel ?? t('aria.profile')}
-      data-profile-type={profileType}
-    >
-      <ProfileIcon size={IconSize.md} />
-    </button>
-  ) : null;
-  const searchAction = (
-    <button
-      type="button"
-      style={s.iconButton}
-      onClick={onOpenSearch}
-      aria-label={t('common.searchAction')}
-    >
-      <IoSearch size={IconSize.md} />
-    </button>
-  );
-  const notificationAction = onOpenNotifications ? (
-    <button
-      type="button"
-      style={s.iconButton}
-      onClick={onOpenNotifications}
-      aria-label={t('common.notifications')}
-      data-testid="mobile-header-notifications"
-    >
-      <IoNotificationsOutline size={IconSize.md} />
-      {notificationCount > 0 && <span style={s.notificationBadge}>{notificationBadgeLabel}</span>}
-    </button>
-  ) : null;
-  const rightActionGroup = (
-    <div style={s.rightActions}>
-      {isSongsRoute && songInstrument && (
-        <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={s.instrumentIcon} />
-      )}
-      {profileAction}
-      {searchAction}
-      {notificationAction}
-    </div>
-  );
+  const leadingSlot = isSongsRoute && songInstrument
+    ? <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={s.instrumentIcon} />
+    : null;
+  const rightActionGroup = <HeaderActions
+    testIdPrefix="mobile-header"
+    leadingSlot={leadingSlot}
+    profileType={profileType}
+    profileLabel={profileLabel}
+    onProfileAction={onProfileAction}
+    onOpenSearch={onOpenSearch}
+    onOpenNotifications={onOpenNotifications}
+    notificationCount={notificationCount}
+  />;
 
   /* v8 ignore start — conditional rendering tested via AppMobile integration */
   if (navTitle) {
@@ -180,61 +147,8 @@ function useStyles() {
       height: Layout.headerIconSlot,
       flexShrink: 0,
     } as CSSProperties,
-    rightActions: {
-      ...flexRow,
-      alignItems: Align.center,
-      gap: Gap.md,
-      marginLeft: CssValue.auto,
-      flexShrink: 0,
-    } as CSSProperties,
     instrumentIcon: {
       flexShrink: 0,
-    } as CSSProperties,
-    iconButton: {
-      ...flexCenter,
-      position: Position.relative,
-      width: Size.iconLg,
-      height: Size.iconLg,
-      background: 'none',
-      border: 'none',
-      cursor: 'pointer',
-      borderRadius: Radius.xs,
-      color: Colors.textPrimary,
-      padding: 0,
-      flexShrink: 0,
-      marginTop: -Gap.xs,
-      marginBottom: -Gap.xs,
-    } as CSSProperties,
-    notificationBadge: {
-      position: Position.absolute,
-      top: 2,
-      right: 1,
-      minWidth: 16,
-      height: 16,
-      padding: '0 4px',
-      borderRadius: CssValue.circle,
-      background: Colors.statusRed,
-      color: Colors.textPrimary,
-      fontSize: 10,
-      fontWeight: Weight.bold,
-      lineHeight: '16px',
-      textAlign: 'center',
-      boxSizing: BoxSizing.borderBox,
-      pointerEvents: 'none',
-    } as CSSProperties,
-    profileButton: {
-      ...flexCenter,
-      width: Size.iconLg,
-      height: Size.iconLg,
-      background: 'none',
-      border: 'none',
-      cursor: 'pointer',
-      borderRadius: Radius.xs,
-      color: Colors.textPrimary,
-      padding: 0,
-      flexShrink: 0,
-      marginTop: -Gap.xs,
-      marginBottom: -Gap.xs,
     } as CSSProperties,
   }), []);
 }

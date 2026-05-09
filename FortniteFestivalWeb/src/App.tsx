@@ -114,7 +114,8 @@ import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import SearchModal from './components/search/SearchModal';
-import MobileNotificationsModal, { mockMobileNotifications } from './components/notifications/MobileNotificationsModal';
+import MobileNotificationsModal, { mockMobileNotifications, type MobileNotification } from './components/notifications/MobileNotificationsModal';
+import { getNotificationDestination } from './components/notifications/notificationDestination';
 import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
 import type { SearchTarget } from './types/search';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
@@ -131,6 +132,7 @@ import RouteErrorFallback from './components/page/RouteErrorFallback';
 import { createPreserveShellScrollState, type PreserveShellScrollState } from './utils/quietNavigation';
 import { getBandFilterActionLabel } from './utils/bandFilterDisplay';
 import { bandTypeLabel } from './utils/bandTypes';
+import { saveLeaderboardRankBy } from './utils/leaderboardSettings';
 import { getProfileClickDestination } from './utils/profileNavigation';
 import {
   clearAppliedBandFilter,
@@ -138,6 +140,7 @@ import {
   readAppliedBandFilterForSelectedProfile,
   writeAppliedBandFilter,
 } from './state/bandFilter';
+import { writeSelectedProfile } from './state/selectedProfile';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
@@ -394,6 +397,18 @@ function AppShell() {
     setNotificationsOpen(true);
   }, []);
 
+  const handleNotificationOpen = useCallback((notification: MobileNotification) => {
+    const destination = getNotificationDestination(notification);
+    if (!destination) return;
+
+    if (destination.rankBy) saveLeaderboardRankBy(destination.rankBy);
+    if (destination.bandProfile) writeSelectedProfile(destination.bandProfile);
+    if (destination.bandFilter) setAppliedBandFilter(writeAppliedBandFilter(destination.bandFilter));
+
+    setNotificationsOpen(false);
+    navigate(destination.path, destination.state ? { state: destination.state } : undefined);
+  }, [navigate]);
+
   // Track whether the back button has already appeared in the current detail stack.
   const backShownRef = useRef(false);
 
@@ -637,9 +652,12 @@ function AppShell() {
           <DesktopNav
             hasPlayer={!!player}
             profileType={profileType}
+            profileLabel={mobileHeaderProfileLabel}
             onOpenSidebar={() => setSidebarOpen((o) => !o)}
             onProfileClick={handleProfileClick}
             onOpenSearch={() => openSearch()}
+            onOpenNotifications={() => setNotificationsOpen(true)}
+            notificationCount={unreadCount}
             isWideDesktop={isWideDesktop}
           />
         )}
@@ -856,6 +874,7 @@ function AppShell() {
         notifications={mockMobileNotifications}
         unreadNotificationIds={unreadNotificationIds}
         onNotificationsSeen={markNotificationsSeen}
+        onNotificationOpen={handleNotificationOpen}
       />
       <BandInstrumentFilterModal
         visible={bandFilterModalOpen && selectedProfile?.type === 'band'}
