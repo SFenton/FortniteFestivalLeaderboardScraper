@@ -75,6 +75,11 @@ export function useUnifiedSearch(query: string, options?: UnifiedSearchOptions):
     setDebouncing(true);
     debounceRef.current = setTimeout(() => {
       setDebouncedQuery(trimmedQuery);
+      setSongResults([]);
+      setPlayerResults([]);
+      setBandResults([]);
+      setErrors(cloneFlags());
+      setLoading(cloneFlags({ players: true, bands: true }));
       setDebouncing(false);
     }, debounceMs);
 
