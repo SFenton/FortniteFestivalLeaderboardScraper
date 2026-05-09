@@ -113,11 +113,11 @@ export default memo(function BandRankHistoryChart({
   const metricLabel = t(`rankings.metric.${metric}`);
 
   const statusMessage = useMemo(() => {
+    if (historyStatus === 'failed') return null;
     if (historyMessage) return historyMessage;
     switch (historyStatus) {
       case 'catching_up': return t('band.rankHistoryCatchingUp');
       case 'stale': return t('band.rankHistoryStale');
-      case 'failed': return t('band.rankHistoryFailed');
       case 'disabled': return t('band.rankHistoryDisabled');
       default: return null;
     }

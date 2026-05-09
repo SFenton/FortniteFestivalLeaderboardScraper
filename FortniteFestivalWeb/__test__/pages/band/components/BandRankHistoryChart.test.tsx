@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import BandRankHistoryChart from '../../../../src/pages/band/components/BandRankHistoryChart';
 import { computeRankAxisWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { TestProviders } from '../../../helpers/TestProviders';
@@ -24,11 +24,13 @@ vi.mock('recharts', () => ({
 }));
 
 vi.mock('../../../../src/components/common/GraphCard', () => ({
-  default: ({ data, renderChart }: {
+  default: ({ data, subtitle, renderChart }: {
     data: unknown[];
+    subtitle?: string;
     renderChart?: (args: { visibleData: unknown[]; animating: boolean; selectedPoint: unknown | null; setSelectedPoint: () => void }) => ReactNode;
   }) => (
     <div data-testid="graph-card">
+      <div data-testid="graph-card-subtitle">{subtitle}</div>
       {renderChart?.({ visibleData: data, animating: false, selectedPoint: null, setSelectedPoint: () => undefined })}
     </div>
   ),
@@ -77,5 +79,39 @@ describe('BandRankHistoryChart', () => {
     const rankAxis = mockYAxisProps.find(props => props.yAxisId === 'rank');
     expect(rankAxis?.tickFormatter?.(3349832)).toBe('#3,349,832');
     expect(rankAxis?.width).toBe(computeRankAxisWidth([3349832], [3349832, 3349832]));
+  });
+
+  it('keeps the base subtitle and hides raw backend failure messages', () => {
+    mockUseBandRankHistory.mockReturnValue({
+      chartData: [{
+        date: '2026-05-08',
+        dateLabel: '5/8/26',
+        timestamp: new Date(2026, 4, 8, 12, 0, 0, 0).getTime(),
+        value: 0.89,
+        rank: 3047505,
+        songsPlayed: 71,
+        coverage: 0.11,
+        fullComboCount: 5,
+        totalChartedSongs: 655,
+        rankedAccountCount: 3349832,
+      }],
+      loading: false,
+      historyStatus: 'failed',
+      historyMessage: '53100: could not write to file "base/pgsql_tmp/pgsql_tmp1013127.94": No space left on device',
+    });
+
+    render(
+      <TestProviders>
+        <BandRankHistoryChart
+          bandType="Band_Trios"
+          teamKey="team-a:team-b:team-c"
+          totalRankedTeams={3349832}
+          skipAnimation
+        />
+      </TestProviders>,
+    );
+
+    expect(screen.getByTestId('graph-card-subtitle')).toHaveTextContent('Any-combo ranking progression over the past 30 days.');
+    expect(screen.queryByText(/pgsql_tmp|No space left on device|temporarily unavailable/i)).not.toBeInTheDocument();
   });
 });
