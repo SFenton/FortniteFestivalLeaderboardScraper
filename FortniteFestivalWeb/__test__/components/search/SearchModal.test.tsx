@@ -200,7 +200,7 @@ describe('SearchModal', () => {
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
   });
 
-  it('does not auto-focus on mobile so first keyboard open comes from the tap gesture', async () => {
+  it('auto-focuses with preventScroll when opened on mobile', async () => {
     setViewportQueries({ mobile: true });
     renderModal();
     const input = screen.getByPlaceholderText('Search songs, players, or bands…');
@@ -208,7 +208,7 @@ describe('SearchModal', () => {
 
     await advanceAndFlush(60);
 
-    expect(focusSpy).not.toHaveBeenCalled();
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
   });
 
   it('focuses with preventScroll from the modal search tap gesture', () => {

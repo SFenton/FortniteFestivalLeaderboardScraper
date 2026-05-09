@@ -15,7 +15,7 @@ string? outPath = null;
 var rollbackCompleted = 1;
 var executeLegacyStagingCleanup = false;
 var executeSnapshotRetention = false;
-string? retentionIndexName = null;
+string? maintenanceIndexName = null;
 string? snapshotPartition = null;
 var allowProd = false;
 var includeBandHistoryCoverage = false;
@@ -43,8 +43,9 @@ for (var i = 0; i < args.Length; i++)
         case "--execute-snapshot-retention":
             executeSnapshotRetention = true;
             break;
+        case "--execute-maintenance-index":
         case "--execute-retention-index":
-            retentionIndexName = args[++i];
+            maintenanceIndexName = args[++i];
             break;
         case "--snapshot-partition":
             snapshotPartition = args[++i];
@@ -73,12 +74,12 @@ if (executeLegacyStagingCleanup && !allowProd)
 if (executeSnapshotRetention && !allowProd)
     return Fail("--allow-prod is required with --execute-snapshot-retention");
 
-if (!string.IsNullOrWhiteSpace(retentionIndexName) && !allowProd)
-    return Fail("--allow-prod is required with --execute-retention-index");
+if (!string.IsNullOrWhiteSpace(maintenanceIndexName) && !allowProd)
+    return Fail("--allow-prod is required with --execute-maintenance-index");
 
 var executeModeCount = (executeLegacyStagingCleanup ? 1 : 0)
     + (executeSnapshotRetention ? 1 : 0)
-    + (!string.IsNullOrWhiteSpace(retentionIndexName) ? 1 : 0);
+    + (!string.IsNullOrWhiteSpace(maintenanceIndexName) ? 1 : 0);
 if (executeModeCount > 1)
     return Fail("Choose only one execute mode per run");
 
@@ -87,14 +88,14 @@ if (executeSnapshotRetention && string.IsNullOrWhiteSpace(snapshotPartition))
 
 var target = new NpgsqlConnectionStringBuilder(pg);
 Console.WriteLine($"Target: host={target.Host} database={target.Database} user={target.Username}");
-Console.WriteLine($"Mode: {ResolveMode(executeLegacyStagingCleanup, executeSnapshotRetention, retentionIndexName)}");
+Console.WriteLine($"Mode: {ResolveMode(executeLegacyStagingCleanup, executeSnapshotRetention, maintenanceIndexName)}");
 Console.WriteLine($"Rollback completed snapshots kept beyond active/projection source: {rollbackCompleted:N0}");
 Console.WriteLine($"Include band history coverage scan: {includeBandHistoryCoverage}");
 Console.WriteLine($"Band history coverage command timeout: {bandHistoryCoverageTimeoutSeconds:N0}s");
 if (!string.IsNullOrWhiteSpace(snapshotPartition))
     Console.WriteLine($"Snapshot partition: {snapshotPartition}");
-if (!string.IsNullOrWhiteSpace(retentionIndexName))
-    Console.WriteLine($"Retention index: {retentionIndexName}");
+if (!string.IsNullOrWhiteSpace(maintenanceIndexName))
+    Console.WriteLine($"Maintenance index: {maintenanceIndexName}");
 
 await using var dataSource = NpgsqlDataSource.Create(pg);
 var reporter = new DatabaseMaintenanceDryRunReporter(dataSource);
@@ -130,22 +131,22 @@ if (executeSnapshotRetention)
     Console.WriteLine($"  reclaimed: {FormatBytes(snapshotRewriteResult.ReclaimedBytes)} ({FormatBytes(snapshotRewriteResult.BeforeTotalBytes)} -> {FormatBytes(snapshotRewriteResult.AfterTotalBytes)})");
 }
 
-RetentionHelperIndexExecutionResult? retentionIndexResult = null;
-if (!string.IsNullOrWhiteSpace(retentionIndexName))
+RetentionHelperIndexExecutionResult? maintenanceIndexResult = null;
+if (!string.IsNullOrWhiteSpace(maintenanceIndexName))
 {
     Console.WriteLine();
-    Console.WriteLine("Executing one retention helper index build with guarded preflight...");
-    retentionIndexResult = await reporter.CreateRetentionHelperIndexAsync(retentionIndexName);
-    Console.WriteLine($"  executed: {retentionIndexResult.Executed}");
-    Console.WriteLine($"  reason:   {retentionIndexResult.Reason}");
-    Console.WriteLine($"  sql:      {retentionIndexResult.Sql}");
-    if (retentionIndexResult.After?.IndexFootprint is not null)
-        Console.WriteLine($"  after:    index={retentionIndexResult.After.IndexFootprint.Name}, bytes={FormatBytes(retentionIndexResult.After.IndexFootprint.IndexBytes)}");
+    Console.WriteLine("Executing one maintenance index build with guarded preflight...");
+    maintenanceIndexResult = await reporter.CreateMaintenanceIndexAsync(maintenanceIndexName);
+    Console.WriteLine($"  executed: {maintenanceIndexResult.Executed}");
+    Console.WriteLine($"  reason:   {maintenanceIndexResult.Reason}");
+    Console.WriteLine($"  sql:      {maintenanceIndexResult.Sql}");
+    if (maintenanceIndexResult.After?.IndexFootprint is not null)
+        Console.WriteLine($"  after:    index={maintenanceIndexResult.After.IndexFootprint.Name}, bytes={FormatBytes(maintenanceIndexResult.After.IndexFootprint.IndexBytes)}");
 }
 
-object payload = cleanupResult is null && snapshotRewriteResult is null && retentionIndexResult is null
+object payload = cleanupResult is null && snapshotRewriteResult is null && maintenanceIndexResult is null
     ? report
-    : new { report, cleanupResult, snapshotRewriteResult, retentionIndexResult };
+    : new { report, cleanupResult, snapshotRewriteResult, maintenanceIndexResult };
 EmitJson(outPath, payload);
 return 0;
 
@@ -164,28 +165,29 @@ static void PrintUsage()
           DatabaseMaintenanceDryRunHarness --pg-env <env-var-name> [--rollback-completed <count>] [--out <path>]
           DatabaseMaintenanceDryRunHarness --pg <connection-string> --execute-legacy-staging-cleanup --allow-prod [--rollback-completed <count>] [--out <path>]
           DatabaseMaintenanceDryRunHarness --pg <connection-string> --execute-snapshot-retention --allow-prod --snapshot-partition <partition-name> [--rollback-completed <count>] [--out <path>]
-                    DatabaseMaintenanceDryRunHarness --pg <connection-string> --execute-retention-index <index-name> --allow-prod [--rollback-completed <count>] [--out <path>]
+          DatabaseMaintenanceDryRunHarness --pg <connection-string> --execute-maintenance-index <index-name> --allow-prod [--rollback-completed <count>] [--out <path>]
 
         Notes:
           - Default mode is read-only and does not execute cleanup SQL.
-                    - Band history coverage scans are skipped unless --include-band-history-coverage is set.
-                    - Band history coverage commands default to a 30s timeout; use --band-history-coverage-timeout-seconds <seconds> to tune it.
+          - Band history coverage scans are skipped unless --include-band-history-coverage is set.
+          - Band history coverage commands default to a 30s timeout; use --band-history-coverage-timeout-seconds <seconds> to tune it.
           - Execute modes require --allow-prod and still refuse cleanup if preflight fails.
           - Snapshot retention execution rewrites one explicit partition per run.
-                    - Retention index execution builds one explicit CREATE INDEX CONCURRENTLY target per run.
+          - Maintenance index execution builds one explicit CREATE INDEX CONCURRENTLY target per run.
+          - --execute-retention-index remains accepted as an alias for existing runbooks.
           - If --pg and --pg-env are omitted, PG_CONN is used.
           - Default rollback-completed is 1.
         """);
 }
 
-static string ResolveMode(bool executeLegacyStagingCleanup, bool executeSnapshotRetention, string? retentionIndexName)
+static string ResolveMode(bool executeLegacyStagingCleanup, bool executeSnapshotRetention, string? maintenanceIndexName)
 {
     if (executeLegacyStagingCleanup)
         return "execute legacy staging cleanup";
     if (executeSnapshotRetention)
         return "execute snapshot retention rewrite";
-        if (!string.IsNullOrWhiteSpace(retentionIndexName))
-                return "execute one retention helper index";
+    if (!string.IsNullOrWhiteSpace(maintenanceIndexName))
+        return "execute one maintenance index";
     return "dry-run/read-only";
 }
 
@@ -240,7 +242,7 @@ static void PrintSummary(DatabaseMaintenanceDryRunReport report)
         Console.WriteLine($"  ... {report.IndexCandidates.Count - 12:N0} more in JSON output");
 
     Console.WriteLine();
-    Console.WriteLine("Retention helper indexes");
+    Console.WriteLine("Maintenance indexes");
     foreach (var status in report.RetentionHelperIndexes)
     {
         var state = status.IndexExists ? "present" : status.TableExists ? "missing" : "blocked";

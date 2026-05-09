@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using FSTService.Persistence;
 using Npgsql;
 
 namespace FSTService.Persistence.Maintenance;
@@ -8,7 +9,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
 {
     private const long LegacyStagingCleanupMinIndexBytes = 1 * 1024 * 1024;
     private const long SnapshotMaintenanceAdvisoryLockKey = 2026050201;
-    private const long RetentionIndexMaintenanceAdvisoryLockKey = 2026050801;
+    private const long MaintenanceIndexAdvisoryLockKey = 2026050801;
     private const string SnapshotParentTable = "leaderboard_entries_snapshot";
 
     private static readonly IReadOnlyDictionary<string, string> SnapshotPartitionInstruments = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -109,7 +110,18 @@ public sealed class DatabaseMaintenanceDryRunReporter
             ["band_type", "ranking_scope", "combo_id", "snapshot_date DESC"],
             "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrsh_latest\" ON public.\"band_team_ranking_stats_history\" (\"band_type\", \"ranking_scope\", \"combo_id\", \"snapshot_date\" DESC)",
             "supports band rank-history stats lookups; managed by the maintenance harness instead of startup DDL"),
+        .. BuildCurrentBandRankingIndexDefinitions(),
     ];
+
+    private static RetentionHelperIndexDefinition[] BuildCurrentBandRankingIndexDefinitions() =>
+        BandRankingStorageNames.GetCurrentRankingIndexDefinitions()
+            .Select(definition => new RetentionHelperIndexDefinition(
+                definition.Name,
+                definition.TableName,
+                definition.KeyColumns,
+                definition.CreateSql,
+                $"{definition.Purpose}; managed by the maintenance harness instead of startup DDL"))
+            .ToArray();
 
     private readonly NpgsqlDataSource _dataSource;
 
@@ -225,10 +237,15 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
     public async Task<RetentionHelperIndexExecutionResult> CreateRetentionHelperIndexAsync(
         string indexName,
+        CancellationToken ct = default) =>
+        await CreateMaintenanceIndexAsync(indexName, ct);
+
+    public async Task<RetentionHelperIndexExecutionResult> CreateMaintenanceIndexAsync(
+        string indexName,
         CancellationToken ct = default)
     {
         var definition = ResolveRetentionHelperIndexDefinition(indexName)
-            ?? throw new ArgumentException($"Unknown retention helper index: {indexName}", nameof(indexName));
+            ?? throw new ArgumentException($"Unknown maintenance index: {indexName}", nameof(indexName));
 
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
         var before = await LoadRetentionHelperIndexStatusAsync(conn, definition, ct);
@@ -249,18 +266,18 @@ public sealed class DatabaseMaintenanceDryRunReporter
                 Executed: false,
                 before,
                 After: before,
-                "not executed: retention helper index already exists",
+            BuildIndexAlreadyCoveredReason(before),
                 definition.CreateSql,
                 ExecutedAtUtc: DateTime.UtcNow);
         }
 
-        if (!await TryAcquireRetentionIndexMaintenanceLockAsync(conn, ct))
+        if (!await TryAcquireMaintenanceIndexLockAsync(conn, ct))
         {
             return new RetentionHelperIndexExecutionResult(
                 Executed: false,
                 before,
                 After: null,
-                "blocked: another retention index maintenance operation already holds the advisory lock",
+            "blocked: another maintenance index operation already holds the advisory lock",
                 definition.CreateSql,
                 ExecutedAtUtc: DateTime.UtcNow);
         }
@@ -274,7 +291,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
                     Executed: false,
                     before,
                     After: preflight,
-                    "not executed: retention helper index was created before the advisory lock was acquired",
+                        BuildIndexCoveredDuringLockReason(preflight),
                     definition.CreateSql,
                     ExecutedAtUtc: DateTime.UtcNow);
             }
@@ -285,13 +302,13 @@ public sealed class DatabaseMaintenanceDryRunReporter
                 Executed: true,
                 before,
                 after,
-                "executed one retention helper CREATE INDEX CONCURRENTLY statement",
+                "executed one maintenance CREATE INDEX CONCURRENTLY statement",
                 definition.CreateSql,
                 ExecutedAtUtc: DateTime.UtcNow);
         }
         finally
         {
-            await ReleaseRetentionIndexMaintenanceLockAsync(conn, CancellationToken.None);
+            await ReleaseMaintenanceIndexLockAsync(conn, CancellationToken.None);
         }
     }
 
@@ -864,15 +881,27 @@ public sealed class DatabaseMaintenanceDryRunReporter
         CancellationToken ct)
     {
         var tableFootprint = await LoadRelationFootprintAsync(conn, definition.TableName, ct);
-        var indexFootprint = await LoadIndexFootprintByNameAsync(conn, definition.Name, ct);
         var tableExists = tableFootprint is not null;
-        var indexExists = indexFootprint is not null;
-        var recommendation = (tableExists, indexExists) switch
+        if (!tableExists)
         {
-            (false, _) => "blocked: target table does not exist in this database",
-            (_, true) => "present; no maintenance action needed",
-            _ => "missing; build explicitly during low database pressure with --execute-retention-index and --allow-prod",
-        };
+            return new RetentionHelperIndexStatus(
+                definition,
+                TableExists: false,
+                IndexExists: false,
+                tableFootprint,
+                IndexFootprint: null,
+                "blocked: target table does not exist in this database");
+        }
+
+        var namedIndexFootprint = await LoadIndexFootprintByNameAsync(conn, definition.Name, ct);
+        var indexFootprint = namedIndexFootprint
+            ?? await LoadEquivalentIndexFootprintAsync(conn, definition, ct);
+        var indexExists = indexFootprint is not null;
+        var recommendation = namedIndexFootprint is not null
+            ? "present; no maintenance action needed"
+            : indexExists
+                ? $"covered by equivalent index {indexFootprint!.Name}; no duplicate maintenance action needed"
+                : "missing; build explicitly during low database pressure with --execute-maintenance-index and --allow-prod";
 
         return new RetentionHelperIndexStatus(
             definition,
@@ -882,6 +911,88 @@ public sealed class DatabaseMaintenanceDryRunReporter
             indexFootprint,
             recommendation);
     }
+
+    private static async Task<IndexFootprint?> LoadEquivalentIndexFootprintAsync(
+        NpgsqlConnection conn,
+        RetentionHelperIndexDefinition definition,
+        CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                idx.relname AS index_name,
+                tbl.relname AS table_name,
+                pg_relation_size(idx.oid)::BIGINT AS index_bytes,
+                COALESCE(st.idx_scan, 0)::BIGINT AS idx_scan,
+                COALESCE(st.idx_tup_read, 0)::BIGINT AS idx_tup_read,
+                COALESCE(st.idx_tup_fetch, 0)::BIGINT AS idx_tup_fetch,
+                pg_get_indexdef(idx.oid) AS indexdef
+            FROM pg_class idx
+            JOIN pg_index ix ON ix.indexrelid = idx.oid
+            JOIN pg_class tbl ON tbl.oid = ix.indrelid
+            JOIN pg_namespace n ON n.oid = idx.relnamespace
+            LEFT JOIN pg_stat_user_indexes st ON st.indexrelid = idx.oid
+            WHERE n.nspname = 'public'
+              AND tbl.relname = @tableName
+              AND idx.relname <> @indexName
+              AND ix.indisvalid
+              AND ix.indisready
+            ORDER BY idx.relname
+            """;
+        cmd.Parameters.AddWithValue("tableName", definition.TableName);
+        cmd.Parameters.AddWithValue("indexName", definition.Name);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var footprint = new IndexFootprint(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetInt64(2),
+                reader.GetInt64(3),
+                reader.GetInt64(4),
+                reader.GetInt64(5),
+                reader.GetString(6));
+
+            if (IndexDefinitionMatchesKeyColumns(footprint.Definition, definition.KeyColumns))
+                return footprint;
+        }
+
+        return null;
+    }
+
+    private static bool IndexDefinitionMatchesKeyColumns(string indexDefinition, IReadOnlyList<string> keyColumns)
+    {
+        var match = Regex.Match(indexDefinition, @"USING\s+btree\s*\((?<columns>[^)]*)\)", RegexOptions.IgnoreCase);
+        if (!match.Success)
+            return false;
+
+        var actualColumns = match.Groups["columns"].Value
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(NormalizeIndexColumn)
+            .ToArray();
+        var expectedColumns = keyColumns.Select(NormalizeIndexColumn).ToArray();
+        return actualColumns.SequenceEqual(expectedColumns, StringComparer.Ordinal);
+    }
+
+    private static string NormalizeIndexColumn(string column)
+    {
+        var normalized = Regex.Replace(column.Trim(), "\"([^\"]+)\"", "$1");
+        normalized = Regex.Replace(normalized, @"\s+NULLS\s+(FIRST|LAST)", string.Empty, RegexOptions.IgnoreCase);
+        normalized = Regex.Replace(normalized, @"\s+ASC\b", string.Empty, RegexOptions.IgnoreCase);
+        normalized = Regex.Replace(normalized, @"\s+", " ");
+        return normalized.ToLowerInvariant();
+    }
+
+    private static string BuildIndexAlreadyCoveredReason(RetentionHelperIndexStatus status) =>
+        string.Equals(status.IndexFootprint?.Name, status.Definition.Name, StringComparison.OrdinalIgnoreCase)
+            ? "not executed: maintenance index already exists"
+            : $"not executed: equivalent index {status.IndexFootprint?.Name ?? "unknown"} already covers this target";
+
+    private static string BuildIndexCoveredDuringLockReason(RetentionHelperIndexStatus status) =>
+        string.Equals(status.IndexFootprint?.Name, status.Definition.Name, StringComparison.OrdinalIgnoreCase)
+            ? "not executed: maintenance index was created before the advisory lock was acquired"
+            : $"not executed: equivalent index {status.IndexFootprint?.Name ?? "unknown"} covered this target before the advisory lock was acquired";
 
     private static async Task<IndexFootprint?> LoadIndexFootprintByNameAsync(
         NpgsqlConnection conn,
@@ -1624,19 +1735,19 @@ public sealed class DatabaseMaintenanceDryRunReporter
         await cmd.ExecuteScalarAsync(ct);
     }
 
-    private static async Task<bool> TryAcquireRetentionIndexMaintenanceLockAsync(NpgsqlConnection conn, CancellationToken ct)
+    private static async Task<bool> TryAcquireMaintenanceIndexLockAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT pg_try_advisory_lock(@lockKey)";
-        cmd.Parameters.AddWithValue("lockKey", RetentionIndexMaintenanceAdvisoryLockKey);
+        cmd.Parameters.AddWithValue("lockKey", MaintenanceIndexAdvisoryLockKey);
         return Convert.ToBoolean(await cmd.ExecuteScalarAsync(ct));
     }
 
-    private static async Task ReleaseRetentionIndexMaintenanceLockAsync(NpgsqlConnection conn, CancellationToken ct)
+    private static async Task ReleaseMaintenanceIndexLockAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT pg_advisory_unlock(@lockKey)";
-        cmd.Parameters.AddWithValue("lockKey", RetentionIndexMaintenanceAdvisoryLockKey);
+        cmd.Parameters.AddWithValue("lockKey", MaintenanceIndexAdvisoryLockKey);
         await cmd.ExecuteScalarAsync(ct);
     }
 

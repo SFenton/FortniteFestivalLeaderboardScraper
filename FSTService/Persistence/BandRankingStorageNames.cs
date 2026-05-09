@@ -4,6 +4,14 @@ internal static class BandRankingStorageNames
 {
     internal static readonly IReadOnlyList<string> AllBandTypes = ["Band_Duets", "Band_Trios", "Band_Quad"];
 
+    private static readonly IReadOnlyList<BandRankingIndexTemplate> RankingIndexTemplates =
+    [
+        new("adjusted", "adjusted_skill_rank", "supports adjusted skill ranking reads"),
+        new("weighted", "weighted_rank", "supports weighted ranking reads"),
+        new("fcrate", "fc_rate_rank", "supports full-combo rate ranking reads"),
+        new("totalscore", "total_score_rank", "supports total-score ranking reads"),
+    ];
+
     internal static string GetCurrentRankingTable(string bandType) => $"band_team_rankings_current_{GetBandTypeSlug(bandType)}";
 
     internal static string GetCurrentStatsTable(string bandType) => $"band_team_ranking_stats_current_{GetBandTypeSlug(bandType)}";
@@ -48,15 +56,20 @@ internal static class BandRankingStorageNames
 
     internal static string GetCreateRankingIndexesSql(string tableName, bool ifNotExists = false)
     {
-        var ifNotExistsClause = ifNotExists ? " IF NOT EXISTS" : string.Empty;
-        var quotedTable = QuoteIdentifier(tableName);
-
-        return $@"
-            CREATE INDEX{ifNotExistsClause} {QuoteIdentifier(tableName + "_ix_adjusted")} ON {quotedTable} (band_type, ranking_scope, combo_id, adjusted_skill_rank);
-            CREATE INDEX{ifNotExistsClause} {QuoteIdentifier(tableName + "_ix_weighted")} ON {quotedTable} (band_type, ranking_scope, combo_id, weighted_rank);
-            CREATE INDEX{ifNotExistsClause} {QuoteIdentifier(tableName + "_ix_fcrate")} ON {quotedTable} (band_type, ranking_scope, combo_id, fc_rate_rank);
-            CREATE INDEX{ifNotExistsClause} {QuoteIdentifier(tableName + "_ix_totalscore")} ON {quotedTable} (band_type, ranking_scope, combo_id, total_score_rank);";
+        return string.Join(
+            Environment.NewLine,
+            BuildRankingIndexDefinitions(tableName, ifNotExists, concurrently: false, schemaName: null)
+                .Select(definition => $"            {definition.CreateSql};"));
     }
+
+    internal static IReadOnlyList<BandRankingIndexSqlDefinition> GetCurrentRankingIndexDefinitions() =>
+        AllBandTypes
+            .SelectMany(bandType => BuildRankingIndexDefinitions(
+                GetCurrentRankingTable(bandType),
+                ifNotExists: true,
+                concurrently: true,
+                schemaName: "public"))
+            .ToArray();
 
     internal static string GetCreateStatsTableSql(string tableName, bool includePrimaryKey, bool temporary = false, bool ifNotExists = false, bool onCommitDrop = false)
     {
@@ -87,11 +100,35 @@ internal static class BandRankingStorageNames
             var statsTable = GetCurrentStatsTable(bandType);
 
             statements.Add(GetCreateRankingTableSql(rankingsTable, includePrimaryKey: true, ifNotExists: true));
-            statements.Add(GetCreateRankingIndexesSql(rankingsTable, ifNotExists: true));
             statements.Add(GetCreateStatsTableSql(statsTable, includePrimaryKey: true, ifNotExists: true));
         }
 
         return string.Join(Environment.NewLine + Environment.NewLine, statements);
+    }
+
+    private static IReadOnlyList<BandRankingIndexSqlDefinition> BuildRankingIndexDefinitions(
+        string tableName,
+        bool ifNotExists,
+        bool concurrently,
+        string? schemaName)
+    {
+        var quotedTable = QuoteIdentifier(tableName);
+        var qualifiedTable = string.IsNullOrWhiteSpace(schemaName)
+            ? quotedTable
+            : $"{schemaName}.{quotedTable}";
+        var ifNotExistsClause = ifNotExists ? " IF NOT EXISTS" : string.Empty;
+        var concurrentlyClause = concurrently ? " CONCURRENTLY" : string.Empty;
+
+        return RankingIndexTemplates
+            .Select(template =>
+            {
+                var indexName = $"{tableName}_ix_{template.Suffix}";
+                var keyColumns = new[] { "band_type", "ranking_scope", "combo_id", template.RankColumn };
+                var columnList = string.Join(", ", keyColumns.Select(QuoteIdentifier));
+                var createSql = $"CREATE INDEX{concurrentlyClause}{ifNotExistsClause} {QuoteIdentifier(indexName)} ON {qualifiedTable} ({columnList})";
+                return new BandRankingIndexSqlDefinition(indexName, tableName, keyColumns, createSql, template.Purpose);
+            })
+            .ToArray();
     }
 
     internal static string QuoteIdentifier(string identifier) => $"\"{identifier.Replace("\"", "\"\"")}\"";
@@ -104,3 +141,12 @@ internal static class BandRankingStorageNames
         _ => throw new ArgumentOutOfRangeException(nameof(bandType), bandType, "Unsupported band type."),
     };
 }
+
+internal sealed record BandRankingIndexSqlDefinition(
+    string Name,
+    string TableName,
+    IReadOnlyList<string> KeyColumns,
+    string CreateSql,
+    string Purpose);
+
+internal sealed record BandRankingIndexTemplate(string Suffix, string RankColumn, string Purpose);

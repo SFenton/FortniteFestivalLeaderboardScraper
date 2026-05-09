@@ -97,9 +97,8 @@ export default function SearchModal({ visible, onClose, defaultTarget, available
   }, []);
 
   const handleOpenComplete = useCallback(() => {
-    if (isMobileChrome) return;
     setTimeout(() => focusSearchWithoutScroll(), 50);
-  }, [focusSearchWithoutScroll, isMobileChrome]);
+  }, [focusSearchWithoutScroll]);
 
   const handleSearchPressStart = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactTouchEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
     if (document.activeElement === event.target) return;

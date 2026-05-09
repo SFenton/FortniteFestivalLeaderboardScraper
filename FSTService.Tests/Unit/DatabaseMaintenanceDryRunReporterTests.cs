@@ -161,12 +161,60 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         Assert.Contains(definitions, definition => definition.Name == "ix_btrhp_status_date");
         Assert.Contains(definitions, definition => definition.Name == "ix_btrsh_retention_cutoff_scope");
         Assert.Contains(definitions, definition => definition.Name == "ix_btrsh_latest");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_duets_ix_adjusted");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_duets_ix_weighted");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_duets_ix_fcrate");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_duets_ix_totalscore");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_trios_ix_adjusted");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_trios_ix_weighted");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_trios_ix_fcrate");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_trios_ix_totalscore");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_quad_ix_adjusted");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_quad_ix_weighted");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_quad_ix_fcrate");
+        Assert.Contains(definitions, definition => definition.Name == "band_team_rankings_current_band_quad_ix_totalscore");
         Assert.All(definitions, definition =>
         {
             Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS", definition.CreateSql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains($"\"{definition.Name}\"", definition.CreateSql, StringComparison.Ordinal);
             Assert.Contains($"public.\"{definition.TableName}\"", definition.CreateSql, StringComparison.Ordinal);
         });
+    }
+
+    [Fact]
+    public void CurrentBandRankingStartupSchema_DoesNotCreateRankOrderIndexes()
+    {
+        var schema = BandRankingStorageNames.GetCurrentSchemaSql();
+
+        Assert.Contains("CREATE TABLE IF NOT EXISTS \"band_team_rankings_current_band_duets\"", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CREATE TABLE IF NOT EXISTS \"band_team_rankings_current_band_trios\"", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CREATE TABLE IF NOT EXISTS \"band_team_rankings_current_band_quad\"", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CREATE INDEX", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_ix_adjusted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_ix_weighted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_ix_fcrate", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_ix_totalscore", schema, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MaintenanceIndexMatching_TreatsRenamedBuildIndexesAsEquivalent()
+    {
+        var method = typeof(DatabaseMaintenanceDryRunReporter).GetMethod("IndexDefinitionMatchesKeyColumns", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var matches = Assert.IsType<bool>(method.Invoke(null,
+        [
+            "CREATE INDEX band_team_rankings_build_band_quad_20260509_ix_adjusted ON public.band_team_rankings_current_band_quad USING btree (band_type, ranking_scope, combo_id, adjusted_skill_rank)",
+            new[] { "band_type", "ranking_scope", "combo_id", "adjusted_skill_rank" },
+        ]));
+        var mismatch = Assert.IsType<bool>(method.Invoke(null,
+        [
+            "CREATE INDEX band_team_rankings_build_band_quad_20260509_ix_weighted ON public.band_team_rankings_current_band_quad USING btree (band_type, ranking_scope, combo_id, weighted_rank)",
+            new[] { "band_type", "ranking_scope", "combo_id", "adjusted_skill_rank" },
+        ]));
+
+        Assert.True(matches);
+        Assert.False(mismatch);
     }
 
     [Fact]
