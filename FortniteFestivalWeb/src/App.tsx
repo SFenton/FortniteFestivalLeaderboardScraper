@@ -112,6 +112,8 @@ import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import SearchModal from './components/search/SearchModal';
+import MobileNotificationsModal, { mockMobileNotifications } from './components/notifications/MobileNotificationsModal';
+import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
 import type { SearchTarget } from './types/search';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
@@ -136,6 +138,13 @@ import {
 } from './state/bandFilter';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
+const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
+
+function hasWindowValidationToken(token: string): boolean {
+  if (typeof window === 'undefined') return false;
+  const value = new URLSearchParams(window.location.search).get('validation') ?? '';
+  return value.split(/[,:;]/).some(part => part.trim() === token);
+}
 import { QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
@@ -314,6 +323,9 @@ function WideDesktopLayout({
 function AppShell() {
   const { t } = useTranslation();
   const { profile: selectedProfile, player, setPlayer, clearPlayer } = useTrackedPlayer();
+  const notificationFeedKey = useMemo(() => notificationFeedKeyForProfile(selectedProfile), [selectedProfile]);
+  const notificationIds = useMemo(() => mockMobileNotifications.map(notification => notification.notificationGuid), []);
+  const { unreadNotificationIds, unreadCount, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
   const { state: { songs } } = useFestival();
   const { settings } = useSettings();
 
@@ -337,6 +349,8 @@ function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const validationOpenedNotificationsRef = useRef(false);
   const [searchTargetOverride, setSearchTargetOverride] = useState<SearchTarget | null>(null);
   const [bandFilterModalOpen, setBandFilterModalOpen] = useState(false);
   const [appliedBandFilter, setAppliedBandFilter] = useState<AppliedBandComboFilter | null>(() => readAppliedBandFilterForSelectedProfile(selectedProfile));
@@ -368,6 +382,14 @@ function AppShell() {
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
     setSearchTargetOverride(null);
+  }, []);
+
+  useEffect(() => {
+    if (validationOpenedNotificationsRef.current) return;
+    if (import.meta.env.MODE !== 'e2e') return;
+    if (!hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN)) return;
+    validationOpenedNotificationsRef.current = true;
+    setNotificationsOpen(true);
   }, []);
 
   // Track whether the back button has already appeared in the current detail stack.
@@ -567,6 +589,7 @@ function AppShell() {
       bandFilterFabActions,
       mergePageQuickLinksIntoFabGroups(quickLinksActions, pageSpecificActions, ...groups),
     );
+  const showMobileFab = isMobile && !notificationsOpen;
 
   return (
     <BandFilterActionProvider value={bandFilterActionValue}>
@@ -605,6 +628,8 @@ function AppShell() {
             profileLabel={mobileHeaderProfileLabel}
             onProfileAction={handleMobileHeaderProfileAction}
             onOpenSearch={() => openSearch()}
+            onOpenNotifications={() => setNotificationsOpen(true)}
+            notificationCount={unreadCount}
           />
         ) : (
           <DesktopNav
@@ -644,7 +669,7 @@ function AppShell() {
 
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} selectedProfile={selectedProfile} activeTab={activeTab} onTabClick={handleTabClick} />}
-      {isMobile && location.pathname === AppRoutes.songs && (
+      {showMobileFab && location.pathname === AppRoutes.songs && (
         <MobileFloatingActionButton
           mode="songs"
           defaultOpen
@@ -658,7 +683,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && location.pathname === AppRoutes.suggestions && (
+      {showMobileFab && location.pathname === AppRoutes.suggestions && (
         <MobileFloatingActionButton
           mode="players"
           icon={<IoFunnel size={Size.iconFab} />}
@@ -667,7 +692,7 @@ function AppShell() {
           onPress={() => fabSearch.openSuggestionsFilter()}
         />
       )}
-      {isMobile && location.pathname === AppRoutes.settings && pageQuickLinks.hasPageQuickLinks && (
+      {showMobileFab && location.pathname === AppRoutes.settings && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
@@ -675,7 +700,7 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {isMobile && (location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname)) && pageQuickLinks.hasPageQuickLinks && (
+      {showMobileFab && (location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname)) && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
@@ -683,7 +708,7 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {isMobile && RoutePatterns.history.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.history.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -694,7 +719,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && RoutePatterns.songDetail.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.songDetail.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -705,7 +730,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && location.pathname === AppRoutes.shop && (
+      {showMobileFab && location.pathname === AppRoutes.shop && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -718,7 +743,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && RoutePatterns.leaderboards.test(location.pathname) && (() => {
+      {showMobileFab && RoutePatterns.leaderboards.test(location.pathname) && (() => {
         const leaderboardActions = [
           ...(location.pathname === '/leaderboards/all' ? [{ label: t('rankings.changeInstrument'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
           { label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() },
@@ -733,7 +758,7 @@ function AppShell() {
         />
         );
       })()}
-      {isMobile && RoutePatterns.rivals.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.rivals.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -746,7 +771,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && RoutePatterns.playerBands.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.playerBands.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -755,7 +780,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && location.pathname === AppRoutes.compete && (
+      {showMobileFab && location.pathname === AppRoutes.compete && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -767,7 +792,7 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.allRivals.test(location.pathname) && (() => {
+      {showMobileFab && RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.allRivals.test(location.pathname) && (() => {
         const rivalIdMatch = location.pathname.match(/^\/rivals\/([^/]+)$/);
         const currentRivalId = rivalIdMatch?.[1];
         const rivalName = new URLSearchParams(location.search).get('name');
@@ -782,7 +807,7 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {isMobile && RoutePatterns.rivalry.test(location.pathname) && (() => {
+      {showMobileFab && RoutePatterns.rivalry.test(location.pathname) && (() => {
         const rivalryIdMatch = location.pathname.match(/^\/rivals\/([^/]+)\/rivalry/);
         const currentRivalId = rivalryIdMatch?.[1];
         const rivalName = new URLSearchParams(location.search).get('name');
@@ -797,7 +822,7 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.settings && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
+      {showMobileFab && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.settings && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
@@ -822,6 +847,13 @@ function AppShell() {
         visible={searchOpen}
         onClose={closeSearch}
         defaultTarget={searchTargetOverride ?? settings.defaultSearchTarget}
+      />
+      <MobileNotificationsModal
+        visible={notificationsOpen}
+        onClose={() => setNotificationsOpen(false)}
+        notifications={mockMobileNotifications}
+        unreadNotificationIds={unreadNotificationIds}
+        onNotificationsSeen={markNotificationsSeen}
       />
       <BandInstrumentFilterModal
         visible={bandFilterModalOpen && selectedProfile?.type === 'band'}

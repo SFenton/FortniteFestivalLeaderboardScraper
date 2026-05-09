@@ -79,6 +79,7 @@ public static class ImprovementNotificationSchema
 
         CREATE TABLE IF NOT EXISTS player_improvement_events (
             event_id        BIGSERIAL PRIMARY KEY,
+            notification_guid UUID     NOT NULL DEFAULT gen_random_uuid(),
             run_id          BIGINT REFERENCES improvement_detection_runs(run_id) ON DELETE SET NULL,
             account_id      TEXT        NOT NULL,
             event_kind      TEXT        NOT NULL,
@@ -95,12 +96,23 @@ public static class ImprovementNotificationSchema
             source          TEXT        NOT NULL DEFAULT 'precompute'
         );
 
+        ALTER TABLE player_improvement_events
+            ADD COLUMN IF NOT EXISTS notification_guid UUID;
+        UPDATE player_improvement_events
+            SET notification_guid = gen_random_uuid()
+            WHERE notification_guid IS NULL;
+        ALTER TABLE player_improvement_events
+            ALTER COLUMN notification_guid SET DEFAULT gen_random_uuid(),
+            ALTER COLUMN notification_guid SET NOT NULL;
+
         CREATE INDEX IF NOT EXISTS ix_player_improvement_events_subject_live
             ON player_improvement_events (account_id, expires_at DESC, detected_at DESC);
         CREATE INDEX IF NOT EXISTS ix_player_improvement_events_expiry
             ON player_improvement_events (expires_at);
         CREATE INDEX IF NOT EXISTS ix_player_improvement_events_kind
             ON player_improvement_events (event_kind, detected_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_player_improvement_events_notification_guid
+            ON player_improvement_events (notification_guid);
 
         CREATE TABLE IF NOT EXISTS band_improvement_subjects (
             band_subject_id BIGSERIAL PRIMARY KEY,
@@ -163,6 +175,7 @@ public static class ImprovementNotificationSchema
 
         CREATE TABLE IF NOT EXISTS band_improvement_events (
             event_id        BIGSERIAL PRIMARY KEY,
+            notification_guid UUID     NOT NULL DEFAULT gen_random_uuid(),
             run_id          BIGINT REFERENCES improvement_detection_runs(run_id) ON DELETE SET NULL,
             band_subject_id BIGINT      NOT NULL REFERENCES band_improvement_subjects(band_subject_id) ON DELETE CASCADE,
             event_kind      TEXT        NOT NULL,
@@ -180,11 +193,22 @@ public static class ImprovementNotificationSchema
             source          TEXT        NOT NULL DEFAULT 'precompute'
         );
 
+        ALTER TABLE band_improvement_events
+            ADD COLUMN IF NOT EXISTS notification_guid UUID;
+        UPDATE band_improvement_events
+            SET notification_guid = gen_random_uuid()
+            WHERE notification_guid IS NULL;
+        ALTER TABLE band_improvement_events
+            ALTER COLUMN notification_guid SET DEFAULT gen_random_uuid(),
+            ALTER COLUMN notification_guid SET NOT NULL;
+
         CREATE INDEX IF NOT EXISTS ix_band_improvement_events_subject_live
             ON band_improvement_events (band_subject_id, ranking_scope, combo_id, expires_at DESC, detected_at DESC);
         CREATE INDEX IF NOT EXISTS ix_band_improvement_events_expiry
             ON band_improvement_events (expires_at);
         CREATE INDEX IF NOT EXISTS ix_band_improvement_events_kind
             ON band_improvement_events (event_kind, detected_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_band_improvement_events_notification_guid
+            ON band_improvement_events (notification_guid);
         """;
 }

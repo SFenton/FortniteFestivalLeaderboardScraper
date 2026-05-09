@@ -31,6 +31,7 @@ public static class DatabaseInitializer
     private const string Schema = """
 
         CREATE EXTENSION IF NOT EXISTS pg_trgm;
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
         -- =====================================================================
         -- SONGS (from fst-service.db)

@@ -2,7 +2,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { IoChevronBack, IoPeople, IoPerson, IoPersonAdd, IoSearch } from 'react-icons/io5';
+import { IoChevronBack, IoNotificationsOutline, IoPeople, IoPerson, IoPersonAdd, IoSearch } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import HamburgerButton from '../HamburgerButton';
 import BackLink from './BackLink';
@@ -28,6 +28,10 @@ export interface MobileHeaderProps {
   onOpenSidebar?: () => void;
   /** Callback to open the unified search modal. */
   onOpenSearch?: () => void;
+  /** Callback to open the notifications modal. */
+  onOpenNotifications?: () => void;
+  /** Number of active notifications for the mobile bell badge. */
+  notificationCount?: number;
   /** Selected profile state rendered immediately before Search. */
   profileType?: MobileHeaderProfileType;
   /** Accessible label for the selected-profile action. */
@@ -45,6 +49,8 @@ export default function MobileHeader({
   isSongsRoute,
   onOpenSidebar,
   onOpenSearch,
+  onOpenNotifications,
+  notificationCount = 0,
   profileType = 'none',
   profileLabel,
   onProfileAction,
@@ -52,6 +58,7 @@ export default function MobileHeader({
   const { t } = useTranslation();
   const navigate = useNavigate();
   const s = useStyles();
+  const notificationBadgeLabel = notificationCount > 9 ? '9+' : String(notificationCount);
   const ProfileIcon = profileType === 'band' ? IoPeople : profileType === 'player' ? IoPerson : IoPersonAdd;
   const profileAction = onProfileAction ? (
     <button
@@ -74,6 +81,18 @@ export default function MobileHeader({
       <IoSearch size={IconSize.md} />
     </button>
   );
+  const notificationAction = onOpenNotifications ? (
+    <button
+      type="button"
+      style={s.iconButton}
+      onClick={onOpenNotifications}
+      aria-label={t('common.notifications')}
+      data-testid="mobile-header-notifications"
+    >
+      <IoNotificationsOutline size={IconSize.md} />
+      {notificationCount > 0 && <span style={s.notificationBadge}>{notificationBadgeLabel}</span>}
+    </button>
+  ) : null;
   const rightActionGroup = (
     <div style={s.rightActions}>
       {isSongsRoute && songInstrument && (
@@ -81,6 +100,7 @@ export default function MobileHeader({
       )}
       {profileAction}
       {searchAction}
+      {notificationAction}
     </div>
   );
 
@@ -172,6 +192,7 @@ function useStyles() {
     } as CSSProperties,
     iconButton: {
       ...flexCenter,
+      position: Position.relative,
       width: Size.iconLg,
       height: Size.iconLg,
       background: 'none',
@@ -183,6 +204,23 @@ function useStyles() {
       flexShrink: 0,
       marginTop: -Gap.xs,
       marginBottom: -Gap.xs,
+    } as CSSProperties,
+    notificationBadge: {
+      position: Position.absolute,
+      top: 2,
+      right: 1,
+      minWidth: 16,
+      height: 16,
+      padding: '0 4px',
+      borderRadius: CssValue.circle,
+      background: Colors.statusRed,
+      color: Colors.textPrimary,
+      fontSize: 10,
+      fontWeight: Weight.bold,
+      lineHeight: '16px',
+      textAlign: 'center',
+      boxSizing: BoxSizing.borderBox,
+      pointerEvents: 'none',
     } as CSSProperties,
     profileButton: {
       ...flexCenter,

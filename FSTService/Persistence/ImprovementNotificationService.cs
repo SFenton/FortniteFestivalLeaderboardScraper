@@ -31,6 +31,7 @@ public sealed class ImprovementNotificationService
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT event_id,
+                   notification_guid,
                    run_id,
                    account_id,
                    NULL::BIGINT AS band_subject_id,
@@ -286,6 +287,7 @@ public sealed class ImprovementNotificationService
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT e.event_id,
+                   e.notification_guid,
                    e.run_id,
                    NULL::TEXT AS account_id,
                    s.band_subject_id,
@@ -311,8 +313,29 @@ public sealed class ImprovementNotificationService
               AND (@teamKey IS NULL OR s.team_key = @teamKey)
               AND (@includeExpired OR e.expires_at > now())
               AND (@kind IS NULL OR e.event_kind = @kind)
-              AND (@rankingScope = 'all' OR e.ranking_scope = @rankingScope)
-              AND (@comboId IS NULL OR e.combo_id = @comboId)
+              AND (
+                  @rankingScope = 'all'
+                  OR e.ranking_scope = @rankingScope
+                  OR EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements(COALESCE(e.payload->'coalescedEvents', '[]'::jsonb)) child
+                      WHERE child->>'rankingScope' = @rankingScope
+                        AND (
+                            @rankingScope <> 'combo'
+                            OR @comboId IS NULL
+                            OR COALESCE(child->>'scopeComboId', child->>'comboId', '') = @comboId
+                        )
+                  )
+              )
+              AND (
+                  @comboId IS NULL
+                  OR e.combo_id = @comboId
+                  OR EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements(COALESCE(e.payload->'coalescedEvents', '[]'::jsonb)) child
+                      WHERE COALESCE(child->>'scopeComboId', child->>'comboId', '') = @comboId
+                  )
+              )
             ORDER BY e.detected_at DESC, e.event_id DESC
             LIMIT @limit;
             """;
@@ -335,28 +358,29 @@ public sealed class ImprovementNotificationService
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            var payloadJson = reader.GetString(16);
+            var payloadJson = reader.GetString(17);
             var payload = JsonSerializer.Deserialize<JsonElement>(payloadJson);
             items.Add(new ImprovementNotificationDto(
                 EventId: reader.GetInt64(0),
-                RunId: reader.IsDBNull(1) ? null : reader.GetInt64(1),
-                AccountId: reader.IsDBNull(2) ? null : reader.GetString(2),
-                BandSubjectId: reader.IsDBNull(3) ? null : reader.GetInt64(3),
-                BandType: reader.IsDBNull(4) ? null : reader.GetString(4),
-                TeamKey: reader.IsDBNull(5) ? null : reader.GetString(5),
-                EventKind: reader.GetString(6),
-                SongId: reader.IsDBNull(7) ? null : reader.GetString(7),
-                Instrument: reader.IsDBNull(8) ? null : reader.GetString(8),
-                RankingScope: reader.IsDBNull(9) ? null : reader.GetString(9),
-                ComboId: reader.IsDBNull(10) ? null : reader.GetString(10),
-                Metric: reader.IsDBNull(11) ? null : reader.GetString(11),
-                OldNumeric: reader.IsDBNull(12) ? null : reader.GetDecimal(12),
-                NewNumeric: reader.IsDBNull(13) ? null : reader.GetDecimal(13),
-                OldRank: reader.IsDBNull(14) ? null : reader.GetInt32(14),
-                NewRank: reader.IsDBNull(15) ? null : reader.GetInt32(15),
+                NotificationGuid: reader.GetGuid(1),
+                RunId: reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                AccountId: reader.IsDBNull(3) ? null : reader.GetString(3),
+                BandSubjectId: reader.IsDBNull(4) ? null : reader.GetInt64(4),
+                BandType: reader.IsDBNull(5) ? null : reader.GetString(5),
+                TeamKey: reader.IsDBNull(6) ? null : reader.GetString(6),
+                EventKind: reader.GetString(7),
+                SongId: reader.IsDBNull(8) ? null : reader.GetString(8),
+                Instrument: reader.IsDBNull(9) ? null : reader.GetString(9),
+                RankingScope: reader.IsDBNull(10) ? null : reader.GetString(10),
+                ComboId: reader.IsDBNull(11) ? null : reader.GetString(11),
+                Metric: reader.IsDBNull(12) ? null : reader.GetString(12),
+                OldNumeric: reader.IsDBNull(13) ? null : reader.GetDecimal(13),
+                NewNumeric: reader.IsDBNull(14) ? null : reader.GetDecimal(14),
+                OldRank: reader.IsDBNull(15) ? null : reader.GetInt32(15),
+                NewRank: reader.IsDBNull(16) ? null : reader.GetInt32(16),
                 Payload: payload,
-                DetectedAt: reader.GetDateTime(17),
-                ExpiresAt: reader.GetDateTime(18)));
+                DetectedAt: reader.GetDateTime(18),
+                ExpiresAt: reader.GetDateTime(19)));
         }
 
         return items;
@@ -600,7 +624,7 @@ public sealed class ImprovementNotificationService
             CROSS JOIN LATERAL (VALUES
                 ('player_first_score', 'score', NULL::NUMERIC, c.score::NUMERIC, NULL::INTEGER, c.rank, s.account_id IS NULL),
                 ('player_score_pb', 'score', s.score::NUMERIC, c.score::NUMERIC, NULL::INTEGER, NULL::INTEGER, s.account_id IS NOT NULL AND c.score > COALESCE(s.score, -1)),
-                ('player_song_rank_improved', 'song_rank', NULL::NUMERIC, NULL::NUMERIC, s.rank, c.rank, s.rank IS NOT NULL AND c.rank IS NOT NULL AND c.rank > 0 AND c.rank < s.rank),
+                ('player_song_rank_improved', 'song_rank', NULL::NUMERIC, NULL::NUMERIC, s.rank, c.rank, s.score IS NOT NULL AND c.score IS NOT NULL AND c.score > s.score AND s.rank IS NOT NULL AND c.rank IS NOT NULL AND c.rank > 0 AND c.rank < s.rank),
                 ('player_stars_improved', 'stars', s.stars::NUMERIC, c.stars::NUMERIC, NULL::INTEGER, NULL::INTEGER, s.account_id IS NOT NULL AND c.stars IS NOT NULL AND s.stars IS NOT NULL AND c.stars > s.stars),
                 ('player_gold_stars_achieved', 'stars', s.stars::NUMERIC, c.stars::NUMERIC, NULL::INTEGER, NULL::INTEGER, c.stars >= 6 AND (s.account_id IS NULL OR COALESCE(s.stars, 0) < 6)),
                 ('player_fc_achieved', 'full_combo', NULL::NUMERIC, NULL::NUMERIC, NULL::INTEGER, NULL::INTEGER, c.is_full_combo IS TRUE AND (s.account_id IS NULL OR COALESCE(s.is_full_combo, false) = false)),
@@ -608,7 +632,7 @@ public sealed class ImprovementNotificationService
             ) AS v(event_kind, metric, old_numeric, new_numeric, old_rank, new_rank, should_emit)
             WHERE v.should_emit
         )
-        {EventSelectOrInsertSql("player_improvement_events", execute, "account_id, event_kind, song_id, instrument, metric, old_numeric, new_numeric, old_rank, new_rank, payload", "account_id, event_kind, song_id, instrument, metric, old_numeric, new_numeric, old_rank, new_rank, payload")}
+        {PlayerSongEventSelectOrInsertSql(execute)}
         """;
 
     private static string PlayerRankEventsSql(bool registeredOnly, bool execute) => $"""
@@ -653,18 +677,133 @@ public sealed class ImprovementNotificationService
             ) AS v(event_kind, metric, old_numeric, new_numeric, old_rank, new_rank, should_emit)
             WHERE v.should_emit
         )
-        {EventSelectOrInsertSql("player_improvement_events", execute, "account_id, event_kind, instrument, metric, old_numeric, new_numeric, old_rank, new_rank, payload", "account_id, event_kind, instrument, metric, old_numeric, new_numeric, old_rank, new_rank, payload")}
+        {PlayerRankEventSelectOrInsertSql(execute)}
         """;
 
-    private static string EventSelectOrInsertSql(string tableName, bool execute, string columns, string selectColumns)
+    private static string PlayerSongEventSelectOrInsertSql(bool execute)
+    {
+        const string coalesced = """
+            , grouped_event_rows AS (
+                SELECT account_id,
+                       song_id,
+                       instrument,
+                       COUNT(*) AS event_count,
+                       array_agg(event_kind ORDER BY CASE event_kind
+                           WHEN 'player_first_score' THEN 10
+                           WHEN 'player_score_pb' THEN 20
+                           WHEN 'player_fc_achieved' THEN 30
+                           WHEN 'player_gold_stars_achieved' THEN 40
+                           WHEN 'player_stars_improved' THEN 50
+                           WHEN 'player_song_rank_improved' THEN 60
+                           WHEN 'player_difficulty_bumped' THEN 70
+                           ELSE 100 END, event_kind) AS event_kinds,
+                       jsonb_agg(jsonb_build_object(
+                           'eventKind', event_kind,
+                           'metric', metric,
+                           'oldNumeric', old_numeric,
+                           'newNumeric', new_numeric,
+                           'oldRank', old_rank,
+                           'newRank', new_rank)
+                           ORDER BY CASE event_kind
+                               WHEN 'player_first_score' THEN 10
+                               WHEN 'player_score_pb' THEN 20
+                               WHEN 'player_fc_achieved' THEN 30
+                               WHEN 'player_gold_stars_achieved' THEN 40
+                               WHEN 'player_stars_improved' THEN 50
+                               WHEN 'player_song_rank_improved' THEN 60
+                               WHEN 'player_difficulty_bumped' THEN 70
+                               ELSE 100 END, event_kind) AS coalesced_events
+                FROM event_rows
+                GROUP BY account_id, song_id, instrument
+            ), primary_event_rows AS (
+                SELECT DISTINCT ON (account_id, song_id, instrument) *
+                FROM event_rows
+                ORDER BY account_id, song_id, instrument, CASE event_kind
+                    WHEN 'player_first_score' THEN 10
+                    WHEN 'player_score_pb' THEN 20
+                    WHEN 'player_fc_achieved' THEN 30
+                    WHEN 'player_gold_stars_achieved' THEN 40
+                    WHEN 'player_stars_improved' THEN 50
+                    WHEN 'player_song_rank_improved' THEN 60
+                    WHEN 'player_difficulty_bumped' THEN 70
+                    ELSE 100 END, event_kind
+            ), coalesced_event_rows AS (
+                SELECT p.account_id,
+                       p.event_kind,
+                       p.song_id,
+                       p.instrument,
+                       p.metric,
+                       p.old_numeric,
+                       p.new_numeric,
+                       p.old_rank,
+                       p.new_rank,
+                       p.payload || jsonb_build_object(
+                           'coalescedEventCount', g.event_count,
+                           'coalescedEventKinds', g.event_kinds,
+                           'coalescedEvents', g.coalesced_events) AS payload
+                FROM primary_event_rows p
+                JOIN grouped_event_rows g
+                  ON g.account_id = p.account_id
+                 AND g.song_id = p.song_id
+                 AND g.instrument = p.instrument
+            )
+            """;
+
+        if (!execute)
+            return $"""
+                {coalesced}
+                SELECT COUNT(*) FROM coalesced_event_rows;
+                """;
+
+        return $"""
+            {coalesced}, superseded AS (
+                UPDATE player_improvement_events existing
+                SET expires_at = LEAST(existing.expires_at, @detectedAt, now())
+                FROM (SELECT DISTINCT account_id, song_id, instrument FROM coalesced_event_rows) lanes
+                WHERE existing.account_id = lanes.account_id
+                  AND existing.song_id = lanes.song_id
+                  AND existing.instrument = lanes.instrument
+                  AND existing.expires_at > now()
+                RETURNING 1
+            ), inserted AS (
+                INSERT INTO player_improvement_events (
+                    run_id, account_id, event_kind, song_id, instrument, metric,
+                    old_numeric, new_numeric, old_rank, new_rank, payload,
+                    detected_at, expires_at, source)
+                SELECT @runId, account_id, event_kind, song_id, instrument, metric,
+                       old_numeric, new_numeric, old_rank, new_rank, payload,
+                       @detectedAt, @expiresAt, @source
+                FROM coalesced_event_rows
+                RETURNING 1
+            )
+            SELECT COUNT(*) FROM inserted;
+            """;
+    }
+
+    private static string PlayerRankEventSelectOrInsertSql(bool execute)
     {
         if (!execute)
             return "SELECT COUNT(*) FROM event_rows;";
 
-        return $"""
-            , inserted AS (
-                INSERT INTO {tableName} (run_id, {columns}, detected_at, expires_at, source)
-                SELECT @runId, {selectColumns}, @detectedAt, @expiresAt, @source
+        return """
+            , superseded AS (
+                UPDATE player_improvement_events existing
+                SET expires_at = LEAST(existing.expires_at, @detectedAt, now())
+                FROM (SELECT DISTINCT account_id, instrument, metric FROM event_rows) lanes
+                WHERE existing.account_id = lanes.account_id
+                  AND existing.song_id IS NULL
+                  AND existing.instrument IS NOT DISTINCT FROM lanes.instrument
+                  AND existing.metric IS NOT DISTINCT FROM lanes.metric
+                  AND existing.expires_at > now()
+                RETURNING 1
+            ), inserted AS (
+                INSERT INTO player_improvement_events (
+                    run_id, account_id, event_kind, instrument, metric,
+                    old_numeric, new_numeric, old_rank, new_rank, payload,
+                    detected_at, expires_at, source)
+                SELECT @runId, account_id, event_kind, instrument, metric,
+                       old_numeric, new_numeric, old_rank, new_rank, payload,
+                       @detectedAt, @expiresAt, @source
                 FROM event_rows
                 RETURNING 1
             )
@@ -776,6 +915,9 @@ public sealed class ImprovementNotificationService
                    c.song_id,
                    c.ranking_scope,
                    COALESCE(c.scope_combo_id, '') AS combo_id,
+                   c.score AS play_score,
+                   COALESCE(c.entry_combo_id, '') AS play_combo_id,
+                   COALESCE(c.entry_instrument_combo, '') AS play_instrument_combo,
                    v.metric,
                    v.old_numeric,
                    v.new_numeric,
@@ -809,7 +951,7 @@ public sealed class ImprovementNotificationService
             CROSS JOIN LATERAL (VALUES
                 ('band_first_score', 'score', NULL::NUMERIC, c.score::NUMERIC, NULL::INTEGER, c.rank, s.band_subject_id IS NULL),
                 (CASE WHEN c.ranking_scope = 'combo' THEN 'band_combo_score_pb' ELSE 'band_score_pb' END, 'score', s.score::NUMERIC, c.score::NUMERIC, NULL::INTEGER, NULL::INTEGER, s.band_subject_id IS NOT NULL AND c.score > COALESCE(s.score, -1)),
-                ('band_song_rank_improved', 'song_rank', NULL::NUMERIC, NULL::NUMERIC, s.rank, c.rank, s.rank IS NOT NULL AND c.rank IS NOT NULL AND c.rank > 0 AND c.rank < s.rank),
+                ('band_song_rank_improved', 'song_rank', NULL::NUMERIC, NULL::NUMERIC, s.rank, c.rank, s.score IS NOT NULL AND c.score IS NOT NULL AND c.score > s.score AND s.rank IS NOT NULL AND c.rank IS NOT NULL AND c.rank > 0 AND c.rank < s.rank),
                 ('band_stars_improved', 'stars', s.stars::NUMERIC, c.stars::NUMERIC, NULL::INTEGER, NULL::INTEGER, s.band_subject_id IS NOT NULL AND c.stars IS NOT NULL AND s.stars IS NOT NULL AND c.stars > s.stars),
                 ('band_gold_stars_achieved', 'stars', s.stars::NUMERIC, c.stars::NUMERIC, NULL::INTEGER, NULL::INTEGER, c.stars >= 6 AND (s.band_subject_id IS NULL OR COALESCE(s.stars, 0) < 6)),
                 ('band_fc_achieved', 'full_combo', NULL::NUMERIC, NULL::NUMERIC, NULL::INTEGER, NULL::INTEGER, c.is_full_combo IS TRUE AND (s.band_subject_id IS NULL OR COALESCE(s.is_full_combo, false) = false)),
@@ -817,7 +959,7 @@ public sealed class ImprovementNotificationService
             ) AS v(event_kind, metric, old_numeric, new_numeric, old_rank, new_rank, should_emit)
             WHERE v.should_emit
         )
-        {EventSelectOrInsertSql("band_improvement_events", execute, "band_subject_id, event_kind, song_id, ranking_scope, combo_id, metric, old_numeric, new_numeric, old_rank, new_rank, payload", "band_subject_id, event_kind, song_id, ranking_scope, combo_id, metric, old_numeric, new_numeric, old_rank, new_rank, payload")}
+        {BandSongEventSelectOrInsertSql(execute)}
         """;
 
     private static string BandSongStateUpsertSql(bool registeredOnly) => $"""
@@ -902,8 +1044,194 @@ public sealed class ImprovementNotificationService
             ) AS v(event_kind, metric, old_numeric, new_numeric, old_rank, new_rank, should_emit)
             WHERE v.should_emit
         )
-        {EventSelectOrInsertSql("band_improvement_events", execute, "band_subject_id, event_kind, ranking_scope, combo_id, metric, old_numeric, new_numeric, old_rank, new_rank, payload", "band_subject_id, event_kind, ranking_scope, combo_id, metric, old_numeric, new_numeric, old_rank, new_rank, payload")}
+        {BandRankEventSelectOrInsertSql(execute)}
         """;
+
+    private static string BandSongEventSelectOrInsertSql(bool execute)
+    {
+        const string coalesced = """
+            , keyed_event_rows AS (
+                SELECT *,
+                       CASE
+                           WHEN event_kind = 'band_song_rank_improved' THEN event_kind || '|' || ranking_scope || '|' || combo_id
+                           WHEN event_kind IN ('band_score_pb', 'band_combo_score_pb') THEN 'band_score_pb'
+                           ELSE event_kind
+                       END AS coalesced_event_key
+                FROM event_rows
+            ), deduplicated_event_rows AS (
+                SELECT DISTINCT ON (band_subject_id, song_id, play_score, play_combo_id, play_instrument_combo, coalesced_event_key) *
+                FROM keyed_event_rows
+                ORDER BY band_subject_id,
+                         song_id,
+                         play_score,
+                         play_combo_id,
+                         play_instrument_combo,
+                         coalesced_event_key,
+                         CASE
+                             WHEN event_kind = 'band_score_pb' THEN 0
+                             WHEN event_kind = 'band_combo_score_pb' THEN 1
+                             WHEN ranking_scope = 'overall' THEN 0
+                             ELSE 1
+                         END,
+                         CASE event_kind
+                             WHEN 'band_first_score' THEN 10
+                             WHEN 'band_score_pb' THEN 20
+                             WHEN 'band_combo_score_pb' THEN 20
+                             WHEN 'band_fc_achieved' THEN 30
+                             WHEN 'band_gold_stars_achieved' THEN 40
+                             WHEN 'band_stars_improved' THEN 50
+                             WHEN 'band_song_rank_improved' THEN 60
+                             WHEN 'band_member_difficulty_bumped' THEN 70
+                             ELSE 100 END,
+                         event_kind
+            ), grouped_event_rows AS (
+                SELECT band_subject_id,
+                       song_id,
+                       play_score,
+                       play_combo_id,
+                       play_instrument_combo,
+                       COUNT(*) AS event_count,
+                       array_agg(event_kind ORDER BY CASE event_kind
+                           WHEN 'band_first_score' THEN 10
+                           WHEN 'band_score_pb' THEN 20
+                           WHEN 'band_combo_score_pb' THEN 20
+                           WHEN 'band_fc_achieved' THEN 30
+                           WHEN 'band_gold_stars_achieved' THEN 40
+                           WHEN 'band_stars_improved' THEN 50
+                           WHEN 'band_song_rank_improved' THEN 60
+                           WHEN 'band_member_difficulty_bumped' THEN 70
+                           ELSE 100 END, event_kind, CASE WHEN ranking_scope = 'overall' THEN 0 ELSE 1 END, combo_id) AS event_kinds,
+                       jsonb_agg(jsonb_build_object(
+                           'eventKind', event_kind,
+                           'metric', metric,
+                           'oldNumeric', old_numeric,
+                           'newNumeric', new_numeric,
+                           'oldRank', old_rank,
+                           'newRank', new_rank,
+                           'rankingScope', ranking_scope,
+                           'scopeComboId', combo_id,
+                           'entryComboId', play_combo_id,
+                           'entryInstrumentCombo', play_instrument_combo)
+                           ORDER BY CASE event_kind
+                               WHEN 'band_first_score' THEN 10
+                               WHEN 'band_score_pb' THEN 20
+                               WHEN 'band_combo_score_pb' THEN 20
+                               WHEN 'band_fc_achieved' THEN 30
+                               WHEN 'band_gold_stars_achieved' THEN 40
+                               WHEN 'band_stars_improved' THEN 50
+                               WHEN 'band_song_rank_improved' THEN 60
+                               WHEN 'band_member_difficulty_bumped' THEN 70
+                               ELSE 100 END, event_kind, CASE WHEN ranking_scope = 'overall' THEN 0 ELSE 1 END, combo_id) AS coalesced_events
+                FROM deduplicated_event_rows
+                GROUP BY band_subject_id, song_id, play_score, play_combo_id, play_instrument_combo
+            ), primary_event_rows AS (
+                SELECT DISTINCT ON (band_subject_id, song_id, play_score, play_combo_id, play_instrument_combo) *
+                FROM deduplicated_event_rows
+                ORDER BY band_subject_id, song_id, play_score, play_combo_id, play_instrument_combo, CASE event_kind
+                    WHEN 'band_first_score' THEN 10
+                    WHEN 'band_score_pb' THEN 20
+                    WHEN 'band_combo_score_pb' THEN 20
+                    WHEN 'band_fc_achieved' THEN 30
+                    WHEN 'band_gold_stars_achieved' THEN 40
+                    WHEN 'band_stars_improved' THEN 50
+                    WHEN 'band_song_rank_improved' THEN 60
+                    WHEN 'band_member_difficulty_bumped' THEN 70
+                    ELSE 100 END,
+                    CASE
+                        WHEN event_kind = 'band_score_pb' THEN 0
+                        WHEN event_kind = 'band_combo_score_pb' THEN 1
+                        WHEN ranking_scope = 'overall' THEN 0
+                        ELSE 1
+                    END,
+                    event_kind
+            ), coalesced_event_rows AS (
+                SELECT p.band_subject_id,
+                       p.event_kind,
+                       p.song_id,
+                       p.ranking_scope,
+                       p.combo_id,
+                       p.metric,
+                       p.old_numeric,
+                       p.new_numeric,
+                       p.old_rank,
+                       p.new_rank,
+                       p.payload || jsonb_build_object(
+                           'coalescedEventCount', g.event_count,
+                           'coalescedEventKinds', g.event_kinds,
+                           'coalescedEvents', g.coalesced_events) AS payload
+                FROM primary_event_rows p
+                JOIN grouped_event_rows g
+                  ON g.band_subject_id = p.band_subject_id
+                 AND g.song_id = p.song_id
+                                 AND g.play_score IS NOT DISTINCT FROM p.play_score
+                                 AND g.play_combo_id = p.play_combo_id
+                                 AND g.play_instrument_combo = p.play_instrument_combo
+            )
+            """;
+
+        if (!execute)
+            return $"""
+                {coalesced}
+                SELECT COUNT(*) FROM coalesced_event_rows;
+                """;
+
+        return $"""
+            {coalesced}, superseded AS (
+                UPDATE band_improvement_events existing
+                SET expires_at = LEAST(existing.expires_at, @detectedAt, now())
+                FROM (SELECT DISTINCT band_subject_id, song_id, ranking_scope, combo_id FROM deduplicated_event_rows) lanes
+                WHERE existing.band_subject_id = lanes.band_subject_id
+                  AND existing.song_id = lanes.song_id
+                  AND existing.ranking_scope = lanes.ranking_scope
+                  AND existing.combo_id = lanes.combo_id
+                  AND existing.expires_at > now()
+                RETURNING 1
+            ), inserted AS (
+                INSERT INTO band_improvement_events (
+                    run_id, band_subject_id, event_kind, song_id, ranking_scope, combo_id, metric,
+                    old_numeric, new_numeric, old_rank, new_rank, payload,
+                    detected_at, expires_at, source)
+                SELECT @runId, band_subject_id, event_kind, song_id, ranking_scope, combo_id, metric,
+                       old_numeric, new_numeric, old_rank, new_rank, payload,
+                       @detectedAt, @expiresAt, @source
+                FROM coalesced_event_rows
+                RETURNING 1
+            )
+            SELECT COUNT(*) FROM inserted;
+            """;
+    }
+
+    private static string BandRankEventSelectOrInsertSql(bool execute)
+    {
+        if (!execute)
+            return "SELECT COUNT(*) FROM event_rows;";
+
+        return """
+            , superseded AS (
+                UPDATE band_improvement_events existing
+                SET expires_at = LEAST(existing.expires_at, @detectedAt, now())
+                FROM (SELECT DISTINCT band_subject_id, ranking_scope, combo_id, metric FROM event_rows) lanes
+                WHERE existing.band_subject_id = lanes.band_subject_id
+                  AND existing.song_id IS NULL
+                  AND existing.ranking_scope = lanes.ranking_scope
+                  AND existing.combo_id = lanes.combo_id
+                  AND existing.metric IS NOT DISTINCT FROM lanes.metric
+                  AND existing.expires_at > now()
+                RETURNING 1
+            ), inserted AS (
+                INSERT INTO band_improvement_events (
+                    run_id, band_subject_id, event_kind, ranking_scope, combo_id, metric,
+                    old_numeric, new_numeric, old_rank, new_rank, payload,
+                    detected_at, expires_at, source)
+                SELECT @runId, band_subject_id, event_kind, ranking_scope, combo_id, metric,
+                       old_numeric, new_numeric, old_rank, new_rank, payload,
+                       @detectedAt, @expiresAt, @source
+                FROM event_rows
+                RETURNING 1
+            )
+            SELECT COUNT(*) FROM inserted;
+            """;
+    }
 
     private static string BandRankStateUpsertSql(bool registeredOnly) => $"""
         WITH current_rows AS (
@@ -938,6 +1266,7 @@ public sealed class ImprovementNotificationService
 
 public sealed record ImprovementNotificationDto(
     long EventId,
+    Guid NotificationGuid,
     long? RunId,
     string? AccountId,
     long? BandSubjectId,

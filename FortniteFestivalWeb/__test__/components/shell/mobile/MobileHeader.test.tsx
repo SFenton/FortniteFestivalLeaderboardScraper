@@ -42,6 +42,69 @@ describe('MobileHeader', () => {
     expect(onOpenSearch).toHaveBeenCalledTimes(1);
   });
 
+  it('renders notifications action to the right of search and calls onOpenNotifications', () => {
+    const onOpenNotifications = vi.fn();
+    renderWithRouter(
+      <MobileHeader
+        navTitle="Songs"
+        backFallback={null}
+        shouldAnimate={false}
+        locationKey="/songs"
+        songInstrument={null}
+        isSongsRoute={true}
+        onOpenSearch={() => {}}
+        onOpenNotifications={onOpenNotifications}
+        notificationCount={5}
+      />,
+    );
+
+    const searchButton = screen.getByRole('button', { name: 'Search' });
+    const notificationsButton = screen.getByRole('button', { name: 'Notifications' });
+    expect(searchButton.compareDocumentPosition(notificationsButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(notificationsButton).getByText('5')).toBeTruthy();
+
+    fireEvent.click(notificationsButton);
+
+    expect(onOpenNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the notification badge at zero and caps counts at 9+', () => {
+    const { rerender } = renderWithRouter(
+      <MobileHeader
+        navTitle="Songs"
+        backFallback={null}
+        shouldAnimate={false}
+        locationKey="/songs"
+        songInstrument={null}
+        isSongsRoute={true}
+        onOpenSearch={() => {}}
+        onOpenNotifications={() => {}}
+        notificationCount={0}
+      />,
+    );
+
+    const notificationsButton = screen.getByRole('button', { name: 'Notifications' });
+    expect(within(notificationsButton).queryByText('0')).toBeNull();
+
+    rerender(
+      <MemoryRouter initialEntries={['/songs']}>
+        <MobileHeader
+          navTitle="Songs"
+          backFallback={null}
+          shouldAnimate={false}
+          locationKey="/songs"
+          songInstrument={null}
+          isSongsRoute={true}
+          onOpenSearch={() => {}}
+          onOpenNotifications={() => {}}
+          notificationCount={12}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(within(screen.getByRole('button', { name: 'Notifications' })).getByText('9+')).toBeTruthy();
+  });
+
   it('renders SongsPage instrument icon before profile and search actions', () => {
     renderWithRouter(
       <MobileHeader
