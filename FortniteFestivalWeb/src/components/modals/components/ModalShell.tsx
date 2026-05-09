@@ -1,8 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Lightweight modal shell: overlay + panel + header + close + escape + lifecycle.
- * Both Modal (sort/filter with apply/reset footer) and MobilePlayerSearchModal
- * compose from this to avoid reimplementing the same infrastructure.
+ * Modal variants compose from this to avoid reimplementing the same infrastructure.
  */
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';

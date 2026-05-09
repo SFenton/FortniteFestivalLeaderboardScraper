@@ -129,7 +129,7 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
           ) : (
             <button style={s.selectPlayerBtn} onClick={onSelectPlayer}>
               <span style={s.sidebarLinkIcon}><IoPerson size={20} /></span>
-              {t('common.selectPlayerProfile')}
+              {t('common.selectProfile')}
             </button>
           )}
           <NavLink to="/settings" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>

@@ -24,7 +24,7 @@ export interface AccountSearchState {
 /**
  * Shared hook for account search with debounce, keyboard navigation,
  * and click-outside-to-close. Used by PlayerSearch, HeaderSearch,
- * FAB search, and MobilePlayerSearchModal.
+ * and FAB search.
  *
  * @param onSelect  Called when a user selects a search result
  * @param opts.debounceMs  Debounce interval (default: DEBOUNCE_MS from theme)

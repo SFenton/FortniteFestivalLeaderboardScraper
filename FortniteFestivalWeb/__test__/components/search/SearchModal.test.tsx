@@ -135,6 +135,33 @@ describe('SearchModal', () => {
     expect(screen.getByRole('tab', { name: 'Songs' })).toHaveAttribute('aria-selected', 'false');
   });
 
+  it('restricts visible targets, falls back to the first available target, and uses the configured placeholder', () => {
+    renderModal({
+      defaultTarget: 'songs',
+      availableTargets: ['players', 'bands'],
+      placeholderKey: 'search.placeholders.playersBands',
+    });
+
+    expect(screen.getByPlaceholderText('Search players or bands…')).toBeDefined();
+    expect(screen.queryByRole('tab', { name: 'Songs' })).toBeNull();
+    expect(screen.getByRole('tab', { name: 'Players' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Bands' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('cycles arrow-key tab navigation through only available targets', () => {
+    renderModal({
+      defaultTarget: 'players',
+      availableTargets: ['players', 'bands'],
+      placeholderKey: 'search.placeholders.playersBands',
+    });
+
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Players' }), { key: 'ArrowLeft' });
+    expect(screen.getByRole('tab', { name: 'Bands' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Bands' }), { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: 'Players' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('does not show a separator above mobile target buttons', () => {
     setViewportQueries({ mobile: true });
     renderModal();

@@ -2,11 +2,11 @@ import type { TrackedPlayer } from '../hooks/data/useTrackedPlayer';
 import type { SelectedProfile } from '../hooks/data/useSelectedProfile';
 import { Routes as AppRoutes } from '../routes';
 
-export type ProfileClickDestination = string | 'sidebar' | 'modal';
+export type ProfileClickDestination = string | 'sidebar' | 'search';
 
 /**
  * Determines the destination action for the selected-profile affordance.
- * Returns the navigation target string, 'sidebar', or 'modal'.
+ * Returns the navigation target string, 'sidebar', or 'search'.
  */
 export function getProfileClickDestination(
   player: TrackedPlayer | null,
@@ -20,7 +20,7 @@ export function getProfileClickDestination(
     }
     return 'sidebar';
   }
-  return 'modal';
+  return 'search';
 }
 
 export function getStatisticsNavigationPath(

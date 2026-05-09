@@ -471,11 +471,31 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await screen.findByText('Test Song', undefined, { timeout: 5000 });
-    fireEvent.click(screen.getByRole('button', { name: 'Select Player Profile' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select Profile' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Search' });
+    expect(within(dialog).getByPlaceholderText('Search players or bands…')).toBeDefined();
     expect(within(dialog).getByRole('tab', { name: 'Players' }).getAttribute('aria-selected')).toBe('true');
-    expect(within(dialog).getByRole('tab', { name: 'Songs' }).getAttribute('aria-selected')).toBe('false');
+    expect(within(dialog).queryByRole('tab', { name: 'Songs' })).toBeNull();
+    expect(within(dialog).getByRole('tab', { name: 'Bands' }).getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('opens unified Search on Players from the unselected sidebar profile action', async () => {
+    setMobile();
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    fireEvent.click(screen.getByLabelText('Open navigation'));
+    const profileButtons = await screen.findAllByRole('button', { name: 'Select Profile' });
+    const sidebarProfileButton = profileButtons.find(button => button.textContent?.includes('Select Profile'));
+    expect(sidebarProfileButton).toBeDefined();
+    fireEvent.click(sidebarProfileButton!);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Search' });
+    expect(within(dialog).getByPlaceholderText('Search players or bands…')).toBeDefined();
+    expect(within(dialog).getByRole('tab', { name: 'Players' }).getAttribute('aria-selected')).toBe('true');
+    expect(within(dialog).queryByRole('tab', { name: 'Songs' })).toBeNull();
+    expect(within(dialog).getByRole('tab', { name: 'Bands' }).getAttribute('aria-selected')).toBe('false');
   });
 
   it('does not include unselected profile access in the mobile FAB menu', async () => {
@@ -483,12 +503,12 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await screen.findByText('Test Song', undefined, { timeout: 5000 });
-    expect(screen.getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Select Profile' })).toBeDefined();
 
     fireEvent.click(screen.getByLabelText('Actions'));
     const menu = await screen.findByTestId('fab-menu');
 
-    expect(within(menu).queryByText('Select Player Profile')).toBeNull();
+    expect(within(menu).queryByText('Select Profile')).toBeNull();
     expect(within(menu).queryByText('Search')).toBeNull();
     expect(within(menu).queryByText('Item Shop')).toBeNull();
     expect(within(menu).getByText('Sort Songs')).toBeDefined();
@@ -527,7 +547,7 @@ describe('App — mobile FAB branches', () => {
     fireEvent.click(screen.getByLabelText('Actions'));
     const menu = await screen.findByTestId('fab-menu');
 
-    expect(within(menu).queryByText('Select Player Profile')).toBeNull();
+    expect(within(menu).queryByText('Select Profile')).toBeNull();
     expect(within(menu).queryByText('TrackedP + BandMate')).toBeNull();
     expect(within(menu).queryByText('Item Shop')).toBeNull();
     expect(within(menu).getByText('Duos')).toBeDefined();

@@ -41,10 +41,32 @@ interface SearchModalProps {
   visible: boolean;
   onClose: () => void;
   defaultTarget: SearchTarget;
+  availableTargets?: readonly SearchTarget[];
+  placeholderKey?: string;
 }
 
+const SEARCH_PLACEHOLDER_KEYS: Record<string, string> = {
+  songs: 'search.placeholders.songs',
+  players: 'search.placeholders.players',
+  bands: 'search.placeholders.bands',
+  'songs|players': 'search.placeholders.songsPlayers',
+  'songs|bands': 'search.placeholders.songsBands',
+  'players|bands': 'search.placeholders.playersBands',
+  'songs|players|bands': 'search.placeholders.songsPlayersBands',
+};
 
-export default function SearchModal({ visible, onClose, defaultTarget }: SearchModalProps) {
+function resolveSearchTargets(availableTargets?: readonly SearchTarget[]): readonly SearchTarget[] {
+  if (!availableTargets || availableTargets.length === 0) return SEARCH_TARGETS;
+  const allowed = new Set<SearchTarget>(availableTargets);
+  const resolved = SEARCH_TARGETS.filter(target => allowed.has(target));
+  return resolved.length > 0 ? resolved : SEARCH_TARGETS;
+}
+
+function getSearchPlaceholderKey(targets: readonly SearchTarget[]): string {
+  return SEARCH_PLACEHOLDER_KEYS[targets.join('|')] ?? 'search.placeholder';
+}
+
+export default function SearchModal({ visible, onClose, defaultTarget, availableTargets, placeholderKey }: SearchModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -53,19 +75,22 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
   const inputRef = useRef<SearchBarRef>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const wasVisibleRef = useRef(false);
+  const visibleTargets = useMemo(() => resolveSearchTargets(availableTargets), [availableTargets]);
+  const effectiveDefaultTarget = visibleTargets.includes(defaultTarget) ? defaultTarget : (visibleTargets[0] ?? SEARCH_TARGETS[0]);
+  const resolvedPlaceholderKey = placeholderKey ?? getSearchPlaceholderKey(visibleTargets);
   const [query, setQuery] = useState('');
-  const [activeTarget, setActiveTarget] = useState<SearchTarget>(defaultTarget);
-  const search = useUnifiedSearch(query);
+  const [activeTarget, setActiveTarget] = useState<SearchTarget>(effectiveDefaultTarget);
+  const search = useUnifiedSearch(query, { enabledTargets: visibleTargets });
 
   useEffect(() => {
-    if (visible && !wasVisibleRef.current) {
-      setActiveTarget(defaultTarget);
+    if (visible && (!wasVisibleRef.current || !visibleTargets.includes(activeTarget))) {
+      setActiveTarget(effectiveDefaultTarget);
     }
     if (!visible) {
       setQuery('');
     }
     wasVisibleRef.current = visible;
-  }, [defaultTarget, visible]);
+  }, [activeTarget, effectiveDefaultTarget, visible, visibleTargets]);
 
   const focusSearchWithoutScroll = useCallback(() => {
     inputRef.current?.focus({ preventScroll: true });
@@ -91,8 +116,8 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
 
   const handleCloseComplete = useCallback(() => {
     setQuery('');
-    setActiveTarget(defaultTarget);
-  }, [defaultTarget]);
+    setActiveTarget(effectiveDefaultTarget);
+  }, [effectiveDefaultTarget]);
 
   const closeAndNavigate = useCallback((path: string) => {
     onClose();
@@ -119,15 +144,15 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
   const handleTabKeyDown = useCallback((target: SearchTarget, e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
     e.preventDefault();
-    const index = SEARCH_TARGETS.indexOf(target);
+    const index = visibleTargets.indexOf(target);
     const delta = e.key === 'ArrowRight' ? 1 : -1;
-    const next = SEARCH_TARGETS[(index + delta + SEARCH_TARGETS.length) % SEARCH_TARGETS.length] ?? target;
+    const next = visibleTargets[(index + delta + visibleTargets.length) % visibleTargets.length] ?? target;
     setActiveTarget(next);
-  }, []);
+  }, [visibleTargets]);
 
   const tabs = (
     <div style={st.tabs} role="tablist" aria-label={t('search.targetTabs')}>
-      {SEARCH_TARGETS.map(target => {
+      {visibleTargets.map(target => {
         const selected = activeTarget === target;
         return (
           <button
@@ -162,7 +187,7 @@ export default function SearchModal({ visible, onClose, defaultTarget }: SearchM
           ref={inputRef}
           value={query}
           onChange={setQuery}
-          placeholder={t('search.placeholder')}
+          placeholder={t(resolvedPlaceholderKey)}
           onKeyDown={handleSearchKeyDown}
           onPointerDownCapture={handleSearchPressStart}
           onTouchStartCapture={handleSearchPressStart}

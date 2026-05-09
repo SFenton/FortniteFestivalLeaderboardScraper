@@ -112,7 +112,6 @@ import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
 import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
-import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import SearchModal from './components/search/SearchModal';
 import MobileNotificationsModal, { type MobileNotification } from './components/notifications/MobileNotificationsModal';
 import { getNotificationDestination } from './components/notifications/notificationDestination';
@@ -131,7 +130,7 @@ import { changelogHash } from './changelog';
 import ErrorBoundary from './components/page/ErrorBoundary';
 import SuspenseFallback from './components/common/SuspenseFallback';
 import RouteErrorFallback from './components/page/RouteErrorFallback';
-import { createPreserveShellScrollState, type PreserveShellScrollState } from './utils/quietNavigation';
+import type { PreserveShellScrollState } from './utils/quietNavigation';
 import { getBandFilterActionLabel } from './utils/bandFilterDisplay';
 import { bandTypeLabel } from './utils/bandTypes';
 import { saveLeaderboardRankBy } from './utils/leaderboardSettings';
@@ -148,6 +147,19 @@ const consumedPreserveShellScrollKeys = new Set<string>();
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
 const MOCK_NOTIFICATION_SOURCE_VERSION = 'mock-source-2026-05-09';
+const PROFILE_SEARCH_TARGETS: readonly SearchTarget[] = ['players', 'bands'];
+
+type SearchModalConfig = {
+  defaultTarget?: SearchTarget;
+  availableTargets?: readonly SearchTarget[];
+  placeholderKey?: string;
+};
+
+const PROFILE_SEARCH_CONFIG: SearchModalConfig = {
+  defaultTarget: 'players',
+  availableTargets: PROFILE_SEARCH_TARGETS,
+  placeholderKey: 'search.placeholders.playersBands',
+};
 
 function hasWindowValidationToken(token: string): boolean {
   if (typeof window === 'undefined') return false;
@@ -331,7 +343,7 @@ function WideDesktopLayout({
 
 function AppShell() {
   const { t } = useTranslation();
-  const { profile: selectedProfile, player, setPlayer, clearPlayer } = useTrackedPlayer();
+  const { profile: selectedProfile, player, clearPlayer } = useTrackedPlayer();
   const { state: { songs } } = useFestival();
   const useEmptyNotificationMock = hasWindowValidationToken(EMPTY_NOTIFICATIONS_VALIDATION_TOKEN);
   const useNotificationMockData = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
@@ -366,11 +378,10 @@ function AppShell() {
     quickLinksRailPortalRefCallback: shellQuickLinksRailPortalRefCallback,
   } = useShellRefs();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const validationOpenedNotificationsRef = useRef(false);
-  const [searchTargetOverride, setSearchTargetOverride] = useState<SearchTarget | null>(null);
+  const [searchConfig, setSearchConfig] = useState<SearchModalConfig | null>(null);
   const [bandFilterModalOpen, setBandFilterModalOpen] = useState(false);
   const [appliedBandFilter, setAppliedBandFilter] = useState<AppliedBandComboFilter | null>(() => readAppliedBandFilterForSelectedProfile(selectedProfile));
   const [hasNewChangelog] = useState(() => {
@@ -393,14 +404,15 @@ function AppShell() {
   const navigate = useNavigate();
   const navType = useNavigationType();
 
-  const openSearch = useCallback((defaultTarget?: SearchTarget) => {
-    setSearchTargetOverride(defaultTarget ?? null);
+  const openSearch = useCallback((config?: SearchModalConfig) => {
+    setSearchConfig(config ?? null);
     setSearchOpen(true);
   }, []);
+  const openProfileSearch = useCallback(() => openSearch(PROFILE_SEARCH_CONFIG), [openSearch]);
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
-    setSearchTargetOverride(null);
+    setSearchConfig(null);
   }, []);
 
   const shouldAutoOpenNotifications = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
@@ -457,25 +469,6 @@ function AppShell() {
   // --- Per-tab stack (mobile only) ---
   const { activeTab, handleTabClick } = useTabNavigation();
 
-  /* v8 ignore start — deep AppInner: routing/navigation logic embedded in render */
-  const handleSelect = (p: TrackedPlayer) => {
-    clearAppliedBandFilter();
-    setAppliedBandFilter(null);
-    setBandFilterModalOpen(false);
-    setPlayer(p);
-    // Tracked profiles live on the statistics tab root; rewrite detail URLs quietly.
-    if (location.pathname !== AppRoutes.statistics) {
-      const preserveScroll = location.pathname === AppRoutes.player(p.accountId);
-      navigate(
-        AppRoutes.statistics,
-        preserveScroll
-          ? { replace: true, state: createPreserveShellScrollState(`profile-select:${p.accountId}`) }
-          : { replace: true },
-      );
-    }
-  };
-  /* v8 ignore stop */
-
   /* v8 ignore start — deep AppInner: deselect callback */
   const [showDeselectConfirm, setShowDeselectConfirm] = useState(false);
   const handleDeselect = useCallback(() => {
@@ -496,17 +489,17 @@ function AppShell() {
   const handleProfileClick = useCallback(() => {
     const dest = getProfileClickDestination(player, selectedProfile);
     if (dest === 'sidebar') setSidebarOpen(true);
-    else if (dest === 'modal') setPlayerModalOpen(true);
+    else if (dest === 'search') openProfileSearch();
     else navigate(dest);
-  }, [navigate, player, selectedProfile]);
+  }, [navigate, openProfileSearch, player, selectedProfile]);
 
   const handleMobileHeaderProfileAction = useCallback(() => {
     if (!selectedProfile) {
-      openSearch('players');
+      openProfileSearch();
       return;
     }
     handleProfileClick();
-  }, [handleProfileClick, openSearch, selectedProfile]);
+  }, [handleProfileClick, openProfileSearch, selectedProfile]);
   /* v8 ignore stop */
 
   /* v8 ignore start — deep AppInner: instrument sync event listener */
@@ -566,7 +559,7 @@ function AppShell() {
     ? t('common.viewNameProfile', { name: selectedProfile.displayName })
     : selectedProfile?.type === 'band'
       ? t('bandList.viewBand', { names: selectedProfile.displayName })
-      : t('common.selectPlayerProfile');
+      : t('common.selectProfile');
   const emptyBandFilterLabel = getEmptyBandFilterActionLabel(selectedProfile, t);
   const selectedBandIdentity = selectedProfile?.type === 'band'
     ? `${selectedProfile.bandId}|${selectedProfile.bandType}|${selectedProfile.teamKey}`
@@ -646,7 +639,7 @@ function AppShell() {
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           onDeselect={handleDeselect}
-          onSelectPlayer={() => { setSidebarOpen(false); setPlayerModalOpen(true); }}
+          onSelectPlayer={() => { setSidebarOpen(false); openProfileSearch(); }}
         />
       )}
       {/* v8 ignore stop */}
@@ -698,7 +691,7 @@ function AppShell() {
           player={player}
           selectedProfile={selectedProfile}
           onDeselect={handleDeselect}
-          onSelectPlayer={() => setPlayerModalOpen(true)}
+          onSelectPlayer={openProfileSearch}
         />
       ) : (
         <>
@@ -881,18 +874,12 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      <MobilePlayerSearchModal
-        visible={playerModalOpen}
-        onClose={() => setPlayerModalOpen(false)}
-        onSelect={handleSelect}
-        player={player}
-        onDeselect={handleDeselect}
-        isMobile={isNarrow}
-      />
       <SearchModal
         visible={searchOpen}
         onClose={closeSearch}
-        defaultTarget={searchTargetOverride ?? settings.defaultSearchTarget}
+        defaultTarget={searchConfig?.defaultTarget ?? settings.defaultSearchTarget}
+        availableTargets={searchConfig?.availableTargets}
+        placeholderKey={searchConfig?.placeholderKey}
       />
       <MobileNotificationsModal
         visible={notificationsOpen}

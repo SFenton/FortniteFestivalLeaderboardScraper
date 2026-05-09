@@ -79,12 +79,12 @@ describe('PinnedSidebar', () => {
 
   it('shows Select Player button when no player', () => {
     renderPinned({ player: null });
-    expect(screen.getByText('Select Player Profile')).toBeTruthy();
+    expect(screen.getByText('Select Profile')).toBeTruthy();
   });
 
   it('calls onSelectPlayer when Select Player is clicked', () => {
     const { props } = renderPinned({ player: null });
-    fireEvent.click(screen.getByText('Select Player Profile'));
+    fireEvent.click(screen.getByText('Select Profile'));
     expect(props.onSelectPlayer).toHaveBeenCalled();
   });
 
@@ -117,7 +117,7 @@ describe('PinnedSidebar', () => {
     expect(screen.getByText('Player Two')).toBeTruthy();
     expect(screen.getByText('Player Three')).toBeTruthy();
     expect(screen.getByText('Trios')).toBeTruthy();
-    expect(screen.queryByText('Select Player Profile')).toBeNull();
+    expect(screen.queryByText('Select Profile')).toBeNull();
   });
 
   it('deselects a selected band from the pinned sidebar', () => {

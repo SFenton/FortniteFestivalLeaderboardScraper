@@ -102,4 +102,36 @@ describe('useUnifiedSearch', () => {
     expect(result.current.loading.players).toBe(false);
     expect(result.current.loading.bands).toBe(false);
   });
+
+  it('skips remote searches for disabled targets', async () => {
+    mockApi.searchAccounts.mockResolvedValue({ results: [{ accountId: 'p1', displayName: 'PlayerOne' }] });
+    mockApi.searchBands.mockResolvedValue({
+      query: 'pla', normalizedQuery: 'pla', rankBy: 'appearance', page: 1, pageSize: 10, totalCount: 0,
+      isAmbiguous: false, needsDisambiguation: false, interpretations: [], results: [],
+    });
+
+    const { result, rerender } = renderHook(
+      ({ query }) => useUnifiedSearch(query, { debounceMs: 10, enabledTargets: ['players'] }),
+      {
+        initialProps: { query: '' },
+        wrapper: ({ children }) => <TestProviders>{children}</TestProviders>,
+      },
+    );
+
+    await act(async () => {
+      rerender({ query: 'pla' });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockApi.searchAccounts).toHaveBeenCalledWith('pla', 10);
+    expect(mockApi.searchBands).not.toHaveBeenCalled();
+    expect(result.current.songResults).toEqual([]);
+    expect(result.current.bandResults).toEqual([]);
+    expect(result.current.loading.bands).toBe(false);
+  });
 });

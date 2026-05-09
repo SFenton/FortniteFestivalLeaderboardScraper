@@ -18,6 +18,7 @@
     "ok": "OK",
     "failedToLoad": "Failed to load data",
     "searchPlayer": "Search player…",
+    "selectProfile": "Select Profile",
     "selectPlayerProfile": "Select Player Profile",
     "selectBandProfile": "Select Band Profile",
     "selectAsProfile": "Select {{name}} as Player Profile",
@@ -283,6 +284,15 @@
   "search": {
     "title": "Search",
     "placeholder": "Search songs, players, or bands…",
+    "placeholders": {
+      "songs": "Search songs…",
+      "players": "Search players…",
+      "bands": "Search bands…",
+      "songsPlayers": "Search songs or players…",
+      "songsBands": "Search songs or bands…",
+      "playersBands": "Search players or bands…",
+      "songsPlayersBands": "Search songs, players, or bands…"
+    },
     "targetTabs": "Search targets",
     "enterQuery": "Enter at least two characters to search.",
     "failed": "Search failed. Try again.",

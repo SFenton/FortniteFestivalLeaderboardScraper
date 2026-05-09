@@ -2,8 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 
 /**
  * Manages a spinner that fades in when active and fades out when inactive.
- * Matches the pattern from MobilePlayerSearchModal — the spinner stays mounted
- * during the fade-out transition and unmounts after it completes.
+ * The spinner stays mounted during the fade-out transition and unmounts after it completes.
  *
  * @param active Whether the spinner should be visible (e.g. `loading || debouncing`).
  * @returns `visible` (mount flag), `opacity` (0 or 1), and `onTransitionEnd` handler.

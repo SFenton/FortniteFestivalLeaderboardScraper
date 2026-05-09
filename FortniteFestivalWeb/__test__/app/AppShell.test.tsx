@@ -207,7 +207,7 @@ describe('AppShell', () => {
     });
     const { container } = render(<App />);
     await waitFor(() => {
-      const profileBtn = container.querySelector('[aria-label="Profile"]');
+      const profileBtn = container.querySelector('[aria-label="Select Profile"]');
       expect(profileBtn).toBeTruthy();
     });
   });
@@ -275,15 +275,15 @@ describe('getProfileClickDestination', () => {
     expect(dest).toBe('sidebar');
   });
 
-  it('opens modal when no player and no selected profile', () => {
+  it('opens search when no player and no selected profile', () => {
     const dest = getProfileClickDestination(null, null);
-    expect(dest).toBe('modal');
+    expect(dest).toBe('search');
   });
 
-  it('opens modal when no player and selected profile is a player type', () => {
+  it('opens search when no player and selected profile is a player type', () => {
     const playerSelectedProfile = { type: 'player' as const, accountId: 'p2', displayName: 'Other' };
     const dest = getProfileClickDestination(null, playerSelectedProfile);
-    expect(dest).toBe('modal');
+    expect(dest).toBe('search');
   });
 });
 

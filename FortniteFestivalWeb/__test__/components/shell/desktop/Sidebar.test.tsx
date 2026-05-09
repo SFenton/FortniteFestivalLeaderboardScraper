@@ -93,12 +93,12 @@ describe('Sidebar', () => {
 
   it('shows Select Player button when no player', () => {
     renderSidebar({ player: null });
-    expect(screen.getByText('Select Player Profile')).toBeTruthy();
+    expect(screen.getByText('Select Profile')).toBeTruthy();
   });
 
   it('calls onSelectPlayer when Select Player is clicked', () => {
     const { props } = renderSidebar({ player: null });
-    fireEvent.click(screen.getByText('Select Player Profile'));
+    fireEvent.click(screen.getByText('Select Profile'));
     expect(props.onSelectPlayer).toHaveBeenCalled();
   });
 
@@ -118,7 +118,7 @@ describe('Sidebar', () => {
     expect(screen.getByText('Player One + Player Two')).toBeTruthy();
     expect(screen.getByText('Player One')).toBeTruthy();
     expect(screen.getByText('Player Two')).toBeTruthy();
-    expect(screen.queryByText('Select Player Profile')).toBeNull();
+    expect(screen.queryByText('Select Profile')).toBeNull();
   });
 
   it('deselects a selected band from the sidebar footer', () => {

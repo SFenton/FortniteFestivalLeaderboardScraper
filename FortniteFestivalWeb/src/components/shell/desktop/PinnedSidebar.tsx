@@ -89,7 +89,7 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
         ) : (
           <button style={s.selectPlayerBtn} onClick={onSelectPlayer}>
             <span style={s.linkIcon}><IoPerson size={20} /></span>
-            {t('common.selectPlayerProfile')}
+            {t('common.selectProfile')}
           </button>
         )}
         <NavLink to="/settings" style={({ isActive }) => linkClass(isActive)}>
