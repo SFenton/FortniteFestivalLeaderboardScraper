@@ -97,6 +97,25 @@ describe('DesktopNav', () => {
     expect(within(screen.getByTestId('desktop-header-notifications')).queryByText('0')).toBeNull();
   });
 
+  it('renders notification swaps as an inert spinner in the existing desktop slot', () => {
+    const onOpenNotifications = vi.fn();
+    renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} onOpenNotifications={onOpenNotifications} hasNotifications={true} notificationCount={7} notificationVisualState="spinner" />);
+
+    const notificationsButton = screen.getByTestId('desktop-header-notifications');
+
+    expect(screen.getByTestId('desktop-header-notifications-presence').getAttribute('data-visible')).toBe('true');
+    expect(notificationsButton.getAttribute('data-notification-state')).toBe('loading');
+    expect(notificationsButton.getAttribute('data-notification-visual-state')).toBe('spinner');
+    expect(notificationsButton.getAttribute('aria-busy')).toBe('true');
+    expect(notificationsButton.getAttribute('tabindex')).toBe('-1');
+    expect(screen.getByTestId('desktop-header-notifications-spinner')).toBeTruthy();
+    expect(within(notificationsButton).queryByText('7')).toBeNull();
+
+    fireEvent.click(notificationsButton);
+
+    expect(onOpenNotifications).not.toHaveBeenCalled();
+  });
+
   it('orders desktop actions as profile, search, notifications', () => {
     renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} onOpenSearch={vi.fn()} onOpenNotifications={vi.fn()} />);
 

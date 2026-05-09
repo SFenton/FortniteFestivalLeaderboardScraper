@@ -68,6 +68,40 @@ describe('MobileHeader', () => {
     expect(onOpenNotifications).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps notification space mounted with an inert spinner during profile swaps', () => {
+    const onOpenNotifications = vi.fn();
+    renderWithRouter(
+      <MobileHeader
+        navTitle="Songs"
+        backFallback={null}
+        shouldAnimate={false}
+        locationKey="/songs"
+        songInstrument={null}
+        isSongsRoute={true}
+        onOpenSearch={() => {}}
+        onOpenNotifications={onOpenNotifications}
+        hasNotifications={true}
+        notificationCount={3}
+        notificationVisualState="spinnerIn"
+      />,
+    );
+
+    const notificationsButton = screen.getByRole('button', { name: 'Notifications' });
+
+    expect(screen.getByTestId('mobile-header-notifications-presence').getAttribute('data-visible')).toBe('true');
+    expect(notificationsButton.getAttribute('data-notification-state')).toBe('loading');
+    expect(notificationsButton.getAttribute('data-notification-visual-state')).toBe('spinnerIn');
+    expect(notificationsButton.getAttribute('aria-busy')).toBe('true');
+    expect(notificationsButton.getAttribute('aria-disabled')).toBe('true');
+    expect(notificationsButton.getAttribute('tabindex')).toBe('-1');
+    expect(screen.getByTestId('mobile-header-notifications-spinner')).toBeTruthy();
+    expect(within(notificationsButton).queryByText('3')).toBeNull();
+
+    fireEvent.click(notificationsButton);
+
+    expect(onOpenNotifications).not.toHaveBeenCalled();
+  });
+
   it('omits the notifications action when notifications are unavailable', () => {
     renderWithRouter(
       <MobileHeader

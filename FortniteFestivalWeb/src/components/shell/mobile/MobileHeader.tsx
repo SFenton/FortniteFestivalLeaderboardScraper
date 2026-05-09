@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { IoChevronBack } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import HamburgerButton from '../HamburgerButton';
-import HeaderActions, { type HeaderActionProfileType } from '../HeaderActions';
+import HeaderActions, { type HeaderActionProfileType, type HeaderNotificationVisualState } from '../HeaderActions';
 import BackLink from './BackLink';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
@@ -34,6 +34,8 @@ export interface MobileHeaderProps {
   hasNotifications?: boolean;
   /** Number of active notifications for the mobile bell badge. */
   notificationCount?: number;
+  /** Visual state for in-place notification icon/spinner swaps. */
+  notificationVisualState?: HeaderNotificationVisualState;
   /** Selected profile state rendered immediately before Search. */
   profileType?: MobileHeaderProfileType;
   /** Accessible label for the selected-profile action. */
@@ -54,6 +56,7 @@ export default function MobileHeader({
   onOpenNotifications,
   hasNotifications,
   notificationCount = 0,
+  notificationVisualState,
   profileType = 'none',
   profileLabel,
   onProfileAction,
@@ -73,6 +76,7 @@ export default function MobileHeader({
     onOpenNotifications={onOpenNotifications}
     hasNotifications={hasNotifications}
     notificationCount={notificationCount}
+    notificationVisualState={notificationVisualState}
   />;
 
   /* v8 ignore start — conditional rendering tested via AppMobile integration */

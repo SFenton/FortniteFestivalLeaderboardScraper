@@ -101,6 +101,7 @@ import { appStyles } from './appStyles';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
 import BackLink from './components/shell/mobile/BackLink';
 import MobileHeader from './components/shell/mobile/MobileHeader';
+import { HEADER_NOTIFICATION_SWAP_FADE_MS, type HeaderNotificationVisualState } from './components/shell/HeaderActions';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/PageQuickLinksContext';
 import { BandFilterActionProvider, type BandFilterActionContextValue } from './contexts/BandFilterActionContext';
@@ -116,7 +117,7 @@ import SearchModal from './components/search/SearchModal';
 import MobileNotificationsModal, { type MobileNotification } from './components/notifications/MobileNotificationsModal';
 import { getNotificationDestination } from './components/notifications/notificationDestination';
 import { useNotificationFreshnessState } from './components/notifications/notificationFreshnessState';
-import { useNotificationSeenState } from './components/notifications/notificationSeenState';
+import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
 import { NotificationFeedWebSocketBridge, useProfileNotificationsFeed } from './components/notifications/useProfileNotificationsFeed';
 import type { SearchTarget } from './types/search';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
@@ -160,6 +161,7 @@ const PROFILE_SEARCH_CONFIG: SearchModalConfig = {
   availableTargets: PROFILE_SEARCH_TARGETS,
   placeholderKey: 'search.placeholders.playersBands',
 };
+const NOTIFICATION_SWAP_PRIME_MS = 32;
 
 function hasWindowValidationToken(token: string): boolean {
   if (typeof window === 'undefined') return false;
@@ -347,7 +349,24 @@ function AppShell() {
   const { state: { songs } } = useFestival();
   const useEmptyNotificationMock = hasWindowValidationToken(EMPTY_NOTIFICATIONS_VALIDATION_TOKEN);
   const useNotificationMockData = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
-  const notificationFeed = useProfileNotificationsFeed(selectedProfile, songs, {
+  const [notificationRequestProfile, setNotificationRequestProfile] = useState<SelectedProfile | null>(selectedProfile);
+  const [notificationHeaderVisualState, setNotificationHeaderVisualState] = useState<HeaderNotificationVisualState>('icon');
+  const notificationPendingProfileRef = useRef<SelectedProfile | null>(selectedProfile);
+  const notificationSwapTimersRef = useRef<number[]>([]);
+  const selectedNotificationFeedKey = useMemo(() => notificationFeedKeyForProfile(selectedProfile), [selectedProfile]);
+  const requestedNotificationFeedKey = useMemo(() => notificationFeedKeyForProfile(notificationRequestProfile), [notificationRequestProfile]);
+  const clearNotificationSwapTimers = useCallback(() => {
+    notificationSwapTimersRef.current.forEach(timer => window.clearTimeout(timer));
+    notificationSwapTimersRef.current = [];
+  }, []);
+  const queueNotificationSwapTimer = useCallback((callback: () => void, delay: number) => {
+    const timer = window.setTimeout(() => {
+      notificationSwapTimersRef.current = notificationSwapTimersRef.current.filter(activeTimer => activeTimer !== timer);
+      callback();
+    }, delay);
+    notificationSwapTimersRef.current.push(timer);
+  }, []);
+  const notificationFeed = useProfileNotificationsFeed(notificationRequestProfile, songs, {
     useMockData: useNotificationMockData,
     useEmptyMock: useEmptyNotificationMock,
     mockSourceVersion: MOCK_NOTIFICATION_SOURCE_VERSION,
@@ -416,8 +435,73 @@ function AppShell() {
   }, []);
 
   const shouldAutoOpenNotifications = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
-  const canOpenNotifications = selectedProfile != null && notificationFeedReadyForHeader;
+  const notificationHeaderBusy = notificationHeaderVisualState !== 'icon';
+  const notificationRequestMatchesSelection = selectedProfile != null && selectedNotificationFeedKey === requestedNotificationFeedKey;
+  const canOpenNotifications = selectedProfile != null && notificationRequestMatchesSelection && notificationFeedReadyForHeader && !notificationHeaderBusy;
   const handleOpenNotifications = useCallback(() => setNotificationsOpen(true), []);
+
+  useEffect(() => () => clearNotificationSwapTimers(), [clearNotificationSwapTimers]);
+
+  useEffect(() => {
+    if (!selectedProfile) {
+      clearNotificationSwapTimers();
+      notificationPendingProfileRef.current = null;
+      setNotificationHeaderVisualState('icon');
+      setNotificationRequestProfile(null);
+      return;
+    }
+
+    if (!notificationRequestProfile) {
+      clearNotificationSwapTimers();
+      notificationPendingProfileRef.current = selectedProfile;
+      setNotificationHeaderVisualState('icon');
+      setNotificationRequestProfile(selectedProfile);
+      return;
+    }
+
+    if (selectedNotificationFeedKey === requestedNotificationFeedKey) return;
+
+    clearNotificationSwapTimers();
+    notificationPendingProfileRef.current = selectedProfile;
+    setNotificationsOpen(false);
+    setNotificationHeaderVisualState('icon');
+    queueNotificationSwapTimer(() => {
+      setNotificationHeaderVisualState('iconOut');
+      queueNotificationSwapTimer(() => {
+        setNotificationHeaderVisualState('spinnerIn');
+        queueNotificationSwapTimer(() => {
+          const pendingProfile = notificationPendingProfileRef.current;
+          if (!pendingProfile) return;
+          setNotificationRequestProfile(pendingProfile);
+          setNotificationHeaderVisualState('spinner');
+        }, HEADER_NOTIFICATION_SWAP_FADE_MS);
+      }, HEADER_NOTIFICATION_SWAP_FADE_MS);
+    }, NOTIFICATION_SWAP_PRIME_MS);
+  }, [
+    clearNotificationSwapTimers,
+    notificationRequestProfile,
+    queueNotificationSwapTimer,
+    requestedNotificationFeedKey,
+    selectedNotificationFeedKey,
+    selectedProfile,
+  ]);
+
+  useEffect(() => {
+    if (notificationHeaderVisualState !== 'spinner') return;
+    if (!notificationRequestProfile || !notificationRequestMatchesSelection) return;
+    if (!notificationFeedReadyForHeader) return;
+
+    queueNotificationSwapTimer(() => {
+      setNotificationHeaderVisualState('spinnerOut');
+      queueNotificationSwapTimer(() => setNotificationHeaderVisualState('icon'), HEADER_NOTIFICATION_SWAP_FADE_MS);
+    }, NOTIFICATION_SWAP_PRIME_MS);
+  }, [
+    notificationFeedReadyForHeader,
+    notificationHeaderVisualState,
+    notificationRequestMatchesSelection,
+    notificationRequestProfile,
+    queueNotificationSwapTimer,
+  ]);
 
   useEffect(() => {
     if (validationOpenedNotificationsRef.current) return;
@@ -665,6 +749,7 @@ function AppShell() {
             onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
             hasNotifications={hasNotifications}
             notificationCount={unreadCount}
+            notificationVisualState={notificationHeaderVisualState}
           />
         ) : (
           <DesktopNav
@@ -677,6 +762,7 @@ function AppShell() {
             onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
             hasNotifications={hasNotifications}
             notificationCount={unreadCount}
+            notificationVisualState={notificationHeaderVisualState}
             isWideDesktop={isWideDesktop}
           />
         )}

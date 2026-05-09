@@ -1,5 +1,5 @@
 import HamburgerButton from '../HamburgerButton';
-import HeaderActions, { type HeaderActionProfileType } from '../HeaderActions';
+import HeaderActions, { type HeaderActionProfileType, type HeaderNotificationVisualState } from '../HeaderActions';
 import { appStyles } from '../../../appStyles';
 
 export type HeaderProfileType = HeaderActionProfileType;
@@ -14,6 +14,7 @@ export interface DesktopNavProps {
   onOpenNotifications?: () => void;
   hasNotifications?: boolean;
   notificationCount?: number;
+  notificationVisualState?: HeaderNotificationVisualState;
   isWideDesktop?: boolean;
 }
 
@@ -27,6 +28,7 @@ export default function DesktopNav({
   onOpenNotifications,
   hasNotifications,
   notificationCount,
+  notificationVisualState,
   isWideDesktop,
 }: DesktopNavProps) {
   const resolvedProfileType = profileType ?? (hasPlayer ? 'player' : 'none');
@@ -39,6 +41,7 @@ export default function DesktopNav({
     onOpenNotifications={onOpenNotifications}
     hasNotifications={hasNotifications}
     notificationCount={notificationCount}
+    notificationVisualState={notificationVisualState}
   />;
 
   return (

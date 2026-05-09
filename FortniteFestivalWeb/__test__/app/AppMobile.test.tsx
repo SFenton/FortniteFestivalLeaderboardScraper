@@ -250,6 +250,27 @@ beforeEach(() => {
   localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
 });
 
+function notificationResponse(items: unknown[] = []) {
+  return {
+    generatedAt: '2026-05-09T16:00:00Z',
+    expiresAfterHours: 72,
+    sourceRunId: 1,
+    sourceCompletedAt: '2026-05-09T16:00:00Z',
+    items,
+  };
+}
+
+function storeSelectedProfile(profile: Record<string, unknown>) {
+  localStorage.setItem('fst:selectedProfile', JSON.stringify(profile));
+  if (profile.type === 'player') {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: profile['accountId'], displayName: profile['displayName'] }));
+  } else {
+    localStorage.removeItem('fst:trackedPlayer');
+  }
+  window.dispatchEvent(new Event('fst:selectedProfileChanged'));
+  window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
+}
+
 describe('App — mobile FAB branches', () => {
   it('merges quick links into the page-specific FAB group', () => {
     const createAction = (label: string) => ({ label, icon: <span>{label}</span>, onPress: vi.fn() });
@@ -464,6 +485,49 @@ describe('App — mobile FAB branches', () => {
     });
     expect(within(screen.getByRole('button', { name: 'Notifications' })).queryByText('0')).toBeNull();
     expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('p-populated', 50, expect.any(Object));
+  });
+
+  it('delays the new profile notification request until the swap spinner has faded in', async () => {
+    setMobile();
+    mockApi.getPlayerNotifications.mockImplementation(async (accountId: string) => notificationResponse(accountId === 'p-new'
+      ? [{
+        eventId: 910,
+        notificationGuid: 'swap-new-notification',
+        eventKind: 'player_score_pb',
+        songId: 's1',
+        instrument: 'Solo_Guitar',
+        metric: 'score',
+        oldNumeric: 100000,
+        newNumeric: 121000,
+        detectedAt: '2026-05-09T16:00:00Z',
+        expiresAt: '2026-05-12T16:00:00Z',
+      }]
+      : []));
+    storeSelectedProfile({ type: 'player', accountId: 'p-old', displayName: 'Old Profile' });
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Notifications' }).getAttribute('data-notification-state')).toBe('empty');
+    });
+    expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('p-old', 50, expect.any(Object));
+
+    await act(async () => {
+      storeSelectedProfile({ type: 'player', accountId: 'p-new', displayName: 'New Profile' });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-header-notifications').getAttribute('data-notification-visual-state')).toBe('spinnerIn');
+    });
+    expect(mockApi.getPlayerNotifications.mock.calls.some(([accountId]) => accountId === 'p-new')).toBe(false);
+
+    await waitFor(() => {
+      expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('p-new', 50, expect.any(Object));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-header-notifications').getAttribute('data-notification-visual-state')).toBe('icon');
+      expect(screen.getByTestId('mobile-header-notifications').getAttribute('data-notification-state')).toBe('populated');
+    });
   });
 
   it('opens unified Search on Players from the unselected mobile header profile action', async () => {

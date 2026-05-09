@@ -3,13 +3,17 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { useTranslation } from 'react-i18next';
 import { IoNotifications, IoNotificationsOffOutline, IoPeople, IoPerson, IoPersonAdd, IoSearch } from 'react-icons/io5';
 import {
-  Align, BoxSizing, Colors, CssValue, Gap, IconSize, Position, Radius, Size, Weight,
+  Align, BoxSizing, Colors, CssValue, Gap, IconSize, Position, Radius, Size, Weight, SpinnerSize,
   flexCenter, flexRow,
 } from '@festival/theme';
+import { IS_IOS } from '@festival/ui-utils';
+import ArcSpinner from '../common/ArcSpinner';
 
 const HEADER_ACTION_TRANSITION_MS = 180;
+export const HEADER_NOTIFICATION_SWAP_FADE_MS = 280;
 
 export type HeaderActionProfileType = 'none' | 'player' | 'band';
+export type HeaderNotificationVisualState = 'icon' | 'iconOut' | 'spinnerIn' | 'spinner' | 'spinnerOut';
 
 export interface HeaderActionsProps {
   profileType?: HeaderActionProfileType;
@@ -19,6 +23,7 @@ export interface HeaderActionsProps {
   onOpenNotifications?: () => void;
   hasNotifications?: boolean;
   notificationCount?: number;
+  notificationVisualState?: HeaderNotificationVisualState;
   leadingSlot?: ReactNode;
   testIdPrefix: string;
   style?: CSSProperties;
@@ -32,16 +37,19 @@ export default function HeaderActions({
   onOpenNotifications,
   notificationCount = 0,
   hasNotifications = notificationCount > 0,
+  notificationVisualState = 'icon',
   leadingSlot,
   testIdPrefix,
   style,
 }: HeaderActionsProps) {
   const { t } = useTranslation();
   const s = useStyles();
-  const notificationVisible = Boolean(onOpenNotifications);
+  const notificationLoading = notificationVisualState !== 'icon';
+  const notificationVisible = Boolean(onOpenNotifications) || notificationLoading;
+  const notificationInteractive = Boolean(onOpenNotifications) && !notificationLoading;
   const notificationVisualRef = useRef({ hasNotifications, notificationCount });
 
-  if (notificationVisible) {
+  if (notificationVisible && !notificationLoading) {
     notificationVisualRef.current = { hasNotifications, notificationCount };
   }
 
@@ -51,6 +59,11 @@ export default function HeaderActions({
   const notificationBadgeLabel = notificationVisual.notificationCount > 9 ? '9+' : String(notificationVisual.notificationCount);
   const ProfileIcon = profileType === 'band' ? IoPeople : profileType === 'player' ? IoPerson : IoPersonAdd;
   const NotificationIcon = notificationVisual.hasNotifications ? IoNotifications : IoNotificationsOffOutline;
+  const notificationState = notificationLoading ? 'loading' : notificationVisual.hasNotifications ? 'populated' : 'empty';
+  const iconOpacity = notificationVisualState === 'icon' || notificationVisualState === 'spinnerOut' ? 1 : 0;
+  const spinnerOpacity = notificationVisualState === 'spinnerIn' || notificationVisualState === 'spinner' ? 1 : 0;
+  const showNotificationBadge = (notificationVisualState === 'icon' || notificationVisualState === 'spinnerOut') && notificationVisual.notificationCount > 0;
+  const notificationGlyphStyle = IS_IOS ? { ...s.notificationGlyph, ...s.notificationGlyphIos } : s.notificationGlyph;
 
   return (
     <div style={{ ...s.actions, ...style }} data-testid={`${testIdPrefix}-actions`}>
@@ -79,15 +92,27 @@ export default function HeaderActions({
       <HeaderActionPresence visible={notificationVisible} testId={`${testIdPrefix}-notifications-presence`} styles={s}>
         <button
           type="button"
-          style={s.iconButton}
-          onClick={onOpenNotifications}
+          style={{ ...s.iconButton, ...(notificationInteractive ? undefined : s.iconButtonInert) }}
+          onClick={notificationInteractive ? onOpenNotifications : undefined}
           aria-label={t('common.notifications')}
+          aria-busy={notificationLoading ? 'true' : undefined}
+          aria-disabled={notificationInteractive ? undefined : 'true'}
           data-testid={`${testIdPrefix}-notifications`}
-          data-notification-state={notificationVisual.hasNotifications ? 'populated' : 'empty'}
-          tabIndex={onOpenNotifications ? 0 : -1}
+          data-notification-visual-state={notificationVisualState}
+          data-notification-state={notificationState}
+          tabIndex={notificationInteractive ? 0 : -1}
         >
-          <NotificationIcon size={IconSize.md} />
-          {notificationVisual.notificationCount > 0 && <span style={s.notificationBadge}>{notificationBadgeLabel}</span>}
+          <span style={{ ...s.notificationIconLayer, opacity: iconOpacity }} data-testid={`${testIdPrefix}-notifications-icon-layer`}>
+            <span style={notificationGlyphStyle} data-testid={`${testIdPrefix}-notifications-glyph`}>
+              <NotificationIcon size={IconSize.md} />
+            </span>
+            {showNotificationBadge && <span style={s.notificationBadge}>{notificationBadgeLabel}</span>}
+          </span>
+          {notificationLoading && (
+            <span style={{ ...s.notificationSpinnerLayer, opacity: spinnerOpacity }} data-testid={`${testIdPrefix}-notifications-spinner`} aria-hidden="true">
+              <ArcSpinner size={SpinnerSize.SM} />
+            </span>
+          )}
         </button>
       </HeaderActionPresence>
     </div>
@@ -145,6 +170,9 @@ function useStyles() {
       marginTop: -Gap.xs,
       marginBottom: -Gap.xs,
     } as CSSProperties,
+    iconButtonInert: {
+      cursor: 'default',
+    } as CSSProperties,
     notificationBadge: {
       position: Position.absolute,
       top: 2,
@@ -161,6 +189,31 @@ function useStyles() {
       textAlign: 'center',
       boxSizing: BoxSizing.borderBox,
       pointerEvents: 'none',
+    } as CSSProperties,
+    notificationIconLayer: {
+      ...flexCenter,
+      position: Position.absolute,
+      inset: 0,
+      transition: `opacity ${HEADER_NOTIFICATION_SWAP_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+      willChange: 'opacity',
+      pointerEvents: 'none',
+    } as CSSProperties,
+    notificationSpinnerLayer: {
+      ...flexCenter,
+      position: Position.absolute,
+      inset: 0,
+      transition: `opacity ${HEADER_NOTIFICATION_SWAP_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
+      willChange: 'opacity',
+      pointerEvents: 'none',
+    } as CSSProperties,
+    notificationGlyph: {
+      ...flexCenter,
+      width: IconSize.md,
+      height: IconSize.md,
+      lineHeight: 0,
+    } as CSSProperties,
+    notificationGlyphIos: {
+      transform: 'translateY(4px)',
     } as CSSProperties,
     actionPresenceVisible: {
       width: Size.iconLg,
