@@ -19,6 +19,7 @@ export const modalStyles = {
   panelBase: { ...modalCard, position: Position.fixed, zIndex: panelZ, ...flexColumn } as CSSProperties,
   panelMobile: { ...modalCard, position: Position.fixed, zIndex: panelZ, ...flexColumn, left: Gap.none, right: Gap.none, borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg, overflow: Overflow.hidden, transition: transformTransition } as CSSProperties,
   panelDesktop: { ...modalCard, position: Position.fixed, zIndex: panelZ, ...flexColumn, top: CssValue.circle, left: CssValue.circle, width: '80vw', maxWidth: '90vw', height: '70vh', borderRadius: Radius.lg, transition: `${modalTransition}, ${transformTransition}` } as CSSProperties,
+  panelDesktopRightDrawer: { ...modalCard, position: Position.fixed, zIndex: panelZ, ...flexColumn, top: 0, right: 0, bottom: 0, width: 440, maxWidth: '92vw', height: '100vh', borderRadius: 0, borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: border(Border.thin, Colors.glassBorder), overflow: Overflow.hidden, transition: `${modalTransition}, ${transformTransition}` } as CSSProperties,
 
   /* ── Header ── */
   headerWrap: { display: Display.flex, alignItems: Align.center, justifyContent: Justify.between, padding: padding(Gap.xl, Font.lg, Gap.xl, Gap.section), flexShrink: 0 } as CSSProperties,

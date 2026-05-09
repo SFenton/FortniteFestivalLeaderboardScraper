@@ -23,6 +23,10 @@ export interface ModalShellProps {
   desktopClassName?: string;
   /** Extra inline styles merged onto the desktop panel (applied after desktopClassName). */
   desktopStyle?: React.CSSProperties;
+  /** Desktop panel placement. Center preserves the existing modal; rightDrawer slides in from the right edge. */
+  desktopPlacement?: 'center' | 'rightDrawer';
+  /** Optional test id applied to the dialog panel. */
+  panelTestId?: string;
   /** Transition duration in ms. Default: 300. */
   transitionMs?: number;
   /** Called when the open animation completes. */
@@ -40,6 +44,8 @@ export default function ModalShell({
   children,
   desktopClassName,
   desktopStyle,
+  desktopPlacement = 'center',
+  panelTestId,
   transitionMs = DEFAULT_TRANSITION_MS,
   onOpenComplete,
   onCloseComplete,
@@ -106,15 +112,18 @@ export default function ModalShell({
   const overlayTransition = `opacity ${transMs} ease`;
   const mobileTransition = `transform ${transMs} ease`;
   const desktopTransition = `opacity ${transMs} ease, transform ${transMs} ease`;
+  const useDesktopPanel = desktopPlacement === 'rightDrawer' || !isMobile;
   const computedMobileTop = vvOffsetTop + vvHeight * 0.2;
-  if (isMobile && visible && mobilePanelTopRef.current === null) {
+  if (!useDesktopPanel && visible && mobilePanelTopRef.current === null) {
     mobilePanelTopRef.current = computedMobileTop;
   }
   const mobilePanelTop = mobilePanelTopRef.current ?? computedMobileTop;
 
-  const panelStyle: React.CSSProperties = isMobile
+  const panelStyle: React.CSSProperties = !useDesktopPanel
     ? { ...css.panelMobile, transition: mobileTransition, top: mobilePanelTop, bottom: 0, transform: animIn ? 'translateY(0)' : 'translateY(100%)' }
-    : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, ...desktopStyle };
+    : desktopPlacement === 'rightDrawer'
+      ? { ...css.panelDesktopRightDrawer, transition: desktopTransition, transform: animIn ? 'translateX(0)' : 'translateX(100%)', opacity: 1, ...desktopStyle }
+      : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, ...desktopStyle };
 
   return createPortal(
     <>
@@ -128,7 +137,9 @@ export default function ModalShell({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={!isMobile ? desktopClassName : undefined}
+        className={useDesktopPanel ? desktopClassName : undefined}
+        data-testid={panelTestId}
+        data-modal-placement={useDesktopPanel ? desktopPlacement : 'mobileSheet'}
         style={panelStyle}
         onTransitionEnd={handleTransitionEnd}
       >

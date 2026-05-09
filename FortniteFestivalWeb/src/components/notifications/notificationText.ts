@@ -86,7 +86,7 @@ const EVENT_PRIORITY: Record<string, number> = {
 
 export function formatNotificationPresentation(t: TFunction, input: NotificationTextInput): NotificationPresentation {
   const events = getDisplayEvents(input);
-  const title = input.title ?? input.songTitle ?? translate(t, 'notifications.values.notification');
+  const title = formatNotificationTitle(t, input, events);
   const richClauses = events
     .flatMap((event, index) => formatEventClauses(t, input, event, index === 0))
     .filter((clause) => clause.text.length > 0);
@@ -107,6 +107,34 @@ export function formatNotificationPresentation(t: TFunction, input: Notification
     flags,
     accessibilityLabel: `${title}. ${message}`,
   };
+}
+
+function formatNotificationTitle(t: TFunction, input: NotificationTextInput, events: NotificationTextEvent[]) {
+  const baseTitle = input.songTitle ?? input.title;
+  const instrumentLabel = input.instrumentLabel?.trim();
+  if (baseTitle && instrumentLabel && events.some(event => PLAYER_SONG_TEXT_EVENT_KINDS.has(event.eventKind))) {
+    return `${baseTitle} · ${instrumentLabel}`;
+  }
+
+  const bandScopeLabel = input.scopeLabel?.trim();
+  if (baseTitle && bandScopeLabel && events.some(event => BAND_SONG_TEXT_EVENT_KINDS.has(event.eventKind))) {
+    return `${baseTitle} · ${bandScopeLabel}`;
+  }
+
+  const aggregateRankTitle = formatAggregateRankTitle(t, input, instrumentLabel, events);
+  if (aggregateRankTitle) return aggregateRankTitle;
+
+  return input.title ?? input.songTitle ?? translate(t, 'notifications.values.notification');
+}
+
+function formatAggregateRankTitle(t: TFunction, input: NotificationTextInput, instrumentLabel: string | undefined, events: NotificationTextEvent[]) {
+  const rankEvent = events.find(event => AGGREGATE_RANK_TITLE_KEYS[event.eventKind]);
+  if (!rankEvent) return null;
+  const scope = rankEvent.eventKind.startsWith('band_')
+    ? rankEvent.scopeLabel?.trim() ?? input.scopeLabel?.trim()
+    : instrumentLabel ?? rankEvent.scopeLabel?.trim() ?? input.scopeLabel?.trim();
+  if (!scope) return null;
+  return `${translate(t, AGGREGATE_RANK_TITLE_KEYS[rankEvent.eventKind])} · ${scope}`;
 }
 
 function getDisplayEvents(input: NotificationTextInput): NotificationTextEvent[] {
@@ -404,6 +432,37 @@ const SONG_TEXT_EVENT_KINDS = new Set([
   'band_fc_achieved',
   'band_member_difficulty_bumped',
 ]);
+
+const PLAYER_SONG_TEXT_EVENT_KINDS = new Set([
+  'player_first_score',
+  'player_score_pb',
+  'player_song_rank_improved',
+  'player_stars_improved',
+  'player_gold_stars_achieved',
+  'player_fc_achieved',
+  'player_difficulty_bumped',
+]);
+
+const BAND_SONG_TEXT_EVENT_KINDS = new Set([
+  'band_first_score',
+  'band_score_pb',
+  'band_combo_score_pb',
+  'band_song_rank_improved',
+  'band_stars_improved',
+  'band_gold_stars_achieved',
+  'band_fc_achieved',
+  'band_member_difficulty_bumped',
+]);
+
+const AGGREGATE_RANK_TITLE_KEYS: Record<string, string> = {
+  player_weighted_rank_improved: 'notifications.rankNames.weightedRank',
+  player_skill_rank_improved: 'notifications.rankNames.skillRank',
+  player_total_score_rank_improved: 'notifications.rankNames.totalScoreRank',
+  player_fc_rate_rank_improved: 'notifications.rankNames.fullComboRank',
+  band_weighted_rank_improved: 'notifications.rankNames.weightedRank',
+  band_total_score_rank_improved: 'notifications.rankNames.totalScoreRank',
+  band_fc_rate_rank_improved: 'notifications.rankNames.fullComboRank',
+};
 
 const DETAIL_EVENT_KINDS = new Set([
   'player_first_score',

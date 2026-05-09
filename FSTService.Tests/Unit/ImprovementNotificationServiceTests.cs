@@ -69,6 +69,47 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetPlayerNotifications_ReportsLatestCompletedSourceRun_WhenNoNewNotificationRowsArrive()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100);
+        BaselineCurrentState();
+
+        UpdateCurrentEntry(score: 101000, rank: 90);
+        var firstDetection = DetectPlayerSongEvents();
+        var firstEnvelope = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+
+        var secondDetection = DetectPlayerSongEvents();
+        var secondEnvelope = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+
+        Assert.Equal(1, firstDetection.PlayerSongEventsInserted);
+        Assert.Equal(0, secondDetection.PlayerSongEventsInserted);
+        Assert.NotNull(firstDetection.RunId);
+        Assert.NotNull(secondDetection.RunId);
+        Assert.Equal(firstDetection.RunId, firstEnvelope.SourceRunId);
+        Assert.Equal(secondDetection.RunId, secondEnvelope.SourceRunId);
+        Assert.True(secondEnvelope.SourceRunId > firstEnvelope.SourceRunId);
+        Assert.NotNull(secondEnvelope.SourceCompletedAt);
+        var notification = Assert.Single(secondEnvelope.Items);
+        Assert.Equal(firstDetection.RunId, notification.RunId);
+    }
+
+    [Fact]
+    public void GetPlayerNotifications_ReportsLatestCompletedSourceRun_WhenFeedIsEmpty()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100);
+        BaselineCurrentState();
+
+        var detection = DetectPlayerSongEvents();
+        var envelope = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+
+        Assert.Equal(0, detection.PlayerSongEventsInserted);
+        Assert.NotNull(detection.RunId);
+        Assert.Equal(detection.RunId, envelope.SourceRunId);
+        Assert.NotNull(envelope.SourceCompletedAt);
+        Assert.Empty(envelope.Items);
+    }
+
+    [Fact]
     public void Precompute_ExpiresOlderPlayerSongNotification_WhenNewSameLaneNotificationArrives()
     {
         InsertCurrentEntry(score: 100000, rank: 100);

@@ -22,10 +22,16 @@ export interface MarqueeTextProps {
 
 const DEFAULT_CYCLE = 8;
 const DEFAULT_GAP = 28;
-/** Fraction of the animation keyframe spent scrolling (rest is pause). */
-const SCROLL_FRACTION = 0.9;
 /** Global epoch for cross-card phase alignment (set once at module load). */
 const MARQUEE_EPOCH = Date.now();
+
+function getTextWidth(element: HTMLElement) {
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  const width = range.getBoundingClientRect().width;
+  range.detach();
+  return width || element.scrollWidth;
+}
 
 /**
  * Renders text that automatically scrolls horizontally when it overflows its
@@ -57,7 +63,7 @@ export default function MarqueeText({
     const check = () => {
       const measure = measureRef.current;
       if (!measure) return;
-      const tw = measure.scrollWidth;
+      const tw = getTextWidth(measure);
       const availableWidth = container.clientWidth;
       const nowOverflows = tw > availableWidth + 1;
       setOverflows(prev => prev === nowOverflows ? prev : nowOverflows);
@@ -84,7 +90,7 @@ export default function MarqueeText({
   }
 
   // Compute translate distance and gap for this instance.
-  const translate = syncDistance ?? (textWidth + gap);
+  const translate = Math.round(syncDistance ?? (textWidth + gap));
   const adjustedGap = Math.max(0, translate - textWidth);
   // Fixed cycle duration ensures all instances share the same period,
   // so epoch-based animation-delay produces perfect cross-card alignment.

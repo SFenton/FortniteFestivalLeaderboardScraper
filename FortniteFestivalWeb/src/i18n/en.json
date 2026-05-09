@@ -55,6 +55,10 @@
   "notifications": {
     "title": "Notifications",
     "latest": "Latest",
+    "sections": {
+      "new": "New",
+      "older": "Older"
+    },
     "values": {
       "notification": "Notification",
       "song": "this song",
@@ -67,6 +71,12 @@
       "combo": "this combo",
       "rankings": "these rankings"
     },
+    "rankNames": {
+      "weightedRank": "Weighted Rank",
+      "skillRank": "Skill Rank",
+      "totalScoreRank": "Total Score Rank",
+      "fullComboRank": "Full Combo Rank"
+    },
     "copy": {
       "unknown": "New improvement detected.",
       "join": {
@@ -75,13 +85,13 @@
         "many": "{{head}}, and {{last}}."
       },
       "primary": {
-        "player_first_score": "Your first play on {{song}} scored {{newScore}}",
-        "player_score_pb": "You set a new personal best on {{song}} with {{newScore}}",
-        "player_song_rank_improved": "You climbed from {{oldRank}} to {{newRank}} on {{song}}",
-        "player_stars_improved": "You improved from {{oldStars}} to {{newStars}} stars on {{song}}",
-        "player_gold_stars_achieved": "You earned gold stars on {{song}}",
-        "player_fc_achieved": "You got a Full Combo on {{song}}",
-        "player_difficulty_bumped": "You improved your difficulty on {{song}} from {{oldDifficulty}} to {{newDifficulty}}",
+        "player_first_score": "Your first {{instrument}} play on {{song}} scored {{newScore}}",
+        "player_score_pb": "You set a new personal best on {{instrument}} for {{song}} with {{newScore}}",
+        "player_song_rank_improved": "You climbed from {{oldRank}} to {{newRank}} on {{instrument}} for {{song}}",
+        "player_stars_improved": "You improved from {{oldStars}} to {{newStars}} stars on {{instrument}} for {{song}}",
+        "player_gold_stars_achieved": "You earned gold stars on {{instrument}} for {{song}}",
+        "player_fc_achieved": "You got a Full Combo on {{instrument}} for {{song}}",
+        "player_difficulty_bumped": "You improved your difficulty on {{instrument}} for {{song}} from {{oldDifficulty}} to {{newDifficulty}}",
         "player_weighted_rank_improved": "You moved up from {{oldRank}} to {{newRank}} in {{instrument}} weighted rankings",
         "player_skill_rank_improved": "You moved up from {{oldRank}} to {{newRank}} in {{instrument}} skill rankings",
         "player_total_score_rank_improved": "You moved up from {{oldRank}} to {{newRank}} in {{instrument}} total score rankings",

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import MobileNotificationsModal, { mockMobileNotifications, sortNotificationsNewestFirst, type MobileNotification } from '../../../src/components/notifications/MobileNotificationsModal';
 
 const mockIsMobile = vi.fn(() => true);
@@ -54,6 +54,7 @@ describe('MobileNotificationsModal', () => {
 
     expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
     expect(screen.queryByText('Latest')).toBeNull();
+    expect(screen.getByTestId('notification-section-heading').textContent).toBe('Older');
     const list = screen.getByTestId('notification-list');
     expect(list.style.overflowY).toBe('auto');
     expect(list.getAttribute('data-scroll-fade')).toBe('true');
@@ -78,8 +79,10 @@ describe('MobileNotificationsModal', () => {
     expect(screen.getByAltText('Apple album art')).toBeTruthy();
     expect(screen.getByAltText('Stand and Fight (Remix) album art')).toBeTruthy();
     expect(screen.getByAltText("Ghosts 'n' Stuff album art")).toBeTruthy();
+    expect(screen.getByAltText('Apple band notification album art')).toBeTruthy();
     screen.getAllByTestId('notification-title').forEach((title) => {
       expect(title.style.color).toBe(BRIGHT_WHITE);
+      expect(title.getAttribute('data-marquee-title')).toBe('true');
     });
     screen.getAllByTestId('notification-summary').forEach((summary) => {
       expect(summary.style.color).toBe(BRIGHT_WHITE);
@@ -91,24 +94,83 @@ describe('MobileNotificationsModal', () => {
     expect(document.body.querySelector('[data-media-layout="duoStack"]')).toBeTruthy();
     expect(document.body.querySelectorAll('[data-media-layout="duoStack"] img')).toHaveLength(2);
     expect(document.body.querySelector('[data-media-layout="comboGrid"]')).toBeTruthy();
-    expect(document.body.querySelectorAll('[data-media-layout="comboGrid"] img')).toHaveLength(3);
+    expect(document.body.querySelectorAll('[data-testid="notification-media-combo-grid"] img')).toHaveLength(3);
+    const cycle = document.body.querySelector('[data-testid="notification-media-cycle"]');
+    expect(cycle).toBeTruthy();
+    expect(cycle?.getAttribute('data-media-cycle')).toBe('freRowSwap');
+    expect(cycle?.getAttribute('data-media-cycle-style')).toBe('rowReplace');
+    expect(cycle?.getAttribute('data-media-cycle-epoch')).toBe('1700000000000');
+    expect(cycle?.getAttribute('data-media-cycle-duration')).toBe('10');
+    expect(cycle?.getAttribute('data-media-cycle-swap-interval')).toBe('5000');
+    expect(cycle?.getAttribute('data-media-cycle-fade-ms')).toBe('400');
+    expect(cycle?.getAttribute('data-media-cycle-active-layer')).toMatch(/^(icons|art)$/);
+    expect(cycle?.getAttribute('data-media-cycle-fading')).toBe('false');
+    const iconLayer = document.body.querySelector('[data-testid="notification-media-cycle-icons"]') as HTMLElement | null;
+    const artLayer = document.body.querySelector('[data-testid="notification-media-cycle-art"]') as HTMLElement | null;
+    expect(iconLayer).toBeTruthy();
+    expect(artLayer).toBeTruthy();
+    expect(iconLayer?.getAttribute('data-media-cycle-row-layer')).toBe('icons');
+    expect(artLayer?.getAttribute('data-media-cycle-row-layer')).toBe('art');
+    expect(iconLayer?.style.transition).toBe('opacity 400ms ease, transform 400ms ease');
+    expect(artLayer?.style.transition).toBe('opacity 400ms ease, transform 400ms ease');
+    expect(screen.getByText('Apple · Pro Drums')).toBeTruthy();
+    expect(screen.getByText('Stand and Fight (Remix) · Drums')).toBeTruthy();
+    expect(screen.getByText("Ghosts 'n' Stuff · Pro Drums")).toBeTruthy();
     expect(screen.getAllByText('Apple').length).toBeGreaterThan(0);
+    expect(screen.getByText('Apple · Band Trios')).toBeTruthy();
+    expect(screen.getByText('Weighted Rank · Drums')).toBeTruthy();
+    expect(screen.getByText('Weighted Rank · Band Duos')).toBeTruthy();
     expect(screen.queryByText('SFentonX - Pro Drums')).toBeNull();
     expect(screen.queryByText('Today 7:53 AM')).toBeNull();
     const modalText = document.body.textContent ?? '';
-    expect(modalText).toContain('You set a new personal best on Apple with 137,700, earned gold stars, and climbed from #1,214 to #982.');
-    expect(modalText).toContain("Your first play on Ghosts 'n' Stuff scored 180,005, started at #1,288, and earned gold stars.");
+    expect(modalText).toContain('You set a new personal best on Pro Drums for Apple with 137,700, earned gold stars, and climbed from #1,214 to #982.');
+    expect(modalText).toContain("Your first Pro Drums play on Ghosts 'n' Stuff scored 180,005, started at #1,288, and earned gold stars.");
     expect(modalText).toContain('Your band set a new best score on Apple with 1,234,567, got a Full Combo, earned gold stars, climbed from #42 to #31 in Band Trios, and climbed from #9 to #6 for Bass/Bass/Drums.');
     const emphasizedText = Array.from(document.body.querySelectorAll('[data-notification-emphasis="true"]')).map((element) => element.textContent);
+    expect(emphasizedText).toContain('Pro Drums');
     expect(emphasizedText).toContain('180,005');
     expect(emphasizedText).toContain('#1,288');
     expect(emphasizedText).toContain('gold stars');
     expect(emphasizedText).toContain('Bass/Bass/Drums');
-    expect(emphasizedText).not.toContain('Band Duos weighted rank');
+    expect(emphasizedText).not.toContain('Weighted Rank · Band Duos');
     expect(screen.getAllByText('New High Score').length).toBeGreaterThan(0);
     expect(screen.getAllByText('First Play').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Gold Stars').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Rank Up').length).toBeGreaterThan(0);
+  });
+
+  it('partitions notifications into New and Older sections without changing unread status', () => {
+    const sortedNotifications = sortNotificationsNewestFirst(mockMobileNotifications);
+    const newNotification = sortedNotifications[1]!;
+    const olderUnreadNotification = sortedNotifications[0]!;
+
+    render(
+      <MobileNotificationsModal
+        visible={true}
+        onClose={() => {}}
+        notifications={sortedNotifications}
+        newNotificationIds={new Set([newNotification.notificationGuid])}
+        unreadNotificationIds={new Set([olderUnreadNotification.notificationGuid])}
+        onNotificationOpen={() => {}}
+      />,
+    );
+
+    const sections = screen.getAllByTestId('notification-section');
+    expect(sections).toHaveLength(2);
+    expect(sections[0]!.getAttribute('data-notification-section')).toBe('new');
+    expect(within(sections[0]!).getByTestId('notification-section-heading').textContent).toBe('New');
+    expect(sections[1]!.getAttribute('data-notification-section')).toBe('older');
+    expect(within(sections[1]!).getByTestId('notification-section-heading').textContent).toBe('Older');
+
+    const newRow = within(sections[0]!).getByTestId('mock-notification-row');
+    expect(newRow.getAttribute('data-notification-guid')).toBe(newNotification.notificationGuid);
+    expect(newRow.getAttribute('data-new')).toBe('true');
+    expect(newRow.getAttribute('data-unread')).toBe('false');
+
+    const olderUnreadRow = screen.getAllByTestId('mock-notification-row')
+      .find(row => row.getAttribute('data-notification-guid') === olderUnreadNotification.notificationGuid);
+    expect(olderUnreadRow?.getAttribute('data-new')).toBe('false');
+    expect(olderUnreadRow?.getAttribute('data-unread')).toBe('true');
   });
 
   it('sorts notification data newest to oldest without mutating the source array', () => {
@@ -134,6 +196,28 @@ describe('MobileNotificationsModal', () => {
     fireEvent.click(firstRow);
 
     expect(onNotificationOpen).toHaveBeenCalledWith(mockMobileNotifications[0]);
+  });
+
+  it('renders desktop presentation as a right-side drawer', () => {
+    mockIsMobile.mockReturnValue(false);
+
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} presentation="desktopDrawer" onNotificationOpen={() => {}} />);
+
+    const drawer = screen.getByTestId('desktop-notifications-drawer');
+    expect(drawer).toBe(screen.getByRole('dialog', { name: 'Notifications' }));
+    expect(drawer.getAttribute('data-modal-placement')).toBe('rightDrawer');
+    expect(drawer.style.top).toBe('0px');
+    expect(drawer.style.right).toBe('0px');
+    expect(drawer.style.bottom).toBe('0px');
+    expect(drawer.style.left).toBe('');
+    expect(drawer.style.width).toBe('460px');
+    expect(drawer.style.maxWidth).toBe('92vw');
+    expect(drawer.style.borderTopLeftRadius).toBe('0px');
+    expect(drawer.style.borderBottomLeftRadius).toBe('0px');
+    screen.getAllByTestId('notification-title').forEach((title) => {
+      expect(title.getAttribute('data-marquee-title')).toBe('true');
+    });
+    expect(screen.getByTestId('mobile-notifications-modal').getAttribute('data-notification-presentation')).toBe('desktopDrawer');
   });
 
   it('hides the chevron and leaves rows inert when no destination exists', () => {

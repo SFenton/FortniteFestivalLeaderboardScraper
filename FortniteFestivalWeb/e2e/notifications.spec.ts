@@ -3,6 +3,7 @@ import { test, expect } from './fixtures/fre';
 import { changelogHash } from '../src/changelog';
 
 const NOTIFICATION_SEEN_STORAGE_KEY = 'fst:notificationSeen:v1';
+const NOTIFICATION_FRESHNESS_STORAGE_KEY = 'fst:notificationFreshness:v1';
 const EXPECTED_NOTIFICATION_COUNT = 6;
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const APPLE_SONG_ID = 'e90125a8-742a-4be9-baa0-4d93f5fba556';
@@ -32,7 +33,9 @@ test.describe('Notification seen state', () => {
     const rows = page.getByTestId('mock-notification-row');
     await expect(dialog).toBeVisible({ timeout: 10_000 });
     await expect(rows).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
+    await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
     await expectRowsNewestFirst(rows);
+    await expectSoloInstrumentNotificationCopy(page);
     await expect(page.getByRole('button', { name: 'Actions' })).toHaveCount(0);
 
     await expect.poll(() => readBadgeCount(notificationBadge), { timeout: 5_000 }).toBeLessThan(EXPECTED_NOTIFICATION_COUNT);
@@ -52,6 +55,7 @@ test.describe('Notification seen state', () => {
     await notificationsButton.click();
     await expect(dialog).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('notification-unread-dot')).toHaveCount(0);
+    await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
     await expect(page.getByRole('button', { name: 'Actions' })).toHaveCount(0);
   });
 
@@ -64,8 +68,11 @@ test.describe('Notification seen state', () => {
     const dialog = page.getByRole('dialog', { name: 'Notifications' });
     const rows = page.getByTestId('mock-notification-row');
     await expect(dialog).toBeVisible({ timeout: 10_000 });
+    await expectDesktopNotificationDrawer(page);
     await expect(rows).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
+    await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
     await expectRowsNewestFirst(rows);
+    await expectSoloInstrumentNotificationCopy(page);
     await expect(page.getByTestId('notification-unread-dot')).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
 
     await revealEveryNotification(page);
@@ -77,7 +84,9 @@ test.describe('Notification seen state', () => {
     await expect(dialog).toBeHidden({ timeout: 5_000 });
     await page.reload({ waitUntil: 'load' });
     await expect(dialog).toBeVisible({ timeout: 10_000 });
+    await expectDesktopNotificationDrawer(page);
     await expect(page.getByTestId('notification-unread-dot')).toHaveCount(0);
+    await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
   });
 
   test('desktop header notifications button opens the notifications modal', async ({ page }, testInfo) => {
@@ -95,7 +104,10 @@ test.describe('Notification seen state', () => {
 
     const dialog = page.getByRole('dialog', { name: 'Notifications' });
     await expect(dialog).toBeVisible({ timeout: 10_000 });
+    await expectDesktopNotificationDrawer(page);
     await expect(page.getByTestId('mock-notification-row')).toHaveCount(EXPECTED_NOTIFICATION_COUNT);
+    await expectNotificationFreshnessSections(page, EXPECTED_NOTIFICATION_COUNT, 0);
+    await expectSoloInstrumentNotificationCopy(page);
   });
 
   test('mobile notification card opens a solo song with the instrument selected', async ({ page }, testInfo) => {
@@ -120,6 +132,8 @@ test.describe('Notification seen state', () => {
     await page.goto(`/?validation=${NOTIFICATIONS_VALIDATION_TOKEN}#/songs`, { waitUntil: 'load' });
     await dismissFirstRunIfVisible(page);
 
+    await expectDesktopNotificationDrawer(page);
+
     const rankNotification = page.locator('[data-testid="mock-notification-row"][data-event-kind="player_weighted_rank_improved"]');
     await expect(rankNotification.getByTestId('notification-chevron')).toBeVisible();
     await rankNotification.click();
@@ -133,6 +147,8 @@ test.describe('Notification seen state', () => {
 
     await page.goto(`/?validation=${NOTIFICATIONS_VALIDATION_TOKEN}#/songs`, { waitUntil: 'load' });
     await dismissFirstRunIfVisible(page);
+
+    await expectDesktopNotificationDrawer(page);
 
     const bandNotification = page.locator('[data-testid="mock-notification-row"][data-event-kind="band_score_pb"]');
     await expect(bandNotification).toBeVisible({ timeout: 10_000 });
@@ -155,6 +171,131 @@ async function expectRowsNewestFirst(rows: Locator) {
   const detectedAtValues = await rows.evaluateAll((elements) => elements.map(element => element.getAttribute('data-detected-at') ?? ''));
   const sortedValues = [...detectedAtValues].sort((left, right) => Date.parse(right) - Date.parse(left));
   expect(detectedAtValues).toEqual(sortedValues);
+}
+
+async function expectNotificationFreshnessSections(page: Page, expectedNewCount: number, expectedOlderCount: number) {
+  const newSection = page.locator('[data-testid="notification-section"][data-notification-section="new"]');
+  const olderSection = page.locator('[data-testid="notification-section"][data-notification-section="older"]');
+  await expect(newSection.getByTestId('notification-section-heading')).toHaveText('New');
+  await expect(newSection.getByTestId('mock-notification-row')).toHaveCount(expectedNewCount);
+  if (expectedOlderCount > 0) {
+    await expect(olderSection.getByTestId('notification-section-heading')).toHaveText('Older');
+    await expect(olderSection.getByTestId('mock-notification-row')).toHaveCount(expectedOlderCount);
+  } else {
+    await expect(olderSection).toHaveCount(0);
+  }
+
+  await expect.poll(() => readMockFreshnessNewCount(page), { timeout: 5_000 }).toBe(expectedNewCount);
+}
+
+async function expectDesktopNotificationDrawer(page: Page) {
+  const dialog = page.getByRole('dialog', { name: 'Notifications' });
+  await expect(dialog).toHaveAttribute('data-modal-placement', 'rightDrawer');
+  await expect(page.getByTestId('desktop-notifications-drawer')).toBeVisible();
+
+  await expect.poll(async () => {
+    const box = await dialog.boundingBox();
+    const viewport = page.viewportSize();
+    if (!box || !viewport) return Number.POSITIVE_INFINITY;
+    return Math.abs(box.x + box.width - viewport.width);
+  }, { timeout: 5_000 }).toBeLessThanOrEqual(2);
+
+  const box = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  if (!box || !viewport) throw new Error('Notification drawer geometry was unavailable');
+
+  expect(Math.abs(box.x + box.width - viewport.width)).toBeLessThanOrEqual(2);
+  expect(box.x).toBeGreaterThan(viewport.width / 2);
+  expect(box.width).toBeGreaterThanOrEqual(420);
+  expect(box.width).toBeLessThanOrEqual(470);
+  expect(Math.abs(box.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(box.height - viewport.height)).toBeLessThanOrEqual(2);
+
+  const radii = await dialog.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      topLeft: style.borderTopLeftRadius,
+      bottomLeft: style.borderBottomLeftRadius,
+    };
+  });
+  expect(radii.topLeft).toBe('0px');
+  expect(radii.bottomLeft).toBe('0px');
+}
+
+async function expectSoloInstrumentNotificationCopy(page: Page) {
+  const playerPb = page.locator('[data-testid="mock-notification-row"][data-event-kind="player_score_pb"]').first();
+  await expectNotificationTitle(playerPb, 'Apple · Pro Drums');
+  await expect(playerPb.getByTestId('notification-summary')).toContainText('You set a new personal best on Pro Drums for Apple');
+
+  const firstPlay = page.locator('[data-testid="mock-notification-row"][data-event-kind="player_first_score"]');
+  await expectNotificationTitle(firstPlay, "Ghosts 'n' Stuff · Pro Drums");
+  await expect(firstPlay.getByTestId('notification-summary')).toContainText("Your first Pro Drums play on Ghosts 'n' Stuff");
+
+  await expectNotificationTitle(page.locator('[data-testid="mock-notification-row"][data-event-kind="player_weighted_rank_improved"]'), 'Weighted Rank · Drums');
+  await expectNotificationTitle(page.locator('[data-testid="mock-notification-row"][data-event-kind="band_weighted_rank_improved"]'), 'Weighted Rank · Band Duos');
+  await expectNotificationTitle(page.locator('[data-testid="mock-notification-row"][data-event-kind="band_score_pb"]'), 'Apple · Band Trios');
+
+  const marqueeMarkers = await page.getByTestId('notification-title').evaluateAll((elements) => elements.map(element => element.getAttribute('data-marquee-title')));
+  expect(marqueeMarkers.every(marker => marker === 'true')).toBe(true);
+  await expectBandSongMediaCycle(page);
+
+  const overflowingText = await page.locator('[data-testid="notification-summary"]').evaluateAll((elements) => elements
+    .filter((element) => element.scrollWidth > element.clientWidth + 1)
+    .map((element) => element.textContent ?? ''));
+  expect(overflowingText).toEqual([]);
+}
+
+async function expectNotificationTitle(row: Locator, expectedTitle: string) {
+  const title = row.getByTestId('notification-title');
+  await expect(title).toHaveAttribute('data-marquee-title', 'true');
+  await expect(title.locator('span').first()).toHaveText(expectedTitle);
+}
+
+async function expectBandSongMediaCycle(page: Page) {
+  const bandRow = page.locator('[data-testid="mock-notification-row"][data-event-kind="band_score_pb"]');
+  const cycle = bandRow.getByTestId('notification-media-cycle');
+  await expect(cycle).toHaveAttribute('data-media-cycle', 'freRowSwap');
+  await expect(cycle).toHaveAttribute('data-media-cycle-style', 'rowReplace');
+  await expect(cycle).toHaveAttribute('data-media-cycle-epoch', '1700000000000');
+  await expect(cycle).toHaveAttribute('data-media-cycle-duration', '10');
+  await expect(cycle).toHaveAttribute('data-media-cycle-swap-interval', '5000');
+  await expect(cycle).toHaveAttribute('data-media-cycle-fade-ms', '400');
+  await expect.poll(async () => cycle.getAttribute('data-media-cycle-fading'), { timeout: 2_000 }).toBe('false');
+  await expect(cycle.getByTestId('notification-media-cycle-art')).toBeAttached();
+  await expect(cycle.getByAltText('Apple band notification album art')).toBeAttached();
+
+  const cycleDetails = await cycle.evaluate((element) => {
+    const icons = element.querySelector('[data-testid="notification-media-cycle-icons"]');
+    const art = element.querySelector('[data-testid="notification-media-cycle-art"]');
+    if (!(icons instanceof HTMLElement) || !(art instanceof HTMLElement)) return null;
+    const cycleRect = element.getBoundingClientRect();
+    const iconsRect = icons.getBoundingClientRect();
+    const artRect = art.getBoundingClientRect();
+    const iconsStyle = getComputedStyle(icons);
+    const artStyle = getComputedStyle(art);
+    return {
+      activeLayer: element.getAttribute('data-media-cycle-active-layer'),
+      cycle: { width: cycleRect.width, height: cycleRect.height },
+      icons: { width: iconsRect.width, height: iconsRect.height, opacity: iconsStyle.opacity, transform: iconsStyle.transform, transitionDuration: iconsStyle.transitionDuration, transitionProperty: iconsStyle.transitionProperty },
+      art: { width: artRect.width, height: artRect.height, opacity: artStyle.opacity, transform: artStyle.transform, transitionDuration: artStyle.transitionDuration, transitionProperty: artStyle.transitionProperty },
+    };
+  });
+
+  expect(cycleDetails).not.toBeNull();
+  expect(cycleDetails!.cycle).toEqual({ width: 64, height: 64 });
+  expect(cycleDetails!.icons.width).toBe(64);
+  expect(cycleDetails!.icons.height).toBe(64);
+  expect(cycleDetails!.art.width).toBe(64);
+  expect(cycleDetails!.art.height).toBe(64);
+  expect(cycleDetails!.activeLayer).toMatch(/^(icons|art)$/);
+  expect(cycleDetails!.icons.transitionProperty).toContain('opacity');
+  expect(cycleDetails!.icons.transitionProperty).toContain('transform');
+  expect(cycleDetails!.art.transitionProperty).toContain('opacity');
+  expect(cycleDetails!.art.transitionProperty).toContain('transform');
+  expect(cycleDetails!.icons.transitionDuration).toBe('0.4s, 0.4s');
+  expect(cycleDetails!.art.transitionDuration).toBe('0.4s, 0.4s');
+  const visibleOpacity = cycleDetails!.activeLayer === 'icons' ? cycleDetails!.icons.opacity : cycleDetails!.art.opacity;
+  expect(visibleOpacity).toBe('1');
 }
 
 async function readBadgeCount(notificationBadge: Locator): Promise<number> {
@@ -195,6 +336,18 @@ async function readMockSeenCount(page: Page): Promise<number> {
     const mockSeen = parsed.mock;
     return Array.isArray(mockSeen) ? mockSeen.length : 0;
   }, NOTIFICATION_SEEN_STORAGE_KEY);
+}
+
+async function readMockFreshnessNewCount(page: Page): Promise<number> {
+  return page.evaluate((storageKey) => {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const mockFreshness = parsed.mock;
+    if (!mockFreshness || typeof mockFreshness !== 'object' || Array.isArray(mockFreshness)) return 0;
+    const ids = (mockFreshness as { newNotificationIds?: unknown }).newNotificationIds;
+    return Array.isArray(ids) ? ids.length : 0;
+  }, NOTIFICATION_FRESHNESS_STORAGE_KEY);
 }
 
 async function readLeaderboardRankBy(page: Page): Promise<string | null> {

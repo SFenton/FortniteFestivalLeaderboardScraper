@@ -13,7 +13,11 @@ const base: NotificationTextInput = {
 };
 
 function format(input: NotificationTextInput) {
-  return formatNotificationPresentation(i18next.t, { ...base, ...input }).message;
+  return present(input).message;
+}
+
+function present(input: NotificationTextInput) {
+  return formatNotificationPresentation(i18next.t, { ...base, ...input });
 }
 
 function emphasizedText(input: ReturnType<typeof formatNotificationPresentation>) {
@@ -22,13 +26,13 @@ function emphasizedText(input: ReturnType<typeof formatNotificationPresentation>
 
 describe('notificationText', () => {
   it.each([
-    ['player_first_score', { newNumeric: 180005, newRank: 1288 }, 'Your first play on Apple scored 180,005 and started at #1,288.'],
-    ['player_score_pb', { oldNumeric: 127025, newNumeric: 137700 }, 'You set a new personal best on Apple with 137,700.'],
-    ['player_song_rank_improved', { oldRank: 1214, newRank: 982 }, 'You climbed from #1,214 to #982 on Apple.'],
-    ['player_stars_improved', { oldNumeric: 5, newNumeric: 6 }, 'You improved from 5 to 6 stars on Apple.'],
-    ['player_gold_stars_achieved', { newNumeric: 6 }, 'You earned gold stars on Apple.'],
-    ['player_fc_achieved', {}, 'You got a Full Combo on Apple.'],
-    ['player_difficulty_bumped', { oldLabel: 'Hard', newLabel: 'Expert' }, 'You improved your difficulty on Apple from Hard to Expert.'],
+    ['player_first_score', { newNumeric: 180005, newRank: 1288 }, 'Your first Drums play on Apple scored 180,005 and started at #1,288.'],
+    ['player_score_pb', { oldNumeric: 127025, newNumeric: 137700 }, 'You set a new personal best on Drums for Apple with 137,700.'],
+    ['player_song_rank_improved', { oldRank: 1214, newRank: 982 }, 'You climbed from #1,214 to #982 on Drums for Apple.'],
+    ['player_stars_improved', { oldNumeric: 5, newNumeric: 6 }, 'You improved from 5 to 6 stars on Drums for Apple.'],
+    ['player_gold_stars_achieved', { newNumeric: 6 }, 'You earned gold stars on Drums for Apple.'],
+    ['player_fc_achieved', {}, 'You got a Full Combo on Drums for Apple.'],
+    ['player_difficulty_bumped', { oldLabel: 'Hard', newLabel: 'Expert' }, 'You improved your difficulty on Drums for Apple from Hard to Expert.'],
     ['player_weighted_rank_improved', { oldRank: 45, newRank: 42 }, 'You moved up from #45 to #42 in Drums weighted rankings.'],
     ['player_skill_rank_improved', { oldRank: 45, newRank: 42 }, 'You moved up from #45 to #42 in Drums skill rankings.'],
     ['player_total_score_rank_improved', { oldRank: 45, newRank: 42 }, 'You moved up from #45 to #42 in Drums total score rankings.'],
@@ -52,6 +56,24 @@ describe('notificationText', () => {
     expect(format({ eventKind, ...(values as Partial<NotificationTextInput>) })).toBe(expected);
   });
 
+  it('adds the friendly instrument to solo song notification titles', () => {
+    expect(present({ eventKind: 'player_score_pb' }).title).toBe('Apple · Drums');
+    expect(present({ eventKind: 'player_first_score', title: "Ghosts 'n' Stuff", songTitle: "Ghosts 'n' Stuff", instrumentLabel: 'Pro Drums' }).title).toBe("Ghosts 'n' Stuff · Pro Drums");
+    expect(present({ eventKind: 'band_score_pb', title: 'Apple' }).title).toBe('Apple · Band Trios');
+    expect(present({ eventKind: 'band_combo_score_pb', title: 'Apple', scopeLabel: 'Band Trios' }).title).toBe('Apple · Band Trios');
+  });
+
+  it('formats aggregate rank notification titles with friendly rank and scope names', () => {
+    expect(present({ eventKind: 'player_weighted_rank_improved', title: 'Solo Drums weighted rank' }).title).toBe('Weighted Rank · Drums');
+    expect(present({ eventKind: 'player_skill_rank_improved', title: 'Solo Drums skill rank' }).title).toBe('Skill Rank · Drums');
+    expect(present({ eventKind: 'player_total_score_rank_improved', title: 'Solo Drums total score rank' }).title).toBe('Total Score Rank · Drums');
+    expect(present({ eventKind: 'player_fc_rate_rank_improved', title: 'Solo Drums Full Combo rank' }).title).toBe('Full Combo Rank · Drums');
+    expect(present({ eventKind: 'band_weighted_rank_improved', title: 'Band Duos weighted rank', scopeLabel: 'Band Duos' }).title).toBe('Weighted Rank · Band Duos');
+    expect(present({ eventKind: 'band_total_score_rank_improved', title: 'Band Duos total score rank', scopeLabel: 'Band Duos' }).title).toBe('Total Score Rank · Band Duos');
+    expect(present({ eventKind: 'band_fc_rate_rank_improved', title: 'Band Duos Full Combo rank', scopeLabel: 'Band Duos' }).title).toBe('Full Combo Rank · Band Duos');
+    expect(present({ eventKind: 'player_total_score_improved', title: 'Solo Drums total score' }).title).toBe('Solo Drums total score');
+  });
+
   it('combines player PB, Full Combo, gold stars, and rank into one friendly sentence', () => {
     const presentation = formatNotificationPresentation(i18next.t, {
       ...base,
@@ -66,9 +88,10 @@ describe('notificationText', () => {
       },
     });
 
-    expect(presentation.message).toBe('You set a new personal best on Apple with 137,700, got a Full Combo, earned gold stars, and climbed from #1,214 to #982.');
+    expect(presentation.title).toBe('Apple · Drums');
+    expect(presentation.message).toBe('You set a new personal best on Drums for Apple with 137,700, got a Full Combo, earned gold stars, and climbed from #1,214 to #982.');
     expect(presentation.messageParts.map(part => part.text).join('')).toBe(presentation.message);
-    expect(emphasizedText(presentation)).toEqual(['Apple', '137,700', 'Full Combo', 'gold stars', '#1,214', '#982']);
+    expect(emphasizedText(presentation)).toEqual(['Drums', 'Apple', '137,700', 'Full Combo', 'gold stars', '#1,214', '#982']);
   expect(presentation.badges).toEqual(['New High Score', 'Full Combo', 'Gold Stars', 'Rank Up']);
   expect(presentation.flags.map(flag => flag.kind)).toEqual(['newHighScore', 'fullCombo', 'goldStars', 'rankUp']);
   });
@@ -86,7 +109,7 @@ describe('notificationText', () => {
       },
     });
 
-    expect(presentation.message).toBe('You set a new personal best on Apple with 137,700 and earned gold stars.');
+    expect(presentation.message).toBe('You set a new personal best on Drums for Apple with 137,700 and earned gold stars.');
   expect(presentation.badges).toEqual(['New High Score', 'Gold Stars']);
   });
 
@@ -104,9 +127,10 @@ describe('notificationText', () => {
       },
     });
 
-    expect(presentation.message).toBe("Your first play on Ghosts 'n' Stuff scored 180,005, started at #1,288, and earned gold stars.");
+    expect(presentation.title).toBe("Ghosts 'n' Stuff · Drums");
+    expect(presentation.message).toBe("Your first Drums play on Ghosts 'n' Stuff scored 180,005, started at #1,288, and earned gold stars.");
     expect(presentation.message).not.toContain('and started at #1,288 and');
-    expect(emphasizedText(presentation)).toEqual(["Ghosts 'n' Stuff", '180,005', '#1,288', 'gold stars']);
+    expect(emphasizedText(presentation)).toEqual(['Drums', "Ghosts 'n' Stuff", '180,005', '#1,288', 'gold stars']);
   });
 
   it('combines band combo PB, Full Combo, gold stars, and rank into one friendly sentence', () => {

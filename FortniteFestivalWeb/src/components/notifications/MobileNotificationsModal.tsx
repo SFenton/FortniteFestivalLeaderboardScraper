@@ -1,26 +1,38 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoChevronForward } from 'react-icons/io5';
 import ModalShell from '../modals/components/ModalShell';
 import {
   Colors, Font, Weight, Gap, Radius, Border, LineHeight,
   Display, Align, Justify, Overflow, BoxSizing, TextTransform, ObjectFit,
+  Opacity, FADE_DURATION, DEMO_SWAP_INTERVAL_MS,
   flexColumn, flexRow, border, padding,
 } from '@festival/theme';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../display/InstrumentIcons';
+import MarqueeText from '../common/MarqueeText';
 import { getNotificationDestination, type NotificationNavigationContext } from './notificationDestination';
 import { formatNotificationPresentation, type NotificationFlagKind, type NotificationMessagePart, type NotificationTextEvent, type NotificationTextInput } from './notificationText';
 
 const NOTIFICATION_MODAL_DESKTOP: CSSProperties = { width: 460, height: 640, maxHeight: '90vh' };
+const NOTIFICATION_DESKTOP_DRAWER: CSSProperties = { width: 460, maxWidth: '92vw' };
 const MODAL_TRANSITION_MS = 250;
 const MEDIA_RAIL_SIZE = 64;
 const MEDIA_ART_SIZE = 54;
 const SOLO_ICON_SIZE = 36;
 const STACKED_ICON_SIZE = 26;
 const GRID_ICON_SIZE = 24;
+const MEDIA_CYCLE_SWAP_INTERVAL_MS = DEMO_SWAP_INTERVAL_MS;
+const MEDIA_CYCLE_FADE_MS = FADE_DURATION;
+const MEDIA_CYCLE_DURATION_SECONDS = (MEDIA_CYCLE_SWAP_INTERVAL_MS * 2) / 1000;
+const MEDIA_CYCLE_EPOCH = 1_700_000_000_000;
 const ALBUM_ART_PREFIX = 'https://cdn2.unrealengine.com/';
+const MEDIA_CYCLE_STYLES = `
+@media (prefers-reduced-motion: reduce) {
+  [data-media-cycle-row-layer] { transition: none !important; transform: translateY(0) !important; }
+}
+`;
 const BRIGHT_TEXT = '#ffffff';
 const UNREAD_DOT_COLOR = '#facc15';
 const LIST_FADE_EDGE_SIZE = 18;
@@ -29,6 +41,7 @@ const LIST_SCROLL_FADE = `linear-gradient(to bottom, transparent 0, #000 ${LIST_
 const LIST_PADDING = `${LIST_TOP_PADDING}px 0 calc(${Gap.section}px + env(safe-area-inset-bottom, 0px))`;
 const VISIBLE_SEEN_THRESHOLD = 0.9;
 const EMPTY_UNREAD_IDS = new Set<string>();
+const EMPTY_NEW_IDS = new Set<string>();
 const NOOP_SEEN_HANDLER = () => {};
 const SFENTONX_ACCOUNT_ID = '195e93ef108143b2975ee46662d4d0e1';
 const KAHNYRI_ACCOUNT_ID = '4c2a1300df4c49a9b9d2b352d704bdf0';
@@ -51,7 +64,9 @@ const FLAG_COLORS: Record<NotificationFlagKind, string> = {
 type NotificationMedia =
   | { kind: 'song'; albumArt: string; alt: string }
   | { kind: 'soloInstrument'; instrument: ServerInstrumentKey; label: string }
-  | { kind: 'instrumentCombo'; instruments: ServerInstrumentKey[]; label: string };
+  | { kind: 'instrumentCombo'; instruments: ServerInstrumentKey[]; label: string; cycleAlbumArt?: { albumArt: string; alt: string } };
+
+type NotificationMediaCycleLayer = 'icons' | 'art';
 
 export type MobileNotification = NotificationTextInput & {
   eventId: number;
@@ -196,7 +211,12 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     scopeLabel: 'Band Trios',
     context: 'SFentonX + kahnyri + db9342 - Bass/Bass/Drums',
     detectedLabel: 'Today 7:53 AM',
-    media: { kind: 'instrumentCombo', instruments: ['Solo_Bass', 'Solo_Bass', 'Solo_Drums'], label: 'Bass/Bass/Drums' },
+    media: {
+      kind: 'instrumentCombo',
+      instruments: ['Solo_Bass', 'Solo_Bass', 'Solo_Drums'],
+      label: 'Bass/Bass/Drums',
+      cycleAlbumArt: { albumArt: albumArt('tg9ervxpjbz6zww6-512x512-16b50aeec442.jpg'), alt: 'Apple band notification album art' },
+    },
     navigation: {
       songId: APPLE_SONG_ID,
       band: {
@@ -238,8 +258,10 @@ export const mockMobileNotifications = MOCK_NOTIFICATIONS;
 type MobileNotificationsModalProps = {
   visible: boolean;
   onClose: () => void;
+  presentation?: 'mobileModal' | 'desktopDrawer';
   notifications?: readonly MobileNotification[];
   unreadNotificationIds?: ReadonlySet<string>;
+  newNotificationIds?: ReadonlySet<string>;
   onNotificationsSeen?: (notificationGuids: string[]) => void;
   onNotificationOpen?: (notification: MobileNotification) => void;
 };
@@ -247,8 +269,10 @@ type MobileNotificationsModalProps = {
 export default function MobileNotificationsModal({
   visible,
   onClose,
+  presentation = 'mobileModal',
   notifications = MOCK_NOTIFICATIONS,
   unreadNotificationIds = EMPTY_UNREAD_IDS,
+  newNotificationIds = EMPTY_NEW_IDS,
   onNotificationsSeen = NOOP_SEEN_HANDLER,
   onNotificationOpen,
 }: MobileNotificationsModalProps) {
@@ -260,8 +284,10 @@ export default function MobileNotificationsModal({
   const seenThisOpenRef = useRef(new Set<string>());
   const wasVisibleRef = useRef(false);
   const sortedNotifications = useMemo(() => sortNotificationsNewestFirst(notifications), [notifications]);
+  const notificationSections = useMemo(() => partitionNotificationSections(sortedNotifications, newNotificationIds), [newNotificationIds, sortedNotifications]);
   const [sessionUnreadIds, setSessionUnreadIds] = useState(() => new Set(unreadNotificationIds));
   const [isReadyForVisibility, setIsReadyForVisibility] = useState(false);
+  const isDesktopDrawer = presentation === 'desktopDrawer';
   const setListRef = useCallback((element: HTMLDivElement | null) => {
     listRef.current = element;
     setListElement(element);
@@ -336,74 +362,111 @@ export default function MobileNotificationsModal({
       visible={visible}
       title={t('notifications.title')}
       onClose={onClose}
-      desktopStyle={NOTIFICATION_MODAL_DESKTOP}
+      desktopStyle={isDesktopDrawer ? NOTIFICATION_DESKTOP_DRAWER : NOTIFICATION_MODAL_DESKTOP}
+      desktopPlacement={isDesktopDrawer ? 'rightDrawer' : 'center'}
+      panelTestId={isDesktopDrawer ? 'desktop-notifications-drawer' : undefined}
       transitionMs={MODAL_TRANSITION_MS}
       onOpenComplete={handleOpenComplete}
     >
-      <div style={styles.body} data-testid="mobile-notifications-modal">
+      <NotificationMediaCycleStyles />
+      <div style={styles.body} data-testid="mobile-notifications-modal" data-notification-presentation={presentation}>
         <div ref={setListRef} style={styles.list} data-testid="notification-list" data-scroll-fade="true" data-scroll-fade-top-padding={LIST_TOP_PADDING} data-safe-area-bottom="true">
-          {sortedNotifications.map((notification) => {
-            const presentation = formatNotificationPresentation(t, notification);
-            const isSessionUnread = sessionUnreadIds.has(notification.notificationGuid);
-            const canOpenNotification = Boolean(onNotificationOpen && getNotificationDestination(notification));
-            const rowContent = (
-              <>
-                <NotificationMediaRail media={notification.media} styles={styles} />
-                <div style={styles.content}>
-                  <div style={styles.titleRow}>
-                    <div style={styles.title} data-testid="notification-title">{presentation.title}</div>
-                    {isSessionUnread && <span style={styles.unreadDot} data-testid="notification-unread-dot" aria-hidden="true" />}
-                  </div>
-                  <div style={styles.summary} data-testid="notification-summary">
-                    {presentation.messageParts.map((part, index) => (
-                      <NotificationMessageSpan key={`${notification.eventId}-${index}`} part={part} styles={styles} />
-                    ))}
-                  </div>
-                  <div style={styles.flags}>
-                    {presentation.flags.map((flag) => (
-                      <span key={flag.kind} style={{ ...styles.flag, backgroundColor: FLAG_COLORS[flag.kind] }} data-testid="notification-flag">
-                        {flag.label}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                {canOpenNotification && <IoChevronForward size={18} aria-hidden="true" style={styles.chevron} data-testid="notification-chevron" />}
-              </>
-            );
-            const rowProps = {
-              ref: (element: HTMLElement | null) => {
-                if (element) rowRefs.current.set(notification.notificationGuid, element);
-                else rowRefs.current.delete(notification.notificationGuid);
-              },
-              style: canOpenNotification ? { ...styles.row, ...styles.rowButton } : styles.row,
-              'data-testid': 'mock-notification-row',
-              'data-notification-guid': notification.notificationGuid,
-              'data-detected-at': notification.detectedAt,
-              'data-event-kind': notification.eventKind,
-              'data-unread': isSessionUnread ? 'true' : 'false',
-              'data-actionable': canOpenNotification ? 'true' : 'false',
-              'aria-label': canOpenNotification ? `${presentation.accessibilityLabel}. Open notification.` : presentation.accessibilityLabel,
-            };
-            return (
-              canOpenNotification ? (
-                <button
+          {notificationSections.map((section) => (
+            <section key={section.key} style={styles.section} data-testid="notification-section" data-notification-section={section.key}>
+              <div style={styles.sectionHeading} data-testid="notification-section-heading">{t(section.labelKey)}</div>
+              {section.notifications.map((notification) => (
+                <NotificationRow
                   key={notification.notificationGuid}
-                  type="button"
-                  onClick={() => onNotificationOpen?.(notification)}
-                  {...rowProps}
-                >
-                  {rowContent}
-                </button>
-              ) : (
-                <article key={notification.notificationGuid} {...rowProps}>
-                  {rowContent}
-                </article>
-              )
-            );
-          })}
+                  notification={notification}
+                  isSessionUnread={sessionUnreadIds.has(notification.notificationGuid)}
+                  isNew={newNotificationIds.has(notification.notificationGuid)}
+                  rowRefs={rowRefs}
+                  styles={styles}
+                  onNotificationOpen={onNotificationOpen}
+                  t={t}
+                />
+              ))}
+            </section>
+          ))}
         </div>
       </div>
     </ModalShell>
+  );
+}
+
+function NotificationRow({
+  notification,
+  isSessionUnread,
+  isNew,
+  rowRefs,
+  styles,
+  onNotificationOpen,
+  t,
+}: {
+  notification: MobileNotification;
+  isSessionUnread: boolean;
+  isNew: boolean;
+  rowRefs: MutableRefObject<Map<string, HTMLElement>>;
+  styles: ReturnType<typeof useStyles>;
+  onNotificationOpen?: (notification: MobileNotification) => void;
+  t: ReturnType<typeof useTranslation>['t'];
+}) {
+  const presentation = formatNotificationPresentation(t, notification);
+  const canOpenNotification = Boolean(onNotificationOpen && getNotificationDestination(notification));
+  const rowContent = (
+    <>
+      <NotificationMediaRail media={notification.media} styles={styles} />
+      <div style={styles.content}>
+        <div style={styles.titleRow}>
+          <div style={styles.title} data-testid="notification-title" data-marquee-title="true">
+            <MarqueeText text={presentation.title} as="span" style={styles.titleMarquee} />
+          </div>
+          {isSessionUnread && <span style={styles.unreadDot} data-testid="notification-unread-dot" aria-hidden="true" />}
+        </div>
+        <div style={styles.summary} data-testid="notification-summary">
+          {presentation.messageParts.map((part, index) => (
+            <NotificationMessageSpan key={`${notification.eventId}-${index}`} part={part} styles={styles} />
+          ))}
+        </div>
+        <div style={styles.flags}>
+          {presentation.flags.map((flag) => (
+            <span key={flag.kind} style={{ ...styles.flag, backgroundColor: FLAG_COLORS[flag.kind] }} data-testid="notification-flag">
+              {flag.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      {canOpenNotification && <IoChevronForward size={18} aria-hidden="true" style={styles.chevron} data-testid="notification-chevron" />}
+    </>
+  );
+  const rowProps = {
+    ref: (element: HTMLElement | null) => {
+      if (element) rowRefs.current.set(notification.notificationGuid, element);
+      else rowRefs.current.delete(notification.notificationGuid);
+    },
+    style: canOpenNotification ? { ...styles.row, ...styles.rowButton } : styles.row,
+    'data-testid': 'mock-notification-row',
+    'data-notification-guid': notification.notificationGuid,
+    'data-detected-at': notification.detectedAt,
+    'data-event-kind': notification.eventKind,
+    'data-unread': isSessionUnread ? 'true' : 'false',
+    'data-new': isNew ? 'true' : 'false',
+    'data-actionable': canOpenNotification ? 'true' : 'false',
+    'aria-label': canOpenNotification ? `${presentation.accessibilityLabel}. Open notification.` : presentation.accessibilityLabel,
+  };
+
+  return canOpenNotification ? (
+    <button
+      type="button"
+      onClick={() => onNotificationOpen?.(notification)}
+      {...rowProps}
+    >
+      {rowContent}
+    </button>
+  ) : (
+    <article {...rowProps}>
+      {rowContent}
+    </article>
   );
 }
 
@@ -413,6 +476,10 @@ function NotificationMessageSpan({ part, styles }: { part: NotificationMessagePa
       {part.text}
     </span>
   );
+}
+
+function NotificationMediaCycleStyles() {
+  return <style data-testid="notification-media-cycle-styles">{MEDIA_CYCLE_STYLES}</style>;
 }
 
 function NotificationMediaRail({ media, styles }: { media: NotificationMedia; styles: ReturnType<typeof useStyles> }) {
@@ -433,26 +500,106 @@ function NotificationMediaRail({ media, styles }: { media: NotificationMedia; st
   }
 
   const layout = media.instruments.length === 2 ? 'duoStack' : 'comboGrid';
-  return (
-    <div style={styles.mediaRail} data-testid="notification-media-rail" data-media-kind="instrumentCombo" data-media-layout={layout} data-media-size={MEDIA_RAIL_SIZE} aria-label={media.label}>
-      {layout === 'duoStack' ? (
-        <div style={styles.duoStack} data-testid="notification-media-duo-stack">
-          {media.instruments.map((instrument, index) => (
-            <InstrumentIcon key={`${instrument}-${index}`} instrument={instrument} size={STACKED_ICON_SIZE} />
-          ))}
-        </div>
-      ) : (
-        <div style={styles.comboGrid} data-testid="notification-media-combo-grid">
-          {Array.from({ length: 4 }).map((_, index) => {
-            const instrument = media.instruments[index];
-            return instrument
-              ? <InstrumentIcon key={`${instrument}-${index}`} instrument={instrument} size={GRID_ICON_SIZE} />
-              : <span key={`empty-${index}`} aria-hidden="true" />;
-          })}
-        </div>
-      )}
+  const comboContent = layout === 'duoStack' ? (
+    <div style={styles.duoStack} data-testid="notification-media-duo-stack">
+      {media.instruments.map((instrument, index) => (
+        <InstrumentIcon key={`${instrument}-${index}`} instrument={instrument} size={STACKED_ICON_SIZE} />
+      ))}
+    </div>
+  ) : (
+    <div style={styles.comboGrid} data-testid="notification-media-combo-grid">
+      {Array.from({ length: 4 }).map((_, index) => {
+        const instrument = media.instruments[index];
+        return instrument
+          ? <InstrumentIcon key={`${instrument}-${index}`} instrument={instrument} size={GRID_ICON_SIZE} />
+          : <span key={`empty-${index}`} aria-hidden="true" />;
+      })}
     </div>
   );
+
+  if (media.cycleAlbumArt) {
+    return (
+      <div style={styles.mediaRail} data-testid="notification-media-rail" data-media-kind="instrumentCombo" data-media-layout={layout} data-media-size={MEDIA_RAIL_SIZE} aria-label={media.label}>
+        <NotificationMediaCycle comboContent={comboContent} cycleAlbumArt={media.cycleAlbumArt} styles={styles} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.mediaRail} data-testid="notification-media-rail" data-media-kind="instrumentCombo" data-media-layout={layout} data-media-size={MEDIA_RAIL_SIZE} aria-label={media.label}>
+      {comboContent}
+    </div>
+  );
+}
+
+function NotificationMediaCycle({ comboContent, cycleAlbumArt, styles }: { comboContent: ReactNode; cycleAlbumArt: { albumArt: string; alt: string }; styles: ReturnType<typeof useStyles> }) {
+  const [visibleLayer, setVisibleLayer] = useState<NotificationMediaCycleLayer>(() => mediaCycleLayerAt(Date.now()));
+  const [isFading, setIsFading] = useState(false);
+
+  useEffect(() => {
+    let firstSwapTimer: ReturnType<typeof setTimeout> | undefined;
+    let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+    let swapInterval: ReturnType<typeof setInterval> | undefined;
+
+    const swapLayer = () => {
+      setIsFading(true);
+      fadeTimer = setTimeout(() => {
+        setVisibleLayer(layer => layer === 'icons' ? 'art' : 'icons');
+        setIsFading(false);
+      }, MEDIA_CYCLE_FADE_MS);
+    };
+
+    firstSwapTimer = setTimeout(() => {
+      swapLayer();
+      swapInterval = setInterval(swapLayer, MEDIA_CYCLE_SWAP_INTERVAL_MS);
+    }, mediaCycleDelayUntilNextSwap(Date.now()));
+
+    return () => {
+      if (firstSwapTimer) clearTimeout(firstSwapTimer);
+      if (fadeTimer) clearTimeout(fadeTimer);
+      if (swapInterval) clearInterval(swapInterval);
+    };
+  }, []);
+
+  const iconsStyle = visibleLayer === 'icons'
+    ? isFading ? styles.mediaCycleFading : styles.mediaCycleVisible
+    : styles.mediaCycleHidden;
+  const artStyle = visibleLayer === 'art'
+    ? isFading ? styles.mediaCycleFading : styles.mediaCycleVisible
+    : styles.mediaCycleHidden;
+
+  return (
+    <div
+      style={styles.mediaCycle}
+      data-testid="notification-media-cycle"
+      data-media-cycle="freRowSwap"
+      data-media-cycle-style="rowReplace"
+      data-media-cycle-epoch={MEDIA_CYCLE_EPOCH}
+      data-media-cycle-duration={MEDIA_CYCLE_DURATION_SECONDS}
+      data-media-cycle-swap-interval={MEDIA_CYCLE_SWAP_INTERVAL_MS}
+      data-media-cycle-fade-ms={MEDIA_CYCLE_FADE_MS}
+      data-media-cycle-active-layer={visibleLayer}
+      data-media-cycle-fading={isFading ? 'true' : 'false'}
+    >
+      <div style={{ ...styles.mediaCycleLayer, ...iconsStyle }} data-testid="notification-media-cycle-icons" data-media-cycle-row-layer="icons" aria-hidden="true">
+        {comboContent}
+      </div>
+      <div style={{ ...styles.mediaCycleLayer, ...artStyle }} data-testid="notification-media-cycle-art" data-media-cycle-row-layer="art" aria-hidden="true">
+        <img src={cycleAlbumArt.albumArt} alt={cycleAlbumArt.alt} loading="lazy" style={styles.mediaArt} />
+      </div>
+    </div>
+  );
+}
+
+function mediaCycleLayerAt(timeMs: number): NotificationMediaCycleLayer {
+  const elapsed = Math.max(0, timeMs - MEDIA_CYCLE_EPOCH);
+  return Math.floor(elapsed / MEDIA_CYCLE_SWAP_INTERVAL_MS) % 2 === 0 ? 'icons' : 'art';
+}
+
+function mediaCycleDelayUntilNextSwap(timeMs: number): number {
+  const elapsed = Math.max(0, timeMs - MEDIA_CYCLE_EPOCH);
+  const progress = elapsed % MEDIA_CYCLE_SWAP_INTERVAL_MS;
+  return progress === 0 ? MEDIA_CYCLE_SWAP_INTERVAL_MS : MEDIA_CYCLE_SWAP_INTERVAL_MS - progress;
 }
 
 function albumArt(path: string) {
@@ -470,6 +617,24 @@ export function sortNotificationsNewestFirst<T extends Pick<MobileNotification, 
     if (timeDelta !== 0) return timeDelta;
     return right.eventId - left.eventId;
   });
+}
+
+function partitionNotificationSections(
+  notifications: readonly MobileNotification[],
+  newNotificationIds: ReadonlySet<string>,
+): Array<{ key: 'new' | 'older'; labelKey: 'notifications.sections.new' | 'notifications.sections.older'; notifications: MobileNotification[] }> {
+  const newNotifications = notifications.filter(notification => newNotificationIds.has(notification.notificationGuid));
+  const olderNotifications = notifications.filter(notification => !newNotificationIds.has(notification.notificationGuid));
+  const sections: Array<{ key: 'new' | 'older'; labelKey: 'notifications.sections.new' | 'notifications.sections.older'; notifications: MobileNotification[] }> = [];
+
+  if (newNotifications.length > 0) {
+    sections.push({ key: 'new', labelKey: 'notifications.sections.new', notifications: newNotifications });
+  }
+  if (olderNotifications.length > 0 || sections.length === 0) {
+    sections.push({ key: 'older', labelKey: 'notifications.sections.older', notifications: olderNotifications });
+  }
+
+  return sections;
 }
 
 function visibleRatio(rowRect: DOMRect, viewportRect: DOMRect): number {
@@ -500,6 +665,20 @@ function useStyles() {
       maskSize: '100% 100%',
       WebkitMaskSize: '100% 100%',
     } as CSSProperties,
+    section: {
+      ...flexColumn,
+      gap: Gap.sm,
+      minWidth: 0,
+    } as CSSProperties,
+    sectionHeading: {
+      color: 'rgba(255, 255, 255, 0.74)',
+      fontSize: Font.xs,
+      fontWeight: Weight.semibold,
+      lineHeight: LineHeight.tight,
+      letterSpacing: 0,
+      textTransform: TextTransform.uppercase,
+      padding: padding(0, Gap.xs),
+    } as CSSProperties,
     row: {
       ...flexRow,
       alignItems: Align.center,
@@ -520,6 +699,7 @@ function useStyles() {
     } as CSSProperties,
     mediaRail: {
       ...flexRow,
+      position: 'relative',
       alignItems: Align.center,
       justifyContent: Justify.center,
       width: MEDIA_RAIL_SIZE,
@@ -529,6 +709,37 @@ function useStyles() {
       flexShrink: 0,
       overflow: Overflow.hidden,
       boxSizing: BoxSizing.borderBox,
+    } as CSSProperties,
+    mediaCycle: {
+      position: 'relative',
+      width: MEDIA_RAIL_SIZE,
+      height: MEDIA_RAIL_SIZE,
+      display: Display.block,
+    } as CSSProperties,
+    mediaCycleLayer: {
+      ...flexRow,
+      position: 'absolute',
+      inset: 0,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      width: MEDIA_RAIL_SIZE,
+      height: MEDIA_RAIL_SIZE,
+      willChange: 'opacity, transform',
+    } as CSSProperties,
+    mediaCycleVisible: {
+      transition: `opacity ${MEDIA_CYCLE_FADE_MS}ms ease, transform ${MEDIA_CYCLE_FADE_MS}ms ease`,
+      opacity: 1,
+      transform: 'translateY(0)',
+    } as CSSProperties,
+    mediaCycleFading: {
+      transition: `opacity ${MEDIA_CYCLE_FADE_MS}ms ease, transform ${MEDIA_CYCLE_FADE_MS}ms ease`,
+      opacity: Opacity.none,
+      transform: 'translateY(4px)',
+    } as CSSProperties,
+    mediaCycleHidden: {
+      transition: `opacity ${MEDIA_CYCLE_FADE_MS}ms ease, transform ${MEDIA_CYCLE_FADE_MS}ms ease`,
+      opacity: Opacity.none,
+      transform: 'translateY(4px)',
     } as CSSProperties,
     mediaArt: {
       width: MEDIA_ART_SIZE,
@@ -576,6 +787,14 @@ function useStyles() {
       lineHeight: 1.2,
       minWidth: 0,
       flex: 1,
+    } as CSSProperties,
+    titleMarquee: {
+      width: '100%',
+      color: 'inherit',
+      fontSize: 'inherit',
+      fontWeight: 'inherit',
+      lineHeight: 'inherit',
+      minWidth: 0,
     } as CSSProperties,
     unreadDot: {
       width: 9,

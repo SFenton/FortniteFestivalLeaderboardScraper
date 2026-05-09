@@ -67,7 +67,8 @@ public sealed class ImprovementNotificationService
         cmd.Parameters.AddWithValue("limit", effectiveLimit);
 
         var items = ReadNotifications(cmd);
-        return new ImprovementNotificationsEnvelope(DateTime.UtcNow, DefaultLiveHours, items);
+        var source = ReadLatestNotificationSource(conn);
+        return new ImprovementNotificationsEnvelope(DateTime.UtcNow, DefaultLiveHours, source.RunId, source.CompletedAt, items);
     }
 
     public ImprovementNotificationsEnvelope GetBandNotificationsBySubject(
@@ -349,7 +350,26 @@ public sealed class ImprovementNotificationService
         cmd.Parameters.AddWithValue("limit", effectiveLimit);
 
         var items = ReadNotifications(cmd);
-        return new ImprovementNotificationsEnvelope(DateTime.UtcNow, DefaultLiveHours, items);
+        var source = ReadLatestNotificationSource(conn);
+        return new ImprovementNotificationsEnvelope(DateTime.UtcNow, DefaultLiveHours, source.RunId, source.CompletedAt, items);
+    }
+
+    private static ImprovementNotificationSourceCursor ReadLatestNotificationSource(NpgsqlConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT run_id, completed_at
+            FROM improvement_detection_runs
+            WHERE status = 'completed'
+            ORDER BY run_id DESC
+            LIMIT 1;
+            """;
+        using var reader = cmd.ExecuteReader();
+        return reader.Read()
+            ? new ImprovementNotificationSourceCursor(
+                reader.GetInt64(0),
+                reader.IsDBNull(1) ? null : reader.GetDateTime(1))
+            : new ImprovementNotificationSourceCursor(null, null);
     }
 
     private static IReadOnlyList<ImprovementNotificationDto> ReadNotifications(NpgsqlCommand cmd)
@@ -1289,7 +1309,13 @@ public sealed record ImprovementNotificationDto(
 public sealed record ImprovementNotificationsEnvelope(
     DateTime GeneratedAt,
     int ExpiresAfterHours,
+    long? SourceRunId,
+    DateTime? SourceCompletedAt,
     IReadOnlyList<ImprovementNotificationDto> Items);
+
+public sealed record ImprovementNotificationSourceCursor(
+    long? RunId,
+    DateTime? CompletedAt);
 
 public sealed record ImprovementNotificationPrecomputeOptions(
     bool Execute,

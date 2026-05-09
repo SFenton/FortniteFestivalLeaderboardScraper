@@ -4,6 +4,7 @@ import MarqueeText from '../../../src/components/common/MarqueeText';
 
 let resizeCallback: ResizeObserverCallback | null = null;
 let observedElements: Element[] = [];
+let rangeWidth = 0;
 
 class MockResizeObserver {
   constructor(cb: ResizeObserverCallback) {
@@ -21,7 +22,23 @@ class MockResizeObserver {
 beforeEach(() => {
   resizeCallback = null;
   observedElements = [];
+  rangeWidth = 0;
   vi.stubGlobal('ResizeObserver', MockResizeObserver);
+  vi.spyOn(document, 'createRange').mockReturnValue({
+    selectNodeContents: vi.fn(),
+    getBoundingClientRect: vi.fn(() => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: rangeWidth,
+      bottom: 20,
+      width: rangeWidth,
+      height: 20,
+      toJSON: () => ({}),
+    })),
+    detach: vi.fn(),
+  } as unknown as Range);
 });
 
 afterEach(() => {
@@ -41,9 +58,24 @@ function fireResize() {
 }
 
 /** Set scrollWidth on an element while keeping clientWidth at its current value. */
-function mockWidths(el: HTMLElement, clientWidth: number, scrollWidth: number) {
+function mockWidths(el: HTMLElement, clientWidth: number, scrollWidth: number, rectWidth = scrollWidth, textWidth = scrollWidth) {
   Object.defineProperty(el, 'clientWidth', { configurable: true, get: () => clientWidth });
   Object.defineProperty(el, 'scrollWidth', { configurable: true, get: () => scrollWidth });
+  Object.defineProperty(el, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: rectWidth,
+      bottom: 20,
+      width: rectWidth,
+      height: 20,
+      toJSON: () => ({}),
+    }),
+  });
+  rangeWidth = textWidth;
 }
 
 describe('MarqueeText', () => {
@@ -95,6 +127,20 @@ describe('MarqueeText', () => {
     expect(headings[1]!.getAttribute('aria-hidden')).toBe('true');
   });
 
+  it('measures block semantic text by content width, not element box width', () => {
+    const { container } = render(<MarqueeText text="A very long song title that overflows" as="h1" />);
+    const wrapper = container.firstElementChild as HTMLElement;
+
+    const inner = wrapper.querySelector('h1')!;
+    mockWidths(wrapper, 200, 200);
+    mockWidths(inner, 200, 500, 200, 500);
+    fireResize();
+
+    const track = wrapper.querySelector('[class*="track"]') as HTMLElement;
+    expect(track).not.toBeNull();
+    expect(track.style.getPropertyValue('--marquee-translate')).toBe('-528px');
+  });
+
   it('deactivates marquee when text stops overflowing', () => {
     const { container } = render(<MarqueeText text="Text" as="p" />);
     const wrapper = container.firstElementChild as HTMLElement;
@@ -137,6 +183,34 @@ describe('MarqueeText', () => {
     // Fixed cycle duration = 8s regardless of translate distance
     const dur = parseFloat(track.style.getPropertyValue('--marquee-duration'));
     expect(dur).toBe(8);
+  });
+
+  it('rounds sub-pixel text width in the translate distance', () => {
+    const { container } = render(<MarqueeText text="Long text here" gap={40} cycleDuration={8} />);
+    const wrapper = container.firstElementChild as HTMLElement;
+
+    const inner = wrapper.querySelector('span')!;
+    mockWidths(wrapper, 50, 50);
+    mockWidths(inner, 200.5, 200.5);
+    fireResize();
+
+    const track = container.querySelector('[class*="track"]') as HTMLElement;
+    expect(track.style.getPropertyValue('--marquee-translate')).toBe('-241px');
+    expect(track.style.getPropertyValue('--marquee-gap')).toBe('40.5px');
+  });
+
+  it('rounds synchronized translate distances consistently', () => {
+    const { container } = render(<MarqueeText text="Long text here" cycleDuration={8} syncDistance={240.7} />);
+    const wrapper = container.firstElementChild as HTMLElement;
+
+    const inner = wrapper.querySelector('span')!;
+    mockWidths(wrapper, 50, 50);
+    mockWidths(inner, 200, 200);
+    fireResize();
+
+    const track = container.querySelector('[class*="track"]') as HTMLElement;
+    expect(track.style.getPropertyValue('--marquee-translate')).toBe('-241px');
+    expect(track.style.getPropertyValue('--marquee-gap')).toBe('41px');
   });
 
   it('keeps marquee phase stable across parent rerenders', () => {

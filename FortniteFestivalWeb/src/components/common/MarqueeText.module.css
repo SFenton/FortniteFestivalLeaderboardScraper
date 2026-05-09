@@ -19,6 +19,8 @@
   display: inline-flex;
   white-space: nowrap;
   will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
   gap: var(--marquee-gap, 28px);
   animation: marqueeScroll var(--marquee-duration, 6s) linear infinite;
   animation-delay: var(--marquee-delay, 0s);
@@ -27,11 +29,11 @@
 @keyframes marqueeScroll {
   /* pause at start (~5 %) */
   0%, 5% {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
   /* pause at end (~5 %) */
   95%, 100% {
-    transform: translateX(var(--marquee-translate, -50%));
+    transform: translate3d(var(--marquee-translate, -50%), 0, 0);
   }
 }
 

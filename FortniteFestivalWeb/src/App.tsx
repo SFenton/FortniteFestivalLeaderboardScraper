@@ -116,6 +116,7 @@ import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearc
 import SearchModal from './components/search/SearchModal';
 import MobileNotificationsModal, { mockMobileNotifications, type MobileNotification } from './components/notifications/MobileNotificationsModal';
 import { getNotificationDestination } from './components/notifications/notificationDestination';
+import { useNotificationFreshnessState } from './components/notifications/notificationFreshnessState';
 import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
 import type { SearchTarget } from './types/search';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
@@ -144,6 +145,7 @@ import { writeSelectedProfile } from './state/selectedProfile';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
+const MOCK_NOTIFICATION_SOURCE_VERSION = 'mock-source-2026-05-09';
 
 function hasWindowValidationToken(token: string): boolean {
   if (typeof window === 'undefined') return false;
@@ -331,6 +333,7 @@ function AppShell() {
   const notificationFeedKey = useMemo(() => notificationFeedKeyForProfile(selectedProfile), [selectedProfile]);
   const notificationIds = useMemo(() => mockMobileNotifications.map(notification => notification.notificationGuid), []);
   const { unreadNotificationIds, unreadCount, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
+  const { newNotificationIds } = useNotificationFreshnessState(notificationFeedKey, notificationIds, MOCK_NOTIFICATION_SOURCE_VERSION);
   const { state: { songs } } = useFestival();
   const { settings } = useSettings();
 
@@ -871,8 +874,10 @@ function AppShell() {
       <MobileNotificationsModal
         visible={notificationsOpen}
         onClose={() => setNotificationsOpen(false)}
+        presentation={isMobile ? 'mobileModal' : 'desktopDrawer'}
         notifications={mockMobileNotifications}
         unreadNotificationIds={unreadNotificationIds}
+        newNotificationIds={newNotificationIds}
         onNotificationsSeen={markNotificationsSeen}
         onNotificationOpen={handleNotificationOpen}
       />
