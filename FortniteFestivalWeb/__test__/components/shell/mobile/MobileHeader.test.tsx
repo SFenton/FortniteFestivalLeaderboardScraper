@@ -68,7 +68,65 @@ describe('MobileHeader', () => {
     expect(onOpenNotifications).toHaveBeenCalledTimes(1);
   });
 
-  it('hides the notification badge at zero and caps counts at 9+', () => {
+  it('omits the notifications action when notifications are unavailable', () => {
+    renderWithRouter(
+      <MobileHeader
+        navTitle="Songs"
+        backFallback={null}
+        shouldAnimate={false}
+        locationKey="/songs"
+        songInstrument={null}
+        isSongsRoute={true}
+        onOpenSearch={() => {}}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Notifications' })).toBeNull();
+    expect(screen.queryByTestId('mobile-header-notifications-presence')).toBeNull();
+  });
+
+  it('keeps the notifications action mounted but inert while fading out', () => {
+    const { rerender } = renderWithRouter(
+      <MobileHeader
+        navTitle="Songs"
+        backFallback={null}
+        shouldAnimate={false}
+        locationKey="/songs"
+        songInstrument={null}
+        isSongsRoute={true}
+        onOpenSearch={() => {}}
+        onOpenNotifications={() => {}}
+        hasNotifications={true}
+        notificationCount={12}
+      />,
+    );
+
+    expect(screen.getByTestId('mobile-header-notifications-presence').getAttribute('data-visible')).toBe('true');
+    expect(screen.getByTestId('mobile-header-notifications').getAttribute('data-notification-state')).toBe('populated');
+    expect(within(screen.getByTestId('mobile-header-notifications')).getByText('9+')).toBeTruthy();
+
+    rerender(
+      <MemoryRouter initialEntries={['/songs']}>
+        <MobileHeader
+          navTitle="Songs"
+          backFallback={null}
+          shouldAnimate={false}
+          locationKey="/songs"
+          songInstrument={null}
+          isSongsRoute={true}
+          onOpenSearch={() => {}}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('mobile-header-notifications-presence').getAttribute('data-visible')).toBe('false');
+    expect(screen.getByTestId('mobile-header-notifications').getAttribute('tabindex')).toBe('-1');
+    expect(screen.getByTestId('mobile-header-notifications').getAttribute('data-notification-state')).toBe('populated');
+    expect(screen.getByTestId('mobile-header-notifications').querySelector('svg path')?.getAttribute('fill')).toBeNull();
+    expect(within(screen.getByTestId('mobile-header-notifications')).getByText('9+')).toBeTruthy();
+  });
+
+  it('uses the empty bell state at zero, full bell when the feed has notifications, and caps counts at 9+', () => {
     const { rerender } = renderWithRouter(
       <MobileHeader
         navTitle="Songs"
@@ -84,6 +142,7 @@ describe('MobileHeader', () => {
     );
 
     const notificationsButton = screen.getByRole('button', { name: 'Notifications' });
+    expect(notificationsButton.getAttribute('data-notification-state')).toBe('empty');
     expect(within(notificationsButton).queryByText('0')).toBeNull();
 
     rerender(
@@ -97,12 +156,37 @@ describe('MobileHeader', () => {
           isSongsRoute={true}
           onOpenSearch={() => {}}
           onOpenNotifications={() => {}}
+          hasNotifications={true}
+          notificationCount={0}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Notifications' }).getAttribute('data-notification-state')).toBe('populated');
+    expect(within(screen.getByRole('button', { name: 'Notifications' })).queryByText('0')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Notifications' }).querySelector('svg path')?.getAttribute('fill')).toBeNull();
+
+    rerender(
+      <MemoryRouter initialEntries={['/songs']}>
+        <MobileHeader
+          navTitle="Songs"
+          backFallback={null}
+          shouldAnimate={false}
+          locationKey="/songs"
+          songInstrument={null}
+          isSongsRoute={true}
+          onOpenSearch={() => {}}
+          onOpenNotifications={() => {}}
+          hasNotifications={true}
           notificationCount={12}
         />
       </MemoryRouter>,
     );
 
-    expect(within(screen.getByRole('button', { name: 'Notifications' })).getByText('9+')).toBeTruthy();
+    const populatedNotificationsButton = screen.getByRole('button', { name: 'Notifications' });
+    expect(populatedNotificationsButton.getAttribute('data-notification-state')).toBe('populated');
+    expect(populatedNotificationsButton.querySelector('svg path')?.getAttribute('fill')).toBeNull();
+    expect(within(populatedNotificationsButton).getByText('9+')).toBeTruthy();
   });
 
   it('renders SongsPage instrument icon before profile and search actions', () => {

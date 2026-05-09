@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { IoChevronForward } from 'react-icons/io5';
+import { IoChevronForward, IoNotificationsOffOutline } from 'react-icons/io5';
 import ModalShell from '../modals/components/ModalShell';
 import {
   Colors, Font, Weight, Gap, Radius, Border, LineHeight,
@@ -254,6 +254,7 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
 ];
 
 export const mockMobileNotifications = MOCK_NOTIFICATIONS;
+export const mockEmptyMobileNotifications: MobileNotification[] = [];
 
 type MobileNotificationsModalProps = {
   visible: boolean;
@@ -262,6 +263,7 @@ type MobileNotificationsModalProps = {
   notifications?: readonly MobileNotification[];
   unreadNotificationIds?: ReadonlySet<string>;
   newNotificationIds?: ReadonlySet<string>;
+  notificationsGenerated?: boolean;
   onNotificationsSeen?: (notificationGuids: string[]) => void;
   onNotificationOpen?: (notification: MobileNotification) => void;
 };
@@ -273,6 +275,7 @@ export default function MobileNotificationsModal({
   notifications = MOCK_NOTIFICATIONS,
   unreadNotificationIds = EMPTY_UNREAD_IDS,
   newNotificationIds = EMPTY_NEW_IDS,
+  notificationsGenerated = true,
   onNotificationsSeen = NOOP_SEEN_HANDLER,
   onNotificationOpen,
 }: MobileNotificationsModalProps) {
@@ -285,6 +288,7 @@ export default function MobileNotificationsModal({
   const wasVisibleRef = useRef(false);
   const sortedNotifications = useMemo(() => sortNotificationsNewestFirst(notifications), [notifications]);
   const notificationSections = useMemo(() => partitionNotificationSections(sortedNotifications, newNotificationIds), [newNotificationIds, sortedNotifications]);
+  const hasNotifications = sortedNotifications.length > 0;
   const [sessionUnreadIds, setSessionUnreadIds] = useState(() => new Set(unreadNotificationIds));
   const [isReadyForVisibility, setIsReadyForVisibility] = useState(false);
   const isDesktopDrawer = presentation === 'desktopDrawer';
@@ -371,7 +375,7 @@ export default function MobileNotificationsModal({
       <NotificationMediaCycleStyles />
       <div style={styles.body} data-testid="mobile-notifications-modal" data-notification-presentation={presentation}>
         <div ref={setListRef} style={styles.list} data-testid="notification-list" data-scroll-fade="true" data-scroll-fade-top-padding={LIST_TOP_PADDING} data-safe-area-bottom="true">
-          {notificationSections.map((section) => (
+          {!hasNotifications ? <NotificationEmptyState styles={styles} t={t} notificationsGenerated={notificationsGenerated} /> : notificationSections.map((section) => (
             <section key={section.key} style={styles.section} data-testid="notification-section" data-notification-section={section.key}>
               <div style={styles.sectionHeading} data-testid="notification-section-heading">{t(section.labelKey)}</div>
               {section.notifications.map((notification) => (
@@ -391,6 +395,16 @@ export default function MobileNotificationsModal({
         </div>
       </div>
     </ModalShell>
+  );
+}
+
+function NotificationEmptyState({ styles, t, notificationsGenerated }: { styles: ReturnType<typeof useStyles>; t: ReturnType<typeof useTranslation>['t']; notificationsGenerated: boolean }) {
+  return (
+    <div style={styles.emptyState} data-testid="notification-empty-state">
+      <IoNotificationsOffOutline size={48} style={styles.emptyIcon} data-testid="notification-empty-icon" aria-hidden="true" />
+      <div style={styles.emptyTitle}>{t('notifications.empty.title')}</div>
+      <div style={styles.emptyBody}>{t(notificationsGenerated ? 'notifications.empty.generatedBody' : 'notifications.empty.notGeneratedBody')}</div>
+    </div>
   );
 }
 
@@ -678,6 +692,35 @@ function useStyles() {
       letterSpacing: 0,
       textTransform: TextTransform.uppercase,
       padding: padding(0, Gap.xs),
+    } as CSSProperties,
+    emptyState: {
+      ...flexColumn,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      gap: Gap.sm,
+      flex: 1,
+      minHeight: 240,
+      padding: padding(Gap.section, Gap.xl),
+      textAlign: 'center',
+      color: BRIGHT_TEXT,
+    } as CSSProperties,
+    emptyTitle: {
+      color: BRIGHT_TEXT,
+      fontSize: Font.lg,
+      fontWeight: Weight.bold,
+      lineHeight: LineHeight.tight,
+      letterSpacing: 0,
+    } as CSSProperties,
+    emptyIcon: {
+      color: 'rgba(255, 255, 255, 0.72)',
+      flexShrink: 0,
+    } as CSSProperties,
+    emptyBody: {
+      color: 'rgba(255, 255, 255, 0.68)',
+      fontSize: Font.sm,
+      lineHeight: LineHeight.snug,
+      maxWidth: 240,
+      letterSpacing: 0,
     } as CSSProperties,
     row: {
       ...flexRow,

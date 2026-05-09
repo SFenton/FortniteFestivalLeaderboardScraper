@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import MobileNotificationsModal, { mockMobileNotifications, sortNotificationsNewestFirst, type MobileNotification } from '../../../src/components/notifications/MobileNotificationsModal';
+import MobileNotificationsModal, { mockEmptyMobileNotifications, mockMobileNotifications, sortNotificationsNewestFirst, type MobileNotification } from '../../../src/components/notifications/MobileNotificationsModal';
 
 const mockIsMobile = vi.fn(() => true);
 const BRIGHT_WHITE = 'rgb(255, 255, 255)';
@@ -49,6 +49,26 @@ function flushAnimationFrames(callbacks: FrameRequestCallback[]) {
 }
 
 describe('MobileNotificationsModal', () => {
+  it('renders a compact empty state without notification sections', () => {
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockEmptyMobileNotifications} />);
+
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
+    expect(screen.getByTestId('notification-empty-state')).toBeTruthy();
+    expect(screen.getByTestId('notification-empty-icon')).toBeTruthy();
+    expect(screen.getByText('No notifications available')).toBeTruthy();
+    expect(screen.getByText('Notifications will appear here when new high scores are set or global ranks improve. Set new high scores and compete with friends to see them!')).toBeTruthy();
+    expect(screen.queryByTestId('mock-notification-row')).toBeNull();
+    expect(screen.queryByTestId('notification-section')).toBeNull();
+    expect(screen.queryByTestId('notification-section-heading')).toBeNull();
+  });
+
+  it('renders the not-generated empty state copy when notifications have not been generated', () => {
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockEmptyMobileNotifications} notificationsGenerated={false} />);
+
+    expect(screen.getByText('No notifications available')).toBeTruthy();
+    expect(screen.getByText('Notifications may appear here after the next leaderboard update. Set new high scores and compete with friends to see them!')).toBeTruthy();
+  });
+
   it('renders hardcoded coalesced notification rows', () => {
     render(<MobileNotificationsModal visible={true} onClose={() => {}} onNotificationOpen={() => {}} />);
 

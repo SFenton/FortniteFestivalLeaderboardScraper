@@ -35,6 +35,13 @@ describe('DesktopNav', () => {
     expect(screen.queryByText('Search')).toBeNull();
   });
 
+  it('omits notifications when no notification opener is provided', () => {
+    renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={() => {}} onProfileClick={() => {}} onOpenSearch={() => {}} />);
+
+    expect(screen.queryByTestId('desktop-header-notifications')).toBeNull();
+    expect(screen.queryByTestId('desktop-header-notifications-presence')).toBeNull();
+  });
+
   it('calls onOpenSidebar when hamburger clicked', () => {
     const onOpen = vi.fn();
     renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={onOpen} onProfileClick={vi.fn()} />);
@@ -76,6 +83,17 @@ describe('DesktopNav', () => {
       </MemoryRouter>,
     );
 
+    expect(screen.getByTestId('desktop-header-notifications').getAttribute('data-notification-state')).toBe('empty');
+    expect(within(screen.getByTestId('desktop-header-notifications')).queryByText('0')).toBeNull();
+
+    rerender(
+      <MemoryRouter>
+        <DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} onOpenNotifications={onOpenNotifications} hasNotifications={true} notificationCount={0} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('desktop-header-notifications').getAttribute('data-notification-state')).toBe('populated');
+    expect(screen.getByTestId('desktop-header-notifications').querySelector('svg path')?.getAttribute('fill')).toBeNull();
     expect(within(screen.getByTestId('desktop-header-notifications')).queryByText('0')).toBeNull();
   });
 

@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { NOTIFICATION_MOCK_FEED_KEY } from './notificationSeenState';
+import {
+  normalizeNotificationFeedKey,
+  pruneStaleNotificationFeeds,
+  touchNotificationFeed,
+  type NotificationStorage,
+} from './notificationSeenState';
 
 export const NOTIFICATION_FRESHNESS_STORAGE_KEY = 'fst:notificationFreshness:v1';
 
-type NotificationStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 type NotificationFreshnessFeedState = {
   knownNotificationIds: string[];
   newNotificationIds: string[];
@@ -47,7 +51,17 @@ function normalizeSourceVersion(value: unknown): string | null {
 }
 
 function normalizeFeedKey(feedKey: string): string {
-  return normalizeNotificationId(feedKey) ?? NOTIFICATION_MOCK_FEED_KEY;
+  return normalizeNotificationFeedKey(feedKey);
+}
+
+function deleteStaleFeedsFromStore(store: NotificationFreshnessStore, staleKeys: ReadonlySet<string>): boolean {
+  let changed = false;
+  for (const staleKey of staleKeys) {
+    if (!Object.prototype.hasOwnProperty.call(store, staleKey)) continue;
+    delete store[staleKey];
+    changed = true;
+  }
+  return changed;
 }
 
 function emptyFeedState(): NotificationFreshnessFeedState {
@@ -121,6 +135,9 @@ export function updateNotificationFreshnessState(
   const currentIdSet = new Set(currentIds);
   const nextSourceVersion = normalizeSourceVersion(sourceVersion);
   const store = readStore(storage);
+  touchNotificationFeed(normalizedFeedKey, storage);
+  const staleKeys = pruneStaleNotificationFeeds(normalizedFeedKey, storage);
+  deleteStaleFeedsFromStore(store, staleKeys);
   const previous = store[normalizedFeedKey] ?? emptyFeedState();
   const previousKnownIds = new Set(previous.knownNotificationIds);
   const unknownIds = currentIds.filter(id => !previousKnownIds.has(id));
@@ -154,8 +171,12 @@ export function readNotificationFreshnessState(
   feedKey: string,
   storage: NotificationStorage | null = getStorage(),
 ): NotificationFreshnessSnapshot {
+  const normalizedFeedKey = normalizeFeedKey(feedKey);
   const store = readStore(storage);
-  return toSnapshot(store[normalizeFeedKey(feedKey)] ?? emptyFeedState());
+  touchNotificationFeed(normalizedFeedKey, storage);
+  const staleKeys = pruneStaleNotificationFeeds(normalizedFeedKey, storage);
+  if (deleteStaleFeedsFromStore(store, staleKeys)) writeStore(storage, store);
+  return toSnapshot(store[normalizedFeedKey] ?? emptyFeedState());
 }
 
 export function useNotificationFreshnessState(

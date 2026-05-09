@@ -114,10 +114,11 @@ import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import SearchModal from './components/search/SearchModal';
-import MobileNotificationsModal, { mockMobileNotifications, type MobileNotification } from './components/notifications/MobileNotificationsModal';
+import MobileNotificationsModal, { type MobileNotification } from './components/notifications/MobileNotificationsModal';
 import { getNotificationDestination } from './components/notifications/notificationDestination';
 import { useNotificationFreshnessState } from './components/notifications/notificationFreshnessState';
-import { notificationFeedKeyForProfile, useNotificationSeenState } from './components/notifications/notificationSeenState';
+import { useNotificationSeenState } from './components/notifications/notificationSeenState';
+import { NotificationFeedWebSocketBridge, useProfileNotificationsFeed } from './components/notifications/useProfileNotificationsFeed';
 import type { SearchTarget } from './types/search';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
 import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
@@ -145,6 +146,7 @@ import { writeSelectedProfile } from './state/selectedProfile';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
+const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
 const MOCK_NOTIFICATION_SOURCE_VERSION = 'mock-source-2026-05-09';
 
 function hasWindowValidationToken(token: string): boolean {
@@ -330,11 +332,20 @@ function WideDesktopLayout({
 function AppShell() {
   const { t } = useTranslation();
   const { profile: selectedProfile, player, setPlayer, clearPlayer } = useTrackedPlayer();
-  const notificationFeedKey = useMemo(() => notificationFeedKeyForProfile(selectedProfile), [selectedProfile]);
-  const notificationIds = useMemo(() => mockMobileNotifications.map(notification => notification.notificationGuid), []);
-  const { unreadNotificationIds, unreadCount, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
-  const { newNotificationIds } = useNotificationFreshnessState(notificationFeedKey, notificationIds, MOCK_NOTIFICATION_SOURCE_VERSION);
   const { state: { songs } } = useFestival();
+  const useEmptyNotificationMock = hasWindowValidationToken(EMPTY_NOTIFICATIONS_VALIDATION_TOKEN);
+  const useNotificationMockData = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
+  const notificationFeed = useProfileNotificationsFeed(selectedProfile, songs, {
+    useMockData: useNotificationMockData,
+    useEmptyMock: useEmptyNotificationMock,
+    mockSourceVersion: MOCK_NOTIFICATION_SOURCE_VERSION,
+  });
+  const notificationIds = notificationFeed.notificationIds;
+  const hasNotifications = notificationFeed.notifications.length > 0;
+  const notificationFeedReadyForHeader = useNotificationMockData || notificationFeed.status !== 'loading';
+  const notificationFeedKey = notificationFeed.feedKey;
+  const { unreadNotificationIds, unreadCount, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
+  const { newNotificationIds } = useNotificationFreshnessState(notificationFeedKey, notificationIds, notificationFeed.sourceVersion);
   const { settings } = useSettings();
 
   // Proximity glow for frosted cards — document-level for full coverage
@@ -392,13 +403,22 @@ function AppShell() {
     setSearchTargetOverride(null);
   }, []);
 
+  const shouldAutoOpenNotifications = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
+  const canOpenNotifications = selectedProfile != null && notificationFeedReadyForHeader;
+  const handleOpenNotifications = useCallback(() => setNotificationsOpen(true), []);
+
   useEffect(() => {
     if (validationOpenedNotificationsRef.current) return;
     if (import.meta.env.MODE !== 'e2e') return;
-    if (!hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN)) return;
+    if (!shouldAutoOpenNotifications) return;
     validationOpenedNotificationsRef.current = true;
     setNotificationsOpen(true);
-  }, []);
+  }, [shouldAutoOpenNotifications]);
+
+  useEffect(() => {
+    if (selectedProfile || useNotificationMockData) return;
+    setNotificationsOpen(false);
+  }, [selectedProfile, useNotificationMockData]);
 
   const handleNotificationOpen = useCallback((notification: MobileNotification) => {
     const destination = getNotificationDestination(notification);
@@ -648,7 +668,8 @@ function AppShell() {
             profileLabel={mobileHeaderProfileLabel}
             onProfileAction={handleMobileHeaderProfileAction}
             onOpenSearch={() => openSearch()}
-            onOpenNotifications={() => setNotificationsOpen(true)}
+            onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
+            hasNotifications={hasNotifications}
             notificationCount={unreadCount}
           />
         ) : (
@@ -659,7 +680,8 @@ function AppShell() {
             onOpenSidebar={() => setSidebarOpen((o) => !o)}
             onProfileClick={handleProfileClick}
             onOpenSearch={() => openSearch()}
-            onOpenNotifications={() => setNotificationsOpen(true)}
+            onOpenNotifications={canOpenNotifications ? handleOpenNotifications : undefined}
+            hasNotifications={hasNotifications}
             notificationCount={unreadCount}
             isWideDesktop={isWideDesktop}
           />
@@ -875,12 +897,14 @@ function AppShell() {
         visible={notificationsOpen}
         onClose={() => setNotificationsOpen(false)}
         presentation={isMobile ? 'mobileModal' : 'desktopDrawer'}
-        notifications={mockMobileNotifications}
+        notifications={notificationFeed.notifications}
         unreadNotificationIds={unreadNotificationIds}
         newNotificationIds={newNotificationIds}
+        notificationsGenerated={notificationFeed.generationStatus === 'generated'}
         onNotificationsSeen={markNotificationsSeen}
         onNotificationOpen={handleNotificationOpen}
       />
+      {selectedProfile && !useNotificationMockData && <NotificationFeedWebSocketBridge profile={selectedProfile} />}
       <BandInstrumentFilterModal
         visible={bandFilterModalOpen && selectedProfile?.type === 'band'}
         selectedBand={selectedProfile?.type === 'band' ? selectedProfile : null}

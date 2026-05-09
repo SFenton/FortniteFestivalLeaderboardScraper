@@ -4,7 +4,7 @@
  * bottom nav, and route-specific floating action buttons.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor, fireEvent, screen, within } from '@testing-library/react';
+import { act, render, waitFor, fireEvent, screen, within } from '@testing-library/react';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -18,6 +18,20 @@ const mockApi = vi.hoisted(() => {
       scores: [{ songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 5, percentile: 80, accuracy: 90, stars: 4, season: 5 }],
     }),
     getSyncStatus: fn().mockResolvedValue({ accountId: 'p1', isTracked: false, backfill: null, historyRecon: null }),
+    getPlayerNotifications: fn().mockResolvedValue({
+      generatedAt: '2026-05-09T16:00:00Z',
+      expiresAfterHours: 72,
+      sourceRunId: 1,
+      sourceCompletedAt: '2026-05-09T16:00:00Z',
+      items: [],
+    }),
+    getBandNotificationsById: fn().mockResolvedValue({
+      generatedAt: '2026-05-09T16:00:00Z',
+      expiresAfterHours: 72,
+      sourceRunId: 1,
+      sourceCompletedAt: '2026-05-09T16:00:00Z',
+      items: [],
+    }),
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'p1', count: 0, history: [] }),
     getLeaderboard: fn().mockResolvedValue({ songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 's1', instruments: [] }),
@@ -200,6 +214,25 @@ beforeAll(() => {
   stubResizeObserver();
   stubElementDimensions();
   stubIntersectionObserver();
+  const originalCreateRange = document.createRange.bind(document);
+  document.createRange = () => {
+    const range = originalCreateRange();
+    Object.assign(range, {
+      getBoundingClientRect: () => ({
+        top: 0,
+        left: 0,
+        bottom: 16,
+        right: 120,
+        width: 120,
+        height: 16,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      }),
+      getClientRects: () => [] as unknown as DOMRectList,
+    });
+    return range;
+  };
   if (!HTMLElement.prototype.animate) {
     HTMLElement.prototype.animate = vi.fn().mockReturnValue({
       cancel: vi.fn(), pause: vi.fn(), play: vi.fn(), finish: vi.fn(),
@@ -336,6 +369,103 @@ describe('App — mobile FAB branches', () => {
     expect(container.innerHTML).toBeTruthy();
   });
 
+  it('hides notifications in the mobile header until a profile is selected', async () => {
+    setMobile();
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+
+    expect(screen.queryByRole('button', { name: 'Notifications' })).toBeNull();
+  });
+
+  it('shows notifications in the mobile header when a player profile is selected', async () => {
+    setMobile();
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', accountId: 'p1', displayName: 'TrackedP' }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Notifications' }).getAttribute('data-notification-state')).toBe('empty');
+    });
+    expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('p1', 50, expect.any(Object));
+  });
+
+  it('waits for selected player notifications before animating the mobile header bell in', async () => {
+    setMobile();
+    let resolveNotifications!: (value: unknown) => void;
+    const pendingNotifications = new Promise((resolve) => {
+      resolveNotifications = resolve;
+    });
+    mockApi.getPlayerNotifications.mockReturnValueOnce(pendingNotifications);
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', accountId: 'p-pending', displayName: 'TrackedP' }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p-pending', displayName: 'TrackedP' }));
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    expect(screen.queryByRole('button', { name: 'Notifications' })).toBeNull();
+    expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('p-pending', 50, expect.any(Object));
+
+    await act(async () => {
+      resolveNotifications({
+        generatedAt: '2026-05-09T16:00:00Z',
+        expiresAfterHours: 72,
+        sourceRunId: 3,
+        sourceCompletedAt: '2026-05-09T16:00:00Z',
+        items: [{
+          eventId: 88,
+          notificationGuid: 'test-notification-guid-88',
+          eventKind: 'player_score_pb',
+          songId: 's1',
+          instrument: 'Solo_Guitar',
+          metric: 'score',
+          oldNumeric: 100000,
+          newNumeric: 120000,
+          detectedAt: '2026-05-09T16:00:00Z',
+          expiresAt: '2026-05-12T16:00:00Z',
+        }],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Notifications' }).getAttribute('data-notification-state')).toBe('populated');
+    });
+    expect(screen.getByRole('button', { name: 'Notifications' }).querySelector('svg path')?.getAttribute('fill')).toBeNull();
+  });
+
+  it('uses the populated mobile header bell when a selected player has notifications', async () => {
+    setMobile();
+    mockApi.getPlayerNotifications.mockResolvedValueOnce({
+      generatedAt: '2026-05-09T16:00:00Z',
+      expiresAfterHours: 72,
+      sourceRunId: 2,
+      sourceCompletedAt: '2026-05-09T16:00:00Z',
+      items: [{
+        eventId: 77,
+        notificationGuid: 'test-notification-guid-77',
+        eventKind: 'player_score_pb',
+        songId: 's1',
+        instrument: 'Solo_Guitar',
+        metric: 'score',
+        oldNumeric: 100000,
+        newNumeric: 110000,
+        detectedAt: '2026-05-09T16:00:00Z',
+        expiresAt: '2026-05-12T16:00:00Z',
+      }],
+    });
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', accountId: 'p-populated', displayName: 'TrackedP' }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p-populated', displayName: 'TrackedP' }));
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Notifications' }).getAttribute('data-notification-state')).toBe('populated');
+    });
+    expect(within(screen.getByRole('button', { name: 'Notifications' })).queryByText('0')).toBeNull();
+    expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('p-populated', 50, expect.any(Object));
+  });
+
   it('opens unified Search on Players from the unselected mobile header profile action', async () => {
     setMobile();
     render(<App />);
@@ -446,12 +576,10 @@ describe('App — mobile FAB branches', () => {
     setDesktop();
     const { container } = render(<App />);
     await waitFor(() => {
-      const profileBtn = container.querySelector('[aria-label="Profile"]');
-      expect(profileBtn).toBeTruthy();
+      expect(screen.getByTestId('desktop-header-profile')).toBeDefined();
     });
     // Click profile button — should open player modal
-    const profileBtn = container.querySelector('[aria-label="Profile"]') as HTMLElement;
-    if (profileBtn) fireEvent.click(profileBtn);
+    fireEvent.click(screen.getByTestId('desktop-header-profile'));
     // Modal should appear or something should change
     expect(container.innerHTML.length).toBeGreaterThan(200);
   });
@@ -461,11 +589,9 @@ describe('App — mobile FAB branches', () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
     const { container } = render(<App />);
     await waitFor(() => {
-      const profileBtn = container.querySelector('[aria-label="Profile"]');
-      expect(profileBtn).toBeTruthy();
+      expect(screen.getByTestId('desktop-header-profile')).toBeDefined();
     });
-    const profileBtn = container.querySelector('[aria-label="Profile"]') as HTMLElement;
-    if (profileBtn) fireEvent.click(profileBtn);
+    fireEvent.click(screen.getByTestId('desktop-header-profile'));
     expect(container.innerHTML.length).toBeGreaterThan(200);
   });
 

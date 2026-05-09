@@ -30,6 +30,8 @@ export interface MobileHeaderProps {
   onOpenSearch?: () => void;
   /** Callback to open the notifications modal. */
   onOpenNotifications?: () => void;
+  /** Whether the selected profile/band has any notifications in its feed. */
+  hasNotifications?: boolean;
   /** Number of active notifications for the mobile bell badge. */
   notificationCount?: number;
   /** Selected profile state rendered immediately before Search. */
@@ -50,6 +52,7 @@ export default function MobileHeader({
   onOpenSidebar,
   onOpenSearch,
   onOpenNotifications,
+  hasNotifications,
   notificationCount = 0,
   profileType = 'none',
   profileLabel,
@@ -68,6 +71,7 @@ export default function MobileHeader({
     onProfileAction={onProfileAction}
     onOpenSearch={onOpenSearch}
     onOpenNotifications={onOpenNotifications}
+    hasNotifications={hasNotifications}
     notificationCount={notificationCount}
   />;
 

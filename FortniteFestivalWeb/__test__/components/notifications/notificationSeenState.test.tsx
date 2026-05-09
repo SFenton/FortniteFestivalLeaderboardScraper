@@ -1,6 +1,8 @@
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  NOTIFICATION_FEED_META_STORAGE_KEY,
+  NOTIFICATION_FEED_RETENTION_MS,
   NOTIFICATION_MOCK_FEED_KEY,
   NOTIFICATION_SEEN_STORAGE_KEY,
   addSeenNotificationIds,
@@ -8,7 +10,9 @@ import {
   deriveUnreadNotificationIds,
   notificationFeedKeyForProfile,
   pruneSeenNotificationIds,
+  readNotificationFeedMetadata,
   readSeenNotificationIds,
+  touchNotificationFeed,
   useNotificationSeenState,
   writeSeenNotificationIds,
 } from '../../../src/components/notifications/notificationSeenState';
@@ -23,7 +27,12 @@ function storedSeenState() {
 
 describe('notificationSeenState', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('persists seen IDs per feed and prunes IDs that are no longer live', () => {
@@ -79,6 +88,23 @@ describe('notificationSeenState', () => {
     expect(sortedSetValues(readSeenNotificationIds('player:p1', null))).toEqual([]);
     expect(sortedSetValues(writeSeenNotificationIds('player:p1', ['alpha'], null))).toEqual(['alpha']);
     expect(sortedSetValues(pruneSeenNotificationIds('player:p1', ['alpha'], null))).toEqual([]);
+  });
+
+  it('touches active feeds and prunes abandoned feed state after retention', () => {
+    const now = new Date('2026-05-09T16:00:00Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    writeSeenNotificationIds('player:old', ['old-seen']);
+    writeSeenNotificationIds('player:current', ['current-seen']);
+    touchNotificationFeed('player:old', localStorage, now.getTime() - NOTIFICATION_FEED_RETENTION_MS - 1);
+
+    writeSeenNotificationIds('player:current', ['current-seen', 'next-seen']);
+
+    expect(storedSeenState()).toEqual({ 'player:current': ['current-seen', 'next-seen'] });
+    expect(readNotificationFeedMetadata('player:current')?.lastAccessedAt).toBe(now.getTime());
+    const metadata = JSON.parse(localStorage.getItem(NOTIFICATION_FEED_META_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
+    expect(metadata['player:old']).toBeUndefined();
   });
 
   it('builds feed keys from the selected profile', () => {

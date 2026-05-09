@@ -59,6 +59,12 @@
       "new": "New",
       "older": "Older"
     },
+    "empty": {
+      "title": "No notifications available",
+      "body": "Notifications will appear here when new high scores are set or global ranks improve. Set new high scores and compete with friends to see them!",
+      "generatedBody": "Notifications will appear here when new high scores are set or global ranks improve. Set new high scores and compete with friends to see them!",
+      "notGeneratedBody": "Notifications may appear here after the next leaderboard update. Set new high scores and compete with friends to see them!"
+    },
     "values": {
       "notification": "Notification",
       "song": "this song",

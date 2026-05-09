@@ -194,6 +194,60 @@ export type WsNotificationMessage =
   | { type: 'history_recon_complete' }
   | { type: 'rivals_complete' };
 
+export type ImprovementNotificationEventPayload = {
+  eventKind?: string | null;
+  metric?: string | null;
+  oldNumeric?: number | null;
+  newNumeric?: number | null;
+  oldRank?: number | null;
+  newRank?: number | null;
+  oldLabel?: string | null;
+  newLabel?: string | null;
+  comboLabel?: string | null;
+  scopeLabel?: string | null;
+  rankingScope?: string | null;
+  scopeComboId?: string | null;
+  comboId?: string | null;
+};
+
+export type ImprovementNotificationPayload = Record<string, unknown> & {
+  coalescedEventCount?: number | null;
+  coalescedEventKinds?: string[] | null;
+  coalescedEvents?: ImprovementNotificationEventPayload[] | null;
+};
+
+export type ImprovementNotificationDto = {
+  eventId: number;
+  notificationGuid: string;
+  runId?: number | null;
+  accountId?: string | null;
+  bandSubjectId?: number | null;
+  bandType?: BandType | null;
+  teamKey?: string | null;
+  eventKind: string;
+  songId?: string | null;
+  instrument?: ServerInstrumentKey | null;
+  rankingScope?: string | null;
+  comboId?: string | null;
+  metric?: string | null;
+  oldNumeric?: number | null;
+  newNumeric?: number | null;
+  oldRank?: number | null;
+  newRank?: number | null;
+  payload?: ImprovementNotificationPayload | null;
+  detectedAt: string;
+  expiresAt: string;
+};
+
+export type ImprovementNotificationsEnvelope = {
+  generatedAt: string;
+  expiresAfterHours: number;
+  sourceRunId?: number | null;
+  sourceCompletedAt?: string | null;
+  notificationsGenerated?: boolean | null;
+  items: ImprovementNotificationDto[];
+};
+
 export type LeaderboardEntry = {
   accountId: string;
   displayName?: string;

@@ -38,6 +38,7 @@ import type {
   BandSongRowsResponse,
   BandSongsResponse,
   BandType,
+  ImprovementNotificationsEnvelope,
   RankingMetric,
   LeaderboardNeighborhoodResponse,
   CompositeNeighborhoodResponse,
@@ -86,8 +87,11 @@ function withSelectedProfileHeaders(headers: Record<string, string> = {}): Recor
   }
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { headers: withSelectedProfileHeaders() });
+async function get<T>(path: string, options?: ApiRequestOptions): Promise<T> {
+  const init: RequestInit = { headers: withSelectedProfileHeaders() };
+  if (options?.signal) init.signal = options.signal;
+
+  const res = await fetch(`${BASE}${path}`, init);
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${res.statusText}`);
   }
@@ -226,6 +230,12 @@ export const api = {
 
   getSyncStatus: (accountId: string) =>
     get<SyncStatusResponse>(`/api/player/${encodeURIComponent(accountId)}/sync-status`),
+
+  getPlayerNotifications: (accountId: string, limit = 50, options?: ApiRequestOptions) =>
+    get<ImprovementNotificationsEnvelope>(`/api/player/${encodeURIComponent(accountId)}/notifications?limit=${limit}`, options),
+
+  getBandNotificationsById: (bandId: string, limit = 50, options?: ApiRequestOptions) =>
+    get<ImprovementNotificationsEnvelope>(`/api/bands/${encodeURIComponent(bandId)}/notifications?limit=${limit}`, options),
 
   getServiceInfo: () =>
     get<ServiceInfoResponse>('/api/service-info'),

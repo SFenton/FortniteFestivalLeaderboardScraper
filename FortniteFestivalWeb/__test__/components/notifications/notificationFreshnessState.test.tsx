@@ -1,11 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   NOTIFICATION_FRESHNESS_STORAGE_KEY,
   readNotificationFreshnessState,
   updateNotificationFreshnessState,
   useNotificationFreshnessState,
 } from '../../../src/components/notifications/notificationFreshnessState';
+import { NOTIFICATION_FEED_RETENTION_MS, touchNotificationFeed } from '../../../src/components/notifications/notificationSeenState';
 
 function sortedSetValues(values: ReadonlySet<string>) {
   return Array.from(values).sort();
@@ -17,7 +18,12 @@ function storedFreshnessState() {
 
 describe('notificationFreshnessState', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('marks first-seen notifications as the current New cohort', () => {
@@ -78,6 +84,26 @@ describe('notificationFreshnessState', () => {
 
     expect(sortedSetValues(snapshot.newNotificationIds)).toEqual(['alpha']);
     expect(sortedSetValues(readNotificationFreshnessState('player:p1', null).newNotificationIds)).toEqual([]);
+  });
+
+  it('prunes abandoned feed cohorts after retention', () => {
+    const now = new Date('2026-05-09T16:00:00Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    updateNotificationFreshnessState('player:old', ['old'], 9);
+    updateNotificationFreshnessState('player:current', ['current'], 10);
+    touchNotificationFeed('player:old', localStorage, now.getTime() - NOTIFICATION_FEED_RETENTION_MS - 1);
+
+    updateNotificationFreshnessState('player:current', ['current', 'next'], 10);
+
+    expect(storedFreshnessState()).toEqual({
+      'player:current': {
+        knownNotificationIds: ['current', 'next'],
+        newNotificationIds: ['next'],
+        sourceVersion: '10',
+      },
+    });
   });
 
   it('updates cohort state from the hook when notifications and source change', () => {

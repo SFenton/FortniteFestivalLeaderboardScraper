@@ -12,6 +12,7 @@ export interface DesktopNavProps {
   onProfileClick: () => void;
   onOpenSearch?: () => void;
   onOpenNotifications?: () => void;
+  hasNotifications?: boolean;
   notificationCount?: number;
   isWideDesktop?: boolean;
 }
@@ -24,6 +25,7 @@ export default function DesktopNav({
   onProfileClick,
   onOpenSearch,
   onOpenNotifications,
+  hasNotifications,
   notificationCount,
   isWideDesktop,
 }: DesktopNavProps) {
@@ -35,6 +37,7 @@ export default function DesktopNav({
     onProfileAction={onProfileClick}
     onOpenSearch={onOpenSearch}
     onOpenNotifications={onOpenNotifications}
+    hasNotifications={hasNotifications}
     notificationCount={notificationCount}
   />;
 
