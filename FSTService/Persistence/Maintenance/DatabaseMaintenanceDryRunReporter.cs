@@ -8,6 +8,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
 {
     private const long LegacyStagingCleanupMinIndexBytes = 1 * 1024 * 1024;
     private const long SnapshotMaintenanceAdvisoryLockKey = 2026050201;
+    private const long RetentionIndexMaintenanceAdvisoryLockKey = 2026050801;
     private const string SnapshotParentTable = "leaderboard_entries_snapshot";
 
     private static readonly IReadOnlyDictionary<string, string> SnapshotPartitionInstruments = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -50,6 +51,34 @@ public sealed class DatabaseMaintenanceDryRunReporter
         "ix_be_combo",
         "ix_bms_account",
         "ix_bm_song_type",
+    ];
+
+    private static readonly RetentionHelperIndexDefinition[] RetentionHelperIndexDefinitions =
+    [
+        new(
+            "ix_crh_retention_cutoff_account",
+            "composite_rank_history",
+            ["snapshot_date", "account_id"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_crh_retention_cutoff_account\" ON public.\"composite_rank_history\" (\"snapshot_date\", \"account_id\")",
+            "supports bounded composite_rank_history retention batches ordered by cutoff date and account"),
+        new(
+            "ix_btrhp_retention_cutoff_scope_team",
+            "band_team_rank_history_points",
+            ["band_type", "snapshot_date", "ranking_scope", "combo_id", "team_key"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrhp_retention_cutoff_scope_team\" ON public.\"band_team_rank_history_points\" (\"band_type\", \"snapshot_date\", \"ranking_scope\", \"combo_id\", \"team_key\")",
+            "supports bounded narrow band history point retention batches by band and cutoff date"),
+        new(
+            "ix_btrh_retention_cutoff_scope_team",
+            "band_team_rank_history",
+            ["band_type", "snapshot_date", "ranking_scope", "combo_id", "team_key"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrh_retention_cutoff_scope_team\" ON public.\"band_team_rank_history\" (\"band_type\", \"snapshot_date\", \"ranking_scope\", \"combo_id\", \"team_key\")",
+            "supports bounded wide band history retention batches by band and cutoff date"),
+        new(
+            "ix_btrsh_retention_cutoff_scope",
+            "band_team_ranking_stats_history",
+            ["band_type", "snapshot_date", "ranking_scope", "combo_id"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrsh_retention_cutoff_scope\" ON public.\"band_team_ranking_stats_history\" (\"band_type\", \"snapshot_date\", \"ranking_scope\", \"combo_id\")",
+            "supports bounded band ranking stats history retention batches by band and cutoff date"),
     ];
 
     private readonly NpgsqlDataSource _dataSource;
@@ -97,6 +126,10 @@ public sealed class DatabaseMaintenanceDryRunReporter
         var legacyLive = await LoadLegacyLiveAsync(conn, ct);
         var legacyStaging = await LoadLegacyStagingAsync(conn, ct);
         var indexCandidates = await LoadIndexCandidatesAsync(conn, ct);
+        var retentionHelperIndexes = await LoadRetentionHelperIndexStatusesAsync(conn, ct);
+        var bandHistoryCoverage = options.IncludeBandHistoryCoverage
+            ? await LoadBandHistoryCoverageAsync(conn, ct)
+            : await LoadSkippedBandHistoryCoverageReportAsync(conn, ct);
 
         return new DatabaseMaintenanceDryRunReport(
             capturedAtUtc,
@@ -106,6 +139,8 @@ public sealed class DatabaseMaintenanceDryRunReporter
             legacyLive,
             legacyStaging,
             indexCandidates,
+                retentionHelperIndexes,
+                bandHistoryCoverage,
             "dry-run only; no cleanup SQL was executed");
     }
 
@@ -156,6 +191,78 @@ public sealed class DatabaseMaintenanceDryRunReporter
             "executed TRUNCATE TABLE leaderboard_staging after guarded preflight",
             sql,
             DateTime.UtcNow);
+    }
+
+    public async Task<RetentionHelperIndexExecutionResult> CreateRetentionHelperIndexAsync(
+        string indexName,
+        CancellationToken ct = default)
+    {
+        var definition = ResolveRetentionHelperIndexDefinition(indexName)
+            ?? throw new ArgumentException($"Unknown retention helper index: {indexName}", nameof(indexName));
+
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        var before = await LoadRetentionHelperIndexStatusAsync(conn, definition, ct);
+        if (!before.TableExists)
+        {
+            return new RetentionHelperIndexExecutionResult(
+                Executed: false,
+                before,
+                After: null,
+                $"blocked: table {definition.TableName} does not exist",
+                definition.CreateSql,
+                ExecutedAtUtc: DateTime.UtcNow);
+        }
+
+        if (before.IndexExists)
+        {
+            return new RetentionHelperIndexExecutionResult(
+                Executed: false,
+                before,
+                After: before,
+                "not executed: retention helper index already exists",
+                definition.CreateSql,
+                ExecutedAtUtc: DateTime.UtcNow);
+        }
+
+        if (!await TryAcquireRetentionIndexMaintenanceLockAsync(conn, ct))
+        {
+            return new RetentionHelperIndexExecutionResult(
+                Executed: false,
+                before,
+                After: null,
+                "blocked: another retention index maintenance operation already holds the advisory lock",
+                definition.CreateSql,
+                ExecutedAtUtc: DateTime.UtcNow);
+        }
+
+        try
+        {
+            var preflight = await LoadRetentionHelperIndexStatusAsync(conn, definition, ct);
+            if (preflight.IndexExists)
+            {
+                return new RetentionHelperIndexExecutionResult(
+                    Executed: false,
+                    before,
+                    After: preflight,
+                    "not executed: retention helper index was created before the advisory lock was acquired",
+                    definition.CreateSql,
+                    ExecutedAtUtc: DateTime.UtcNow);
+            }
+
+            await ExecuteNonQueryAsync(conn, definition.CreateSql, ct);
+            var after = await LoadRetentionHelperIndexStatusAsync(conn, definition, ct);
+            return new RetentionHelperIndexExecutionResult(
+                Executed: true,
+                before,
+                after,
+                "executed one retention helper CREATE INDEX CONCURRENTLY statement",
+                definition.CreateSql,
+                ExecutedAtUtc: DateTime.UtcNow);
+        }
+        finally
+        {
+            await ReleaseRetentionIndexMaintenanceLockAsync(conn, CancellationToken.None);
+        }
     }
 
     public async Task<IReadOnlyList<SnapshotPartitionRewritePlan>> BuildSnapshotRetentionRewritePlansAsync(
@@ -711,6 +818,87 @@ public sealed class DatabaseMaintenanceDryRunReporter
         return "not eligible under current dry-run policy";
     }
 
+    private static async Task<IReadOnlyList<RetentionHelperIndexStatus>> LoadRetentionHelperIndexStatusesAsync(
+        NpgsqlConnection conn,
+        CancellationToken ct)
+    {
+        var statuses = new List<RetentionHelperIndexStatus>(RetentionHelperIndexDefinitions.Length);
+        foreach (var definition in RetentionHelperIndexDefinitions)
+            statuses.Add(await LoadRetentionHelperIndexStatusAsync(conn, definition, ct));
+        return statuses;
+    }
+
+    private static async Task<RetentionHelperIndexStatus> LoadRetentionHelperIndexStatusAsync(
+        NpgsqlConnection conn,
+        RetentionHelperIndexDefinition definition,
+        CancellationToken ct)
+    {
+        var tableFootprint = await LoadRelationFootprintAsync(conn, definition.TableName, ct);
+        var indexFootprint = await LoadIndexFootprintByNameAsync(conn, definition.Name, ct);
+        var tableExists = tableFootprint is not null;
+        var indexExists = indexFootprint is not null;
+        var recommendation = (tableExists, indexExists) switch
+        {
+            (false, _) => "blocked: target table does not exist in this database",
+            (_, true) => "present; no maintenance action needed",
+            _ => "missing; build explicitly during low database pressure with --execute-retention-index and --allow-prod",
+        };
+
+        return new RetentionHelperIndexStatus(
+            definition,
+            tableExists,
+            indexExists,
+            tableFootprint,
+            indexFootprint,
+            recommendation);
+    }
+
+    private static async Task<IndexFootprint?> LoadIndexFootprintByNameAsync(
+        NpgsqlConnection conn,
+        string indexName,
+        CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                idx.relname AS index_name,
+                tbl.relname AS table_name,
+                pg_relation_size(idx.oid)::BIGINT AS index_bytes,
+                COALESCE(st.idx_scan, 0)::BIGINT AS idx_scan,
+                COALESCE(st.idx_tup_read, 0)::BIGINT AS idx_tup_read,
+                COALESCE(st.idx_tup_fetch, 0)::BIGINT AS idx_tup_fetch,
+                pg_get_indexdef(idx.oid) AS indexdef
+            FROM pg_class idx
+            JOIN pg_index ix ON ix.indexrelid = idx.oid
+            JOIN pg_class tbl ON tbl.oid = ix.indrelid
+            JOIN pg_namespace n ON n.oid = idx.relnamespace
+            LEFT JOIN pg_stat_user_indexes st ON st.indexrelid = idx.oid
+            WHERE n.nspname = 'public'
+              AND idx.relname = @indexName
+            """;
+        cmd.Parameters.AddWithValue("indexName", indexName);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct)
+            ? new IndexFootprint(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetInt64(2),
+                reader.GetInt64(3),
+                reader.GetInt64(4),
+                reader.GetInt64(5),
+                reader.GetString(6))
+            : null;
+    }
+
+    private static RetentionHelperIndexDefinition? ResolveRetentionHelperIndexDefinition(string indexName)
+    {
+        if (string.IsNullOrWhiteSpace(indexName))
+            return null;
+        var normalized = indexName.Trim();
+        return RetentionHelperIndexDefinitions.FirstOrDefault(definition =>
+            string.Equals(definition.Name, normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static async Task<IReadOnlyList<IndexDryRunCandidate>> LoadIndexCandidatesAsync(NpgsqlConnection conn, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
@@ -792,6 +980,298 @@ public sealed class DatabaseMaintenanceDryRunReporter
             return "child legacy live index; legacy live is planned for drop";
         return "watched index candidate";
     }
+
+    private static async Task<BandHistoryCoverageReport> LoadBandHistoryCoverageAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        var tables = new BandHistoryCoverageTables(
+            WideHistoryExists: await TableExistsAsync(conn, "band_team_rank_history", ct),
+            NarrowPointsExists: await TableExistsAsync(conn, "band_team_rank_history_points", ct),
+            NarrowStatsExists: await TableExistsAsync(conn, "band_team_ranking_stats_history", ct));
+
+        var wide = await LoadBandHistoryTeamCoverageAsync(conn, "band_team_rank_history", tables.WideHistoryExists, ct);
+        var points = await LoadBandHistoryTeamCoverageAsync(conn, "band_team_rank_history_points", tables.NarrowPointsExists, ct);
+        var stats = await LoadBandHistoryStatsCoverageAsync(conn, tables.NarrowStatsExists, ct);
+        var wideRowsMissingFromNarrow = await LoadWideRowsMissingFromNarrowAsync(conn, tables, wide, ct);
+        var narrowRowsMissingStats = await LoadNarrowRowsMissingStatsAsync(conn, tables, points, ct);
+
+        var keys = wide.Keys
+            .Concat(points.Keys)
+            .Concat(stats.Keys)
+            .Distinct()
+            .OrderBy(key => key.BandType, StringComparer.Ordinal)
+            .ThenBy(key => key.RankingScope, StringComparer.Ordinal)
+            .ThenBy(key => key.ComboId, StringComparer.Ordinal)
+            .ToArray();
+        var items = keys
+            .Select(key => BuildBandHistoryCoverageItem(
+                key,
+                wide.GetValueOrDefault(key),
+                points.GetValueOrDefault(key),
+                stats.GetValueOrDefault(key),
+                wideRowsMissingFromNarrow.GetValueOrDefault(key),
+                narrowRowsMissingStats.GetValueOrDefault(key)))
+            .ToArray();
+
+        return new BandHistoryCoverageReport(
+            Included: true,
+            tables,
+            items,
+            CompleteCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Complete),
+            PartialCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Partial),
+            WideOnlyCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.WideOnly),
+            AbsentCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Absent),
+            BuildBandHistoryCoverageReportRecommendation(items));
+    }
+
+    private static async Task<BandHistoryCoverageReport> LoadSkippedBandHistoryCoverageReportAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        var tables = new BandHistoryCoverageTables(
+            WideHistoryExists: await TableExistsAsync(conn, "band_team_rank_history", ct),
+            NarrowPointsExists: await TableExistsAsync(conn, "band_team_rank_history_points", ct),
+            NarrowStatsExists: await TableExistsAsync(conn, "band_team_ranking_stats_history", ct));
+
+        return new BandHistoryCoverageReport(
+            Included: false,
+            tables,
+            Items: [],
+            CompleteCount: 0,
+            PartialCount: 0,
+            WideOnlyCount: 0,
+            AbsentCount: 0,
+            "skipped by default because it can scan large history tables; rerun the harness with --include-band-history-coverage during low database pressure");
+    }
+
+    private static async Task<IReadOnlyDictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>> LoadBandHistoryTeamCoverageAsync(
+        NpgsqlConnection conn,
+        string tableName,
+        bool tableExists,
+        CancellationToken ct)
+    {
+        if (!tableExists)
+            return new Dictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>();
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = $"""
+            SELECT
+                band_type,
+                ranking_scope,
+                combo_id,
+                COUNT(*)::BIGINT AS row_count,
+                COUNT(DISTINCT team_key)::BIGINT AS team_count,
+                COUNT(DISTINCT snapshot_date)::BIGINT AS snapshot_date_count,
+                MIN(snapshot_date) AS min_snapshot_date,
+                MAX(snapshot_date) AS max_snapshot_date
+            FROM {QualifiedIdentifier(tableName)}
+            GROUP BY band_type, ranking_scope, combo_id
+            ORDER BY band_type, ranking_scope, combo_id
+            """;
+
+        var results = new Dictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var key = ReadBandHistoryCoverageKey(reader);
+            results[key] = new BandHistoryCoverageSourceSummary(
+                reader.GetInt64(3),
+                reader.GetInt64(4),
+                reader.GetInt64(5),
+                ReadNullableDateOnly(reader, 6),
+                ReadNullableDateOnly(reader, 7));
+        }
+
+        return results;
+    }
+
+    private static async Task<IReadOnlyDictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>> LoadBandHistoryStatsCoverageAsync(
+        NpgsqlConnection conn,
+        bool tableExists,
+        CancellationToken ct)
+    {
+        if (!tableExists)
+            return new Dictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>();
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = $"""
+            SELECT
+                band_type,
+                ranking_scope,
+                combo_id,
+                COUNT(*)::BIGINT AS row_count,
+                COUNT(DISTINCT snapshot_date)::BIGINT AS snapshot_date_count,
+                MIN(snapshot_date) AS min_snapshot_date,
+                MAX(snapshot_date) AS max_snapshot_date
+            FROM {QualifiedIdentifier("band_team_ranking_stats_history")}
+            GROUP BY band_type, ranking_scope, combo_id
+            ORDER BY band_type, ranking_scope, combo_id
+            """;
+
+        var results = new Dictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var key = ReadBandHistoryCoverageKey(reader);
+            results[key] = new BandHistoryCoverageSourceSummary(
+                reader.GetInt64(3),
+                TeamCount: 0,
+                SnapshotDateCount: reader.GetInt64(4),
+                MinSnapshotDate: ReadNullableDateOnly(reader, 5),
+                MaxSnapshotDate: ReadNullableDateOnly(reader, 6));
+        }
+
+        return results;
+    }
+
+    private static async Task<IReadOnlyDictionary<BandHistoryCoverageKey, long>> LoadWideRowsMissingFromNarrowAsync(
+        NpgsqlConnection conn,
+        BandHistoryCoverageTables tables,
+        IReadOnlyDictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary> wide,
+        CancellationToken ct)
+    {
+        if (!tables.WideHistoryExists)
+            return new Dictionary<BandHistoryCoverageKey, long>();
+        if (!tables.NarrowPointsExists)
+            return wide.ToDictionary(pair => pair.Key, pair => pair.Value.RowCount);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = """
+            SELECT
+                wide.band_type,
+                wide.ranking_scope,
+                wide.combo_id,
+                COUNT(*)::BIGINT AS missing_rows
+            FROM band_team_rank_history wide
+            LEFT JOIN band_team_rank_history_points points
+              ON points.band_type = wide.band_type
+             AND points.ranking_scope = wide.ranking_scope
+             AND points.combo_id = wide.combo_id
+             AND points.team_key = wide.team_key
+             AND points.snapshot_date = wide.snapshot_date
+            WHERE points.team_key IS NULL
+            GROUP BY wide.band_type, wide.ranking_scope, wide.combo_id
+            ORDER BY wide.band_type, wide.ranking_scope, wide.combo_id
+            """;
+
+        return await LoadBandHistoryMissingRowsAsync(cmd, ct);
+    }
+
+    private static async Task<IReadOnlyDictionary<BandHistoryCoverageKey, long>> LoadNarrowRowsMissingStatsAsync(
+        NpgsqlConnection conn,
+        BandHistoryCoverageTables tables,
+        IReadOnlyDictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary> points,
+        CancellationToken ct)
+    {
+        if (!tables.NarrowPointsExists)
+            return new Dictionary<BandHistoryCoverageKey, long>();
+        if (!tables.NarrowStatsExists)
+            return points.ToDictionary(pair => pair.Key, pair => pair.Value.RowCount);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = """
+            SELECT
+                points.band_type,
+                points.ranking_scope,
+                points.combo_id,
+                COUNT(*)::BIGINT AS missing_rows
+            FROM band_team_rank_history_points points
+            LEFT JOIN band_team_ranking_stats_history stats
+              ON stats.band_type = points.band_type
+             AND stats.ranking_scope = points.ranking_scope
+             AND stats.combo_id = points.combo_id
+             AND stats.snapshot_date = points.snapshot_date
+            WHERE stats.band_type IS NULL
+            GROUP BY points.band_type, points.ranking_scope, points.combo_id
+            ORDER BY points.band_type, points.ranking_scope, points.combo_id
+            """;
+
+        return await LoadBandHistoryMissingRowsAsync(cmd, ct);
+    }
+
+    private static async Task<IReadOnlyDictionary<BandHistoryCoverageKey, long>> LoadBandHistoryMissingRowsAsync(
+        NpgsqlCommand cmd,
+        CancellationToken ct)
+    {
+        var results = new Dictionary<BandHistoryCoverageKey, long>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            results[ReadBandHistoryCoverageKey(reader)] = reader.GetInt64(3);
+        return results;
+    }
+
+    private static BandHistoryCoverageItem BuildBandHistoryCoverageItem(
+        BandHistoryCoverageKey key,
+        BandHistoryCoverageSourceSummary? wide,
+        BandHistoryCoverageSourceSummary? narrowPoints,
+        BandHistoryCoverageSourceSummary? narrowStats,
+        long wideRowsMissingFromNarrow,
+        long narrowRowsMissingStats)
+    {
+        var classification = ClassifyBandHistoryCoverage(
+            wide,
+            narrowPoints,
+            narrowStats,
+            wideRowsMissingFromNarrow,
+            narrowRowsMissingStats);
+
+        return new BandHistoryCoverageItem(
+            key.BandType,
+            key.RankingScope,
+            key.ComboId,
+            wide,
+            narrowPoints,
+            narrowStats,
+            wideRowsMissingFromNarrow,
+            narrowRowsMissingStats,
+            classification,
+            BuildBandHistoryCoverageRecommendation(classification, wideRowsMissingFromNarrow, narrowRowsMissingStats));
+    }
+
+    private static BandHistoryCoverageClassification ClassifyBandHistoryCoverage(
+        BandHistoryCoverageSourceSummary? wide,
+        BandHistoryCoverageSourceSummary? narrowPoints,
+        BandHistoryCoverageSourceSummary? narrowStats,
+        long wideRowsMissingFromNarrow,
+        long narrowRowsMissingStats)
+    {
+        var wideRows = wide?.RowCount ?? 0;
+        var narrowRows = narrowPoints?.RowCount ?? 0;
+        var statsRows = narrowStats?.RowCount ?? 0;
+
+        if (wideRows == 0 && narrowRows == 0)
+            return BandHistoryCoverageClassification.Absent;
+        if (wideRows > 0 && narrowRows == 0)
+            return BandHistoryCoverageClassification.WideOnly;
+        if (wideRowsMissingFromNarrow > 0 || narrowRowsMissingStats > 0 || statsRows == 0)
+            return BandHistoryCoverageClassification.Partial;
+        return BandHistoryCoverageClassification.Complete;
+    }
+
+    private static string BuildBandHistoryCoverageRecommendation(
+        BandHistoryCoverageClassification classification,
+        long wideRowsMissingFromNarrow,
+        long narrowRowsMissingStats) => classification switch
+    {
+        BandHistoryCoverageClassification.Complete => "narrow history covers available wide rows and stats dates; eligible to consider disabling UseWideHistoryCompatibilityWrite after read-source review",
+        BandHistoryCoverageClassification.WideOnly => "wide history has rows with no narrow point coverage; keep wide compatibility writes enabled",
+        BandHistoryCoverageClassification.Partial => $"narrow history is incomplete: {wideRowsMissingFromNarrow:N0} wide row(s) missing from points, {narrowRowsMissingStats:N0} point row(s) missing stats",
+        _ => "no band history rows found for this scope",
+    };
+
+    private static string BuildBandHistoryCoverageReportRecommendation(IReadOnlyList<BandHistoryCoverageItem> items)
+    {
+        if (items.Count == 0)
+            return "no band history rows found; keep wide compatibility writes unchanged until history exists";
+        var incomplete = items.Count(item => item.Classification != BandHistoryCoverageClassification.Complete);
+        if (incomplete == 0)
+            return "all reported band history scopes have complete narrow coverage; UseWideHistoryCompatibilityWrite can be considered for false after operator review";
+        return $"{incomplete:N0} band history scope(s) still need wide fallback or backfill before disabling UseWideHistoryCompatibilityWrite";
+    }
+
+    private static BandHistoryCoverageKey ReadBandHistoryCoverageKey(NpgsqlDataReader reader) =>
+        new(reader.GetString(0), reader.GetString(1), reader.GetString(2));
 
     private static async Task<IReadOnlyList<IndexFootprint>> LoadIndexesForTablesAsync(NpgsqlConnection conn, IReadOnlyList<string> tableNames, CancellationToken ct)
     {
@@ -1067,6 +1547,22 @@ public sealed class DatabaseMaintenanceDryRunReporter
         await cmd.ExecuteScalarAsync(ct);
     }
 
+    private static async Task<bool> TryAcquireRetentionIndexMaintenanceLockAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT pg_try_advisory_lock(@lockKey)";
+        cmd.Parameters.AddWithValue("lockKey", RetentionIndexMaintenanceAdvisoryLockKey);
+        return Convert.ToBoolean(await cmd.ExecuteScalarAsync(ct));
+    }
+
+    private static async Task ReleaseRetentionIndexMaintenanceLockAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT pg_advisory_unlock(@lockKey)";
+        cmd.Parameters.AddWithValue("lockKey", RetentionIndexMaintenanceAdvisoryLockKey);
+        await cmd.ExecuteScalarAsync(ct);
+    }
+
     private static string NormalizeSnapshotPartitionName(string partitionName)
     {
         if (string.IsNullOrWhiteSpace(partitionName))
@@ -1158,6 +1654,19 @@ public sealed class DatabaseMaintenanceDryRunReporter
             reader.GetInt64(4),
             reader.GetInt64(5));
 
+    private static DateOnly? ReadNullableDateOnly(NpgsqlDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+            return null;
+        var value = reader.GetValue(ordinal);
+        return value switch
+        {
+            DateOnly date => date,
+            DateTime dateTime => DateOnly.FromDateTime(dateTime),
+            _ => null,
+        };
+    }
+
     private static IReadOnlyList<SnapshotEstimate> ParseSnapshotEstimates(string valuesText, string frequenciesText, long liveTuples, long totalBytes)
     {
         var values = ParseLongArray(valuesText);
@@ -1204,7 +1713,9 @@ public sealed class DatabaseMaintenanceDryRunReporter
         Regex.Replace(text.Trim(), "^\\{|\\}$", string.Empty);
 }
 
-public sealed record DatabaseMaintenanceDryRunOptions(int RollbackCompletedSnapshotsToKeep = 1);
+public sealed record DatabaseMaintenanceDryRunOptions(
+    int RollbackCompletedSnapshotsToKeep = 1,
+    bool IncludeBandHistoryCoverage = false);
 
 public sealed record DatabaseMaintenanceDryRunReport(
     DateTime CapturedAtUtc,
@@ -1214,6 +1725,8 @@ public sealed record DatabaseMaintenanceDryRunReport(
     LegacyLiveDryRunSummary LegacyLive,
     LegacyStagingDryRunSummary LegacyStaging,
     IReadOnlyList<IndexDryRunCandidate> IndexCandidates,
+    IReadOnlyList<RetentionHelperIndexStatus> RetentionHelperIndexes,
+    BandHistoryCoverageReport BandHistoryCoverage,
     string Mode);
 
 public sealed record SnapshotDryRunSummary(
@@ -1343,6 +1856,73 @@ public sealed record IndexDryRunCandidate(
     string RecreationSource,
     bool DeprecatedOrPlannedDrop,
     string Recommendation);
+
+public sealed record RetentionHelperIndexDefinition(
+    string Name,
+    string TableName,
+    IReadOnlyList<string> KeyColumns,
+    string CreateSql,
+    string Purpose);
+
+public sealed record RetentionHelperIndexStatus(
+    RetentionHelperIndexDefinition Definition,
+    bool TableExists,
+    bool IndexExists,
+    RelationFootprint? TableFootprint,
+    IndexFootprint? IndexFootprint,
+    string Recommendation);
+
+public sealed record RetentionHelperIndexExecutionResult(
+    bool Executed,
+    RetentionHelperIndexStatus Before,
+    RetentionHelperIndexStatus? After,
+    string Reason,
+    string Sql,
+    DateTime ExecutedAtUtc);
+
+public sealed record BandHistoryCoverageTables(
+    bool WideHistoryExists,
+    bool NarrowPointsExists,
+    bool NarrowStatsExists);
+
+public sealed record BandHistoryCoverageReport(
+    bool Included,
+    BandHistoryCoverageTables Tables,
+    IReadOnlyList<BandHistoryCoverageItem> Items,
+    int CompleteCount,
+    int PartialCount,
+    int WideOnlyCount,
+    int AbsentCount,
+    string Recommendation);
+
+public sealed record BandHistoryCoverageItem(
+    string BandType,
+    string RankingScope,
+    string ComboId,
+    BandHistoryCoverageSourceSummary? WideHistory,
+    BandHistoryCoverageSourceSummary? NarrowPoints,
+    BandHistoryCoverageSourceSummary? NarrowStats,
+    long WideRowsMissingFromNarrow,
+    long NarrowRowsMissingStats,
+    BandHistoryCoverageClassification Classification,
+    string Recommendation);
+
+public sealed record BandHistoryCoverageKey(string BandType, string RankingScope, string ComboId);
+
+public sealed record BandHistoryCoverageSourceSummary(
+    long RowCount,
+    long TeamCount,
+    long SnapshotDateCount,
+    DateOnly? MinSnapshotDate,
+    DateOnly? MaxSnapshotDate);
+
+public enum BandHistoryCoverageClassification
+{
+    Complete,
+    Partial,
+    WideOnly,
+    Absent,
+}
 
 public sealed class SnapshotRetentionPolicy
 {

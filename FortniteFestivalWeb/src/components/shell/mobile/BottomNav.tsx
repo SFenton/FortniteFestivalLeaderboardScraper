@@ -44,6 +44,8 @@ export default function BottomNav({ player, selectedProfile = null, activeTab, o
         <button
           key={tab.key}
           onClick={() => onTabClick(tab.key, tab.path)}
+          data-testid={`bottom-nav-${tab.key}`}
+          data-tab-key={tab.key}
           style={activeTab === tab.key ? s.tabActive : s.tab}
         >
           <span style={s.tabIcon}>{tab.icon}</span>

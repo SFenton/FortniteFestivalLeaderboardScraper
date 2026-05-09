@@ -18,6 +18,8 @@ const mockScrollElement = vi.hoisted(() => ({
   getBoundingClientRect: () => ({ top: 0 }),
   scrollTo: mockScrollTo,
 }));
+const mockUseIsMobile = vi.hoisted(() => vi.fn(() => false));
+const mockUseIsMobileChrome = vi.hoisted(() => vi.fn(() => false));
 const mockFestivalValue = vi.hoisted(() => ({
   state: {
     currentSeason: 9,
@@ -60,8 +62,8 @@ vi.mock('../../../../src/hooks/ui/useContainerWidth', () => ({
 }));
 
 vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
-  useIsMobile: () => false,
-  useIsMobileChrome: () => false,
+  useIsMobile: mockUseIsMobile,
+  useIsMobileChrome: mockUseIsMobileChrome,
   useIsWideDesktop: () => false,
 }));
 
@@ -162,6 +164,8 @@ describe('SongBandLeaderboardPage', () => {
     localStorage.clear();
     mockScrollTo.mockClear();
     mockScrollElement.style.marginBottom = '';
+    mockUseIsMobile.mockReturnValue(false);
+    mockUseIsMobileChrome.mockReturnValue(false);
     mockGetSongBandLeaderboard.mockResolvedValue(response);
   });
 
@@ -232,6 +236,33 @@ describe('SongBandLeaderboardPage', () => {
       expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 25, undefined, undefined, undefined);
     });
     expect(mockScrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('shows only member score before instrument icons on mobile song-band rows', async () => {
+    mockUseIsMobile.mockReturnValue(true);
+
+    renderPage();
+
+    await screen.findByTestId('song-band-leaderboard-list');
+
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+    expect(screen.getByText('Beta')).toBeInTheDocument();
+
+    const firstTrailing = screen.getAllByTestId('band-member-trailing')[0]!;
+    const firstMetadata = within(firstTrailing).getByTestId('song-band-member-metadata');
+    const firstInstrument = within(firstTrailing).getByTestId('instrument-icon-Solo_Guitar');
+    const score = within(firstMetadata).getByText('654,321');
+
+    expect(firstMetadata).toContainElement(score);
+    expect(score.compareDocumentPosition(firstInstrument) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(firstMetadata).queryByText('H')).toBeNull();
+    expect(within(firstMetadata).queryByText('S9')).toBeNull();
+    expect(within(firstMetadata).queryByTestId('song-band-member-stars-container')).toBeNull();
+    expect(within(firstMetadata).queryByTestId('song-band-member-accuracy-container')).toBeNull();
+
+    expect(screen.getAllByTestId('song-band-member-score-container')).toHaveLength(4);
+    expect(screen.queryAllByTestId('song-band-member-stars-container')).toHaveLength(0);
+    expect(screen.queryAllByTestId('song-band-member-accuracy-container')).toHaveLength(0);
   });
 
   it('passes the applied selected-band combo for the matching band type', async () => {

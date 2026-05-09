@@ -2344,16 +2344,56 @@ public sealed class MetaDatabase : IMetaDatabase
         tx.Commit();
     }
 
-    public int CleanupCompositeRankHistoryRetention(int retentionDays = 365)
+    public int CleanupCompositeRankHistoryRetention(
+        int retentionDays = 365,
+        int batchSize = 5000,
+        int maxBatches = 1,
+        int commandTimeoutSeconds = 0,
+        CancellationToken ct = default)
     {
+        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
+        if (maxBatches <= 0) throw new ArgumentOutOfRangeException(nameof(maxBatches));
+
         using var conn = _ds.OpenConnection();
-        using var tx = conn.BeginTransaction();
-        var deleted = CleanupCompositeRankHistoryRetention(conn, tx, retentionDays);
-        tx.Commit();
-        return deleted;
+        var totalDeleted = 0;
+
+        for (var batch = 0; batch < maxBatches; batch++)
+        {
+            ct.ThrowIfCancellationRequested();
+            using var tx = conn.BeginTransaction();
+            var deleted = CleanupCompositeRankHistoryRetentionBatch(
+                conn,
+                tx,
+                retentionDays,
+                batchSize,
+                commandTimeoutSeconds,
+                ct);
+            tx.Commit();
+            totalDeleted += deleted;
+
+            if (deleted < batchSize)
+                break;
+        }
+
+        return totalDeleted;
     }
 
     private static int CleanupCompositeRankHistoryRetention(NpgsqlConnection conn, NpgsqlTransaction tx, int retentionDays)
+        => CleanupCompositeRankHistoryRetentionBatch(
+            conn,
+            tx,
+            retentionDays,
+            FSTService.DatabaseMaintenanceOptions.DefaultCleanupBatchSize,
+            commandTimeoutSeconds: 0,
+            ct: default);
+
+    private static int CleanupCompositeRankHistoryRetentionBatch(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        int retentionDays,
+        int batchSize,
+        int commandTimeoutSeconds,
+        CancellationToken ct)
     {
         if (retentionDays <= 0)
             return 0;
@@ -2361,17 +2401,27 @@ public sealed class MetaDatabase : IMetaDatabase
         var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
         using var c = conn.CreateCommand();
         c.Transaction = tx;
+        ConfigureCommandTimeout(c, commandTimeoutSeconds);
         c.CommandText = @"
+            WITH doomed AS (
+                SELECT crh.ctid
+                FROM composite_rank_history crh
+                WHERE crh.snapshot_date < @cutoff
+                  AND EXISTS (
+                    SELECT 1 FROM composite_rank_history crh2
+                    WHERE crh2.account_id = crh.account_id
+                      AND crh2.snapshot_date > crh.snapshot_date
+                      AND crh2.snapshot_date <= @cutoff
+                  )
+                ORDER BY crh.snapshot_date ASC, crh.account_id ASC
+                LIMIT @batchSize
+            )
             DELETE FROM composite_rank_history crh
-            WHERE crh.snapshot_date < @cutoff
-              AND EXISTS (
-                SELECT 1 FROM composite_rank_history crh2
-                WHERE crh2.account_id = crh.account_id
-                  AND crh2.snapshot_date > crh.snapshot_date
-                  AND crh2.snapshot_date <= @cutoff
-              )";
+            USING doomed
+            WHERE crh.ctid = doomed.ctid";
         c.Parameters.AddWithValue("cutoff", cutoff);
-        return c.ExecuteNonQuery();
+        c.Parameters.AddWithValue("batchSize", batchSize);
+        return ExecuteNonQueryWithCancellation(c, ct);
     }
 
     // ── Composite ranking deltas ─────────────────────────────────────
@@ -3940,10 +3990,15 @@ public sealed class MetaDatabase : IMetaDatabase
         string bandType,
         int retentionDays = 365,
         int commandTimeoutSeconds = 0,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int batchSize = 5000,
+        int maxBatches = 1)
     {
+        if (batchSize <= 0) throw new ArgumentOutOfRangeException(nameof(batchSize));
+        if (maxBatches <= 0) throw new ArgumentOutOfRangeException(nameof(maxBatches));
+
         using var conn = _ds.OpenConnection();
-        return CleanupBandRankHistoryRetention(conn, bandType, retentionDays, commandTimeoutSeconds, ct);
+        return CleanupBandRankHistoryRetention(conn, bandType, retentionDays, commandTimeoutSeconds, ct, batchSize, maxBatches);
     }
 
     private static int CleanupBandRankHistoryRetention(
@@ -3951,56 +4006,108 @@ public sealed class MetaDatabase : IMetaDatabase
         string bandType,
         int retentionDays,
         int commandTimeoutSeconds,
-        CancellationToken ct)
+        CancellationToken ct,
+        int batchSize = FSTService.DatabaseMaintenanceOptions.DefaultCleanupBatchSize,
+        int maxBatches = FSTService.DatabaseMaintenanceOptions.DefaultCleanupMaxBatches)
     {
         if (retentionDays <= 0)
             return 0;
 
         var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-retentionDays);
-        using var cmd = conn.CreateCommand();
-        ConfigureCommandTimeout(cmd, commandTimeoutSeconds);
-        cmd.CommandText = @"
-            DELETE FROM band_team_rank_history_points history
-            WHERE history.band_type = @bandType
-              AND history.snapshot_date < @cutoff
-              AND EXISTS (
-                SELECT 1 FROM band_team_rank_history_points newer
-                WHERE newer.band_type = history.band_type
-                  AND newer.ranking_scope = history.ranking_scope
-                  AND newer.combo_id = history.combo_id
-                  AND newer.team_key = history.team_key
-                  AND newer.snapshot_date > history.snapshot_date
-                  AND newer.snapshot_date <= @cutoff
-              );
+        var totalDeleted = 0;
+        totalDeleted += CleanupBandRankHistoryRetentionTable(
+            conn,
+            "band_team_rank_history_points",
+            bandType,
+            cutoff,
+            true,
+            batchSize,
+            maxBatches,
+            commandTimeoutSeconds,
+            ct);
+        totalDeleted += CleanupBandRankHistoryRetentionTable(
+            conn,
+            "band_team_rank_history",
+            bandType,
+            cutoff,
+            true,
+            batchSize,
+            maxBatches,
+            commandTimeoutSeconds,
+            ct);
+        totalDeleted += CleanupBandRankHistoryRetentionTable(
+            conn,
+            "band_team_ranking_stats_history",
+            bandType,
+            cutoff,
+            false,
+            batchSize,
+            maxBatches,
+            commandTimeoutSeconds,
+            ct);
+        return totalDeleted;
+    }
 
-            DELETE FROM band_team_rank_history history
-            WHERE history.band_type = @bandType
-              AND history.snapshot_date < @cutoff
-              AND EXISTS (
-                SELECT 1
-                FROM band_team_rank_history newer
-                WHERE newer.band_type = history.band_type
-                  AND newer.ranking_scope = history.ranking_scope
-                  AND newer.combo_id = history.combo_id
-                  AND newer.team_key = history.team_key
-                  AND newer.snapshot_date > history.snapshot_date
-                  AND newer.snapshot_date <= @cutoff
-              );
+    private static int CleanupBandRankHistoryRetentionTable(
+        NpgsqlConnection conn,
+        string tableName,
+        string bandType,
+        DateOnly cutoff,
+        bool hasTeamKey,
+        int batchSize,
+        int maxBatches,
+        int commandTimeoutSeconds,
+        CancellationToken ct)
+    {
+        var totalDeleted = 0;
+        var teamKeyPredicate = hasTeamKey ? "AND newer.team_key = history.team_key" : string.Empty;
+        var orderByTeamKey = hasTeamKey ? ", history.team_key ASC" : string.Empty;
 
-            DELETE FROM band_team_ranking_stats_history history
-            WHERE history.band_type = @bandType
-              AND history.snapshot_date < @cutoff
-              AND EXISTS (
-                SELECT 1
-                FROM band_team_ranking_stats_history newer
-                WHERE newer.band_type = history.band_type
-                  AND newer.ranking_scope = history.ranking_scope
-                  AND newer.combo_id = history.combo_id
-                  AND newer.snapshot_date > history.snapshot_date
-                  AND newer.snapshot_date <= @cutoff
-              );";
-        cmd.Parameters.AddWithValue("bandType", bandType);
-        cmd.Parameters.AddWithValue("cutoff", cutoff);
+        for (var batch = 0; batch < maxBatches; batch++)
+        {
+            ct.ThrowIfCancellationRequested();
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            ConfigureCommandTimeout(cmd, commandTimeoutSeconds);
+            cmd.CommandText = $@"
+                WITH doomed AS (
+                    SELECT history.ctid
+                    FROM {tableName} history
+                    WHERE history.band_type = @bandType
+                      AND history.snapshot_date < @cutoff
+                      AND EXISTS (
+                        SELECT 1
+                        FROM {tableName} newer
+                        WHERE newer.band_type = history.band_type
+                          AND newer.ranking_scope = history.ranking_scope
+                          AND newer.combo_id = history.combo_id
+                          {teamKeyPredicate}
+                          AND newer.snapshot_date > history.snapshot_date
+                          AND newer.snapshot_date <= @cutoff
+                      )
+                    ORDER BY history.snapshot_date ASC, history.ranking_scope ASC, history.combo_id ASC{orderByTeamKey}
+                    LIMIT @batchSize
+                )
+                DELETE FROM {tableName} history
+                USING doomed
+                WHERE history.ctid = doomed.ctid";
+            cmd.Parameters.AddWithValue("bandType", bandType);
+            cmd.Parameters.AddWithValue("cutoff", cutoff);
+            cmd.Parameters.AddWithValue("batchSize", batchSize);
+            var deleted = ExecuteNonQueryWithCancellation(cmd, ct);
+            tx.Commit();
+            totalDeleted += deleted;
+
+            if (deleted < batchSize)
+                break;
+        }
+
+        return totalDeleted;
+    }
+
+    private static int ExecuteNonQueryWithCancellation(NpgsqlCommand cmd, CancellationToken ct)
+    {
         ct.ThrowIfCancellationRequested();
         using var registration = ct.Register(static state => ((NpgsqlCommand)state!).Cancel(), cmd);
         try
@@ -4870,6 +4977,7 @@ public sealed class MetaDatabase : IMetaDatabase
                             be.accuracy,
                             be.is_full_combo,
                             be.stars,
+                            be.season,
                             COALESCE(be.end_time, '') AS end_time,
                             {BandSongComboIdExpression} AS combo_id
                         FROM band_entries be
@@ -4906,6 +5014,7 @@ public sealed class MetaDatabase : IMetaDatabase
                             accuracy,
                             is_full_combo,
                             stars,
+                            season,
                             NULLIF(end_time, '') AS end_time,
                             @computedAt AS computed_at
                         FROM OverallChoice
@@ -4927,6 +5036,7 @@ public sealed class MetaDatabase : IMetaDatabase
                             accuracy,
                             is_full_combo,
                             stars,
+                            season,
                             NULLIF(end_time, '') AS end_time,
                             @computedAt AS computed_at
                         FROM NormalizedEntries
@@ -4947,6 +5057,7 @@ public sealed class MetaDatabase : IMetaDatabase
                         accuracy,
                         is_full_combo,
                         stars,
+                        season,
                         end_time,
                         computed_at
                     FROM OverallRanked
@@ -4965,6 +5076,7 @@ public sealed class MetaDatabase : IMetaDatabase
                         accuracy,
                         is_full_combo,
                         stars,
+                        season,
                         end_time,
                         computed_at
                     FROM ComboRanked;";
@@ -5013,11 +5125,11 @@ public sealed class MetaDatabase : IMetaDatabase
                     INSERT INTO band_song_team_rankings (
                         band_type, ranking_scope, scope_combo_id, team_key, song_id,
                         entry_combo_id, rank, total_entries, percentile, score, accuracy,
-                        is_full_combo, stars, end_time, computed_at)
+                        is_full_combo, stars, season, end_time, computed_at)
                     SELECT
                         band_type, ranking_scope, scope_combo_id, team_key, song_id,
                         entry_combo_id, rank, total_entries, percentile, score, accuracy,
-                        is_full_combo, stars, end_time, computed_at
+                        is_full_combo, stars, season, end_time, computed_at
                     FROM _band_song_rank_results
                     ORDER BY ranking_scope, scope_combo_id, team_key, percentile ASC, rank ASC, score DESC, song_id ASC
                     ON CONFLICT (band_type, ranking_scope, scope_combo_id, team_key, song_id)
@@ -5030,6 +5142,7 @@ public sealed class MetaDatabase : IMetaDatabase
                         accuracy = EXCLUDED.accuracy,
                         is_full_combo = EXCLUDED.is_full_combo,
                         stars = EXCLUDED.stars,
+                        season = EXCLUDED.season,
                         end_time = EXCLUDED.end_time,
                         computed_at = EXCLUDED.computed_at
                     WHERE band_song_team_rankings.entry_combo_id IS DISTINCT FROM EXCLUDED.entry_combo_id
@@ -5040,6 +5153,7 @@ public sealed class MetaDatabase : IMetaDatabase
                        OR band_song_team_rankings.accuracy IS DISTINCT FROM EXCLUDED.accuracy
                        OR band_song_team_rankings.is_full_combo IS DISTINCT FROM EXCLUDED.is_full_combo
                        OR band_song_team_rankings.stars IS DISTINCT FROM EXCLUDED.stars
+                       OR band_song_team_rankings.season IS DISTINCT FROM EXCLUDED.season
                        OR band_song_team_rankings.end_time IS DISTINCT FROM EXCLUDED.end_time;";
                 cmd.Parameters.AddWithValue("bandType", bandType);
                 cmd.ExecuteNonQuery();
@@ -5099,6 +5213,9 @@ public sealed class MetaDatabase : IMetaDatabase
 
     public List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null)
     {
+        if (TryGetBandSongPerformancesFromDerived(bandType, teamKey, comboId, out var derivedPerformances))
+            return derivedPerformances;
+
         if (TryGetBandSongPerformancesFromCurrentProjection(bandType, teamKey, comboId, out var projectedPerformances))
             return projectedPerformances;
 
@@ -5210,6 +5327,67 @@ public sealed class MetaDatabase : IMetaDatabase
         return performances;
     }
 
+    private bool TryGetBandSongPerformancesFromDerived(
+        string bandType,
+        string teamKey,
+        string? comboId,
+        out List<BandSongPerformanceDto> performances)
+    {
+        var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
+        var normalizedComboId = comboId ?? string.Empty;
+        performances = [];
+
+        using var conn = _ds.OpenConnection();
+
+        using (var scopeCmd = conn.CreateCommand())
+        {
+            scopeCmd.CommandText = @"
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM band_song_team_rankings
+                    WHERE band_type = @bandType
+                      AND ranking_scope = @scope
+                      AND scope_combo_id = @comboId
+                );";
+            scopeCmd.Parameters.AddWithValue("bandType", bandType);
+            scopeCmd.Parameters.AddWithValue("scope", rankingScope);
+            scopeCmd.Parameters.AddWithValue("comboId", normalizedComboId);
+            if (scopeCmd.ExecuteScalar() is not bool hasScopeRows || !hasScopeRows)
+                return false;
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT
+                song_id,
+                NULLIF(entry_combo_id, '') AS combo_id,
+                rank AS effective_rank,
+                total_entries,
+                percentile,
+                score,
+                accuracy,
+                is_full_combo,
+                stars,
+                season,
+                end_time
+            FROM band_song_team_rankings
+            WHERE band_type = @bandType
+              AND ranking_scope = @scope
+              AND scope_combo_id = @comboId
+              AND team_key = @teamKey
+            ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("scope", rankingScope);
+        cmd.Parameters.AddWithValue("comboId", normalizedComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            performances.Add(ReadBandSongPerformance(reader));
+
+        return true;
+    }
+
     private bool TryGetBandSongPerformancesFromCurrentProjection(
         string bandType,
         string teamKey,
@@ -5234,10 +5412,11 @@ public sealed class MetaDatabase : IMetaDatabase
             scopeCmd.CommandText = @"
                 SELECT EXISTS (
                     SELECT 1
-                    FROM current_band_leaderboard_entries
+                    FROM band_current_projection_scope
                     WHERE band_type = @bandType
                       AND ranking_scope = @scope
                       AND scope_combo_id = @comboId
+                      AND status = 'ready'
                 );";
             scopeCmd.Parameters.AddWithValue("bandType", bandType);
             scopeCmd.Parameters.AddWithValue("scope", rankingScope);
@@ -5338,7 +5517,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     accuracy,
                     is_full_combo,
                     stars,
-                    NULL::INTEGER AS season,
+                    season,
                     end_time
                 FROM band_song_team_rankings
                 WHERE band_type = @bandType

@@ -1771,10 +1771,14 @@ public static class DatabaseInitializer
             accuracy        INTEGER,
             is_full_combo   BOOLEAN,
             stars           INTEGER,
+            season          INTEGER,
             end_time        TEXT,
             computed_at     TIMESTAMPTZ      NOT NULL,
             PRIMARY KEY (band_type, ranking_scope, scope_combo_id, team_key, song_id)
         );
+
+        ALTER TABLE band_song_team_rankings
+            ADD COLUMN IF NOT EXISTS season INTEGER;
 
         CREATE INDEX IF NOT EXISTS ix_bstr_team_best
             ON band_song_team_rankings (band_type, ranking_scope, scope_combo_id, team_key, percentile ASC, rank ASC, score DESC, song_id ASC);
@@ -1849,6 +1853,9 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_bcps_status_updated
             ON band_current_projection_scope (status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS ix_bcps_scope_ready
+            ON band_current_projection_scope (band_type, ranking_scope, scope_combo_id, status);
 
         -- Aggregate band-team rankings are stored in per-band current tables.
 

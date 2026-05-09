@@ -894,6 +894,9 @@ public sealed class BandCurrentProjectionBuilder
 
         CREATE INDEX IF NOT EXISTS ix_bcps_status_updated
             ON band_current_projection_scope (status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS ix_bcps_scope_ready
+            ON band_current_projection_scope (band_type, ranking_scope, scope_combo_id, status);
         """;
 }
 

@@ -66,20 +66,22 @@ export function hasSongBandMemberAccuracy(entries: readonly Pick<SongBandLeaderb
 type SongBandMemberMetadataProps = {
   member: Pick<PlayerBandMember, 'difficulty' | 'season' | 'score' | 'stars' | 'accuracy' | 'isFullCombo'>;
   scoreWidth?: string;
+  showDifficulty?: boolean;
+  showSeason?: boolean;
   showStars?: boolean;
   showAccuracy?: boolean;
 };
 
-export function SongBandMemberMetadata({ member, scoreWidth, showStars, showAccuracy }: SongBandMemberMetadataProps) {
+export function SongBandMemberMetadata({ member, scoreWidth, showDifficulty = true, showSeason = true, showStars, showAccuracy }: SongBandMemberMetadataProps) {
   const styles = useStyles();
   const showScore = scoreWidth != null;
-  const hasMetadata = member.difficulty != null || member.season != null || showScore || showStars || showAccuracy;
+  const hasMetadata = (showDifficulty && member.difficulty != null) || (showSeason && member.season != null) || showScore || showStars || showAccuracy;
   if (!hasMetadata) return null;
 
   return (
     <span data-testid="song-band-member-metadata" style={styles.memberMetadata}>
-      {member.difficulty != null && member.difficulty >= 0 && <DifficultyPill difficulty={member.difficulty} />}
-      {member.season != null && <SeasonPill season={member.season} />}
+      {showDifficulty && member.difficulty != null && member.difficulty >= 0 && <DifficultyPill difficulty={member.difficulty} />}
+      {showSeason && member.season != null && <SeasonPill season={member.season} />}
       {showScore && (
         <span data-testid="song-band-member-score-container" style={{ ...styles.score, width: scoreWidth }}>
           {member.score != null ? <ScorePill score={member.score} width="100%" /> : '-'}

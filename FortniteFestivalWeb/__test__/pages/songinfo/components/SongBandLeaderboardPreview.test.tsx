@@ -1,11 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { SongBandData } from '../../../../src/api/pageCache';
 import SongBandLeaderboardPreview from '../../../../src/pages/songinfo/components/SongBandLeaderboardPreview';
 
+const mockUseIsMobile = vi.hoisted(() => vi.fn(() => false));
+
 vi.mock('../../../../src/hooks/ui/useContainerWidth', () => ({
   useContainerWidth: () => 800,
+}));
+
+vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
+  useIsMobile: mockUseIsMobile,
 }));
 
 vi.mock('../../../../src/components/display/InstrumentIcons', () => ({
@@ -60,6 +66,10 @@ const data: SongBandData = {
 };
 
 describe('SongBandLeaderboardPreview', () => {
+  beforeEach(() => {
+    mockUseIsMobile.mockReturnValue(false);
+  });
+
   it('renders band cards with score metadata and a view-all route', () => {
     render(
       <MemoryRouter>
@@ -161,6 +171,57 @@ describe('SongBandLeaderboardPreview', () => {
 
     expect(screen.getByRole('link', { name: 'View full leaderboard' })).toBeInTheDocument();
     expect(screen.queryByText('View full leaderboard (5 tracked / 42 total)')).toBeNull();
+  });
+
+  it('shows only member score before instrument icons on mobile preview rows', () => {
+    const selectedPlayerEntry = {
+      ...data.entries[1],
+      bandId: 'band-selected',
+      teamKey: 'acct-player:acct-z',
+      score: 9_999_999,
+      rank: 27,
+      members: [
+        { accountId: 'acct-player', displayName: 'Selected Player', instruments: ['Solo_Drums'], score: 5_000_000, accuracy: 999_000, difficulty: 3, season: 9, stars: 5, isFullCombo: true },
+        { accountId: 'acct-z', displayName: 'Zeta', instruments: ['Solo_Vocals'], score: 4_999_999, accuracy: 998_000, difficulty: 3, season: 9, stars: 5, isFullCombo: true },
+      ],
+    };
+    mockUseIsMobile.mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <SongBandLeaderboardPreview
+          songId="song-a"
+          bandType="Band_Duets"
+          data={{ ...data, selectedPlayerEntry }}
+          selectedAccountId="acct-player"
+          baseDelay={0}
+          skipAnimation
+        />
+      </MemoryRouter>,
+    );
+
+    const firstTrailing = screen.getAllByTestId('band-member-trailing')[0]!;
+    const firstMetadata = within(firstTrailing).getByTestId('song-band-member-metadata');
+    const firstInstrument = within(firstTrailing).getByTestId('instrument-icon-Solo_Guitar');
+    const firstScore = within(firstMetadata).getByText('654,321');
+    expect(firstScore.compareDocumentPosition(firstInstrument) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(firstMetadata).queryByText('H')).toBeNull();
+    expect(within(firstMetadata).queryByText('S9')).toBeNull();
+    expect(within(firstMetadata).queryByTestId('song-band-member-stars-container')).toBeNull();
+    expect(within(firstMetadata).queryByTestId('song-band-member-accuracy-container')).toBeNull();
+
+    const selectedRow = screen.getByTestId('song-band-selected-entry-Band_Duets');
+    const selectedTrailing = within(selectedRow).getAllByTestId('band-member-trailing')[0]!;
+    const selectedMetadata = within(selectedTrailing).getByTestId('song-band-member-metadata');
+    const selectedInstrument = within(selectedTrailing).getByTestId('instrument-icon-Solo_Drums');
+    const selectedScore = within(selectedMetadata).getByText('5,000,000');
+    expect(selectedScore.compareDocumentPosition(selectedInstrument) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(selectedMetadata).queryByText('H')).toBeNull();
+    expect(within(selectedMetadata).queryByText('S9')).toBeNull();
+
+    expect(screen.getAllByTestId('song-band-member-score-container')).toHaveLength(6);
+    expect(screen.queryAllByTestId('song-band-member-stars-container')).toHaveLength(0);
+    expect(screen.queryAllByTestId('song-band-member-accuracy-container')).toHaveLength(0);
   });
 
   it('renders a selected player band score when it is outside the preview entries', () => {

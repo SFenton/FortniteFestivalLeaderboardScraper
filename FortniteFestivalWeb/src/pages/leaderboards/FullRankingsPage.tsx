@@ -45,6 +45,7 @@ import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScope
 import { coerceRankingMetric } from './helpers/rankingHelpers';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { Routes } from '../../routes';
+import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
 
 type FullRankingsData = RankingsPageResponse | ComboPageResponse;
 type FullPlayerRanking = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
@@ -66,9 +67,10 @@ export default function FullRankingsPage() {
   const { profile, player } = useTrackedPlayer();
   const selectedBand = profile?.type === 'band' ? profile : null;
   const appliedBandComboFilter = useAppliedBandComboFilter();
+  const hasSelectedBandComboFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const selectedBandComboId = isCombo
     ? comboId!
-    : selectedBand && appliedBandComboFilter?.bandType === selectedBand.bandType
+    : hasSelectedBandComboFilter && selectedBand && appliedBandComboFilter?.bandType === selectedBand.bandType
       ? appliedBandComboFilter.comboId
       : undefined;
   const isMobileChrome = useIsMobileChrome();

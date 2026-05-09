@@ -162,16 +162,11 @@ export default function PlayerBandCard({
   const contentRef = useRef<HTMLDivElement>(null);
   const contentWidth = useContainerWidth(contentRef);
   const memberLayouts = resolveBandCardMemberLayouts(entry.members, contentWidth);
-  const rankRail = typeof rank === 'number' ? (
-    <div data-testid="band-rank-rail" style={{ ...bandCardStyles.rankRail, ...(rankWidth ? { width: rankWidth, minWidth: rankWidth } : undefined) }} aria-label={`Rank ${rank.toLocaleString()}`}>#{rank.toLocaleString()}</div>
+  const rankRailBaseStyle = { ...bandCardStyles.rankRail, ...(rankWidth ? { width: rankWidth, minWidth: rankWidth } : undefined) };
+  const renderRankRail = (style?: CSSProperties) => typeof rank === 'number' ? (
+    <div data-testid="band-rank-rail" style={{ ...rankRailBaseStyle, ...style }} aria-label={`Rank ${rank.toLocaleString()}`}>#{rank.toLocaleString()}</div>
   ) : null;
-  const memberContent = (
-    <div ref={contentRef} style={bandCardStyles.entryCardContent}>
-      <div style={bandCardStyles.memberList}>
-        {entry.members.map((member, index) => <BandMemberRow key={`${entry.teamKey}:${member.accountId}:${index}`} member={member} layout={memberLayouts[index] ?? { stacked: false, instrumentRowCount: 1 }} metadata={renderMemberMetadata?.(member)} />)}
-      </div>
-    </div>
-  );
+  const rankRail = renderRankRail();
   const chevron = route ? <IoChevronForward aria-hidden="true" size={18} style={bandCardStyles.entryChevron} /> : null;
   const footer = appearanceLabel ? (
     <div style={bandCardStyles.appearanceFooter} aria-label={`${appearanceCount.toLocaleString()} ${appearanceLabel}`}>
@@ -184,13 +179,28 @@ export default function PlayerBandCard({
     </div>
   ) : null;
   const hasFooter = !!footer;
+  const shouldReserveDuoMetadataSpacer = typeof rank === 'number' && hasFooter && entry.bandType === 'Band_Duets' && entry.members.length === 2;
+  const memberContent = (
+    <div ref={contentRef} style={bandCardStyles.entryCardContent}>
+      <div style={bandCardStyles.memberList}>
+        {entry.members.map((member, index) => <BandMemberRow key={`${entry.teamKey}:${member.accountId}:${index}`} member={member} layout={memberLayouts[index] ?? { stacked: false, instrumentRowCount: 1 }} metadata={renderMemberMetadata?.(member)} />)}
+        {shouldReserveDuoMetadataSpacer && <div data-testid="band-member-spacer-row" aria-hidden="true" style={bandCardStyles.memberSpacerRow} />}
+      </div>
+    </div>
+  );
   const content = hasFooter ? (
     <>
       <div data-testid="band-card-member-content" style={bandCardStyles.entryCardMetaContent}>{memberContent}</div>
       {footer}
     </>
   ) : memberContent;
-  const body = rankRail ? (
+  const body = rankRail && hasFooter ? (
+    <div data-testid="band-ranked-card-content" style={bandCardStyles.rankedCardWithFooter}>
+      {renderRankRail(bandCardStyles.rankedFooterRankRail)}
+      <div data-testid="band-card-member-content" style={{ ...bandCardStyles.entryCardMetaContent, ...bandCardStyles.rankedFooterMemberContent }}>{memberContent}</div>
+      <div data-testid="band-ranked-card-footer" style={bandCardStyles.rankedFooterFullSpan}>{footer}</div>
+    </div>
+  ) : rankRail ? (
     <div data-testid="band-ranked-card-content" style={bandCardStyles.rankedCardContent}>
       {rankRail}
       <div style={hasFooter ? bandCardStyles.rankedMetaStack : bandCardStyles.rankedMemberOnly}>{content}</div>
@@ -320,6 +330,30 @@ const bandCardStyles = {
     flex: 1,
     minWidth: 0,
   } as CSSProperties,
+  rankedCardWithFooter: {
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr)',
+    gridTemplateRows: 'auto auto',
+    alignItems: 'center',
+    columnGap: Gap.md,
+    rowGap: Gap.md,
+    flex: 1,
+    minWidth: 0,
+  } as CSSProperties,
+  rankedFooterRankRail: {
+    gridColumn: '1',
+    gridRow: '1 / 3',
+  } as CSSProperties,
+  rankedFooterMemberContent: {
+    gridColumn: '2',
+    gridRow: '1',
+    minWidth: 0,
+  } as CSSProperties,
+  rankedFooterFullSpan: {
+    gridColumn: '1 / -1',
+    gridRow: '2',
+    minWidth: 0,
+  } as CSSProperties,
   rankedMetaStack: {
     ...flexColumn,
     alignItems: 'stretch',
@@ -352,6 +386,11 @@ const bandCardStyles = {
     gap: Gap.md,
     flex: 1,
     minWidth: 0,
+  } as CSSProperties,
+  memberSpacerRow: {
+    height: MEMBER_ROW_HEIGHT,
+    minHeight: MEMBER_ROW_HEIGHT,
+    flexShrink: 0,
   } as CSSProperties,
   memberTrailingInline: {
     ...flexRow,

@@ -32,6 +32,8 @@ interface FilterSortOptions {
   shopVisible?: boolean;
   /** App-visible instruments that are allowed to participate in per-instrument filters. */
   visibleInstruments?: readonly InstrumentKey[] | null;
+  /** Selected tracked band mode uses band song rows instead of solo instrument filters. */
+  selectedBandMode?: boolean;
 }
 
 const PCT_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -55,20 +57,23 @@ export function useFilteredSongs({
   filterInvalidScoresEnabled,
   shopVisible,
   visibleInstruments,
+  selectedBandMode,
 }: FilterSortOptions): Song[] {
   return useMemo(() => {
     const hasPlayerData = allScoreMap.size > 0;
     const visibleInstrumentSet = visibleInstruments ? new Set<InstrumentKey>(visibleInstruments) : null;
     const canUseInstrument = (key: InstrumentKey) => !visibleInstrumentSet || visibleInstrumentSet.has(key);
-    const effectiveInstrument = inst && canUseInstrument(inst) ? inst : null;
+    const effectiveInstrument = !selectedBandMode && inst && canUseInstrument(inst) ? inst : null;
 
     // Pre-compute which instruments have any missing/has filter active
     const filterInstruments = new Set<InstrumentKey>();
-    for (const [k, v] of Object.entries(f.missingScores)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
-    for (const [k, v] of Object.entries(f.missingFCs)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
-    for (const [k, v] of Object.entries(f.hasScores)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
-    for (const [k, v] of Object.entries(f.hasFCs)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
-    if (filterInvalidScoresEnabled) {
+    if (!selectedBandMode) {
+      for (const [k, v] of Object.entries(f.missingScores)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
+      for (const [k, v] of Object.entries(f.missingFCs)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
+      for (const [k, v] of Object.entries(f.hasScores)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
+      for (const [k, v] of Object.entries(f.hasFCs)) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
+    }
+    if (!selectedBandMode && filterInvalidScoresEnabled) {
       for (const [k, v] of Object.entries(f.overThreshold ?? {})) { const key = k as InstrumentKey; if (v && canUseInstrument(key)) filterInstruments.add(key); }
     }
     const activeFilterInstruments = effectiveInstrument
@@ -79,13 +84,13 @@ export function useFilteredSongs({
     // Season/percentile/stars/difficulty filters are instrument-specific — skip them when no instrument is selected
     // so stale filter values from a previously selected instrument don't hide songs.
     const seasonKeys = Object.keys(f.seasonFilter);
-    const checkSeason = effectiveInstrument != null && hasPlayerData && seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false);
+    const checkSeason = !selectedBandMode && effectiveInstrument != null && hasPlayerData && seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false);
     const pctKeys = Object.keys(f.percentileFilter);
-    const checkPct = effectiveInstrument != null && hasPlayerData && pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false);
+    const checkPct = !selectedBandMode && effectiveInstrument != null && hasPlayerData && pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false);
     const starKeys = Object.keys(f.starsFilter);
-    const checkStars = effectiveInstrument != null && hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
+    const checkStars = !selectedBandMode && effectiveInstrument != null && hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
     const diffKeys = Object.keys(f.difficultyFilter);
-    const checkDiff = effectiveInstrument != null && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
+    const checkDiff = !selectedBandMode && effectiveInstrument != null && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
 
     const list = songs.filter(s => {
       if (!songMatchesSearch(s, search)) return false;
@@ -98,6 +103,13 @@ export function useFilteredSongs({
       }
 
       if (effectiveInstrument && !songSupportsInstrument(s, effectiveInstrument)) return false;
+
+      const score = scoreMap.get(s.songId);
+      if (selectedBandMode && f.selectedBandHasScore !== f.selectedBandMissingScore) {
+        const hasSelectedBandScore = (score?.score ?? 0) > 0;
+        if (f.selectedBandHasScore && !hasSelectedBandScore) return false;
+        if (f.selectedBandMissingScore && hasSelectedBandScore) return false;
+      }
 
       if (!hasPlayerData) {
         if (checkDiff) {
@@ -139,8 +151,6 @@ export function useFilteredSongs({
         }
         if (!anyInstrumentPassed) return false;
       }
-
-      const score = scoreMap.get(s.songId);
 
       if (checkSeason) {
         const season = score?.season ?? 0;
@@ -289,5 +299,5 @@ export function useFilteredSongs({
       }
       return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
     });
-  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, leavingTomorrowIds, isScoreValid, filterInvalidScoresEnabled, shopVisible, visibleInstruments]);
+  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, leavingTomorrowIds, isScoreValid, filterInvalidScoresEnabled, shopVisible, visibleInstruments, selectedBandMode]);
 }

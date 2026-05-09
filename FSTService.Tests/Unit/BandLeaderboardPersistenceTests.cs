@@ -342,6 +342,25 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
         Assert.Null(missing);
     }
 
+    [Fact]
+    public async Task BandSpoolWriterFactory_FlushAll_UpdatesOverThresholdFlagWhenScoreIsUnchanged()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+        var logger = Substitute.For<ILogger<BandLeaderboardPersistence>>();
+
+        UpsertDirect(persistence, "song-a", MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000, isOverThreshold: true), rebuildTeamMembership: true);
+
+        await using var spool = BandSpoolWriterFactory.Create(logger, persistence);
+        spool.Enqueue("song-a", "Band_Duets", [MakeBandEntry(["acct-a", "acct-b"], "0:1", 1_000, isOverThreshold: false)]);
+
+        spool.Complete();
+        spool.FlushAll();
+
+        Assert.False(GetBandEntryIsOverThreshold("song-a", "acct-a:acct-b"));
+    }
+
     private void UpsertDirect(
         BandLeaderboardPersistence persistence,
         string songId,
@@ -388,6 +407,22 @@ public sealed class BandLeaderboardPersistenceTests : IDisposable
                   AND band_type = 'Band_Duets'
                   AND team_key = @teamKey
             )
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        return Convert.ToBoolean(cmd.ExecuteScalar());
+    }
+
+    private bool GetBandEntryIsOverThreshold(string songId, string teamKey)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT is_over_threshold
+            FROM band_entries
+            WHERE song_id = @songId
+              AND band_type = 'Band_Duets'
+              AND team_key = @teamKey
             """;
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("teamKey", teamKey);

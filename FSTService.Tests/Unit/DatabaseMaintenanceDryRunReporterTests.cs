@@ -148,6 +148,50 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
     }
 
     [Fact]
+    public void RetentionHelperIndexDefinitions_GenerateConcurrentSqlForExplicitTargets()
+    {
+        var definitions = GetReporterPrivateStaticArray<RetentionHelperIndexDefinition>("RetentionHelperIndexDefinitions");
+
+        Assert.Contains(definitions, definition => definition.Name == "ix_crh_retention_cutoff_account");
+        Assert.Contains(definitions, definition => definition.Name == "ix_btrhp_retention_cutoff_scope_team");
+        Assert.Contains(definitions, definition => definition.Name == "ix_btrh_retention_cutoff_scope_team");
+        Assert.Contains(definitions, definition => definition.Name == "ix_btrsh_retention_cutoff_scope");
+        Assert.All(definitions, definition =>
+        {
+            Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS", definition.CreateSql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains($"\"{definition.Name}\"", definition.CreateSql, StringComparison.Ordinal);
+            Assert.Contains($"public.\"{definition.TableName}\"", definition.CreateSql, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public void RetentionHelperIndexResolution_IsSingleNamedTargetOnly()
+    {
+        var method = typeof(DatabaseMaintenanceDryRunReporter).GetMethod("ResolveRetentionHelperIndexDefinition", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var definition = Assert.IsType<RetentionHelperIndexDefinition>(method.Invoke(null, ["IX_CRH_RETENTION_CUTOFF_ACCOUNT"]));
+
+        Assert.Equal("ix_crh_retention_cutoff_account", definition.Name);
+        Assert.Null(method.Invoke(null, ["all"]));
+        Assert.Null(method.Invoke(null, [""]));
+    }
+
+    [Fact]
+    public void BandHistoryCoverageClassification_RequiresNarrowPointsAndStatsToCoverWideRows()
+    {
+        var wide = Coverage(rows: 100, teams: 10, dates: 5);
+        var points = Coverage(rows: 100, teams: 10, dates: 5);
+        var stats = Coverage(rows: 5, teams: 0, dates: 5);
+
+        Assert.Equal(BandHistoryCoverageClassification.Complete, InvokeBandHistoryCoverageClassification(wide, points, stats, missingWideRows: 0, missingStatsRows: 0));
+        Assert.Equal(BandHistoryCoverageClassification.Partial, InvokeBandHistoryCoverageClassification(wide, points, stats, missingWideRows: 2, missingStatsRows: 0));
+        Assert.Equal(BandHistoryCoverageClassification.Partial, InvokeBandHistoryCoverageClassification(wide, points, stats, missingWideRows: 0, missingStatsRows: 1));
+        Assert.Equal(BandHistoryCoverageClassification.WideOnly, InvokeBandHistoryCoverageClassification(wide, null, null, missingWideRows: 100, missingStatsRows: 0));
+        Assert.Equal(BandHistoryCoverageClassification.Absent, InvokeBandHistoryCoverageClassification(null, null, null, missingWideRows: 0, missingStatsRows: 0));
+    }
+
+    [Fact]
     public void SnapshotRewritePlan_UsesKeepAndPurgeIdsDeterministically()
     {
         var plans = InvokeSnapshotRewritePlans(
@@ -272,6 +316,29 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         var field = typeof(GlobalLeaderboardPersistence).GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(field);
         return Assert.IsType<string[]>(field.GetValue(null));
+    }
+
+    private static IReadOnlyList<T> GetReporterPrivateStaticArray<T>(string fieldName)
+    {
+        var field = typeof(DatabaseMaintenanceDryRunReporter).GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(field);
+        return Assert.IsAssignableFrom<IReadOnlyList<T>>(field.GetValue(null));
+    }
+
+    private static BandHistoryCoverageSourceSummary Coverage(long rows, long teams, long dates) =>
+        new(rows, teams, dates, DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-10)), DateOnly.FromDateTime(DateTime.UtcNow));
+
+    private static BandHistoryCoverageClassification InvokeBandHistoryCoverageClassification(
+        BandHistoryCoverageSourceSummary? wide,
+        BandHistoryCoverageSourceSummary? points,
+        BandHistoryCoverageSourceSummary? stats,
+        long missingWideRows,
+        long missingStatsRows)
+    {
+        var method = typeof(DatabaseMaintenanceDryRunReporter).GetMethod("ClassifyBandHistoryCoverage", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        return Assert.IsType<BandHistoryCoverageClassification>(method.Invoke(null, [wide, points, stats, missingWideRows, missingStatsRows]));
     }
 
     private static bool InvokeLegacyStagingEligibility(RelationFootprint? footprint, long exactRowCount, long activeStagingMetaRows)

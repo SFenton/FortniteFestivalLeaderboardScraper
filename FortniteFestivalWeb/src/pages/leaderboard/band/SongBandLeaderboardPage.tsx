@@ -166,6 +166,7 @@ export default function SongBandLeaderboardPage() {
                 <SongBandLeaderboardRow
                   key={`${entry.bandType}:${entry.teamKey}:${entry.rank}`}
                   entry={entry}
+                  isMobile={isMobile}
                   scoreWidth={scoreWidth}
                   memberScoreWidth={memberScoreWidth}
                   showMemberStars={showMemberStars}
@@ -225,6 +226,7 @@ function normalizeSoloDifficulty(difficulty: number | null | undefined): number 
 
 function SongBandLeaderboardRow({
   entry,
+  isMobile,
   scoreWidth,
   memberScoreWidth,
   showMemberStars,
@@ -233,6 +235,7 @@ function SongBandLeaderboardRow({
   onAnimationEnd,
 }: {
   entry: SongBandLeaderboardEntry;
+  isMobile: boolean;
   scoreWidth?: string;
   memberScoreWidth?: string;
   showMemberStars: boolean;
@@ -251,7 +254,7 @@ function SongBandLeaderboardRow({
       style={style}
       onAnimationEnd={onAnimationEnd}
       ariaLabel={names ? t('bandList.viewBand', { names }) : t('band.title')}
-      renderMemberMetadata={(member) => <SongBandMemberMetadata member={member} scoreWidth={memberScoreWidth} showStars={showMemberStars} showAccuracy={showMemberAccuracy} />}
+      renderMemberMetadata={(member) => <SongBandMemberMetadata member={member} scoreWidth={memberScoreWidth} showDifficulty={!isMobile} showSeason={!isMobile} showStars={!isMobile && showMemberStars} showAccuracy={!isMobile && showMemberAccuracy} />}
       scoreFooter={<SongBandScoreFooter entry={entry} scoreWidth={scoreWidth} />}
       scoreFooterAriaLabel={t('songDetail.bandScoreFooter', {
         rank: entry.rank,

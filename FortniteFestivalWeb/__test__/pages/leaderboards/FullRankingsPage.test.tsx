@@ -441,6 +441,43 @@ describe('FullRankingsPage', () => {
     });
   });
 
+  it('renders the selected band footer for the active selected-band combo filter', async () => {
+    selectBandProfile();
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 100,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
+    });
+    mockApi.getBandRanking.mockResolvedValue(makeBandRankingEntry());
+
+    render(
+      <TestProviders
+        route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore"
+        bandFilter={{
+          bandId: selectedBandProfile.bandId,
+          bandType: selectedBandProfile.bandType,
+          teamKey: selectedBandProfile.teamKey,
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'band-a', instrument: 'Solo_Guitar' },
+            { accountId: 'band-b', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText('Top Player')).toBeTruthy();
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'band-a:band-b', 'Solo_Guitar+Solo_Bass', 'totalscore');
+    expect(document.body.textContent).toContain('Alpha + Beta');
+  });
+
   it('does not query selected band ranking for a selected solo player', async () => {
     render(
       <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore" accountId="test-player">

@@ -1,6 +1,7 @@
 using FortniteFestival.Core.Services;
 using FSTService.Auth;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -442,6 +443,18 @@ public static partial class ApiEndpoints
                 limit: Math.Clamp(limit ?? 30, 1, 200),
                 ct);
             return Results.Ok(new { count = results.Count, tables = results });
+        })
+        .WithTags("Admin")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
+        app.MapGet("/api/admin/dbstats/pressure", async (
+            IDatabasePressureMonitor monitor,
+            IOptions<DatabaseMaintenanceOptions> options,
+            CancellationToken ct) =>
+        {
+            var snapshot = await monitor.GetPressureSnapshotAsync(options.Value, ct);
+            return Results.Ok(snapshot);
         })
         .WithTags("Admin")
         .RequireAuthorization()

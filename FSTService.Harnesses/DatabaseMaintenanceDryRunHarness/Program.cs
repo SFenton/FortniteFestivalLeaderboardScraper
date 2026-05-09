@@ -15,8 +15,10 @@ string? outPath = null;
 var rollbackCompleted = 1;
 var executeLegacyStagingCleanup = false;
 var executeSnapshotRetention = false;
+string? retentionIndexName = null;
 string? snapshotPartition = null;
 var allowProd = false;
+var includeBandHistoryCoverage = false;
 
 for (var i = 0; i < args.Length; i++)
 {
@@ -40,11 +42,17 @@ for (var i = 0; i < args.Length; i++)
         case "--execute-snapshot-retention":
             executeSnapshotRetention = true;
             break;
+        case "--execute-retention-index":
+            retentionIndexName = args[++i];
+            break;
         case "--snapshot-partition":
             snapshotPartition = args[++i];
             break;
         case "--allow-prod":
             allowProd = true;
+            break;
+        case "--include-band-history-coverage":
+            includeBandHistoryCoverage = true;
             break;
         default:
             return Fail($"Unknown argument: {args[i]}");
@@ -61,7 +69,13 @@ if (executeLegacyStagingCleanup && !allowProd)
 if (executeSnapshotRetention && !allowProd)
     return Fail("--allow-prod is required with --execute-snapshot-retention");
 
-if (executeLegacyStagingCleanup && executeSnapshotRetention)
+if (!string.IsNullOrWhiteSpace(retentionIndexName) && !allowProd)
+    return Fail("--allow-prod is required with --execute-retention-index");
+
+var executeModeCount = (executeLegacyStagingCleanup ? 1 : 0)
+    + (executeSnapshotRetention ? 1 : 0)
+    + (!string.IsNullOrWhiteSpace(retentionIndexName) ? 1 : 0);
+if (executeModeCount > 1)
     return Fail("Choose only one execute mode per run");
 
 if (executeSnapshotRetention && string.IsNullOrWhiteSpace(snapshotPartition))
@@ -69,14 +83,17 @@ if (executeSnapshotRetention && string.IsNullOrWhiteSpace(snapshotPartition))
 
 var target = new NpgsqlConnectionStringBuilder(pg);
 Console.WriteLine($"Target: host={target.Host} database={target.Database} user={target.Username}");
-Console.WriteLine($"Mode: {ResolveMode(executeLegacyStagingCleanup, executeSnapshotRetention)}");
+Console.WriteLine($"Mode: {ResolveMode(executeLegacyStagingCleanup, executeSnapshotRetention, retentionIndexName)}");
 Console.WriteLine($"Rollback completed snapshots kept beyond active/projection source: {rollbackCompleted:N0}");
+Console.WriteLine($"Include band history coverage scan: {includeBandHistoryCoverage}");
 if (!string.IsNullOrWhiteSpace(snapshotPartition))
     Console.WriteLine($"Snapshot partition: {snapshotPartition}");
+if (!string.IsNullOrWhiteSpace(retentionIndexName))
+    Console.WriteLine($"Retention index: {retentionIndexName}");
 
 await using var dataSource = NpgsqlDataSource.Create(pg);
 var reporter = new DatabaseMaintenanceDryRunReporter(dataSource);
-var report = await reporter.BuildReportAsync(new DatabaseMaintenanceDryRunOptions(rollbackCompleted));
+var report = await reporter.BuildReportAsync(new DatabaseMaintenanceDryRunOptions(rollbackCompleted, includeBandHistoryCoverage));
 
 PrintSummary(report);
 
@@ -105,9 +122,22 @@ if (executeSnapshotRetention)
     Console.WriteLine($"  reclaimed: {FormatBytes(snapshotRewriteResult.ReclaimedBytes)} ({FormatBytes(snapshotRewriteResult.BeforeTotalBytes)} -> {FormatBytes(snapshotRewriteResult.AfterTotalBytes)})");
 }
 
-object payload = cleanupResult is null && snapshotRewriteResult is null
+RetentionHelperIndexExecutionResult? retentionIndexResult = null;
+if (!string.IsNullOrWhiteSpace(retentionIndexName))
+{
+    Console.WriteLine();
+    Console.WriteLine("Executing one retention helper index build with guarded preflight...");
+    retentionIndexResult = await reporter.CreateRetentionHelperIndexAsync(retentionIndexName);
+    Console.WriteLine($"  executed: {retentionIndexResult.Executed}");
+    Console.WriteLine($"  reason:   {retentionIndexResult.Reason}");
+    Console.WriteLine($"  sql:      {retentionIndexResult.Sql}");
+    if (retentionIndexResult.After?.IndexFootprint is not null)
+        Console.WriteLine($"  after:    index={retentionIndexResult.After.IndexFootprint.Name}, bytes={FormatBytes(retentionIndexResult.After.IndexFootprint.IndexBytes)}");
+}
+
+object payload = cleanupResult is null && snapshotRewriteResult is null && retentionIndexResult is null
     ? report
-    : new { report, cleanupResult, snapshotRewriteResult };
+    : new { report, cleanupResult, snapshotRewriteResult, retentionIndexResult };
 EmitJson(outPath, payload);
 return 0;
 
@@ -126,22 +156,27 @@ static void PrintUsage()
           DatabaseMaintenanceDryRunHarness --pg-env <env-var-name> [--rollback-completed <count>] [--out <path>]
           DatabaseMaintenanceDryRunHarness --pg <connection-string> --execute-legacy-staging-cleanup --allow-prod [--rollback-completed <count>] [--out <path>]
           DatabaseMaintenanceDryRunHarness --pg <connection-string> --execute-snapshot-retention --allow-prod --snapshot-partition <partition-name> [--rollback-completed <count>] [--out <path>]
+                    DatabaseMaintenanceDryRunHarness --pg <connection-string> --execute-retention-index <index-name> --allow-prod [--rollback-completed <count>] [--out <path>]
 
         Notes:
           - Default mode is read-only and does not execute cleanup SQL.
+                    - Band history coverage scans are skipped unless --include-band-history-coverage is set.
           - Execute modes require --allow-prod and still refuse cleanup if preflight fails.
           - Snapshot retention execution rewrites one explicit partition per run.
+                    - Retention index execution builds one explicit CREATE INDEX CONCURRENTLY target per run.
           - If --pg and --pg-env are omitted, PG_CONN is used.
           - Default rollback-completed is 1.
         """);
 }
 
-static string ResolveMode(bool executeLegacyStagingCleanup, bool executeSnapshotRetention)
+static string ResolveMode(bool executeLegacyStagingCleanup, bool executeSnapshotRetention, string? retentionIndexName)
 {
     if (executeLegacyStagingCleanup)
         return "execute legacy staging cleanup";
     if (executeSnapshotRetention)
         return "execute snapshot retention rewrite";
+        if (!string.IsNullOrWhiteSpace(retentionIndexName))
+                return "execute one retention helper index";
     return "dry-run/read-only";
 }
 
@@ -163,6 +198,13 @@ static void PrintSummary(DatabaseMaintenanceDryRunReport report)
         Console.WriteLine($"  smallest rewrite:       {smallestRewrite.PartitionName} ({FormatBytes(smallestRewrite.TotalBytes)}, estimated purge {FormatBytes(smallestRewrite.EstimatedPurgeBytes)})");
         Console.WriteLine($"  rewrite keep ids:       {FormatIds(smallestRewrite.KeepSnapshotIds)}");
         Console.WriteLine($"  rewrite purge ids:      {FormatIds(smallestRewrite.PurgeSnapshotIds)}");
+    }
+    Console.WriteLine($"  rewrite candidates:     {report.SnapshotRewritePlans.Count(plan => plan.CanExecute):N0}/{report.SnapshotRewritePlans.Count:N0}");
+    foreach (var plan in report.SnapshotRewritePlans.Take(8))
+    {
+        Console.WriteLine($"  {plan.PartitionName}: keepRows={plan.EstimatedRetainRows:N0}, purgeRows={plan.EstimatedPurgeRows:N0}, purgeBytes={FormatBytes(plan.EstimatedPurgeBytes)}, blockedIds={FormatIds(plan.BlockedSnapshotIds)}, canExecute={plan.CanExecute}");
+        if (!plan.CanExecute)
+            Console.WriteLine($"    reason: {plan.Reason}");
     }
 
     Console.WriteLine();
@@ -187,9 +229,38 @@ static void PrintSummary(DatabaseMaintenanceDryRunReport report)
     }
     if (report.IndexCandidates.Count > 12)
         Console.WriteLine($"  ... {report.IndexCandidates.Count - 12:N0} more in JSON output");
+
+    Console.WriteLine();
+    Console.WriteLine("Retention helper indexes");
+    foreach (var status in report.RetentionHelperIndexes)
+    {
+        var state = status.IndexExists ? "present" : status.TableExists ? "missing" : "blocked";
+        Console.WriteLine($"  {status.Definition.Name} on {status.Definition.TableName}: {state}");
+        if (!status.IndexExists && status.TableExists)
+            Console.WriteLine($"    sql: {status.Definition.CreateSql}");
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Band history coverage");
+    Console.WriteLine($"  included:              {report.BandHistoryCoverage.Included}");
+    Console.WriteLine($"  wide table:            {report.BandHistoryCoverage.Tables.WideHistoryExists}");
+    Console.WriteLine($"  narrow points table:   {report.BandHistoryCoverage.Tables.NarrowPointsExists}");
+    Console.WriteLine($"  narrow stats table:    {report.BandHistoryCoverage.Tables.NarrowStatsExists}");
+    Console.WriteLine($"  complete scopes:       {report.BandHistoryCoverage.CompleteCount:N0}");
+    Console.WriteLine($"  partial scopes:        {report.BandHistoryCoverage.PartialCount:N0}");
+    Console.WriteLine($"  wide-only scopes:      {report.BandHistoryCoverage.WideOnlyCount:N0}");
+    Console.WriteLine($"  recommendation:        {report.BandHistoryCoverage.Recommendation}");
+    foreach (var item in report.BandHistoryCoverage.Items
+        .Where(item => item.Classification != BandHistoryCoverageClassification.Complete)
+        .Take(8))
+    {
+        Console.WriteLine($"  {item.BandType}/{item.RankingScope}/{FormatCombo(item.ComboId)}: {item.Classification}, missingWideRows={item.WideRowsMissingFromNarrow:N0}, missingStatsRows={item.NarrowRowsMissingStats:N0}");
+    }
 }
 
 static string FormatIds(IReadOnlyList<long> ids) => ids.Count == 0 ? "none" : string.Join(", ", ids);
+
+static string FormatCombo(string comboId) => string.IsNullOrWhiteSpace(comboId) ? "overall" : comboId;
 
 static string FormatBytes(long bytes)
 {

@@ -374,7 +374,7 @@ function renderResults({ activeTarget, query, search, styles: st, isMobile, t, o
   if (activeTarget === 'players') {
     if (search.playerResults.length === 0) return <div style={{ ...st.hintCenter, ...getStaggerStyle(0, shouldStagger) }}>{t('search.noResults.players')}</div>;
     return search.playerResults.map((player, index) => (
-      <button key={player.accountId} type="button" style={{ ...st.resultBtn, ...getStaggerStyle(index, shouldStagger) }} onClick={() => onPlayerSelect(player)}>
+      <button key={player.accountId} type="button" data-testid="search-player-result" style={{ ...st.resultBtn, ...getStaggerStyle(index, shouldStagger) }} onClick={() => onPlayerSelect(player)}>
         <span style={st.resultTitle}>{player.displayName}</span>
       </button>
     ));

@@ -4,6 +4,7 @@ using FSTService;
 using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -47,6 +48,9 @@ public sealed class PostScrapeOrchestrator
     private readonly SoloCurrentProjectionBuilder? _soloCurrentProjectionBuilder;
     private readonly IOptions<ImprovementNotificationOptions> _improvementNotificationOptions;
     private readonly IOptions<BandRankHistoryOptions> _bandRankHistoryOptions;
+    private readonly IOptions<DatabaseMaintenanceOptions> _databaseMaintenanceOptions;
+    private readonly IDatabasePressureMonitor? _databasePressureMonitor;
+    private readonly IDatabaseRetentionMaintenanceService? _retentionMaintenanceService;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
@@ -80,7 +84,10 @@ public sealed class PostScrapeOrchestrator
         ImprovementNotificationService? improvementNotifications = null,
         SoloCurrentProjectionBuilder? soloCurrentProjectionBuilder = null,
         IOptions<ImprovementNotificationOptions>? improvementNotificationOptions = null,
-        IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null)
+        IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null,
+        IOptions<DatabaseMaintenanceOptions>? databaseMaintenanceOptions = null,
+        IDatabasePressureMonitor? databasePressureMonitor = null,
+        IDatabaseRetentionMaintenanceService? retentionMaintenanceService = null)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
@@ -110,6 +117,9 @@ public sealed class PostScrapeOrchestrator
         _soloCurrentProjectionBuilder = soloCurrentProjectionBuilder;
         _improvementNotificationOptions = improvementNotificationOptions ?? Options.Create(new ImprovementNotificationOptions());
         _bandRankHistoryOptions = bandRankHistoryOptions ?? Options.Create(new BandRankHistoryOptions());
+        _databaseMaintenanceOptions = databaseMaintenanceOptions ?? Options.Create(new DatabaseMaintenanceOptions());
+        _databasePressureMonitor = databasePressureMonitor;
+        _retentionMaintenanceService = retentionMaintenanceService;
         _options = options;
         _log = log;
     }
@@ -541,6 +551,7 @@ public sealed class PostScrapeOrchestrator
         var cleanupSoloExcessEntries = resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment);
         var cleanupRankHistoryRetention = resolvedPhases.HasFlag(ScrapePhase.SoloRankings);
         var cleanupBandRankHistoryRetention = resolvedPhases.HasFlag(ScrapePhase.SoloRankings);
+        var cleanupServiceLevelRetention = ShouldRunServiceLevelRetentionMaintenance(resolvedPhases);
 
         if (cleanupSoloExcessEntries)
             cleanupItems++;
@@ -548,6 +559,8 @@ public sealed class PostScrapeOrchestrator
             cleanupItems += GlobalLeaderboardScraper.AllInstruments.Count + 1;
         if (cleanupBandRankHistoryRetention)
             cleanupItems += BandInstrumentMapping.AllBandTypes.Count;
+        if (cleanupServiceLevelRetention)
+            cleanupItems++;
 
         if (cleanupItems == 0)
             return;
@@ -574,14 +587,82 @@ public sealed class PostScrapeOrchestrator
 
         if (cleanupRankHistoryRetention)
         {
-            await RunPhaseAsync("Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
+            if (await ShouldSkipMaintenanceCleanupAsync("rank history retention", ct))
+                ReportSkippedCleanupItems(GlobalLeaderboardScraper.AllInstruments.Count + 1);
+            else
+                await RunPhaseAsync("Cleanup.RankHistoryRetention", () => CleanupRankHistoryRetentionAsync(ct));
         }
 
         if (cleanupBandRankHistoryRetention)
         {
-            await RunPhaseAsync("Cleanup.BandRankHistoryRetention", () => CleanupBandRankHistoryRetentionAsync(ct));
+            if (await ShouldSkipMaintenanceCleanupAsync("band rank history retention", ct))
+                ReportSkippedCleanupItems(BandInstrumentMapping.AllBandTypes.Count);
+            else
+                await RunPhaseAsync("Cleanup.BandRankHistoryRetention", () => CleanupBandRankHistoryRetentionAsync(ct));
+        }
+
+        if (cleanupServiceLevelRetention)
+            await RunPhaseAsync("Cleanup.ServiceLevelRetention", () => RunServiceLevelRetentionMaintenanceAsync(ct));
+    }
+
+    private bool ShouldRunServiceLevelRetentionMaintenance(ScrapePhase resolvedPhases) =>
+        _retentionMaintenanceService is not null &&
+        _databaseMaintenanceOptions.Value.ServiceLevelRetentionMaintenanceEnabled &&
+        resolvedPhases.HasFlag(ScrapePhase.SoloFinalize);
+
+    private async Task RunServiceLevelRetentionMaintenanceAsync(CancellationToken ct)
+    {
+        _progress.SetSubOperation("cleanup_service_level_retention");
+        try
+        {
+            var result = await _retentionMaintenanceService!.RunAsync(ct);
+            if (result.Skipped)
+            {
+                _log.LogInformation("Service-level retention maintenance skipped: {Reason}.", result.Reason);
+                return;
+            }
+
+            _log.LogInformation(
+                "Service-level retention maintenance completed: {Reason}. Snapshot candidates={SnapshotCandidates:N0}, rewrites={RewriteCount:N0}, metadata rows deleted={MetadataDeleted:N0}.",
+                result.Reason,
+                result.SnapshotRetention.CandidateCount,
+                result.SnapshotRetention.RewriteResults.Count,
+                result.MetadataCleanup.TotalDeletedRows);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Service-level retention maintenance failed. Continuing without blocking fresh data publication.");
+        }
+        finally
+        {
+            _progress.ReportPhaseItemComplete();
         }
     }
+
+    private async Task<bool> ShouldSkipMaintenanceCleanupAsync(string cleanupName, CancellationToken ct)
+    {
+        var options = _databaseMaintenanceOptions.Value;
+        if (!options.SkipCleanupWhenPressureDetected || _databasePressureMonitor is null)
+            return false;
+
+        var snapshot = await _databasePressureMonitor.GetPressureSnapshotAsync(options, ct);
+        if (!snapshot.IsUnderPressure)
+            return false;
+
+        _log.LogWarning(
+            "Skipping {CleanupName} cleanup because database pressure is already high: {Reasons}.",
+            cleanupName,
+            string.Join("; ", snapshot.Reasons));
+        return true;
+    }
+
+    private void ReportSkippedCleanupItems(int itemCount)
+    {
+        for (var i = 0; i < itemCount; i++)
+            _progress.ReportPhaseItemComplete();
+    }
+
+    private static int PositiveOrDefault(int value, int fallback) => value > 0 ? value : fallback;
 
     private bool ShouldRefreshSoloCurrentProjectionDuringCleanup(ScrapePhase resolvedPhases) =>
         _soloCurrentProjectionBuilder is not null &&
@@ -667,6 +748,15 @@ public sealed class PostScrapeOrchestrator
 
     private async Task CleanupRankHistoryRetentionAsync(CancellationToken ct)
     {
+        var maintenanceOptions = _databaseMaintenanceOptions.Value;
+        var batchSize = PositiveOrDefault(
+            maintenanceOptions.RankHistoryCleanupBatchSize,
+            DatabaseMaintenanceOptions.DefaultCleanupBatchSize);
+        var maxBatches = PositiveOrDefault(
+            maintenanceOptions.RankHistoryCleanupMaxBatches,
+            DatabaseMaintenanceOptions.DefaultCleanupMaxBatches);
+        var commandTimeoutSeconds = Math.Max(0, maintenanceOptions.CleanupCommandTimeoutSeconds);
+
         foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
         {
             ct.ThrowIfCancellationRequested();
@@ -674,7 +764,9 @@ public sealed class PostScrapeOrchestrator
             try
             {
                 var db = _persistence.GetOrCreateInstrumentDb(instrument);
-                var deleted = await Task.Run(() => db.CleanupRankHistoryRetention(), ct);
+                var deleted = await Task.Run(() => db.CleanupRankHistoryRetention(
+                    batchSize: batchSize,
+                    maxBatches: maxBatches), ct);
                 if (deleted > 0)
                 {
                     _log.LogInformation(
@@ -699,7 +791,11 @@ public sealed class PostScrapeOrchestrator
         _progress.SetSubOperation("cleanup_composite_rank_history");
         try
         {
-            var deleted = await Task.Run(() => _persistence.Meta.CleanupCompositeRankHistoryRetention(), ct);
+            var deleted = await Task.Run(() => _persistence.Meta.CleanupCompositeRankHistoryRetention(
+                batchSize: batchSize,
+                maxBatches: maxBatches,
+                commandTimeoutSeconds: commandTimeoutSeconds,
+                ct: ct), ct);
             if (deleted > 0)
             {
                 _log.LogInformation(
@@ -721,6 +817,16 @@ public sealed class PostScrapeOrchestrator
     private async Task CleanupBandRankHistoryRetentionAsync(CancellationToken ct)
     {
         var options = _bandRankHistoryOptions.Value;
+        var maintenanceOptions = _databaseMaintenanceOptions.Value;
+        var batchSize = PositiveOrDefault(
+            maintenanceOptions.BandRankHistoryCleanupBatchSize,
+            DatabaseMaintenanceOptions.DefaultCleanupBatchSize);
+        var maxBatches = PositiveOrDefault(
+            maintenanceOptions.BandRankHistoryCleanupMaxBatches,
+            DatabaseMaintenanceOptions.DefaultCleanupMaxBatches);
+        var commandTimeoutSeconds = options.CommandTimeoutSeconds > 0
+            ? options.CommandTimeoutSeconds
+            : Math.Max(0, maintenanceOptions.CleanupCommandTimeoutSeconds);
         foreach (var bandType in BandInstrumentMapping.AllBandTypes)
         {
             ct.ThrowIfCancellationRequested();
@@ -730,8 +836,10 @@ public sealed class PostScrapeOrchestrator
                 var deleted = await Task.Run(() => _persistence.Meta.CleanupBandRankHistoryRetention(
                     bandType,
                     options.RetentionDays,
-                    options.CommandTimeoutSeconds,
-                    ct), ct);
+                    commandTimeoutSeconds,
+                    ct,
+                    batchSize,
+                    maxBatches), ct);
                 if (deleted > 0)
                 {
                     _log.LogInformation(

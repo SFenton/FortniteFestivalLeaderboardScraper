@@ -70,6 +70,7 @@ import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransitio
 import { buildSongQuickLinkSections, type SongQuickLinkSection } from './songQuickLinks';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
+import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
 
 /**
  * Estimated minimum width (px) for each metadata element in desktop row layout.
@@ -345,9 +346,10 @@ export default function SongsPage() {
   const { profile } = useTrackedPlayer();
   const selectedBand = profile?.type === 'band' ? profile : null;
   const appliedBandComboFilter = useAppliedBandComboFilter();
-  const activeBandComboId = selectedBand && appliedBandComboFilter?.bandType === selectedBand.bandType
-    ? appliedBandComboFilter.comboId
-    : undefined;
+  const selectedBandComboFilter = selectedBand && isBandFilterForSelectedProfile(appliedBandComboFilter, profile)
+    ? appliedBandComboFilter
+    : null;
+  const activeBandComboId = selectedBandComboFilter?.comboId;
   const isSelectedBand = selectedBand != null;
   const effectiveSortMode: SongSortMode = isSelectedBand && !BAND_SAFE_SORT_MODES.has(settings.sortMode) ? 'title' : settings.sortMode;
   const enabledInstruments = useMemo(
@@ -356,6 +358,7 @@ export default function SongsPage() {
   );
   const activeSongInstrumentFilter = isVisibleInstrumentFilter(settings.instrument, enabledInstruments) ? settings.instrument : null;
   const displayInstrumentFilter = isSelectedBand ? null : activeSongInstrumentFilter;
+  const modalInstrumentFilter = isSelectedBand ? null : activeSongInstrumentFilter;
   const scopedFilters = useMemo(
     () => sanitizeSongFiltersForInstruments(settings.filters, enabledInstruments),
     [enabledInstruments, settings.filters],
@@ -522,16 +525,33 @@ export default function SongsPage() {
   };
 
   const openFilter = () => {
-    filterModal.open({ ...scopedFilters, instrumentFilter: activeSongInstrumentFilter });
+    filterModal.open({ ...scopedFilters, instrumentFilter: modalInstrumentFilter });
   };
   const applyFilter = () => {
     const { instrumentFilter, ...filters } = filterModal.draft;
+    if (isSelectedBand) {
+      setSettings(s => normalizeSongSettings({ ...s, filters: sanitizeSongFiltersForInstruments(filters, enabledInstruments) }));
+      filterModal.close();
+      return;
+    }
     const nextInstrument = isVisibleInstrumentFilter(instrumentFilter, enabledInstruments) ? instrumentFilter : null;
     setInstrument(nextInstrument ?? DEFAULT_INSTRUMENT);
     setSettings(s => normalizeSongSettings({ ...s, filters: sanitizeSongFiltersForInstruments(filters, enabledInstruments), instrument: nextInstrument }));
     filterModal.close();
   };
   const resetFilter = () => {
+    if (isSelectedBand) {
+      const defaults = defaultSongFilters();
+      filterModal.setDraft({
+        ...filterModal.draft,
+        selectedBandHasScore: defaults.selectedBandHasScore,
+        selectedBandMissingScore: defaults.selectedBandMissingScore,
+        shopInShop: defaults.shopInShop,
+        shopLeavingTomorrow: defaults.shopLeavingTomorrow,
+        instrumentFilter: null,
+      });
+      return;
+    }
     filterModal.setDraft({ ...defaultSongFilters(), instrumentFilter: null });
   };
 
@@ -577,8 +597,9 @@ export default function SongsPage() {
 
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
-  const filtersActive = isFilterActive(settings.filters, displayInstrumentFilter, isShopVisible, enabledInstruments) || displayInstrumentFilter != null;
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
+  const filtersActive = isFilterActive(settings.filters, displayInstrumentFilter, isShopVisible, enabledInstruments, isSelectedBand) || displayInstrumentFilter != null;
+  const hasFilterableProfile = isSelectedBand || !!playerData;
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: hasFilterableProfile, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [hasFilterableProfile, isShopVisible, appSettings.disableShopHighlighting]);
 
   const { isScoreValid, enabled: scoreFilterEnabled, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
 
@@ -723,6 +744,7 @@ export default function SongsPage() {
     filterInvalidScoresEnabled: scoreFilterEnabled,
     shopVisible: isShopVisible,
     visibleInstruments: enabledInstruments,
+    selectedBandMode: isSelectedBand,
   });
 
   const sectionModel = useMemo(() => buildSongQuickLinkSections({
@@ -753,8 +775,15 @@ export default function SongsPage() {
     }));
   }, [effectiveSortMode, hasQuickLinkSections, isWideDesktop, sectionModel.sections]);
 
-  const hasPlayer = !!playerData;
+  const hasPlayer = hasFilterableProfile;
   const hasSongRowScoreData = hasDisplayScores;
+  const emptySubtitle = isSelectedBand && scopedFilters.selectedBandHasScore && bandScoreMap.size === 0
+    ? t(activeBandComboId ? 'songs.noSelectedBandComboScores' : 'songs.noSelectedBandScores')
+    : isSelectedBand && filtersActive
+      ? t('songs.noSelectedBandFilterResults')
+      : filtersActive
+        ? t('songs.noResultsSubtitle')
+        : t('common.serviceDown');
 
   // Derive available seasons from player scores
   const availableSeasons = useMemo(() => {
@@ -1113,6 +1142,8 @@ export default function SongsPage() {
           draft={filterModal.draft}
           savedDraft={{ ...scopedFilters, instrumentFilter: displayInstrumentFilter }}
           availableSeasons={availableSeasons}
+          selectedBandMode={isSelectedBand}
+          selectedBandName={selectedBand?.displayName}
           onChange={filterModal.setDraft}
           onCancel={filterModal.close}
           onReset={resetFilter}
@@ -1153,7 +1184,7 @@ export default function SongsPage() {
           <EmptyState
             fullPage
             title={t('songs.noResults')}
-            subtitle={filtersActive ? t('songs.noResultsSubtitle') : t('common.serviceDown')}
+            subtitle={emptySubtitle}
             style={emptyStateStyle}
             onAnimationEnd={emptyStagger.onAnimationEnd}
           />

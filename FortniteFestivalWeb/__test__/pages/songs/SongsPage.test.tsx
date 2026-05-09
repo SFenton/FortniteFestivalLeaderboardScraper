@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
-import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act, within, cleanup } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
 import { Colors, Gap, Layout, FADE_DURATION } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
@@ -9,8 +9,10 @@ import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } 
 import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../src/hooks/ui/usePageQuickLinks';
 import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
 import { clearPageTransitionCache } from '../../../src/hooks/ui/usePageTransition';
+import { defaultSongSettings } from '../../../src/utils/songSettings';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
+import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -39,6 +41,17 @@ beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
   stubElementDimensions(800);
+  if (typeof Range !== 'undefined') {
+    const rect = { top: 0, left: 0, bottom: 16, right: 120, width: 120, height: 16, x: 0, y: 0, toJSON() { return this; } };
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect,
+    });
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [] as unknown as DOMRectList,
+    });
+  }
 });
 
 function resetMocks() {
@@ -67,12 +80,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.useRealTimers();
 });
 
-function renderSongsPage(route = '/songs', accountId?: string) {
+function renderSongsPage(route = '/songs', accountId?: string, bandFilter?: AppliedBandComboFilter | null) {
   return render(
-    <TestProviders route={route} accountId={accountId}>
+    <TestProviders route={route} accountId={accountId} bandFilter={bandFilter}>
       <Routes>
         <Route path="/songs" element={<SongsPage />} />
       </Routes>
@@ -120,6 +134,50 @@ async function settleSongsPage() {
 async function openSongsQuickLinksModal() {
   await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
   return await screen.findByTestId('songs-quick-links-modal-list');
+}
+
+function selectTestBandProfile() {
+  localStorage.setItem('fst:selectedProfile', JSON.stringify({
+    type: 'band',
+    bandId: 'band-1',
+    bandType: 'Band_Duets',
+    teamKey: 'p1:p2',
+    displayName: 'Test Duo',
+    members: [],
+  }));
+}
+
+function setSongSettingsFilter(filterPatch: Record<string, unknown>) {
+  const settings = defaultSongSettings();
+  localStorage.setItem('fst:songSettings', JSON.stringify({
+    ...settings,
+    filters: {
+      ...settings.filters,
+      ...filterPatch,
+    },
+  }));
+}
+
+function mockSelectedBandRows() {
+  mockApi.getBandSongRows.mockResolvedValue({
+    bandType: 'Band_Duets',
+    teamKey: 'p1:p2',
+    comboId: null,
+    count: 1,
+    entries: [{
+      songId: 's1',
+      comboId: null,
+      rank: 1,
+      totalEntries: 10,
+      percentile: 10,
+      score: 123456,
+      accuracy: 980000,
+      isFullCombo: true,
+      stars: 5,
+      season: 5,
+      endTime: '2026-05-01T00:00:00Z',
+    }],
+  });
 }
 
 describe('SongsPage', () => {
@@ -394,33 +452,8 @@ describe('SongsPage', () => {
   });
 
   it('renders selected band song row scores without solo-only metadata', async () => {
-    localStorage.setItem('fst:selectedProfile', JSON.stringify({
-      type: 'band',
-      bandId: 'band-1',
-      bandType: 'Band_Duets',
-      teamKey: 'p1:p2',
-      displayName: 'Test Duo',
-      members: [],
-    }));
-    mockApi.getBandSongRows.mockResolvedValue({
-      bandType: 'Band_Duets',
-      teamKey: 'p1:p2',
-      comboId: null,
-      count: 1,
-      entries: [{
-        songId: 's1',
-        comboId: null,
-        rank: 1,
-        totalEntries: 10,
-        percentile: 10,
-        score: 123456,
-        accuracy: 980000,
-        isFullCombo: true,
-        stars: 5,
-        season: 5,
-        endTime: '2026-05-01T00:00:00Z',
-      }],
-    });
+    selectTestBandProfile();
+    mockSelectedBandRows();
 
     const { container } = renderSongsPage('/songs');
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
@@ -430,6 +463,74 @@ describe('SongsPage', () => {
     expect(container.textContent).toContain('123,456');
     expect(container.querySelector('[data-metadata-key="difficulty"]')).toBeNull();
     expect(container.querySelector('[data-metadata-key="intensity"]')).toBeNull();
+  });
+
+  it('filters selected band songs to rows with a band score', async () => {
+    selectTestBandProfile();
+    mockSelectedBandRows();
+    setSongSettingsFilter({ selectedBandHasScore: true });
+
+    const { container } = renderSongsPage('/songs');
+    await settleSongsPage();
+
+    expect(container.textContent).toContain('Alpha Song');
+    expect(container.textContent).not.toContain('Beta Song');
+    expect(container.textContent).not.toContain('Gamma Song');
+  });
+
+  it('filters selected band songs to rows missing a band score', async () => {
+    selectTestBandProfile();
+    mockSelectedBandRows();
+    setSongSettingsFilter({ selectedBandMissingScore: true });
+
+    const { container } = renderSongsPage('/songs');
+    await settleSongsPage();
+
+    expect(container.textContent).not.toContain('Alpha Song');
+    expect(container.textContent).toContain('Beta Song');
+    expect(container.textContent).toContain('Gamma Song');
+  });
+
+  it('ignores stale solo score filters while a tracked band is selected', async () => {
+    selectTestBandProfile();
+    mockSelectedBandRows();
+    setSongSettingsFilter({ hasScores: { Solo_Guitar: true }, selectedBandHasScore: false, selectedBandMissingScore: false });
+
+    const { container } = renderSongsPage('/songs');
+    await settleSongsPage();
+
+    expect(container.textContent).toContain('Alpha Song');
+    expect(container.textContent).toContain('Beta Song');
+    expect(container.textContent).toContain('Gamma Song');
+  });
+
+  it('uses the applied combo only when it belongs to the selected tracked band', async () => {
+    selectTestBandProfile();
+    mockSelectedBandRows();
+    const matchingFilter: AppliedBandComboFilter = {
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'p1', instrument: 'Solo_Guitar' },
+        { accountId: 'p2', instrument: 'Solo_Bass' },
+      ],
+    };
+
+    const firstRender = renderSongsPage('/songs', undefined, matchingFilter);
+
+    await waitFor(() => expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', 'p1:p2', 'Solo_Guitar+Solo_Bass'));
+    firstRender.unmount();
+
+    resetMocks();
+    selectTestBandProfile();
+    mockSelectedBandRows();
+    const otherBandFilter: AppliedBandComboFilter = { ...matchingFilter, bandId: 'other-band' };
+
+    renderSongsPage('/songs', undefined, otherBandFilter);
+
+    await waitFor(() => expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', 'p1:p2', undefined));
   });
 
   it('opens sort modal when Sort button is clicked', async () => {

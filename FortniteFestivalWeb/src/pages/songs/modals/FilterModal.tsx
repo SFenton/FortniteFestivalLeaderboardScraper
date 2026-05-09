@@ -26,6 +26,8 @@ type FilterModalProps = {
   draft: FilterDraft;
   savedDraft?: FilterDraft;
   availableSeasons: number[];
+  selectedBandMode?: boolean;
+  selectedBandName?: string;
   onChange: (d: FilterDraft) => void;
   onCancel: () => void;
   onReset: () => void;
@@ -34,7 +36,7 @@ type FilterModalProps = {
 
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 
-export default function FilterModal({ visible, draft, savedDraft, availableSeasons, onChange, onCancel, onReset, onApply }: FilterModalProps) {
+export default function FilterModal({ visible, draft, savedDraft, availableSeasons, selectedBandMode = false, selectedBandName, onChange, onCancel, onReset, onApply }: FilterModalProps) {
   const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
   const { isShopVisible } = useShopState();
@@ -54,6 +56,14 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
   };
   const toggleOverThreshold = (key: InstrumentKey) => {
     onChange({ ...draft, overThreshold: { ...draft.overThreshold, [key]: !(draft.overThreshold?.[key] ?? false) } });
+  };
+  const toggleSelectedBandHasScore = () => {
+    const next = !draft.selectedBandHasScore;
+    onChange({ ...draft, selectedBandHasScore: next, selectedBandMissingScore: next ? false : draft.selectedBandMissingScore });
+  };
+  const toggleSelectedBandMissingScore = () => {
+    const next = !draft.selectedBandMissingScore;
+    onChange({ ...draft, selectedBandMissingScore: next, selectedBandHasScore: next ? false : draft.selectedBandHasScore });
   };
 
   // Global toggles: set/unset all visible instruments at once
@@ -87,83 +97,100 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
           onExitComplete={() => setConfirmOpen(false)}
         />
       ) : null}>
-      {/* Global filters */}
-      <ModalSection>
-        <Accordion title={t('filter.globalToggles')} hint={t('filter.globalTogglesHint')}>
+      {selectedBandMode ? (
+        <ModalSection title={t('filter.selectedBandScores')} hint={t('filter.selectedBandScoresHint', { band: selectedBandName ?? t('band.title') })}>
           <ToggleRow
-            label={t('filter.missingScores')}
-            description={t('filter.missingScoresDesc')}
-            checked={allOn(draft.missingScores)}
-            onToggle={() => toggleGlobal('missingScores')}
+            label={t('filter.selectedBandHasScore')}
+            description={t('filter.selectedBandHasScoreDesc')}
+            checked={draft.selectedBandHasScore}
+            onToggle={toggleSelectedBandHasScore}
           />
           <ToggleRow
-            label={t('filter.hasScores')}
-            description={t('filter.hasScoresDesc')}
-            checked={allOn(draft.hasScores)}
-            onToggle={() => toggleGlobal('hasScores')}
+            label={t('filter.selectedBandMissingScore')}
+            description={t('filter.selectedBandMissingScoreDesc')}
+            checked={draft.selectedBandMissingScore}
+            onToggle={toggleSelectedBandMissingScore}
           />
-          <ToggleRow
-            label={t('filter.missingFCs')}
-            description={t('filter.missingFCsDesc')}
-            checked={allOn(draft.missingFCs)}
-            onToggle={() => toggleGlobal('missingFCs')}
-          />
-          <ToggleRow
-            label={t('filter.hasFCs')}
-            description={t('filter.hasFCsDesc')}
-            checked={allOn(draft.hasFCs)}
-            onToggle={() => toggleGlobal('hasFCs')}
-          />
-          {appSettings.filterInvalidScores && (
+        </ModalSection>
+      ) : (<>
+        {/* Global filters */}
+        <ModalSection>
+          <Accordion title={t('filter.globalToggles')} hint={t('filter.globalTogglesHint')}>
             <ToggleRow
-              label={t('filter.overThreshold')}
-              description={t('filter.overThresholdDesc')}
-              checked={allOn(draft.overThreshold ?? {})}
-              onToggle={() => toggleGlobal('overThreshold')}
-            />
-          )}
-        </Accordion>
-      </ModalSection>
-
-      {/* Missing filters nstrument accordions */}
-      <ModalSection title={t('filter.individualToggles')} hint={t('filter.individualTogglesHint')}>
-        {visibleKeys.map(key => (
-          <Accordion key={key} title={INSTRUMENT_LABELS[key]} icon={<InstrumentIcon instrument={key} size={28} />}>
-            <ToggleRow
-              label={t('filter.instrumentMissingScores', { instrument: INSTRUMENT_LABELS[key] })}
-              description={t('filter.instrumentMissingScoresDesc', { instrument: INSTRUMENT_LABELS[key] })}
-              checked={draft.missingScores[key] ?? false}
-              onToggle={() => toggleMissingScores(key)}
+              label={t('filter.missingScores')}
+              description={t('filter.missingScoresDesc')}
+              checked={allOn(draft.missingScores)}
+              onToggle={() => toggleGlobal('missingScores')}
             />
             <ToggleRow
-              label={t('filter.instrumentHasScores', { instrument: INSTRUMENT_LABELS[key] })}
-              description={t('filter.instrumentHasScoresDesc', { instrument: INSTRUMENT_LABELS[key] })}
-              checked={draft.hasScores[key] ?? false}
-              onToggle={() => toggleHasScores(key)}
+              label={t('filter.hasScores')}
+              description={t('filter.hasScoresDesc')}
+              checked={allOn(draft.hasScores)}
+              onToggle={() => toggleGlobal('hasScores')}
             />
             <ToggleRow
-              label={t('filter.instrumentMissingFCs', { instrument: INSTRUMENT_LABELS[key] })}
-              description={t('filter.instrumentMissingFCsDesc', { instrument: INSTRUMENT_LABELS[key] })}
-              checked={draft.missingFCs[key] ?? false}
-              onToggle={() => toggleMissingFCs(key)}
+              label={t('filter.missingFCs')}
+              description={t('filter.missingFCsDesc')}
+              checked={allOn(draft.missingFCs)}
+              onToggle={() => toggleGlobal('missingFCs')}
             />
             <ToggleRow
-              label={t('filter.instrumentHasFCs', { instrument: INSTRUMENT_LABELS[key] })}
-              description={t('filter.instrumentHasFCsDesc', { instrument: INSTRUMENT_LABELS[key] })}
-              checked={draft.hasFCs[key] ?? false}
-              onToggle={() => toggleHasFCs(key)}
+              label={t('filter.hasFCs')}
+              description={t('filter.hasFCsDesc')}
+              checked={allOn(draft.hasFCs)}
+              onToggle={() => toggleGlobal('hasFCs')}
             />
             {appSettings.filterInvalidScores && (
               <ToggleRow
-                label={t('filter.instrumentOverThreshold', { instrument: INSTRUMENT_LABELS[key] })}
-                description={t('filter.instrumentOverThresholdDesc', { instrument: INSTRUMENT_LABELS[key] })}
-                checked={draft.overThreshold?.[key] ?? false}
-                onToggle={() => toggleOverThreshold(key)}
+                label={t('filter.overThreshold')}
+                description={t('filter.overThresholdDesc')}
+                checked={allOn(draft.overThreshold ?? {})}
+                onToggle={() => toggleGlobal('overThreshold')}
               />
             )}
           </Accordion>
-        ))}
-      </ModalSection>
+        </ModalSection>
+
+        {/* Missing filters nstrument accordions */}
+        <ModalSection title={t('filter.individualToggles')} hint={t('filter.individualTogglesHint')}>
+          {visibleKeys.map(key => (
+            <Accordion key={key} title={INSTRUMENT_LABELS[key]} icon={<InstrumentIcon instrument={key} size={28} />}>
+              <ToggleRow
+                label={t('filter.instrumentMissingScores', { instrument: INSTRUMENT_LABELS[key] })}
+                description={t('filter.instrumentMissingScoresDesc', { instrument: INSTRUMENT_LABELS[key] })}
+                checked={draft.missingScores[key] ?? false}
+                onToggle={() => toggleMissingScores(key)}
+              />
+              <ToggleRow
+                label={t('filter.instrumentHasScores', { instrument: INSTRUMENT_LABELS[key] })}
+                description={t('filter.instrumentHasScoresDesc', { instrument: INSTRUMENT_LABELS[key] })}
+                checked={draft.hasScores[key] ?? false}
+                onToggle={() => toggleHasScores(key)}
+              />
+              <ToggleRow
+                label={t('filter.instrumentMissingFCs', { instrument: INSTRUMENT_LABELS[key] })}
+                description={t('filter.instrumentMissingFCsDesc', { instrument: INSTRUMENT_LABELS[key] })}
+                checked={draft.missingFCs[key] ?? false}
+                onToggle={() => toggleMissingFCs(key)}
+              />
+              <ToggleRow
+                label={t('filter.instrumentHasFCs', { instrument: INSTRUMENT_LABELS[key] })}
+                description={t('filter.instrumentHasFCsDesc', { instrument: INSTRUMENT_LABELS[key] })}
+                checked={draft.hasFCs[key] ?? false}
+                onToggle={() => toggleHasFCs(key)}
+              />
+              {appSettings.filterInvalidScores && (
+                <ToggleRow
+                  label={t('filter.instrumentOverThreshold', { instrument: INSTRUMENT_LABELS[key] })}
+                  description={t('filter.instrumentOverThresholdDesc', { instrument: INSTRUMENT_LABELS[key] })}
+                  checked={draft.overThreshold?.[key] ?? false}
+                  onToggle={() => toggleOverThreshold(key)}
+                />
+              )}
+            </Accordion>
+          ))}
+        </ModalSection>
+      </>)}
 
       {/* Item Shop filters */}
       {isShopVisible && (
@@ -186,51 +213,53 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       )}
 
       {/* Instrument selector */}
-      <ModalSection title={t('filter.instrumentFilters')} hint={t('filter.instrumentFiltersHint')}>
-        <InstrumentSelector
-          instruments={selectorItems}
-          selected={draft.instrumentFilter}
-          onSelect={handleInstrumentSelect}
-          deferSelection
-        >
-          <ModalSection>
-            <Accordion title={t('filter.seasonTitle')} hint={t('filter.seasonHint')}>
-              <SeasonToggles
-                availableSeasons={availableSeasons}
-                seasonFilter={draft.seasonFilter}
-                onChange={seasonFilter => onChange({ ...draft, seasonFilter })}
-              />
-            </Accordion>
-          </ModalSection>
+      {!selectedBandMode && (
+        <ModalSection title={t('filter.instrumentFilters')} hint={t('filter.instrumentFiltersHint')}>
+          <InstrumentSelector
+            instruments={selectorItems}
+            selected={draft.instrumentFilter}
+            onSelect={handleInstrumentSelect}
+            deferSelection
+          >
+            <ModalSection>
+              <Accordion title={t('filter.seasonTitle')} hint={t('filter.seasonHint')}>
+                <SeasonToggles
+                  availableSeasons={availableSeasons}
+                  seasonFilter={draft.seasonFilter}
+                  onChange={seasonFilter => onChange({ ...draft, seasonFilter })}
+                />
+              </Accordion>
+            </ModalSection>
 
-          <ModalSection>
-            <Accordion title={t('filter.percentileTitle')} hint={t('filter.percentileHint')}>
-              <PercentileToggles
-                percentileFilter={draft.percentileFilter}
-                onChange={percentileFilter => onChange({ ...draft, percentileFilter })}
-              />
-            </Accordion>
-          </ModalSection>
+            <ModalSection>
+              <Accordion title={t('filter.percentileTitle')} hint={t('filter.percentileHint')}>
+                <PercentileToggles
+                  percentileFilter={draft.percentileFilter}
+                  onChange={percentileFilter => onChange({ ...draft, percentileFilter })}
+                />
+              </Accordion>
+            </ModalSection>
 
-          <ModalSection>
-            <Accordion title={t('filter.starsTitle')} hint={t('filter.starsHint')}>
-              <StarsToggles
-                starsFilter={draft.starsFilter}
-                onChange={starsFilter => onChange({ ...draft, starsFilter })}
-              />
-            </Accordion>
-          </ModalSection>
+            <ModalSection>
+              <Accordion title={t('filter.starsTitle')} hint={t('filter.starsHint')}>
+                <StarsToggles
+                  starsFilter={draft.starsFilter}
+                  onChange={starsFilter => onChange({ ...draft, starsFilter })}
+                />
+              </Accordion>
+            </ModalSection>
 
-          <ModalSection>
-            <Accordion title={t('filter.intensityTitle')} hint={t('filter.intensityHint')}>
-              <DifficultyToggles
-                difficultyFilter={draft.difficultyFilter}
-                onChange={difficultyFilter => onChange({ ...draft, difficultyFilter })}
-              />
-            </Accordion>
-          </ModalSection>
-        </InstrumentSelector>
-      </ModalSection>
+            <ModalSection>
+              <Accordion title={t('filter.intensityTitle')} hint={t('filter.intensityHint')}>
+                <DifficultyToggles
+                  difficultyFilter={draft.difficultyFilter}
+                  onChange={difficultyFilter => onChange({ ...draft, difficultyFilter })}
+                />
+              </Accordion>
+            </ModalSection>
+          </InstrumentSelector>
+        </ModalSection>
+      )}
     </Modal>
   );
 }

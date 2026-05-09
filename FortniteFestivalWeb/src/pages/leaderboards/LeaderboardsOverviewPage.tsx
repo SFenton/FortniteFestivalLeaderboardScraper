@@ -29,6 +29,7 @@ import { useGridColumnCount } from '../../hooks/ui/useGridColumnCount';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
 
 import {
   Display, Overflow, Gap,
@@ -50,6 +51,7 @@ export default function LeaderboardsOverviewPage() {
   const selectedBandTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
   const selectedBandType = profile?.type === 'band' ? profile.bandType : undefined;
   const appliedBandComboFilter = useAppliedBandComboFilter();
+  const hasSelectedBandComboFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const scrollContainerRef = useScrollContainer();
@@ -112,7 +114,7 @@ export default function LeaderboardsOverviewPage() {
     }),
   });
 
-  const selectedBandComboId = selectedBandType && appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType
+  const selectedBandComboId = hasSelectedBandComboFilter && selectedBandType && appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType
     ? appliedBandComboFilter.comboId
     : undefined;
 

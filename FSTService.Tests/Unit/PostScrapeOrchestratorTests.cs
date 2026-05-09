@@ -4,6 +4,7 @@ using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
@@ -33,6 +34,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly PathDataStore _pathDataStore;
     private readonly TestLogger<PostScrapeOrchestrator> _log;
     private readonly SoloCurrentProjectionBuilder _soloCurrentProjectionBuilder;
+    private readonly IDatabasePressureMonitor _databasePressureMonitor;
 
     private readonly PostScrapeOrchestrator _sut;
 
@@ -107,6 +109,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         _soloCurrentProjectionBuilder = new SoloCurrentProjectionBuilder(
             _metaFixture.DataSource,
             Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        _databasePressureMonitor = Substitute.For<IDatabasePressureMonitor>();
+        _databasePressureMonitor.GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(DatabasePressureSnapshot.None));
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
@@ -133,7 +138,8 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Substitute.For<ILogger<BandScrapePhase>>()),
             new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
             Options.Create(new ScraperOptions()), _log, null,
-            soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder);
+            soloCurrentProjectionBuilder: _soloCurrentProjectionBuilder,
+            databasePressureMonitor: _databasePressureMonitor);
     }
 
     public void Dispose()
@@ -684,6 +690,27 @@ public class PostScrapeOrchestratorTests : IDisposable
         var progress = _progress.GetProgressResponse();
         Assert.Equal("Cleanup", progress.Current?.Operation);
         Assert.Equal("cleanup_solo_excess_entries", progress.Current?.SubOperation);
+        Assert.Equal(100, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public async Task RunCleanupAsync_WithDatabasePressure_SkipsBestEffortRankHistoryCleanup()
+    {
+        _databasePressureMonitor.GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new DatabasePressureSnapshot(true, 1, 0, 0, 0, ["active vacuum count 1"])));
+        var ctx = CreateContext();
+
+        await _sut.RunCleanupAsync(ctx, ScrapePhase.SoloRankings, CancellationToken.None);
+
+        await _databasePressureMonitor.Received(2)
+            .GetPressureSnapshotAsync(Arg.Any<DatabaseMaintenanceOptions>(), Arg.Any<CancellationToken>());
+        Assert.Contains(_log.Entries, entry =>
+            entry.Level == LogLevel.Warning &&
+            entry.Message.Contains("Skipping rank history retention cleanup", StringComparison.Ordinal));
+        Assert.Contains(_log.Entries, entry =>
+            entry.Level == LogLevel.Warning &&
+            entry.Message.Contains("Skipping band rank history retention cleanup", StringComparison.Ordinal));
+        var progress = _progress.GetProgressResponse();
         Assert.Equal(100, progress.Current?.ProgressPercent);
     }
 

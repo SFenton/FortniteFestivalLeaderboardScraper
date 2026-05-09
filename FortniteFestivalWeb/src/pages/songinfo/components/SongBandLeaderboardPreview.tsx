@@ -11,6 +11,7 @@ import SongBandScoreFooter, { SongBandMemberMetadata, formatSongBandAccuracy, ge
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
 import { songBandToPlayerBandEntry, songBandTypeLabel } from '../../../utils/songBandLeaderboards';
+import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 
 type SongBandLeaderboardPreviewProps = {
   songId: string;
@@ -32,6 +33,7 @@ export default function SongBandLeaderboardPreview({
   skipAnimation,
 }: SongBandLeaderboardPreviewProps) {
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
   const styles = useStyles();
   const title = songBandTypeLabel(bandType, t);
   const selectedEntry = data.selectedBandEntry ?? data.selectedPlayerEntry ?? null;
@@ -91,7 +93,7 @@ export default function SongBandLeaderboardPreview({
                 sourceAccountId={entryHasAccount(entry, selectedAccountId) ? selectedAccountId : undefined}
                 rank={entry.rank}
                 ariaLabel={names ? t('bandList.viewBand', { names }) : t('band.title')}
-                renderMemberMetadata={(member) => <SongBandMemberMetadata member={member} scoreWidth={memberScoreWidth} showStars={showMemberStars} showAccuracy={showMemberAccuracy} />}
+                renderMemberMetadata={(member) => <SongBandMemberMetadata member={member} scoreWidth={memberScoreWidth} showDifficulty={!isMobile} showSeason={!isMobile} showStars={!isMobile && showMemberStars} showAccuracy={!isMobile && showMemberAccuracy} />}
                 scoreFooter={<SongBandScoreFooter entry={entry} scoreWidth={scoreWidth} />}
                 scoreFooterAriaLabel={t('songDetail.bandScoreFooter', {
                   rank: entry.rank,
@@ -116,7 +118,7 @@ export default function SongBandLeaderboardPreview({
                 sourceAccountId={selectedAccountId}
                 rank={selectedEntry.rank}
                 ariaLabel={names ? t('bandList.viewBand', { names }) : t('band.title')}
-                renderMemberMetadata={(member) => <SongBandMemberMetadata member={member} scoreWidth={memberScoreWidth} showStars={showMemberStars} showAccuracy={showMemberAccuracy} />}
+                renderMemberMetadata={(member) => <SongBandMemberMetadata member={member} scoreWidth={memberScoreWidth} showDifficulty={!isMobile} showSeason={!isMobile} showStars={!isMobile && showMemberStars} showAccuracy={!isMobile && showMemberAccuracy} />}
                 scoreFooter={<SongBandScoreFooter entry={selectedEntry} scoreWidth={scoreWidth} />}
                 scoreFooterAriaLabel={t('songDetail.bandScoreFooter', {
                   rank: selectedEntry.rank,

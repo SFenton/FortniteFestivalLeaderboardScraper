@@ -17,6 +17,8 @@ const defaultProps = () => ({
   draft: baseDraft(),
   savedDraft: baseDraft(),
   availableSeasons: [1, 2, 3],
+  selectedBandMode: false,
+  selectedBandName: undefined as string | undefined,
   onChange: vi.fn(),
   onCancel: vi.fn(),
   onReset: vi.fn(),
@@ -219,6 +221,30 @@ describe('FilterModal', () => {
     fireEvent.click(screen.getByTitle('Lead'));
     const newDraft = props.onChange.mock.calls[0]![0] as FilterDraft;
     expect(newDraft.instrumentFilter).toBeNull();
+  });
+
+  it('hides solo-only controls and shows selected band score filters in selected band mode', () => {
+    renderModal({ selectedBandMode: true, selectedBandName: 'Test Duo' });
+
+    expect(screen.getByText('Selected Band Scores')).toBeDefined();
+    expect(screen.getByText('Has Selected Band Score')).toBeDefined();
+    expect(screen.getByText('Missing Selected Band Score')).toBeDefined();
+    expect(screen.queryByText('Selected Instrument Filters')).toBeNull();
+    expect(screen.queryByText('Individual Score & FC Toggles')).toBeNull();
+    expect(screen.queryByText('Global Score & FC Toggles')).toBeNull();
+  });
+
+  it('toggles selected band score filters without touching solo maps', () => {
+    const onChange = vi.fn();
+    renderModal({ selectedBandMode: true, onChange });
+
+    fireEvent.click(screen.getByText('Has Selected Band Score'));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      selectedBandHasScore: true,
+      selectedBandMissingScore: false,
+      hasScores: {},
+      missingScores: {},
+    }));
   });
 
   /* ── Instrument-specific filter sub-sections ── */

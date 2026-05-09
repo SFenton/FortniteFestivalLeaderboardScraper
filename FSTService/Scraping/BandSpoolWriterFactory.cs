@@ -120,6 +120,7 @@ public static class BandSpoolWriterFactory
                       AND COALESCE(e.base_score, -1) = COALESCE(s.base_score, -1)
                       AND COALESCE(e.instrument_bonus, -1) = COALESCE(s.instrument_bonus, -1)
                       AND COALESCE(e.overdrive_bonus, -1) = COALESCE(s.overdrive_bonus, -1)
+                      AND e.is_over_threshold = s.is_over_threshold
                     """;
                 deleted = cmd.ExecuteNonQuery();
             }
@@ -158,12 +159,13 @@ public static class BandSpoolWriterFactory
                             rank = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.rank ELSE band_entries.rank END,
                             percentile = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.percentile ELSE band_entries.percentile END,
                             end_time = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.end_time ELSE band_entries.end_time END,
-                            is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
-                            last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
+                            is_over_threshold = CASE WHEN EXCLUDED.score > band_entries.score OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold THEN EXCLUDED.is_over_threshold ELSE band_entries.is_over_threshold END,
+                            last_updated_at = CASE WHEN EXCLUDED.score > band_entries.score OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold THEN EXCLUDED.last_updated_at ELSE band_entries.last_updated_at END
                         WHERE EXCLUDED.score > band_entries.score
                            OR COALESCE(EXCLUDED.base_score, -1) != COALESCE(band_entries.base_score, -1)
                            OR COALESCE(EXCLUDED.instrument_bonus, -1) != COALESCE(band_entries.instrument_bonus, -1)
                            OR COALESCE(EXCLUDED.overdrive_bonus, -1) != COALESCE(band_entries.overdrive_bonus, -1)
+                           OR EXCLUDED.is_over_threshold IS DISTINCT FROM band_entries.is_over_threshold
                         """;
                     cmd.ExecuteNonQuery();
                 }

@@ -64,6 +64,19 @@ function makeMixedEntry(): PlayerBandEntry {
   } as PlayerBandEntry;
 }
 
+function makeTriosEntry(): PlayerBandEntry {
+  return {
+    bandId: 'band-trios',
+    teamKey: 'p1:p2:p3',
+    bandType: 'Band_Trios',
+    members: [
+      { accountId: 'p1', displayName: 'Alpha', instruments: ['Solo_Guitar'] },
+      { accountId: 'p2', displayName: 'Beta', instruments: ['Solo_Bass'] },
+      { accountId: 'p3', displayName: 'Gamma', instruments: ['Solo_Drums'] },
+    ],
+  } as PlayerBandEntry;
+}
+
 function renderCard(entry: PlayerBandEntry) {
   return render(
     <MemoryRouter>
@@ -202,11 +215,37 @@ describe('PlayerBandCard adaptive instrument layout', () => {
     expect(screen.getByLabelText('Season 4 score 1,234,567 99 percent')).toHaveStyle({ paddingLeft: '8px', paddingRight: '8px' });
     expect(screen.getByText('Season 4 - 1,234,567 - 99%')).toBeInTheDocument();
     expect(screen.getByTestId('band-rank-rail')).toHaveTextContent('#7');
-    expect(screen.getByTestId('band-rank-rail')).toHaveStyle({ alignSelf: 'stretch' });
-    expect(screen.getByTestId('band-ranked-card-content')).toContainElement(screen.getByTestId('band-rank-rail'));
-    expect(screen.getByTestId('band-ranked-card-content')).toContainElement(screen.getByLabelText('Season 4 score 1,234,567 99 percent'));
+    const rankedContent = screen.getByTestId('band-ranked-card-content');
+    const rankedFooter = screen.getByTestId('band-ranked-card-footer');
+    const scoreFooter = screen.getByLabelText('Season 4 score 1,234,567 99 percent');
+    expect(screen.getByTestId('band-rank-rail')).toHaveStyle({ alignSelf: 'stretch', gridRow: '1 / 3' });
+    expect(rankedContent).toHaveStyle({ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gridTemplateRows: 'auto auto' });
+    expect(rankedContent).toContainElement(screen.getByTestId('band-rank-rail'));
+    expect(rankedContent).toContainElement(scoreFooter);
+    expect(rankedFooter).toHaveStyle({ gridColumn: '1 / -1', gridRow: '2' });
+    expect(rankedFooter).toContainElement(scoreFooter);
+    expect(screen.getByTestId('band-member-spacer-row')).toHaveStyle({ height: '32px', minHeight: '32px' });
+    expect(screen.getByTestId('band-card-member-content')).toContainElement(screen.getByTestId('band-member-spacer-row'));
     expect(screen.getByTestId('band-card-member-content')).not.toContainElement(screen.getByTestId('band-rank-rail'));
+    expect(screen.getByTestId('band-card-member-content')).not.toContainElement(scoreFooter);
     expect(screen.queryByText('appearances')).toBeNull();
+  });
+
+  it('does not reserve the metadata spacer for non-duo ranked footer cards', () => {
+    render(
+      <MemoryRouter>
+        <PlayerBandCard
+          entry={makeTriosEntry()}
+          rank={8}
+          testId="band-card"
+          scoreFooter={<span>Season 4 - 2,345,678 - 98%</span>}
+          scoreFooterAriaLabel="Season 4 score 2,345,678 98 percent"
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByLabelText('Season 4 score 2,345,678 98 percent')).toBeInTheDocument();
+    expect(screen.queryByTestId('band-member-spacer-row')).toBeNull();
   });
 
   it('renders member metadata before member instrument icons', () => {

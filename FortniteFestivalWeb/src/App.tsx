@@ -143,8 +143,17 @@ import {
   writeAppliedBandFilter,
 } from './state/bandFilter';
 import { writeSelectedProfile } from './state/selectedProfile';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { queryClient } from './api/queryClient';
+import { Routes as AppRoutes, RoutePatterns } from './routes';
+import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
+import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
+import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
+import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
+const showReactQueryDevtools = import.meta.env.DEV && import.meta.env.MODE !== 'e2e';
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
 const MOCK_NOTIFICATION_SOURCE_VERSION = 'mock-source-2026-05-09';
@@ -168,13 +177,6 @@ function hasWindowValidationToken(token: string): boolean {
   const value = new URLSearchParams(window.location.search).get('validation') ?? '';
   return value.split(/[,:;]/).some(part => part.trim() === token);
 }
-import { QueryClientProvider } from '@tanstack/react-query';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { queryClient } from './api/queryClient';
-import { Routes as AppRoutes, RoutePatterns } from './routes';
-import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
-import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
-import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
 
 export { getProfileClickDestination, getStatisticsNavigationPath } from './utils/profileNavigation';
 
@@ -202,7 +204,7 @@ export default function App() {
       </FestivalProvider>
     </SettingsProvider>
     </FeatureFlagsProvider>
-    <ReactQueryDevtools initialIsOpen={false} />
+    {showReactQueryDevtools && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>
   );
 }
@@ -555,11 +557,33 @@ function AppShell() {
 
   /* v8 ignore start — deep AppInner: deselect callback */
   const [showDeselectConfirm, setShowDeselectConfirm] = useState(false);
+  useTapDiagnostics({
+    pathname: location.pathname,
+    search: location.search,
+    hash: typeof window !== 'undefined' ? window.location.hash : '',
+    activeTab,
+    isMobile,
+    isNarrow,
+    sidebarOpen,
+    searchOpen,
+    notificationsOpen,
+    bandFilterModalOpen,
+    showChangelog,
+    showDeselectConfirm,
+    activeCarouselKey,
+    player: player ? { accountId: player.accountId, displayName: player.displayName } : null,
+    selectedProfile: selectedProfile ? { type: selectedProfile.type, displayName: selectedProfile.displayName } : null,
+  });
   const handleDeselect = useCallback(() => {
+    clearAppliedBandFilter();
+    setAppliedBandFilter(null);
     setBandFilterModalOpen(false);
-    if (!selectedProfile) return;
+    if (selectedProfile?.type === 'band') {
+      clearPlayer();
+      return;
+    }
     setShowDeselectConfirm(true);
-  }, [selectedProfile]);
+  }, [clearPlayer, selectedProfile?.type]);
   const confirmDeselect = useCallback(() => {
     clearAppliedBandFilter();
     setAppliedBandFilter(null);
@@ -633,12 +657,6 @@ function AppShell() {
 
   const wideDesktop = !isMobile && isWideDesktop;
   const profileType = selectedProfile?.type ?? 'none';
-  const deselectConfirmTitle = selectedProfile?.type === 'band'
-    ? t('band.deselectConfirmTitle')
-    : t('common.deselectConfirmTitle');
-  const deselectConfirmMessage = selectedProfile?.type === 'band'
-    ? t('band.deselectConfirmMessage')
-    : t('common.deselectConfirmMessage');
   const mobileHeaderProfileLabel = selectedProfile?.type === 'player'
     ? t('common.viewNameProfile', { name: selectedProfile.displayName })
     : selectedProfile?.type === 'band'
@@ -990,8 +1008,8 @@ function AppShell() {
       {showChangelog && <ChangelogModal onDismiss={dismissChangelog} onExitComplete={() => setChangelogDismissed(true)} />}
       {showDeselectConfirm && (
         <ConfirmAlert
-          title={deselectConfirmTitle}
-          message={deselectConfirmMessage}
+          title={t('common.deselectConfirmTitle')}
+          message={t('common.deselectConfirmMessage')}
           onNo={() => setShowDeselectConfirm(false)}
           onYes={confirmDeselect}
           onExitComplete={() => setShowDeselectConfirm(false)}

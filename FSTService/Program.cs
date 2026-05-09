@@ -84,6 +84,8 @@ builder.Services.Configure<BandTeamRankingRebuildOptions>(
     builder.Configuration.GetSection(BandTeamRankingRebuildOptions.Section));
 builder.Services.Configure<BackgroundJobOptions>(
     builder.Configuration.GetSection(BackgroundJobOptions.Section));
+builder.Services.Configure<DatabaseMaintenanceOptions>(
+    builder.Configuration.GetSection(DatabaseMaintenanceOptions.Section));
 builder.Services.Configure<ApiSettings>(
     builder.Configuration.GetSection(ApiSettings.Section));
 
@@ -282,6 +284,9 @@ builder.Services.AddSingleton<IPathDataStore>(sp =>
 builder.Services.AddSingleton(sp => (FSTService.Scraping.PathDataStore)sp.GetRequiredService<IPathDataStore>());
 
 builder.Services.AddSingleton<FSTService.Api.DbStatsService>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabasePressureMonitor, FSTService.Persistence.Maintenance.DatabasePressureMonitor>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DatabaseMaintenanceDryRunReporter>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetentionMaintenanceService, FSTService.Persistence.Maintenance.DatabaseRetentionMaintenanceService>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 
 // ─── Shared services ────────────────────────────────────────

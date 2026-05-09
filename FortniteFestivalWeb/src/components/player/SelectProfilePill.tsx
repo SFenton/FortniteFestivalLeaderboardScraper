@@ -42,6 +42,7 @@ export function SelectProfilePill({ visible, onClick, isMobile, label, ariaLabel
         className={visible ? anim.profileCircleBreathe : undefined}
         onClick={onClick}
         aria-label={buttonAriaLabel}
+        data-testid="select-profile-pill"
         tabIndex={visible ? 0 : -1}
       >
         {circleIcon ?? pillIcon}

@@ -177,6 +177,29 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         // All accounts are included (no topN filtering)
     }
 
+    [Fact]
+    public void CleanupCompositeRankHistoryRetention_DeletesOnlyConfiguredBatch()
+    {
+        var cutoff = DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-365);
+        InsertCompositeRankHistoryRow("p1", cutoff.AddDays(-30), 6);
+        InsertCompositeRankHistoryRow("p1", cutoff.AddDays(-20), 5);
+        InsertCompositeRankHistoryRow("p1", cutoff.AddDays(-10), 4);
+        InsertCompositeRankHistoryRow("p1", cutoff.AddDays(2), 3);
+        InsertCompositeRankHistoryRow("p2", cutoff.AddDays(-30), 9);
+
+        var firstPassDeleted = Db.CleanupCompositeRankHistoryRetention(batchSize: 1, maxBatches: 1);
+
+        Assert.Equal(1, firstPassDeleted);
+        Assert.Equal(3, CountCompositeRankHistoryRows("p1"));
+        Assert.Equal([cutoff.AddDays(-30)], GetCompositeRankHistoryDates("p2"));
+
+        var secondPassDeleted = Db.CleanupCompositeRankHistoryRetention(batchSize: 100, maxBatches: 10);
+
+        Assert.Equal(1, secondPassDeleted);
+        Assert.Equal([cutoff.AddDays(-10), cutoff.AddDays(2)], GetCompositeRankHistoryDates("p1"));
+        Assert.Equal([cutoff.AddDays(-30)], GetCompositeRankHistoryDates("p2"));
+    }
+
     // ═══════════════════════════════════════════════════════════
     // ComboLeaderboard
     // ═══════════════════════════════════════════════════════════
@@ -571,6 +594,39 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void CleanupBandRankHistoryRetention_DeletesOnlyConfiguredBatchPerHistoryTable()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var cutoff = today.AddDays(-365);
+        var oldSnapshot = cutoff.AddDays(-20);
+        var retainedCutoffSnapshot = cutoff.AddDays(-10);
+        CloneBandHistorySnapshot("Band_Duets", today, oldSnapshot);
+        CloneBandHistorySnapshot("Band_Duets", today, retainedCutoffSnapshot);
+        var initialOldWideRows = CountBandHistoryRows("band_team_rank_history", "Band_Duets", oldSnapshot);
+        var initialOldPointRows = CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", oldSnapshot);
+        var initialOldStatsRows = CountBandHistoryRows("band_team_ranking_stats_history", "Band_Duets", oldSnapshot);
+
+        var firstPassDeleted = Db.CleanupBandRankHistoryRetention("Band_Duets", batchSize: 1, maxBatches: 1);
+
+        Assert.Equal(3, firstPassDeleted);
+        Assert.Equal(initialOldWideRows - 1, CountBandHistoryRows("band_team_rank_history", "Band_Duets", oldSnapshot));
+        Assert.Equal(initialOldPointRows - 1, CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", oldSnapshot));
+        Assert.Equal(initialOldStatsRows - 1, CountBandHistoryRows("band_team_ranking_stats_history", "Band_Duets", oldSnapshot));
+
+        Db.CleanupBandRankHistoryRetention("Band_Duets", batchSize: 100, maxBatches: 10);
+
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history", "Band_Duets", oldSnapshot));
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", oldSnapshot));
+        Assert.Equal(0, CountBandHistoryRows("band_team_ranking_stats_history", "Band_Duets", oldSnapshot));
+        Assert.True(CountBandHistoryRows("band_team_rank_history", "Band_Duets", retainedCutoffSnapshot) > 0);
+        Assert.True(CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", retainedCutoffSnapshot) > 0);
+        Assert.True(CountBandHistoryRows("band_team_ranking_stats_history", "Band_Duets", retainedCutoffSnapshot) > 0);
+    }
+
+    [Fact]
     public void EnqueueBandRankHistoryJob_CoalescesOlderSameDayJobs()
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
@@ -625,6 +681,46 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void GetBandSongPerformances_ReadsDerivedProjectionWhenAvailable()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandSongTeamRankings("Band_Duets");
+        DeleteBandEntries("Band_Duets");
+
+        var performances = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
+
+        Assert.Equal(["song_0", "song_1"], performances.Select(p => p.SongId).ToArray());
+        var song0 = performances.Single(p => p.SongId == "song_0");
+        Assert.Equal("Solo_Guitar+Solo_Guitar", song0.ComboId);
+        Assert.Equal(1, song0.Rank);
+        Assert.Equal(2, song0.TotalEntries);
+        Assert.Equal(50.0, song0.Percentile, 3);
+        Assert.Equal(1100, song0.Score);
+        Assert.Equal(1, song0.Season);
+    }
+
+    [Fact]
+    public void GetBandSongPerformances_ReadsDerivedDuplicateInstrumentComboProjection()
+    {
+        SeedDuplicateTriosBandRankingsSource();
+        Db.RebuildBandSongTeamRankings("Band_Trios");
+        DeleteBandEntries("Band_Trios");
+
+        var performance = Assert.Single(Db.GetBandSongPerformances(
+            "Band_Trios",
+            "d1:d2:d3",
+            "Solo_Bass+Solo_Drums+Solo_Drums"));
+
+        Assert.Equal("dup_trio_song", performance.SongId);
+        Assert.Equal("Solo_Bass+Solo_Drums+Solo_Drums", performance.ComboId);
+        Assert.Equal(1, performance.Rank);
+        Assert.Equal(2, performance.TotalEntries);
+        Assert.Equal(50.0, performance.Percentile, 3);
+        Assert.Equal(3100, performance.Score);
+        Assert.Equal(1, performance.Season);
+    }
+
+    [Fact]
     public void GetBandSongPerformanceExtremes_ReturnsLimitedBestAndWorst()
     {
         SeedBandRankingsSource();
@@ -635,8 +731,10 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         var worstSong = Assert.Single(worst);
         Assert.Equal("song_0", bestSong.SongId);
         Assert.Equal(50.0, bestSong.Percentile, 3);
+        Assert.Equal(1, bestSong.Season);
         Assert.Equal("song_1", worstSong.SongId);
         Assert.Equal(66.667, worstSong.Percentile, 3);
+        Assert.Equal(1, worstSong.Season);
     }
 
     [Fact]
@@ -768,6 +866,101 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
+    private int CountCompositeRankHistoryRows(string accountId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM composite_rank_history WHERE account_id = @accountId";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private DateOnly[] GetCompositeRankHistoryDates(string accountId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT snapshot_date FROM composite_rank_history WHERE account_id = @accountId ORDER BY snapshot_date";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        using var reader = cmd.ExecuteReader();
+        var dates = new List<DateOnly>();
+        while (reader.Read())
+            dates.Add(reader.GetFieldValue<DateOnly>(0));
+        return dates.ToArray();
+    }
+
+    private void InsertCompositeRankHistoryRow(string accountId, DateOnly snapshotDate, int rank)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO composite_rank_history (
+                account_id,
+                snapshot_date,
+                composite_rank,
+                composite_rating,
+                instruments_played,
+                total_songs_played)
+            VALUES (@accountId, @snapshotDate, @rank, @rating, 1, 1)";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.Parameters.AddWithValue("rank", rank);
+        cmd.Parameters.AddWithValue("rating", 1.0f / Math.Max(1, rank));
+        cmd.ExecuteNonQuery();
+    }
+
+    private void CloneBandHistorySnapshot(string bandType, DateOnly sourceDate, DateOnly targetDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO band_team_rank_history (
+                band_type, ranking_scope, combo_id, team_key, team_members,
+                songs_played, total_charted_songs, coverage, raw_skill_rating,
+                adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating,
+                computed_at, snapshot_date)
+            SELECT
+                band_type, ranking_scope, combo_id, team_key, team_members,
+                songs_played, total_charted_songs, coverage, raw_skill_rating,
+                adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank,
+                fc_rate, fc_rate_rank, total_score, total_score_rank, avg_accuracy,
+                full_combo_count, avg_stars, best_rank, avg_rank, raw_weighted_rating,
+                computed_at, @targetDate
+            FROM band_team_rank_history
+            WHERE band_type = @bandType AND snapshot_date = @sourceDate
+            ON CONFLICT DO NOTHING;
+
+            INSERT INTO band_team_rank_history_points (
+                band_type, ranking_scope, combo_id, team_key, snapshot_date,
+                snapshot_taken_at, adjusted_skill_rank, weighted_rank, fc_rate_rank,
+                total_score_rank, adjusted_skill_rating, weighted_rating, fc_rate,
+                total_score, songs_played, coverage, full_combo_count,
+                total_charted_songs, total_ranked_teams, raw_weighted_rating,
+                raw_skill_rating)
+            SELECT
+                band_type, ranking_scope, combo_id, team_key, @targetDate,
+                snapshot_taken_at, adjusted_skill_rank, weighted_rank, fc_rate_rank,
+                total_score_rank, adjusted_skill_rating, weighted_rating, fc_rate,
+                total_score, songs_played, coverage, full_combo_count,
+                total_charted_songs, total_ranked_teams, raw_weighted_rating,
+                raw_skill_rating
+            FROM band_team_rank_history_points
+            WHERE band_type = @bandType AND snapshot_date = @sourceDate
+            ON CONFLICT DO NOTHING;
+
+            INSERT INTO band_team_ranking_stats_history (
+                band_type, ranking_scope, combo_id, total_teams, computed_at, snapshot_date)
+            SELECT band_type, ranking_scope, combo_id, total_teams, computed_at, @targetDate
+            FROM band_team_ranking_stats_history
+            WHERE band_type = @bandType AND snapshot_date = @sourceDate
+            ON CONFLICT DO NOTHING;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("sourceDate", sourceDate);
+        cmd.Parameters.AddWithValue("targetDate", targetDate);
+        cmd.ExecuteNonQuery();
+    }
+
     private int CountBandSongRankingRows(string bandType, string rankingScope)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -856,6 +1049,19 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             MakeBandEntry(["t1", "t2", "t3"], "0:1:3", 3000, isFullCombo: true),
             MakeBandEntry(["t4", "t5", "t6"], "3:1:0", 2500),
             MakeBandEntry(["t1", "t2", "t3"], "0:1:2", 1000),
+        ]);
+    }
+
+    private void SeedDuplicateTriosBandRankingsSource()
+    {
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+
+        persistence.UpsertBandEntries("dup_trio_song", "Band_Trios",
+        [
+            MakeBandEntry(["d1", "d2", "d3"], "1:3:3", 3100, isFullCombo: true),
+            MakeBandEntry(["d4", "d5", "d6"], "3:1:3", 2800),
         ]);
     }
 

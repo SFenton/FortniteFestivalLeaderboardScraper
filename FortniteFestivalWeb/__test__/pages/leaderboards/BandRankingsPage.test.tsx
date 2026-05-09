@@ -187,6 +187,58 @@ describe('BandRankingsPage', () => {
     expect(within(footer).queryByText('Tracked Player + Other Partner')).toBeNull();
   });
 
+  it('renders the selected band footer for the active selected-band combo filter', async () => {
+    localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'selected:partner',
+      displayName: 'Selected + Partner',
+      members: [
+        { accountId: 'selected', displayName: 'Selected' },
+        { accountId: 'partner', displayName: 'Partner' },
+      ],
+    }));
+    mockApi.getBandRankings.mockResolvedValue({
+      bandType: 'Band_Duets',
+      comboId: 'Solo_Guitar+Solo_Bass',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalTeams: 42,
+      entries: [makeBandEntry(1, ['Alpha', 'Beta'])],
+      selectedBandEntry: makeBandEntry(13, ['Selected', 'Partner']),
+    });
+
+    render(
+      <TestProviders
+        route="/leaderboards/bands/Band_Duets?rankBy=totalscore"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'selected:partner',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'selected', instrument: 'Solo_Guitar' },
+            { accountId: 'partner', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25, undefined, 'selected:partner');
+    });
+    expect(await screen.findByTestId('band-rankings-card-list')).toBeTruthy();
+    const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
+    expect(within(footer).getByText('Selected + Partner')).toBeTruthy();
+    expect(within(footer).getByText('#13')).toBeTruthy();
+  });
+
   it('requests and renders the selected player best band in the fixed footer', async () => {
     writeSelectedProfile({
       type: 'player',

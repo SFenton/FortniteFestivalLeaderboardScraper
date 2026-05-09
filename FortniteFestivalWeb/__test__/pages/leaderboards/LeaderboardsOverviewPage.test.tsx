@@ -89,6 +89,22 @@ beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
   stubElementDimensions(800);
+  const createRange = document.createRange.bind(document);
+  document.createRange = () => {
+    const range = createRange();
+    range.getBoundingClientRect = () => ({
+      top: 0,
+      left: 0,
+      bottom: 20,
+      right: 120,
+      width: 120,
+      height: 20,
+      x: 0,
+      y: 0,
+      toJSON() { return this; },
+    });
+    return range;
+  };
 });
 
 beforeEach(() => {
@@ -326,6 +342,55 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     });
   });
 
+  it('purple-highlights the selected band when the selected-band combo filter is active', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'selected-a:selected-b',
+      displayName: 'Selected Duo',
+      members: [
+        { accountId: 'selected-a', displayName: 'Selected A' },
+        { accountId: 'selected-b', displayName: 'Selected B' },
+      ],
+    }));
+    const selectedTopEntry = makeBandEntry(1, 'Band_Duets', ['Selected A', 'Selected B'], ['selected-a', 'selected-b']);
+    mockApi.getBandRankings.mockImplementation((bandType: BandType, comboId: string | undefined, rankBy: string, page: number, pageSize: number) => Promise.resolve({
+      bandType,
+      comboId: comboId ?? null,
+      rankBy,
+      page,
+      pageSize,
+      totalTeams: 42,
+      entries: [bandType === 'Band_Duets' ? selectedTopEntry : makeBandEntry(1, bandType, ['Gamma', 'Delta'])],
+      selectedBandEntry: bandType === 'Band_Duets' ? selectedTopEntry : null,
+    }));
+
+    render(
+      <TestProviders
+        route="/leaderboards?rankBy=weighted"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'selected-a:selected-b',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'selected-a', instrument: 'Solo_Guitar' },
+            { accountId: 'selected-b', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const selectedTopRow = await screen.findByTestId('band-ranking-entry-Band_Duets-0');
+    expect(selectedTopRow).toHaveStyle({ backgroundColor: 'rgba(75, 15, 99, 0.75)' });
+    expect(screen.queryByTestId('band-ranking-selected-entry-Band_Duets')).toBeNull();
+  });
+
   it('filters matching band card member instruments by the active selected-band combo', async () => {
     localStorage.setItem('fst:selectedProfile', JSON.stringify({
       type: 'band',
@@ -401,6 +466,7 @@ describe('LeaderboardsOverviewPage band rankings', () => {
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
       expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'weighted', 1, 10, undefined, undefined);
     });
+    expect(await screen.findByTestId('band-ranking-selected-entry-Band_Duets')).toBeTruthy();
   });
 
   it('renders observed Duos assignments as compact side-by-side possibilities', async () => {
@@ -578,6 +644,9 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     expect(within(selectedRows[1]!).getByText('Selected B')).toBeTruthy();
     expect(within(selectedRows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
     expect(within(selectedRows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'weighted', 1, 10, undefined, 'selected-a:selected-b');
+    });
   });
 
   it('falls back to the exact band ranking endpoint when the overview response has no selected band field', async () => {

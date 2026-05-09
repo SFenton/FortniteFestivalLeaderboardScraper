@@ -73,6 +73,8 @@ export type SongFilters = {
   hasScores: Record<string, boolean>;
   hasFCs: Record<string, boolean>;
   overThreshold: Record<string, boolean>;
+  selectedBandHasScore: boolean;
+  selectedBandMissingScore: boolean;
   seasonFilter: Record<number, boolean>;
   percentileFilter: Record<number, boolean>;
   starsFilter: Record<number, boolean>;
@@ -87,6 +89,8 @@ export const defaultSongFilters = (): SongFilters => ({
   hasScores: {},
   hasFCs: {},
   overThreshold: {},
+  selectedBandHasScore: false,
+  selectedBandMissingScore: false,
   seasonFilter: {},
   percentileFilter: {},
   starsFilter: {},
@@ -124,8 +128,9 @@ export const isVisibleInstrumentFilter = (instrument: InstrumentKey | null | und
   return !visibleInstruments || visibleInstruments.includes(instrument);
 };
 
-export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean, visibleInstruments?: readonly InstrumentKey[] | null): boolean => {
+export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean, visibleInstruments?: readonly InstrumentKey[] | null, selectedBandMode = false): boolean => {
   if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) return true;
+  if (selectedBandMode) return f.selectedBandHasScore || f.selectedBandMissingScore;
   const scoped = sanitizeSongFiltersForInstruments(f, visibleInstruments);
   const hasPerInstrument =
     Object.values(scoped.missingScores).some(v => v === true) ||
