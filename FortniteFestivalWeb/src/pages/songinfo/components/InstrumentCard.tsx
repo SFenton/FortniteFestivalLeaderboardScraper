@@ -30,6 +30,7 @@ interface InstrumentCardProps {
   totalEntries?: number;
   /** Entries tracked locally by FST for this instrument's leaderboard (if known). */
   localEntries?: number;
+  showLeaderboardEntryTotals?: boolean;
   skipAnimation?: boolean;
   scoreWidth: string;
   sig?: string;
@@ -48,6 +49,7 @@ export default memo(function InstrumentCard({
   prefetchedError,
   totalEntries,
   localEntries,
+  showLeaderboardEntryTotals,
   skipAnimation,
   scoreWidth,
   sig,
@@ -77,13 +79,13 @@ export default memo(function InstrumentCard({
     return computeRankWidth(ranks);
   }, [prefetchedEntries, playerScore, playerInTop]);
 
-  const hasViewAllCounts = totalEntries != null && localEntries != null && totalEntries > 0;
+  const hasViewAllCounts = showLeaderboardEntryTotals === true && totalEntries != null && localEntries != null && totalEntries > 0;
   const fullViewAllLabel = hasViewAllCounts
     ? t('leaderboard.viewFullWithCounts', {
         local: localEntries!.toLocaleString(),
         total: totalEntries!.toLocaleString(),
       })
-    : t('leaderboard.viewPlain');
+    : t('leaderboard.viewFullShort');
 
   useLayoutEffect(() => {
     if (!hasViewAllCounts) {

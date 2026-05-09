@@ -45,16 +45,17 @@ public sealed class MetaDatabase : IMetaDatabase
         return (long)(int)cmd.ExecuteScalar()!;
     }
 
-    public void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes)
+    public void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false)
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE scrape_log SET completed_at = @now, songs_scraped = @songs, total_entries = @entries, total_requests = @requests, total_bytes = @bytes WHERE id = @id";
+        cmd.CommandText = "UPDATE scrape_log SET completed_at = @now, songs_scraped = @songs, total_entries = @entries, total_requests = @requests, total_bytes = @bytes, epic_reported_over_100_pages = @epicReportedOver100Pages WHERE id = @id";
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.Parameters.AddWithValue("songs", songsScraped);
         cmd.Parameters.AddWithValue("entries", (int)totalEntries);
         cmd.Parameters.AddWithValue("requests", totalRequests);
         cmd.Parameters.AddWithValue("bytes", totalBytes);
+        cmd.Parameters.AddWithValue("epicReportedOver100Pages", epicReportedOver100Pages);
         cmd.Parameters.AddWithValue("id", (int)scrapeId);
         cmd.ExecuteNonQuery();
     }
@@ -63,7 +64,7 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, started_at, completed_at, songs_scraped, total_entries, total_requests, total_bytes FROM scrape_log WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1";
+        cmd.CommandText = "SELECT id, started_at, completed_at, songs_scraped, total_entries, total_requests, total_bytes, epic_reported_over_100_pages FROM scrape_log WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1";
         using var r = cmd.ExecuteReader();
         if (!r.Read()) return null;
         return new ScrapeRunInfo
@@ -75,7 +76,17 @@ public sealed class MetaDatabase : IMetaDatabase
             TotalEntries = r.IsDBNull(4) ? 0 : r.GetInt32(4),
             TotalRequests = r.IsDBNull(5) ? 0 : r.GetInt32(5),
             TotalBytes = r.IsDBNull(6) ? 0 : r.GetInt64(6),
+            EpicReportedOver100Pages = !r.IsDBNull(7) && r.GetBoolean(7),
         };
+    }
+
+    public bool ShouldShowLeaderboardEntryTotals()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT epic_reported_over_100_pages FROM scrape_log WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1";
+        var result = cmd.ExecuteScalar();
+        return result is bool value && value;
     }
 
     public void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing)

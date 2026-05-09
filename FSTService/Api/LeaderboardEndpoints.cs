@@ -60,19 +60,20 @@ public static partial class ApiEndpoints
                 }
             }
 
+            var showLeaderboardEntryTotals = metaDb.ShouldShowLeaderboardEntryTotals();
             var bands = BuildSongBandLeaderboardsPayload(songId, effectiveTop, selectedAccountId,
                 normalizedSelectedBandType, normalizedSelectedTeamKey, normalizedComboId, metaDb);
 
             if (canUseGenericCache)
             {
                 var cacheKey = LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, effectiveTop);
-                var jsonBytes = SerializeJsonPayload(httpContext, new { songId, bands });
+                var jsonBytes = SerializeJsonPayload(httpContext, new { songId, showLeaderboardEntryTotals, bands });
                 var etag = lbCache.Set(cacheKey, jsonBytes);
                 httpContext.Response.Headers.ETag = etag;
                 return Results.Bytes(jsonBytes, "application/json");
             }
 
-            return Results.Ok(new { songId, bands });
+            return Results.Ok(new { songId, showLeaderboardEntryTotals, bands });
         })
         .WithTags("Leaderboards")
         .RequireRateLimiting("public");
@@ -227,6 +228,7 @@ public static partial class ApiEndpoints
             // ── Build response ───────────────────────────────────
             var instrumentKeys = persistence.GetInstrumentKeys();
             var population = metaDb.GetAllLeaderboardPopulation();
+            var showLeaderboardEntryTotals = metaDb.ShouldShowLeaderboardEntryTotals();
 
             Dictionary<string, SongMaxScores>? maxScoresMap = leeway.HasValue
                 ? pathStore.GetAllMaxScores()
@@ -296,6 +298,7 @@ public static partial class ApiEndpoints
             var payload = new
             {
                 songId,
+                showLeaderboardEntryTotals,
                 instruments,
             };
             var jsonBytes = SerializeJsonPayload(httpContext, payload);

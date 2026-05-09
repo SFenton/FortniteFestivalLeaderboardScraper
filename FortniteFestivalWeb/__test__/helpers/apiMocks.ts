@@ -117,6 +117,7 @@ export const MOCK_LEADERBOARD_RESPONSE: LeaderboardResponse = {
 
 export const MOCK_ALL_LEADERBOARDS_RESPONSE: AllLeaderboardsResponse = {
   songId: 'song-1',
+  showLeaderboardEntryTotals: false,
   instruments: [
     { instrument: 'Solo_Guitar', count: 3, totalEntries: 500, localEntries: 500, entries: MOCK_LEADERBOARD_ENTRIES.slice(0, 3) },
     { instrument: 'Solo_Bass', count: 2, totalEntries: 300, localEntries: 300, entries: MOCK_LEADERBOARD_ENTRIES.slice(0, 2) },

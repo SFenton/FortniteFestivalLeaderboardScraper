@@ -862,6 +862,7 @@ public sealed class ScrapeRunInfo
     public long TotalEntries { get; init; }
     public int TotalRequests { get; init; }
     public long TotalBytes { get; init; }
+    public bool EpicReportedOver100Pages { get; init; }
 }
 
 /// <summary>

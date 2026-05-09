@@ -14,4 +14,5 @@ public sealed class ScrapePassResult
     public required long TotalEntries { get; init; }
     public required int SongsScraped { get; init; }
     public required TimeSpan ScrapeDuration { get; init; }
+    public bool EpicReportedOver100Pages { get; init; }
 }

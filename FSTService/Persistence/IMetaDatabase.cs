@@ -11,8 +11,9 @@ public interface IMetaDatabase : IDisposable
 
     // ── Scrape log ───────────────────────────────────────────────────
     long StartScrapeRun();
-    void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes);
+    void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false);
     ScrapeRunInfo? GetLastCompletedScrapeRun();
+    bool ShouldShowLeaderboardEntryTotals();
     void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);
 
     // ── Score history ────────────────────────────────────────────────

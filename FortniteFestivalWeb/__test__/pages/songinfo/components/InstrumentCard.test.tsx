@@ -67,6 +67,9 @@ const baseProps = {
   playerScore: undefined as PlayerScore | undefined,
   playerName: undefined as string | undefined,
   playerAccountId: undefined as string | undefined,
+  totalEntries: undefined as number | undefined,
+  localEntries: undefined as number | undefined,
+  showLeaderboardEntryTotals: undefined as boolean | undefined,
 };
 
 function renderCard(overrides: Partial<typeof baseProps> = {}) {
@@ -310,19 +313,28 @@ describe('InstrumentCard', () => {
   it('shows view-all button when entries exist', () => {
     const entries = [makeEntry(1), makeEntry(2)];
     renderCard({ prefetchedEntries: entries });
-    expect(screen.getByText('View leaderboard')).toBeTruthy();
+    expect(screen.getByText('View full leaderboard')).toBeTruthy();
   });
 
-  it('shows tracked/total counts on view-all button when provided', () => {
+  it('shows tracked/total counts on view-all button when totals are enabled', () => {
     const entries = [makeEntry(1), makeEntry(2)];
-    renderCard({ prefetchedEntries: entries, localEntries: 10030, totalEntries: 700000, windowWidth: 1200 });
+    renderCard({ prefetchedEntries: entries, localEntries: 10030, totalEntries: 700000, showLeaderboardEntryTotals: true, windowWidth: 1200 });
     expect(screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)')).toBeTruthy();
   });
 
-  it('falls back to plain label when totalEntries is zero', () => {
+  it('hides tracked/total counts when totals are not enabled', () => {
+    const entries = [makeEntry(1), makeEntry(2)];
+    renderCard({ prefetchedEntries: entries, localEntries: 10030, totalEntries: 700000, showLeaderboardEntryTotals: false, windowWidth: 1200 });
+    expect(screen.getByText('View full leaderboard')).toBeTruthy();
+    expect(screen.queryByText('View full leaderboard (10,030 tracked / 700,000 total)')).toBeNull();
+    expect(screen.queryByText('10,030 tracked')).toBeNull();
+    expect(screen.queryByText('700,000 total')).toBeNull();
+  });
+
+  it('falls back to full label when totalEntries is zero', () => {
     const entries = [makeEntry(1)];
-    renderCard({ prefetchedEntries: entries, localEntries: 0, totalEntries: 0 });
-    expect(screen.getByText('View leaderboard')).toBeTruthy();
+    renderCard({ prefetchedEntries: entries, localEntries: 0, totalEntries: 0, showLeaderboardEntryTotals: true });
+    expect(screen.getByText('View full leaderboard')).toBeTruthy();
   });
 
   it('stacks view-all counts into three rows at hyper-compact width', () => {
@@ -331,6 +343,7 @@ describe('InstrumentCard', () => {
       prefetchedEntries: entries,
       localEntries: 10002,
       totalEntries: 364400,
+      showLeaderboardEntryTotals: true,
       windowWidth: 320,
     });
     expect(screen.getByText('View full leaderboard')).toBeTruthy();
@@ -344,6 +357,7 @@ describe('InstrumentCard', () => {
       prefetchedEntries: entries,
       localEntries: 10002,
       totalEntries: 212592,
+      showLeaderboardEntryTotals: true,
       windowWidth: 390,
     });
     expect(screen.getByText('View full leaderboard')).toBeTruthy();
@@ -358,7 +372,7 @@ describe('InstrumentCard', () => {
       prefetchedEntries: entries,
       windowWidth: 390,
     });
-    const button = screen.getByText('View leaderboard');
+    const button = screen.getByText('View full leaderboard');
     expect(button.style.flexDirection).not.toBe('column');
     expect(button.style.whiteSpace).toBe('nowrap');
   });
@@ -369,6 +383,7 @@ describe('InstrumentCard', () => {
       prefetchedEntries: entries,
       localEntries: 10030,
       totalEntries: 700000,
+      showLeaderboardEntryTotals: true,
       windowWidth: 1200,
     });
     const button = screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)');
@@ -384,6 +399,7 @@ describe('InstrumentCard', () => {
       prefetchedEntries: entries,
       localEntries: 10030,
       totalEntries: 700000,
+      showLeaderboardEntryTotals: true,
       windowWidth: 430,
     });
     expect(screen.getByText('View full leaderboard')).toBeTruthy();
@@ -398,6 +414,7 @@ describe('InstrumentCard', () => {
       prefetchedEntries: entries,
       localEntries: 10030,
       totalEntries: 700000,
+      showLeaderboardEntryTotals: true,
       windowWidth: 1200,
     });
     expect(screen.getByText('View full leaderboard (10,030 tracked / 700,000 total)')).toBeTruthy();

@@ -36,6 +36,24 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(100, last.SongsScraped);
         Assert.Equal(50_000, last.TotalEntries);
         Assert.NotNull(last.CompletedAt);
+        Assert.False(last.EpicReportedOver100Pages);
+    }
+
+    [Fact]
+    public void CompleteScrapeRun_persists_epic_page_count_visibility_signal()
+    {
+        var cappedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(cappedId, 100, 50_000, 200, 1_000_000, epicReportedOver100Pages: false);
+        Assert.False(Db.ShouldShowLeaderboardEntryTotals());
+
+        var uncappedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(uncappedId, 100, 50_000, 200, 1_000_000, epicReportedOver100Pages: true);
+
+        var last = Db.GetLastCompletedScrapeRun();
+        Assert.NotNull(last);
+        Assert.Equal(uncappedId, last.Id);
+        Assert.True(last.EpicReportedOver100Pages);
+        Assert.True(Db.ShouldShowLeaderboardEntryTotals());
     }
 
     [Fact]

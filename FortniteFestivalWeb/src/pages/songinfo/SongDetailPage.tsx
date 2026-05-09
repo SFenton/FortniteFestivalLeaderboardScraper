@@ -138,6 +138,9 @@ export default function SongDetailPage() {
   const [bandData, setBandData] = useState<Record<PlayerBandType, SongBandData>>(
     () => cached?.bandData ?? createSongBandData(true),
   );
+  const [showLeaderboardEntryTotals, setShowLeaderboardEntryTotals] = useState(
+    () => cached?.showLeaderboardEntryTotals === true,
+  );
 
   // Track whether the component mounted with cached data so effects can skip the initial fetch.
   // After the first render cycle, clear the flag so future prop changes (e.g. player swap) refetch.
@@ -202,6 +205,9 @@ export default function SongDetailPage() {
     }
     api.getAllLeaderboards(songId, 10, leewayParam).then((res) => {
       if (cancelled) return;
+      if (typeof res.showLeaderboardEntryTotals === 'boolean') {
+        setShowLeaderboardEntryTotals(res.showLeaderboardEntryTotals);
+      }
       const newData = Object.fromEntries(
         INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: false, error: null }]),
       ) as unknown as Record<InstrumentKey, InstrumentData>;
@@ -243,6 +249,9 @@ export default function SongDetailPage() {
     }
     api.getAllSongBandLeaderboards(songId, 10, selectedAccountId, selectedBandType, selectedTeamKey, activeBandComboId).then((res) => {
       if (cancelled) return;
+      if (typeof res.showLeaderboardEntryTotals === 'boolean') {
+        setShowLeaderboardEntryTotals(res.showLeaderboardEntryTotals);
+      }
       const nextData = createSongBandData(false);
       for (const band of res.bands) {
         const bandType = band.bandType as PlayerBandType;
@@ -385,9 +394,10 @@ export default function SongDetailPage() {
       scoreHistory,
       scoreHistoryAccountId: player?.accountId,
       bandSelectionKey,
+      showLeaderboardEntryTotals,
       scrollTop: scrollContainerRef.current?.scrollTop ?? 0,
     });
-  }, [allReady, songId, instrumentData, bandData, scoreHistory, player?.accountId, bandSelectionKey]);
+  }, [allReady, songId, instrumentData, bandData, scoreHistory, player?.accountId, bandSelectionKey, showLeaderboardEntryTotals]);
   /* v8 ignore stop */
 
   // Restore scroll position when returning from cache (not on fresh PUSH navigations)
@@ -446,10 +456,11 @@ export default function SongDetailPage() {
       bandType={bandType}
       data={bandData[bandType]}
       selectedAccountId={selectedAccountId}
+      showLeaderboardEntryTotals={showLeaderboardEntryTotals}
       baseDelay={baseDelay}
       skipAnimation={skipAnim}
     />
-  ), [bandData, selectedAccountId, skipAnim, songId]);
+  ), [bandData, selectedAccountId, showLeaderboardEntryTotals, skipAnim, songId]);
 
   if (!songId) {
     return <div style={styles.center}>{t('songDetail.songNotFound')}</div>;
@@ -545,6 +556,7 @@ export default function SongDetailPage() {
                       prefetchedError={instrumentData[inst].error}
                       totalEntries={instrumentData[inst].totalEntries}
                       localEntries={instrumentData[inst].localEntries}
+                      showLeaderboardEntryTotals={showLeaderboardEntryTotals}
                       skipAnimation={skipAnim}
                       scoreWidth={globalScoreWidth}
                       sig={song?.sig}

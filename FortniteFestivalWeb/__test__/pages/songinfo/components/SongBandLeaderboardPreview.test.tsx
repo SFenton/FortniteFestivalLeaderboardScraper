@@ -128,6 +128,41 @@ describe('SongBandLeaderboardPreview', () => {
     expect(viewAll).toHaveAttribute('href', '/songs/song-a/bands/Band_Duets');
   });
 
+  it('shows view-all counts when leaderboard totals are enabled', () => {
+    render(
+      <MemoryRouter>
+        <SongBandLeaderboardPreview
+          songId="song-a"
+          bandType="Band_Duets"
+          data={data}
+          showLeaderboardEntryTotals
+          baseDelay={0}
+          skipAnimation
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: 'View full leaderboard (5 tracked / 42 total)' })).toBeInTheDocument();
+  });
+
+  it('hides view-all counts when leaderboard totals are not enabled', () => {
+    render(
+      <MemoryRouter>
+        <SongBandLeaderboardPreview
+          songId="song-a"
+          bandType="Band_Duets"
+          data={data}
+          showLeaderboardEntryTotals={false}
+          baseDelay={0}
+          skipAnimation
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: 'View full leaderboard' })).toBeInTheDocument();
+    expect(screen.queryByText('View full leaderboard (5 tracked / 42 total)')).toBeNull();
+  });
+
   it('renders a selected player band score when it is outside the preview entries', () => {
     const selectedPlayerEntry = {
       ...data.entries[1],

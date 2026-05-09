@@ -511,6 +511,7 @@ public sealed class ScraperWorker : BackgroundService
                     })
                     .ToList(),
                 DegreeOfParallelism = opts.DegreeOfParallelism,
+                EpicReportedOver100Pages = false,
             };
 
             // Observe the path generation task that ran in parallel with the scrape
@@ -596,7 +597,8 @@ public sealed class ScraperWorker : BackgroundService
                     result.SongsScraped,
                     result.TotalEntries,
                     result.TotalRequests,
-                    result.TotalBytes);
+                        result.TotalBytes,
+                        result.EpicReportedOver100Pages);
             }
         }
         finally

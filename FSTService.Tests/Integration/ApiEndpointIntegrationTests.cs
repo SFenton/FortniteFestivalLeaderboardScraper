@@ -1786,6 +1786,28 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiLeaderboardAll_ExposesEntryTotalVisibilityFromLatestCompletedScrape()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+
+        var cappedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(cappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: false);
+
+        var cappedResponse = await _client.GetAsync("/api/leaderboard/entryTotalsVisibilityCapped/all?top=10");
+        Assert.Equal(HttpStatusCode.OK, cappedResponse.StatusCode);
+        var cappedJson = await cappedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(cappedJson.GetProperty("showLeaderboardEntryTotals").GetBoolean());
+
+        var uncappedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(uncappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: true);
+
+        var uncappedResponse = await _client.GetAsync("/api/leaderboard/entryTotalsVisibilityUncapped/all?top=10");
+        Assert.Equal(HttpStatusCode.OK, uncappedResponse.StatusCode);
+        var uncappedJson = await uncappedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(uncappedJson.GetProperty("showLeaderboardEntryTotals").GetBoolean());
+    }
+
+    [Fact]
     public async Task ApiLeaderboardAll_EmptySong_ReturnsEmptyInstruments()
     {
         var response = await _client.GetAsync("/api/leaderboard/nonexistentSong/all");

@@ -32,6 +32,7 @@ export type SongBandData = {
 export type SongDetailCache = {
   instrumentData: Record<InstrumentKey, InstrumentData>;
   bandData?: Record<PlayerBandType, SongBandData>;
+  showLeaderboardEntryTotals?: boolean;
   scoreHistory: ScoreHistoryEntry[];
   scoreHistoryAccountId: string | undefined;
   bandSelectionKey: string | undefined;

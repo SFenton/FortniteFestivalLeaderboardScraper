@@ -338,10 +338,12 @@ public sealed class ScrapeOrchestrator
         // ── Update leaderboard population from Epic's reported totalPages ──
         _progress.SetSubOperation("updating_population");
         var populationItems = new List<(string SongId, string Instrument, long TotalEntries)>();
+        var epicReportedOver100Pages = false;
         foreach (var (_, results) in allResults)
             foreach (var r in results)
                 if (r.ReportedTotalPages > 0)
                 {
+                    epicReportedOver100Pages |= r.ReportedTotalPages > 100;
                     long totalEntries = r.ReportedTotalPages <= 100
                         ? r.EntriesCount
                         : (long)r.ReportedTotalPages * 100;
@@ -398,6 +400,7 @@ public sealed class ScrapeOrchestrator
             Aggregates = aggregates,
             ScrapeRequests = scrapeRequests,
             DegreeOfParallelism = opts.DegreeOfParallelism,
+            EpicReportedOver100Pages = epicReportedOver100Pages,
         };
 
         return new ScrapePassResult
@@ -409,6 +412,7 @@ public sealed class ScrapeOrchestrator
             TotalEntries = aggregates.TotalEntries,
             SongsScraped = aggregates.SongsWithData,
             ScrapeDuration = sw.Elapsed,
+            EpicReportedOver100Pages = epicReportedOver100Pages,
         };
     }
 

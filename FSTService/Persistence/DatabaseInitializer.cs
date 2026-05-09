@@ -489,8 +489,11 @@ public static class DatabaseInitializer
             songs_scraped   INTEGER,
             total_entries   INTEGER,
             total_requests  INTEGER,
-            total_bytes     BIGINT
+            total_bytes     BIGINT,
+            epic_reported_over_100_pages BOOLEAN NOT NULL DEFAULT FALSE
         );
+
+        ALTER TABLE scrape_log ADD COLUMN IF NOT EXISTS epic_reported_over_100_pages BOOLEAN NOT NULL DEFAULT FALSE;
 
         CREATE INDEX IF NOT EXISTS ix_scrapelog_completed
             ON scrape_log (id DESC) WHERE completed_at IS NOT NULL;

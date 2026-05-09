@@ -394,7 +394,7 @@ public sealed class PostScrapeOrchestrator
         if (precomputeApiResponses)
         {
             _persistence.Meta.ClearBackfillRankingsPending(ctx.RegisteredIds);
-            await RunPhaseAsync("Cleanup.PrecomputeAll", () => PrecomputeAllForCleanupAsync(ct));
+            await RunPhaseAsync("Cleanup.PrecomputeAll", () => PrecomputeAllForCleanupAsync(ctx.EpicReportedOver100Pages, ct));
         }
     }
 
@@ -591,12 +591,12 @@ public sealed class PostScrapeOrchestrator
     private static bool ShouldPrecomputeDuringPublicationCleanup(ScrapePhase resolvedPhases) =>
         resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute);
 
-    private async Task PrecomputeAllForCleanupAsync(CancellationToken ct)
+    private async Task PrecomputeAllForCleanupAsync(bool showLeaderboardEntryTotals, CancellationToken ct)
     {
         _progress.SetSubOperation("cleanup_api_precompute");
         try
         {
-            await _precomputer.PrecomputeAllAsync(ct);
+            await _precomputer.PrecomputeAllAsync(showLeaderboardEntryTotals, ct);
         }
         finally
         {

@@ -111,7 +111,10 @@ public sealed class ScrapeTimePrecomputer
     /// Phases 2-7 are independent and run in parallel. All output is staged to a
     /// disk-backed channel, then bulk-loaded to PostgreSQL at the end.
     /// </summary>
-    public async Task PrecomputeAllAsync(CancellationToken ct)
+    public Task PrecomputeAllAsync(CancellationToken ct)
+        => PrecomputeAllAsync(_metaDb.ShouldShowLeaderboardEntryTotals(), ct);
+
+    public async Task PrecomputeAllAsync(bool showLeaderboardEntryTotals, CancellationToken ct)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allMaxScores = _pathStore.GetAllMaxScores();
@@ -151,8 +154,8 @@ public sealed class ScrapeTimePrecomputer
             }, ct);
             var phase3 = Task.Run(() =>
             {
-                PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
-                PrecomputeSongBandLeaderboardsAll();
+                PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals);
+                PrecomputeSongBandLeaderboardsAll(showLeaderboardEntryTotals);
             }, ct);
             var phase4 = Task.Run(() =>
             {
@@ -169,8 +172,8 @@ public sealed class ScrapeTimePrecomputer
         {
             await PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
                 tiers, bandScoresCache, ct);
-            PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
-            PrecomputeSongBandLeaderboardsAll();
+            PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals);
+            PrecomputeSongBandLeaderboardsAll(showLeaderboardEntryTotals);
             await PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct);
             PrecomputeRankingsPages(instrumentKeys);
             PrecomputeNeighborhoods(registeredIds, instrumentKeys);
@@ -629,7 +632,8 @@ public sealed class ScrapeTimePrecomputer
     private void PrecomputeLeaderboardAll(
         Dictionary<string, SongMaxScores> allMaxScores,
         Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
-        IReadOnlyList<string> instrumentKeys)
+        IReadOnlyList<string> instrumentKeys,
+        bool showLeaderboardEntryTotals)
     {
         // Get all song IDs that have leaderboard data
         var allSongIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -650,9 +654,9 @@ public sealed class ScrapeTimePrecomputer
             try
             {
                 // No-leeway variant
-                PrecomputeLeaderboardAllForSong(songId, null, allMaxScores, unfilteredPopulation, instrumentKeys);
+                PrecomputeLeaderboardAllForSong(songId, null, allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals);
                 // Leeway=1 variant
-                PrecomputeLeaderboardAllForSong(songId, 1.0, allMaxScores, unfilteredPopulation, instrumentKeys);
+                PrecomputeLeaderboardAllForSong(songId, 1.0, allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals);
             }
             catch (Exception ex)
             {
@@ -665,7 +669,8 @@ public sealed class ScrapeTimePrecomputer
         string songId, double? leeway,
         Dictionary<string, SongMaxScores> allMaxScores,
         Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
-        IReadOnlyList<string> instrumentKeys)
+        IReadOnlyList<string> instrumentKeys,
+        bool showLeaderboardEntryTotals)
     {
         var instrumentArr = instrumentKeys.ToArray();
         var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)?[instrumentArr.Length];
@@ -726,13 +731,13 @@ public sealed class ScrapeTimePrecomputer
             }).ToList(),
         }).ToList();
 
-        var payload = new { songId, instruments };
+        var payload = new { songId, showLeaderboardEntryTotals, instruments };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
         var cacheKey = LeaderboardCacheKeys.LeaderboardAll(songId, LeaderboardCacheKeys.SongDetailPreviewTop, leeway);
         Store(cacheKey, jsonBytes);
     }
 
-    private void PrecomputeSongBandLeaderboardsAll()
+    private void PrecomputeSongBandLeaderboardsAll(bool showLeaderboardEntryTotals)
     {
         var songIds = _metaDb.GetBandLeaderboardSongIds();
         if (songIds.Count == 0) return;
@@ -741,7 +746,7 @@ public sealed class ScrapeTimePrecomputer
         {
             try
             {
-                PrecomputeSongBandLeaderboardsAllForSong(songId);
+                PrecomputeSongBandLeaderboardsAllForSong(songId, showLeaderboardEntryTotals);
             }
             catch (Exception ex)
             {
@@ -750,7 +755,7 @@ public sealed class ScrapeTimePrecomputer
         });
     }
 
-    private void PrecomputeSongBandLeaderboardsAllForSong(string songId)
+    private void PrecomputeSongBandLeaderboardsAllForSong(string songId, bool showLeaderboardEntryTotals)
     {
         var bands = BandInstrumentMapping.AllBandTypes.Select(bandType =>
         {
@@ -772,7 +777,7 @@ public sealed class ScrapeTimePrecomputer
             };
         }).ToList();
 
-        var payload = new { songId, bands };
+        var payload = new { songId, showLeaderboardEntryTotals, bands };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
         var cacheKey = LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, LeaderboardCacheKeys.SongDetailPreviewTop);
         Store(cacheKey, jsonBytes);

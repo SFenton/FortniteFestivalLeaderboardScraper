@@ -17,6 +17,7 @@ type SongBandLeaderboardPreviewProps = {
   bandType: PlayerBandType;
   data: SongBandData;
   selectedAccountId?: string;
+  showLeaderboardEntryTotals?: boolean;
   baseDelay: number;
   skipAnimation?: boolean;
 };
@@ -26,6 +27,7 @@ export default function SongBandLeaderboardPreview({
   bandType,
   data,
   selectedAccountId,
+  showLeaderboardEntryTotals,
   baseDelay,
   skipAnimation,
 }: SongBandLeaderboardPreviewProps) {
@@ -41,13 +43,13 @@ export default function SongBandLeaderboardPreview({
   const memberScoreWidth = useMemo(() => getSongBandMemberScoreWidth(measuredEntries), [measuredEntries]);
   const showMemberStars = useMemo(() => hasSongBandMemberStars(measuredEntries), [measuredEntries]);
   const showMemberAccuracy = useMemo(() => hasSongBandMemberAccuracy(measuredEntries), [measuredEntries]);
-  const hasCounts = data.totalEntries != null && data.localEntries != null && data.totalEntries > 0;
+  const hasCounts = showLeaderboardEntryTotals === true && data.totalEntries != null && data.localEntries != null && data.totalEntries > 0;
   const viewAllLabel = hasCounts
     ? t('leaderboard.viewFullWithCounts', {
         local: data.localEntries!.toLocaleString(),
         total: data.totalEntries!.toLocaleString(),
       })
-    : t('leaderboard.viewPlain');
+    : t('leaderboard.viewFullShort');
 
   const anim = (delayMs: number): CSSProperties => skipAnimation ? {} : ({
     opacity: Opacity.none,

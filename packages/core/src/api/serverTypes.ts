@@ -427,6 +427,7 @@ export type PlayerHistoryResponse = {
 /** Leaderboard data for all instruments on one song. */
 export type AllLeaderboardsResponse = {
   songId: string;
+  showLeaderboardEntryTotals?: boolean;
   instruments: {
     instrument: string;
     count: number;
@@ -540,6 +541,7 @@ export type SongBandLeaderboardResponse = {
 
 export type AllSongBandLeaderboardsResponse = {
   songId: string;
+  showLeaderboardEntryTotals?: boolean;
   bands: Array<Omit<SongBandLeaderboardResponse, 'songId'>>;
 };
 
