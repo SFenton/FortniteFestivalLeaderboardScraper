@@ -479,15 +479,10 @@ function AppShell() {
   /* v8 ignore start — deep AppInner: deselect callback */
   const [showDeselectConfirm, setShowDeselectConfirm] = useState(false);
   const handleDeselect = useCallback(() => {
-    clearAppliedBandFilter();
-    setAppliedBandFilter(null);
     setBandFilterModalOpen(false);
-    if (selectedProfile?.type === 'band') {
-      clearPlayer();
-      return;
-    }
+    if (!selectedProfile) return;
     setShowDeselectConfirm(true);
-  }, [clearPlayer, selectedProfile?.type]);
+  }, [selectedProfile]);
   const confirmDeselect = useCallback(() => {
     clearAppliedBandFilter();
     setAppliedBandFilter(null);
@@ -561,6 +556,12 @@ function AppShell() {
 
   const wideDesktop = !isMobile && isWideDesktop;
   const profileType = selectedProfile?.type ?? 'none';
+  const deselectConfirmTitle = selectedProfile?.type === 'band'
+    ? t('band.deselectConfirmTitle')
+    : t('common.deselectConfirmTitle');
+  const deselectConfirmMessage = selectedProfile?.type === 'band'
+    ? t('band.deselectConfirmMessage')
+    : t('common.deselectConfirmMessage');
   const mobileHeaderProfileLabel = selectedProfile?.type === 'player'
     ? t('common.viewNameProfile', { name: selectedProfile.displayName })
     : selectedProfile?.type === 'band'
@@ -916,8 +917,8 @@ function AppShell() {
       {showChangelog && <ChangelogModal onDismiss={dismissChangelog} onExitComplete={() => setChangelogDismissed(true)} />}
       {showDeselectConfirm && (
         <ConfirmAlert
-          title={t('common.deselectConfirmTitle')}
-          message={t('common.deselectConfirmMessage')}
+          title={deselectConfirmTitle}
+          message={deselectConfirmMessage}
           onNo={() => setShowDeselectConfirm(false)}
           onYes={confirmDeselect}
           onExitComplete={() => setShowDeselectConfirm(false)}

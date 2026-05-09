@@ -33,7 +33,7 @@ describe('ConfirmAlert', () => {
     expect(screen.getByText('No')).toBeDefined();
   });
 
-  it('sizes to content and keeps long button labels on one line', () => {
+  it('uses compact sizing and lets long button labels wrap', () => {
     render(
       <ConfirmAlert
         {...defaultProps}
@@ -48,11 +48,16 @@ describe('ConfirmAlert', () => {
     const yesButton = screen.getByText('Permanently Dismiss');
 
     expect(card.style.minWidth).toBe(`min(${Layout.confirmMinWidth}px, calc(100vw - ${Gap.section * 2}px))`);
-    expect(card.style.width).toBe('fit-content');
+    expect(card.style.width).toBe(`${Layout.confirmMaxWidth}px`);
     expect(card.style.maxWidth).toBe(`calc(100vw - ${Gap.section * 2}px)`);
+    expect(card.style.boxSizing).toBe('border-box');
     expect(card.style.padding).toContain('safe-area-inset-bottom');
-    expect(noButton.style.whiteSpace).toBe('nowrap');
-    expect(yesButton.style.whiteSpace).toBe('nowrap');
+    expect(noButton.style.minWidth).toBe('0px');
+    expect(yesButton.style.minWidth).toBe('0px');
+    expect(noButton.style.whiteSpace).toBe('normal');
+    expect(yesButton.style.whiteSpace).toBe('normal');
+    expect(noButton.style.overflowWrap).toBe('anywhere');
+    expect(yesButton.style.overflowWrap).toBe('anywhere');
   });
 
   it('calls onNo when No is clicked', () => {

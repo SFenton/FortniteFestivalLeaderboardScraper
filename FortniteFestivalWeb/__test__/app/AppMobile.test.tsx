@@ -543,6 +543,54 @@ describe('App — mobile FAB branches', () => {
     expect(container.querySelector('nav')).toBeTruthy();
   });
 
+  it('confirms selected band deselect from the desktop sidebar', async () => {
+    setDesktop();
+    window.location.hash = '#/settings';
+    const selectedBand: SelectedProfile = {
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    };
+    localStorage.setItem('fst:selectedProfile', JSON.stringify(selectedBand));
+
+    render(<App />);
+
+    await screen.findByText('App Settings', undefined, { timeout: 5000 });
+    fireEvent.click(screen.getByLabelText('Open navigation'));
+
+    const bandPanel = await screen.findByTestId('sidebar-band-profile');
+    expect(within(bandPanel).getByText('TrackedP + BandMate')).toBeDefined();
+
+    fireEvent.click(within(bandPanel).getByRole('button', { name: 'Deselect Band' }));
+
+    expect(await screen.findByText('Deselect Band?')).toBeDefined();
+    expect(screen.getByText(/Deselecting this band will prevent you from seeing band scores/)).toBeDefined();
+    expect(localStorage.getItem('fst:selectedProfile')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'No' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Deselect Band?')).toBeNull();
+    });
+    expect(localStorage.getItem('fst:selectedProfile')).not.toBeNull();
+
+    fireEvent.click(within(screen.getByTestId('sidebar-band-profile')).getByRole('button', { name: 'Deselect Band' }));
+    expect(await screen.findByText('Deselect Band?')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
+
+    await waitFor(() => {
+      expect(localStorage.getItem('fst:selectedProfile')).toBeNull();
+    });
+    expect(localStorage.getItem('fst:trackedPlayer')).toBeNull();
+    window.location.hash = '';
+  }, 10000);
+
   it('opens Settings quick links directly from the mobile FAB', async () => {
     setMobile();
     window.location.hash = '#/settings';
