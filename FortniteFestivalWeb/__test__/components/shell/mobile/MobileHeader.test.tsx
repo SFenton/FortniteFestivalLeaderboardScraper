@@ -237,6 +237,29 @@ describe('MobileHeader', () => {
     expect(screen.getByRole('button', { name: 'View band SFentonX + Phankie.ToT' }).getAttribute('data-profile-type')).toBe('band');
   });
 
+  it('renders selected band statistics as a root header, not a back header', () => {
+    renderWithRouter(
+      <MobileHeader
+        navTitle="Statistics"
+        backFallback={null}
+        shouldAnimate={false}
+        locationKey="/statistics"
+        songInstrument={null}
+        isSongsRoute={false}
+        profileType="band"
+        profileLabel="View band SFentonX + Phankie.ToT"
+        onOpenSidebar={() => {}}
+        onProfileAction={() => {}}
+        onOpenSearch={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toBeDefined();
+    expect(screen.getByText('Statistics')).toBeDefined();
+    expect(screen.queryByRole('link', { name: /Back/i })).toBeNull();
+    expect(screen.getByRole('button', { name: 'View band SFentonX + Phankie.ToT' }).getAttribute('data-profile-type')).toBe('band');
+  });
+
   it('does not render song instrument icon outside SongsPage', () => {
     renderWithRouter(
       <MobileHeader

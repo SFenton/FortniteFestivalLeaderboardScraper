@@ -55,8 +55,7 @@ describe('BottomNav', () => {
     expect(screen.getByText('Statistics')).toBeDefined();
 
     fireEvent.click(screen.getByText('Statistics'));
-    expect(onTabClick).toHaveBeenCalledWith(TabKey.Statistics, expect.stringContaining('/bands/band-1'));
-    expect(onTabClick).toHaveBeenCalledWith(TabKey.Statistics, expect.stringContaining('teamKey=p1%3Ap2'));
+    expect(onTabClick).toHaveBeenCalledWith(TabKey.Statistics, '/statistics');
   });
 
   it('calls onTabClick when a tab is pressed', () => {

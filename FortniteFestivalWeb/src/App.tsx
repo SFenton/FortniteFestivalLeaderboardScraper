@@ -37,7 +37,8 @@ const CompetePage = lazy(() => import('./pages/compete/CompetePage'));
 import { Size, Layout, QUERY_NARROW_GRID } from '@festival/theme';
 
 /** Shared route tree used by both mobile and wide-desktop layouts. */
-function RoutesContent({ player }: { player: TrackedPlayer | null }) {
+function RoutesContent({ player, selectedProfile }: { player: TrackedPlayer | null; selectedProfile: SelectedProfile | null }) {
+  const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
   return (
     <Suspense fallback={<SuspenseFallback />}>
     <Routes>
@@ -68,11 +69,12 @@ function RoutesContent({ player }: { player: TrackedPlayer | null }) {
       ) : (
         <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
-      {player ? (
-        <Route path="/statistics" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>} />
-      ) : (
-        <Route path="/statistics" element={<Navigate to={AppRoutes.songs} replace />} />
-      )}
+      <Route path="/statistics" element={player
+        ? <ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>
+        : selectedBand
+          ? <ErrorBoundary fallback={<RouteErrorFallback />}><BandPage statisticsBand={selectedBand} /></ErrorBoundary>
+          : <Navigate to={AppRoutes.songs} replace />}
+      />
       {player ? (
         <Route path="/suggestions" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SuggestionsPage accountId={player.accountId} /></ErrorBoundary>} />
       ) : (
@@ -153,7 +155,7 @@ import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
 
-export { getProfileClickDestination } from './utils/profileNavigation';
+export { getProfileClickDestination, getStatisticsNavigationPath } from './utils/profileNavigation';
 
 export default function App() {
   return (
@@ -288,7 +290,7 @@ function WideDesktopLayout({
           <div style={appStyles.sidebarGutter} />
           <div style={appStyles.centerColumn}>
             <div id="main-content" style={{ ...appStyles.content, ...appStyles.contentPinned }}>
-              <RoutesContent player={player} />
+              <RoutesContent player={player} selectedProfile={selectedProfile} />
             </div>
           </div>
           <div style={appStyles.rightGutter} />
@@ -660,7 +662,7 @@ function AppShell() {
         <div ref={shellScrollRef} style={appStyles.scrollContainer}>
         <div style={appStyles.contentColumn}>
         <div id="main-content" style={appStyles.content}>
-          <RoutesContent player={player} />
+          <RoutesContent player={player} selectedProfile={selectedProfile} />
         </div>
         </div>
         </div>

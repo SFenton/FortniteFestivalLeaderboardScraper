@@ -27,6 +27,6 @@ export function getStatisticsNavigationPath(
   player: TrackedPlayer | null,
   selectedProfile: SelectedProfile | null,
 ): string | null {
-  const destination = getProfileClickDestination(player, selectedProfile);
-  return destination === 'sidebar' || destination === 'modal' ? null : destination;
+  if (player || selectedProfile?.type === 'band') return AppRoutes.statistics;
+  return null;
 }

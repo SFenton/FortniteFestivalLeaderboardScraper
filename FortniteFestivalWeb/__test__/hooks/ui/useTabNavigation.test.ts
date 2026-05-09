@@ -78,20 +78,19 @@ describe('useTabNavigation', () => {
     expect(result.current.tabRoutes[TabKey.Statistics]).toBe('/statistics');
   });
 
-  it('Statistics uses rootOverride for selected band destination', () => {
+  it('Statistics uses rootOverride for selected band statistics root', () => {
     function useTestHook() {
       const tab = useTabNavigation();
       const location = useLocation();
       return { tab, location };
     }
 
-    const bandPath = '/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two';
     const { result } = renderHook(() => useTestHook(), { wrapper: wrapper('/songs') });
-    act(() => { result.current.tab.handleTabClick(TabKey.Statistics, bandPath); });
+    act(() => { result.current.tab.handleTabClick(TabKey.Statistics, '/statistics'); });
 
     expect(result.current.tab.activeTab).toBe(TabKey.Statistics);
-    expect(result.current.location.pathname).toBe('/bands/band-1');
-    expect(result.current.location.search).toContain('teamKey=p1%3Ap2');
+    expect(result.current.location.pathname).toBe('/statistics');
+    expect(result.current.location.search).toBe('');
   });
 
   it('loads routes from sessionStorage', () => {

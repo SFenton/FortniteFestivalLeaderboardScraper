@@ -21,7 +21,28 @@ import App from '../../src/App';
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
-beforeAll(() => { stubScrollTo(); stubResizeObserver(); stubElementDimensions(); stubIntersectionObserver(); });
+beforeAll(() => {
+  stubScrollTo();
+  stubResizeObserver();
+  stubElementDimensions();
+  stubIntersectionObserver();
+  const createRange = document.createRange.bind(document);
+  document.createRange = () => {
+    const range = createRange();
+    range.getBoundingClientRect = () => ({
+      top: 0,
+      left: 0,
+      bottom: 20,
+      right: 120,
+      width: 120,
+      height: 20,
+      x: 0,
+      y: 0,
+      toJSON() { return this; },
+    });
+    return range;
+  };
+});
 
 function resetMocks() {
   mockApi.getSongs.mockResolvedValue({ songs: [{ songId: 's1', title: 'Test', artist: 'A', year: 2024, difficulty: { guitar: 3 } }], count: 1, currentSeason: 5 });
@@ -209,7 +230,7 @@ describe('AppShell', () => {
   });
 });
 
-import { getProfileClickDestination } from '../../src/App';
+import { getProfileClickDestination, getStatisticsNavigationPath } from '../../src/App';
 
 describe('getProfileClickDestination', () => {
   const playerProfile = { accountId: 'p1', displayName: 'Player' };
@@ -263,5 +284,29 @@ describe('getProfileClickDestination', () => {
     const playerSelectedProfile = { type: 'player' as const, accountId: 'p2', displayName: 'Other' };
     const dest = getProfileClickDestination(null, playerSelectedProfile);
     expect(dest).toBe('modal');
+  });
+});
+
+describe('getStatisticsNavigationPath', () => {
+  const playerProfile = { accountId: 'p1', displayName: 'Player' };
+  const bandProfile = {
+    type: 'band' as const,
+    bandId: 'band-123',
+    bandType: 'Band_Duets',
+    teamKey: 'tk-abc',
+    displayName: 'My Duo',
+    members: [],
+  };
+
+  it('returns /statistics for a selected player', () => {
+    expect(getStatisticsNavigationPath(playerProfile, null)).toBe('/statistics');
+  });
+
+  it('returns /statistics for a selected band instead of the band detail route', () => {
+    expect(getStatisticsNavigationPath(null, bandProfile)).toBe('/statistics');
+  });
+
+  it('returns null when no statistics-capable profile is selected', () => {
+    expect(getStatisticsNavigationPath(null, null)).toBeNull();
   });
 });

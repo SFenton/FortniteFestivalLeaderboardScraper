@@ -20,8 +20,9 @@ import { useBandRankHistory } from '../../hooks/chart/useBandRankHistory';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useStagger } from '../../hooks/ui/useStagger';
-import { useSelectedProfile } from '../../hooks/data/useSelectedProfile';
+import { useSelectedProfile, type SelectedBandProfile } from '../../hooks/data/useSelectedProfile';
 import { defaultSongFilters, loadSongSettings, saveSongSettings, type SongSettings } from '../../utils/songSettings';
+import { createPreserveShellScrollState } from '../../utils/quietNavigation';
 import { Routes } from '../../routes';
 import Page from '../Page';
 import { getLeaderboardPageForRank } from '../leaderboards/helpers/rankingHelpers';
@@ -51,7 +52,11 @@ const SELECT_BAND_PROFILE_ACTION_SLOT_SHADOW_SAFE_STYLE: CSSProperties = {
   margin: -SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER,
 };
 
-export default function BandPage() {
+type BandPageProps = {
+  statisticsBand?: SelectedBandProfile | null;
+};
+
+export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const { t } = useTranslation();
   const { bandId } = useParams<{ bandId?: string }>();
   const [searchParams] = useSearchParams();
@@ -61,13 +66,14 @@ export default function BandPage() {
   const { profile, selectBand } = useSelectedProfile();
   const appliedBandComboFilter = useAppliedBandComboFilter();
 
-  const lookupAccountId = searchParams.get('accountId') ?? undefined;
-  const lookupTeamKey = searchParams.get('teamKey') ?? undefined;
-  const lookupBandTypeRaw = searchParams.get('bandType') ?? undefined;
-  const lookupBandType = isBandType(lookupBandTypeRaw) ? lookupBandTypeRaw : undefined;
-  const routeNames = searchParams.get('names')?.trim() || undefined;
+  const isStatisticsBandMode = !!statisticsBand;
+  const lookupAccountId = isStatisticsBandMode ? undefined : searchParams.get('accountId') ?? undefined;
+  const lookupTeamKey = statisticsBand?.teamKey ?? searchParams.get('teamKey') ?? undefined;
+  const lookupBandTypeRaw = statisticsBand?.bandType ?? searchParams.get('bandType') ?? undefined;
+  const lookupBandType = statisticsBand?.bandType ?? (isBandType(lookupBandTypeRaw) ? lookupBandTypeRaw : undefined);
+  const routeNames = statisticsBand?.displayName.trim() || searchParams.get('names')?.trim() || undefined;
   const hasTeamContext = !!lookupBandType && !!lookupTeamKey;
-  const hasAccountLookupContext = !!lookupAccountId && hasTeamContext;
+  const hasAccountLookupContext = !isStatisticsBandMode && !!lookupAccountId && hasTeamContext;
   const contextualComboId = lookupBandType && appliedBandComboFilter?.bandType === lookupBandType
     ? appliedBandComboFilter.comboId
     : undefined;
@@ -103,8 +109,12 @@ export default function BandPage() {
     () => rankingQuery.data ? buildBandEntryFromRanking(rankingQuery.data, routeNames) : null,
     [rankingQuery.data, routeNames],
   );
-  const contextBand = lookupQuery.data ?? rankedContextBand;
-  const effectiveBandId = bandId ?? contextBand?.bandId ?? rankingQuery.data?.bandId ?? null;
+  const statisticsContextBand = useMemo(
+    () => statisticsBand ? buildBandEntryFromSelectedProfile(statisticsBand) : null,
+    [statisticsBand],
+  );
+  const contextBand = lookupQuery.data ?? rankedContextBand ?? statisticsContextBand;
+  const effectiveBandId = bandId ?? statisticsBand?.bandId ?? contextBand?.bandId ?? rankingQuery.data?.bandId ?? null;
   const bandRouteContext = useMemo(() => {
     if (lookupBandType && lookupTeamKey) {
       return { accountId: lookupAccountId, bandType: lookupBandType, teamKey: lookupTeamKey, names: routeNames };
@@ -113,10 +123,11 @@ export default function BandPage() {
   }, [lookupAccountId, lookupBandType, lookupTeamKey, routeNames]);
 
   useEffect(() => {
+    if (isStatisticsBandMode) return;
     if (!bandId && contextBand?.bandId) {
       navigate(Routes.band(contextBand.bandId, bandRouteContext), { replace: true });
     }
-  }, [bandId, bandRouteContext, contextBand?.bandId, navigate]);
+  }, [bandId, bandRouteContext, contextBand?.bandId, isStatisticsBandMode, navigate]);
 
   const detailQuery = useQuery({
     queryKey: queryKeys.bandDetail(effectiveBandId ?? ''),
@@ -176,12 +187,13 @@ export default function BandPage() {
   }, [contextBand, effectiveBandId, queryClient, rankingQuery.data]);
 
   useEffect(() => {
+    if (isStatisticsBandMode) return;
     if (!payload || routeNames || (!bandId && contextBand?.bandId)) return;
     if (!resolvedTitle || resolvedTitle === genericBandTitle) return;
     const next = new URLSearchParams(searchParams);
     next.set('names', resolvedTitle);
     navigate(`${location.pathname}?${next.toString()}`, { replace: true, state: location.state });
-  }, [bandId, contextBand?.bandId, genericBandTitle, location.pathname, location.state, navigate, payload, resolvedTitle, routeNames, searchParams]);
+  }, [bandId, contextBand?.bandId, genericBandTitle, isStatisticsBandMode, location.pathname, location.state, navigate, payload, resolvedTitle, routeNames, searchParams]);
 
   const pageKey = effectiveBandId ?? `${lookupAccountId ?? 'missing'}:${lookupBandType ?? 'missing'}:${lookupTeamKey ?? 'missing'}`;
   const scopedPageKey = `${pageKey}:${activeComboId ?? 'all'}`;
@@ -198,7 +210,7 @@ export default function BandPage() {
   const subtitle = payload
     ? t('band.subtitle', {
         type: formatBandType(payload.band.bandType),
-        count: (payload.band.appearanceCount ?? 0).toLocaleString(),
+        count: payload.band.appearanceCount ?? 0,
       })
     : undefined;
 
@@ -237,9 +249,11 @@ export default function BandPage() {
 
   const buildSelectedBand = useCallback(() => {
     if (!payload) return;
+    const bandId = payload.band.bandId;
+    if (!bandId) return;
 
     return {
-      bandId: payload.band.bandId,
+      bandId,
       bandType: payload.band.bandType,
       teamKey: payload.band.teamKey,
       displayName: title,
@@ -252,8 +266,15 @@ export default function BandPage() {
 
   const handleBandProfileClick = useCallback(() => {
     const selectedBand = buildSelectedBand();
-    if (selectedBand) selectBand(selectedBand);
-  }, [buildSelectedBand, selectBand]);
+    if (!selectedBand) return;
+    selectBand(selectedBand);
+    if (location.pathname !== Routes.statistics) {
+      navigate(Routes.statistics, {
+        replace: true,
+        state: createPreserveShellScrollState(`profile-select:${selectedBand.bandId}`),
+      });
+    }
+  }, [buildSelectedBand, location.pathname, navigate, selectBand]);
 
   const navigateToBandLeaderboard = useCallback((metric: BandRankingMetric, rank: number) => {
     if (!payload || rank <= 0) return;
@@ -359,6 +380,20 @@ function buildBandEntryFromRanking(ranking: BandRankingDto, routeNames?: string)
     teamKey: ranking.teamKey,
     appearanceCount: ranking.songsPlayed,
     members,
+  };
+}
+
+function buildBandEntryFromSelectedProfile(profile: SelectedBandProfile): PlayerBandEntry {
+  return {
+    bandId: profile.bandId,
+    bandType: profile.bandType,
+    teamKey: profile.teamKey,
+    appearanceCount: 0,
+    members: profile.members.map(member => ({
+      accountId: member.accountId,
+      displayName: member.displayName,
+      instruments: [] as ServerInstrumentKey[],
+    })),
   };
 }
 

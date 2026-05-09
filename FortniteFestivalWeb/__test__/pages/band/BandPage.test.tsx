@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, fireEvent } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import type { QueryClient } from '@tanstack/react-query';
 import { ACCURACY_SCALE } from '@festival/core';
@@ -9,6 +9,7 @@ import { queryKeys } from '../../../src/api/queryKeys';
 import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
+import type { SelectedBandProfile } from '../../../src/hooks/data/useSelectedProfile';
 
 const mockApi = vi.hoisted(() => ({
   getSongs: vi.fn(),
@@ -253,14 +254,21 @@ const { default: BandPage } = await import('../../../src/pages/band/BandPage');
 
 function LocationProbe() {
   const location = useLocation();
-  return <div data-testid="current-location">{`${location.pathname}${location.search}`}</div>;
+  const state = location.state as { preserveShellScrollKey?: string } | null;
+  return (
+    <>
+      <div data-testid="current-location">{`${location.pathname}${location.search}`}</div>
+      <div data-testid="location-preserve-scroll">{state?.preserveShellScrollKey ? 'true' : 'false'}</div>
+    </>
+  );
 }
 
-function renderBandPage(route: string, queryClient: QueryClient = createTestQueryClient(), bandFilter?: AppliedBandComboFilter | null) {
+function renderBandPage(route: string, queryClient: QueryClient = createTestQueryClient(), bandFilter?: AppliedBandComboFilter | null, statisticsBand?: SelectedBandProfile | null) {
   return render(
     <TestProviders route={route} queryClient={queryClient} bandFilter={bandFilter}>
       <LocationProbe />
       <Routes>
+        <Route path="/statistics" element={<BandPage statisticsBand={statisticsBand} />} />
         <Route path="/bands" element={<BandPage />} />
         <Route path="/bands/:bandId" element={<BandPage />} />
       </Routes>
@@ -276,6 +284,32 @@ async function advancePastSpinner() {
 }
 
 describe('BandPage', () => {
+  it('renders selected band statistics on /statistics without canonicalizing to band detail', async () => {
+    const selectedBand: SelectedBandProfile = {
+      type: 'band',
+      bandId: 'band-guid-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'Player One + Player Two',
+      members: [
+        { accountId: 'p1', displayName: 'Player One' },
+        { accountId: 'p2', displayName: 'Player Two' },
+      ],
+    };
+
+    renderBandPage('/statistics', createTestQueryClient(), null, selectedBand);
+    await advancePastSpinner();
+
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/statistics');
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expect(mockApi.getPlayerBandsByType).not.toHaveBeenCalled();
+    expect(mockApi.getBandDetail).not.toHaveBeenCalled();
+    expect(await screen.findByText('Player One + Player Two')).toBeTruthy();
+    const statisticsSection = screen.getByTestId('band-section-statistics');
+    expect(statisticsSection).toHaveTextContent('2 / 10');
+    expect(statisticsSection).toHaveTextContent('#7');
+  });
+
   it('renders band details from a direct band id route', async () => {
     const { container } = renderBandPage('/bands/band-guid-1');
     await advancePastSpinner();
@@ -445,6 +479,10 @@ describe('BandPage', () => {
         { accountId: 'p2', displayName: 'Player Two' },
       ],
     });
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/statistics');
+    });
+    expect(screen.getByTestId('location-preserve-scroll')).toHaveTextContent('true');
   });
 
   it('does not show an on-page deselect action for the selected band', async () => {
@@ -472,18 +510,16 @@ describe('BandPage', () => {
     });
   });
 
-  it('fades the select band profile action after selecting the current band', async () => {
+  it('quietly rewrites to statistics after selecting the current band profile', async () => {
     renderBandPage('/bands/band-guid-1');
     await advancePastSpinner();
 
     fireEvent.click(screen.getByRole('button', { name: 'Select Band Profile' }));
 
-    expect(screen.queryByRole('button', { name: 'Deselect Band' })).toBeNull();
-    expect(screen.getByTestId('band-select-profile-slot')).toHaveStyle({ opacity: '0' });
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-
-    expect(screen.queryByTestId('band-select-profile-slot')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/statistics');
+    });
+    expect(screen.getByTestId('location-preserve-scroll')).toHaveTextContent('true');
   });
 
   it('uses friendly fallback text instead of account ids when member names are missing', async () => {

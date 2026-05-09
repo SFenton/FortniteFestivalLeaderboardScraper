@@ -69,8 +69,7 @@ describe('PinnedSidebar', () => {
 
     expect(screen.queryByText('Suggestions')).toBeNull();
     expect(screen.queryByText('Rivals')).toBeNull();
-    expect(statisticsLink?.getAttribute('href')).toContain('/bands/band-1');
-    expect(statisticsLink?.getAttribute('href')).toContain('teamKey=p1%3Ap2');
+    expect(statisticsLink?.getAttribute('href')).toBe('/statistics');
   });
 
   it('shows player displayName when player is set', () => {
