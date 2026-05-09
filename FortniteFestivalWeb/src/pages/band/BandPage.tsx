@@ -31,6 +31,8 @@ import BandSongsSection, { useBandSongs } from './components/BandSongsSection';
 
 const VALID_BAND_TYPES: BandType[] = ['Band_Duets', 'Band_Trios', 'Band_Quad'];
 const SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH = 360;
+const SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER = 20;
+const SELECT_BAND_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH = SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH + (SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER * 2);
 const SELECT_BAND_PROFILE_ACTION_SLOT_STYLE: CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -42,6 +44,11 @@ const SELECT_BAND_PROFILE_ACTION_SLOT_STYLE: CSSProperties = {
     transition('max-width', TRANSITION_MS),
     transition('opacity', TRANSITION_MS),
   ),
+};
+const SELECT_BAND_PROFILE_ACTION_SLOT_SHADOW_SAFE_STYLE: CSSProperties = {
+  ...SELECT_BAND_PROFILE_ACTION_SLOT_STYLE,
+  padding: SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER,
+  margin: -SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER,
 };
 
 export default function BandPage() {
@@ -266,15 +273,18 @@ export default function BandPage() {
   }, [buildSelectedBand, location.pathname, navigate, selectBand]);
 
   const canNavigateToBandSongs = !!payload && (!activeComboId || isCurrentBandSelected);
+  const selectBandProfileSlotStyle = isMobile
+    ? SELECT_BAND_PROFILE_ACTION_SLOT_STYLE
+    : SELECT_BAND_PROFILE_ACTION_SLOT_SHADOW_SAFE_STYLE;
 
   const bandProfileAction = selectBandProfileMounted ? (
     <div
       data-testid="band-select-profile-slot"
       aria-hidden={!selectBandProfileVisible}
       style={{
-        ...SELECT_BAND_PROFILE_ACTION_SLOT_STYLE,
+        ...selectBandProfileSlotStyle,
         maxWidth: selectBandProfileVisible
-          ? (isMobile ? Layout.pillButtonHeight : SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH)
+          ? (isMobile ? Layout.pillButtonHeight : SELECT_BAND_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
           : 0,
         opacity: selectBandProfileVisible ? 1 : 0,
       }}

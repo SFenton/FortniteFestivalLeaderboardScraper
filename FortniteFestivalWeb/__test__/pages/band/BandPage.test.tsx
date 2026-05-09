@@ -27,6 +27,7 @@ vi.mock('../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
 });
 
 const SELECTED_PROFILE_STORAGE_KEY = 'fst:selectedProfile';
+const SELECT_BAND_PROFILE_SHADOW_GUTTER = 20;
 const DEFAULT_CONFIGURATIONS = [
   {
     rawInstrumentCombo: '0:1',
@@ -393,6 +394,13 @@ describe('BandPage', () => {
 
     expect(screen.getByRole('button', { name: 'Select Band Profile' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Select Band Profile' })).toHaveStyle({ backgroundColor: Colors.accentPurple });
+    expect(screen.getByTestId('band-select-profile-slot')).toHaveStyle({
+      maxWidth: `${360 + (SELECT_BAND_PROFILE_SHADOW_GUTTER * 2)}px`,
+      overflow: 'hidden',
+      padding: `${SELECT_BAND_PROFILE_SHADOW_GUTTER}px`,
+      margin: `-${SELECT_BAND_PROFILE_SHADOW_GUTTER}px`,
+      opacity: '1',
+    });
     expect(localStorage.getItem(SELECTED_PROFILE_STORAGE_KEY)).toBeNull();
   });
 
