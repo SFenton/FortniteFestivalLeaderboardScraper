@@ -435,7 +435,6 @@ function NotificationRow({
           <div style={styles.title} data-testid="notification-title" data-marquee-title="true">
             <MarqueeText text={presentation.title} as="span" style={styles.titleMarquee} />
           </div>
-          {isSessionUnread && <span style={styles.unreadDot} data-testid="notification-unread-dot" aria-hidden="true" />}
         </div>
         <div style={styles.summary} data-testid="notification-summary">
           {presentation.messageParts.map((part, index) => (
@@ -450,7 +449,12 @@ function NotificationRow({
           ))}
         </div>
       </div>
-      {canOpenNotification && <IoChevronForward size={18} aria-hidden="true" style={styles.chevron} data-testid="notification-chevron" />}
+      {(isSessionUnread || canOpenNotification) && (
+        <div style={styles.trailingAction} data-testid="notification-trailing-action">
+          {isSessionUnread && <span style={styles.unreadDot} data-testid="notification-unread-dot" aria-hidden="true" />}
+          {canOpenNotification && <IoChevronForward size={18} aria-hidden="true" style={styles.chevron} data-testid="notification-chevron" />}
+        </div>
+      )}
     </>
   );
   const rowProps = {
@@ -815,6 +819,16 @@ function useStyles() {
       color: 'rgba(255, 255, 255, 0.72)',
       flexShrink: 0,
       alignSelf: Align.center,
+    } as CSSProperties,
+    trailingAction: {
+      ...flexRow,
+      position: 'relative',
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      width: 20,
+      minWidth: 20,
+      alignSelf: Align.stretch,
+      flexShrink: 0,
       marginLeft: Gap.xs,
     } as CSSProperties,
     titleRow: {
@@ -840,10 +854,13 @@ function useStyles() {
       minWidth: 0,
     } as CSSProperties,
     unreadDot: {
+      position: 'absolute',
+      top: 'calc(50% - 24px)',
+      left: '50%',
+      transform: 'translateX(-50%)',
       width: 9,
       height: 9,
       minWidth: 9,
-      marginTop: 5,
       borderRadius: '50%',
       background: UNREAD_DOT_COLOR,
       boxShadow: `0 0 0 2px ${Colors.surfaceSubtle}`,

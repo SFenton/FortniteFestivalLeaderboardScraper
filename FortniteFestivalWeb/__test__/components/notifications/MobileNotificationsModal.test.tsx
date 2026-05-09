@@ -136,23 +136,21 @@ describe('MobileNotificationsModal', () => {
     expect(screen.getByText('Apple · Pro Drums')).toBeTruthy();
     expect(screen.getByText('Stand and Fight (Remix) · Drums')).toBeTruthy();
     expect(screen.getByText("Ghosts 'n' Stuff · Pro Drums")).toBeTruthy();
-    expect(screen.getAllByText('Apple').length).toBeGreaterThan(0);
     expect(screen.getByText('Apple · Band Trios')).toBeTruthy();
-    expect(screen.getByText('Weighted Rank · Drums')).toBeTruthy();
-    expect(screen.getByText('Weighted Rank · Band Duos')).toBeTruthy();
+    expect(screen.getAllByText('Weighted Rank Improved').length).toBe(2);
     expect(screen.queryByText('SFentonX - Pro Drums')).toBeNull();
     expect(screen.queryByText('Today 7:53 AM')).toBeNull();
     const modalText = document.body.textContent ?? '';
-    expect(modalText).toContain('You set a new personal best on Pro Drums for Apple with 137,700, earned gold stars, and climbed from #1,214 to #982.');
-    expect(modalText).toContain("Your first Pro Drums play on Ghosts 'n' Stuff scored 180,005, started at #1,288, and earned gold stars.");
-    expect(modalText).toContain('Your band set a new best score on Apple with 1,234,567, got a Full Combo, earned gold stars, climbed from #42 to #31 in Band Trios, and climbed from #9 to #6 for Bass/Bass/Drums.');
+    expect(modalText).toContain('Pro Drums score improved from 127,025 to 137,700, earned Gold Stars, and rank improved from #1,214 to #982.');
+    expect(modalText).toContain("First Pro Drums score on Ghosts 'n' Stuff: 180,005, started at #1,288, and earned Gold Stars.");
+    expect(modalText).toContain('Score improved from 1,210,400 to 1,234,567, earned a Full Combo, earned Gold Stars, Band Trios rank improved from #42 to #31, and Bass/Bass/Drums rank improved from #9 to #6.');
     const emphasizedText = Array.from(document.body.querySelectorAll('[data-notification-emphasis="true"]')).map((element) => element.textContent);
     expect(emphasizedText).toContain('Pro Drums');
     expect(emphasizedText).toContain('180,005');
     expect(emphasizedText).toContain('#1,288');
-    expect(emphasizedText).toContain('gold stars');
+    expect(emphasizedText).toContain('Gold Stars');
     expect(emphasizedText).toContain('Bass/Bass/Drums');
-    expect(emphasizedText).not.toContain('Weighted Rank · Band Duos');
+    expect(emphasizedText).not.toContain('Weighted Rank Improved');
     expect(screen.getAllByText('New High Score').length).toBeGreaterThan(0);
     expect(screen.getAllByText('First Play').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Gold Stars').length).toBeGreaterThan(0);
@@ -272,18 +270,22 @@ describe('MobileNotificationsModal', () => {
   it('keeps unread dots stable for the current modal session', () => {
     const unreadNotificationIds = new Set([mockMobileNotifications[0]!.notificationGuid]);
     const { rerender } = render(
-      <MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={unreadNotificationIds} />,
+      <MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={unreadNotificationIds} onNotificationOpen={() => {}} />,
     );
 
     expect(screen.getAllByTestId('notification-unread-dot')).toHaveLength(1);
+    expect(screen.getByTestId('notification-unread-dot').parentElement).toBe(screen.getAllByTestId('notification-chevron')[0]!.parentElement);
+    expect(screen.getAllByTestId('notification-trailing-action')[0]!.style.justifyContent).toBe('center');
+    expect(screen.getAllByTestId('notification-trailing-action')[0]!.style.position).toBe('relative');
+    expect(screen.getByTestId('notification-unread-dot').style.position).toBe('absolute');
     expect(screen.getAllByTestId('mock-notification-row')[0]!.getAttribute('data-unread')).toBe('true');
 
-    rerender(<MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={new Set()} />);
+    rerender(<MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
 
     expect(screen.getAllByTestId('notification-unread-dot')).toHaveLength(1);
 
-    rerender(<MobileNotificationsModal visible={false} onClose={() => {}} unreadNotificationIds={new Set()} />);
-    rerender(<MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={new Set()} />);
+    rerender(<MobileNotificationsModal visible={false} onClose={() => {}} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
+    rerender(<MobileNotificationsModal visible={true} onClose={() => {}} unreadNotificationIds={new Set()} onNotificationOpen={() => {}} />);
 
     expect(screen.queryByTestId('notification-unread-dot')).toBeNull();
   });

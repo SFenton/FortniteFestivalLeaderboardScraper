@@ -124,17 +124,23 @@ function formatNotificationTitle(t: TFunction, input: NotificationTextInput, eve
   const aggregateRankTitle = formatAggregateRankTitle(t, input, instrumentLabel, events);
   if (aggregateRankTitle) return aggregateRankTitle;
 
+  const progressTitle = formatProgressTitle(t, events);
+  if (progressTitle) return progressTitle;
+
   return input.title ?? input.songTitle ?? translate(t, 'notifications.values.notification');
 }
 
-function formatAggregateRankTitle(t: TFunction, input: NotificationTextInput, instrumentLabel: string | undefined, events: NotificationTextEvent[]) {
+function formatAggregateRankTitle(t: TFunction, _input: NotificationTextInput, _instrumentLabel: string | undefined, events: NotificationTextEvent[]) {
   const rankEvent = events.find(event => AGGREGATE_RANK_TITLE_KEYS[event.eventKind]);
   if (!rankEvent) return null;
-  const scope = rankEvent.eventKind.startsWith('band_')
-    ? rankEvent.scopeLabel?.trim() ?? input.scopeLabel?.trim()
-    : instrumentLabel ?? rankEvent.scopeLabel?.trim() ?? input.scopeLabel?.trim();
-  if (!scope) return null;
-  return `${translate(t, AGGREGATE_RANK_TITLE_KEYS[rankEvent.eventKind])} · ${scope}`;
+  return translate(t, 'notifications.titles.rankImproved', {
+    rank: translate(t, AGGREGATE_RANK_TITLE_KEYS[rankEvent.eventKind]),
+  });
+}
+
+function formatProgressTitle(t: TFunction, events: NotificationTextEvent[]) {
+  const progressEvent = events.find(event => PROGRESS_TITLE_KEYS[event.eventKind]);
+  return progressEvent ? translate(t, PROGRESS_TITLE_KEYS[progressEvent.eventKind]) : null;
 }
 
 function getDisplayEvents(input: NotificationTextInput): NotificationTextEvent[] {
@@ -295,7 +301,7 @@ function emphasisTermsForEvent(event: NotificationTextEvent, values: ReturnType<
   }
 
   if (event.eventKind === 'player_gold_stars_achieved' || event.eventKind === 'band_gold_stars_achieved') {
-    terms.push('gold stars');
+    terms.push('Gold Stars');
   }
   if (event.eventKind === 'player_fc_achieved' || event.eventKind === 'band_fc_achieved') {
     terms.push('Full Combo');
@@ -462,6 +468,13 @@ const AGGREGATE_RANK_TITLE_KEYS: Record<string, string> = {
   band_weighted_rank_improved: 'notifications.rankNames.weightedRank',
   band_total_score_rank_improved: 'notifications.rankNames.totalScoreRank',
   band_fc_rate_rank_improved: 'notifications.rankNames.fullComboRank',
+};
+
+const PROGRESS_TITLE_KEYS: Record<string, string> = {
+  player_total_score_improved: 'notifications.titles.totalScoreImproved',
+  band_total_score_improved: 'notifications.titles.totalScoreImproved',
+  player_fc_count_improved: 'notifications.titles.fullComboCountImproved',
+  band_fc_count_improved: 'notifications.titles.fullComboCountImproved',
 };
 
 const DETAIL_EVENT_KINDS = new Set([
