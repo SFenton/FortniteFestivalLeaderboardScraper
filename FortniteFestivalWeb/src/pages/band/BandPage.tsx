@@ -184,6 +184,7 @@ export default function BandPage() {
   const hasCachedData = !!payload && bandRankHistory.hasData && bandSongsQuery.data != null;
   const { phase, shouldStagger } = usePageTransition(`band:${scopedPageKey}`, !loading && !secondaryLoading, hasCachedData);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
+  const isMobile = useIsMobile();
   const styles = useStyles();
 
   const title = resolvedTitle ?? routeNames ?? genericBandTitle;
@@ -272,12 +273,15 @@ export default function BandPage() {
       aria-hidden={!selectBandProfileVisible}
       style={{
         ...SELECT_BAND_PROFILE_ACTION_SLOT_STYLE,
-        maxWidth: selectBandProfileVisible ? SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH : 0,
+        maxWidth: selectBandProfileVisible
+          ? (isMobile ? Layout.pillButtonHeight : SELECT_BAND_PROFILE_ACTION_SLOT_MAX_WIDTH)
+          : 0,
         opacity: selectBandProfileVisible ? 1 : 0,
       }}
     >
       <SelectProfilePill
         visible={selectBandProfileVisible}
+        isMobile={isMobile}
         label={t('band.selectProfile')}
         ariaLabel={t('band.selectProfile')}
         icon={<IoPeople size={IconSize.action} />}

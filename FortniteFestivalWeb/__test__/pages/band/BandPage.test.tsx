@@ -3,7 +3,7 @@ import { render, screen, act, fireEvent } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import type { QueryClient } from '@tanstack/react-query';
 import { ACCURACY_SCALE } from '@festival/core';
-import { Colors } from '@festival/theme';
+import { Colors, IconSize, Layout } from '@festival/theme';
 import { DEFAULT_INSTRUMENT, type BandDetailResponse } from '@festival/core/api/serverTypes';
 import { queryKeys } from '../../../src/api/queryKeys';
 import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
@@ -18,8 +18,13 @@ const mockApi = vi.hoisted(() => ({
   getBandRankHistory: vi.fn(),
   getBandSongs: vi.fn(),
 }));
+const mockUseIsMobile = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
+vi.mock('../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/hooks/ui/useIsMobile')>();
+  return { ...actual, useIsMobile: mockUseIsMobile };
+});
 
 const SELECTED_PROFILE_STORAGE_KEY = 'fst:selectedProfile';
 const DEFAULT_CONFIGURATIONS = [
@@ -70,6 +75,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   localStorage.clear();
   vi.clearAllMocks();
+  mockUseIsMobile.mockReturnValue(false);
   mockApi.getSongs.mockResolvedValue({
     count: 6,
     currentSeason: 1,
@@ -388,6 +394,30 @@ describe('BandPage', () => {
     expect(screen.getByRole('button', { name: 'Select Band Profile' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Select Band Profile' })).toHaveStyle({ backgroundColor: Colors.accentPurple });
     expect(localStorage.getItem(SELECTED_PROFILE_STORAGE_KEY)).toBeNull();
+  });
+
+  it('renders Select Band Profile on mobile as a compact pulsing two-person circle', async () => {
+    mockUseIsMobile.mockReturnValue(true);
+
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    const selectButton = screen.getByRole('button', { name: 'Select Band Profile' });
+    const selectButtonStyle = selectButton.getAttribute('style') ?? '';
+    expect(selectButtonStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(selectButtonStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
+    expect(selectButtonStyle).toContain('border-radius: 999px');
+    expect(selectButton.className).toContain('profileCircleBreathe');
+
+    const selectIcon = selectButton.querySelector('svg');
+    expect(selectIcon).not.toBeNull();
+    expect(selectIcon).toHaveAttribute('height', `${IconSize.action}`);
+    expect(selectIcon).toHaveAttribute('width', `${IconSize.action}`);
+
+    expect(screen.getByTestId('band-select-profile-slot')).toHaveStyle({
+      maxWidth: `${Layout.pillButtonHeight}px`,
+      opacity: '1',
+    });
   });
 
   it('selects the current band with member summaries when Select Band Profile is clicked', async () => {
