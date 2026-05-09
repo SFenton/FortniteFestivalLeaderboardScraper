@@ -74,11 +74,41 @@ public sealed class DatabaseMaintenanceDryRunReporter
             "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrh_retention_cutoff_scope_team\" ON public.\"band_team_rank_history\" (\"band_type\", \"snapshot_date\", \"ranking_scope\", \"combo_id\", \"team_key\")",
             "supports bounded wide band history retention batches by band and cutoff date"),
         new(
+            "ix_btrh_latest",
+            "band_team_rank_history",
+            ["band_type", "ranking_scope", "combo_id", "team_key", "snapshot_date DESC"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrh_latest\" ON public.\"band_team_rank_history\" (\"band_type\", \"ranking_scope\", \"combo_id\", \"team_key\", \"snapshot_date\" DESC)",
+            "supports wide band rank-history API fallback lookups; managed by the maintenance harness instead of startup DDL"),
+        new(
+            "ix_btrhl_snapshot",
+            "band_team_rank_history_latest",
+            ["band_type", "snapshot_date DESC"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrhl_snapshot\" ON public.\"band_team_rank_history_latest\" (\"band_type\", \"snapshot_date\" DESC)",
+            "supports latest-state staleness checks; managed by the maintenance harness instead of startup DDL"),
+        new(
+            "ix_btrhp_team_date",
+            "band_team_rank_history_points",
+            ["band_type", "ranking_scope", "combo_id", "team_key", "snapshot_date DESC"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrhp_team_date\" ON public.\"band_team_rank_history_points\" (\"band_type\", \"ranking_scope\", \"combo_id\", \"team_key\", \"snapshot_date\" DESC)",
+            "supports narrow band rank-history API reads; managed by the maintenance harness instead of startup DDL"),
+        new(
+            "ix_btrhp_status_date",
+            "band_team_rank_history_points",
+            ["band_type", "ranking_scope", "combo_id", "snapshot_date DESC"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrhp_status_date\" ON public.\"band_team_rank_history_points\" (\"band_type\", \"ranking_scope\", \"combo_id\", \"snapshot_date\" DESC)",
+            "supports narrow band rank-history status checks; managed by the maintenance harness instead of startup DDL"),
+        new(
             "ix_btrsh_retention_cutoff_scope",
             "band_team_ranking_stats_history",
             ["band_type", "snapshot_date", "ranking_scope", "combo_id"],
             "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrsh_retention_cutoff_scope\" ON public.\"band_team_ranking_stats_history\" (\"band_type\", \"snapshot_date\", \"ranking_scope\", \"combo_id\")",
             "supports bounded band ranking stats history retention batches by band and cutoff date"),
+        new(
+            "ix_btrsh_latest",
+            "band_team_ranking_stats_history",
+            ["band_type", "ranking_scope", "combo_id", "snapshot_date DESC"],
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"ix_btrsh_latest\" ON public.\"band_team_ranking_stats_history\" (\"band_type\", \"ranking_scope\", \"combo_id\", \"snapshot_date\" DESC)",
+            "supports band rank-history stats lookups; managed by the maintenance harness instead of startup DDL"),
     ];
 
     private readonly NpgsqlDataSource _dataSource;
@@ -128,7 +158,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
         var indexCandidates = await LoadIndexCandidatesAsync(conn, ct);
         var retentionHelperIndexes = await LoadRetentionHelperIndexStatusesAsync(conn, ct);
         var bandHistoryCoverage = options.IncludeBandHistoryCoverage
-            ? await LoadBandHistoryCoverageAsync(conn, ct)
+            ? await LoadBandHistoryCoverageAsync(conn, options, ct)
             : await LoadSkippedBandHistoryCoverageReportAsync(conn, ct);
 
         return new DatabaseMaintenanceDryRunReport(
@@ -981,46 +1011,56 @@ public sealed class DatabaseMaintenanceDryRunReporter
         return "watched index candidate";
     }
 
-    private static async Task<BandHistoryCoverageReport> LoadBandHistoryCoverageAsync(NpgsqlConnection conn, CancellationToken ct)
+    private static async Task<BandHistoryCoverageReport> LoadBandHistoryCoverageAsync(
+        NpgsqlConnection conn,
+        DatabaseMaintenanceDryRunOptions options,
+        CancellationToken ct)
     {
         var tables = new BandHistoryCoverageTables(
             WideHistoryExists: await TableExistsAsync(conn, "band_team_rank_history", ct),
             NarrowPointsExists: await TableExistsAsync(conn, "band_team_rank_history_points", ct),
             NarrowStatsExists: await TableExistsAsync(conn, "band_team_ranking_stats_history", ct));
 
-        var wide = await LoadBandHistoryTeamCoverageAsync(conn, "band_team_rank_history", tables.WideHistoryExists, ct);
-        var points = await LoadBandHistoryTeamCoverageAsync(conn, "band_team_rank_history_points", tables.NarrowPointsExists, ct);
-        var stats = await LoadBandHistoryStatsCoverageAsync(conn, tables.NarrowStatsExists, ct);
-        var wideRowsMissingFromNarrow = await LoadWideRowsMissingFromNarrowAsync(conn, tables, wide, ct);
-        var narrowRowsMissingStats = await LoadNarrowRowsMissingStatsAsync(conn, tables, points, ct);
+        try
+        {
+            var wide = await LoadBandHistoryTeamCoverageAsync(conn, "band_team_rank_history", tables.WideHistoryExists, options, ct);
+            var points = await LoadBandHistoryTeamCoverageAsync(conn, "band_team_rank_history_points", tables.NarrowPointsExists, options, ct);
+            var stats = await LoadBandHistoryStatsCoverageAsync(conn, tables.NarrowStatsExists, options, ct);
+            var wideRowsMissingFromNarrow = await LoadWideRowsMissingFromNarrowAsync(conn, tables, wide, options, ct);
+            var narrowRowsMissingStats = await LoadNarrowRowsMissingStatsAsync(conn, tables, points, options, ct);
 
-        var keys = wide.Keys
-            .Concat(points.Keys)
-            .Concat(stats.Keys)
-            .Distinct()
-            .OrderBy(key => key.BandType, StringComparer.Ordinal)
-            .ThenBy(key => key.RankingScope, StringComparer.Ordinal)
-            .ThenBy(key => key.ComboId, StringComparer.Ordinal)
-            .ToArray();
-        var items = keys
-            .Select(key => BuildBandHistoryCoverageItem(
-                key,
-                wide.GetValueOrDefault(key),
-                points.GetValueOrDefault(key),
-                stats.GetValueOrDefault(key),
-                wideRowsMissingFromNarrow.GetValueOrDefault(key),
-                narrowRowsMissingStats.GetValueOrDefault(key)))
-            .ToArray();
+            var keys = wide.Keys
+                .Concat(points.Keys)
+                .Concat(stats.Keys)
+                .Distinct()
+                .OrderBy(key => key.BandType, StringComparer.Ordinal)
+                .ThenBy(key => key.RankingScope, StringComparer.Ordinal)
+                .ThenBy(key => key.ComboId, StringComparer.Ordinal)
+                .ToArray();
+            var items = keys
+                .Select(key => BuildBandHistoryCoverageItem(
+                    key,
+                    wide.GetValueOrDefault(key),
+                    points.GetValueOrDefault(key),
+                    stats.GetValueOrDefault(key),
+                    wideRowsMissingFromNarrow.GetValueOrDefault(key),
+                    narrowRowsMissingStats.GetValueOrDefault(key)))
+                .ToArray();
 
-        return new BandHistoryCoverageReport(
-            Included: true,
-            tables,
-            items,
-            CompleteCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Complete),
-            PartialCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Partial),
-            WideOnlyCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.WideOnly),
-            AbsentCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Absent),
-            BuildBandHistoryCoverageReportRecommendation(items));
+            return new BandHistoryCoverageReport(
+                Included: true,
+                tables,
+                items,
+                CompleteCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Complete),
+                PartialCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Partial),
+                WideOnlyCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.WideOnly),
+                AbsentCount: items.Count(item => item.Classification == BandHistoryCoverageClassification.Absent),
+                BuildBandHistoryCoverageReportRecommendation(items));
+        }
+        catch (Exception ex) when (IsBandHistoryCoverageInterrupted(ex))
+        {
+            return BuildInterruptedBandHistoryCoverageReport(tables, options, ex);
+        }
     }
 
     private static async Task<BandHistoryCoverageReport> LoadSkippedBandHistoryCoverageReportAsync(NpgsqlConnection conn, CancellationToken ct)
@@ -1038,20 +1078,43 @@ public sealed class DatabaseMaintenanceDryRunReporter
             PartialCount: 0,
             WideOnlyCount: 0,
             AbsentCount: 0,
-            "skipped by default because it can scan large history tables; rerun the harness with --include-band-history-coverage during low database pressure");
+            "skipped by default because it can scan large history tables; rerun the harness with --include-band-history-coverage during low database pressure",
+            Status: "skipped");
+    }
+
+    private static BandHistoryCoverageReport BuildInterruptedBandHistoryCoverageReport(
+        BandHistoryCoverageTables tables,
+        DatabaseMaintenanceDryRunOptions options,
+        Exception ex)
+    {
+        var timeout = options.BandHistoryCoverageCommandTimeoutSeconds <= 0
+            ? "without a command timeout"
+            : $"after {options.BandHistoryCoverageCommandTimeoutSeconds:N0}s";
+
+        return new BandHistoryCoverageReport(
+            Included: true,
+            tables,
+            Items: [],
+            CompleteCount: 0,
+            PartialCount: 0,
+            WideOnlyCount: 0,
+            AbsentCount: 0,
+            $"band history coverage scan was interrupted {timeout} ({ex.GetType().Name}); keep UseWideHistoryCompatibilityWrite enabled and rerun during a maintenance window if a full proof is required",
+            Status: "interrupted");
     }
 
     private static async Task<IReadOnlyDictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>> LoadBandHistoryTeamCoverageAsync(
         NpgsqlConnection conn,
         string tableName,
         bool tableExists,
+        DatabaseMaintenanceDryRunOptions options,
         CancellationToken ct)
     {
         if (!tableExists)
             return new Dictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>();
 
         await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 0;
+        ConfigureBandHistoryCoverageCommand(cmd, options);
         cmd.CommandText = $"""
             SELECT
                 band_type,
@@ -1086,13 +1149,14 @@ public sealed class DatabaseMaintenanceDryRunReporter
     private static async Task<IReadOnlyDictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>> LoadBandHistoryStatsCoverageAsync(
         NpgsqlConnection conn,
         bool tableExists,
+        DatabaseMaintenanceDryRunOptions options,
         CancellationToken ct)
     {
         if (!tableExists)
             return new Dictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary>();
 
         await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 0;
+        ConfigureBandHistoryCoverageCommand(cmd, options);
         cmd.CommandText = $"""
             SELECT
                 band_type,
@@ -1127,6 +1191,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
         NpgsqlConnection conn,
         BandHistoryCoverageTables tables,
         IReadOnlyDictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary> wide,
+        DatabaseMaintenanceDryRunOptions options,
         CancellationToken ct)
     {
         if (!tables.WideHistoryExists)
@@ -1135,7 +1200,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
             return wide.ToDictionary(pair => pair.Key, pair => pair.Value.RowCount);
 
         await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 0;
+        ConfigureBandHistoryCoverageCommand(cmd, options);
         cmd.CommandText = """
             SELECT
                 wide.band_type,
@@ -1161,6 +1226,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
         NpgsqlConnection conn,
         BandHistoryCoverageTables tables,
         IReadOnlyDictionary<BandHistoryCoverageKey, BandHistoryCoverageSourceSummary> points,
+        DatabaseMaintenanceDryRunOptions options,
         CancellationToken ct)
     {
         if (!tables.NarrowPointsExists)
@@ -1169,7 +1235,7 @@ public sealed class DatabaseMaintenanceDryRunReporter
             return points.ToDictionary(pair => pair.Key, pair => pair.Value.RowCount);
 
         await using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 0;
+        ConfigureBandHistoryCoverageCommand(cmd, options);
         cmd.CommandText = """
             SELECT
                 points.band_type,
@@ -1189,6 +1255,17 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
         return await LoadBandHistoryMissingRowsAsync(cmd, ct);
     }
+
+    private static void ConfigureBandHistoryCoverageCommand(NpgsqlCommand cmd, DatabaseMaintenanceDryRunOptions options)
+    {
+        if (options.BandHistoryCoverageCommandTimeoutSeconds >= 0)
+            cmd.CommandTimeout = options.BandHistoryCoverageCommandTimeoutSeconds;
+    }
+
+    private static bool IsBandHistoryCoverageInterrupted(Exception ex) =>
+        ex is PostgresException { SqlState: "57014" }
+        || ex is NpgsqlException { InnerException: TimeoutException }
+        || ex is TimeoutException;
 
     private static async Task<IReadOnlyDictionary<BandHistoryCoverageKey, long>> LoadBandHistoryMissingRowsAsync(
         NpgsqlCommand cmd,
@@ -1715,7 +1792,8 @@ public sealed class DatabaseMaintenanceDryRunReporter
 
 public sealed record DatabaseMaintenanceDryRunOptions(
     int RollbackCompletedSnapshotsToKeep = 1,
-    bool IncludeBandHistoryCoverage = false);
+    bool IncludeBandHistoryCoverage = false,
+    int BandHistoryCoverageCommandTimeoutSeconds = 30);
 
 public sealed record DatabaseMaintenanceDryRunReport(
     DateTime CapturedAtUtc,
@@ -1893,7 +1971,8 @@ public sealed record BandHistoryCoverageReport(
     int PartialCount,
     int WideOnlyCount,
     int AbsentCount,
-    string Recommendation);
+    string Recommendation,
+    string Status = "complete");
 
 public sealed record BandHistoryCoverageItem(
     string BandType,

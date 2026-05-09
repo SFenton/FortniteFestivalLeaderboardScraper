@@ -155,7 +155,12 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         Assert.Contains(definitions, definition => definition.Name == "ix_crh_retention_cutoff_account");
         Assert.Contains(definitions, definition => definition.Name == "ix_btrhp_retention_cutoff_scope_team");
         Assert.Contains(definitions, definition => definition.Name == "ix_btrh_retention_cutoff_scope_team");
+        Assert.Contains(definitions, definition => definition.Name == "ix_btrh_latest");
+        Assert.Contains(definitions, definition => definition.Name == "ix_btrhl_snapshot");
+        Assert.Contains(definitions, definition => definition.Name == "ix_btrhp_team_date");
+        Assert.Contains(definitions, definition => definition.Name == "ix_btrhp_status_date");
         Assert.Contains(definitions, definition => definition.Name == "ix_btrsh_retention_cutoff_scope");
+        Assert.Contains(definitions, definition => definition.Name == "ix_btrsh_latest");
         Assert.All(definitions, definition =>
         {
             Assert.Contains("CREATE INDEX CONCURRENTLY IF NOT EXISTS", definition.CreateSql, StringComparison.OrdinalIgnoreCase);

@@ -6972,9 +6972,6 @@ public sealed class MetaDatabase : IMetaDatabase
                 PRIMARY KEY (band_type, ranking_scope, combo_id, team_key, snapshot_date)
             );
 
-            CREATE INDEX IF NOT EXISTS ix_btrh_latest
-                ON band_team_rank_history (band_type, ranking_scope, combo_id, team_key, snapshot_date DESC);
-
             CREATE TABLE IF NOT EXISTS band_team_rank_history_latest (
                 band_type             TEXT             NOT NULL,
                 ranking_scope         TEXT             NOT NULL,
@@ -7006,9 +7003,6 @@ public sealed class MetaDatabase : IMetaDatabase
                 PRIMARY KEY (band_type, ranking_scope, combo_id, team_key)
             );
 
-            CREATE INDEX IF NOT EXISTS ix_btrhl_snapshot
-                ON band_team_rank_history_latest (band_type, snapshot_date DESC);
-
             CREATE TABLE IF NOT EXISTS band_team_rank_history_points (
                 band_type             TEXT             NOT NULL,
                 ranking_scope         TEXT             NOT NULL,
@@ -7034,12 +7028,6 @@ public sealed class MetaDatabase : IMetaDatabase
                 PRIMARY KEY (band_type, ranking_scope, combo_id, team_key, snapshot_date)
             );
 
-            CREATE INDEX IF NOT EXISTS ix_btrhp_team_date
-                ON band_team_rank_history_points (band_type, ranking_scope, combo_id, team_key, snapshot_date DESC);
-
-            CREATE INDEX IF NOT EXISTS ix_btrhp_status_date
-                ON band_team_rank_history_points (band_type, ranking_scope, combo_id, snapshot_date DESC);
-
             CREATE TABLE IF NOT EXISTS band_team_ranking_stats_history (
                 band_type      TEXT        NOT NULL,
                 ranking_scope  TEXT        NOT NULL,
@@ -7049,9 +7037,6 @@ public sealed class MetaDatabase : IMetaDatabase
                 snapshot_date  DATE        NOT NULL,
                 PRIMARY KEY (band_type, ranking_scope, combo_id, snapshot_date)
             );
-
-            CREATE INDEX IF NOT EXISTS ix_btrsh_latest
-                ON band_team_ranking_stats_history (band_type, ranking_scope, combo_id, snapshot_date DESC);
 
             CREATE TABLE IF NOT EXISTS band_rank_history_jobs (
                 job_id                 BIGSERIAL PRIMARY KEY,

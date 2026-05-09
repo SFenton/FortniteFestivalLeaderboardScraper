@@ -19,6 +19,7 @@ string? retentionIndexName = null;
 string? snapshotPartition = null;
 var allowProd = false;
 var includeBandHistoryCoverage = false;
+var bandHistoryCoverageTimeoutSeconds = 30;
 
 for (var i = 0; i < args.Length; i++)
 {
@@ -54,6 +55,9 @@ for (var i = 0; i < args.Length; i++)
         case "--include-band-history-coverage":
             includeBandHistoryCoverage = true;
             break;
+        case "--band-history-coverage-timeout-seconds":
+            bandHistoryCoverageTimeoutSeconds = int.Parse(args[++i]);
+            break;
         default:
             return Fail($"Unknown argument: {args[i]}");
     }
@@ -86,6 +90,7 @@ Console.WriteLine($"Target: host={target.Host} database={target.Database} user={
 Console.WriteLine($"Mode: {ResolveMode(executeLegacyStagingCleanup, executeSnapshotRetention, retentionIndexName)}");
 Console.WriteLine($"Rollback completed snapshots kept beyond active/projection source: {rollbackCompleted:N0}");
 Console.WriteLine($"Include band history coverage scan: {includeBandHistoryCoverage}");
+Console.WriteLine($"Band history coverage command timeout: {bandHistoryCoverageTimeoutSeconds:N0}s");
 if (!string.IsNullOrWhiteSpace(snapshotPartition))
     Console.WriteLine($"Snapshot partition: {snapshotPartition}");
 if (!string.IsNullOrWhiteSpace(retentionIndexName))
@@ -93,7 +98,10 @@ if (!string.IsNullOrWhiteSpace(retentionIndexName))
 
 await using var dataSource = NpgsqlDataSource.Create(pg);
 var reporter = new DatabaseMaintenanceDryRunReporter(dataSource);
-var report = await reporter.BuildReportAsync(new DatabaseMaintenanceDryRunOptions(rollbackCompleted, includeBandHistoryCoverage));
+var report = await reporter.BuildReportAsync(new DatabaseMaintenanceDryRunOptions(
+    rollbackCompleted,
+    includeBandHistoryCoverage,
+    bandHistoryCoverageTimeoutSeconds));
 
 PrintSummary(report);
 
@@ -161,6 +169,7 @@ static void PrintUsage()
         Notes:
           - Default mode is read-only and does not execute cleanup SQL.
                     - Band history coverage scans are skipped unless --include-band-history-coverage is set.
+                    - Band history coverage commands default to a 30s timeout; use --band-history-coverage-timeout-seconds <seconds> to tune it.
           - Execute modes require --allow-prod and still refuse cleanup if preflight fails.
           - Snapshot retention execution rewrites one explicit partition per run.
                     - Retention index execution builds one explicit CREATE INDEX CONCURRENTLY target per run.
@@ -242,6 +251,7 @@ static void PrintSummary(DatabaseMaintenanceDryRunReport report)
 
     Console.WriteLine();
     Console.WriteLine("Band history coverage");
+    Console.WriteLine($"  status:                {report.BandHistoryCoverage.Status}");
     Console.WriteLine($"  included:              {report.BandHistoryCoverage.Included}");
     Console.WriteLine($"  wide table:            {report.BandHistoryCoverage.Tables.WideHistoryExists}");
     Console.WriteLine($"  narrow points table:   {report.BandHistoryCoverage.Tables.NarrowPointsExists}");

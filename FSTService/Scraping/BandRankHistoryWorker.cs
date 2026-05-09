@@ -16,6 +16,7 @@ public sealed class BandRankHistoryWorker : BackgroundService
 
     private readonly IMetaDatabase _metaDb;
     private readonly IOptions<BandRankHistoryOptions> _options;
+    private readonly IOptions<ScraperOptions> _scraperOptions;
     private readonly BackgroundWorkCoordinator _coordinator;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<BandRankHistoryWorker> _log;
@@ -23,12 +24,14 @@ public sealed class BandRankHistoryWorker : BackgroundService
     public BandRankHistoryWorker(
         IMetaDatabase metaDb,
         IOptions<BandRankHistoryOptions> options,
+        IOptions<ScraperOptions> scraperOptions,
         BackgroundWorkCoordinator coordinator,
         ScrapeProgressTracker progress,
         ILogger<BandRankHistoryWorker> log)
     {
         _metaDb = metaDb;
         _options = options;
+        _scraperOptions = scraperOptions;
         _coordinator = coordinator;
         _progress = progress;
         _log = log;
@@ -38,6 +41,12 @@ public sealed class BandRankHistoryWorker : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            if (_scraperOptions.Value.ApiOnly)
+            {
+                await DelaySafely(IdleDelay, stoppingToken);
+                continue;
+            }
+
             var opts = _options.Value;
             if (opts.Mode != BandRankHistoryMode.Background)
             {

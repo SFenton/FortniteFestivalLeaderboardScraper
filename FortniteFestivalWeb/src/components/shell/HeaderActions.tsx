@@ -210,10 +210,10 @@ function useStyles() {
       ...flexCenter,
       width: IconSize.md,
       height: IconSize.md,
+      transform: 'translateY(4px)',
       lineHeight: 0,
     } as CSSProperties,
     notificationGlyphIos: {
-      transform: 'translateY(4px)',
     } as CSSProperties,
     actionPresenceVisible: {
       width: Size.iconLg,
