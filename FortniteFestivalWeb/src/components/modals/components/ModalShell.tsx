@@ -58,6 +58,7 @@ export default function ModalShell({
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const mobilePanelTopRef = useRef<number | null>(null);
+  const rendered = visible || mounted;
 
   useEffect(() => {
     if (visible) {
@@ -66,15 +67,15 @@ export default function ModalShell({
     } else {
       setAnimIn(false);
     }
-  }, [visible]);
+  }, [mounted, visible]);
 
   useLayoutEffect(() => {
-    if (mounted && visible) {
+    if (rendered && visible) {
       panelRef.current?.getBoundingClientRect();
       const id = requestAnimationFrame(() => setAnimIn(true));
       return () => cancelAnimationFrame(id);
     }
-  }, [mounted, visible]);
+  }, [rendered, visible]);
 
   const handleTransitionEnd = useCallback(() => {
     if (animIn) {
@@ -99,13 +100,13 @@ export default function ModalShell({
   }, [mounted, visible, transitionMs, onCloseComplete]);
 
   useEffect(() => {
-    if (!mounted) return;
+    if (!rendered) return;
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [mounted, onClose]);
+  }, [rendered, onClose]);
 
-  if (!mounted) return null;
+  if (!rendered) return null;
 
   const transMs = `${transitionMs}ms`;
   const overlayTransition = `opacity ${transMs} ease`;

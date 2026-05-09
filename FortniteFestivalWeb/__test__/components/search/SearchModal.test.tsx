@@ -200,13 +200,11 @@ describe('SearchModal', () => {
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
   });
 
-  it('auto-focuses with preventScroll when opened on mobile', async () => {
+  it('auto-focuses immediately with preventScroll when opened on mobile', () => {
     setViewportQueries({ mobile: true });
-    renderModal();
-    const input = screen.getByPlaceholderText('Search songs, players, or bands…');
-    const focusSpy = vi.spyOn(input, 'focus');
+    const focusSpy = vi.spyOn(HTMLInputElement.prototype, 'focus');
 
-    await advanceAndFlush(60);
+    renderModal();
 
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
   });

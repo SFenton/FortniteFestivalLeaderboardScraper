@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { LoadPhase } from '@festival/core';
@@ -95,6 +95,11 @@ export default function SearchModal({ visible, onClose, defaultTarget, available
   const focusSearchWithoutScroll = useCallback(() => {
     inputRef.current?.focus({ preventScroll: true });
   }, []);
+
+  useLayoutEffect(() => {
+    if (!visible || !isMobileChrome) return;
+    focusSearchWithoutScroll();
+  }, [focusSearchWithoutScroll, isMobileChrome, visible]);
 
   const handleOpenComplete = useCallback(() => {
     setTimeout(() => focusSearchWithoutScroll(), 50);
