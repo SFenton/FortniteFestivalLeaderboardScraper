@@ -714,6 +714,13 @@ describe('App — mobile FAB branches', () => {
     expect(within(menu).queryByText('TrackedP + BandMate')).toBeNull();
     expect(within(menu).queryByText('Item Shop')).toBeNull();
     expect(within(menu).getByText('Duos')).toBeDefined();
+    fireEvent.click(within(menu).getByText('Filter Songs'));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Filter Songs' });
+    expect(within(dialog).getByText('Selected Band Scores')).toBeDefined();
+    expect(within(dialog).getByText('Filter songs by whether TrackedP + BandMate has a band score recorded.')).toBeDefined();
+    expect(within(dialog).getByText('Has Selected Band Score')).toBeDefined();
+    expect(within(dialog).queryByText('Global Score & FC Toggles')).toBeNull();
   });
 
   it('renders desktop nav on non-mobile', async () => {

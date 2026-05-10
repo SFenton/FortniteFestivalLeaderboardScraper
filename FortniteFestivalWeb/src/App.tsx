@@ -841,7 +841,7 @@ function AppShell() {
           actionGroups={withPageQuickLinks(
             [
               { label: t('common.sortSongs'), icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
-              ...(player ? [{ label: t('common.filterSongs'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
+              ...(player || selectedProfile?.type === 'band' ? [{ label: t('common.filterSongs'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
             ],
           )}
           onPress={() => {}}
