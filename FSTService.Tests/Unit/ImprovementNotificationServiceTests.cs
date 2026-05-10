@@ -69,6 +69,33 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void Precompute_CoalescesPlayerSongImprovementsAcrossInstruments_FromSameScrapeRun()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100, stars: 5, isFullCombo: false, instrument: "Solo_Guitar");
+        InsertCurrentEntry(score: 200000, rank: 200, stars: 5, isFullCombo: false, instrument: "Solo_Drums");
+        BaselineCurrentState();
+
+        UpdateCurrentEntry(score: 101000, rank: 90, stars: 6, isFullCombo: true, instrument: "Solo_Guitar");
+        UpdateCurrentEntry(score: 201000, rank: 180, stars: 5, isFullCombo: false, instrument: "Solo_Drums");
+
+        var report = DetectPlayerSongEvents();
+        var notifications = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+
+        Assert.Equal(1, report.PlayerSongEventsInserted);
+        var notification = Assert.Single(notifications.Items);
+        Assert.Equal(SongId, notification.SongId);
+        AssertCoalescedInstruments(notification, "Solo_Guitar", "Solo_Drums");
+
+        var childInstruments = notification.Payload.GetProperty("coalescedEvents")
+            .EnumerateArray()
+            .Select(element => element.GetProperty("instrument").GetString())
+            .Distinct()
+            .ToArray();
+
+        Assert.Equal(new[] { "Solo_Guitar", "Solo_Drums" }, childInstruments);
+    }
+
+    [Fact]
     public void GetPlayerNotifications_ReportsLatestCompletedSourceRun_WhenNoNewNotificationRowsArrive()
     {
         InsertCurrentEntry(score: 100000, rank: 100);
@@ -281,6 +308,48 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void Precompute_CoalescesPlayerAggregateRankImprovements_FromSameInstrumentRun()
+    {
+        InsertAccountRanking(weightedRank: 100, adjustedSkillRank: 200, totalScoreRank: 300, fcRateRank: 400);
+        BaselinePlayerRankState();
+
+        UpdateAccountRanking(weightedRank: 90, adjustedSkillRank: 180, totalScoreRank: 250, fcRateRank: 350);
+
+        var report = DetectPlayerRankEvents();
+        var notifications = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+
+        Assert.Equal(1, report.PlayerRankEventsInserted);
+        var notification = Assert.Single(notifications.Items);
+        Assert.Equal("player_total_score_rank_improved", notification.EventKind);
+        Assert.Equal("aggregateRank", notification.Payload.GetProperty("coalescedGroup").GetString());
+        AssertCoalescedKinds(
+            notification,
+            "player_total_score_rank_improved",
+            "player_skill_rank_improved",
+            "player_weighted_rank_improved",
+            "player_fc_rate_rank_improved");
+    }
+
+    [Fact]
+    public void Precompute_DoesNotCoalescePlayerAggregateRankImprovementsAcrossInstruments()
+    {
+        InsertAccountRanking(weightedRank: 100, totalScoreRank: 300, instrument: "Solo_Guitar");
+        InsertAccountRanking(weightedRank: 200, totalScoreRank: 400, instrument: "Solo_Drums");
+        BaselinePlayerRankState();
+
+        UpdateAccountRanking(weightedRank: 90, totalScoreRank: 250, instrument: "Solo_Guitar");
+        UpdateAccountRanking(weightedRank: 180, totalScoreRank: 350, instrument: "Solo_Drums");
+
+        var report = DetectPlayerRankEvents();
+        var notifications = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+
+        Assert.Equal(2, report.PlayerRankEventsInserted);
+        Assert.Equal(2, notifications.Items.Count);
+        Assert.Contains(notifications.Items, item => item.Instrument == "Solo_Guitar");
+        Assert.Contains(notifications.Items, item => item.Instrument == "Solo_Drums");
+    }
+
+    [Fact]
     public void Precompute_ExpiresOlderBandRankNotification_WhenNewSameComboMetricNotificationArrives()
     {
         InsertCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 100);
@@ -315,6 +384,33 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         Assert.Contains(allNotifications.Items, item => item.NewRank == 90 && item.ExpiresAt <= DateTime.UtcNow.AddSeconds(1));
     }
 
+    [Fact]
+    public void Precompute_CoalescesBandAggregateRankImprovements_FromSameScopeRun()
+    {
+        InsertCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 100, totalScoreRank: 200, fcRateRank: 300);
+        BaselineBandRankState();
+
+        UpdateCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 90, totalScoreRank: 180, fcRateRank: 250);
+
+        var report = DetectBandRankEvents();
+        var notifications = _sut.GetBandNotificationsByTeamKey(
+            BandType,
+            TeamKey,
+            includeExpired: true,
+            rankingScope: "combo",
+            comboId: "Solo_Guitar+Solo_Bass");
+
+        Assert.Equal(1, report.BandRankEventsInserted);
+        var notification = Assert.Single(notifications.Items);
+        Assert.Equal("band_total_score_rank_improved", notification.EventKind);
+        Assert.Equal("aggregateRank", notification.Payload.GetProperty("coalescedGroup").GetString());
+        AssertCoalescedKinds(
+            notification,
+            "band_total_score_rank_improved",
+            "band_weighted_rank_improved",
+            "band_fc_rate_rank_improved");
+    }
+
     private static void AssertCoalescedKinds(ImprovementNotificationDto notification, params string[] expectedKinds)
     {
         var payload = notification.Payload;
@@ -330,6 +426,17 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     private static void AssertValidNotificationGuid(ImprovementNotificationDto notification)
     {
         Assert.NotEqual(Guid.Empty, notification.NotificationGuid);
+    }
+
+    private static void AssertCoalescedInstruments(ImprovementNotificationDto notification, params string[] expectedInstruments)
+    {
+        var payload = notification.Payload;
+        var actualInstruments = payload.GetProperty("coalescedInstruments")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToArray();
+
+        Assert.Equal(expectedInstruments, actualInstruments);
     }
 
     private static void AssertDistinctNotificationGuids(IReadOnlyList<ImprovementNotificationDto> notifications)
@@ -442,7 +549,12 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
             PruneExpired: false));
     }
 
-    private void InsertAccountRanking(int weightedRank)
+    private void InsertAccountRanking(
+        int weightedRank = 1000,
+        int adjustedSkillRank = 1000,
+        int totalScoreRank = 1000,
+        int fcRateRank = 1000,
+        string instrument = Instrument)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -455,35 +567,54 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
                 avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank, computed_at)
             VALUES (
                 @accountId, @instrument, 1, 1, 1,
-                0, 0, 1000,
-                0, @weightedRank, 0, 1000,
-                100000, 1000, 100, 1000,
+                0, 0, @adjustedSkillRank,
+                0, @weightedRank, 0, @fcRateRank,
+                100000, @totalScoreRank, 100, 1000,
                 100, 1, 6, 1, 1, now());
             """;
         cmd.Parameters.AddWithValue("accountId", AccountId);
-        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("adjustedSkillRank", adjustedSkillRank);
         cmd.Parameters.AddWithValue("weightedRank", weightedRank);
+        cmd.Parameters.AddWithValue("totalScoreRank", totalScoreRank);
+        cmd.Parameters.AddWithValue("fcRateRank", fcRateRank);
         cmd.ExecuteNonQuery();
     }
 
-    private void UpdateAccountRanking(int weightedRank)
+    private void UpdateAccountRanking(
+        int weightedRank = 1000,
+        int adjustedSkillRank = 1000,
+        int totalScoreRank = 1000,
+        int fcRateRank = 1000,
+        string instrument = Instrument)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             UPDATE account_rankings
             SET weighted_rank = @weightedRank,
+                adjusted_skill_rank = @adjustedSkillRank,
+                total_score_rank = @totalScoreRank,
+                fc_rate_rank = @fcRateRank,
                 computed_at = now()
             WHERE account_id = @accountId
               AND instrument = @instrument;
             """;
         cmd.Parameters.AddWithValue("accountId", AccountId);
-        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("instrument", instrument);
         cmd.Parameters.AddWithValue("weightedRank", weightedRank);
+        cmd.Parameters.AddWithValue("adjustedSkillRank", adjustedSkillRank);
+        cmd.Parameters.AddWithValue("totalScoreRank", totalScoreRank);
+        cmd.Parameters.AddWithValue("fcRateRank", fcRateRank);
         cmd.ExecuteNonQuery();
     }
 
-    private void InsertCurrentBandRanking(string rankingScope, string comboId, int weightedRank)
+    private void InsertCurrentBandRanking(
+        string rankingScope,
+        string comboId,
+        int weightedRank = 1000,
+        int totalScoreRank = 1000,
+        int fcRateRank = 1000)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -499,8 +630,8 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
                 @bandType, @rankingScope, @comboId, @teamKey, @teamMembers,
                 1, 1, 1,
                 0, 0, 1000,
-                0, @weightedRank, 0, 1000,
-                200000, 1000, 100, 1,
+                0, @weightedRank, 0, @fcRateRank,
+                200000, @totalScoreRank, 100, 1,
                 6, 1, 1, NULL, now());
             """;
         cmd.Parameters.AddWithValue("bandType", BandType);
@@ -509,16 +640,25 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         cmd.Parameters.AddWithValue("teamKey", TeamKey);
         cmd.Parameters.AddWithValue("teamMembers", new[] { "account-1", "account-2" });
         cmd.Parameters.AddWithValue("weightedRank", weightedRank);
+        cmd.Parameters.AddWithValue("totalScoreRank", totalScoreRank);
+        cmd.Parameters.AddWithValue("fcRateRank", fcRateRank);
         cmd.ExecuteNonQuery();
     }
 
-    private void UpdateCurrentBandRanking(string rankingScope, string comboId, int weightedRank)
+    private void UpdateCurrentBandRanking(
+        string rankingScope,
+        string comboId,
+        int weightedRank = 1000,
+        int totalScoreRank = 1000,
+        int fcRateRank = 1000)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             UPDATE band_team_rankings_current_band_duets
             SET weighted_rank = @weightedRank,
+                total_score_rank = @totalScoreRank,
+                fc_rate_rank = @fcRateRank,
                 computed_at = now()
             WHERE band_type = @bandType
               AND ranking_scope = @rankingScope
@@ -530,10 +670,12 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         cmd.Parameters.AddWithValue("comboId", comboId);
         cmd.Parameters.AddWithValue("teamKey", TeamKey);
         cmd.Parameters.AddWithValue("weightedRank", weightedRank);
+        cmd.Parameters.AddWithValue("totalScoreRank", totalScoreRank);
+        cmd.Parameters.AddWithValue("fcRateRank", fcRateRank);
         cmd.ExecuteNonQuery();
     }
 
-    private void InsertCurrentEntry(int score, int rank, int stars = 6, bool isFullCombo = true)
+    private void InsertCurrentEntry(int score, int rank, int stars = 6, bool isFullCombo = true, string instrument = Instrument)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -548,16 +690,17 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
                 now(), now(), now());
             """;
         cmd.Parameters.AddWithValue("songId", SongId);
-        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("instrument", instrument);
         cmd.Parameters.AddWithValue("accountId", AccountId);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("rank", rank);
         cmd.Parameters.AddWithValue("stars", stars);
         cmd.Parameters.AddWithValue("isFullCombo", isFullCombo);
         cmd.ExecuteNonQuery();
+
     }
 
-    private void UpdateCurrentEntry(int score, int rank, int stars = 6, bool isFullCombo = true)
+    private void UpdateCurrentEntry(int score, int rank, int stars = 6, bool isFullCombo = true, string instrument = Instrument)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -575,7 +718,7 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
               AND account_id = @accountId;
             """;
         cmd.Parameters.AddWithValue("songId", SongId);
-        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("instrument", instrument);
         cmd.Parameters.AddWithValue("accountId", AccountId);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("rank", rank);

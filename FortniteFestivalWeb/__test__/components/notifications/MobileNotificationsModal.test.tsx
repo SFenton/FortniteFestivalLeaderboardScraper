@@ -85,6 +85,94 @@ describe('MobileNotificationsModal', () => {
     expect(shouldSurfaceNotification(rankNotification, new Set<ServerInstrumentKey>(['Solo_Drums']))).toBe(true);
   });
 
+  it('filters aggregate rank notifications by the experimental ranks setting', () => {
+    const rankNotification: MobileNotification = {
+      ...mockMobileNotifications[3]!,
+      eventKind: 'player_total_score_rank_improved',
+      metric: 'total_score_rank',
+      oldRank: 263,
+      newRank: 189,
+      payload: {
+        coalescedEventCount: 2,
+        coalescedEventKinds: ['player_total_score_rank_improved', 'player_weighted_rank_improved'],
+        coalescedEvents: [
+          { eventKind: 'player_total_score_rank_improved', metric: 'total_score_rank', oldRank: 263, newRank: 189 },
+          { eventKind: 'player_weighted_rank_improved', metric: 'weighted_rank', oldRank: 201, newRank: 163 },
+        ],
+      },
+    };
+
+    const hiddenExperimental: MobileNotification = {
+      ...rankNotification,
+      eventKind: 'player_weighted_rank_improved',
+      metric: 'weighted_rank',
+      payload: {
+        coalescedEventCount: 1,
+        coalescedEventKinds: ['player_weighted_rank_improved'],
+        coalescedEvents: [
+          { eventKind: 'player_weighted_rank_improved', metric: 'weighted_rank', oldRank: 201, newRank: 163 },
+        ],
+      },
+    };
+
+    const visibleWithToggleOff = filterSurfaceNotifications([rankNotification], {
+      visibleInstruments: new Set<ServerInstrumentKey>(['Solo_Drums']),
+      enableExperimentalRanks: false,
+    });
+    const hiddenWithToggleOff = filterSurfaceNotifications([hiddenExperimental], {
+      visibleInstruments: new Set<ServerInstrumentKey>(['Solo_Drums']),
+      enableExperimentalRanks: false,
+    });
+    const visibleWithToggleOn = filterSurfaceNotifications([rankNotification], {
+      visibleInstruments: new Set<ServerInstrumentKey>(['Solo_Drums']),
+      enableExperimentalRanks: true,
+    });
+
+    expect(visibleWithToggleOff).toHaveLength(1);
+    expect(visibleWithToggleOff[0]!.eventKind).toBe('player_total_score_rank_improved');
+    expect(visibleWithToggleOff[0]!.navigation?.rankBy).toBe('totalscore');
+    expect(visibleWithToggleOff[0]!.payload.coalescedEvents).toHaveLength(1);
+    expect(hiddenWithToggleOff).toHaveLength(0);
+    expect(visibleWithToggleOn[0]!.payload.coalescedEvents).toHaveLength(2);
+  });
+
+  it('renders album art with a two-column affected instrument grid for multi-instrument song notifications', () => {
+    const notification: MobileNotification = {
+      ...mockMobileNotifications[0]!,
+      notificationGuid: 'multi-instrument-song-notification',
+      instrument: 'Solo_Guitar',
+      instrumentLabel: 'Lead',
+      media: {
+        kind: 'songInstrumentGrid',
+        albumArt: 'https://cdn2.unrealengine.com/taxes.jpg',
+        alt: 'Taxes album art',
+        instruments: ['Solo_Guitar', 'Solo_Drums', 'Solo_Vocals'],
+        label: 'Lead, Drums, Tap Vocals',
+      },
+      surfaceInstruments: ['Solo_Guitar', 'Solo_Drums', 'Solo_Vocals'],
+      payload: {
+        coalescedEventCount: 3,
+        coalescedEventKinds: ['player_score_pb', 'player_fc_achieved', 'player_gold_stars_achieved'],
+        coalescedInstruments: ['Solo_Guitar', 'Solo_Drums', 'Solo_Vocals'],
+        coalescedEvents: [
+          { eventKind: 'player_score_pb', instrument: 'Solo_Guitar', instrumentLabel: 'Lead', metric: 'score', oldNumeric: 1, newNumeric: 2 },
+          { eventKind: 'player_fc_achieved', instrument: 'Solo_Drums', instrumentLabel: 'Drums', metric: 'full_combo' },
+          { eventKind: 'player_gold_stars_achieved', instrument: 'Solo_Vocals', instrumentLabel: 'Tap Vocals', metric: 'stars' },
+        ],
+      },
+    };
+
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={[notification]} />);
+
+    const rail = screen.getByTestId('notification-media-rail');
+    const grid = screen.getByTestId('notification-media-song-instrument-grid');
+    expect(rail.getAttribute('data-media-kind')).toBe('songInstrumentGrid');
+    expect(rail.getAttribute('aria-label')).toBe('Affected instruments: Lead, Drums, Tap Vocals');
+    expect(screen.getByAltText('Taxes album art')).toBeTruthy();
+    expect(grid.style.gridTemplateColumns).toBe('18px 18px');
+    expect(grid.querySelectorAll('img')).toHaveLength(3);
+  });
+
   it('renders a compact empty state without notification sections', () => {
     render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={mockEmptyMobileNotifications} />);
 
@@ -177,14 +265,14 @@ describe('MobileNotificationsModal', () => {
     expect(screen.queryByText('SFentonX - Pro Drums')).toBeNull();
     expect(screen.queryByText('Today 7:53 AM')).toBeNull();
     const modalText = document.body.textContent ?? '';
-    expect(modalText).toContain('Pro Drums score improved from 127,025 to 137,700, earned Gold Stars, and rank improved from #1,214 to #982.');
-    expect(modalText).toContain("First Pro Drums score on Ghosts 'n' Stuff: 180,005, started at #1,288, and earned Gold Stars.");
-    expect(modalText).toContain('Score improved from 1,210,400 to 1,234,567, earned a Full Combo, earned Gold Stars, Band Trios rank improved from #42 to #31, and Bass/Bass/Drums rank improved from #9 to #6.');
+    expect(modalText).toContain('You set a new personal best on Pro Drums for Apple with 137,700, earned gold stars, and climbed from #1,214 to #982.');
+    expect(modalText).toContain("Your first Pro Drums play on Ghosts 'n' Stuff scored 180,005, started at #1,288, and earned gold stars.");
+    expect(modalText).toContain('Your band set a new best score on Apple with 1,234,567, got a Full Combo, earned gold stars, climbed from #42 to #31 in Band Trios, and climbed from #9 to #6 for Bass/Bass/Drums.');
     const emphasizedText = Array.from(document.body.querySelectorAll('[data-notification-emphasis="true"]')).map((element) => element.textContent);
     expect(emphasizedText).toContain('Pro Drums');
     expect(emphasizedText).toContain('180,005');
     expect(emphasizedText).toContain('#1,288');
-    expect(emphasizedText).toContain('Gold Stars');
+    expect(emphasizedText).toContain('gold stars');
     expect(emphasizedText).toContain('Bass/Bass/Drums');
     expect(emphasizedText).not.toContain('Weighted Rank Improved');
     expect(screen.getAllByText('New High Score').length).toBeGreaterThan(0);

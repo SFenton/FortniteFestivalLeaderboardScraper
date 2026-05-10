@@ -1,7 +1,10 @@
 import type { TFunction } from 'i18next';
+import { SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 
 export type NotificationTextEvent = {
   eventKind: string;
+  instrument?: ServerInstrumentKey | null;
+  instrumentLabel?: string | null;
   metric?: string | null;
   oldNumeric?: number | null;
   newNumeric?: number | null;
@@ -17,7 +20,9 @@ export type NotificationTextEvent = {
 };
 
 export type NotificationTextPayload = {
+  coalescedGroup?: string | null;
   coalescedEventKinds?: string[] | null;
+  coalescedInstruments?: ServerInstrumentKey[] | null;
   coalescedEvents?: NotificationTextEvent[] | null;
 };
 
@@ -82,17 +87,27 @@ const EVENT_PRIORITY: Record<string, number> = {
   band_song_rank_improved: 60,
   player_difficulty_bumped: 70,
   band_member_difficulty_bumped: 70,
+  player_total_score_rank_improved: 80,
+  band_total_score_rank_improved: 80,
+  player_skill_rank_improved: 90,
+  band_skill_rank_improved: 90,
+  player_weighted_rank_improved: 100,
+  band_weighted_rank_improved: 100,
+  player_fc_rate_rank_improved: 110,
+  band_fc_rate_rank_improved: 110,
+  player_max_score_rank_improved: 120,
+  band_max_score_rank_improved: 120,
 };
 
 export function formatNotificationPresentation(t: TFunction, input: NotificationTextInput): NotificationPresentation {
   const events = getDisplayEvents(input);
   const title = formatNotificationTitle(t, input, events);
-  const richClauses = events
-    .flatMap((event, index) => formatEventClauses(t, input, event, index === 0))
+  const statementStyleMessage = shouldUseStatementStyleMessage(events);
+  const richClauses = formatNotificationClauses(t, input, events)
     .filter((clause) => clause.text.length > 0);
   const clauses = richClauses.map(clause => clause.text);
   const message = clauses.length > 0
-    ? formatSentence(t, clauses)
+    ? statementStyleMessage ? clauses.join(' ') : formatSentence(t, clauses)
     : translate(t, 'notifications.copy.unknown');
   const messageParts = richClauses.length > 0
     ? emphasizeText(message, richClauses.flatMap(clause => clause.emphasisTerms))
@@ -112,6 +127,10 @@ export function formatNotificationPresentation(t: TFunction, input: Notification
 function formatNotificationTitle(t: TFunction, input: NotificationTextInput, events: NotificationTextEvent[]) {
   const baseTitle = input.songTitle ?? input.title;
   const instrumentLabel = input.instrumentLabel?.trim();
+  if (baseTitle && isMultiInstrumentPlayerSongNotification(events)) {
+    return baseTitle;
+  }
+
   if (baseTitle && instrumentLabel && events.some(event => PLAYER_SONG_TEXT_EVENT_KINDS.has(event.eventKind))) {
     return `${baseTitle} · ${instrumentLabel}`;
   }
@@ -130,8 +149,16 @@ function formatNotificationTitle(t: TFunction, input: NotificationTextInput, eve
   return input.title ?? input.songTitle ?? translate(t, 'notifications.values.notification');
 }
 
-function formatAggregateRankTitle(t: TFunction, _input: NotificationTextInput, _instrumentLabel: string | undefined, events: NotificationTextEvent[]) {
-  const rankEvent = events.find(event => AGGREGATE_RANK_TITLE_KEYS[event.eventKind]);
+function formatAggregateRankTitle(t: TFunction, input: NotificationTextInput, instrumentLabel: string | undefined, events: NotificationTextEvent[]) {
+  const rankEvents = events.filter(event => AGGREGATE_RANK_TITLE_KEYS[event.eventKind]);
+  if (rankEvents.length > 1) {
+    const scope = instrumentLabel ?? input.comboLabel ?? input.scopeLabel ?? null;
+    return scope
+      ? translate(t, 'notifications.titles.rankUpdatesWithScope', { scope })
+      : translate(t, 'notifications.titles.rankUpdates');
+  }
+
+  const rankEvent = rankEvents[0];
   if (!rankEvent) return null;
   return translate(t, 'notifications.titles.rankImproved', {
     rank: translate(t, AGGREGATE_RANK_TITLE_KEYS[rankEvent.eventKind]),
@@ -149,6 +176,8 @@ function getDisplayEvents(input: NotificationTextInput): NotificationTextEvent[]
     ? payloadEvents
     : [{
         eventKind: input.eventKind,
+        instrument: input.instrument,
+        instrumentLabel: input.instrumentLabel,
         metric: input.metric,
         oldNumeric: input.oldNumeric,
         newNumeric: input.newNumeric,
@@ -162,20 +191,107 @@ function getDisplayEvents(input: NotificationTextInput): NotificationTextEvent[]
     .sort((left, right) => priority(left.eventKind) - priority(right.eventKind));
 }
 
+function formatNotificationClauses(t: TFunction, input: NotificationTextInput, events: NotificationTextEvent[]): NotificationClause[] {
+  if (isMultiAggregateRankNotification(events)) {
+    return formatAggregateRankUpdateClauses(t, events);
+  }
+
+  if (isMultiInstrumentPlayerSongNotification(events)) {
+    return formatMultiInstrumentSongClauses(t, input, events);
+  }
+
+  return events.flatMap((event, index) => formatEventClauses(t, input, event, index === 0));
+}
+
+function shouldUseStatementStyleMessage(events: NotificationTextEvent[]) {
+  return isMultiAggregateRankNotification(events) || isMultiInstrumentPlayerSongNotification(events);
+}
+
+function isMultiAggregateRankNotification(events: NotificationTextEvent[]) {
+  return events.filter(event => AGGREGATE_RANK_TITLE_KEYS[event.eventKind]).length > 1;
+}
+
+function isMultiInstrumentPlayerSongNotification(events: NotificationTextEvent[]) {
+  const instruments = new Set(
+    events
+      .filter(event => PLAYER_SONG_TEXT_EVENT_KINDS.has(event.eventKind))
+      .map(event => eventInstrumentLabel(event))
+      .filter((instrument): instrument is string => Boolean(instrument)),
+  );
+  return instruments.size > 1;
+}
+
+function formatAggregateRankUpdateClauses(t: TFunction, events: NotificationTextEvent[]): NotificationClause[] {
+  return events
+    .filter(event => AGGREGATE_RANK_TITLE_KEYS[event.eventKind])
+    .map((event) => {
+      const rank = rankName(t, event.eventKind);
+      const oldRank = formatRank(t, event.oldRank);
+      const newRank = formatRank(t, event.newRank);
+      return {
+        text: translate(t, 'notifications.copy.rankUpdateStatement', { rank, oldRank, newRank }),
+        emphasisTerms: filterEmphasisTerms([rank, oldRank, newRank]),
+      };
+    });
+}
+
+function formatMultiInstrumentSongClauses(t: TFunction, input: NotificationTextInput, events: NotificationTextEvent[]): NotificationClause[] {
+  return groupedInstrumentEvents(events).map(({ label, events: groupEvents }) => {
+    const scopedInput = { ...input, instrumentLabel: label };
+    const detailClauses = groupEvents.flatMap((event) => {
+      const clauses = formatEventClauses(t, scopedInput, event, false);
+      if (FIRST_SCORE_EVENT_KINDS.has(event.eventKind) && event.newRank != null) {
+        const values = buildValues(t, scopedInput, event);
+        return [
+          ...clauses,
+          { text: translate(t, 'notifications.copy.detail.first_score_rank', values), emphasisTerms: filterEmphasisTerms([values.newRank]) },
+        ];
+      }
+      return clauses;
+    });
+    const updateText = formatClauseFragment(t, detailClauses.map(clause => clause.text));
+    return {
+      text: translate(t, 'notifications.copy.instrumentUpdateStatement', { instrument: label, updates: updateText }),
+      emphasisTerms: filterEmphasisTerms([label, ...detailClauses.flatMap(clause => clause.emphasisTerms)]),
+    };
+  });
+}
+
+function groupedInstrumentEvents(events: NotificationTextEvent[]) {
+  const groups = new Map<string, NotificationTextEvent[]>();
+  for (const event of events.filter(event => PLAYER_SONG_TEXT_EVENT_KINDS.has(event.eventKind))) {
+    const label = eventInstrumentLabel(event);
+    if (!label) continue;
+    const group = groups.get(label) ?? [];
+    group.push(event);
+    groups.set(label, group);
+  }
+
+  return Array.from(groups.entries())
+    .map(([label, groupEvents]) => ({ label, events: groupEvents.sort((left, right) => priority(left.eventKind) - priority(right.eventKind)) }))
+    .sort((left, right) => instrumentLabelOrder(left.label) - instrumentLabelOrder(right.label));
+}
+
 function removeRedundantStarEvents(events: NotificationTextEvent[]) {
-  const eventKinds = new Set(events.map(event => event.eventKind));
+  const goldStarKeys = new Set(events
+    .filter(event => event.eventKind === 'player_gold_stars_achieved' || event.eventKind === 'band_gold_stars_achieved')
+    .map(starEventKey));
   return events.filter(event => {
-    if (event.eventKind === 'player_stars_improved' && eventKinds.has('player_gold_stars_achieved')) return false;
-    if (event.eventKind === 'band_stars_improved' && eventKinds.has('band_gold_stars_achieved')) return false;
+    if (event.eventKind === 'player_stars_improved' && goldStarKeys.has(starEventKey(event))) return false;
+    if (event.eventKind === 'band_stars_improved' && goldStarKeys.has(starEventKey(event))) return false;
     return true;
   });
+}
+
+function starEventKey(event: NotificationTextEvent) {
+  return [event.eventKind.startsWith('band_') ? 'band' : 'player', event.instrument ?? '', event.rankingScope ?? '', event.comboId ?? event.scopeComboId ?? ''].join('|');
 }
 
 function formatEventClauses(t: TFunction, input: NotificationTextInput, event: NotificationTextEvent, primary: boolean): NotificationClause[] {
   const values = buildValues(t, input, event);
   const combo = rankingScope(input, event) === 'combo' && Boolean(comboLabel(input, event));
   const key = primary
-    ? primaryKey(event.eventKind, combo)
+    ? primaryKey(event.eventKind, combo, shouldUseBandRankNoScopeCopy(input, event))
     : detailKey(event);
   if (!key) return [];
   const clause = translate(t, key, values);
@@ -189,13 +305,26 @@ function formatEventClauses(t: TFunction, input: NotificationTextInput, event: N
   return [{ text: clause, emphasisTerms }];
 }
 
-function primaryKey(eventKind: string, combo: boolean): string | null {
+function primaryKey(eventKind: string, combo: boolean, noScopeBandRank = false): string | null {
+  if (noScopeBandRank) return `notifications.copy.primaryBandNoScope.${eventKind}`;
   if (combo && eventKind.startsWith('band_')) {
     const comboKey = `notifications.copy.primaryCombo.${eventKind}`;
     if (COMBO_PRIMARY_EVENT_KINDS.has(eventKind)) return comboKey;
   }
   if (PRIMARY_EVENT_KINDS.has(eventKind)) return `notifications.copy.primary.${eventKind}`;
   return null;
+}
+
+function shouldUseBandRankNoScopeCopy(input: NotificationTextInput, event: NotificationTextEvent) {
+  const scope = (event.scopeLabel ?? input.scopeLabel)?.trim();
+  const title = input.title?.trim();
+  return Boolean(
+    scope
+    && title
+    && scope === title
+    && event.eventKind.startsWith('band_')
+    && AGGREGATE_RANK_TITLE_KEYS[event.eventKind],
+  );
 }
 
 function detailKey(event: NotificationTextEvent): string | null {
@@ -223,7 +352,7 @@ function buildValues(t: TFunction, input: NotificationTextInput, event: Notifica
     newDifficulty: event.newLabel ?? formatNumberValue(t, event.newNumeric, 'notifications.values.difficulty'),
     oldCount: formatNumberValue(t, event.oldNumeric, 'notifications.values.count'),
     newCount: formatNumberValue(t, event.newNumeric, 'notifications.values.count'),
-    instrument: input.instrumentLabel ?? translate(t, 'notifications.values.instrument'),
+    instrument: eventInstrumentLabel(event) ?? input.instrumentLabel ?? translate(t, 'notifications.values.instrument'),
     combo: comboLabel(input, event) ?? translate(t, 'notifications.values.combo'),
     scope: scopeLabel(t, input, event),
   };
@@ -249,6 +378,26 @@ function formatSentence(t: TFunction, clauses: string[]) {
     head: clauses.slice(0, -1).join(', '),
     last: clauses[clauses.length - 1],
   });
+}
+
+function formatClauseFragment(t: TFunction, clauses: string[]) {
+  if (clauses.length === 0) return translate(t, 'notifications.copy.unknown');
+  if (clauses.length === 1) return translate(t, 'notifications.copy.joinFragment.one', { clause: clauses[0] });
+  if (clauses.length === 2) return translate(t, 'notifications.copy.joinFragment.two', { first: clauses[0], second: clauses[1] });
+  return translate(t, 'notifications.copy.joinFragment.many', {
+    head: clauses.slice(0, -1).join(', '),
+    last: clauses[clauses.length - 1],
+  });
+}
+
+function eventInstrumentLabel(event: NotificationTextEvent) {
+  if (event.instrumentLabel?.trim()) return event.instrumentLabel.trim();
+  return event.instrument ? serverInstrumentLabel(event.instrument) : null;
+}
+
+function instrumentLabelOrder(label: string) {
+  const index = SERVER_INSTRUMENT_KEYS.findIndex(instrument => serverInstrumentLabel(instrument) === label);
+  return index >= 0 ? index : 1000;
 }
 
 function emphasizeText(text: string, terms: string[]): NotificationMessagePart[] {
@@ -302,6 +451,7 @@ function emphasisTermsForEvent(event: NotificationTextEvent, values: ReturnType<
 
   if (event.eventKind === 'player_gold_stars_achieved' || event.eventKind === 'band_gold_stars_achieved') {
     terms.push('Gold Stars');
+    terms.push('gold stars');
   }
   if (event.eventKind === 'player_fc_achieved' || event.eventKind === 'band_fc_achieved') {
     terms.push('Full Combo');
@@ -345,6 +495,11 @@ function priority(eventKind: string) {
   return EVENT_PRIORITY[eventKind] ?? 1000;
 }
 
+function rankName(t: TFunction, eventKind: string) {
+  const key = AGGREGATE_RANK_TITLE_KEYS[eventKind];
+  return key ? translate(t, key) : translate(t, 'notifications.values.rank');
+}
+
 function flagKind(eventKind: string): NotificationFlagKind {
   if (eventKind === 'player_first_score' || eventKind === 'band_first_score') return 'firstPlay';
   if (eventKind === 'player_score_pb' || eventKind === 'band_score_pb' || eventKind === 'band_combo_score_pb') return 'newHighScore';
@@ -378,6 +533,7 @@ const PRIMARY_EVENT_KINDS = new Set([
   'player_skill_rank_improved',
   'player_total_score_rank_improved',
   'player_fc_rate_rank_improved',
+  'player_max_score_rank_improved',
   'player_total_score_improved',
   'player_fc_count_improved',
   'band_first_score',
@@ -389,8 +545,10 @@ const PRIMARY_EVENT_KINDS = new Set([
   'band_fc_achieved',
   'band_member_difficulty_bumped',
   'band_weighted_rank_improved',
+  'band_skill_rank_improved',
   'band_total_score_rank_improved',
   'band_fc_rate_rank_improved',
+  'band_max_score_rank_improved',
   'band_total_score_improved',
   'band_fc_count_improved',
 ]);
@@ -465,9 +623,12 @@ const AGGREGATE_RANK_TITLE_KEYS: Record<string, string> = {
   player_skill_rank_improved: 'notifications.rankNames.skillRank',
   player_total_score_rank_improved: 'notifications.rankNames.totalScoreRank',
   player_fc_rate_rank_improved: 'notifications.rankNames.fullComboRank',
+  player_max_score_rank_improved: 'notifications.rankNames.maxScoreRank',
   band_weighted_rank_improved: 'notifications.rankNames.weightedRank',
+  band_skill_rank_improved: 'notifications.rankNames.skillRank',
   band_total_score_rank_improved: 'notifications.rankNames.totalScoreRank',
   band_fc_rate_rank_improved: 'notifications.rankNames.fullComboRank',
+  band_max_score_rank_improved: 'notifications.rankNames.maxScoreRank',
 };
 
 const PROGRESS_TITLE_KEYS: Record<string, string> = {

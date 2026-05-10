@@ -9,10 +9,12 @@ import {
   Opacity, FADE_DURATION, DEMO_SWAP_INTERVAL_MS,
   flexColumn, flexRow, border, padding,
 } from '@festival/theme';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { isExperimentalRankingMetric } from '../../pages/leaderboards/helpers/rankingHelpers';
 import { InstrumentIcon } from '../display/InstrumentIcons';
 import MarqueeText from '../common/MarqueeText';
 import { getNotificationDestination, type NotificationNavigationContext } from './notificationDestination';
+import { getNotificationRankingMetric, isAggregateRankNotificationEvent } from './notificationRanking';
 import { formatNotificationPresentation, type NotificationFlagKind, type NotificationMessagePart, type NotificationTextEvent, type NotificationTextInput } from './notificationText';
 
 const NOTIFICATION_MODAL_DESKTOP: CSSProperties = { width: 460, height: 640, maxHeight: '90vh' };
@@ -20,6 +22,8 @@ const NOTIFICATION_DESKTOP_DRAWER: CSSProperties = { width: 460, maxWidth: '92vw
 const MODAL_TRANSITION_MS = 250;
 const MEDIA_RAIL_SIZE = 64;
 const MEDIA_ART_SIZE = 54;
+const SONG_GRID_ART_SIZE = 44;
+const SONG_GRID_ICON_SIZE = 18;
 const SOLO_ICON_SIZE = 36;
 const STACKED_ICON_SIZE = 26;
 const GRID_ICON_SIZE = 24;
@@ -63,6 +67,7 @@ const FLAG_COLORS: Record<NotificationFlagKind, string> = {
 
 type NotificationMedia =
   | { kind: 'song'; albumArt: string; alt: string }
+  | { kind: 'songInstrumentGrid'; albumArt: string; alt: string; instruments: ServerInstrumentKey[]; label: string }
   | { kind: 'soloInstrument'; instrument: ServerInstrumentKey; label: string }
   | { kind: 'instrumentCombo'; instruments: ServerInstrumentKey[]; label: string; cycleAlbumArt?: { albumArt: string; alt: string } };
 
@@ -79,10 +84,12 @@ export type MobileNotification = NotificationTextInput & {
   context: string;
   detectedLabel: string;
   media: NotificationMedia;
+  surfaceInstruments?: ServerInstrumentKey[];
   navigation?: NotificationNavigationContext | null;
   payload: {
     coalescedEventCount: number;
     coalescedEventKinds: string[];
+    coalescedInstruments?: ServerInstrumentKey[];
     coalescedEvents: NotificationTextEvent[];
   };
 };
@@ -257,30 +264,113 @@ export const mockMobileNotifications = MOCK_NOTIFICATIONS;
 export const mockEmptyMobileNotifications: MobileNotification[] = [];
 
 export type NotificationInstrumentFilter = ReadonlySet<ServerInstrumentKey> | null | undefined;
+export type NotificationSurfaceFilter = NotificationInstrumentFilter | {
+  visibleInstruments?: NotificationInstrumentFilter;
+  enableExperimentalRanks?: boolean;
+};
 
 export function notificationSurfaceInstrument(
-  notification: Pick<MobileNotification, 'instrument' | 'media'>,
+  notification: Pick<MobileNotification, 'instrument' | 'media' | 'surfaceInstruments'>,
 ): ServerInstrumentKey | null {
-  if (notification.instrument) return notification.instrument;
-  return notification.media.kind === 'soloInstrument' ? notification.media.instrument : null;
+  return notificationSurfaceInstruments(notification)[0] ?? null;
+}
+
+export function notificationSurfaceInstruments(
+  notification: Pick<MobileNotification, 'instrument' | 'media' | 'surfaceInstruments'>,
+): ServerInstrumentKey[] {
+  if (notification.surfaceInstruments?.length) return orderedUniqueInstruments(notification.surfaceInstruments);
+  if (notification.instrument) return [notification.instrument];
+  if (notification.media.kind === 'soloInstrument') return [notification.media.instrument];
+  if (notification.media.kind === 'songInstrumentGrid') return orderedUniqueInstruments(notification.media.instruments);
+  return [];
 }
 
 export function shouldSurfaceNotification(
-  notification: Pick<MobileNotification, 'instrument' | 'media'>,
-  visibleInstrumentFilter: NotificationInstrumentFilter,
+  notification: MobileNotification,
+  surfaceFilter: NotificationSurfaceFilter,
 ): boolean {
-  if (!visibleInstrumentFilter) return true;
-  const instrument = notificationSurfaceInstrument(notification);
-  if (!instrument) return true;
-  return visibleInstrumentFilter.has(instrument);
+  return Boolean(projectSurfaceNotification(notification, surfaceFilter));
 }
 
-export function filterSurfaceNotifications<T extends Pick<MobileNotification, 'instrument' | 'media'>>(
-  notifications: readonly T[],
-  visibleInstrumentFilter: NotificationInstrumentFilter,
-): T[] {
-  if (!visibleInstrumentFilter) return [...notifications];
-  return notifications.filter(notification => shouldSurfaceNotification(notification, visibleInstrumentFilter));
+export function filterSurfaceNotifications(
+  notifications: readonly MobileNotification[],
+  surfaceFilter: NotificationSurfaceFilter,
+): MobileNotification[] {
+  return notifications.flatMap((notification) => {
+    const projected = projectSurfaceNotification(notification, surfaceFilter);
+    return projected ? [projected] : [];
+  });
+}
+
+function projectSurfaceNotification(
+  notification: MobileNotification,
+  surfaceFilter: NotificationSurfaceFilter,
+): MobileNotification | null {
+  const filter = normalizeSurfaceFilter(surfaceFilter);
+  const rankProjected = projectExperimentalRankNotification(notification, filter.enableExperimentalRanks);
+  if (!rankProjected) return null;
+  if (!filter.visibleInstruments) return rankProjected;
+
+  const instruments = notificationSurfaceInstruments(rankProjected);
+  if (instruments.length === 0) return rankProjected;
+  return instruments.some(instrument => filter.visibleInstruments?.has(instrument)) ? rankProjected : null;
+}
+
+function normalizeSurfaceFilter(surfaceFilter: NotificationSurfaceFilter): { visibleInstruments: NotificationInstrumentFilter; enableExperimentalRanks: boolean } {
+  if (!isStructuredSurfaceFilter(surfaceFilter)) {
+    return { visibleInstruments: surfaceFilter, enableExperimentalRanks: true };
+  }
+  return {
+    visibleInstruments: surfaceFilter.visibleInstruments,
+    enableExperimentalRanks: surfaceFilter.enableExperimentalRanks ?? true,
+  };
+}
+
+function isStructuredSurfaceFilter(surfaceFilter: NotificationSurfaceFilter): surfaceFilter is Exclude<NotificationSurfaceFilter, NotificationInstrumentFilter> {
+  return Boolean(surfaceFilter) && !(surfaceFilter instanceof Set);
+}
+
+function projectExperimentalRankNotification(notification: MobileNotification, enableExperimentalRanks: boolean): MobileNotification | null {
+  if (enableExperimentalRanks) return notification;
+
+  const events = notification.payload.coalescedEvents.length > 0
+    ? notification.payload.coalescedEvents
+    : [{ eventKind: notification.eventKind, metric: notification.metric, oldRank: notification.oldRank, newRank: notification.newRank }];
+  const hasAggregateRankEvents = events.some(isAggregateRankNotificationEvent);
+  if (!hasAggregateRankEvents) return notification;
+
+  const visibleEvents = events.filter((event) => {
+    const metric = getNotificationRankingMetric(event);
+    return !metric || !isExperimentalRankingMetric(metric);
+  });
+  if (visibleEvents.length === 0) return null;
+  if (visibleEvents.length === events.length) return notification;
+
+  const primary = visibleEvents[0]!;
+  const rankBy = getNotificationRankingMetric(primary);
+  return {
+    ...notification,
+    eventKind: primary.eventKind,
+    metric: primary.metric,
+    oldNumeric: primary.oldNumeric,
+    newNumeric: primary.newNumeric,
+    oldRank: primary.oldRank,
+    newRank: primary.newRank,
+    navigation: notification.navigation || rankBy
+      ? { ...notification.navigation, rankBy }
+      : notification.navigation,
+    payload: {
+      ...notification.payload,
+      coalescedEventCount: visibleEvents.length,
+      coalescedEventKinds: visibleEvents.map(event => event.eventKind),
+      coalescedEvents: visibleEvents,
+    },
+  };
+}
+
+function orderedUniqueInstruments(instruments: readonly ServerInstrumentKey[]): ServerInstrumentKey[] {
+  const present = new Set(instruments);
+  return SERVER_INSTRUMENT_KEYS.filter(instrument => present.has(instrument));
 }
 
 type MobileNotificationsModalProps = {
@@ -536,6 +626,25 @@ function NotificationMediaRail({ media, styles }: { media: NotificationMedia; st
     );
   }
 
+  if (media.kind === 'songInstrumentGrid') {
+    return (
+      <div
+        style={styles.songInstrumentMediaRail}
+        data-testid="notification-media-rail"
+        data-media-kind="songInstrumentGrid"
+        data-media-size={MEDIA_RAIL_SIZE}
+        aria-label={`Affected instruments: ${media.instruments.map(serverInstrumentLabel).join(', ')}`}
+      >
+        <img src={media.albumArt} alt={media.alt} loading="lazy" style={styles.songInstrumentMediaArt} />
+        <div style={styles.songInstrumentGrid} data-testid="notification-media-song-instrument-grid" aria-hidden="true">
+          {media.instruments.map((instrument) => (
+            <InstrumentIcon key={instrument} instrument={instrument} size={SONG_GRID_ICON_SIZE} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (media.kind === 'soloInstrument') {
     return (
       <div style={styles.mediaRail} data-testid="notification-media-rail" data-media-kind="soloInstrument" data-media-size={MEDIA_RAIL_SIZE} aria-label={media.label}>
@@ -719,7 +828,7 @@ function useStyles() {
       color: 'rgba(255, 255, 255, 0.74)',
       fontSize: Font.xs,
       fontWeight: Weight.semibold,
-      lineHeight: LineHeight.tight,
+      lineHeight: LineHeight.snug,
       letterSpacing: 0,
       textTransform: TextTransform.uppercase,
       padding: padding(0, Gap.xs),
@@ -739,7 +848,7 @@ function useStyles() {
       color: BRIGHT_TEXT,
       fontSize: Font.lg,
       fontWeight: Weight.bold,
-      lineHeight: LineHeight.tight,
+      lineHeight: LineHeight.snug,
       letterSpacing: 0,
     } as CSSProperties,
     emptyIcon: {
@@ -821,6 +930,35 @@ function useStyles() {
       borderRadius: Radius.xs,
       objectFit: ObjectFit.cover,
       display: Display.block,
+    } as CSSProperties,
+    songInstrumentMediaRail: {
+      ...flexColumn,
+      position: 'relative',
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      gap: 4,
+      width: MEDIA_RAIL_SIZE,
+      minWidth: MEDIA_RAIL_SIZE,
+      flexShrink: 0,
+      overflow: Overflow.hidden,
+      boxSizing: BoxSizing.borderBox,
+    } as CSSProperties,
+    songInstrumentMediaArt: {
+      width: SONG_GRID_ART_SIZE,
+      height: SONG_GRID_ART_SIZE,
+      borderRadius: Radius.xs,
+      objectFit: ObjectFit.cover,
+      display: Display.block,
+      flexShrink: 0,
+    } as CSSProperties,
+    songInstrumentGrid: {
+      display: Display.grid,
+      gridTemplateColumns: `${SONG_GRID_ICON_SIZE}px ${SONG_GRID_ICON_SIZE}px`,
+      gridAutoRows: `${SONG_GRID_ICON_SIZE}px`,
+      gap: 3,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      flexShrink: 0,
     } as CSSProperties,
     duoStack: {
       ...flexColumn,

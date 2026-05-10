@@ -3,6 +3,7 @@ import { Routes } from '../../routes';
 import type { SelectedBandMemberProfile, SelectedBandProfile } from '../../state/selectedProfile';
 import type { AppliedBandComboFilter, BandInstrumentFilterAssignment } from '../../types/bandFilter';
 import type { NotificationTextEvent } from './notificationText';
+import { getNotificationRankingMetric } from './notificationRanking';
 
 export type NotificationNavigationContext = {
   songId?: string | null;
@@ -62,34 +63,6 @@ const SONG_EVENT_KINDS = new Set([
   'band_member_difficulty_bumped',
 ]);
 
-const RANK_METRIC_BY_EVENT_KIND: Record<string, RankingMetric> = {
-  player_weighted_rank_improved: 'weighted',
-  band_weighted_rank_improved: 'weighted',
-  player_skill_rank_improved: 'adjusted',
-  band_skill_rank_improved: 'adjusted',
-  player_total_score_rank_improved: 'totalscore',
-  band_total_score_rank_improved: 'totalscore',
-  player_fc_rate_rank_improved: 'fcrate',
-  band_fc_rate_rank_improved: 'fcrate',
-  player_max_score_rank_improved: 'maxscore',
-  band_max_score_rank_improved: 'maxscore',
-};
-
-const RANK_METRIC_BY_EVENT_METRIC: Record<string, RankingMetric> = {
-  weighted_rank: 'weighted',
-  skill_rank: 'adjusted',
-  adjusted_skill_rank: 'adjusted',
-  total_score_rank: 'totalscore',
-  fc_rate_rank: 'fcrate',
-  max_score_rank: 'maxscore',
-  max_score_percent_rank: 'maxscore',
-  composite_rank: 'adjusted',
-  composite_rank_weighted: 'weighted',
-  composite_rank_total_score: 'totalscore',
-  composite_rank_fc_rate: 'fcrate',
-  composite_rank_max_score: 'maxscore',
-};
-
 export function getNotificationDestination(notification: NotificationDestinationInput): NotificationDestination | null {
   const events = getDestinationEvents(notification);
   const songId = notification.navigation?.songId ?? notification.songId;
@@ -109,7 +82,9 @@ export function getNotificationDestination(notification: NotificationDestination
 }
 
 function buildSongDestination(notification: NotificationDestinationInput, songId: string): NotificationDestination {
-  const instrument = notification.navigation?.instrument ?? notification.instrument;
+  const instrument = hasMultipleEventInstruments(notification)
+    ? null
+    : notification.navigation?.instrument ?? notification.instrument;
   const bandProfile = buildBandProfile(notification.navigation?.band);
   const bandFilter = bandProfile ? buildBandFilter(bandProfile, notification.navigation?.bandFilter) : null;
   const path = instrument
@@ -156,15 +131,19 @@ function getDestinationEvents(notification: NotificationDestinationInput): Notif
 
 function getRankMetric(events: readonly NotificationTextEvent[]): RankingMetric | null {
   for (const event of events) {
-    const byKind = RANK_METRIC_BY_EVENT_KIND[event.eventKind];
-    if (byKind) return byKind;
-    const metric = event.metric?.trim();
-    if (metric) {
-      const byMetric = RANK_METRIC_BY_EVENT_METRIC[metric];
-      if (byMetric) return byMetric;
-    }
+    const metric = getNotificationRankingMetric(event);
+    if (metric) return metric;
   }
   return null;
+}
+
+function hasMultipleEventInstruments(notification: NotificationDestinationInput): boolean {
+  const instruments = new Set(
+    getDestinationEvents(notification)
+      .map(event => event.instrument)
+      .filter((instrument): instrument is ServerInstrumentKey => Boolean(instrument)),
+  );
+  return instruments.size > 1;
 }
 
 function withQuery(path: string, params: Record<string, string>) {

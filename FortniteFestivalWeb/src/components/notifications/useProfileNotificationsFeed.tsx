@@ -158,6 +158,7 @@ function mapNotificationDto(
   const song = dto.songId ? songsById.get(dto.songId) : undefined;
   const comboLabel = dto.comboId ? comboScopeLabel(dto.comboId) : null;
   const events = normalizedNotificationEvents(dto, comboLabel);
+  const surfaceInstruments = notificationSurfaceInstruments(dto, events);
   const scopeLabel = dto.rankingScope === 'combo' && comboLabel
     ? comboLabel
     : profile.type === 'band'
@@ -185,11 +186,13 @@ function mapNotificationDto(
     instrumentLabel,
     context: notificationContext(profile, instrumentLabel, comboLabel),
     detectedLabel: formatDetectedLabel(dto.detectedAt),
-    media: notificationMedia(song, instrument, comboLabel, dto.comboId),
+    media: notificationMedia(song, instrument, comboLabel, dto.comboId, surfaceInstruments),
+    surfaceInstruments,
     navigation: notificationNavigation(dto, profile, instrument),
     payload: {
       coalescedEventCount: eventCount(dto.payload, events),
       coalescedEventKinds: eventKinds(dto.payload, events),
+      coalescedInstruments: surfaceInstruments,
       coalescedEvents: events,
     },
   };
@@ -211,8 +214,11 @@ function normalizePayloadEvent(
   const eventKind = stringValue(event.eventKind);
   if (!eventKind) return [];
   const rankingScope = stringValue(event.rankingScope) ?? dto.rankingScope ?? null;
+  const instrument = normalizeServerInstrument(event.instrument) ?? normalizeServerInstrument(dto.instrument) ?? null;
   return [{
     eventKind,
+    instrument,
+    instrumentLabel: instrument ? serverInstrumentLabel(instrument) : null,
     metric: stringValue(event.metric),
     oldNumeric: numberValue(event.oldNumeric),
     newNumeric: numberValue(event.newNumeric),
@@ -229,8 +235,11 @@ function normalizePayloadEvent(
 }
 
 function normalizeDtoEvent(dto: ImprovementNotificationDto, comboLabel: string | null): NotificationTextEvent {
+  const instrument = normalizeServerInstrument(dto.instrument) ?? null;
   return {
     eventKind: dto.eventKind,
+    instrument,
+    instrumentLabel: instrument ? serverInstrumentLabel(instrument) : null,
     metric: dto.metric,
     oldNumeric: dto.oldNumeric,
     newNumeric: dto.newNumeric,
@@ -242,6 +251,27 @@ function normalizeDtoEvent(dto: ImprovementNotificationDto, comboLabel: string |
     scopeComboId: dto.comboId,
     comboId: dto.comboId,
   };
+}
+
+function notificationSurfaceInstruments(
+  dto: ImprovementNotificationDto,
+  events: readonly NotificationTextEvent[],
+): ServerInstrumentKey[] {
+  const instruments = [
+    ...(Array.isArray(dto.payload?.coalescedInstruments) ? dto.payload.coalescedInstruments : []),
+    ...events.map(event => event.instrument),
+    dto.instrument,
+  ];
+
+  return orderedUniqueInstruments(instruments.flatMap(instrument => {
+    const normalized = normalizeServerInstrument(instrument);
+    return normalized ? [normalized] : [];
+  }));
+}
+
+function orderedUniqueInstruments(instruments: readonly ServerInstrumentKey[]): ServerInstrumentKey[] {
+  const present = new Set(instruments);
+  return SERVER_INSTRUMENT_KEYS.filter(instrument => present.has(instrument));
 }
 
 function eventCount(payload: ImprovementNotificationPayload | null | undefined, events: readonly NotificationTextEvent[]): number {
@@ -272,7 +302,13 @@ function notificationContext(profile: SelectedProfile, instrumentLabel: string |
   return detail ? `${profile.displayName} - ${detail}` : profile.displayName;
 }
 
-function notificationMedia(song: ServerSong | undefined, instrument: ServerInstrumentKey | undefined, comboLabel: string | null, comboId?: string | null): MobileNotification['media'] {
+function notificationMedia(
+  song: ServerSong | undefined,
+  instrument: ServerInstrumentKey | undefined,
+  comboLabel: string | null,
+  comboId: string | null | undefined,
+  surfaceInstruments: readonly ServerInstrumentKey[],
+): MobileNotification['media'] {
   if (comboLabel) {
     const instruments = comboId && isWithinGroupComboId(comboId) ? instrumentsFromComboId(comboId) : instrumentsFromComboLabel(comboLabel);
     return {
@@ -281,6 +317,11 @@ function notificationMedia(song: ServerSong | undefined, instrument: ServerInstr
       label: comboLabel,
       ...(song?.albumArt ? { cycleAlbumArt: { albumArt: song.albumArt, alt: `${song.title} album art` } } : {}),
     };
+  }
+
+  if (song?.albumArt && surfaceInstruments.length > 1) {
+    const label = surfaceInstruments.map(serverInstrumentLabel).join(', ');
+    return { kind: 'songInstrumentGrid', albumArt: song.albumArt, alt: `${song.title} album art`, instruments: [...surfaceInstruments], label };
   }
 
   if (song?.albumArt) {

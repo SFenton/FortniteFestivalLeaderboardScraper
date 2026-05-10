@@ -383,9 +383,13 @@ function AppShell() {
     if (notificationRequestProfile?.type !== 'player') return null;
     return new Set(visibleInstruments(settings));
   }, [notificationRequestProfile?.type, settings]);
+  const notificationSurfaceFilter = useMemo(() => ({
+    visibleInstruments: notificationInstrumentFilter,
+    enableExperimentalRanks: settings.enableExperimentalRanks,
+  }), [notificationInstrumentFilter, settings.enableExperimentalRanks]);
   const surfaceNotifications = useMemo(
-    () => filterSurfaceNotifications(notificationFeed.notifications, notificationInstrumentFilter),
-    [notificationFeed.notifications, notificationInstrumentFilter],
+    () => filterSurfaceNotifications(notificationFeed.notifications, notificationSurfaceFilter),
+    [notificationFeed.notifications, notificationSurfaceFilter],
   );
   const surfaceNotificationIds = useMemo(
     () => new Set(surfaceNotifications.map(notification => notification.notificationGuid)),

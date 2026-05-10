@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mockMobileNotifications } from '../../../src/components/notifications/MobileNotificationsModal';
 import { getNotificationDestination, type NotificationDestinationInput } from '../../../src/components/notifications/notificationDestination';
+import { getNotificationRankingMetric } from '../../../src/components/notifications/notificationRanking';
 
 const APPLE_SONG_ID = 'e90125a8-742a-4be9-baa0-4d93f5fba556';
 const STAND_AND_FIGHT_REMIX_SONG_ID = '4e5b8da5-0891-4a5b-9386-85031fcdca08';
@@ -58,6 +59,30 @@ describe('getNotificationDestination', () => {
     };
 
     expect(getNotificationDestination(notification)?.path).toBe('/leaderboards?rankBy=totalscore');
+  });
+
+  it('maps aggregate notification rank metrics without treating song ranks as aggregate ranks', () => {
+    expect(getNotificationRankingMetric({ eventKind: 'player_total_score_rank_improved', metric: 'total_score_rank' })).toBe('totalscore');
+    expect(getNotificationRankingMetric({ eventKind: 'player_weighted_rank_improved', metric: 'weighted_rank' })).toBe('weighted');
+    expect(getNotificationRankingMetric({ eventKind: 'player_skill_rank_improved', metric: 'adjusted_skill_rank' })).toBe('adjusted');
+    expect(getNotificationRankingMetric({ eventKind: 'player_fc_rate_rank_improved', metric: 'fc_rate_rank' })).toBe('fcrate');
+    expect(getNotificationRankingMetric({ eventKind: 'player_song_rank_improved', metric: 'song_rank' })).toBeNull();
+  });
+
+  it('routes multi-instrument song improvements without selecting an arbitrary instrument', () => {
+    const notification: NotificationDestinationInput = {
+      eventKind: 'player_score_pb',
+      songId: APPLE_SONG_ID,
+      instrument: 'Solo_Guitar',
+      payload: {
+        coalescedEvents: [
+          { eventKind: 'player_score_pb', instrument: 'Solo_Guitar', metric: 'score' },
+          { eventKind: 'player_fc_achieved', instrument: 'Solo_Drums', metric: 'full_combo' },
+        ],
+      },
+    };
+
+    expect(getNotificationDestination(notification)?.path).toBe(`/songs/${APPLE_SONG_ID}`);
   });
 
   it('returns null for notifications without a supported destination', () => {

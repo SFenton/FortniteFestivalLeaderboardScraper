@@ -196,6 +196,7 @@ export type WsNotificationMessage =
 
 export type ImprovementNotificationEventPayload = {
   eventKind?: string | null;
+  instrument?: ServerInstrumentKey | null;
   metric?: string | null;
   oldNumeric?: number | null;
   newNumeric?: number | null;
@@ -211,8 +212,10 @@ export type ImprovementNotificationEventPayload = {
 };
 
 export type ImprovementNotificationPayload = Record<string, unknown> & {
+  coalescedGroup?: string | null;
   coalescedEventCount?: number | null;
   coalescedEventKinds?: string[] | null;
+  coalescedInstruments?: ServerInstrumentKey[] | null;
   coalescedEvents?: ImprovementNotificationEventPayload[] | null;
 };
 
