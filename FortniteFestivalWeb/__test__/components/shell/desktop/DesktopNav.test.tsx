@@ -108,7 +108,7 @@ describe('DesktopNav', () => {
     expect(notificationsButton.getAttribute('data-notification-visual-state')).toBe('spinner');
     expect(notificationsButton.getAttribute('aria-busy')).toBe('true');
     expect(notificationsButton.getAttribute('tabindex')).toBe('-1');
-    expect(screen.getByTestId('desktop-header-notifications-spinner')).toBeTruthy();
+    expect(screen.getByTestId('desktop-header-notifications-spinner').style.transform).toBe('translateY(4px)');
     expect(within(notificationsButton).queryByText('7')).toBeNull();
 
     fireEvent.click(notificationsButton);

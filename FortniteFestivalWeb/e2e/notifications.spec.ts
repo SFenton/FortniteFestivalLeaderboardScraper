@@ -255,8 +255,8 @@ async function expectSoloInstrumentNotificationCopy(page: Page) {
   await expectNotificationTitle(firstPlay, "Ghosts 'n' Stuff · Pro Drums");
   await expect(firstPlay.getByTestId('notification-summary')).toContainText("Your first Pro Drums play on Ghosts 'n' Stuff");
 
-  await expectNotificationTitle(page.locator('[data-testid="mock-notification-row"][data-event-kind="player_weighted_rank_improved"]'), 'Weighted Rank Improved');
-  await expectNotificationTitle(page.locator('[data-testid="mock-notification-row"][data-event-kind="band_weighted_rank_improved"]'), 'Weighted Rank Improved');
+  await expectNotificationTitle(page.locator('[data-testid="mock-notification-row"][data-event-kind="player_weighted_rank_improved"]'), 'Weighted Percentile Rank Improved');
+  await expectNotificationTitle(page.locator('[data-testid="mock-notification-row"][data-event-kind="band_weighted_rank_improved"]'), 'Weighted Percentile Rank Improved');
   await expectNotificationTitle(page.locator('[data-testid="mock-notification-row"][data-event-kind="band_score_pb"]'), 'Apple · Band Trios');
 
   const marqueeMarkers = await page.getByTestId('notification-title').evaluateAll((elements) => elements.map(element => element.getAttribute('data-marquee-title')));

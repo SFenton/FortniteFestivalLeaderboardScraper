@@ -204,6 +204,10 @@ export type ImprovementNotificationEventPayload = {
   newRank?: number | null;
   oldLabel?: string | null;
   newLabel?: string | null;
+  oldFullCombo?: boolean | null;
+  newFullCombo?: boolean | null;
+  oldStars?: number | null;
+  newStars?: number | null;
   comboLabel?: string | null;
   scopeLabel?: string | null;
   rankingScope?: string | null;
@@ -217,6 +221,10 @@ export type ImprovementNotificationPayload = Record<string, unknown> & {
   coalescedEventKinds?: string[] | null;
   coalescedInstruments?: ServerInstrumentKey[] | null;
   coalescedEvents?: ImprovementNotificationEventPayload[] | null;
+  oldFullCombo?: boolean | null;
+  newFullCombo?: boolean | null;
+  oldStars?: number | null;
+  newStars?: number | null;
 };
 
 export type ImprovementNotificationDto = {

@@ -194,6 +194,10 @@ function mapNotificationDto(
       coalescedEventKinds: eventKinds(dto.payload, events),
       coalescedInstruments: surfaceInstruments,
       coalescedEvents: events,
+      oldFullCombo: booleanValue(dto.payload?.oldFullCombo),
+      newFullCombo: booleanValue(dto.payload?.newFullCombo),
+      oldStars: numberValue(dto.payload?.oldStars),
+      newStars: numberValue(dto.payload?.newStars),
     },
   };
 }
@@ -226,6 +230,10 @@ function normalizePayloadEvent(
     newRank: numberValue(event.newRank),
     oldLabel: stringValue(event.oldLabel),
     newLabel: stringValue(event.newLabel),
+    oldFullCombo: booleanValue(event.oldFullCombo),
+    newFullCombo: booleanValue(event.newFullCombo),
+    oldStars: numberValue(event.oldStars),
+    newStars: numberValue(event.newStars),
     comboLabel: stringValue(event.comboLabel) ?? comboLabel,
     scopeLabel: stringValue(event.scopeLabel) ?? (rankingScope === 'combo' ? comboLabel : null),
     rankingScope,
@@ -245,6 +253,10 @@ function normalizeDtoEvent(dto: ImprovementNotificationDto, comboLabel: string |
     newNumeric: dto.newNumeric,
     oldRank: dto.oldRank,
     newRank: dto.newRank,
+    oldFullCombo: booleanValue(dto.payload?.oldFullCombo),
+    newFullCombo: booleanValue(dto.payload?.newFullCombo),
+    oldStars: numberValue(dto.payload?.oldStars),
+    newStars: numberValue(dto.payload?.newStars),
     comboLabel,
     scopeLabel: dto.rankingScope === 'combo' ? comboLabel : null,
     rankingScope: dto.rankingScope,
@@ -385,6 +397,15 @@ function numberValue(value: unknown): number | null {
   if (typeof value !== 'string') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function booleanValue(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return null;
 }
 
 function notificationMessageMatchesProfile(message: WsNotificationMessage, profile: SelectedProfile): boolean {

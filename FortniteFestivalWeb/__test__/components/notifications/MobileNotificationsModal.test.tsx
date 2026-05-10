@@ -136,6 +136,36 @@ describe('MobileNotificationsModal', () => {
     expect(visibleWithToggleOn[0]!.payload.coalescedEvents).toHaveLength(2);
   });
 
+  it('keeps aggregate progress facts when paired experimental rank children are filtered out', () => {
+    const notification: MobileNotification = {
+      ...mockMobileNotifications[3]!,
+      eventKind: 'player_fc_count_improved',
+      metric: 'full_combo_count',
+      oldNumeric: 649,
+      newNumeric: 655,
+      payload: {
+        coalescedEventCount: 2,
+        coalescedEventKinds: ['player_fc_count_improved', 'player_fc_rate_rank_improved'],
+        coalescedEvents: [
+          { eventKind: 'player_fc_count_improved', metric: 'full_combo_count', oldNumeric: 649, newNumeric: 655 },
+          { eventKind: 'player_fc_rate_rank_improved', metric: 'fc_rate_rank', oldRank: 4, newRank: 1 },
+        ],
+      },
+    };
+
+    const visibleWithToggleOff = filterSurfaceNotifications([notification], {
+      visibleInstruments: new Set<ServerInstrumentKey>(['Solo_Drums']),
+      enableExperimentalRanks: false,
+    });
+
+    expect(visibleWithToggleOff).toHaveLength(1);
+    expect(visibleWithToggleOff[0]!.eventKind).toBe('player_fc_count_improved');
+    expect(visibleWithToggleOff[0]!.payload.coalescedEventKinds).toEqual(['player_fc_count_improved']);
+    expect(visibleWithToggleOff[0]!.payload.coalescedEvents).toEqual([
+      { eventKind: 'player_fc_count_improved', metric: 'full_combo_count', oldNumeric: 649, newNumeric: 655 },
+    ]);
+  });
+
   it('renders album art with a two-column affected instrument grid for multi-instrument song notifications', () => {
     const notification: MobileNotification = {
       ...mockMobileNotifications[0]!,
@@ -171,6 +201,130 @@ describe('MobileNotificationsModal', () => {
     expect(screen.getByAltText('Taxes album art')).toBeTruthy();
     expect(grid.style.gridTemplateColumns).toBe('18px 18px');
     expect(grid.querySelectorAll('img')).toHaveLength(3);
+    expect(screen.queryByTestId('notification-flags')).toBeNull();
+    const flagGroups = screen.getAllByTestId('notification-flag-group');
+    expect(flagGroups).toHaveLength(3);
+    expect(flagGroups.map(group => group.getAttribute('data-instrument'))).toEqual(['Solo_Guitar', 'Solo_Drums', 'Solo_Vocals']);
+    expect(flagGroups.map(group => group.getAttribute('aria-label'))).toEqual([
+      'Lead: New High Score',
+      'Drums: Full Combo',
+      'Tap Vocals: Gold Stars',
+    ]);
+    expect(within(flagGroups[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(flagGroups[0]!).getByText('New High Score')).toBeTruthy();
+    expect(within(flagGroups[1]!).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(flagGroups[1]!).getByText('Full Combo')).toBeTruthy();
+    expect(within(flagGroups[2]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(flagGroups[2]!).getByText('Gold Stars')).toBeTruthy();
+  });
+
+  it('renders grouped notification statements with visible line breaks', () => {
+    const notification: MobileNotification = {
+      ...mockMobileNotifications[3]!,
+      notificationGuid: 'instrument-aggregate-notification',
+      eventKind: 'player_total_score_improved',
+      metric: 'total_score',
+      oldNumeric: 91257683,
+      newNumeric: 91743538,
+      instrument: 'Solo_Vocals',
+      instrumentLabel: 'Tap Vocals',
+      media: { kind: 'soloInstrument', instrument: 'Solo_Vocals', label: 'Tap Vocals' },
+      surfaceInstruments: ['Solo_Vocals'],
+      payload: {
+        coalescedEventCount: 3,
+        coalescedEventKinds: ['player_total_score_improved', 'player_total_score_rank_improved', 'player_fc_count_improved'],
+        coalescedEvents: [
+          { eventKind: 'player_total_score_improved', metric: 'total_score', oldNumeric: 91257683, newNumeric: 91743538 },
+          { eventKind: 'player_total_score_rank_improved', metric: 'total_score_rank', oldRank: 12, newRank: 10 },
+          { eventKind: 'player_fc_count_improved', metric: 'full_combo_count', oldNumeric: 649, newNumeric: 655 },
+        ],
+      },
+    };
+
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={[notification]} />);
+
+    expect(screen.getByText('Tap Vocals · Improvements')).toBeTruthy();
+    const summary = screen.getByTestId('notification-summary');
+    expect(summary.style.whiteSpace).toBe('pre-line');
+    expect(summary.textContent).toBe('Your total score increased to 91,743,538 points and your total score rank moved up from #12 to #10.\n\nYour Full Combo count increased to 655.');
+  });
+
+  it('renders Full Combo and Gold Stars pills when a PB score already has those statuses', () => {
+    const notification: MobileNotification = {
+      ...mockMobileNotifications[0]!,
+      notificationGuid: 'pb-result-status-notification',
+      payload: {
+        coalescedEventCount: 1,
+        coalescedEventKinds: ['player_score_pb'],
+        coalescedEvents: [
+          { eventKind: 'player_score_pb', metric: 'score', oldNumeric: 127025, newNumeric: 137700 },
+        ],
+        oldFullCombo: true,
+        newFullCombo: true,
+        oldStars: 6,
+        newStars: 6,
+      },
+    };
+
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={[notification]} />);
+
+    expect(screen.getByTestId('notification-summary').textContent).toBe('You set a new personal best on Pro Drums for Apple with 137,700 points, got a Full Combo, and earned gold stars.');
+    const flags = screen.getByTestId('notification-flags');
+    expect(within(flags).getByText('New High Score')).toBeTruthy();
+    expect(within(flags).getByText('Full Combo')).toBeTruthy();
+    expect(within(flags).getByText('Gold Stars')).toBeTruthy();
+  });
+
+  it('renders primary-child Full Combo and Gold Stars pills in multi-instrument PB notifications', () => {
+    const notification: MobileNotification = {
+      ...mockMobileNotifications[0]!,
+      notificationGuid: 'multi-primary-pb-result-status-notification',
+      title: 'Inferno Island',
+      songTitle: 'Inferno Island',
+      eventKind: 'player_score_pb',
+      instrument: 'Solo_Drums',
+      instrumentLabel: 'Drums',
+      metric: 'score',
+      oldNumeric: 203946,
+      newNumeric: 214668,
+      media: {
+        kind: 'songInstrumentGrid',
+        albumArt: 'https://cdn2.unrealengine.com/inferno-island.jpg',
+        alt: 'Inferno Island album art',
+        instruments: ['Solo_Drums', 'Solo_PeripheralCymbals'],
+        label: 'Drums, Pro Drums + Cymbals',
+      },
+      surfaceInstruments: ['Solo_Drums', 'Solo_PeripheralCymbals'],
+      payload: {
+        coalescedEventCount: 3,
+        coalescedEventKinds: ['player_score_pb', 'player_song_rank_improved', 'player_first_score'],
+        coalescedInstruments: ['Solo_Drums', 'Solo_PeripheralCymbals'],
+        coalescedEvents: [
+          { eventKind: 'player_score_pb', instrument: 'Solo_Drums', instrumentLabel: 'Drums', metric: 'score', oldNumeric: 203946, newNumeric: 214668 },
+          { eventKind: 'player_song_rank_improved', instrument: 'Solo_Drums', instrumentLabel: 'Drums', metric: 'song_rank', oldRank: 342, newRank: 56 },
+          { eventKind: 'player_first_score', instrument: 'Solo_PeripheralCymbals', instrumentLabel: 'Pro Drums + Cymbals', metric: 'score', newNumeric: 201919, newRank: 6 },
+        ],
+        oldFullCombo: true,
+        newFullCombo: true,
+        oldStars: 6,
+        newStars: 6,
+      },
+    };
+
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={[notification]} />);
+
+    expect(screen.getByTestId('notification-summary').textContent).toBe('For Drums, your play set a new personal best with 214,668 points, got a Full Combo, earned gold stars, and climbed from #342 to #56.\n\nFor Pro Drums + Cymbals, your first play scored 201,919 points and started at #6.');
+    expect(screen.queryByTestId('notification-flags')).toBeNull();
+    const flagGroups = screen.getAllByTestId('notification-flag-group');
+    expect(flagGroups).toHaveLength(2);
+    expect(flagGroups.map(group => group.getAttribute('data-instrument'))).toEqual(['Solo_Drums', 'Solo_PeripheralCymbals']);
+    expect(within(flagGroups[0]!).getByText('New High Score')).toBeTruthy();
+    expect(within(flagGroups[0]!).getByText('Full Combo')).toBeTruthy();
+    expect(within(flagGroups[0]!).getByText('Gold Stars')).toBeTruthy();
+    expect(within(flagGroups[0]!).getByText('Rank Up')).toBeTruthy();
+    expect(within(flagGroups[1]!).getByText('First Play')).toBeTruthy();
+    expect(within(flagGroups[1]!).queryByText('Full Combo')).toBeNull();
+    expect(within(flagGroups[1]!).queryByText('Gold Stars')).toBeNull();
   });
 
   it('renders a compact empty state without notification sections', () => {
@@ -261,20 +415,20 @@ describe('MobileNotificationsModal', () => {
     expect(screen.getByText('Stand and Fight (Remix) · Drums')).toBeTruthy();
     expect(screen.getByText("Ghosts 'n' Stuff · Pro Drums")).toBeTruthy();
     expect(screen.getByText('Apple · Band Trios')).toBeTruthy();
-    expect(screen.getAllByText('Weighted Rank Improved').length).toBe(2);
+    expect(screen.getAllByText('Weighted Percentile Rank Improved').length).toBe(2);
     expect(screen.queryByText('SFentonX - Pro Drums')).toBeNull();
     expect(screen.queryByText('Today 7:53 AM')).toBeNull();
     const modalText = document.body.textContent ?? '';
-    expect(modalText).toContain('You set a new personal best on Pro Drums for Apple with 137,700, earned gold stars, and climbed from #1,214 to #982.');
-    expect(modalText).toContain("Your first Pro Drums play on Ghosts 'n' Stuff scored 180,005, started at #1,288, and earned gold stars.");
-    expect(modalText).toContain('Your band set a new best score on Apple with 1,234,567, got a Full Combo, earned gold stars, climbed from #42 to #31 in Band Trios, and climbed from #9 to #6 for Bass/Bass/Drums.');
+    expect(modalText).toContain('You set a new personal best on Pro Drums for Apple with 137,700 points, earned gold stars, and climbed from #1,214 to #982.');
+    expect(modalText).toContain("Your first Pro Drums play on Ghosts 'n' Stuff scored 180,005 points, started at #1,288, and earned gold stars.");
+    expect(modalText).toContain('Your band set a new best score on Apple with 1,234,567 points, got a Full Combo, earned gold stars, climbed from #42 to #31 in Band Trios, and climbed from #9 to #6 for Bass/Bass/Drums.');
     const emphasizedText = Array.from(document.body.querySelectorAll('[data-notification-emphasis="true"]')).map((element) => element.textContent);
     expect(emphasizedText).toContain('Pro Drums');
     expect(emphasizedText).toContain('180,005');
     expect(emphasizedText).toContain('#1,288');
     expect(emphasizedText).toContain('gold stars');
     expect(emphasizedText).toContain('Bass/Bass/Drums');
-    expect(emphasizedText).not.toContain('Weighted Rank Improved');
+    expect(emphasizedText).not.toContain('Weighted Percentile Rank Improved');
     expect(screen.getAllByText('New High Score').length).toBeGreaterThan(0);
     expect(screen.getAllByText('First Play').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Gold Stars').length).toBeGreaterThan(0);

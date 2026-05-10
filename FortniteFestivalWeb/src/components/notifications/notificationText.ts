@@ -12,6 +12,10 @@ export type NotificationTextEvent = {
   newRank?: number | null;
   oldLabel?: string | null;
   newLabel?: string | null;
+  oldFullCombo?: boolean | null;
+  newFullCombo?: boolean | null;
+  oldStars?: number | null;
+  newStars?: number | null;
   comboLabel?: string | null;
   scopeLabel?: string | null;
   rankingScope?: string | null;
@@ -24,6 +28,10 @@ export type NotificationTextPayload = {
   coalescedEventKinds?: string[] | null;
   coalescedInstruments?: ServerInstrumentKey[] | null;
   coalescedEvents?: NotificationTextEvent[] | null;
+  oldFullCombo?: boolean | null;
+  newFullCombo?: boolean | null;
+  oldStars?: number | null;
+  newStars?: number | null;
 };
 
 export type NotificationTextInput = NotificationTextEvent & {
@@ -42,6 +50,7 @@ export type NotificationPresentation = {
   messageParts: NotificationMessagePart[];
   badges: string[];
   flags: NotificationFlag[];
+  flagGroups?: NotificationFlagGroup[];
   accessibilityLabel: string;
 };
 
@@ -66,6 +75,12 @@ export type NotificationFlag = {
   label: string;
 };
 
+export type NotificationFlagGroup = {
+  instrument: ServerInstrumentKey;
+  label: string;
+  flags: NotificationFlag[];
+};
+
 type NotificationClause = {
   text: string;
   emphasisTerms: string[];
@@ -87,6 +102,8 @@ const EVENT_PRIORITY: Record<string, number> = {
   band_song_rank_improved: 60,
   player_difficulty_bumped: 70,
   band_member_difficulty_bumped: 70,
+  player_total_score_improved: 75,
+  player_fc_count_improved: 76,
   player_total_score_rank_improved: 80,
   band_total_score_rank_improved: 80,
   player_skill_rank_improved: 90,
@@ -107,12 +124,13 @@ export function formatNotificationPresentation(t: TFunction, input: Notification
     .filter((clause) => clause.text.length > 0);
   const clauses = richClauses.map(clause => clause.text);
   const message = clauses.length > 0
-    ? statementStyleMessage ? clauses.join(' ') : formatSentence(t, clauses)
+    ? statementStyleMessage ? clauses.join('\n\n') : formatSentence(t, clauses)
     : translate(t, 'notifications.copy.unknown');
   const messageParts = richClauses.length > 0
     ? emphasizeText(message, richClauses.flatMap(clause => clause.emphasisTerms))
     : [{ text: message }];
   const flags = uniqueFlags(events.map(event => formatEventFlag(t, event.eventKind)));
+  const flagGroups = formatNotificationFlagGroups(t, events);
 
   return {
     title,
@@ -120,6 +138,7 @@ export function formatNotificationPresentation(t: TFunction, input: Notification
     messageParts,
     badges: flags.map(flag => flag.label),
     flags,
+    ...(flagGroups.length > 0 ? { flagGroups } : {}),
     accessibilityLabel: `${title}. ${message}`,
   };
 }
@@ -139,6 +158,9 @@ function formatNotificationTitle(t: TFunction, input: NotificationTextInput, eve
   if (baseTitle && bandScopeLabel && events.some(event => BAND_SONG_TEXT_EVENT_KINDS.has(event.eventKind))) {
     return `${baseTitle} · ${bandScopeLabel}`;
   }
+
+  const instrumentAggregateTitle = formatInstrumentAggregateTitle(t, input, instrumentLabel, events);
+  if (instrumentAggregateTitle) return instrumentAggregateTitle;
 
   const aggregateRankTitle = formatAggregateRankTitle(t, input, instrumentLabel, events);
   if (aggregateRankTitle) return aggregateRankTitle;
@@ -165,6 +187,14 @@ function formatAggregateRankTitle(t: TFunction, input: NotificationTextInput, in
   });
 }
 
+function formatInstrumentAggregateTitle(t: TFunction, input: NotificationTextInput, instrumentLabel: string | undefined, events: NotificationTextEvent[]) {
+  if (!isPlayerInstrumentAggregateNotification(events)) return null;
+  const scope = instrumentLabel ?? input.scopeLabel ?? null;
+  return scope
+    ? translate(t, 'notifications.titles.instrumentUpdatesWithScope', { scope })
+    : translate(t, 'notifications.titles.instrumentUpdates');
+}
+
 function formatProgressTitle(t: TFunction, events: NotificationTextEvent[]) {
   const progressEvent = events.find(event => PROGRESS_TITLE_KEYS[event.eventKind]);
   return progressEvent ? translate(t, PROGRESS_TITLE_KEYS[progressEvent.eventKind]) : null;
@@ -185,13 +215,132 @@ function getDisplayEvents(input: NotificationTextInput): NotificationTextEvent[]
         newRank: input.newRank,
         oldLabel: input.oldLabel,
         newLabel: input.newLabel,
+        oldFullCombo: input.oldFullCombo,
+        newFullCombo: input.newFullCombo,
+        oldStars: input.oldStars,
+        newStars: input.newStars,
       }];
 
-  return removeRedundantStarEvents(events)
+  return removeRedundantStarEvents(withDerivedScoreResultEvents(input, events))
     .sort((left, right) => priority(left.eventKind) - priority(right.eventKind));
 }
 
+function withDerivedScoreResultEvents(input: NotificationTextInput, events: NotificationTextEvent[]): NotificationTextEvent[] {
+  const explicitFullComboKeys = new Set(events
+    .filter(event => event.eventKind === 'player_fc_achieved' || event.eventKind === 'band_fc_achieved')
+    .map(event => statusEventKey(input, event)));
+  const explicitGoldStarKeys = new Set(events
+    .filter(event => event.eventKind === 'player_gold_stars_achieved' || event.eventKind === 'band_gold_stars_achieved')
+    .map(event => statusEventKey(input, event)));
+  const derivedEvents: NotificationTextEvent[] = [];
+  const multiInstrumentPlayerSong = isMultiInstrumentPlayerSongNotification(events);
+
+  for (const event of events) {
+    if (!SCORE_RESULT_EVENT_KINDS.has(event.eventKind)) continue;
+    const scoreResult = scoreResultState(input, events, event, multiInstrumentPlayerSong);
+    if (!scoreResult) continue;
+
+    const key = statusEventKey(input, event);
+    const bandEvent = event.eventKind.startsWith('band_');
+    if (scoreResult.newFullCombo === true && !explicitFullComboKeys.has(key)) {
+      derivedEvents.push(derivedScoreResultEvent(input, event, bandEvent ? 'band_fc_achieved' : 'player_fc_achieved', 'full_combo', scoreResult));
+      explicitFullComboKeys.add(key);
+    }
+    if (scoreResult.newStars != null && scoreResult.newStars >= 6 && !explicitGoldStarKeys.has(key)) {
+      derivedEvents.push(derivedScoreResultEvent(input, event, bandEvent ? 'band_gold_stars_achieved' : 'player_gold_stars_achieved', 'stars', scoreResult));
+      explicitGoldStarKeys.add(key);
+    }
+  }
+
+  return derivedEvents.length > 0 ? [...events, ...derivedEvents] : events;
+}
+
+type ScoreResultState = {
+  oldFullCombo?: boolean | null;
+  newFullCombo?: boolean | null;
+  oldStars?: number | null;
+  newStars?: number | null;
+};
+
+function scoreResultState(
+  input: NotificationTextInput,
+  events: NotificationTextEvent[],
+  event: NotificationTextEvent,
+  multiInstrumentPlayerSong: boolean,
+): ScoreResultState | null {
+  if (hasScoreResultState(event)) return event;
+  if (multiInstrumentPlayerSong && !eventMatchesTopLevelScoreResult(input, event)) return null;
+  if (!topLevelPayloadBelongsToEvent(input, events, event)) return null;
+  const state = input.payload;
+  return state && hasScoreResultState(state) ? state : null;
+}
+
+function topLevelPayloadBelongsToEvent(input: NotificationTextInput, events: NotificationTextEvent[], event: NotificationTextEvent) {
+  const scoreEvents = events.filter(candidate => SCORE_RESULT_EVENT_KINDS.has(candidate.eventKind));
+  if (scoreEvents.length !== 1 && !eventMatchesTopLevelScoreResult(input, event)) return false;
+  const eventInstrument = event.instrument ?? null;
+  const inputInstrument = input.instrument ?? null;
+  return !eventInstrument || !inputInstrument || eventInstrument === inputInstrument;
+}
+
+function eventMatchesTopLevelScoreResult(input: NotificationTextInput, event: NotificationTextEvent) {
+  const inputInstrument = input.instrument ?? null;
+  const eventInstrument = event.instrument ?? null;
+  return event.eventKind === input.eventKind
+    && inputInstrument != null
+    && eventInstrument != null
+    && inputInstrument === eventInstrument
+    && valueMatches(input.metric, event.metric)
+    && valueMatches(input.oldNumeric, event.oldNumeric)
+    && valueMatches(input.newNumeric, event.newNumeric)
+    && valueMatches(input.oldRank, event.oldRank)
+    && valueMatches(input.newRank, event.newRank);
+}
+
+function valueMatches<T>(inputValue: T | null | undefined, eventValue: T | null | undefined) {
+  return inputValue == null || eventValue == null || inputValue === eventValue;
+}
+
+function hasScoreResultState(state: ScoreResultState) {
+  return state.newFullCombo != null || state.newStars != null;
+}
+
+function derivedScoreResultEvent(
+  input: NotificationTextInput,
+  source: NotificationTextEvent,
+  eventKind: string,
+  metric: string,
+  state: ScoreResultState,
+): NotificationTextEvent {
+  return {
+    eventKind,
+    instrument: source.instrument ?? input.instrument,
+    instrumentLabel: source.instrumentLabel ?? input.instrumentLabel,
+    metric,
+    oldNumeric: metric === 'stars' ? state.oldStars : null,
+    newNumeric: metric === 'stars' ? state.newStars : null,
+    rankingScope: source.rankingScope ?? input.rankingScope,
+    comboLabel: source.comboLabel ?? input.comboLabel,
+    scopeLabel: source.scopeLabel ?? input.scopeLabel,
+    scopeComboId: source.scopeComboId,
+    comboId: source.comboId ?? input.comboId,
+  };
+}
+
+function statusEventKey(input: NotificationTextInput, event: NotificationTextEvent) {
+  return [
+    event.eventKind.startsWith('band_') ? 'band' : 'player',
+    event.instrument ?? input.instrument ?? '',
+    event.rankingScope ?? input.rankingScope ?? '',
+    event.comboId ?? event.scopeComboId ?? input.comboId ?? '',
+  ].join('|');
+}
+
 function formatNotificationClauses(t: TFunction, input: NotificationTextInput, events: NotificationTextEvent[]): NotificationClause[] {
+  if (isPlayerInstrumentAggregateNotification(events)) {
+    return formatPlayerInstrumentAggregateClauses(t, events);
+  }
+
   if (isMultiAggregateRankNotification(events)) {
     return formatAggregateRankUpdateClauses(t, events);
   }
@@ -204,7 +353,14 @@ function formatNotificationClauses(t: TFunction, input: NotificationTextInput, e
 }
 
 function shouldUseStatementStyleMessage(events: NotificationTextEvent[]) {
-  return isMultiAggregateRankNotification(events) || isMultiInstrumentPlayerSongNotification(events);
+  return isPlayerInstrumentAggregateNotification(events) || isMultiAggregateRankNotification(events) || isMultiInstrumentPlayerSongNotification(events);
+}
+
+function isPlayerInstrumentAggregateNotification(events: NotificationTextEvent[]) {
+  const aggregateEvents = events.filter(event => PLAYER_INSTRUMENT_AGGREGATE_EVENT_KINDS.has(event.eventKind));
+  return aggregateEvents.length > 1
+    && aggregateEvents.length === events.length
+    && aggregateEvents.some(event => PLAYER_INSTRUMENT_AGGREGATE_PROGRESS_EVENT_KINDS.has(event.eventKind));
 }
 
 function isMultiAggregateRankNotification(events: NotificationTextEvent[]) {
@@ -235,19 +391,104 @@ function formatAggregateRankUpdateClauses(t: TFunction, events: NotificationText
     });
 }
 
+function formatPlayerInstrumentAggregateClauses(t: TFunction, events: NotificationTextEvent[]): NotificationClause[] {
+  const eventByKind = new Map(events.map(event => [event.eventKind, event]));
+  const clauses = filterClauses([
+    formatTotalScoreAggregateClause(t, eventByKind),
+    formatFullComboAggregateClause(t, eventByKind),
+    formatInstrumentAggregateRankClause(t, eventByKind.get('player_skill_rank_improved'), 'notifications.copy.instrumentAggregate.skillRank'),
+    formatInstrumentAggregateRankClause(t, eventByKind.get('player_weighted_rank_improved'), 'notifications.copy.instrumentAggregate.weightedRank'),
+    formatInstrumentAggregateRankClause(t, eventByKind.get('player_max_score_rank_improved'), 'notifications.copy.instrumentAggregate.maxScoreRank'),
+  ]);
+
+  if (clauses.length > 0) return clauses;
+  return events.flatMap((event, index) => formatEventClauses(t, { eventKind: event.eventKind }, event, index === 0));
+}
+
+function formatTotalScoreAggregateClause(t: TFunction, eventByKind: ReadonlyMap<string, NotificationTextEvent>): NotificationClause | null {
+  const valueEvent = eventByKind.get('player_total_score_improved');
+  const rankEvent = eventByKind.get('player_total_score_rank_improved');
+  const newScore = formatNumberValue(t, valueEvent?.newNumeric, 'notifications.values.score');
+  const oldRank = formatRank(t, rankEvent?.oldRank);
+  const newRank = formatRank(t, rankEvent?.newRank);
+
+  if (valueEvent && rankEvent) {
+    return {
+      text: translate(t, 'notifications.copy.instrumentAggregate.totalScoreValueAndRank', { newScore, oldRank, newRank }),
+      emphasisTerms: filterEmphasisTerms([newScore, 'total score rank', oldRank, newRank]),
+    };
+  }
+
+  if (valueEvent) {
+    return {
+      text: translate(t, 'notifications.copy.instrumentAggregate.totalScoreValue', { newScore }),
+      emphasisTerms: filterEmphasisTerms([newScore]),
+    };
+  }
+
+  return formatInstrumentAggregateRankClause(t, rankEvent, 'notifications.copy.instrumentAggregate.totalScoreRank');
+}
+
+function formatFullComboAggregateClause(t: TFunction, eventByKind: ReadonlyMap<string, NotificationTextEvent>): NotificationClause | null {
+  const countEvent = eventByKind.get('player_fc_count_improved');
+  const rankEvent = eventByKind.get('player_fc_rate_rank_improved');
+  const newCount = formatNumberValue(t, countEvent?.newNumeric, 'notifications.values.count');
+  const oldRank = formatRank(t, rankEvent?.oldRank);
+  const newRank = formatRank(t, rankEvent?.newRank);
+
+  if (countEvent && rankEvent) {
+    return {
+      text: translate(t, 'notifications.copy.instrumentAggregate.fullComboCountAndRank', { newCount, oldRank, newRank }),
+      emphasisTerms: filterEmphasisTerms([newCount, 'Full Combo percentage rank', oldRank, newRank]),
+    };
+  }
+
+  if (countEvent) {
+    return {
+      text: translate(t, 'notifications.copy.instrumentAggregate.fullComboCount', { newCount }),
+      emphasisTerms: filterEmphasisTerms([newCount]),
+    };
+  }
+
+  return formatInstrumentAggregateRankClause(t, rankEvent, 'notifications.copy.instrumentAggregate.fullComboRank');
+}
+
+function formatInstrumentAggregateRankClause(t: TFunction, event: NotificationTextEvent | undefined, key: string): NotificationClause | null {
+  if (!event) return null;
+  const oldRank = formatRank(t, event.oldRank);
+  const newRank = formatRank(t, event.newRank);
+  return {
+    text: translate(t, key, { oldRank, newRank }),
+    emphasisTerms: filterEmphasisTerms([...instrumentAggregateRankEmphasisTerms(key), oldRank, newRank]),
+  };
+}
+
+function instrumentAggregateRankEmphasisTerms(key: string) {
+  switch (key) {
+    case 'notifications.copy.instrumentAggregate.totalScoreRank':
+      return ['total score rank'];
+    case 'notifications.copy.instrumentAggregate.fullComboRank':
+      return ['Full Combo percentage rank'];
+    case 'notifications.copy.instrumentAggregate.skillRank':
+      return ['adjusted percentile rank'];
+    case 'notifications.copy.instrumentAggregate.weightedRank':
+      return ['percentile rank, weighted by number of entries'];
+    case 'notifications.copy.instrumentAggregate.maxScoreRank':
+      return ['max score rank'];
+    default:
+      return [];
+  }
+}
+
+function filterClauses(clauses: Array<NotificationClause | null>): NotificationClause[] {
+  return clauses.filter((clause): clause is NotificationClause => Boolean(clause));
+}
+
 function formatMultiInstrumentSongClauses(t: TFunction, input: NotificationTextInput, events: NotificationTextEvent[]): NotificationClause[] {
   return groupedInstrumentEvents(events).map(({ label, events: groupEvents }) => {
     const scopedInput = { ...input, instrumentLabel: label };
     const detailClauses = groupEvents.flatMap((event) => {
-      const clauses = formatEventClauses(t, scopedInput, event, false);
-      if (FIRST_SCORE_EVENT_KINDS.has(event.eventKind) && event.newRank != null) {
-        const values = buildValues(t, scopedInput, event);
-        return [
-          ...clauses,
-          { text: translate(t, 'notifications.copy.detail.first_score_rank', values), emphasisTerms: filterEmphasisTerms([values.newRank]) },
-        ];
-      }
-      return clauses;
+      return formatEventClauses(t, scopedInput, event, false);
     });
     const updateText = formatClauseFragment(t, detailClauses.map(clause => clause.text));
     return {
@@ -272,6 +513,16 @@ function groupedInstrumentEvents(events: NotificationTextEvent[]) {
     .sort((left, right) => instrumentLabelOrder(left.label) - instrumentLabelOrder(right.label));
 }
 
+function formatNotificationFlagGroups(t: TFunction, events: NotificationTextEvent[]): NotificationFlagGroup[] {
+  if (!isMultiInstrumentPlayerSongNotification(events)) return [];
+  return groupedInstrumentEvents(events).flatMap(({ label, events: groupEvents }) => {
+    const instrument = groupEvents.find(event => event.instrument)?.instrument ?? instrumentForLabel(label);
+    if (!instrument) return [];
+    const flags = uniqueFlags(groupEvents.map(event => formatEventFlag(t, event.eventKind)));
+    return flags.length > 0 ? [{ instrument, label, flags }] : [];
+  });
+}
+
 function removeRedundantStarEvents(events: NotificationTextEvent[]) {
   const goldStarKeys = new Set(events
     .filter(event => event.eventKind === 'player_gold_stars_achieved' || event.eventKind === 'band_gold_stars_achieved')
@@ -291,7 +542,7 @@ function formatEventClauses(t: TFunction, input: NotificationTextInput, event: N
   const values = buildValues(t, input, event);
   const combo = rankingScope(input, event) === 'combo' && Boolean(comboLabel(input, event));
   const key = primary
-    ? primaryKey(event.eventKind, combo, shouldUseBandRankNoScopeCopy(input, event))
+    ? primaryKey(event.eventKind, combo, shouldUseBandRankNoScopeCopy(input, event), hasInstrumentContext(input, event))
     : detailKey(event);
   if (!key) return [];
   const clause = translate(t, key, values);
@@ -305,14 +556,19 @@ function formatEventClauses(t: TFunction, input: NotificationTextInput, event: N
   return [{ text: clause, emphasisTerms }];
 }
 
-function primaryKey(eventKind: string, combo: boolean, noScopeBandRank = false): string | null {
+function primaryKey(eventKind: string, combo: boolean, noScopeBandRank = false, instrumentContext = false): string | null {
   if (noScopeBandRank) return `notifications.copy.primaryBandNoScope.${eventKind}`;
   if (combo && eventKind.startsWith('band_')) {
+    if (instrumentContext && COMBO_INSTRUMENT_PRIMARY_EVENT_KINDS.has(eventKind)) return `notifications.copy.primaryComboInstrument.${eventKind}`;
     const comboKey = `notifications.copy.primaryCombo.${eventKind}`;
     if (COMBO_PRIMARY_EVENT_KINDS.has(eventKind)) return comboKey;
   }
   if (PRIMARY_EVENT_KINDS.has(eventKind)) return `notifications.copy.primary.${eventKind}`;
   return null;
+}
+
+function hasInstrumentContext(input: NotificationTextInput, event: NotificationTextEvent) {
+  return Boolean(eventInstrumentLabel(event) ?? input.instrumentLabel?.trim());
 }
 
 function shouldUseBandRankNoScopeCopy(input: NotificationTextInput, event: NotificationTextEvent) {
@@ -398,6 +654,10 @@ function eventInstrumentLabel(event: NotificationTextEvent) {
 function instrumentLabelOrder(label: string) {
   const index = SERVER_INSTRUMENT_KEYS.findIndex(instrument => serverInstrumentLabel(instrument) === label);
   return index >= 0 ? index : 1000;
+}
+
+function instrumentForLabel(label: string): ServerInstrumentKey | null {
+  return SERVER_INSTRUMENT_KEYS.find(instrument => serverInstrumentLabel(instrument) === label) ?? null;
 }
 
 function emphasizeText(text: string, terms: string[]): NotificationMessagePart[] {
@@ -563,9 +823,23 @@ const COMBO_PRIMARY_EVENT_KINDS = new Set([
   'band_member_difficulty_bumped',
 ]);
 
+const COMBO_INSTRUMENT_PRIMARY_EVENT_KINDS = new Set([
+  'band_first_score',
+  'band_score_pb',
+  'band_combo_score_pb',
+]);
+
 const FIRST_SCORE_EVENT_KINDS = new Set([
   'player_first_score',
   'band_first_score',
+]);
+
+const SCORE_RESULT_EVENT_KINDS = new Set([
+  'player_first_score',
+  'player_score_pb',
+  'band_first_score',
+  'band_score_pb',
+  'band_combo_score_pb',
 ]);
 
 const FALLBACK_EMPHASIS_TERMS = new Set([
@@ -616,6 +890,21 @@ const BAND_SONG_TEXT_EVENT_KINDS = new Set([
   'band_gold_stars_achieved',
   'band_fc_achieved',
   'band_member_difficulty_bumped',
+]);
+
+const PLAYER_INSTRUMENT_AGGREGATE_PROGRESS_EVENT_KINDS = new Set([
+  'player_total_score_improved',
+  'player_fc_count_improved',
+]);
+
+const PLAYER_INSTRUMENT_AGGREGATE_EVENT_KINDS = new Set([
+  'player_total_score_improved',
+  'player_total_score_rank_improved',
+  'player_fc_count_improved',
+  'player_fc_rate_rank_improved',
+  'player_skill_rank_improved',
+  'player_weighted_rank_improved',
+  'player_max_score_rank_improved',
 ]);
 
 const AGGREGATE_RANK_TITLE_KEYS: Record<string, string> = {

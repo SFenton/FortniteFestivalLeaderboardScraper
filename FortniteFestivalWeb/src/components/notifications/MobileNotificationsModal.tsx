@@ -15,7 +15,7 @@ import { InstrumentIcon } from '../display/InstrumentIcons';
 import MarqueeText from '../common/MarqueeText';
 import { getNotificationDestination, type NotificationNavigationContext } from './notificationDestination';
 import { getNotificationRankingMetric, isAggregateRankNotificationEvent } from './notificationRanking';
-import { formatNotificationPresentation, type NotificationFlagKind, type NotificationMessagePart, type NotificationTextEvent, type NotificationTextInput } from './notificationText';
+import { formatNotificationPresentation, type NotificationFlagGroup, type NotificationFlagKind, type NotificationMessagePart, type NotificationPresentation, type NotificationTextEvent, type NotificationTextInput } from './notificationText';
 
 const NOTIFICATION_MODAL_DESKTOP: CSSProperties = { width: 460, height: 640, maxHeight: '90vh' };
 const NOTIFICATION_DESKTOP_DRAWER: CSSProperties = { width: 460, maxWidth: '92vw' };
@@ -24,6 +24,7 @@ const MEDIA_RAIL_SIZE = 64;
 const MEDIA_ART_SIZE = 54;
 const SONG_GRID_ART_SIZE = 44;
 const SONG_GRID_ICON_SIZE = 18;
+const FLAG_GROUP_ICON_SIZE = 20;
 const SOLO_ICON_SIZE = 36;
 const STACKED_ICON_SIZE = 26;
 const GRID_ICON_SIZE = 24;
@@ -91,6 +92,10 @@ export type MobileNotification = NotificationTextInput & {
     coalescedEventKinds: string[];
     coalescedInstruments?: ServerInstrumentKey[];
     coalescedEvents: NotificationTextEvent[];
+    oldFullCombo?: boolean | null;
+    newFullCombo?: boolean | null;
+    oldStars?: number | null;
+    newStars?: number | null;
   };
 };
 
@@ -172,7 +177,7 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0004',
     detectedAt: '2026-05-09T14:50:00Z',
     eventKind: 'player_weighted_rank_improved',
-    title: 'Solo Drums weighted rank',
+    title: 'Solo Drums weighted percentile rank',
     instrumentLabel: 'Drums',
     context: 'SFentonX - Rankings',
     detectedLabel: 'Today 7:53 AM',
@@ -191,7 +196,7 @@ const MOCK_NOTIFICATIONS: MobileNotification[] = [
     notificationGuid: 'f2ddf535-f63e-4fd3-9c2c-9b7273fd0005',
     detectedAt: '2026-05-09T14:49:00Z',
     eventKind: 'band_weighted_rank_improved',
-    title: 'Band Duos weighted rank',
+    title: 'Band Duos weighted percentile rank',
     scopeLabel: 'Band Duos',
     context: 'SFentonX + kahnyri - Guitar/Drums',
     detectedLabel: 'Today 7:53 AM',
@@ -558,13 +563,7 @@ function NotificationRow({
             <NotificationMessageSpan key={`${notification.eventId}-${index}`} part={part} styles={styles} />
           ))}
         </div>
-        <div style={styles.flags}>
-          {presentation.flags.map((flag) => (
-            <span key={flag.kind} style={{ ...styles.flag, backgroundColor: FLAG_COLORS[flag.kind] }} data-testid="notification-flag">
-              {flag.label}
-            </span>
-          ))}
-        </div>
+        <NotificationFlags presentation={presentation} styles={styles} />
       </div>
       {(isSessionUnread || canOpenNotification) && (
         <div style={styles.trailingAction} data-testid="notification-trailing-action">
@@ -610,6 +609,50 @@ function NotificationMessageSpan({ part, styles }: { part: NotificationMessagePa
     <span style={part.emphasis ? styles.summaryEmphasis : undefined} data-notification-emphasis={part.emphasis ? 'true' : undefined}>
       {part.text}
     </span>
+  );
+}
+
+function NotificationFlags({ presentation, styles }: { presentation: NotificationPresentation; styles: ReturnType<typeof useStyles> }) {
+  if (presentation.flagGroups?.length) {
+    return (
+      <div style={styles.flagGroups} data-testid="notification-flag-groups">
+        {presentation.flagGroups.map((group) => (
+          <NotificationFlagGroupRow key={group.instrument} group={group} styles={styles} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.flags} data-testid="notification-flags">
+      {presentation.flags.map((flag) => (
+        <span key={flag.kind} style={{ ...styles.flag, backgroundColor: FLAG_COLORS[flag.kind] }} data-testid="notification-flag">
+          {flag.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function NotificationFlagGroupRow({ group, styles }: { group: NotificationFlagGroup; styles: ReturnType<typeof useStyles> }) {
+  return (
+    <div
+      style={styles.flagGroup}
+      data-testid="notification-flag-group"
+      data-instrument={group.instrument}
+      aria-label={`${group.label}: ${group.flags.map(flag => flag.label).join(', ')}`}
+    >
+      <span style={styles.flagGroupIcon} aria-hidden="true">
+        <InstrumentIcon instrument={group.instrument} size={FLAG_GROUP_ICON_SIZE} />
+      </span>
+      <div style={styles.flagGroupPills}>
+        {group.flags.map((flag) => (
+          <span key={flag.kind} style={{ ...styles.flag, backgroundColor: FLAG_COLORS[flag.kind] }} data-testid="notification-flag">
+            {flag.label}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1035,6 +1078,7 @@ function useStyles() {
       color: BRIGHT_TEXT,
       fontSize: Font.sm,
       lineHeight: LineHeight.snug,
+      whiteSpace: 'pre-line',
     } as CSSProperties,
     summaryEmphasis: {
       fontWeight: Weight.bold,
@@ -1044,6 +1088,33 @@ function useStyles() {
       alignItems: Align.center,
       gap: Gap.xs,
       flexWrap: 'wrap',
+    } as CSSProperties,
+    flagGroups: {
+      ...flexColumn,
+      gap: Gap.xs,
+      minWidth: 0,
+    } as CSSProperties,
+    flagGroup: {
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.xs,
+      minWidth: 0,
+    } as CSSProperties,
+    flagGroupIcon: {
+      width: FLAG_GROUP_ICON_SIZE,
+      height: FLAG_GROUP_ICON_SIZE,
+      minWidth: FLAG_GROUP_ICON_SIZE,
+      display: Display.flex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      flexShrink: 0,
+    } as CSSProperties,
+    flagGroupPills: {
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.xs,
+      flexWrap: 'wrap',
+      minWidth: 0,
     } as CSSProperties,
     flag: {
       flexShrink: 0,

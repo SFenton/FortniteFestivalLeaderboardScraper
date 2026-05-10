@@ -202,6 +202,7 @@ function useStyles() {
       ...flexCenter,
       position: Position.absolute,
       inset: 0,
+      transform: 'translateY(4px)',
       transition: `opacity ${HEADER_NOTIFICATION_SWAP_FADE_MS}ms cubic-bezier(0.22, 1, 0.36, 1)`,
       willChange: 'opacity',
       pointerEvents: 'none',

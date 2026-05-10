@@ -94,7 +94,7 @@ describe('MobileHeader', () => {
     expect(notificationsButton.getAttribute('aria-busy')).toBe('true');
     expect(notificationsButton.getAttribute('aria-disabled')).toBe('true');
     expect(notificationsButton.getAttribute('tabindex')).toBe('-1');
-    expect(screen.getByTestId('mobile-header-notifications-spinner')).toBeTruthy();
+    expect(screen.getByTestId('mobile-header-notifications-spinner').style.transform).toBe('translateY(4px)');
     expect(within(notificationsButton).queryByText('3')).toBeNull();
 
     fireEvent.click(notificationsButton);
