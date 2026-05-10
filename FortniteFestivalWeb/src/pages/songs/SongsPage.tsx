@@ -23,7 +23,7 @@ import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
-import { type BandSongPerformance, type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
+import { type BandSongPerformance, type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT, INSTRUMENT_LABELS } from '@festival/core/api/serverTypes';
 import { accuracyBgColor, maxScoreColor, LoadPhase } from '@festival/core';
 import { Gap, Colors, Font, Layout, MetadataSize, BoxSizing, CssValue, Display, TextAlign, Weight, Border, Radius, Size, FADE_DURATION, STAGGER_INTERVAL, QUICK_FADE_MS, border, flexCenter, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
@@ -63,6 +63,8 @@ import {
   SONG_SETTINGS_CHANGED_EVENT,
   isFilterActive,
   isVisibleInstrumentFilter,
+  isBandIntensitySortMode,
+  parseBandIntensityInstrument,
   sanitizeSongFiltersForInstruments,
 } from '../../utils/songSettings';
 import { resolveCompactRowMode } from './layoutMode';
@@ -116,7 +118,7 @@ const ROW_FIXED_OVERHEAD = 262;
 /** Safety buffer (px) so compact mode fires before any metadata could clip. */
 const ROW_WIDTH_BUFFER = 60;
 
-const SONG_SORT_LABEL_KEYS: Record<SongSortMode, string> = {
+const SONG_SORT_LABEL_KEYS: Partial<Record<SongSortMode, string>> = {
   title: 'sort.title',
   artist: 'sort.artist',
   year: 'sort.year',
@@ -152,7 +154,7 @@ const SONG_QUICK_LINK_PERCENTAGE_PILL_STYLE: CSSProperties = {
 };
 
 function getSongQuickLinkBucketKey(id: string): string {
-  const separator = id.indexOf(':');
+  const separator = id.lastIndexOf(':');
   return separator >= 0 ? id.slice(separator + 1) : id;
 }
 
@@ -225,13 +227,14 @@ function getMaxScoreDiffQuickLinkValue(bucketKey: string): number | null {
 
 function renderSongQuickLinkLabel(sortMode: SongSortMode, section: Pick<SongQuickLinkSection, 'id' | 'label'>, isWideDesktop = false): ReactNode {
   const bucketKey = getSongQuickLinkBucketKey(section.id);
+  const isIntensitySort = sortMode === 'intensity' || isBandIntensitySortMode(sortMode);
 
   if (isWideDesktop) {
     if (sortMode === 'percentile') {
       return bucketKey === 'no-rank' ? section.label : `Top ${section.label}`;
     }
 
-    if (sortMode !== 'intensity') {
+    if (!isIntensitySort) {
       return section.label;
     }
   }
@@ -275,7 +278,7 @@ function renderSongQuickLinkLabel(sortMode: SongSortMode, section: Pick<SongQuic
     return <SeasonPill season={season} />;
   }
 
-  if (sortMode === 'intensity') {
+  if (isIntensitySort) {
     const intensity = Number(bucketKey);
     if (!Number.isFinite(intensity) || intensity < 0) {
       return section.label;
@@ -351,7 +354,19 @@ export default function SongsPage() {
     : null;
   const activeBandComboId = selectedBandComboFilter?.comboId;
   const isSelectedBand = selectedBand != null;
-  const effectiveSortMode: SongSortMode = isSelectedBand && !BAND_SAFE_SORT_MODES.has(settings.sortMode) ? 'title' : settings.sortMode;
+  const bandComboInstruments = useMemo<InstrumentKey[]>(() => {
+    if (!selectedBandComboFilter) return [];
+    return Array.from(new Set(selectedBandComboFilter.assignments.map(assignment => assignment.instrument)));
+  }, [selectedBandComboFilter]);
+  const effectiveSortMode: SongSortMode = (() => {
+    if (!isSelectedBand) return isBandIntensitySortMode(settings.sortMode) ? 'title' : settings.sortMode;
+    const bandIntensityInstrument = parseBandIntensityInstrument(settings.sortMode);
+    if (bandIntensityInstrument) {
+      return bandComboInstruments.includes(bandIntensityInstrument) ? settings.sortMode : 'title';
+    }
+    return BAND_SAFE_SORT_MODES.has(settings.sortMode) ? settings.sortMode : 'title';
+  })();
+  const activeBandIntensityInstrument = parseBandIntensityInstrument(effectiveSortMode);
   const enabledInstruments = useMemo(
     () => visibleInstruments(appSettings),
     [appSettings],
@@ -391,6 +406,9 @@ export default function SongsPage() {
     // Auto-inject maxdistance/maxscorediff only when max-score sort is active
     if (isSelectedBand) {
       order = order.filter(k => BAND_SONG_METADATA_KEYS.has(k));
+      if (activeBandIntensityInstrument && !order.includes('intensity')) {
+        order = ['intensity', ...order];
+      }
     }
 
     if (!isSelectedBand && effectiveSortMode === 'maxdistance' && !order.includes('maxdistance')) {
@@ -406,6 +424,7 @@ export default function SongsPage() {
   }, [
     settings.metadataOrder,
     effectiveSortMode,
+    activeBandIntensityInstrument,
     isSelectedBand,
     appSettings.songRowVisualOrderEnabled,
     appSettings.songRowVisualOrder,
@@ -509,7 +528,7 @@ export default function SongsPage() {
 
   const openSort = () => {
     sortModal.open({
-      sortMode: settings.sortMode,
+      sortMode: effectiveSortMode,
       sortAscending: settings.sortAscending,
       metadataOrder: settings.metadataOrder,
       instrumentOrder: settings.instrumentOrder,
@@ -555,7 +574,7 @@ export default function SongsPage() {
     filterModal.setDraft({ ...defaultSongFilters(), instrumentFilter: null });
   };
 
-  const sortActive = settings.sortMode !== 'title' || !settings.sortAscending;
+  const sortActive = effectiveSortMode !== 'title' || !settings.sortAscending;
 
   // Register sort/filter actions for FAB — uses refs so latest closures are always captured
   const openSortRef = useRef(openSort);
@@ -759,7 +778,9 @@ export default function SongsPage() {
   }), [displayAllScoreMap, displayInstrumentFilter, displayScoreMap, effectiveSortMode, filtered, shopCtx.leavingTomorrowIds, shopCtx.shopSongIds, t]);
 
   const hasQuickLinkSections = sectionModel.sections.length >= 2;
-  const sortLabel = t(SONG_SORT_LABEL_KEYS[effectiveSortMode] ?? 'sort.title');
+  const sortLabel = activeBandIntensityInstrument
+    ? t('sort.bandIntensity', { instrument: INSTRUMENT_LABELS[activeBandIntensityInstrument] })
+    : t(SONG_SORT_LABEL_KEYS[effectiveSortMode] ?? 'sort.title');
   const quickLinksTitle = t('songs.quickLinksTitle', { sort: sortLabel });
   const quickLinkItems = useMemo<SongQuickLink[]>(() => {
     if (!hasQuickLinkSections) {
@@ -1113,7 +1134,7 @@ export default function SongsPage() {
           visible={sortModal.visible}
           draft={sortModal.draft}
           savedDraft={{
-            sortMode: settings.sortMode,
+            sortMode: effectiveSortMode,
             sortAscending: settings.sortAscending,
             metadataOrder: settings.metadataOrder,
             instrumentOrder: settings.instrumentOrder,
@@ -1121,6 +1142,7 @@ export default function SongsPage() {
           instrumentFilter={displayInstrumentFilter}
           hasPlayer={!!playerData}
           hideItemShop={!isShopVisible}
+          bandComboInstruments={isSelectedBand ? bandComboInstruments : undefined}
           metadataVisibility={{
             score: appSettings.metadataShowScore,
             percentage: appSettings.metadataShowPercentage,
@@ -1234,7 +1256,7 @@ export default function SongsPage() {
                       <SongRow
                         song={row.song}
                         score={hasSongRowScoreData ? displayScoreMap.get(row.song.songId) : undefined}
-                        instrument={instrument}
+                        instrument={activeBandIntensityInstrument ?? instrument}
                         instrumentFilter={displayInstrumentFilter}
                         allScoreMap={isSelectedBand ? undefined : hasSongRowScoreData ? displayAllScoreMap.get(row.song.songId) : undefined}
                         showInstrumentIcons={!isSelectedBand && hasSongRowScoreData && !appSettings.songsHideInstrumentIcons}

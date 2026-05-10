@@ -8,7 +8,7 @@ import ConfirmAlert from '../../../components/modals/ConfirmAlert';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { INSTRUMENT_LABELS } from '@festival/core/api/serverTypes';
 import type { SongSortMode } from '../../../utils/songSettings';
-import { INSTRUMENT_SORT_MODES, METADATA_SORT_DISPLAY } from '../../../utils/songSettings';
+import { bandIntensitySortMode, INSTRUMENT_SORT_MODES, METADATA_SORT_DISPLAY } from '../../../utils/songSettings';
 import { Colors, Font, Gap } from '@festival/theme';
 import { IoArrowUp, IoArrowDown } from 'react-icons/io5';
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
@@ -39,6 +39,7 @@ type SortModalProps = {
   instrumentFilter: InstrumentKey | null;
   hasPlayer?: boolean;
   hideItemShop?: boolean;
+  bandComboInstruments?: readonly InstrumentKey[];
   metadataVisibility?: MetadataVisibility;
   songRowVisualOrderEnabled?: boolean;
   onChange: (d: SortDraft) => void;
@@ -47,7 +48,7 @@ type SortModalProps = {
   onApply: () => void;
 };
 
-export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, hideItemShop, metadataVisibility: mv, songRowVisualOrderEnabled, onChange, onCancel, onReset, onApply }: SortModalProps) {
+export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, hideItemShop, bandComboInstruments, metadataVisibility: mv, songRowVisualOrderEnabled, onChange, onCancel, onReset, onApply }: SortModalProps) {
   const { t } = useTranslation();
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
 
@@ -83,6 +84,9 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
     : draft.metadataOrder;
 
   const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.stars || mv.seasonachieved || mv.intensity || mv.difficulty || mv.lastplayed);
+  const visibleBandComboInstruments = instrumentFilter == null
+    ? Array.from(new Set(bandComboInstruments ?? []))
+    : [];
 
   return (
     <Modal visible={visible} title={t('common.sortSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('sort.resetLabel')} resetHint={t('sort.resetHint')} applyLabel={t('sort.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (
@@ -129,6 +133,22 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
               <RadioRow key={mode} label={label} selected={draft.sortMode === mode} onSelect={() => setMode(mode)} />
             ))}
           </Accordion>
+        </ModalSection>
+      )}
+
+      {visibleBandComboInstruments.length > 0 && (
+        <ModalSection title={t('sort.bandIntensityMode')} hint={t('sort.bandIntensityHint')}>
+          {visibleBandComboInstruments.map((instrument) => {
+            const mode = bandIntensitySortMode(instrument);
+            return (
+              <RadioRow
+                key={instrument}
+                label={t('sort.bandIntensity', { instrument: INSTRUMENT_LABELS[instrument] })}
+                selected={draft.sortMode === mode}
+                onSelect={() => setMode(mode)}
+              />
+            );
+          })}
         </ModalSection>
       )}
 

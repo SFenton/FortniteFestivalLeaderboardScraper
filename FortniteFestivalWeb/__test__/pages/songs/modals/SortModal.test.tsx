@@ -23,6 +23,7 @@ const defaultProps = () => ({
   savedDraft: baseDraft(),
   instrumentFilter: null as InstrumentKey | null,
   hasPlayer: true,
+  bandComboInstruments: undefined as readonly InstrumentKey[] | undefined,
   metadataVisibility: undefined as MetadataVisibility | undefined,
   onChange: vi.fn(),
   onCancel: vi.fn(),
@@ -171,6 +172,44 @@ describe('SortModal', () => {
     renderModal({ instrumentFilter: 'Solo_Guitar', metadataVisibility: mv });
     // maxdistance is no longer gated by MetadataVisibility — always available as a sort option
     expect(screen.queryByText('Filtered Instrument Sort Mode')).not.toBeNull();
+  });
+
+  /* ── Band intensity sort modes ── */
+
+  it('shows distinct band intensity sort modes for the active combo instruments', () => {
+    renderModal({ bandComboInstruments: ['Solo_Bass', 'Solo_Drums'] });
+
+    expect(screen.getByText('Band Instrument Intensity')).toBeDefined();
+    expect(screen.getByText('Bass Intensity')).toBeDefined();
+    expect(screen.getByText('Drums Intensity')).toBeDefined();
+  });
+
+  it('deduplicates repeated band combo instruments', () => {
+    renderModal({ bandComboInstruments: ['Solo_Bass', 'Solo_Drums', 'Solo_Bass'] });
+
+    expect(screen.getAllByText('Bass Intensity')).toHaveLength(1);
+    expect(screen.getAllByText('Drums Intensity')).toHaveLength(1);
+  });
+
+  it('selects a band intensity sort mode', () => {
+    const props = defaultProps();
+    props.bandComboInstruments = ['Solo_Bass', 'Solo_Drums'];
+    renderModal(props);
+    fireEvent.click(screen.getByText('Bass Intensity'));
+
+    expect(props.onChange.mock.calls[0]![0].sortMode).toBe('bandIntensity:Solo_Bass');
+  });
+
+  it('hides band intensity sort modes when no combo instruments are supplied', () => {
+    renderModal({ bandComboInstruments: [] });
+    expect(screen.queryByText('Band Instrument Intensity')).toBeNull();
+  });
+
+  it('keeps band intensity sort modes mutually exclusive with filtered instrument sort modes', () => {
+    renderModal({ instrumentFilter: 'Solo_Guitar', bandComboInstruments: ['Solo_Bass'] });
+
+    expect(screen.getByText('Filtered Instrument Sort Mode')).toBeDefined();
+    expect(screen.queryByText('Band Instrument Intensity')).toBeNull();
   });
 
   /* ── Direction toggle ── */

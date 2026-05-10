@@ -5,6 +5,7 @@
 import { useMemo } from 'react';
 import { type ServerSong as Song, type PlayerScore, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import type { SongFilters, SongSortMode } from '../../utils/songSettings';
+import { parseBandIntensityInstrument } from '../../utils/songSettings';
 import { compareByMode } from '../../utils/songSort';
 import { getSongInstrumentDifficulty, songSupportsInstrument } from '../../utils/songInstrumentDifficulty';
 import { songMatchesSearch } from '../../utils/songSearch';
@@ -40,6 +41,15 @@ const PCT_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 9
 
 function getSongIntensity(song: Song, instrument: InstrumentKey | null): number | undefined {
   return getSongInstrumentDifficulty(song, instrument);
+}
+
+function compareSongIntensity(a: Song, b: Song, instrument: InstrumentKey | null, dir: number): number {
+  const ia = getSongIntensity(a, instrument);
+  const ib = getSongIntensity(b, instrument);
+  if (ia != null && ib != null) return ia - ib;
+  if (ia != null) return -dir;
+  if (ib != null) return dir;
+  return a.title.localeCompare(b.title);
 }
 
 export function useFilteredSongs({
@@ -185,10 +195,13 @@ export function useFilteredSongs({
     });
 
     const dir = sortAscending ? 1 : -1;
+    const bandIntensityInstrument = parseBandIntensityInstrument(sortMode);
     return list.slice().sort((a, b) => {
       // eslint-disable-next-line no-useless-assignment
       let cmp = 0;
-      switch (sortMode) {
+      if (bandIntensityInstrument) {
+        cmp = compareSongIntensity(a, b, bandIntensityInstrument, dir);
+      } else switch (sortMode) {
         case 'title':
           cmp = a.title.localeCompare(b.title); break;
         case 'artist':
@@ -198,17 +211,7 @@ export function useFilteredSongs({
         case 'duration':
           cmp = (a.durationSeconds ?? 0) - (b.durationSeconds ?? 0); break;
         case 'intensity': {
-          const ia = getSongIntensity(a, effectiveInstrument);
-          const ib = getSongIntensity(b, effectiveInstrument);
-          if (ia != null && ib != null) {
-            cmp = ia - ib;
-          } else if (ia != null) {
-            cmp = -dir;
-          } else if (ib != null) {
-            cmp = dir;
-          } else {
-            cmp = a.title.localeCompare(b.title);
-          }
+          cmp = compareSongIntensity(a, b, effectiveInstrument, dir);
           break;
         }
         /* v8 ignore start -- shop sort tiebreaker chain */

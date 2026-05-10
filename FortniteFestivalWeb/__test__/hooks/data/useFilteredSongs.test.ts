@@ -2,6 +2,7 @@
 import { renderHook } from '@testing-library/react';
 import { useFilteredSongs } from '../../../src/hooks/data/useFilteredSongs';
 import { compareByMode } from '../../../src/pages/songs/components/SongRow';
+import { defaultSongFilters } from '../../../src/utils/songSettings';
 import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 
 function song(id: string, title: string, artist: string, year?: number, maxScores?: Partial<Record<InstrumentKey, number>>): Song {
@@ -69,6 +70,53 @@ describe('useFilteredSongs', () => {
     }));
     expect(result.current).toHaveLength(1);
     expect(result.current[0]!.title).toBe('Beta');
+  });
+
+  it('filters selected band scores while ignoring stale solo-only filters', () => {
+    const bandScoreMap = new Map<string, PlayerScore>([
+      ['s1', score('s1', { instrument: 'Solo_Guitar' as InstrumentKey, score: 1000, season: 5, stars: 5 })],
+    ]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: {
+        ...defaultSongFilters(),
+        selectedBandHasScore: true,
+        hasScores: { Solo_Bass: true, Solo_Drums: true },
+        missingFCs: { Solo_Bass: true },
+        overThreshold: { Solo_Drums: true },
+        seasonFilter: { 5: false },
+        percentileFilter: { 10: false },
+        starsFilter: { 5: false },
+        difficultyFilter: { 3: false },
+      },
+      instrument: null,
+      scoreMap: bandScoreMap,
+      allScoreMap: new Map([['s1', new Map([['Solo_Guitar' as InstrumentKey, bandScoreMap.get('s1')!]])]]),
+      selectedBandMode: true,
+      filterInvalidScoresEnabled: true,
+      isScoreValid: () => false,
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s1']);
+  });
+
+  it('combines selected band score filters with shop filters', () => {
+    const bandScoreMap = new Map<string, PlayerScore>([
+      ['s1', score('s1', { instrument: 'Solo_Guitar' as InstrumentKey, score: 1000 })],
+      ['s2', score('s2', { instrument: 'Solo_Guitar' as InstrumentKey, score: 2000 })],
+    ]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: { ...defaultSongFilters(), selectedBandHasScore: true, shopInShop: true },
+      instrument: null,
+      scoreMap: bandScoreMap,
+      allScoreMap: new Map(),
+      shopVisible: true,
+      shopSongIds: new Set(['s2']),
+      selectedBandMode: true,
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s2']);
   });
 
   it('sorts by title ascending', () => {
@@ -688,6 +736,73 @@ describe('useFilteredSongs — additional sort modes', () => {
     }));
 
     expect(result.current.map(s => s.songId)).toEqual(['s1', 's3', 's2']);
+  });
+
+  it('sorts by band bass intensity while the selected instrument is null', () => {
+    const songsWithBandIntensity = [
+      { ...songs[0], difficulty: { bass: 5 } },
+      { ...songs[1], difficulty: { bass: 1 } },
+      { ...songs[2], difficulty: { bass: 3 } },
+    ] as Song[];
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithBandIntensity,
+      search: '',
+      sortMode: 'bandIntensity:Solo_Bass' as any,
+      sortAscending: true,
+      filters: emptyFilters as any,
+      instrument: null,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+      selectedBandMode: true,
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s2', 's3', 's1']);
+  });
+
+  it('sorts by band drums intensity descending while the selected instrument is null', () => {
+    const songsWithBandIntensity = [
+      { ...songs[0], difficulty: { drums: 5 } },
+      { ...songs[1], difficulty: { drums: 1 } },
+      { ...songs[2], difficulty: { drums: 3 } },
+    ] as Song[];
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithBandIntensity,
+      search: '',
+      sortMode: 'bandIntensity:Solo_Drums' as any,
+      sortAscending: false,
+      filters: emptyFilters as any,
+      instrument: null,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+      selectedBandMode: true,
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s1', 's3', 's2']);
+  });
+
+  it('keeps songs missing band intensity at the end with a title tiebreaker', () => {
+    const songsWithMissingBandIntensity = [
+      { ...songs[0], songId: 'present-high', title: 'Zulu', difficulty: { bass: 5 } },
+      { ...songs[1], songId: 'missing-alpha', title: 'Alpha', difficulty: { bass: null } },
+      { ...songs[2], songId: 'present-low', title: 'Bravo', difficulty: { bass: 1 } },
+      { ...song('missing-charlie', 'Charlie', 'Artist D', 2023, undefined), difficulty: { bass: null } },
+    ] as Song[];
+
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithMissingBandIntensity,
+      search: '',
+      sortMode: 'bandIntensity:Solo_Bass' as any,
+      sortAscending: true,
+      filters: emptyFilters as any,
+      instrument: null,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+      selectedBandMode: true,
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['present-low', 'present-high', 'missing-alpha', 'missing-charlie']);
   });
 
   it.each([

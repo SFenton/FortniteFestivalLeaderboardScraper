@@ -8,6 +8,8 @@ import { INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
 
 /* ── Sort ── */
 
+export type BandIntensitySortMode = `bandIntensity:${InstrumentKey}`;
+
 export type SongSortMode =
   | 'title'
   | 'artist'
@@ -24,7 +26,10 @@ export type SongSortMode =
   | 'intensity'
   | 'difficulty'
   | 'maxdistance'
-  | 'maxscorediff';
+  | 'maxscorediff'
+  | BandIntensitySortMode;
+
+const BAND_INTENSITY_SORT_PREFIX = 'bandIntensity:';
 
 /** Sort modes only valid when an instrument filter is active. */
 export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
@@ -41,6 +46,18 @@ export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
 
 export const isInstrumentSortMode = (mode: SongSortMode): boolean =>
   INSTRUMENT_SORT_MODES.some(m => m.mode === mode);
+
+export const parseBandIntensityInstrument = (mode: SongSortMode | string | null | undefined): InstrumentKey | null => {
+  if (typeof mode !== 'string' || !mode.startsWith(BAND_INTENSITY_SORT_PREFIX)) return null;
+  const instrument = mode.slice(BAND_INTENSITY_SORT_PREFIX.length);
+  return (INSTRUMENT_KEYS as readonly string[]).includes(instrument) ? instrument as InstrumentKey : null;
+};
+
+export const isBandIntensitySortMode = (mode: SongSortMode | string | null | undefined): mode is BandIntensitySortMode =>
+  parseBandIntensityInstrument(mode) != null;
+
+export const bandIntensitySortMode = (instrument: InstrumentKey): BandIntensitySortMode =>
+  `${BAND_INTENSITY_SORT_PREFIX}${instrument}` as BandIntensitySortMode;
 
 export const METADATA_SORT_DISPLAY: Record<string, string> = {
   score: 'Score',

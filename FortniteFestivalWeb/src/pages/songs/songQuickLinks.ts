@@ -2,6 +2,7 @@ import { formatPercentileBucket } from '@festival/core';
 import { DEFAULT_INSTRUMENT, type PlayerScore, type ServerInstrumentKey as InstrumentKey, type ServerSong as Song } from '@festival/core/api/serverTypes';
 import type { TFunction } from 'i18next';
 import type { SongSortMode } from '../../utils/songSettings';
+import { parseBandIntensityInstrument } from '../../utils/songSettings';
 import { getSongInstrumentDifficulty } from '../../utils/songInstrumentDifficulty';
 
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
@@ -28,6 +29,10 @@ type BuildSongQuickLinkSectionsOptions = {
   shopSongIds?: ReadonlySet<string> | null;
   leavingTomorrowIds?: ReadonlySet<string> | null;
   t: TFunction;
+};
+
+type GetSongQuickLinkBucketOptions = Omit<BuildSongQuickLinkSectionsOptions, 'songs'> & {
+  song: Song;
 };
 
 type SectionBucket = {
@@ -120,7 +125,12 @@ function getSongQuickLinkBucket({
   shopSongIds,
   leavingTomorrowIds,
   t,
-}: BuildSongQuickLinkSectionsOptions & { song: Song }): SectionBucket {
+}: GetSongQuickLinkBucketOptions): SectionBucket {
+  const bandIntensityInstrument = parseBandIntensityInstrument(sortMode);
+  if (bandIntensityInstrument) {
+    return getIntensityBucket(sortMode, song, bandIntensityInstrument, t);
+  }
+
   switch (sortMode) {
     case 'title':
       return getAlphaBucket(sortMode, song.title, t);

@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   INSTRUMENT_SORT_MODES,
+  bandIntensitySortMode,
   isInstrumentSortMode,
+  isBandIntensitySortMode,
   METADATA_SORT_DISPLAY,
   DEFAULT_METADATA_ORDER,
   defaultSongFilters,
@@ -10,6 +12,7 @@ import {
   defaultSongSettings,
   loadSongSettings,
   normalizeSongSettings,
+  parseBandIntensityInstrument,
   sanitizeSongFiltersForInstruments,
   saveSongSettings,
   resetSongSettingsForDeselect,
@@ -53,6 +56,29 @@ describe('songSettings', () => {
       expect(isInstrumentSortMode('title')).toBe(false);
       expect(isInstrumentSortMode('artist')).toBe(false);
       expect(isInstrumentSortMode('year')).toBe(false);
+    });
+  });
+
+  describe('band intensity sort helpers', () => {
+    it('identifies valid band intensity sort modes', () => {
+      expect(isBandIntensitySortMode('bandIntensity:Solo_Bass')).toBe(true);
+    });
+
+    it('rejects plain intensity and metadata sort modes', () => {
+      expect(isBandIntensitySortMode('intensity')).toBe(false);
+      expect(isBandIntensitySortMode('title')).toBe(false);
+    });
+
+    it('parses the target instrument from a valid band intensity sort mode', () => {
+      expect(parseBandIntensityInstrument('bandIntensity:Solo_Bass')).toBe('Solo_Bass');
+    });
+
+    it('returns null when parsing non-band intensity modes', () => {
+      expect(parseBandIntensityInstrument('intensity')).toBeNull();
+    });
+
+    it('constructs a band intensity sort mode for an instrument', () => {
+      expect(bandIntensitySortMode('Solo_Drums')).toBe('bandIntensity:Solo_Drums');
     });
   });
 
@@ -195,6 +221,19 @@ describe('songSettings', () => {
       expect(loaded.sortAscending).toBe(true);
       expect(loaded.instrument).toBeNull();
     });
+
+    it('round-trips persisted band intensity sort modes without a selected solo instrument', () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        sortMode: bandIntensitySortMode('Solo_Bass'),
+        sortAscending: false,
+        instrument: null,
+      }));
+
+      const loaded = loadSongSettings();
+      expect(loaded.sortMode).toBe('bandIntensity:Solo_Bass');
+      expect(loaded.sortAscending).toBe(false);
+      expect(loaded.instrument).toBeNull();
+    });
   });
 
   describe('normalizeSongSettings', () => {
@@ -229,6 +268,17 @@ describe('songSettings', () => {
       });
 
       expect(normalized.sortMode).toBe('score');
+      expect(normalized.sortAscending).toBe(false);
+    });
+
+    it('preserves band intensity sort mode when instrument is null', () => {
+      const normalized = normalizeSongSettings({
+        ...defaultSongSettings(),
+        sortMode: bandIntensitySortMode('Solo_Bass'),
+        sortAscending: false,
+      });
+
+      expect(normalized.sortMode).toBe('bandIntensity:Solo_Bass');
       expect(normalized.sortAscending).toBe(false);
     });
   });

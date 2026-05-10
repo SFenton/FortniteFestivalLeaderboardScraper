@@ -20,6 +20,7 @@ import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import DifficultyPill from '../../../components/songs/metadata/DifficultyPill';
 import ScorePill from '../../../components/songs/metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
+import { isBandIntensitySortMode } from '../../../utils/songSettings';
 import { getSongInstrumentDifficulty, songSupportsInstrument } from '../../../utils/songInstrumentDifficulty';
 import { resolveInstrumentChipRows, resolvePillFitsTopRow, splitInstrumentRows, type InstrumentChipRowCount } from '../layoutMode';
 import anim from '../../../styles/animations.module.css';
@@ -211,17 +212,18 @@ export const SongRow = memo(function SongRow({ song,
   const displayOrder = useMemo(() => {
     const order = [...metadataOrder];
     const generalModes = ['title', 'artist', 'year', 'duration', 'hasfc'];
+    const primarySortMetadataKey = isBandIntensitySortMode(sortMode) ? 'intensity' : sortMode;
     if (!generalModes.includes(sortMode)) {
       if (sortMode === 'maxdistance' || sortMode === 'maxscorediff') {
         // Max-distance/diff sort: score (dual) is primary, metric goes to bottom row
         const rest = order.filter(k => k !== 'score' && k !== 'maxdistance' && k !== 'maxscorediff');
         return ['score', sortMode, ...rest];
       }
-      if (order.includes(sortMode)) {
-        return [sortMode, ...order.filter(k => k !== sortMode)];
+      if (order.includes(primarySortMetadataKey)) {
+        return [primarySortMetadataKey, ...order.filter(k => k !== primarySortMetadataKey)];
       }
       // Sort mode not in saved order (e.g. new metadata key) — prepend it
-      return [sortMode, ...order];
+      return [primarySortMetadataKey, ...order];
     }
     return order;
   }, [metadataOrder, sortMode]);
