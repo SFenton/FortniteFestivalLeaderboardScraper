@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { useEffect } from 'react';
 import SearchModal from '../../../src/components/search/SearchModal';
 import { TestProviders } from '../../helpers/TestProviders';
@@ -54,7 +54,6 @@ function renderModal(overrides: Partial<React.ComponentProps<typeof SearchModal>
   const props = {
     visible: true,
     onClose: vi.fn(),
-    defaultTarget: 'songs' as const,
     ...overrides,
   };
   const result = render(
@@ -72,6 +71,16 @@ async function advanceAndFlush(ms: number) {
 
 const SEARCH_SETTLE_MS = 900;
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function findAnimatedAncestor(text: string): HTMLElement | null {
   let el = screen.getByText(text) as HTMLElement | null;
   while (el && el !== document.body) {
@@ -82,7 +91,7 @@ function findAnimatedAncestor(text: string): HTMLElement | null {
 }
 
 function expectResultListEdgePadding(result: HTMLElement | null) {
-  const resultList = result?.parentElement;
+  const resultList = result?.closest('[data-testid="search-result-list"]') as HTMLElement | null;
   expect(resultList?.style.paddingTop).toBe('40px');
   expect(resultList?.style.paddingBottom).toBe('40px');
   expect(resultList?.style.flexShrink).toBe('0');
@@ -128,45 +137,52 @@ afterEach(() => {
 });
 
 describe('SearchModal', () => {
-  it('opens on the configured default target', () => {
-    renderModal({ defaultTarget: 'bands' });
+  it('opens with no target filter selected', () => {
+    renderModal();
     expect(screen.getByRole('dialog', { name: 'Search' })).toBeDefined();
-    expect(screen.getByRole('tab', { name: 'Bands' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Songs' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('button', { name: 'Songs' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Players' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Bands' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('restricts visible targets, falls back to the first available target, and uses the configured placeholder', () => {
+  it('restricts visible target filters and uses the configured placeholder', () => {
     renderModal({
-      defaultTarget: 'songs',
       availableTargets: ['players', 'bands'],
       placeholderKey: 'search.placeholders.playersBands',
     });
 
     expect(screen.getByPlaceholderText('Search players or bands…')).toBeDefined();
-    expect(screen.queryByRole('tab', { name: 'Songs' })).toBeNull();
-    expect(screen.getByRole('tab', { name: 'Players' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Bands' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.queryByRole('button', { name: 'Songs' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Players' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Bands' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('cycles arrow-key tab navigation through only available targets', () => {
+  it('toggles target filters on and off', () => {
     renderModal({
-      defaultTarget: 'players',
       availableTargets: ['players', 'bands'],
       placeholderKey: 'search.placeholders.playersBands',
     });
 
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Players' }), { key: 'ArrowLeft' });
-    expect(screen.getByRole('tab', { name: 'Bands' })).toHaveAttribute('aria-selected', 'true');
+    const players = screen.getByRole('button', { name: 'Players' });
+    const bands = screen.getByRole('button', { name: 'Bands' });
 
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Bands' }), { key: 'ArrowRight' });
-    expect(screen.getByRole('tab', { name: 'Players' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(players);
+    expect(players).toHaveAttribute('aria-pressed', 'true');
+    expect(bands).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(players);
+    expect(players).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(bands);
+    expect(players).toHaveAttribute('aria-pressed', 'false');
+    expect(bands).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('does not show a separator above mobile target buttons', () => {
     setViewportQueries({ mobile: true });
     renderModal();
-    const tablist = screen.getByRole('tablist');
-    expect(tablist.getAttribute('style') ?? '').not.toContain('border-top');
+    const filterGroup = screen.getByRole('group', { name: 'Search targets' });
+    expect(filterGroup.getAttribute('style') ?? '').not.toContain('border-top');
   });
 
   it('pads mobile target buttons above safe-area bottoms', () => {
@@ -232,9 +248,9 @@ describe('SearchModal', () => {
 
   it('lays out the result panel so loading spinners can center vertically', () => {
     renderModal();
-    const tabpanel = screen.getByRole('tabpanel');
-    expect(tabpanel.style.display).toBe('flex');
-    expect(tabpanel.style.flexDirection).toBe('column');
+    const panel = screen.getByTestId('search-results-panel');
+    expect(panel.style.display).toBe('flex');
+    expect(panel.style.flexDirection).toBe('column');
   });
 
   it('runs song, player, and band searches for the same query', async () => {
@@ -246,17 +262,57 @@ describe('SearchModal', () => {
     await waitFor(() => {
       expect(mockApi.searchAccounts).toHaveBeenCalledWith('but', 10);
       expect(mockApi.searchBands).toHaveBeenCalledWith({ q: 'but', page: 1, pageSize: 10 });
-      expect(screen.getByText('Butter Barn Hoedown')).toBeDefined();
+      expect(within(screen.getByTestId('search-section-songs')).getByText('Butter Barn Hoedown')).toBeDefined();
     });
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Players' }));
-    expect(await screen.findByText('PlayerOne')).toBeDefined();
-    expect(screen.queryByText('Player')).toBeNull();
+    expect(within(screen.getByTestId('search-section-players')).getByText('PlayerOne')).toBeDefined();
+    expect(within(screen.getByTestId('search-section-bands')).getByText('PlayerTwo')).toBeDefined();
+    expect(screen.getByTestId('search-section-songs').style.marginTop).toBe('');
+    expect(screen.getByTestId('search-section-players').style.marginTop).not.toBe('');
+    expect(screen.getByTestId('search-section-bands').style.marginTop).not.toBe('');
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Bands' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
+    expect(await screen.findByTestId('search-player-result')).toBeDefined();
+    expect(screen.queryByTestId('search-section-songs')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bands' }));
     expect(await screen.findByText('PlayerOne')).toBeDefined();
     expect(await screen.findByText('PlayerTwo')).toBeDefined();
     expect(await screen.findByText('3')).toBeDefined();
+  });
+
+  it('omits empty global result sections after all target searches settle', async () => {
+    mockApi.searchAccounts.mockResolvedValueOnce({ results: [] });
+
+    renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'but' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('search-section-songs')).toBeDefined();
+      expect(screen.getByTestId('search-section-bands')).toBeDefined();
+    });
+    expect(screen.queryByTestId('search-section-players')).toBeNull();
+    expect(screen.queryByText('No players found.')).toBeNull();
+  });
+
+  it('shows one global empty state when every target has no results', async () => {
+    mockApi.searchAccounts.mockResolvedValueOnce({ results: [] });
+    mockApi.searchBands.mockResolvedValueOnce({
+      query: 'zzzz', normalizedQuery: 'zzzz', rankBy: 'appearance', page: 1, pageSize: 10, totalCount: 0,
+      isAmbiguous: false, needsDisambiguation: false, interpretations: [], results: [],
+    });
+
+    renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'zzzz' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+
+    await waitFor(() => expect(screen.getByText('No results found.')).toBeDefined());
+    expect(screen.queryByTestId('search-section-songs')).toBeNull();
+    expect(screen.queryByTestId('search-section-players')).toBeNull();
+    expect(screen.queryByTestId('search-section-bands')).toBeNull();
   });
 
   it('matches songs the same way as the Songs page search', async () => {
@@ -265,7 +321,8 @@ describe('SearchModal', () => {
 
     await advanceAndFlush(SEARCH_SETTLE_MS);
 
-    expect(await screen.findByText("(Don't Fear) The Reaper")).toBeDefined();
+    const songsSection = await screen.findByTestId('search-section-songs');
+    expect(within(songsSection).getByText("(Don't Fear) The Reaper")).toBeDefined();
     expect(screen.queryByText('FC')).toBeNull();
   });
 
@@ -274,8 +331,52 @@ describe('SearchModal', () => {
     fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'but' } });
 
     await advanceAndFlush(SEARCH_SETTLE_MS);
+    await waitFor(() => expect(screen.getByText('Butter Barn Hoedown')).toBeDefined());
 
     expectResultListEdgePadding(findAnimatedAncestor('Butter Barn Hoedown'));
+  });
+
+  it('uses the modal results panel as the scroll fade root for global results', async () => {
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    const observerInstances: Array<{ options?: IntersectionObserverInit; observed: Element[] }> = [];
+
+    class MockIntersectionObserver {
+      readonly root: Element | Document | null;
+      readonly rootMargin: string;
+      readonly thresholds: readonly number[];
+      private readonly instance: { options?: IntersectionObserverInit; observed: Element[] };
+
+      constructor(_callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        this.root = options?.root ?? null;
+        this.rootMargin = options?.rootMargin ?? '';
+        this.thresholds = Array.isArray(options?.threshold) ? options.threshold : [options?.threshold ?? 0];
+        this.instance = { options, observed: [] };
+        observerInstances.push(this.instance);
+      }
+
+      observe(target: Element) { this.instance.observed.push(target); }
+      unobserve() {}
+      disconnect() {}
+      takeRecords(): IntersectionObserverEntry[] { return []; }
+    }
+
+    globalThis.IntersectionObserver = MockIntersectionObserver as unknown as typeof globalThis.IntersectionObserver;
+
+    try {
+      renderModal();
+      fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'but' } });
+
+      await advanceAndFlush(SEARCH_SETTLE_MS);
+      await waitFor(() => expect(screen.getByTestId('search-section-songs')).toBeDefined());
+
+      const panel = screen.getByTestId('search-results-panel');
+      expect(observerInstances.some(instance =>
+        instance.options?.root === panel &&
+        instance.observed.some(element => (element as HTMLElement).dataset.testid === 'search-section-songs'),
+      )).toBe(true);
+    } finally {
+      globalThis.IntersectionObserver = originalIntersectionObserver;
+    }
   });
 
   it('keeps player and band lists padded through the bottom scroll fade', async () => {
@@ -284,13 +385,13 @@ describe('SearchModal', () => {
 
     await advanceAndFlush(SEARCH_SETTLE_MS);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Players' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
     await waitFor(() => expect(findAnimatedAncestor('PlayerOne')).not.toBeNull());
     const playerResult = findAnimatedAncestor('PlayerOne');
     expect(playerResult?.style.flexShrink).toBe('0');
     expectResultListEdgePadding(playerResult);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Bands' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Bands' }));
     await waitFor(() => expect(findAnimatedAncestor('PlayerTwo')).not.toBeNull());
     const bandResult = findAnimatedAncestor('PlayerTwo');
     expect(bandResult?.style.flexShrink).toBe('0');
@@ -304,16 +405,16 @@ describe('SearchModal', () => {
 
     await advanceAndFlush(SEARCH_SETTLE_MS);
 
-    expect(findAnimatedAncestor('Butter Barn Hoedown')).not.toBeNull();
+    await waitFor(() => expect(findAnimatedAncestor('Butter Barn Hoedown')).not.toBeNull());
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Players' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
     await waitFor(() => expect(findAnimatedAncestor('PlayerOne')).not.toBeNull());
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Songs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
     await waitFor(() => expect(screen.getByText('Butter Barn Hoedown')).toBeDefined());
     expect(findAnimatedAncestor('Butter Barn Hoedown')).toBeNull();
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Players' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
     await waitFor(() => expect(screen.getByText('PlayerOne')).toBeDefined());
     expect(findAnimatedAncestor('PlayerOne')).toBeNull();
 
@@ -324,12 +425,18 @@ describe('SearchModal', () => {
   });
 
   it('shows player results while band search is still pending', async () => {
-    let resolveBands: (value: unknown) => void = () => {};
-    mockApi.searchBands.mockReturnValue(new Promise(resolve => { resolveBands = resolve; }));
+    const pendingBands = createDeferred<unknown>();
+    mockApi.searchBands.mockReturnValue(pendingBands.promise);
 
-    renderModal({ defaultTarget: 'players' });
+    renderModal();
     fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'pla' } });
 
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+
+    expect(screen.queryByTestId('search-section-songs')).toBeNull();
+    expect(screen.queryByText('Butter Barn Hoedown')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
     await advanceAndFlush(SEARCH_SETTLE_MS);
 
     await waitFor(() => {
@@ -337,7 +444,7 @@ describe('SearchModal', () => {
     });
 
     await act(async () => {
-      resolveBands({
+      pendingBands.resolve({
         query: 'pla', normalizedQuery: 'pla', rankBy: 'appearance', page: 1, pageSize: 10, totalCount: 0,
         isAmbiguous: false, needsDisambiguation: false, interpretations: [], results: [],
       });
@@ -346,11 +453,12 @@ describe('SearchModal', () => {
   });
 
   it('navigates and closes when a player result is selected', async () => {
-    const { props } = renderModal({ defaultTarget: 'players' });
+    const { props } = renderModal();
     fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'pla' } });
 
     await advanceAndFlush(SEARCH_SETTLE_MS);
-    fireEvent.click(await screen.findByText('PlayerOne'));
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
+    fireEvent.click(await screen.findByTestId('search-player-result'));
 
     expect(props.onClose).toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/player/p1');

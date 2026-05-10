@@ -12,6 +12,7 @@ import PlayerBandCard from '../../pages/player/components/PlayerBandCard';
 import { SongRow } from '../../pages/songs/components/SongRow';
 import { useUnifiedSearch } from '../../hooks/data/useUnifiedSearch';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useScrollFade } from '../../hooks/ui/useScrollFade';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { Routes } from '../../routes';
@@ -19,7 +20,7 @@ import { SEARCH_TARGETS, type SearchTarget } from '../../types/search';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 import {
   Align, Border, BoxSizing, Colors, Cursor, CssValue, Display, Font, Gap, Justify,
-  LineHeight, Overflow, Radius, TextAlign, Weight, flexCenter, flexColumn,
+  LineHeight, Overflow, Radius, TextAlign, TextTransform, Weight, flexCenter, flexColumn,
   border, frostedCard, padding, Shadow, FADE_DURATION, SPINNER_FADE_MS, STAGGER_INTERVAL,
 } from '@festival/theme';
 
@@ -40,10 +41,11 @@ const EMPTY_METADATA_ORDER: string[] = [];
 interface SearchModalProps {
   visible: boolean;
   onClose: () => void;
-  defaultTarget: SearchTarget;
   availableTargets?: readonly SearchTarget[];
   placeholderKey?: string;
 }
+
+type SearchViewKey = SearchTarget | 'global';
 
 const SEARCH_PLACEHOLDER_KEYS: Record<string, string> = {
   songs: 'search.placeholders.songs',
@@ -66,7 +68,7 @@ function getSearchPlaceholderKey(targets: readonly SearchTarget[]): string {
   return SEARCH_PLACEHOLDER_KEYS[targets.join('|')] ?? 'search.placeholder';
 }
 
-export default function SearchModal({ visible, onClose, defaultTarget, availableTargets, placeholderKey }: SearchModalProps) {
+export default function SearchModal({ visible, onClose, availableTargets, placeholderKey }: SearchModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -76,21 +78,22 @@ export default function SearchModal({ visible, onClose, defaultTarget, available
   const resultsRef = useRef<HTMLDivElement>(null);
   const wasVisibleRef = useRef(false);
   const visibleTargets = useMemo(() => resolveSearchTargets(availableTargets), [availableTargets]);
-  const effectiveDefaultTarget = visibleTargets.includes(defaultTarget) ? defaultTarget : (visibleTargets[0] ?? SEARCH_TARGETS[0]);
   const resolvedPlaceholderKey = placeholderKey ?? getSearchPlaceholderKey(visibleTargets);
   const [query, setQuery] = useState('');
-  const [activeTarget, setActiveTarget] = useState<SearchTarget>(effectiveDefaultTarget);
+  const [activeTarget, setActiveTarget] = useState<SearchTarget | null>(null);
   const search = useUnifiedSearch(query, { enabledTargets: visibleTargets });
 
   useEffect(() => {
-    if (visible && (!wasVisibleRef.current || !visibleTargets.includes(activeTarget))) {
-      setActiveTarget(effectiveDefaultTarget);
+    if (visible && !wasVisibleRef.current) {
+      setActiveTarget(null);
+    } else if (visible && activeTarget && !visibleTargets.includes(activeTarget)) {
+      setActiveTarget(null);
     }
     if (!visible) {
       setQuery('');
     }
     wasVisibleRef.current = visible;
-  }, [activeTarget, effectiveDefaultTarget, visible, visibleTargets]);
+  }, [activeTarget, visible, visibleTargets]);
 
   const focusSearchWithoutScroll = useCallback(() => {
     inputRef.current?.focus({ preventScroll: true });
@@ -120,8 +123,8 @@ export default function SearchModal({ visible, onClose, defaultTarget, available
 
   const handleCloseComplete = useCallback(() => {
     setQuery('');
-    setActiveTarget(effectiveDefaultTarget);
-  }, [effectiveDefaultTarget]);
+    setActiveTarget(null);
+  }, []);
 
   const closeAndNavigate = useCallback((path: string) => {
     onClose();
@@ -145,29 +148,23 @@ export default function SearchModal({ visible, onClose, defaultTarget, available
     }));
   }, [closeAndNavigate]);
 
-  const handleTabKeyDown = useCallback((target: SearchTarget, e: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-    e.preventDefault();
-    const index = visibleTargets.indexOf(target);
-    const delta = e.key === 'ArrowRight' ? 1 : -1;
-    const next = visibleTargets[(index + delta + visibleTargets.length) % visibleTargets.length] ?? target;
-    setActiveTarget(next);
-  }, [visibleTargets]);
+  const toggleTargetFilter = useCallback((target: SearchTarget) => {
+    setActiveTarget(current => current === target ? null : target);
+  }, []);
 
   const tabs = (
-    <div style={st.tabs} role="tablist" aria-label={t('search.targetTabs')}>
+    <div style={st.tabs} role="group" aria-label={t('search.targetTabs')}>
       {visibleTargets.map(target => {
         const selected = activeTarget === target;
         return (
           <button
             key={target}
             type="button"
-            role="tab"
-            aria-selected={selected}
-            aria-controls={`search-results-${target}`}
+            aria-pressed={selected}
+            aria-controls="search-results"
+            data-testid={`search-target-filter-${target}`}
             style={selected ? st.tabSelected : st.tab}
-            onClick={() => setActiveTarget(target)}
-            onKeyDown={e => handleTabKeyDown(target, e)}
+            onClick={() => toggleTargetFilter(target)}
           >
             {t(SEARCH_TARGET_LABEL_KEYS[target])}
           </button>
@@ -201,9 +198,10 @@ export default function SearchModal({ visible, onClose, defaultTarget, available
           style={st.searchBar}
         />
         {!isMobile && tabs}
-        <div ref={resultsRef} id={`search-results-${activeTarget}`} role="tabpanel" style={st.results} aria-live="polite">
+        <div ref={resultsRef} id="search-results" role="region" aria-label={t('search.results')} data-testid="search-results-panel" style={st.results} aria-live="polite">
           <SearchResultsPanel
             activeTarget={activeTarget}
+            visibleTargets={visibleTargets}
             query={query}
             search={search}
             styles={st}
@@ -222,7 +220,8 @@ export default function SearchModal({ visible, onClose, defaultTarget, available
 }
 
 interface RenderResultsArgs {
-  activeTarget: SearchTarget;
+  activeTarget: SearchTarget | null;
+  visibleTargets: readonly SearchTarget[];
   query: string;
   search: ReturnType<typeof useUnifiedSearch>;
   styles: ReturnType<typeof useStyles>;
@@ -235,21 +234,25 @@ interface RenderResultsArgs {
 }
 
 function SearchResultsPanel(props: RenderResultsArgs) {
-  const { activeTarget, query, search, styles: st, resultsRef } = props;
+  const { activeTarget, visibleTargets, query, search, styles: st, resultsRef } = props;
   const resultListRef = useRef<HTMLDivElement>(null);
   const trimmedQuery = query.trim();
   const isShort = trimmedQuery.length < 2;
-  const loading = !isShort && (search.debouncing || search.loading[activeTarget]);
+  const waitingForDebounce = !isShort && trimmedQuery !== search.debouncedQuery;
+  const loading = !isShort && (waitingForDebounce || search.debouncing || (activeTarget == null
+    ? visibleTargets.some(target => search.loading[target])
+    : search.loading[activeTarget]));
   const contentSignature = useMemo(
-    () => getContentSignature(activeTarget, trimmedQuery, search),
-    [activeTarget, search, trimmedQuery],
+    () => getContentSignature(activeTarget, visibleTargets, trimmedQuery, search),
+    [activeTarget, search, trimmedQuery, visibleTargets],
   );
   const [loadPhase, setLoadPhase] = useState<LoadPhase>(LoadPhase.ContentIn);
   const [staggerSignature, setStaggerSignature] = useState<string | null>(null);
   const loadPhaseRef = useRef(loadPhase);
-  const staggeredSignaturesRef = useRef<Partial<Record<SearchTarget, string>>>({});
+  const staggeredSignaturesRef = useRef<Partial<Record<SearchViewKey, string>>>({});
   const previousQueryRef = useRef(trimmedQuery);
   const updateScrollMask = useScrollMask(resultsRef, [activeTarget, contentSignature, loadPhase], { selfScroll: true, size: SEARCH_SCROLL_FADE_SIZE });
+  useScrollFade(resultsRef, resultListRef, [activeTarget, contentSignature, loadPhase], { distance: SEARCH_SCROLL_FADE_SIZE });
   const { resetRush } = useStaggerRush(resultListRef, resultsRef);
   loadPhaseRef.current = loadPhase;
 
@@ -282,7 +285,9 @@ function SearchResultsPanel(props: RenderResultsArgs) {
       return undefined;
     }
 
-    if (staggeredSignaturesRef.current[activeTarget] === contentSignature) {
+    const viewKey = activeTarget ?? 'global';
+
+    if (staggeredSignaturesRef.current[viewKey] === contentSignature) {
       setStaggerSignature(null);
       setLoadPhase(LoadPhase.ContentIn);
       return undefined;
@@ -291,34 +296,43 @@ function SearchResultsPanel(props: RenderResultsArgs) {
     if (loadPhaseRef.current === LoadPhase.Loading || loadPhaseRef.current === LoadPhase.SpinnerOut) {
       setLoadPhase(LoadPhase.SpinnerOut);
       const id = setTimeout(() => {
-        staggeredSignaturesRef.current[activeTarget] = contentSignature;
+        staggeredSignaturesRef.current[viewKey] = contentSignature;
         setStaggerSignature(contentSignature);
         setLoadPhase(LoadPhase.ContentIn);
       }, SPINNER_FADE_MS);
       return () => clearTimeout(id);
     }
 
-    staggeredSignaturesRef.current[activeTarget] = contentSignature;
+    staggeredSignaturesRef.current[viewKey] = contentSignature;
     setStaggerSignature(contentSignature);
     setLoadPhase(LoadPhase.ContentIn);
     return undefined;
   }, [activeTarget, contentSignature, isShort, loading, search.debouncedQuery]);
 
-  if (loadPhase !== LoadPhase.ContentIn && !isShort) {
-    const spinnerStyle = loadPhase === LoadPhase.SpinnerOut ? st.spinnerWrapOut : st.spinnerWrapIn;
+  if ((loading || loadPhase !== LoadPhase.ContentIn) && !isShort) {
+    const spinnerStyle = !loading && loadPhase === LoadPhase.SpinnerOut ? st.spinnerWrapOut : st.spinnerWrapIn;
     return <div style={spinnerStyle}><ArcSpinner size={SpinnerSize.MD} /></div>;
   }
 
   return (
-    <div ref={resultListRef} style={st.resultList}>
+    <div ref={resultListRef} style={activeTarget == null ? st.globalResultList : st.resultList} data-testid="search-result-list">
       {renderResults({ ...props, shouldStagger: staggerSignature === contentSignature && loadPhase === LoadPhase.ContentIn })}
     </div>
   );
 }
 
-function getContentSignature(target: SearchTarget, query: string, search: ReturnType<typeof useUnifiedSearch>): string {
-  if (query.length < 2) return `${target}:short`;
+function getContentSignature(activeTarget: SearchTarget | null, visibleTargets: readonly SearchTarget[], query: string, search: ReturnType<typeof useUnifiedSearch>): string {
+  const viewKey = activeTarget ?? 'global';
+  if (query.length < 2) return `${viewKey}:short`;
   const debouncedQuery = search.debouncedQuery || query;
+  if (activeTarget == null) {
+    return `global:${visibleTargets.map(target => getTargetContentSignature(target, debouncedQuery, search)).join('||')}`;
+  }
+
+  return getTargetContentSignature(activeTarget, debouncedQuery, search);
+}
+
+function getTargetContentSignature(target: SearchTarget, debouncedQuery: string, search: ReturnType<typeof useUnifiedSearch>): string {
   if (search.errors[target]) return `${target}:${debouncedQuery}:error`;
 
   if (target === 'songs') {
@@ -338,24 +352,66 @@ function getStaggerStyle(index: number, enabled: boolean): CSSProperties | undef
   return delay == null ? undefined : { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` };
 }
 
-function renderResults({ activeTarget, query, search, styles: st, isMobile, t, onSongSelect, onPlayerSelect, onBandSelect, shouldStagger }: RenderResultsArgs & { shouldStagger: boolean }) {
+function renderResults(args: RenderResultsArgs & { shouldStagger: boolean }) {
+  const { activeTarget, visibleTargets, query, styles: st, t } = args;
   const isShort = query.trim().length < 2;
-  const hasError = search.errors[activeTarget];
 
   if (isShort) {
     return <div style={st.hintCenter}>{t('search.enterQuery')}</div>;
   }
 
+  if (activeTarget == null) {
+    let staggerIndex = 0;
+    const renderedTargets = visibleTargets.filter(target => shouldRenderGlobalSection(target, args.search));
+
+    if (renderedTargets.length === 0) {
+      return <div style={st.hintCenter}>{t('search.noResults.all')}</div>;
+    }
+
+    return renderedTargets.map((target, sectionIndex) => {
+      const sectionId = `search-section-${target}`;
+      const headingId = `${sectionId}-heading`;
+      const section = (
+        <section key={target} id={sectionId} data-testid={sectionId} style={sectionIndex === 0 ? st.section : st.sectionSpaced} aria-labelledby={headingId}>
+          <h3 id={headingId} style={st.sectionHeading}>{t(SEARCH_TARGET_LABEL_KEYS[target])}</h3>
+          <div style={st.sectionList}>
+            {renderTargetResults({ ...args, activeTarget: target, startIndex: staggerIndex, compactEmpty: true })}
+          </div>
+        </section>
+      );
+      staggerIndex += getTargetStaggerSlotCount(target, args.search);
+      return section;
+    });
+  }
+
+  return renderTargetResults({ ...args, activeTarget, startIndex: 0, compactEmpty: false });
+}
+
+function shouldRenderGlobalSection(target: SearchTarget, search: ReturnType<typeof useUnifiedSearch>): boolean {
+  if (search.errors[target]) return true;
+  return getTargetResultCount(target, search) > 0;
+}
+
+function getTargetResultCount(target: SearchTarget, search: ReturnType<typeof useUnifiedSearch>): number {
+  if (target === 'songs') return search.songResults.length;
+  if (target === 'players') return search.playerResults.length;
+  return search.bandResults.length;
+}
+
+function renderTargetResults({ activeTarget, search, styles: st, isMobile, t, onSongSelect, onPlayerSelect, onBandSelect, shouldStagger, startIndex, compactEmpty }: RenderResultsArgs & { activeTarget: SearchTarget; shouldStagger: boolean; startIndex: number; compactEmpty: boolean }) {
+  const hasError = search.errors[activeTarget];
+  const emptyStyle = compactEmpty ? st.sectionHint : st.hintCenter;
+
   if (hasError) {
-    return <div style={{ ...st.hintCenter, ...getStaggerStyle(0, shouldStagger) }}>{t('search.failed')}</div>;
+    return <div style={{ ...emptyStyle, ...getStaggerStyle(startIndex, shouldStagger) }}>{t('search.failed')}</div>;
   }
 
   if (activeTarget === 'songs') {
-    if (search.songResults.length === 0) return <div style={{ ...st.hintCenter, ...getStaggerStyle(0, shouldStagger) }}>{t('search.noResults.songs')}</div>;
+    if (search.songResults.length === 0) return <div style={{ ...emptyStyle, ...getStaggerStyle(startIndex, shouldStagger) }}>{t('search.noResults.songs')}</div>;
     return search.songResults.map((song, index) => (
       <div
         key={song.songId}
-        style={{ ...st.songRowWrap, ...getStaggerStyle(index, shouldStagger) }}
+        style={{ ...st.songRowWrap, ...getStaggerStyle(startIndex + index, shouldStagger) }}
         onClickCapture={(event) => {
           event.preventDefault();
           onSongSelect(song);
@@ -376,22 +432,22 @@ function renderResults({ activeTarget, query, search, styles: st, isMobile, t, o
   }
 
   if (activeTarget === 'players') {
-    if (search.playerResults.length === 0) return <div style={{ ...st.hintCenter, ...getStaggerStyle(0, shouldStagger) }}>{t('search.noResults.players')}</div>;
+    if (search.playerResults.length === 0) return <div style={{ ...emptyStyle, ...getStaggerStyle(startIndex, shouldStagger) }}>{t('search.noResults.players')}</div>;
     return search.playerResults.map((player, index) => (
-      <button key={player.accountId} type="button" data-testid="search-player-result" style={{ ...st.resultBtn, ...getStaggerStyle(index, shouldStagger) }} onClick={() => onPlayerSelect(player)}>
+      <button key={player.accountId} type="button" data-testid="search-player-result" style={{ ...st.resultBtn, ...getStaggerStyle(startIndex + index, shouldStagger) }} onClick={() => onPlayerSelect(player)}>
         <span style={st.resultTitle}>{player.displayName}</span>
       </button>
     ));
   }
 
-  if (search.bandResults.length === 0) return <div style={{ ...st.hintCenter, ...getStaggerStyle(0, shouldStagger) }}>{t('search.noResults.bands')}</div>;
+  if (search.bandResults.length === 0) return <div style={{ ...emptyStyle, ...getStaggerStyle(startIndex, shouldStagger) }}>{t('search.noResults.bands')}</div>;
   return search.bandResults.map((band, index) => {
     const members = band.members.map(member => member.displayName ?? member.accountId).filter(Boolean).join(' · ');
     const cardEntry = toPlayerBandEntry(band);
     return (
       <div
         key={band.bandId}
-        style={{ ...st.bandCardWrap, ...getStaggerStyle(index, shouldStagger) }}
+        style={{ ...st.bandCardWrap, ...getStaggerStyle(startIndex + index, shouldStagger) }}
         onClickCapture={(event) => {
           event.preventDefault();
           onBandSelect(band);
@@ -405,6 +461,13 @@ function renderResults({ activeTarget, query, search, styles: st, isMobile, t, o
       </div>
     );
   });
+}
+
+function getTargetStaggerSlotCount(target: SearchTarget, search: ReturnType<typeof useUnifiedSearch>): number {
+  if (search.errors[target]) return 1;
+  if (target === 'songs') return Math.max(1, search.songResults.length);
+  if (target === 'players') return Math.max(1, search.playerResults.length);
+  return Math.max(1, search.bandResults.length);
 }
 
 function toPlayerBandEntry(band: BandSearchResult): PlayerBandEntry {
@@ -492,6 +555,53 @@ function useStyles(isMobile: boolean) {
         boxSizing: BoxSizing.borderBox,
         paddingTop: SEARCH_SCROLL_FADE_SIZE,
         paddingBottom: SEARCH_SCROLL_FADE_SIZE,
+      } as CSSProperties,
+      globalResultList: {
+        ...flexColumn,
+        gap: Gap.md,
+        flexShrink: 0,
+        minHeight: CssValue.full,
+        boxSizing: BoxSizing.borderBox,
+        paddingTop: SEARCH_SCROLL_FADE_SIZE,
+        paddingBottom: SEARCH_SCROLL_FADE_SIZE,
+      } as CSSProperties,
+      section: {
+        ...flexColumn,
+        gap: Gap.sm,
+        minWidth: 0,
+      } as CSSProperties,
+      sectionSpaced: {
+        ...flexColumn,
+        gap: Gap.sm,
+        minWidth: 0,
+        marginTop: Gap.md,
+      } as CSSProperties,
+      sectionHeading: {
+        color: 'rgba(255, 255, 255, 0.74)',
+        fontSize: Font.xs,
+        fontWeight: Weight.semibold,
+        lineHeight: LineHeight.snug,
+        letterSpacing: 0,
+        textTransform: TextTransform.uppercase,
+        padding: padding(0, Gap.xs),
+        margin: 0,
+      } as CSSProperties,
+      sectionList: {
+        ...flexColumn,
+        gap: Gap.xs,
+        minWidth: 0,
+      } as CSSProperties,
+      sectionHint: {
+        ...frostedCard,
+        minHeight: 54,
+        ...flexCenter,
+        flexShrink: 0,
+        padding: padding(Gap.md, Gap.section),
+        borderRadius: Radius.md,
+        color: Colors.textTertiary,
+        fontSize: Font.sm,
+        lineHeight: LineHeight.relaxed,
+        textAlign: TextAlign.center,
       } as CSSProperties,
       spinnerWrapIn: {
         ...flexCenter,

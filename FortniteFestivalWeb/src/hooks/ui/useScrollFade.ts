@@ -25,16 +25,17 @@ const DEFAULT_STOPS: ReadonlyArray<readonly [number, number]> = [
  * IntersectionObserver for efficient tracking. Only children near the
  * edges get `getBoundingClientRect` calls — typically 0–2 at any time.
  *
- * Uses the app's scroll container (via ScrollContainerContext).
+ * Uses the provided scroll container when available, otherwise falls back to
+ * the app's scroll container (via ScrollContainerContext).
  *
- * @param _scrollRef Deprecated — kept for API compat, no longer used
+ * @param scrollRef  Ref to the scroll container that owns the viewport edges
  * @param listRef    Ref to the direct parent of the items to fade
  * @param deps       Extra dependency array — when any value changes, observers reconnect
  * @param options    Fade distance and curve configuration
  * @returns          `update` handler (called automatically on scroll)
  */
 export function useScrollFade(
-  _scrollRef: RefObject<HTMLElement | null>,
+  scrollRef: RefObject<HTMLElement | null>,
   listRef: RefObject<HTMLElement | null>,
   deps: readonly unknown[] = [],
   options: ScrollFadeOptions = {},
@@ -44,12 +45,14 @@ export function useScrollFade(
   const rafId = useRef(0);
   const scrollContainerRef = useScrollContainer();
 
+  const getScrollElement = useCallback(() => scrollRef.current ?? scrollContainerRef.current, [scrollRef, scrollContainerRef]);
+
   // Track which children are near scroll container edges
   const edgeChildrenRef = useRef(new Set<HTMLElement>());
 
   const applyMasks = useCallback(() => {
     const listEl = listRef.current;
-    const scrollEl = scrollContainerRef.current;
+    const scrollEl = getScrollElement();
     if (!listEl || !scrollEl) return;
 
     const scrollRect = scrollEl.getBoundingClientRect();
@@ -109,7 +112,7 @@ export function useScrollFade(
         }
       }
     }
-  }, [distance, stops, listRef, scrollContainerRef]);
+  }, [distance, stops, listRef, getScrollElement]);
 
   const throttledUpdate = useCallback(() => {
     if (rafId.current) return;
@@ -122,7 +125,7 @@ export function useScrollFade(
   // Set up IntersectionObserver to track children near scroll container edges
   useEffect(() => {
     const listEl = listRef.current;
-    const scrollEl = scrollContainerRef.current;
+    const scrollEl = getScrollElement();
     if (!listEl) return;
 
     // Observe with margin that extends the "near edge" zone
@@ -157,25 +160,25 @@ export function useScrollFade(
 
     return () => observer.disconnect();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [distance, throttledUpdate, scrollContainerRef, ...deps]);
+  }, [distance, throttledUpdate, getScrollElement, ...deps]);
 
   // Listen to scroll container for mask updates on tracked elements
   useEffect(() => {
-    const scrollEl = scrollContainerRef.current;
+    const scrollEl = getScrollElement();
     if (!scrollEl) return;
     scrollEl.addEventListener('scroll', throttledUpdate, { passive: true });
     return () => scrollEl.removeEventListener('scroll', throttledUpdate);
-  }, [throttledUpdate, scrollContainerRef]);
+  }, [throttledUpdate, getScrollElement]);
 
   // Re-evaluate masks when the scroll container resizes (e.g. header portal
   // rendering, fab spacer margin, window resize).
   useEffect(() => {
-    const scrollEl = scrollContainerRef.current;
+    const scrollEl = getScrollElement();
     if (!scrollEl) return;
     const ro = new ResizeObserver(throttledUpdate);
     ro.observe(scrollEl);
     return () => ro.disconnect();
-  }, [scrollContainerRef, throttledUpdate]);
+  }, [getScrollElement, throttledUpdate]);
 
   useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
 

@@ -42,20 +42,32 @@ describe('useScrollFade', () => {
   });
 
   it('registers scroll container listener', () => {
+    const { wrapper } = createScrollContainerWrapper();
+    const scrollEl = document.createElement('div');
+    const addSpy = vi.spyOn(scrollEl, 'addEventListener');
+    const listEl = makeListEl(2);
+    const scrollRef = { current: scrollEl };
+    const listRef = { current: listEl };
+    renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
+    expect(addSpy).toHaveBeenCalledWith('scroll', expect.any(Function), { passive: true });
+  });
+
+  it('falls back to the context scroll container when no scroll ref is provided', () => {
     const { wrapper, mockEl } = createScrollContainerWrapper();
     const addSpy = vi.spyOn(mockEl, 'addEventListener');
     const listEl = makeListEl(2);
-    const scrollRef = { current: document.createElement('div') };
+    const scrollRef = { current: null };
     const listRef = { current: listEl };
     renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
     expect(addSpy).toHaveBeenCalledWith('scroll', expect.any(Function), { passive: true });
   });
 
   it('cleans up scroll listener on unmount', () => {
-    const { wrapper, mockEl } = createScrollContainerWrapper();
-    const removeSpy = vi.spyOn(mockEl, 'removeEventListener');
+    const { wrapper } = createScrollContainerWrapper();
+    const scrollEl = document.createElement('div');
+    const removeSpy = vi.spyOn(scrollEl, 'removeEventListener');
     const listEl = makeListEl(2);
-    const scrollRef = { current: document.createElement('div') };
+    const scrollRef = { current: scrollEl };
     const listRef = { current: listEl };
     const { unmount } = renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
     unmount();
@@ -72,13 +84,14 @@ describe('useScrollFade', () => {
 
   it('creates ResizeObserver on the scroll container', () => {
     const observers = stubResizeObserver();
-    const { wrapper, mockEl } = createScrollContainerWrapper();
+    const { wrapper } = createScrollContainerWrapper();
+    const scrollEl = document.createElement('div');
     const listEl = makeListEl(2);
-    const scrollRef = { current: document.createElement('div') };
+    const scrollRef = { current: scrollEl };
     const listRef = { current: listEl };
     renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
     const observed = observers.flatMap(o => o.targets);
-    expect(observed).toContain(mockEl);
+    expect(observed).toContain(scrollEl);
   });
 
   it('disconnects ResizeObserver on unmount', () => {

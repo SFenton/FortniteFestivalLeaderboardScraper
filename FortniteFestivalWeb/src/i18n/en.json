@@ -294,6 +294,7 @@
       "songsPlayersBands": "Search songs, players, or bands…"
     },
     "targetTabs": "Search targets",
+    "results": "Search results",
     "enterQuery": "Enter at least two characters to search.",
     "failed": "Search failed. Try again.",
     "unknownBand": "Unknown Band",
@@ -304,6 +305,7 @@
       "bands": "Bands"
     },
     "noResults": {
+      "all": "No results found.",
       "songs": "No songs found.",
       "players": "No players found.",
       "bands": "No bands found."
