@@ -72,6 +72,11 @@ builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompre
 
 // ─── Configuration ──────────────────────────────────────────
 
+var apiOnlyRequested = args.Any(arg => arg.Equals("--api-only", StringComparison.OrdinalIgnoreCase))
+    || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
+var scraperWorkerDisabled = args.Any(arg => arg.Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
+    || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:DisableScraperWorker");
+
 builder.Services.Configure<ScraperOptions>(
     builder.Configuration.GetSection(ScraperOptions.Section));
 builder.Services.Configure<FeatureOptions>(
@@ -109,6 +114,10 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         else if (args[i].Equals("--api-only", StringComparison.OrdinalIgnoreCase))
         {
             opts.ApiOnly = true;
+        }
+        else if (args[i].Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.DisableScraperWorker = true;
         }
         else if (args[i].Equals("--backfill-only", StringComparison.OrdinalIgnoreCase))
         {
@@ -515,36 +524,24 @@ builder.Services.AddSingleton<StartupInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<StartupInitializer>());
 builder.Services.AddHealthChecks()
     .AddCheck<StartupInitializer>("database", tags: ["ready"]);
-builder.Services.AddHostedService<ScraperWorker>();
-builder.Services.AddHostedService<BandRankHistoryWorker>();
+if (!apiOnlyRequested)
+{
+    if (!scraperWorkerDisabled)
+        builder.Services.AddHostedService<ScraperWorker>();
+    builder.Services.AddHostedService<BandRankHistoryWorker>();
+}
 
 // ─── Build and configure pipeline ───────────────────────────
 
 var app = builder.Build();
 
-// Initialize PostgreSQL schema (retry with backoff — PG may still be recovering after OOM/crash)
+if (apiOnlyRequested)
 {
-    var pgDs = app.Services.GetRequiredService<NpgsqlDataSource>();
-    var startupLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
-    const int maxRetries = 10;
-    for (int attempt = 1; ; attempt++)
-    {
-        try
-        {
-            await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(pgDs);
-            break;
-        }
-        catch (Exception ex) when (attempt < maxRetries &&
-            (ex is NpgsqlException || ex is System.Net.Sockets.SocketException ||
-             ex.InnerException is System.Net.Sockets.SocketException))
-        {
-            var delay = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt - 1), 30));
-            startupLog.LogWarning(ex,
-                "Schema init attempt {Attempt}/{MaxRetries} failed. Retrying in {Delay}s...",
-                attempt, maxRetries, delay.TotalSeconds);
-            await Task.Delay(delay);
-        }
-    }
+    app.Logger.LogInformation("API-only mode enabled; scraper hosted services were not registered.");
+}
+else if (scraperWorkerDisabled)
+{
+    app.Logger.LogInformation("Scraper worker disabled; non-API background hosted services remain registered.");
 }
 
 // One-shot precompute: --precompute
@@ -553,6 +550,10 @@ var app = builder.Build();
     if (scraperOpts2.PrecomputeOnly)
     {
         var precompLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Precompute");
+        var pgDs = app.Services.GetRequiredService<NpgsqlDataSource>();
+
+        precompLog.LogInformation("--precompute: ensuring database schema...");
+        await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(pgDs);
 
         // Minimal init: open instrument DBs + load song catalog (skip Item Shop HTTP calls)
         precompLog.LogInformation("--precompute: initializing databases...");

@@ -63,22 +63,24 @@ public sealed class BandRankHistoryWorker : BackgroundService
             BandRankHistoryJobInfo? job = null;
             try
             {
+                var maxAttempts = Math.Max(1, opts.MaxRetryAttempts);
+                var retryDelay = TimeSpan.FromSeconds(Math.Max(0, opts.RetryDelaySeconds));
                 var recoveredJobs = _metaDb.RecoverStaleBandRankHistoryJobs(
-                    staleAfter: TimeSpan.FromMinutes(15),
+                    staleAfter: TimeSpan.FromMinutes(Math.Max(1, opts.StaleRunningJobMinutes)),
                     maxCatchupAge: TimeSpan.FromHours(Math.Max(1, opts.MaxCatchupAgeHours)));
                 if (recoveredJobs > 0)
                 {
                     _log.LogInformation("Recovered or superseded {JobCount:N0} stale band rank-history job(s).", recoveredJobs);
                 }
 
-                job = _metaDb.GetNextBandRankHistoryJob();
+                job = _metaDb.GetNextBandRankHistoryJob(maxAttempts, retryDelay);
                 if (job is null)
                 {
                     await DelaySafely(IdleDelay, stoppingToken);
                     continue;
                 }
 
-                if (!_metaDb.TryStartBandRankHistoryJob(job.JobId))
+                if (!_metaDb.TryStartBandRankHistoryJob(job.JobId, maxAttempts))
                     continue;
 
                 _log.LogInformation("Band rank-history background job {JobId} started for {BandType} scrape {ScrapeId}.",

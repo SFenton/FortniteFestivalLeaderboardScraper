@@ -210,7 +210,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Substitute.For<ILogger<FSTService.Scraping.ItemShopService>>());
 
         var dbInitializer = new StartupInitializer(
-            _persistence, _festivalService, shopService,
+            _persistence, _metaFixture.DataSource, _festivalService, shopService,
             _lifetime,
             options,
             Substitute.For<ILogger<StartupInitializer>>());

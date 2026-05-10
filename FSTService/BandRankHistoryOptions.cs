@@ -48,6 +48,15 @@ public sealed class BandRankHistoryOptions
 
     /// <summary>Maximum catch-up age before jobs are marked stale/superseded instead of processed forever.</summary>
     public int MaxCatchupAgeHours { get; set; } = 24;
+
+    /// <summary>Maximum attempts for a queued/paused/failed background history job before it is left failed.</summary>
+    public int MaxRetryAttempts { get; set; } = 3;
+
+    /// <summary>Delay before a failed background history job is eligible for automatic retry.</summary>
+    public int RetryDelaySeconds { get; set; } = 900;
+
+    /// <summary>How long a running job may be inactive before it is recovered as paused.</summary>
+    public int StaleRunningJobMinutes { get; set; } = 15;
 }
 
 public enum BandRankHistoryMode

@@ -3,6 +3,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace FSTService;
 
@@ -14,6 +15,7 @@ namespace FSTService;
 public sealed class StartupInitializer : IHostedService, IHealthCheck
 {
     private readonly GlobalLeaderboardPersistence _persistence;
+    private readonly NpgsqlDataSource _dataSource;
     private readonly FestivalService _festivalService;
     private readonly ItemShopService _shopService;
     private readonly IHostApplicationLifetime _lifetime;
@@ -30,6 +32,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
 
     public StartupInitializer(
         GlobalLeaderboardPersistence persistence,
+        NpgsqlDataSource dataSource,
         FestivalService festivalService,
         ItemShopService shopService,
         IHostApplicationLifetime lifetime,
@@ -37,6 +40,7 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         ILogger<StartupInitializer> log)
     {
         _persistence = persistence;
+        _dataSource = dataSource;
         _festivalService = festivalService;
         _shopService = shopService;
         _lifetime = lifetime;
@@ -55,6 +59,8 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         try
         {
             _log.LogInformation("Initializing databases and song catalog...");
+
+            await EnsureSchemaWithRetryAsync(ct);
 
             // Clean up any leftover spool files from previous runs
             SpoolWriter<LeaderboardEntry>.CleanupStaleFiles(_log);
@@ -82,6 +88,29 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
             _log.LogCritical(ex, "Database initialization failed. Shutting down.");
             _readySignal.TrySetException(ex);
             _lifetime.StopApplication();
+        }
+    }
+
+    private async Task EnsureSchemaWithRetryAsync(CancellationToken ct)
+    {
+        const int maxRetries = 10;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await DatabaseInitializer.EnsureSchemaAsync(_dataSource, ct);
+                return;
+            }
+            catch (Exception ex) when (attempt < maxRetries &&
+                (ex is NpgsqlException || ex is System.Net.Sockets.SocketException ||
+                 ex.InnerException is System.Net.Sockets.SocketException))
+            {
+                var delay = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt - 1), 30));
+                _log.LogWarning(ex,
+                    "Schema init attempt {Attempt}/{MaxRetries} failed. Retrying in {Delay}s...",
+                    attempt, maxRetries, delay.TotalSeconds);
+                await Task.Delay(delay, ct);
+            }
         }
     }
 

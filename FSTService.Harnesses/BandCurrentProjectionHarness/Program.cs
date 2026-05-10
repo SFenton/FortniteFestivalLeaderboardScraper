@@ -18,6 +18,7 @@ string? bandType = null;
 string? combo = null;
 string? bandTypesArg = null;
 string scopeMode = "all";
+long? publishGeneration = null;
 bool execute = false;
 bool allowProd = false;
 bool skipSchema = false;
@@ -53,6 +54,9 @@ for (var i = 0; i < args.Length; i++)
         case "--scope-mode":
             scopeMode = args[++i];
             break;
+        case "--publish-generation":
+            publishGeneration = long.Parse(args[++i]);
+            break;
         case "--execute":
             execute = true;
             break;
@@ -84,8 +88,17 @@ if (string.IsNullOrWhiteSpace(pg))
 if (execute && !allowProd)
     return Fail("--allow-prod is required with --execute");
 
+if (publishGeneration.HasValue && !execute)
+    return Fail("--publish-generation requires --execute and --allow-prod");
+
+if (publishGeneration is <= 0)
+    return Fail("--publish-generation must be greater than zero");
+
 if (clearExisting && !execute)
     return Fail("--clear-existing is only valid with --execute");
+
+if (clearExisting && publishGeneration.HasValue)
+    return Fail("--clear-existing is not valid with --publish-generation");
 
 if (!string.IsNullOrWhiteSpace(combo) && (string.IsNullOrWhiteSpace(songId) || string.IsNullOrWhiteSpace(bandType)))
     return Fail("--combo is only valid with --song-id and --band-type");
@@ -116,7 +129,7 @@ if (scoped && rankingScope == "combo")
 
 var target = new NpgsqlConnectionStringBuilder(pg);
 Console.WriteLine($"Target: host={target.Host} database={target.Database} user={target.Username}");
-Console.WriteLine($"Mode: {(execute ? scoped ? "execute-scope" : "execute-full" : "status")}");
+Console.WriteLine($"Mode: {(publishGeneration.HasValue ? scoped ? "publish-scope" : "publish-generation" : execute ? scoped ? "execute-scope" : "execute-full" : "status")}");
 Console.WriteLine($"Ensure schema: {ensureSchema}");
 Console.WriteLine($"Timeout seconds: {(timeoutSeconds <= 0 ? "unlimited" : timeoutSeconds)}");
 if (!scoped)
@@ -130,6 +143,8 @@ else
 }
 if (clearExisting)
     Console.WriteLine("Clear existing projection rows before full rebuild: true");
+if (publishGeneration.HasValue)
+    Console.WriteLine($"Publish generation: {publishGeneration.Value:N0}");
 
 await using var dataSource = NpgsqlDataSource.Create(pg);
 using var loggerFactory = LoggerFactory.Create(builder =>
@@ -164,8 +179,27 @@ var options = new BandCurrentProjectionRebuildOptions
 
 BandCurrentProjectionRebuildResult? rebuildResult = null;
 BandCurrentProjectionScopeResult? scopeResult = null;
+BandCurrentProjectionPublishResult? publishResult = null;
+IReadOnlyList<BandCurrentProjectionScopeKey> publishScopes = [];
 
-if (execute && scoped)
+if (execute && publishGeneration.HasValue)
+{
+    publishScopes = scoped
+        ? [new BandCurrentProjectionScopeKey(songId!, bandType!, rankingScope, normalizedCombo)]
+        : await LoadPublishScopesAsync(dataSource, publishGeneration.Value, bandTypes, includeOverall, includeCombo);
+
+    publishResult = await builder.TryPublishGenerationAsync(publishGeneration.Value, publishScopes);
+    Console.WriteLine();
+    Console.WriteLine($"Published generation {publishGeneration.Value:N0} without rebuilding.");
+    Console.WriteLine($"  requested scopes: {publishResult.ScopeCount:N0}");
+    Console.WriteLine($"  ready scopes:     {publishResult.ReadyScopes:N0}");
+    Console.WriteLine($"  failed scopes:    {publishResult.FailedScopes:N0}");
+    Console.WriteLine($"  missing scopes:   {publishResult.MissingScopes:N0}");
+    Console.WriteLine($"  published scopes: {publishResult.PublishedScopes:N0}");
+    Console.WriteLine($"  published rows:   {publishResult.PublishedRows:N0}");
+    Console.WriteLine($"  old rows deleted: {publishResult.DeletedRows:N0}");
+}
+else if (execute && scoped)
 {
     scopeResult = await builder.RebuildScopeAsync(new BandCurrentProjectionScopeKey(songId!, bandType!, rankingScope, normalizedCombo), options);
     Console.WriteLine();
@@ -189,7 +223,9 @@ else if (execute)
     Console.WriteLine($"  scopes: {rebuildResult.ScopeCount:N0}");
     Console.WriteLine($"  rows: {rebuildResult.DeletedRows:N0} deleted / {rebuildResult.InsertedRows:N0} inserted");
     Console.WriteLine($"  orphaned rows deleted: {rebuildResult.OrphanedRowsDeleted:N0}");
+    Console.WriteLine($"  unpublished candidates deleted: {rebuildResult.CandidateRowsDeleted:N0}");
     Console.WriteLine($"  generation: {rebuildResult.Generation:N0}");
+    Console.WriteLine($"  publish: {(rebuildResult.PublishResult.Published ? "published" : "not published")} {rebuildResult.PublishResult.PublishedScopes:N0}/{rebuildResult.PublishResult.ScopeCount:N0} scope(s), ready={rebuildResult.PublishResult.ReadyScopes:N0}, failed={rebuildResult.PublishResult.FailedScopes:N0}, missing={rebuildResult.PublishResult.MissingScopes:N0}, rows={rebuildResult.PublishResult.PublishedRows:N0}, oldRowsDeleted={rebuildResult.PublishResult.DeletedRows:N0}");
 }
 else
 {
@@ -213,9 +249,12 @@ var payload = new
     bandTypes,
     scopeMode,
     scope = scoped ? new { songId, bandType, rankingScope, comboId = string.IsNullOrWhiteSpace(normalizedCombo) ? null : normalizedCombo } : null,
+    publishGeneration,
+    publishScopeCount = publishScopes.Count,
     before,
     after,
     scopeResult,
+    publishResult,
     rebuildResult,
 };
 
@@ -237,6 +276,8 @@ static void PrintUsage()
           BandCurrentProjectionHarness --pg-env <env-var-name> [--out <path>]
           BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod [--band-types <csv>] [--scope-mode all|overall|combo] [--timeout-seconds <seconds>] [--clear-existing] [--progress-every <count>] [--out <path>]
           BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --song-id <song-id> --band-type <band-type> [--combo <combo>] [--timeout-seconds <seconds>] [--out <path>]
+                    BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --publish-generation <generation> [--band-types <csv>] [--scope-mode all|overall|combo] [--out <path>]
+                    BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --publish-generation <generation> --song-id <song-id> --band-type <band-type> [--combo <combo>] [--out <path>]
 
         Notes:
           - Default mode is read-only status/inspection.
@@ -245,8 +286,48 @@ static void PrintUsage()
           - Status mode is read-only and does not run schema migrations.
           - Execute mode ensures projection schema unless --skip-schema is provided.
           - Full rebuild uses the same scoped updater as normal incremental projection maintenance.
+          - Publish mode advances matching existing ready scopes for one generation without rebuilding rows.
           - Run full rebuild before deploying API code that reads current_band_leaderboard_entries.
         """);
+}
+
+static async Task<IReadOnlyList<BandCurrentProjectionScopeKey>> LoadPublishScopesAsync(
+    NpgsqlDataSource dataSource,
+    long generation,
+    IReadOnlyCollection<string> bandTypes,
+    bool includeOverall,
+    bool includeCombo)
+{
+    await using var conn = await dataSource.OpenConnectionAsync();
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = """
+        SELECT song_id, band_type, ranking_scope, scope_combo_id
+        FROM band_current_projection_scope
+        WHERE projection_generation = @generation
+          AND band_type = ANY(@bandTypes)
+          AND (
+              (@includeOverall AND ranking_scope = 'overall')
+              OR (@includeCombo AND ranking_scope = 'combo')
+          )
+        ORDER BY band_type, ranking_scope, scope_combo_id, song_id;
+        """;
+    cmd.Parameters.AddWithValue("generation", generation);
+    cmd.Parameters.AddWithValue("bandTypes", bandTypes.ToArray());
+    cmd.Parameters.AddWithValue("includeOverall", includeOverall);
+    cmd.Parameters.AddWithValue("includeCombo", includeCombo);
+
+    var scopes = new List<BandCurrentProjectionScopeKey>();
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        scopes.Add(new BandCurrentProjectionScopeKey(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3)));
+    }
+
+    return scopes;
 }
 
 static List<string> ParseBandTypes(string? value)
@@ -292,7 +373,7 @@ static void PrintStats(string title, BandCurrentProjectionStats stats)
         foreach (var scope in stats.RecentScopes.Take(5))
         {
             var error = string.IsNullOrWhiteSpace(scope.ErrorMessage) ? string.Empty : $" error={scope.ErrorMessage}";
-            Console.WriteLine($"    {scope.BandType}/{scope.RankingScope}/{DisplayCombo(scope.ScopeComboId)}/{scope.SongId}: rows={scope.RowCount:N0} status={scope.Status} gen={scope.ProjectionGeneration:N0}{error}");
+            Console.WriteLine($"    {scope.BandType}/{scope.RankingScope}/{DisplayCombo(scope.ScopeComboId)}/{scope.SongId}: rows={scope.RowCount:N0} status={scope.Status} gen={scope.ProjectionGeneration:N0} published={FormatNullable(scope.PublishedGeneration)} publishedRows={scope.PublishedRowCount:N0}{error}");
         }
     }
 }

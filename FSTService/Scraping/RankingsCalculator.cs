@@ -44,6 +44,7 @@ public sealed class RankingsCalculator
     private readonly IPathDataStore _pathStore;
     private readonly ScrapeProgressTracker _progress;
     private readonly FeatureOptions _features;
+    private readonly ScraperOptions _scraperOptions;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
     private readonly BandTeamRankingRebuildOptions _bandTeamRankingOptions;
     private readonly ILogger<RankingsCalculator> _log;
@@ -57,13 +58,15 @@ public sealed class RankingsCalculator
         IOptions<FeatureOptions> features,
         ILogger<RankingsCalculator> log,
         IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null,
-        IOptions<BandTeamRankingRebuildOptions>? bandTeamRankingOptions = null)
+        IOptions<BandTeamRankingRebuildOptions>? bandTeamRankingOptions = null,
+        IOptions<ScraperOptions>? scraperOptions = null)
     {
         _persistence = persistence;
         _metaDb = metaDb;
         _pathStore = pathStore;
         _progress = progress;
         _features = features.Value;
+        _scraperOptions = scraperOptions?.Value ?? new ScraperOptions();
         _bandRankHistoryOptions = bandRankHistoryOptions?.Value ?? new BandRankHistoryOptions();
         _bandTeamRankingOptions = bandTeamRankingOptions?.Value ?? BandTeamRankingRebuildOptions.Default;
         _log = log;
@@ -761,26 +764,52 @@ public sealed class RankingsCalculator
     {
         _progress.SetSubOperation("rank_history_snapshots");
         var snapshotsSw = System.Diagnostics.Stopwatch.StartNew();
+        var maxDegreeOfParallelism = Math.Clamp(
+            _scraperOptions.RankHistorySnapshotMaxDegreeOfParallelism,
+            1,
+            instruments.Count + 1);
 
-        var snapshotTasks = instruments.Select(instrument => Task.Run(() =>
+        var snapshotItems = instruments.Select(instrument => (Instrument: (string?)instrument, IsComposite: false))
+            .Append((Instrument: (string?)null, IsComposite: true));
+
+        await Parallel.ForEachAsync(snapshotItems,
+            new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism, CancellationToken = ct },
+            (snapshotItem, token) =>
         {
-            ct.ThrowIfCancellationRequested();
-            var instSw = System.Diagnostics.Stopwatch.StartNew();
+            token.ThrowIfCancellationRequested();
+            var snapshotItemSw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var db = _persistence.GetOrCreateInstrumentDb(instrument);
-                db.SnapshotRankHistory(cleanupRetention: false);
-
-                instSw.Stop();
-                LogPhase("snapshots.per_instrument", instrument, instSw.Elapsed);
+                if (snapshotItem.IsComposite)
+                {
+                    _metaDb.SnapshotCompositeRankHistory(cleanupRetention: false);
+                    snapshotItemSw.Stop();
+                    LogPhase("snapshots.composite", instrument: null, snapshotItemSw.Elapsed);
+                }
+                else
+                {
+                    var db = _persistence.GetOrCreateInstrumentDb(snapshotItem.Instrument!);
+                    db.SnapshotRankHistory(cleanupRetention: false);
+                    snapshotItemSw.Stop();
+                    LogPhase("snapshots.per_instrument", snapshotItem.Instrument, snapshotItemSw.Elapsed);
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                instSw.Stop();
-                _log.LogWarning(ex,
-                    "Rank history snapshot maintenance failed for {Instrument}. Continuing without blocking core rankings.",
-                    instrument);
-                LogPhase("snapshots.per_instrument.failed", instrument, instSw.Elapsed);
+                snapshotItemSw.Stop();
+                if (snapshotItem.IsComposite)
+                {
+                    _log.LogWarning(ex,
+                        "Composite rank history snapshot maintenance failed. Continuing without blocking core rankings.");
+                    LogPhase("snapshots.composite.failed", instrument: null, snapshotItemSw.Elapsed);
+                }
+                else
+                {
+                    _log.LogWarning(ex,
+                        "Rank history snapshot maintenance failed for {Instrument}. Continuing without blocking core rankings.",
+                        snapshotItem.Instrument);
+                    LogPhase("snapshots.per_instrument.failed", snapshotItem.Instrument, snapshotItemSw.Elapsed);
+                }
             }
             finally
             {
@@ -788,33 +817,9 @@ public sealed class RankingsCalculator
                     _progress.IncrementBranchProgress(progressBranchId);
                 _progress.ReportPhaseItemComplete();
             }
-        }, ct)).ToList();
 
-        var compositeTask = Task.Run(() =>
-        {
-            var compositeSnapSw = System.Diagnostics.Stopwatch.StartNew();
-            try
-            {
-                _metaDb.SnapshotCompositeRankHistory(cleanupRetention: false);
-                compositeSnapSw.Stop();
-                LogPhase("snapshots.composite", instrument: null, compositeSnapSw.Elapsed);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                compositeSnapSw.Stop();
-                _log.LogWarning(ex,
-                    "Composite rank history snapshot maintenance failed. Continuing without blocking core rankings.");
-                LogPhase("snapshots.composite.failed", instrument: null, compositeSnapSw.Elapsed);
-            }
-            finally
-            {
-                if (progressBranchId is not null)
-                    _progress.IncrementBranchProgress(progressBranchId);
-                _progress.ReportPhaseItemComplete();
-            }
-        }, ct);
-
-        await Task.WhenAll(snapshotTasks.Append(compositeTask));
+            return ValueTask.CompletedTask;
+        });
 
         snapshotsSw.Stop();
         LogPhase("snapshots.total", instrument: null, snapshotsSw.Elapsed);

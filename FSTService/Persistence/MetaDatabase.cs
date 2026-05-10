@@ -546,9 +546,12 @@ public sealed class MetaDatabase : IMetaDatabase
         {
             list.Add(new ScoreHistoryEntry
             {
-                SongId = r.GetString(0), Instrument = r.GetString(1),
-                OldScore = r.IsDBNull(2) ? null : r.GetInt32(2), NewScore = r.GetInt32(3),
-                OldRank = r.IsDBNull(4) ? null : r.GetInt32(4), NewRank = r.GetInt32(5),
+                SongId = r.GetString(0),
+                Instrument = r.GetString(1),
+                OldScore = r.IsDBNull(2) ? null : r.GetInt32(2),
+                NewScore = r.GetInt32(3),
+                OldRank = r.IsDBNull(4) ? null : r.GetInt32(4),
+                NewRank = r.GetInt32(5),
                 Accuracy = r.IsDBNull(6) ? null : r.GetInt32(6),
                 IsFullCombo = r.IsDBNull(7) ? null : r.GetBoolean(7),
                 Stars = r.IsDBNull(8) ? null : r.GetInt32(8),
@@ -3471,7 +3474,7 @@ public sealed class MetaDatabase : IMetaDatabase
 
         using var insertCmd = conn.CreateCommand();
         ConfigureBandRebuildCommand(insertCmd, tx, options);
-    insertCmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'combo' AND combo_id = @comboId", "ORDER BY team_key");
+        insertCmd.CommandText = BuildBandTeamRankingInsertSql(targetTable, "WHERE ranking_scope = 'combo' AND combo_id = @comboId", "ORDER BY team_key");
         var comboIdParam = insertCmd.Parameters.Add("comboId", NpgsqlDbType.Text);
 
         foreach (var comboId in comboIds)
@@ -3653,6 +3656,9 @@ public sealed class MetaDatabase : IMetaDatabase
         if (options.CleanupRetention)
             CleanupBandRankHistoryRetention(conn, bandType, options.RetentionDays, options.CommandTimeoutSeconds, ct);
 
+        if (jobId.HasValue)
+            return ReadBandRankHistoryJobSnapshotResult(conn, jobId.Value, options.CommandTimeoutSeconds);
+
         return new BandRankHistorySnapshotResult
         {
             RowsScanned = scanned,
@@ -3660,6 +3666,34 @@ public sealed class MetaDatabase : IMetaDatabase
             RowsSkipped = Math.Max(0, scanned - inserted),
             ChunksCompleted = completed,
             ChunksTotal = chunks.Count,
+        };
+    }
+
+    private static BandRankHistorySnapshotResult ReadBandRankHistoryJobSnapshotResult(
+        NpgsqlConnection conn,
+        long jobId,
+        int commandTimeoutSeconds)
+    {
+        using var cmd = conn.CreateCommand();
+        ConfigureCommandTimeout(cmd, commandTimeoutSeconds);
+        cmd.CommandText = @"
+            SELECT count(*)::int AS chunks_total,
+                   count(*) FILTER (WHERE status = 'complete')::int AS chunks_completed,
+                   COALESCE(sum(rows_scanned), 0)::bigint AS rows_scanned,
+                   COALESCE(sum(rows_inserted), 0)::bigint AS rows_inserted,
+                   COALESCE(sum(rows_skipped), 0)::bigint AS rows_skipped
+            FROM band_rank_history_job_chunks
+            WHERE job_id = @jobId";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        using var reader = cmd.ExecuteReader();
+        reader.Read();
+        return new BandRankHistorySnapshotResult
+        {
+            ChunksTotal = reader.GetInt32(0),
+            ChunksCompleted = reader.GetInt32(1),
+            RowsScanned = reader.GetInt64(2),
+            RowsInserted = reader.GetInt64(3),
+            RowsSkipped = reader.GetInt64(4),
         };
     }
 
@@ -4170,8 +4204,11 @@ public sealed class MetaDatabase : IMetaDatabase
         return ReadBandRankHistoryJob(reader);
     }
 
-    public BandRankHistoryJobInfo? GetNextBandRankHistoryJob()
+    public BandRankHistoryJobInfo? GetNextBandRankHistoryJob(int maxAttempts = int.MaxValue, TimeSpan? retryDelay = null)
     {
+        var effectiveMaxAttempts = Math.Max(1, maxAttempts);
+        var effectiveRetryDelay = retryDelay ?? TimeSpan.Zero;
+
         using var conn = _ds.OpenConnection();
         using (var tx = conn.BeginTransaction())
         {
@@ -4187,8 +4224,16 @@ public sealed class MetaDatabase : IMetaDatabase
                    current_ranking_scope, current_combo_id, updated_at
             FROM band_rank_history_jobs
             WHERE status IN ('queued', 'paused')
-            ORDER BY snapshot_date DESC, scrape_id DESC, job_id ASC
+               OR (
+                   status = 'failed'
+                   AND attempts < @maxAttempts
+                   AND updated_at <= now() - @retryDelay
+               )
+            ORDER BY CASE WHEN status IN ('queued', 'paused') THEN 0 ELSE 1 END,
+                     snapshot_date DESC, scrape_id DESC, job_id ASC
             LIMIT 1";
+        cmd.Parameters.AddWithValue("maxAttempts", effectiveMaxAttempts);
+        cmd.Parameters.AddWithValue("retryDelay", effectiveRetryDelay);
         using var reader = cmd.ExecuteReader();
         return reader.Read() ? ReadBandRankHistoryJob(reader) : null;
     }
@@ -4238,16 +4283,29 @@ public sealed class MetaDatabase : IMetaDatabase
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
-    public bool TryStartBandRankHistoryJob(long jobId)
+    public bool TryStartBandRankHistoryJob(long jobId, int maxAttempts = int.MaxValue)
     {
+        var effectiveMaxAttempts = Math.Max(1, maxAttempts);
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             UPDATE band_rank_history_jobs
-            SET status = 'running', started_at = COALESCE(started_at, now()), paused_at = NULL,
-                attempts = attempts + 1, updated_at = now()
-            WHERE job_id = @jobId AND status IN ('queued', 'paused')";
+            SET status = 'running',
+                started_at = COALESCE(started_at, now()),
+                failed_at = NULL,
+                paused_at = NULL,
+                last_error = NULL,
+                current_ranking_scope = NULL,
+                current_combo_id = NULL,
+                attempts = attempts + 1,
+                updated_at = now()
+            WHERE job_id = @jobId
+              AND (
+                  status IN ('queued', 'paused')
+                  OR (status = 'failed' AND attempts < @maxAttempts)
+              )";
         cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("maxAttempts", effectiveMaxAttempts);
         return cmd.ExecuteNonQuery() == 1;
     }
 
@@ -4256,11 +4314,24 @@ public sealed class MetaDatabase : IMetaDatabase
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
+            WITH counters AS (
+                SELECT count(*)::int AS chunks_total,
+                       count(*) FILTER (WHERE status = 'complete')::int AS chunks_completed,
+                       COALESCE(sum(rows_scanned), 0)::bigint AS rows_scanned,
+                       COALESCE(sum(rows_inserted), 0)::bigint AS rows_inserted,
+                       COALESCE(sum(rows_skipped), 0)::bigint AS rows_skipped
+                FROM band_rank_history_job_chunks
+                WHERE job_id = @jobId
+            )
             UPDATE band_rank_history_jobs
             SET status = 'complete', completed_at = now(), updated_at = now(), last_error = NULL,
-                chunks_total = @chunksTotal, chunks_completed = @chunksCompleted,
-                rows_scanned = @rowsScanned, rows_inserted = @rowsInserted, rows_skipped = @rowsSkipped,
+                chunks_total = CASE WHEN counters.chunks_total > 0 THEN counters.chunks_total ELSE @chunksTotal END,
+                chunks_completed = CASE WHEN counters.chunks_total > 0 THEN counters.chunks_completed ELSE @chunksCompleted END,
+                rows_scanned = CASE WHEN counters.chunks_total > 0 THEN counters.rows_scanned ELSE @rowsScanned END,
+                rows_inserted = CASE WHEN counters.chunks_total > 0 THEN counters.rows_inserted ELSE @rowsInserted END,
+                rows_skipped = CASE WHEN counters.chunks_total > 0 THEN counters.rows_skipped ELSE @rowsSkipped END,
                 current_ranking_scope = NULL, current_combo_id = NULL
+            FROM counters
             WHERE job_id = @jobId";
         cmd.Parameters.AddWithValue("jobId", jobId);
         cmd.Parameters.AddWithValue("chunksTotal", result.ChunksTotal);
@@ -5214,7 +5285,16 @@ public sealed class MetaDatabase : IMetaDatabase
     public List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null)
     {
         if (TryGetBandSongPerformancesFromDerived(bandType, teamKey, comboId, out var derivedPerformances))
+        {
+            if (derivedPerformances.Count > 0)
+                return derivedPerformances;
+
+            if (TryGetBandSongPerformancesFromCurrentProjection(bandType, teamKey, comboId, out var currentPerformances)
+                && currentPerformances.Count > 0)
+                return currentPerformances;
+
             return derivedPerformances;
+        }
 
         if (TryGetBandSongPerformancesFromCurrentProjection(bandType, teamKey, comboId, out var projectedPerformances))
             return projectedPerformances;
@@ -5416,7 +5496,7 @@ public sealed class MetaDatabase : IMetaDatabase
                     WHERE band_type = @bandType
                       AND ranking_scope = @scope
                       AND scope_combo_id = @comboId
-                      AND status = 'ready'
+                      AND published_generation IS NOT NULL
                 );";
             scopeCmd.Parameters.AddWithValue("bandType", bandType);
             scopeCmd.Parameters.AddWithValue("scope", rankingScope);
@@ -5428,23 +5508,29 @@ public sealed class MetaDatabase : IMetaDatabase
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT
-                song_id,
-                NULLIF(entry_combo_id, '') AS combo_id,
-                rank AS effective_rank,
-                total_entries,
-                percentile,
-                score,
-                accuracy,
-                is_full_combo,
-                stars,
-                season,
-                end_time
-            FROM current_band_leaderboard_entries
-            WHERE band_type = @bandType
-              AND ranking_scope = @scope
-              AND scope_combo_id = @comboId
-              AND team_key = @teamKey
-            ORDER BY percentile ASC, effective_rank ASC, score DESC, song_id ASC;";
+                cble.song_id,
+                NULLIF(cble.entry_combo_id, '') AS combo_id,
+                cble.rank AS effective_rank,
+                cble.total_entries,
+                cble.percentile,
+                cble.score,
+                cble.accuracy,
+                cble.is_full_combo,
+                cble.stars,
+                cble.season,
+                cble.end_time
+            FROM current_band_leaderboard_entries cble
+            JOIN band_current_projection_scope scope
+              ON scope.song_id = cble.song_id
+             AND scope.band_type = cble.band_type
+             AND scope.ranking_scope = cble.ranking_scope
+             AND scope.scope_combo_id = cble.scope_combo_id
+             AND scope.published_generation = cble.projection_generation
+            WHERE cble.band_type = @bandType
+              AND cble.ranking_scope = @scope
+              AND cble.scope_combo_id = @comboId
+              AND cble.team_key = @teamKey
+            ORDER BY cble.percentile ASC, cble.rank ASC, cble.score DESC, cble.song_id ASC;";
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("scope", rankingScope);
         cmd.Parameters.AddWithValue("comboId", normalizedComboId);
@@ -6014,7 +6100,7 @@ public sealed class MetaDatabase : IMetaDatabase
         result = ([], 0);
 
         if (!TryGetCurrentBandProjectionScope(bandType, comboId, out var rankingScope, out var scopeComboId) ||
-            !TryGetReadyCurrentBandProjectionScopeRowCount(conn, songId, bandType, rankingScope, scopeComboId, out var totalEntries))
+            !TryGetPublishedCurrentBandProjectionScope(conn, songId, bandType, rankingScope, scopeComboId, out var totalEntries, out var projectionGeneration))
             return false;
 
         using var cmd = conn.CreateCommand();
@@ -6040,12 +6126,14 @@ public sealed class MetaDatabase : IMetaDatabase
                   AND cble.band_type = @bandType
                   AND cble.ranking_scope = @rankingScope
                   AND cble.scope_combo_id = @scopeComboId
+                  AND cble.projection_generation = @projectionGeneration
                 ORDER BY cble.rank ASC
                 LIMIT @limit OFFSET @offset
             )
             {SongBandLeaderboardEntryRowsSql};
             """;
         AddCurrentBandProjectionScopeParameters(cmd, songId, bandType, rankingScope, scopeComboId);
+        cmd.Parameters.AddWithValue("projectionGeneration", projectionGeneration);
         cmd.Parameters.AddWithValue("limit", limit);
         cmd.Parameters.AddWithValue("offset", offset);
 
@@ -6065,7 +6153,7 @@ public sealed class MetaDatabase : IMetaDatabase
         entry = null;
 
         if (!TryGetCurrentBandProjectionScope(bandType, comboId, out var rankingScope, out var scopeComboId) ||
-            !TryGetReadyCurrentBandProjectionScopeRowCount(conn, songId, bandType, rankingScope, scopeComboId, out _))
+            !TryGetPublishedCurrentBandProjectionScope(conn, songId, bandType, rankingScope, scopeComboId, out _, out var projectionGeneration))
             return false;
 
         using var cmd = conn.CreateCommand();
@@ -6091,6 +6179,7 @@ public sealed class MetaDatabase : IMetaDatabase
                   AND cble.band_type = @bandType
                   AND cble.ranking_scope = @rankingScope
                   AND cble.scope_combo_id = @scopeComboId
+                  AND cble.projection_generation = @projectionGeneration
                   AND @accountId = ANY(cble.team_members)
                 ORDER BY cble.rank ASC
                 LIMIT 1
@@ -6098,6 +6187,7 @@ public sealed class MetaDatabase : IMetaDatabase
             {SongBandLeaderboardEntryRowsSql};
             """;
         AddCurrentBandProjectionScopeParameters(cmd, songId, bandType, rankingScope, scopeComboId);
+        cmd.Parameters.AddWithValue("projectionGeneration", projectionGeneration);
         cmd.Parameters.AddWithValue("accountId", accountId);
 
         using var reader = cmd.ExecuteReader();
@@ -6116,7 +6206,7 @@ public sealed class MetaDatabase : IMetaDatabase
         entry = null;
 
         if (!TryGetCurrentBandProjectionScope(bandType, comboId, out var rankingScope, out var scopeComboId) ||
-            !TryGetReadyCurrentBandProjectionScopeRowCount(conn, songId, bandType, rankingScope, scopeComboId, out _))
+            !TryGetPublishedCurrentBandProjectionScope(conn, songId, bandType, rankingScope, scopeComboId, out _, out var projectionGeneration))
             return false;
 
         using var cmd = conn.CreateCommand();
@@ -6142,6 +6232,7 @@ public sealed class MetaDatabase : IMetaDatabase
                   AND cble.band_type = @bandType
                   AND cble.ranking_scope = @rankingScope
                   AND cble.scope_combo_id = @scopeComboId
+                  AND cble.projection_generation = @projectionGeneration
                   AND cble.team_key = @teamKey
                 ORDER BY cble.rank ASC
                 LIMIT 1
@@ -6149,6 +6240,7 @@ public sealed class MetaDatabase : IMetaDatabase
             {SongBandLeaderboardEntryRowsSql};
             """;
         AddCurrentBandProjectionScopeParameters(cmd, songId, bandType, rankingScope, scopeComboId);
+        cmd.Parameters.AddWithValue("projectionGeneration", projectionGeneration);
         cmd.Parameters.AddWithValue("teamKey", teamKey);
 
         using var reader = cmd.ExecuteReader();
@@ -6181,34 +6273,37 @@ public sealed class MetaDatabase : IMetaDatabase
         string.Equals(bandType, "Band_Trios", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(bandType, "Band_Quad", StringComparison.OrdinalIgnoreCase);
 
-    private static bool TryGetReadyCurrentBandProjectionScopeRowCount(
+    private static bool TryGetPublishedCurrentBandProjectionScope(
         NpgsqlConnection conn,
         string songId,
         string bandType,
         string rankingScope,
         string scopeComboId,
-        out int rowCount)
+        out int rowCount,
+        out long projectionGeneration)
     {
         rowCount = 0;
+        projectionGeneration = 0;
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT row_count
+            SELECT published_row_count, published_generation
             FROM band_current_projection_scope
             WHERE song_id = @songId
               AND band_type = @bandType
               AND ranking_scope = @rankingScope
               AND scope_combo_id = @scopeComboId
-              AND status = 'ready'
+              AND published_generation IS NOT NULL
             LIMIT 1;
             """;
         AddCurrentBandProjectionScopeParameters(cmd, songId, bandType, rankingScope, scopeComboId);
 
-        var value = cmd.ExecuteScalar();
-        if (value is null or DBNull)
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
             return false;
 
-        var count = Convert.ToInt64(value);
+        var count = reader.GetInt64(0);
         rowCount = count > int.MaxValue ? int.MaxValue : (int)count;
+        projectionGeneration = reader.GetInt64(1);
         return true;
     }
 

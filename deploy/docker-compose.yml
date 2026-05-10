@@ -77,25 +77,26 @@ services:
           memory: 4G
 
   fstservice:
-    image: ghcr.io/sfenton/fstservice:latest
+    image: &fstservice_image ghcr.io/sfenton/fstservice:latest
     container_name: fstservice
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
+    volumes: &fstservice_volumes
       - ./fst-data:/app/data
       # Docker socket for container recycling — allows FSTService to recreate
       # gluetun containers on CDN blocks instead of using the gluetun control API.
       - /var/run/docker.sock:/var/run/docker.sock
     # Grant the non-root 'ubuntu' user access to the Docker socket.
     # Set DOCKER_GID to your host's docker group ID (run: getent group docker | cut -d: -f3).
-    group_add:
+    group_add: &fstservice_group_add
       - "${DOCKER_GID:-999}"
+    command: ["--api-only"]
     # API-only service — the web frontend is served by the festivalweb container.
     ports:
       - "127.0.0.1:8081:8080"
-    environment:
+    environment: &fstservice_environment
       - DOTNET_ENVIRONMENT=Production
       # ── Database ──
       - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:?Set PG_PASSWORD in .env};Minimum Pool Size=2;Maximum Pool Size=15;Connection Idle Lifetime=30;Connection Pruning Interval=10;Command Timeout=0
@@ -113,8 +114,13 @@ services:
       - Scraper__PageConcurrency=${PAGE_CONCURRENCY:-10}
       # ── Songs scraped concurrently in sequential mode (default: 1) ──
       - Scraper__SongConcurrency=${SONG_CONCURRENCY:-1}
+      # ── Global scraper concurrency cap. Keep lower than appsettings default on shared API/DB hosts. ──
+      - Scraper__DegreeOfParallelism=${SCRAPER_DOP:-64}
+      - Scraper__DisableScraperWorker=${SCRAPER_DISABLE_SCRAPER_WORKER:-false}
       # ── Hard cap on API requests per second, 0 = unlimited (default: 0) ──
       - Scraper__MaxRequestsPerSecond=${MAX_REQUESTS_PER_SECOND:-0}
+      # ── Rank-history snapshots are WAL-heavy; keep this low unless worker has a dedicated DB. ──
+      - Scraper__RankHistorySnapshotMaxDegreeOfParallelism=${RANK_HISTORY_SNAPSHOT_MAX_DOP:-1}
       # ── Web registration retention in days (default: 7) ──
       - Scraper__WebRegistrationRetentionDays=${WEB_REGISTRATION_RETENTION_DAYS:-7}
       # ── Initial DOP: start low and ramp via AIMD slow-start to avoid CDN burst blocks (default: 4) ──
@@ -128,8 +134,12 @@ services:
       - Features__PlayerBands=${FEATURE_PLAYER_BANDS:-false}
       - ImprovementNotifications__Enabled=${IMPROVEMENT_NOTIFICATIONS_ENABLED:-true}
       - ImprovementNotifications__Scope=${IMPROVEMENT_NOTIFICATIONS_SCOPE:-registered}
-      # Set to true to disable background scraping (API-only mode)
-      # - Scraper__ApiOnly=true
+      # Queue band history as resumable background work instead of blocking ranking publish.
+      - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Background}
+      - BandRankHistory__CommandTimeoutSeconds=${BAND_RANK_HISTORY_COMMAND_TIMEOUT_SECONDS:-0}
+      - BandRankHistory__MaxRetryAttempts=${BAND_RANK_HISTORY_MAX_RETRY_ATTEMPTS:-3}
+      - BandRankHistory__RetryDelaySeconds=${BAND_RANK_HISTORY_RETRY_DELAY_SECONDS:-900}
+      - BandRankHistory__StaleRunningJobMinutes=${BAND_RANK_HISTORY_STALE_RUNNING_JOB_MINUTES:-15}
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00
@@ -154,6 +164,25 @@ services:
       - Scraper__ContainerNames__1=gluetun-2
       - Scraper__ContainerNames__2=gluetun-3
       - Scraper__ContainerNames__3=gluetun-4
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  fstworker:
+    image: *fstservice_image
+    container_name: fstworker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fstservice:
+        condition: service_healthy
+    volumes: *fstservice_volumes
+    group_add: *fstservice_group_add
+    environment: *fstservice_environment
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
       interval: 30s

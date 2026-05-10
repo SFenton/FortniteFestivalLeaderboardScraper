@@ -1813,8 +1813,38 @@ public static class DatabaseInitializer
             last_updated_at       TIMESTAMPTZ      NOT NULL,
             projection_generation BIGINT           NOT NULL DEFAULT 0,
             computed_at           TIMESTAMPTZ      NOT NULL,
-            PRIMARY KEY (song_id, band_type, ranking_scope, scope_combo_id, team_key)
+            PRIMARY KEY (song_id, band_type, ranking_scope, scope_combo_id, projection_generation, team_key)
         ) PARTITION BY LIST (band_type);
+
+        DO $$
+        DECLARE
+            key_columns TEXT[];
+        BEGIN
+            SELECT array_agg(att.attname ORDER BY ord.ordinality)
+            INTO key_columns
+            FROM pg_constraint con
+            JOIN unnest(con.conkey) WITH ORDINALITY AS ord(attnum, ordinality) ON TRUE
+            JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ord.attnum
+            WHERE con.conrelid = 'current_band_leaderboard_entries'::regclass
+              AND con.contype = 'p'
+              AND con.conname = 'current_band_leaderboard_entries_pkey';
+
+            IF key_columns IS NOT NULL AND key_columns <> ARRAY['song_id', 'band_type', 'ranking_scope', 'scope_combo_id', 'projection_generation', 'team_key'] THEN
+                ALTER TABLE current_band_leaderboard_entries DROP CONSTRAINT current_band_leaderboard_entries_pkey;
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'current_band_leaderboard_entries'::regclass
+                  AND contype = 'p'
+                  AND conname = 'current_band_leaderboard_entries_pkey'
+            ) THEN
+                ALTER TABLE current_band_leaderboard_entries
+                    ADD CONSTRAINT current_band_leaderboard_entries_pkey
+                    PRIMARY KEY (song_id, band_type, ranking_scope, scope_combo_id, projection_generation, team_key);
+            END IF;
+        END $$;
 
         CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_duets PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Duets');
         CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_trios PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Trios');
@@ -1822,6 +1852,9 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_cble_scope_rank
             ON current_band_leaderboard_entries (song_id, band_type, ranking_scope, scope_combo_id, rank);
+
+        CREATE INDEX IF NOT EXISTS ix_cble_scope_generation_rank
+            ON current_band_leaderboard_entries (song_id, band_type, ranking_scope, scope_combo_id, projection_generation, rank);
 
         CREATE INDEX IF NOT EXISTS ix_cble_team_song
             ON current_band_leaderboard_entries (band_type, team_key, song_id, ranking_scope, scope_combo_id);
@@ -1843,7 +1876,9 @@ public static class DatabaseInitializer
             ranking_scope         TEXT        NOT NULL DEFAULT 'overall',
             scope_combo_id        TEXT        NOT NULL DEFAULT '',
             projection_generation BIGINT      NOT NULL DEFAULT 0,
+            published_generation  BIGINT,
             row_count             BIGINT      NOT NULL DEFAULT 0,
+            published_row_count   BIGINT      NOT NULL DEFAULT 0,
             status                TEXT        NOT NULL DEFAULT 'ready',
             error_message         TEXT,
             last_rebuilt_at       TIMESTAMPTZ,
@@ -1851,11 +1886,27 @@ public static class DatabaseInitializer
             PRIMARY KEY (song_id, band_type, ranking_scope, scope_combo_id)
         );
 
+        ALTER TABLE band_current_projection_scope
+            ADD COLUMN IF NOT EXISTS published_generation BIGINT;
+
+        ALTER TABLE band_current_projection_scope
+            ADD COLUMN IF NOT EXISTS published_row_count BIGINT NOT NULL DEFAULT 0;
+
+        UPDATE band_current_projection_scope scope
+        SET published_generation = scope.projection_generation,
+            published_row_count = scope.row_count
+        WHERE scope.published_generation IS NULL
+                    AND scope.status = 'ready';
+
         CREATE INDEX IF NOT EXISTS ix_bcps_status_updated
             ON band_current_projection_scope (status, updated_at DESC);
 
         CREATE INDEX IF NOT EXISTS ix_bcps_scope_ready
             ON band_current_projection_scope (band_type, ranking_scope, scope_combo_id, status);
+
+        CREATE INDEX IF NOT EXISTS ix_bcps_scope_published
+            ON band_current_projection_scope (band_type, ranking_scope, scope_combo_id, published_generation)
+            WHERE published_generation IS NOT NULL;
 
         -- Aggregate band-team rankings are stored in per-band current tables.
 

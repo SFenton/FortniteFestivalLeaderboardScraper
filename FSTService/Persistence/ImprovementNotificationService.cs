@@ -572,6 +572,15 @@ public sealed class ImprovementNotificationService
         ? $"WHERE EXISTS (SELECT 1 FROM registered_bands rb WHERE rb.band_type = {alias}.band_type AND rb.team_key = {alias}.team_key)"
         : string.Empty;
 
+    private static string PublishedBandCurrentJoin(string alias = "c") => $"""
+        JOIN band_current_projection_scope {alias}_published_scope
+          ON {alias}_published_scope.song_id = {alias}.song_id
+         AND {alias}_published_scope.band_type = {alias}.band_type
+         AND {alias}_published_scope.ranking_scope = {alias}.ranking_scope
+         AND {alias}_published_scope.scope_combo_id = {alias}.scope_combo_id
+         AND {alias}_published_scope.published_generation = {alias}.projection_generation
+        """;
+
     private static string RegisteredBandRankFilter(bool registeredOnly, string alias = "r") => registeredOnly
         ? $"WHERE EXISTS (SELECT 1 FROM registered_bands rb WHERE rb.band_type = {alias}.band_type AND rb.team_key = {alias}.team_key)"
         : string.Empty;
@@ -608,6 +617,7 @@ public sealed class ImprovementNotificationService
     private static string CountBandSongRowsSql(bool registeredOnly) => $"""
         SELECT COUNT(*)
         FROM current_band_leaderboard_entries c
+        {PublishedBandCurrentJoin()}
         {RegisteredBandCurrentFilter(registeredOnly)};
         """;
 
@@ -623,6 +633,7 @@ public sealed class ImprovementNotificationService
         WITH subject_rows AS (
             SELECT DISTINCT c.band_type, c.team_key
             FROM current_band_leaderboard_entries c
+            {PublishedBandCurrentJoin()}
             {RegisteredBandCurrentFilter(registeredOnly)}
             UNION
             SELECT DISTINCT r.band_type, r.team_key
@@ -879,62 +890,22 @@ public sealed class ImprovementNotificationService
 
     private static string PlayerRankEventSelectOrInsertSql(bool execute)
     {
-        if (!execute)
-            return """
-                , rank_event_rows AS (
-                    SELECT *
-                    FROM event_rows
-                    WHERE event_kind IN (
-                        'player_total_score_rank_improved',
-                        'player_skill_rank_improved',
-                        'player_weighted_rank_improved',
-                        'player_fc_rate_rank_improved')
-                ), progress_event_rows AS (
-                    SELECT *
-                    FROM event_rows
-                    WHERE event_kind NOT IN (
-                        'player_total_score_rank_improved',
-                        'player_skill_rank_improved',
-                        'player_weighted_rank_improved',
-                        'player_fc_rate_rank_improved')
-                ), grouped_rank_event_rows AS (
-                    SELECT account_id,
-                           instrument,
-                           COUNT(*) AS event_count
-                    FROM rank_event_rows
-                    GROUP BY account_id, instrument
-                )
-                SELECT
-                    (SELECT COUNT(*) FROM grouped_rank_event_rows)
-                    + (SELECT COUNT(*) FROM progress_event_rows);
-                """;
-
-        return """
-            , rank_event_rows AS (
-                SELECT *
-                FROM event_rows
-                WHERE event_kind IN (
-                    'player_total_score_rank_improved',
-                    'player_skill_rank_improved',
-                    'player_weighted_rank_improved',
-                    'player_fc_rate_rank_improved')
-            ), progress_event_rows AS (
-                SELECT *
-                FROM event_rows
-                WHERE event_kind NOT IN (
-                    'player_total_score_rank_improved',
-                    'player_skill_rank_improved',
-                    'player_weighted_rank_improved',
-                    'player_fc_rate_rank_improved')
-            ), grouped_rank_event_rows AS (
+        const string coalesced = """
+            , grouped_event_rows AS (
                 SELECT account_id,
                        instrument,
                        COUNT(*) AS event_count,
+                       CASE
+                           WHEN BOOL_OR(event_kind IN ('player_total_score_improved', 'player_fc_count_improved')) THEN 'instrumentAggregate'
+                           ELSE 'aggregateRank'
+                       END AS coalesced_group,
                        array_agg(event_kind ORDER BY CASE event_kind
-                           WHEN 'player_total_score_rank_improved' THEN 10
-                           WHEN 'player_skill_rank_improved' THEN 20
-                           WHEN 'player_weighted_rank_improved' THEN 30
-                           WHEN 'player_fc_rate_rank_improved' THEN 40
+                           WHEN 'player_total_score_improved' THEN 10
+                           WHEN 'player_total_score_rank_improved' THEN 20
+                           WHEN 'player_skill_rank_improved' THEN 30
+                           WHEN 'player_weighted_rank_improved' THEN 40
+                           WHEN 'player_fc_count_improved' THEN 50
+                           WHEN 'player_fc_rate_rank_improved' THEN 60
                            ELSE 100 END, event_kind) AS event_kinds,
                        jsonb_agg(jsonb_build_object(
                            'eventKind', event_kind,
@@ -944,23 +915,27 @@ public sealed class ImprovementNotificationService
                            'oldRank', old_rank,
                            'newRank', new_rank)
                            ORDER BY CASE event_kind
-                               WHEN 'player_total_score_rank_improved' THEN 10
-                               WHEN 'player_skill_rank_improved' THEN 20
-                               WHEN 'player_weighted_rank_improved' THEN 30
-                               WHEN 'player_fc_rate_rank_improved' THEN 40
+                               WHEN 'player_total_score_improved' THEN 10
+                               WHEN 'player_total_score_rank_improved' THEN 20
+                               WHEN 'player_skill_rank_improved' THEN 30
+                               WHEN 'player_weighted_rank_improved' THEN 40
+                               WHEN 'player_fc_count_improved' THEN 50
+                               WHEN 'player_fc_rate_rank_improved' THEN 60
                                ELSE 100 END, event_kind) AS coalesced_events
-                FROM rank_event_rows
+                FROM event_rows
                 GROUP BY account_id, instrument
-            ), primary_rank_event_rows AS (
+            ), primary_event_rows AS (
                 SELECT DISTINCT ON (account_id, instrument) *
-                FROM rank_event_rows
+                FROM event_rows
                 ORDER BY account_id, instrument, CASE event_kind
-                    WHEN 'player_total_score_rank_improved' THEN 10
-                    WHEN 'player_skill_rank_improved' THEN 20
-                    WHEN 'player_weighted_rank_improved' THEN 30
-                    WHEN 'player_fc_rate_rank_improved' THEN 40
+                    WHEN 'player_total_score_improved' THEN 10
+                    WHEN 'player_total_score_rank_improved' THEN 20
+                    WHEN 'player_skill_rank_improved' THEN 30
+                    WHEN 'player_weighted_rank_improved' THEN 40
+                    WHEN 'player_fc_count_improved' THEN 50
+                    WHEN 'player_fc_rate_rank_improved' THEN 60
                     ELSE 100 END, event_kind
-            ), coalesced_rank_event_rows AS (
+            ), coalesced_event_rows AS (
                 SELECT p.account_id,
                        p.event_kind,
                        p.instrument,
@@ -970,49 +945,38 @@ public sealed class ImprovementNotificationService
                        p.old_rank,
                        p.new_rank,
                        p.payload || jsonb_build_object(
-                           'coalescedGroup', 'aggregateRank',
+                           'coalescedGroup', g.coalesced_group,
                            'coalescedEventCount', g.event_count,
                            'coalescedEventKinds', g.event_kinds,
                            'coalescedEvents', g.coalesced_events) AS payload
-                FROM primary_rank_event_rows p
-                JOIN grouped_rank_event_rows g
+                FROM primary_event_rows p
+                JOIN grouped_event_rows g
                   ON g.account_id = p.account_id
                  AND g.instrument = p.instrument
-            ), coalesced_event_rows AS (
-                SELECT * FROM coalesced_rank_event_rows
-                UNION ALL
-                SELECT account_id,
-                       event_kind,
-                       instrument,
-                       metric,
-                       old_numeric,
-                       new_numeric,
-                       old_rank,
-                       new_rank,
-                       payload
-                FROM progress_event_rows
-            ), superseded_rank AS (
+            )
+            """;
+
+        if (!execute)
+            return $"""
+                {coalesced}
+                SELECT COUNT(*) FROM coalesced_event_rows;
+                """;
+
+        return $"""
+            {coalesced}, superseded AS (
                 UPDATE player_improvement_events existing
                 SET expires_at = LEAST(existing.expires_at, @detectedAt, now())
-                FROM (SELECT DISTINCT account_id, instrument FROM rank_event_rows) lanes
+                FROM (SELECT DISTINCT account_id, instrument FROM coalesced_event_rows) lanes
                 WHERE existing.account_id = lanes.account_id
                   AND existing.song_id IS NULL
                   AND existing.instrument IS NOT DISTINCT FROM lanes.instrument
                   AND existing.event_kind IN (
+                      'player_total_score_improved',
                       'player_total_score_rank_improved',
+                      'player_fc_count_improved',
+                      'player_fc_rate_rank_improved',
                       'player_skill_rank_improved',
-                      'player_weighted_rank_improved',
-                      'player_fc_rate_rank_improved')
-                  AND existing.expires_at > now()
-                RETURNING 1
-            ), superseded_progress AS (
-                UPDATE player_improvement_events existing
-                SET expires_at = LEAST(existing.expires_at, @detectedAt, now())
-                FROM (SELECT DISTINCT account_id, instrument, metric FROM progress_event_rows) lanes
-                WHERE existing.account_id = lanes.account_id
-                  AND existing.song_id IS NULL
-                  AND existing.instrument IS NOT DISTINCT FROM lanes.instrument
-                  AND existing.metric IS NOT DISTINCT FROM lanes.metric
+                      'player_weighted_rank_improved')
                   AND existing.expires_at > now()
                 RETURNING 1
             ), inserted AS (
@@ -1093,6 +1057,7 @@ public sealed class ImprovementNotificationService
         WITH source_rows AS (
             SELECT c.band_type, c.team_key, c.team_members, MIN(c.first_seen_at) AS first_seen_at, MAX(c.last_updated_at) AS last_seen_at
             FROM current_band_leaderboard_entries c
+            {PublishedBandCurrentJoin()}
             {RegisteredBandCurrentFilter(registeredOnly)}
             GROUP BY c.band_type, c.team_key, c.team_members
             UNION ALL
@@ -1126,6 +1091,7 @@ public sealed class ImprovementNotificationService
         WITH current_rows AS (
             SELECT c.*, s.band_subject_id, s.team_members AS subject_members
             FROM current_band_leaderboard_entries c
+            {PublishedBandCurrentJoin()}
             JOIN band_improvement_subjects s ON s.band_type = c.band_type AND s.team_key = c.team_key
             {RegisteredBandCurrentFilter(registeredOnly)}
         ), event_rows AS (
@@ -1185,6 +1151,7 @@ public sealed class ImprovementNotificationService
         WITH current_rows AS (
             SELECT c.*, s.band_subject_id
             FROM current_band_leaderboard_entries c
+            {PublishedBandCurrentJoin()}
             JOIN band_improvement_subjects s ON s.band_type = c.band_type AND s.team_key = c.team_key
             {RegisteredBandCurrentFilter(registeredOnly)}
         ), upserted AS (

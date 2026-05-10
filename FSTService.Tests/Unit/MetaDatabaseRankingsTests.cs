@@ -640,6 +640,77 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void FailedBandRankHistoryJob_BecomesNextJobOnlyWithinRetryPolicy()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var job = Db.EnqueueBandRankHistoryJob(200, "Band_Duets", today, "Background", coalesceSameDay: true);
+
+        Assert.True(Db.TryStartBandRankHistoryJob(job.JobId, maxAttempts: 2));
+        Db.FailBandRankHistoryJob(job.JobId, "stream timeout");
+
+        Assert.Null(Db.GetNextBandRankHistoryJob(maxAttempts: 2, retryDelay: TimeSpan.FromHours(1)));
+
+        var retry = Db.GetNextBandRankHistoryJob(maxAttempts: 2, retryDelay: TimeSpan.Zero);
+        Assert.NotNull(retry);
+        Assert.Equal(job.JobId, retry.JobId);
+
+        Assert.True(Db.TryStartBandRankHistoryJob(job.JobId, maxAttempts: 2));
+        Db.FailBandRankHistoryJob(job.JobId, "second timeout");
+
+        Assert.Null(Db.GetNextBandRankHistoryJob(maxAttempts: 2, retryDelay: TimeSpan.Zero));
+    }
+
+    [Fact]
+    public void TryStartBandRankHistoryJob_RestartsFailedJobAndClearsFailureFields()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var job = Db.EnqueueBandRankHistoryJob(201, "Band_Duets", today, "Background", coalesceSameDay: true);
+
+        Assert.True(Db.TryStartBandRankHistoryJob(job.JobId, maxAttempts: 3));
+        Db.FailBandRankHistoryJob(job.JobId, "temporary failure");
+
+        Assert.True(Db.TryStartBandRankHistoryJob(job.JobId, maxAttempts: 3));
+        var status = GetBandHistoryJobStatusDetails(job.JobId);
+
+        Assert.Equal("running", status.Status);
+        Assert.Equal(2, status.Attempts);
+        Assert.Null(status.LastError);
+        Assert.Null(status.FailedAt);
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistoryChunked_ResumesFailedChunkWithoutDuplicatingCompletedChunks()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var job = Db.EnqueueBandRankHistoryJob(202, "Band_Duets", today, "Background", coalesceSameDay: true);
+
+        var first = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions(), job.JobId);
+        Db.CompleteBandRankHistoryJob(job.JobId, first);
+        var initialRows = CountBandHistoryRows("band_team_rank_history", "Band_Duets", today);
+        var initialCompleteChunks = CountBandHistoryChunks(job.JobId, "complete");
+
+        Assert.True(first.ChunksTotal > 1);
+        Assert.Equal(first.ChunksTotal, initialCompleteChunks);
+
+        FailOneBandHistoryChunk(job.JobId);
+        var failedCounts = GetBandHistoryChunkStatusCounts(job.JobId);
+        Assert.Equal(first.ChunksTotal - 1, failedCounts.Complete);
+        Assert.Equal(1, failedCounts.Failed);
+
+        var retry = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions(), job.JobId);
+        Db.CompleteBandRankHistoryJob(job.JobId, retry);
+
+        Assert.Equal(first.ChunksTotal, retry.ChunksTotal);
+        Assert.Equal(first.ChunksTotal, retry.ChunksCompleted);
+        Assert.Equal(first.ChunksTotal, CountBandHistoryChunks(job.JobId, "complete"));
+        Assert.Equal(0, CountBandHistoryChunks(job.JobId, "failed"));
+        Assert.Equal(initialRows, CountBandHistoryRows("band_team_rank_history", "Band_Duets", today));
+        Assert.Equal("complete", GetBandHistoryJobStatus(job.JobId));
+    }
+
+    [Fact]
     public void GetBandRankHistory_ReturnsSnapshotsForTeam()
     {
         SeedBandRankingsSource();
@@ -718,6 +789,38 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(50.0, performance.Percentile, 3);
         Assert.Equal(3100, performance.Score);
         Assert.Equal(1, performance.Season);
+    }
+
+    [Fact]
+    public void GetBandSongPerformances_FallsBackToCurrentProjectionWhenDerivedDuplicateComboScopeMissesTeam()
+    {
+        const string songId = "5ec7617e-f48d-4353-9830-b8a1f22be9bb";
+        const string teamKey = "195e93ef108143b2975ee46662d4d0e1:4c2a1300df4c49a9b9d2b352d704bdf0:db9342c9dd874c799b58f177ec899f5e";
+
+        var persistence = new BandLeaderboardPersistence(
+            _fixture.DataSource,
+            Substitute.For<Microsoft.Extensions.Logging.ILogger<BandLeaderboardPersistence>>());
+        persistence.UpsertBandEntries(songId, "Band_Trios",
+        [
+            MakeBandEntry([
+                "195e93ef108143b2975ee46662d4d0e1",
+                "db9342c9dd874c799b58f177ec899f5e",
+                "4c2a1300df4c49a9b9d2b352d704bdf0",
+            ], "1:1:3", 519611),
+            MakeBandEntry(["other1", "other2", "other3"], "1:1:3", 600000),
+        ]);
+        Db.RebuildBandSongTeamRankings("Band_Trios");
+        RebuildCurrentBandProjectionScope(songId, "Band_Trios", "combo", "Solo_Bass+Solo_Bass+Solo_Drums");
+        DeleteBandSongTeamRankingRows("Band_Trios", "combo", "Solo_Bass+Solo_Bass+Solo_Drums", teamKey);
+
+        var performance = Assert.Single(Db.GetBandSongPerformances(
+            "Band_Trios",
+            teamKey,
+            "Solo_Bass+Solo_Bass+Solo_Drums"));
+
+        Assert.Equal(songId, performance.SongId);
+        Assert.Equal("Solo_Bass+Solo_Bass+Solo_Drums", performance.ComboId);
+        Assert.Equal(519611, performance.Score);
     }
 
     [Fact]
@@ -837,10 +940,10 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
-    public void GetSongBandLeaderboard_FallsBackWhenProjectionScopeIsNotReady()
+    public void GetSongBandLeaderboard_FallsBackWhenProjectionScopeIsUnpublished()
     {
         SeedBandRankingsSource();
-        RebuildCurrentBandProjectionScope("song_0", "Band_Duets", "overall", string.Empty);
+        RebuildCurrentBandProjectionScope("song_0", "Band_Duets", "overall", string.Empty, publishOnSuccess: false);
         ForceCurrentBandProjectionTopTeam("song_0", "Band_Duets", "overall", string.Empty, "p3:p4", 9999);
         UpdateCurrentBandProjectionScopeStatus("song_0", "Band_Duets", "overall", string.Empty, "failed");
 
@@ -852,6 +955,211 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(1100, entries[0].Score);
         Assert.NotNull(selectedTeamEntry);
         Assert.Equal(900, selectedTeamEntry.Score);
+    }
+
+    [Fact]
+    public async Task GetSongBandLeaderboard_IgnoresUnpublishedCandidateGeneration()
+    {
+        SeedBandRankingsSource();
+        var scope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        var published = RebuildCurrentBandProjectionScope(scope.SongId, scope.BandType, scope.RankingScope, scope.ScopeComboId);
+
+        UpdateBandEntryScore("song_0", "Band_Duets", "p3:p4", 9999);
+        var candidate = RebuildCurrentBandProjectionScope(scope.SongId, scope.BandType, scope.RankingScope, scope.ScopeComboId, publishOnSuccess: false);
+
+        var (entriesBeforePublish, _) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+
+        Assert.True(candidate.Generation > published.Generation);
+        Assert.Equal("p1:p2", entriesBeforePublish[0].TeamKey);
+        Assert.Equal(1100, entriesBeforePublish[0].Score);
+        Assert.Equal(published.Generation, GetCurrentBandProjectionPublishedGeneration(scope));
+
+        var publishResult = await CreateBandCurrentProjectionBuilder()
+            .TryPublishGenerationAsync(candidate.Generation, [scope]);
+        var (entriesAfterPublish, _) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+
+        Assert.True(publishResult.Published);
+        Assert.Equal(candidate.Generation, GetCurrentBandProjectionPublishedGeneration(scope));
+        Assert.Equal("p3:p4", entriesAfterPublish[0].TeamKey);
+        Assert.Equal(9999, entriesAfterPublish[0].Score);
+    }
+
+    [Fact]
+    public async Task TryPublishGeneration_DoesNotAdvanceWhenRequiredScopeIsMissing()
+    {
+        var scope = new BandCurrentProjectionScopeKey("missing_song", "Band_Duets", "overall", string.Empty);
+
+        var result = await CreateBandCurrentProjectionBuilder()
+            .TryPublishGenerationAsync(123, [scope]);
+
+        Assert.False(result.Published);
+        Assert.Equal(1, result.MissingScopes);
+        Assert.Equal(0, GetCurrentBandProjectionStateGeneration());
+    }
+
+    [Fact]
+    public void RebuildScope_DoesNotPublishMissingUnpublishedScope()
+    {
+        var result = RebuildCurrentBandProjectionScope("missing_song", "Band_Duets", "overall", string.Empty);
+        var scope = new BandCurrentProjectionScopeKey(result.SongId, result.BandType, result.RankingScope, result.ScopeComboId);
+
+        Assert.False(result.SourceScopeExists);
+        Assert.Null(GetCurrentBandProjectionPublishedGeneration(scope));
+        Assert.Equal(0, GetCurrentBandProjectionStateGeneration());
+    }
+
+    [Fact]
+    public async Task EnsureSchema_BackfillsAllExistingReadyScopesAsPublished()
+    {
+        SeedBandRankingsSource();
+        var firstScope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        var secondScope = new BandCurrentProjectionScopeKey("song_1", "Band_Duets", "overall", string.Empty);
+        var first = RebuildCurrentBandProjectionScope(firstScope.SongId, firstScope.BandType, firstScope.RankingScope, firstScope.ScopeComboId);
+        var second = RebuildCurrentBandProjectionScope(secondScope.SongId, secondScope.BandType, secondScope.RankingScope, secondScope.ScopeComboId);
+        ClearPublishedCurrentBandProjectionScopes(first.Generation);
+
+        await CreateBandCurrentProjectionBuilder().EnsureSchemaAsync();
+
+        Assert.True(second.Generation > first.Generation);
+        Assert.Equal(first.Generation, GetCurrentBandProjectionPublishedGeneration(firstScope));
+        Assert.Equal(second.Generation, GetCurrentBandProjectionPublishedGeneration(secondScope));
+    }
+
+    [Fact]
+    public async Task TryPublishGeneration_DoesNotAdvanceWhenRequiredScopeFailed()
+    {
+        SeedBandRankingsSource();
+        var scope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        var published = RebuildCurrentBandProjectionScope(scope.SongId, scope.BandType, scope.RankingScope, scope.ScopeComboId);
+        UpdateBandEntryScore("song_0", "Band_Duets", "p3:p4", 9999);
+        var candidate = RebuildCurrentBandProjectionScope(scope.SongId, scope.BandType, scope.RankingScope, scope.ScopeComboId, publishOnSuccess: false);
+        UpdateCurrentBandProjectionScopeStatus(scope.SongId, scope.BandType, scope.RankingScope, scope.ScopeComboId, "failed");
+
+        var result = await CreateBandCurrentProjectionBuilder()
+            .TryPublishGenerationAsync(candidate.Generation, [scope]);
+        var (entries, _) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+
+        Assert.False(result.Published);
+        Assert.Equal(1, result.FailedScopes);
+        Assert.Equal(published.Generation, GetCurrentBandProjectionPublishedGeneration(scope));
+        Assert.Equal("p1:p2", entries[0].TeamKey);
+        Assert.Equal(1100, entries[0].Score);
+    }
+
+    [Fact]
+    public async Task TryPublishGeneration_PublishesReadyScopeWhenSiblingScopeFailed()
+    {
+        SeedBandRankingsSource();
+        var readyScope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        var failedScope = new BandCurrentProjectionScopeKey("song_1", "Band_Duets", "overall", string.Empty);
+        RebuildCurrentBandProjectionScope(readyScope.SongId, readyScope.BandType, readyScope.RankingScope, readyScope.ScopeComboId);
+        var failedPublished = RebuildCurrentBandProjectionScope(failedScope.SongId, failedScope.BandType, failedScope.RankingScope, failedScope.ScopeComboId);
+
+        UpdateBandEntryScore("song_0", "Band_Duets", "p3:p4", 9999);
+        UpdateBandEntryScore("song_1", "Band_Duets", "p1:p2", 9999);
+        var staged = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync(
+                [readyScope, failedScope],
+                new BandCurrentProjectionRebuildOptions { PublishOnSuccess = false, SkipUnchangedScopes = false });
+        var candidateGeneration = Assert.Single(staged.Scopes.Select(static scope => scope.Generation).Distinct());
+        UpdateCurrentBandProjectionScopeStatus(failedScope.SongId, failedScope.BandType, failedScope.RankingScope, failedScope.ScopeComboId, "failed");
+
+        var publish = await CreateBandCurrentProjectionBuilder()
+            .TryPublishGenerationAsync(candidateGeneration, [readyScope, failedScope]);
+        var (readyEntries, _) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+        var readyAccountEntry = Db.GetSongBandLeaderboardEntryForAccount("song_0", "Band_Duets", "p3");
+        var readyTeamEntry = Db.GetSongBandLeaderboardEntryForTeam("song_0", "Band_Duets", "p3:p4");
+        var (failedEntries, _) = Db.GetSongBandLeaderboard("song_1", "Band_Duets", limit: 10);
+        var failedTeamEntry = Db.GetSongBandLeaderboardEntryForTeam("song_1", "Band_Duets", "p1:p2");
+
+        Assert.True(publish.Published);
+        Assert.Equal(2, publish.ScopeCount);
+        Assert.Equal(1, publish.ReadyScopes);
+        Assert.Equal(1, publish.PublishedScopes);
+        Assert.Equal(1, publish.FailedScopes);
+        Assert.Equal(0, publish.MissingScopes);
+        Assert.Equal(candidateGeneration, GetCurrentBandProjectionPublishedGeneration(readyScope));
+        Assert.Equal(failedPublished.Generation, GetCurrentBandProjectionPublishedGeneration(failedScope));
+        Assert.Equal("p3:p4", readyEntries[0].TeamKey);
+        Assert.Equal(9999, readyEntries[0].Score);
+        Assert.NotNull(readyAccountEntry);
+        Assert.Equal(9999, readyAccountEntry.Score);
+        Assert.NotNull(readyTeamEntry);
+        Assert.Equal(9999, readyTeamEntry.Score);
+        Assert.Equal("p3:p4", failedEntries[0].TeamKey);
+        Assert.Equal(1300, failedEntries[0].Score);
+        Assert.NotNull(failedTeamEntry);
+        Assert.Equal(1200, failedTeamEntry.Score);
+    }
+
+    [Fact]
+    public async Task RefreshScopes_CleansFailedUnpublishedCandidateRows()
+    {
+        SeedBandRankingsSource();
+        var refreshScope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        var failedScope = new BandCurrentProjectionScopeKey("song_1", "Band_Duets", "overall", string.Empty);
+        RebuildCurrentBandProjectionScope(refreshScope.SongId, refreshScope.BandType, refreshScope.RankingScope, refreshScope.ScopeComboId);
+        RebuildCurrentBandProjectionScope(failedScope.SongId, failedScope.BandType, failedScope.RankingScope, failedScope.ScopeComboId);
+
+        UpdateBandEntryScore("song_1", "Band_Duets", "p1:p2", 9999);
+        var staged = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync(
+                [failedScope],
+                new BandCurrentProjectionRebuildOptions { PublishOnSuccess = false, SkipUnchangedScopes = false });
+        var failedGeneration = Assert.Single(staged.Scopes.Select(static result => result.Generation).Distinct());
+        UpdateCurrentBandProjectionScopeStatus(failedScope.SongId, failedScope.BandType, failedScope.RankingScope, failedScope.ScopeComboId, "failed");
+        var failedCandidateRowsBeforeCleanup = CountCurrentBandProjectionRows(failedScope, failedGeneration);
+
+        UpdateBandEntryScore("song_0", "Band_Duets", "p3:p4", 9999);
+        var refreshed = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync([refreshScope], new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = false });
+        var publishedGeneration = Assert.Single(refreshed.Scopes.Select(static result => result.Generation).Distinct());
+
+        Assert.True(staged.InsertedRows > 0);
+        Assert.True(failedCandidateRowsBeforeCleanup > 0);
+        Assert.True(refreshed.PublishResult.Published);
+        Assert.True(refreshed.CandidateRowsDeleted > 0);
+        Assert.Equal(0, CountCurrentBandProjectionRows(failedScope, failedGeneration));
+        Assert.Equal(publishedGeneration, GetCurrentBandProjectionPublishedGeneration(refreshScope));
+        Assert.True(CountCurrentBandProjectionRows(refreshScope, publishedGeneration) > 0);
+    }
+
+    [Fact]
+    public async Task RebuildAll_WithBandTypeFilterPrunesOnlyThatBandType()
+    {
+        SeedBandRankingsSource();
+        SeedQuadBandRankingsSource();
+        var duetScope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        var quadScope = new BandCurrentProjectionScopeKey("quad_song", "Band_Quad", "overall", string.Empty);
+        var duetPublished = RebuildCurrentBandProjectionScope(duetScope.SongId, duetScope.BandType, duetScope.RankingScope, duetScope.ScopeComboId);
+        RebuildCurrentBandProjectionScope(quadScope.SongId, quadScope.BandType, quadScope.RankingScope, quadScope.ScopeComboId);
+        DeleteBandEntriesForSong(quadScope.SongId, quadScope.BandType);
+
+        var rebuild = await CreateBandCurrentProjectionBuilder()
+            .RebuildAllAsync(new BandCurrentProjectionRebuildOptions { BandTypes = ["Band_Quad"] });
+
+        Assert.True(rebuild.OrphanedRowsDeleted > 0);
+        Assert.Null(GetCurrentBandProjectionPublishedGeneration(quadScope));
+        Assert.Equal(duetPublished.Generation, GetCurrentBandProjectionPublishedGeneration(duetScope));
+        Assert.True(CountCurrentBandProjectionRows(duetScope, duetPublished.Generation) > 0);
+    }
+
+    [Fact]
+    public async Task RebuildAll_PrunesPublishedScopeMissingFromCurrentSource()
+    {
+        SeedBandRankingsSource();
+        var staleScope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+        RebuildCurrentBandProjectionScope(staleScope.SongId, staleScope.BandType, staleScope.RankingScope, staleScope.ScopeComboId);
+        DeleteBandEntriesForSong(staleScope.SongId, staleScope.BandType);
+
+        var rebuild = await CreateBandCurrentProjectionBuilder()
+            .RebuildAllAsync(new BandCurrentProjectionRebuildOptions());
+        var (entries, totalEntries) = Db.GetSongBandLeaderboard(staleScope.SongId, staleScope.BandType, limit: 10);
+
+        Assert.True(rebuild.OrphanedRowsDeleted > 0);
+        Assert.Null(GetCurrentBandProjectionPublishedGeneration(staleScope));
+        Assert.Empty(entries);
+        Assert.Equal(0, totalEntries);
     }
 
     private int CountBandHistoryRows(string tableName, string bandType, DateOnly? snapshotDate = null)
@@ -984,15 +1292,132 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    private void RebuildCurrentBandProjectionScope(string songId, string bandType, string rankingScope, string scopeComboId)
+    private void DeleteBandEntriesForSong(string songId, string bandType)
     {
-        var builder = new BandCurrentProjectionBuilder(
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM band_entries WHERE song_id = @songId AND band_type = @bandType";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void DeleteBandSongTeamRankingRows(string bandType, string rankingScope, string scopeComboId, string teamKey)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM band_song_team_rankings
+            WHERE band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId
+              AND team_key = @teamKey;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
+        cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.ExecuteNonQuery();
+    }
+
+    private BandCurrentProjectionScopeResult RebuildCurrentBandProjectionScope(string songId, string bandType, string rankingScope, string scopeComboId, bool publishOnSuccess = true)
+    {
+        var builder = CreateBandCurrentProjectionBuilder();
+
+        return builder.RebuildScopeAsync(
+                new BandCurrentProjectionScopeKey(songId, bandType, rankingScope, scopeComboId),
+                new BandCurrentProjectionRebuildOptions { PublishOnSuccess = publishOnSuccess })
+            .GetAwaiter()
+            .GetResult();
+    }
+
+    private BandCurrentProjectionBuilder CreateBandCurrentProjectionBuilder() =>
+        new(
             _fixture.DataSource,
             Substitute.For<Microsoft.Extensions.Logging.ILogger<BandCurrentProjectionBuilder>>());
 
-        builder.RebuildScopeAsync(new BandCurrentProjectionScopeKey(songId, bandType, rankingScope, scopeComboId))
-            .GetAwaiter()
-            .GetResult();
+    private void UpdateBandEntryScore(string songId, string bandType, string teamKey, int score)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE band_entries
+            SET score = @score,
+                last_updated_at = now()
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND team_key = @teamKey;
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.ExecuteNonQuery();
+    }
+
+    private long? GetCurrentBandProjectionPublishedGeneration(BandCurrentProjectionScopeKey scope)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT published_generation
+            FROM band_current_projection_scope
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId;
+            """;
+        cmd.Parameters.AddWithValue("songId", scope.SongId);
+        cmd.Parameters.AddWithValue("bandType", scope.BandType);
+        cmd.Parameters.AddWithValue("rankingScope", scope.RankingScope);
+        cmd.Parameters.AddWithValue("scopeComboId", scope.ScopeComboId);
+        var value = cmd.ExecuteScalar();
+        return value is null or DBNull ? null : Convert.ToInt64(value);
+    }
+
+    private int CountCurrentBandProjectionRows(BandCurrentProjectionScopeKey scope, long generation)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*)
+            FROM current_band_leaderboard_entries
+            WHERE song_id = @songId
+              AND band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId
+              AND projection_generation = @generation;
+            """;
+        cmd.Parameters.AddWithValue("songId", scope.SongId);
+        cmd.Parameters.AddWithValue("bandType", scope.BandType);
+        cmd.Parameters.AddWithValue("rankingScope", scope.RankingScope);
+        cmd.Parameters.AddWithValue("scopeComboId", scope.ScopeComboId);
+        cmd.Parameters.AddWithValue("generation", generation);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private void ClearPublishedCurrentBandProjectionScopes(long stateGeneration)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE band_current_projection_scope
+            SET published_generation = NULL,
+                published_row_count = 0;
+
+            UPDATE band_current_projection_state
+            SET current_generation = @stateGeneration;
+            """;
+        cmd.Parameters.AddWithValue("stateGeneration", stateGeneration);
+        cmd.ExecuteNonQuery();
+    }
+
+    private long GetCurrentBandProjectionStateGeneration()
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COALESCE((SELECT current_generation FROM band_current_projection_state WHERE id = TRUE), 0);";
+        return Convert.ToInt64(cmd.ExecuteScalar());
     }
 
     private void UpdateCurrentBandProjectionScopeStatus(string songId, string bandType, string rankingScope, string scopeComboId, string status)
@@ -1103,6 +1528,91 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.Parameters.AddWithValue("jobId", jobId);
         return (string)cmd.ExecuteScalar()!;
     }
+
+    private BandHistoryJobStatusDetails GetBandHistoryJobStatusDetails(long jobId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT status, attempts, last_error, failed_at FROM band_rank_history_jobs WHERE job_id = @jobId";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        using var reader = cmd.ExecuteReader();
+        reader.Read();
+        return new BandHistoryJobStatusDetails(
+            reader.GetString(0),
+            reader.GetInt32(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetDateTime(3));
+    }
+
+    private int CountBandHistoryChunks(long jobId, string status)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM band_rank_history_job_chunks WHERE job_id = @jobId AND status = @status";
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("status", status);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private BandHistoryChunkStatusCounts GetBandHistoryChunkStatusCounts(long jobId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*) FILTER (WHERE status = 'complete')::int,
+                   COUNT(*) FILTER (WHERE status = 'failed')::int,
+                   COUNT(*) FILTER (WHERE status = 'queued')::int,
+                   COUNT(*) FILTER (WHERE status = 'running')::int
+            FROM band_rank_history_job_chunks
+            WHERE job_id = @jobId;
+            """;
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        using var reader = cmd.ExecuteReader();
+        reader.Read();
+        return new BandHistoryChunkStatusCounts(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3));
+    }
+
+    private void FailOneBandHistoryChunk(long jobId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH selected AS (
+                SELECT ctid
+                FROM band_rank_history_job_chunks
+                WHERE job_id = @jobId AND status = 'complete'
+                ORDER BY ranking_scope, combo_id
+                LIMIT 1
+            )
+            UPDATE band_rank_history_job_chunks chunk
+            SET status = 'failed',
+                completed_at = NULL,
+                last_error = 'test retry',
+                updated_at = now()
+            FROM selected
+            WHERE chunk.ctid = selected.ctid;
+
+            UPDATE band_rank_history_jobs job
+            SET status = 'failed',
+                failed_at = now(),
+                completed_at = NULL,
+                last_error = 'test retry',
+                chunks_completed = counts.completed_count,
+                updated_at = now()
+            FROM (
+                SELECT COUNT(*) FILTER (WHERE status = 'complete')::int AS completed_count
+                FROM band_rank_history_job_chunks
+                WHERE job_id = @jobId
+            ) counts
+            WHERE job.job_id = @jobId;
+            """;
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private sealed record BandHistoryJobStatusDetails(string Status, int Attempts, string? LastError, DateTime? FailedAt);
+
+    private sealed record BandHistoryChunkStatusCounts(int Complete, int Failed, int Queued, int Running);
 
     private void SeedBandSearchProjection(string bandType, string teamKey, string[] memberAccountIds, string memberInstrumentsJson)
     {

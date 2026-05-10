@@ -76,6 +76,12 @@ public sealed class ScraperOptions
     public int SoloProjectionCleanupMaxDegreeOfParallelism { get; set; } = 4;
 
     /// <summary>
+    /// Maximum number of rank-history snapshot writers to run concurrently after rankings publish.
+    /// Keep this low on shared API/worker deployments to avoid WAL and data-file pressure.
+    /// </summary>
+    public int RankHistorySnapshotMaxDegreeOfParallelism { get; set; } = 1;
+
+    /// <summary>
     /// Command timeout in seconds for cleanup-time solo projection refreshes. 0 means unlimited.
     /// </summary>
     public int SoloProjectionCleanupCommandTimeoutSeconds { get; set; }
@@ -92,6 +98,11 @@ public sealed class ScraperOptions
     /// Set via <c>--api-only</c> CLI argument or <c>Scraper__ApiOnly=true</c> env var.
     /// </summary>
     public bool ApiOnly { get; set; }
+    /// <summary>
+    /// When true, do not register the scrape loop worker, but still allow other
+    /// non-API background services such as band rank-history maintenance to run.
+    /// </summary>
+    public bool DisableScraperWorker { get; set; }
 
     /// <summary>
     /// When true, only run the device-code auth setup and exit.

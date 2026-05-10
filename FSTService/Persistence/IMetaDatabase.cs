@@ -193,9 +193,9 @@ public interface IMetaDatabase : IDisposable
     BandRankHistorySnapshotResult SnapshotBandRankHistoryChunked(string bandType, BandRankHistorySnapshotOptions options, long? jobId = null, CancellationToken ct = default);
     int CleanupBandRankHistoryRetention(string bandType, int retentionDays = 365, int commandTimeoutSeconds = 0, CancellationToken ct = default, int batchSize = 5000, int maxBatches = 1);
     BandRankHistoryJobInfo EnqueueBandRankHistoryJob(long scrapeId, string bandType, DateOnly snapshotDate, string mode, bool coalesceSameDay = true);
-    BandRankHistoryJobInfo? GetNextBandRankHistoryJob();
+    BandRankHistoryJobInfo? GetNextBandRankHistoryJob(int maxAttempts = int.MaxValue, TimeSpan? retryDelay = null);
     int RecoverStaleBandRankHistoryJobs(TimeSpan staleAfter, TimeSpan maxCatchupAge);
-    bool TryStartBandRankHistoryJob(long jobId);
+    bool TryStartBandRankHistoryJob(long jobId, int maxAttempts = int.MaxValue);
     void CompleteBandRankHistoryJob(long jobId, BandRankHistorySnapshotResult result);
     void PauseBandRankHistoryJob(long jobId, string? reason = null);
     void FailBandRankHistoryJob(long jobId, string error);

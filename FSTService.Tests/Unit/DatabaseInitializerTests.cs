@@ -48,7 +48,7 @@ public class DatabaseInitializerTests : IDisposable
         var lifetime = Substitute.For<IHostApplicationLifetime>();
 
         var init = new StartupInitializer(
-            _persistence, festivalService, shopService, lifetime,
+            _persistence, _metaFixture.DataSource, festivalService, shopService, lifetime,
             Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
             Substitute.For<ILogger<StartupInitializer>>());
 
@@ -67,7 +67,7 @@ public class DatabaseInitializerTests : IDisposable
         var lifetime = Substitute.For<IHostApplicationLifetime>();
 
         var init = new StartupInitializer(
-            _persistence, festivalService, shopService, lifetime,
+            _persistence, _metaFixture.DataSource, festivalService, shopService, lifetime,
             Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
             Substitute.For<ILogger<StartupInitializer>>());
 
@@ -92,7 +92,7 @@ public class DatabaseInitializerTests : IDisposable
         var lifetime = Substitute.For<IHostApplicationLifetime>();
 
         var init = new StartupInitializer(
-            _persistence, festivalService, shopService, lifetime,
+            _persistence, _metaFixture.DataSource, festivalService, shopService, lifetime,
             Options.Create(new ScraperOptions { DataDirectory = _tempDir }),
             Substitute.For<ILogger<StartupInitializer>>());
 
