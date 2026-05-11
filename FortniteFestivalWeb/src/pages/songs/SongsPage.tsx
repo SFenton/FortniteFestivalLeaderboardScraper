@@ -581,11 +581,6 @@ export default function SongsPage() {
   const openFilterRef = useRef(openFilter);
   openSortRef.current = openSort;
   openFilterRef.current = openFilter;
-  /* v8 ignore start � FAB action registration callbacks */
-  useEffect(() => {
-    fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
-  }, [fabSearch]);
-  /* v8 ignore stop */
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted, syncBannerDismissed, dismissSyncBanner } = usePlayerData();
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
 
@@ -617,6 +612,16 @@ export default function SongsPage() {
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
   const filtersActive = isFilterActive(settings.filters, displayInstrumentFilter, isShopVisible, enabledInstruments, isSelectedBand) || displayInstrumentFilter != null;
+  /* v8 ignore start � FAB action registration callbacks */
+  useEffect(() => {
+    fabSearch.registerActions({
+      openSort: () => openSortRef.current(),
+      openFilter: () => openFilterRef.current(),
+      sortActive,
+      filterActive: filtersActive,
+    });
+  }, [fabSearch, filtersActive, sortActive]);
+  /* v8 ignore stop */
   const hasFilterableProfile = isSelectedBand || !!playerData;
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: hasFilterableProfile, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [hasFilterableProfile, isShopVisible, appSettings.disableShopHighlighting]);
 
@@ -1064,7 +1069,7 @@ export default function SongsPage() {
   }, [activeItemId, closeQuickLinks, desktopRailRevealDelayMs, handleModalQuickLinkSelect, handleSongQuickLinkSelect, isWideDesktop, loadPhase, openQuickLinks, quickLinkItems, quickLinksOpen, quickLinksTitle]);
 
   const quickLinksButtonLabel = t('songs.quickLinksButton');
-  const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
+  const compactQuickLinksAction = !isWideDesktop && !isMobileChrome && pageQuickLinks
     ? (
       <ActionPill
         icon={<IoCompass size={Size.iconAction} />}
@@ -1076,7 +1081,7 @@ export default function SongsPage() {
 
   const emptyStagger = useStaggerStyle(200, { skip: !shouldStagger });
   const songsStyles = useSongsStyles();
-  const showMobilePageHeader = !isMobileChrome || appSettings.showButtonsInHeaderMobile;
+  const showMobilePageHeader = !isMobileChrome || (appSettings.showButtonsInHeaderMobile && !!compactQuickLinksAction);
   const loadingSpinnerStyle = isMobileChrome ? songsStyles.keyboardAwareSpinnerOverlay : undefined;
   const keyboardAwareMessageStyle = isMobileChrome ? songsStyles.keyboardAwareMessage : undefined;
   const emptyStateStyle = keyboardAwareMessageStyle ? { ...emptyStagger.style, ...keyboardAwareMessageStyle } : emptyStagger.style;
@@ -1098,13 +1103,13 @@ export default function SongsPage() {
       quickLinks={pageQuickLinks}
       before={<>
         <LoadGate phase={loadPhase} overlay spinnerStyle={loadingSpinnerStyle} spinnerTestId="songs-loading-spinner">
-          {isMobileChrome ? (
+          {isMobileChrome ? compactQuickLinksAction ? (
             <PageHeaderTransition visible={showMobilePageHeader}>
               <PageHeader
                 actions={compactQuickLinksAction}
               />
             </PageHeaderTransition>
-          ) : (
+          ) : null : (
             <PageHeader
               title={
                 <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>

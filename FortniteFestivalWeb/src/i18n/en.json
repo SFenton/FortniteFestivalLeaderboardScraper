@@ -6,6 +6,7 @@
     "reset": "Reset",
     "search": "Search...",
     "searchAction": "Search",
+    "clearSearch": "Clear Search",
     "notifications": "Notifications",
     "dismiss": "Dismiss",
     "loading": "Loading…",
@@ -18,7 +19,6 @@
     "ok": "OK",
     "failedToLoad": "Failed to load data",
     "searchPlayer": "Search player…",
-    "selectProfile": "Select Profile",
     "selectPlayerProfile": "Select Player Profile",
     "selectBandProfile": "Select Band Profile",
     "selectAsProfile": "Select {{name}} as Player Profile",
@@ -521,9 +521,7 @@
     "missingId": "This band link is missing an ID and cannot be resolved.",
     "lookupFailed": "The service could not resolve this older band link. Try refreshing the player page.",
     "selectProfile": "Select Band Profile",
-    "deselectProfile": "Deselect Band",
-    "deselectConfirmTitle": "Deselect Band?",
-    "deselectConfirmMessage": "Deselecting this band will prevent you from seeing band scores and song play history until a new player or band is selected. Are you sure you want to deselect this band?"
+    "deselectProfile": "Deselect Band"
   },
   "bandList": {
     "title": "Player Bands",

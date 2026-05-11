@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { forwardRef, useRef, useImperativeHandle, useLayoutEffect, useMemo, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler, type TouchEventHandler } from 'react';
+import { forwardRef, useRef, useImperativeHandle, useLayoutEffect, useMemo, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler, type ReactNode, type TouchEventHandler } from 'react';
 import { IoSearch } from 'react-icons/io5';
 import { IconSize, Colors, Font, Gap, Display, Align, Cursor, CssValue } from '@festival/theme';
 import fx from '../../styles/effects.module.css';
@@ -26,8 +26,16 @@ export interface SearchBarProps {
   inputClassName?: string;
   /** Extra style on the outer wrapper (e.g. for stagger animations). */
   style?: React.CSSProperties;
+  /** Extra style on the search icon. */
+  iconStyle?: React.CSSProperties;
+  /** Search icon size. */
+  iconSize?: number;
+  /** Extra style on the input element. */
+  inputStyle?: React.CSSProperties;
   /** Auto-focus on mount. */
   autoFocus?: boolean;
+  /** Optional control rendered at the end of the search field. */
+  trailing?: ReactNode;
 }
 
 export interface SearchBarRef {
@@ -52,7 +60,11 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
     className,
     inputClassName,
     style,
+    iconStyle,
+    iconSize,
+    inputStyle,
     autoFocus,
+    trailing,
   },
   ref,
 ) {
@@ -83,11 +95,11 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
         inputRef.current?.focus({ preventScroll: true });
       }}
     >
-      {!hideIcon && <IoSearch size={IconSize.xs} style={s.searchIcon} />}
+      {!hideIcon && <IoSearch size={iconSize ?? IconSize.xs} style={{ ...s.searchIcon, ...iconStyle }} />}
       <input
         ref={inputRef}
         className={`${fx.searchPlaceholder}${inputClassName ? ` ${inputClassName}` : ''}`}
-        style={s.searchInput}
+        style={{ ...s.searchInput, ...inputStyle }}
         placeholder={placeholder}
         value={value}
         onChange={e => onChange(e.target.value)}
@@ -96,6 +108,7 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
         onBlur={onBlur}
         enterKeyHint={enterKeyHint}
       />
+      {trailing}
     </div>
   );
 });

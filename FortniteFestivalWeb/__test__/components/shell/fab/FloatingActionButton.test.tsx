@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import FloatingActionButton, { type ActionItem } from '../../../../src/components/shell/fab/FloatingActionButton';
 import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../../src/constants/keyboardLayoutVars';
 import { TestProviders } from '../../../helpers/TestProviders';
@@ -28,6 +28,32 @@ class MockVisualViewport extends EventTarget {
 }
 
 let visualViewport: MockVisualViewport;
+
+function rectWithWidth(width: number, height = 56): DOMRect {
+  return {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: width,
+    bottom: height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+function mockDockLabelMeasurements(stageWidth: number, controlWidths: number[]) {
+  const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function getBoundingClientRectMock(this: HTMLElement) {
+    if (this.getAttribute('data-testid') === 'fab-dock-stage') return rectWithWidth(stageWidth);
+    if (this.getAttribute('data-dock-label-measure') === 'control') {
+      const index = Number(this.getAttribute('data-dock-label-index') ?? 0);
+      return rectWithWidth(controlWidths[index] ?? 56);
+    }
+    return originalGetBoundingClientRect.call(this);
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -141,6 +167,307 @@ describe('FloatingActionButton', () => {
   it('shows search bar when defaultOpen is true', () => {
     renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
     expect(screen.getByPlaceholderText('Search songs...')).toBeTruthy();
+  });
+
+  it('renders a collapsed songs dock with evenly distributed direct actions', () => {
+    const onSort = vi.fn();
+    const onFilter = vi.fn();
+    const onQuickLinks = vi.fn();
+
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [
+        { label: 'Sort Songs', icon: <span>S</span>, onPress: onSort },
+        { label: 'Filter Songs', icon: <span>F</span>, onPress: onFilter },
+      ],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: onQuickLinks,
+    });
+
+    const dock = document.querySelector('.fab-search-dock') as HTMLElement;
+    expect(dock).toBeTruthy();
+    expect(screen.getByTestId('fab-dock-row')).toHaveStyle({ justifyContent: 'space-between' });
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Search' })).toBeTruthy();
+    const sortButton = screen.getByRole('button', { name: 'Sort Songs' });
+    const filterButton = screen.getByRole('button', { name: 'Filter Songs' });
+    expect(sortButton).toBeTruthy();
+    expect(filterButton).toBeTruthy();
+    expect(sortButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
+    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
+    fireEvent.click(screen.getByRole('button', { name: 'Sort Songs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Filter Songs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+    expect(onSort).toHaveBeenCalledTimes(1);
+    expect(onFilter).toHaveBeenCalledTimes(1);
+    expect(onQuickLinks).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+  });
+
+  it('shows labels on all non-FAB dock controls when measured width fits', () => {
+    mockDockLabelMeasurements(420, [104, 84, 92]);
+
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [
+        { label: 'Sort Songs', displayLabel: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+        { label: 'Filter Songs', displayLabel: 'Filter', icon: <span>F</span>, onPress: vi.fn() },
+      ],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    const searchButton = screen.getByRole('button', { name: 'Search' });
+    const sortButton = screen.getByRole('button', { name: 'Sort Songs' });
+    const filterButton = screen.getByRole('button', { name: 'Filter Songs' });
+    const quickLinksButton = screen.getByRole('button', { name: 'Quick Links' });
+
+    expect(within(searchButton).getByText('Search')).toBeTruthy();
+    expect(within(sortButton).getByText('Sort')).toBeTruthy();
+    expect(within(filterButton).getByText('Filter')).toBeTruthy();
+    expect(within(quickLinksButton).queryByText(/quick links/i)).toBeNull();
+    expect(screen.getByTestId('fab-dock-row')).toHaveStyle({ justifyContent: 'flex-start', gap: '4px' });
+    expect(searchButton.parentElement).toHaveStyle({ width: '168px', minWidth: '104px' });
+    expect(searchButton).toHaveStyle({ width: '100%', justifyContent: 'flex-start' });
+    expect(sortButton).toHaveStyle({ width: '100%' });
+    expect(sortButton.parentElement).toHaveStyle({ width: '92px' });
+    expect(filterButton).toHaveStyle({ width: '100%' });
+    expect(filterButton.parentElement).toHaveStyle({ width: '92px' });
+    expect(sortButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
+    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
+  });
+
+  it('keeps the initial songs dock hidden until measured widths settle', () => {
+    mockDockLabelMeasurements(420, [104, 84, 92]);
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    let nextRafId = 0;
+    vi.mocked(window.requestAnimationFrame).mockImplementation((callback) => {
+      const frameId = ++nextRafId;
+      rafCallbacks.set(frameId, callback);
+      return frameId;
+    });
+    vi.mocked(window.cancelAnimationFrame).mockImplementation((frameId) => {
+      rafCallbacks.delete(frameId);
+    });
+
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [
+        { label: 'Sort Songs', displayLabel: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+        { label: 'Filter Songs', displayLabel: 'Filter', icon: <span>F</span>, onPress: vi.fn() },
+      ],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    const visibleContent = screen.getByTestId('fab-dock-visible-content');
+    const searchButton = screen.getByRole('button', { name: 'Search' });
+
+    expect(visibleContent).toHaveStyle({ opacity: '0' });
+    expect(searchButton.parentElement).toHaveStyle({ width: '168px', minWidth: '104px' });
+    expect(searchButton.parentElement).toHaveStyle({ transition: 'none' });
+
+    const runNextAnimationFrame = (time: number) => {
+      const nextFrame = rafCallbacks.entries().next().value;
+      if (!nextFrame) throw new Error('Expected a queued animation frame');
+      const [frameId, callback] = nextFrame;
+      rafCallbacks.delete(frameId);
+      callback(time);
+    };
+
+    act(() => { runNextAnimationFrame(0); });
+    expect(visibleContent).toHaveStyle({ opacity: '0' });
+    act(() => { runNextAnimationFrame(16); });
+    expect(visibleContent).toHaveStyle({ opacity: '1' });
+    expect((searchButton.parentElement as HTMLElement).style.transition).toContain('width 360ms ease');
+  });
+
+  it('uses blue active styling for active dock actions', () => {
+    mockDockLabelMeasurements(420, [104, 84, 92]);
+
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [
+        { label: 'Sort Songs', displayLabel: 'Sort', active: true, icon: <span>S</span>, onPress: vi.fn() },
+        { label: 'Filter Songs', displayLabel: 'Filter', icon: <span>F</span>, onPress: vi.fn() },
+      ],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    const sortButton = screen.getByRole('button', { name: 'Sort Songs' });
+    const filterButton = screen.getByRole('button', { name: 'Filter Songs' });
+
+    expect(sortButton.style.backgroundColor).toBe('rgb(45, 130, 230)');
+    expect(sortButton.style.backgroundImage).toBe('none');
+    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
+  });
+
+  it('keeps dock controls icon-only when measured labels do not fit', () => {
+    mockDockLabelMeasurements(280, [104, 84, 92]);
+
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [
+        { label: 'Sort Songs', displayLabel: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+        { label: 'Filter Songs', displayLabel: 'Filter', icon: <span>F</span>, onPress: vi.fn() },
+      ],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    const searchButton = screen.getByRole('button', { name: 'Search' });
+    const sortButton = screen.getByRole('button', { name: 'Sort Songs' });
+    const filterButton = screen.getByRole('button', { name: 'Filter Songs' });
+
+    expect(within(searchButton).queryByText('Search')).toBeNull();
+    expect(within(sortButton).queryByText('Sort')).toBeNull();
+    expect(within(filterButton).queryByText('Filter')).toBeNull();
+    expect(searchButton.parentElement).toHaveStyle({ width: '56px' });
+    expect(sortButton.parentElement).toHaveStyle({ width: '56px' });
+    expect(filterButton.parentElement).toHaveStyle({ width: '56px' });
+  });
+
+  it('can show Search and Sort labels when Filter is unavailable', () => {
+    mockDockLabelMeasurements(300, [104, 84]);
+
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [
+        { label: 'Sort Songs', displayLabel: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+      ],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    const searchButton = screen.getByRole('button', { name: 'Search' });
+    const sortButton = screen.getByRole('button', { name: 'Sort Songs' });
+
+    expect(within(searchButton).getByText('Search')).toBeTruthy();
+    expect(within(sortButton).getByText('Sort')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Filter Songs' })).toBeNull();
+  });
+
+  it('contracts labeled dock search directly to its stretched collapsed width', () => {
+    mockDockLabelMeasurements(420, [104, 84, 92]);
+
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [
+        { label: 'Sort Songs', displayLabel: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+        { label: 'Filter Songs', displayLabel: 'Filter', icon: <span>F</span>, onPress: vi.fn() },
+      ],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    const collapsedSearchButton = screen.getByRole('button', { name: 'Search' });
+    expect(collapsedSearchButton).toHaveStyle({ padding: '0px 12px', gap: '8px' });
+
+    fireEvent.click(collapsedSearchButton);
+    act(() => { vi.advanceTimersByTime(700); });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    const searchInputWrap = input.parentElement as HTMLElement;
+    const searchSlot = input.closest('.fab-search-bar')?.parentElement as HTMLElement;
+
+    expect(searchInputWrap).toHaveStyle({ padding: '0px 12px', gap: '8px' });
+
+    fireEvent.focus(input);
+    fireEvent.blur(input);
+    act(() => { vi.advanceTimersByTime(300); });
+
+    expect(searchSlot).toHaveStyle({ width: '168px', flexBasis: '168px' });
+  });
+
+  it('expands dock search, compacts on Enter blur, and preserves the query', () => {
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [{ label: 'Sort Songs', icon: <span>S</span>, onPress: vi.fn() }],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    const hiddenInput = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    const expandedSearchIcon = hiddenInput.parentElement?.querySelector('svg');
+    expect(document.activeElement).toBe(hiddenInput);
+    expect(hiddenInput).toHaveStyle({ opacity: '0' });
+    expect(expandedSearchIcon?.getAttribute('width')).toBe('18');
+    expect(expandedSearchIcon?.getAttribute('height')).toBe('18');
+    const sortSlot = screen.getByRole('button', { name: 'Sort Songs' }).parentElement as HTMLElement;
+    expect(sortSlot).toHaveStyle({ opacity: '0' });
+    expect(sortSlot.style.width).not.toBe('0px');
+
+    act(() => { vi.advanceTimersByTime(300); });
+    expect(sortSlot.style.width).toBe('0px');
+    expect(hiddenInput).toHaveStyle({ opacity: '0' });
+    act(() => { vi.advanceTimersByTime(400); });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    expect(input).toHaveStyle({ opacity: '1' });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'alpha' } });
+
+    expect(input.value).toBe('alpha');
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.blur(input);
+    expect(screen.getByPlaceholderText('Search songs...')).toBeTruthy();
+    expect(input).toHaveStyle({ opacity: '0' });
+    act(() => { vi.advanceTimersByTime(300); });
+    expect(screen.queryByPlaceholderText('Search songs...')).toBeTruthy();
+    expect(sortSlot.style.width).not.toBe('0px');
+    expect(sortSlot).toHaveStyle({ opacity: '0' });
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(screen.queryByPlaceholderText('Search songs...')).toBeNull();
+    act(() => { vi.advanceTimersByTime(40); });
+    expect(screen.getByTestId('fab-search-toggle-icon')).toHaveStyle({ opacity: '1' });
+    expect(sortSlot).toHaveStyle({ opacity: '1' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    act(() => { vi.advanceTimersByTime(700); });
+    expect((screen.getByPlaceholderText('Search songs...') as HTMLInputElement).value).toBe('alpha');
+  });
+
+  it('clears dock search without compacting while focused', () => {
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [{ label: 'Sort Songs', icon: <span>S</span>, onPress: vi.fn() }],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    act(() => { vi.advanceTimersByTime(700); });
+    const input = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'alpha' } });
+
+    const clearButton = screen.getByRole('button', { name: 'Clear Search' });
+    const pointerDownSpies = fireCancelableEvent(clearButton, 'pointerdown');
+    fireEvent.click(clearButton);
+
+    expect(pointerDownSpies.preventDefaultSpy).toHaveBeenCalled();
+    expect(pointerDownSpies.stopPropagationSpy).toHaveBeenCalled();
+    expect(screen.getByPlaceholderText('Search songs...')).toBeTruthy();
+    expect(input.value).toBe('');
   });
 
   it('search bar syncs with SearchQueryContext', () => {

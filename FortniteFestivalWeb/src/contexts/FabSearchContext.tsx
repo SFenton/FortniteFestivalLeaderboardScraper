@@ -1,9 +1,18 @@
 import { createContext, useContext, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
 
-type FabSearchContextType = {
-  registerActions: (actions: { openSort: () => void; openFilter: () => void }) => void;
+type SongsFabActions = {
   openSort: () => void;
   openFilter: () => void;
+  sortActive?: boolean;
+  filterActive?: boolean;
+};
+
+type FabSearchContextType = {
+  registerActions: (actions: SongsFabActions) => void;
+  openSort: () => void;
+  openFilter: () => void;
+  songsSortActive: boolean;
+  songsFilterActive: boolean;
   registerSuggestionsActions: (actions: { openFilter: () => void }) => void;
   openSuggestionsFilter: () => void;
   registerPlayerHistoryActions: (actions: { openSort: () => void }) => void;
@@ -31,7 +40,7 @@ type FabSearchContextType = {
 };
 
 const FabSearchContext = createContext<FabSearchContextType>({
-  registerActions: () => {}, openSort: () => {}, openFilter: () => {},
+  registerActions: () => {}, openSort: () => {}, openFilter: () => {}, songsSortActive: false, songsFilterActive: false,
   registerSuggestionsActions: () => {}, openSuggestionsFilter: () => {},
   registerPlayerHistoryActions: () => {}, openPlayerHistorySort: () => {},
   registerSongDetailActions: () => {}, openPaths: () => {},
@@ -44,7 +53,8 @@ const FabSearchContext = createContext<FabSearchContextType>({
 });
 
 export function FabSearchProvider({ children }: { children: ReactNode }) {
-  const actionsRef = useRef<{ openSort: () => void; openFilter: () => void }>({ openSort: () => {}, openFilter: () => {} });
+  const actionsRef = useRef<SongsFabActions>({ openSort: () => {}, openFilter: () => {}, sortActive: false, filterActive: false });
+  const [songsActionState, setSongsActionState] = useState({ sortActive: false, filterActive: false });
   const suggestionsActionsRef = useRef<{ openFilter: () => void }>({ openFilter: () => {} });
   const playerHistoryActionsRef = useRef<{ openSort: () => void }>({ openSort: () => {} });
   const songDetailActionsRef = useRef<{ openPaths: () => void }>({ openPaths: () => {} });
@@ -54,8 +64,14 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const bandActionsRef = useRef<{ openFilter: () => void }>({ openFilter: () => {} });
   const playerQuickLinksRef = useRef<() => void>(() => {});
 
-  const registerActions = useCallback((actions: { openSort: () => void; openFilter: () => void }) => {
+  const registerActions = useCallback((actions: SongsFabActions) => {
     actionsRef.current = actions;
+    const nextState = { sortActive: !!actions.sortActive, filterActive: !!actions.filterActive };
+    setSongsActionState(previous => (
+      previous.sortActive === nextState.sortActive && previous.filterActive === nextState.filterActive
+        ? previous
+        : nextState
+    ));
   }, []);
 
   const registerSuggestionsActions = useCallback((actions: { openFilter: () => void }) => {
@@ -113,7 +129,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<FabSearchContextType>(() => ({
-    registerActions, openSort, openFilter,
+    registerActions, openSort, openFilter, songsSortActive: songsActionState.sortActive, songsFilterActive: songsActionState.filterActive,
     registerSuggestionsActions, openSuggestionsFilter,
     registerPlayerHistoryActions, openPlayerHistorySort,
     registerSongDetailActions, openPaths,
@@ -123,7 +139,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerBandActions, openBandFilter,
     registerPlayerQuickLinks, openPlayerQuickLinks, hasPlayerQuickLinks,
     registerPlayerPageSelect, playerPageSelect,
-  }), [registerActions, openSort, openFilter,
+  }), [registerActions, openSort, openFilter, songsActionState.sortActive, songsActionState.filterActive,
     registerSuggestionsActions, openSuggestionsFilter,
     registerPlayerHistoryActions, openPlayerHistorySort,
     registerSongDetailActions, openPaths,

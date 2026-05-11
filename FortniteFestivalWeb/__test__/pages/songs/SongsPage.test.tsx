@@ -147,6 +147,21 @@ function selectTestBandProfile() {
   }));
 }
 
+function selectTestTrioBandProfile() {
+  localStorage.setItem('fst:selectedProfile', JSON.stringify({
+    type: 'band',
+    bandId: 'band-trio-1',
+    bandType: 'Band_Trios',
+    teamKey: 'sfentonx:kahnyri:phankie',
+    displayName: 'SFentonX + Kahnyri + Phankie.ToT',
+    members: [
+      { accountId: 'sfentonx', displayName: 'SFentonX' },
+      { accountId: 'kahnyri', displayName: 'Kahnyri' },
+      { accountId: 'phankie', displayName: 'Phankie.ToT' },
+    ],
+  }));
+}
+
 function setSongSettingsFilter(filterPatch: Record<string, unknown>) {
   const settings = defaultSongSettings();
   localStorage.setItem('fst:songSettings', JSON.stringify({
@@ -173,6 +188,28 @@ function mockSelectedBandRows() {
       score: 123456,
       accuracy: 980000,
       isFullCombo: true,
+      stars: 5,
+      season: 5,
+      endTime: '2026-05-01T00:00:00Z',
+    }],
+  });
+}
+
+function mockSelectedTrioBandRows() {
+  mockApi.getBandSongRows.mockResolvedValue({
+    bandType: 'Band_Trios',
+    teamKey: 'sfentonx:kahnyri:phankie',
+    comboId: 'Solo_Bass+Solo_Bass+Solo_Drums',
+    count: 1,
+    entries: [{
+      songId: 's1',
+      comboId: 'Solo_Bass+Solo_Bass+Solo_Drums',
+      rank: 2,
+      totalEntries: 20,
+      percentile: 10,
+      score: 234567,
+      accuracy: 970000,
+      isFullCombo: false,
       stars: 5,
       season: 5,
       endTime: '2026-05-01T00:00:00Z',
@@ -502,6 +539,40 @@ describe('SongsPage', () => {
     expect(container.textContent).toContain('Alpha Song');
     expect(container.textContent).toContain('Beta Song');
     expect(container.textContent).toContain('Gamma Song');
+  });
+
+  it('filters duplicate-instrument selected trio songs by selected band score', async () => {
+    selectTestTrioBandProfile();
+    mockSelectedTrioBandRows();
+    setSongSettingsFilter({
+      selectedBandHasScore: true,
+      hasScores: { Solo_Bass: true, Solo_Drums: true },
+      missingFCs: { Solo_Bass: true },
+      overThreshold: { Solo_Drums: true },
+      seasonFilter: { 5: false },
+      percentileFilter: { 10: false },
+      starsFilter: { 5: false },
+      difficultyFilter: { 3: false },
+    });
+    const matchingFilter: AppliedBandComboFilter = {
+      bandId: 'band-trio-1',
+      bandType: 'Band_Trios',
+      teamKey: 'sfentonx:kahnyri:phankie',
+      comboId: 'Solo_Bass+Solo_Bass+Solo_Drums',
+      assignments: [
+        { accountId: 'sfentonx', instrument: 'Solo_Bass' },
+        { accountId: 'kahnyri', instrument: 'Solo_Drums' },
+        { accountId: 'phankie', instrument: 'Solo_Bass' },
+      ],
+    };
+
+    const { container } = renderSongsPage('/songs', undefined, matchingFilter);
+    await settleSongsPage();
+
+    expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Trios', 'sfentonx:kahnyri:phankie', 'Solo_Bass+Solo_Bass+Solo_Drums');
+    expect(container.textContent).toContain('Alpha Song');
+    expect(container.textContent).not.toContain('Beta Song');
+    expect(container.textContent).not.toContain('Gamma Song');
   });
 
   it('uses the applied combo only when it belongs to the selected tracked band', async () => {
@@ -1217,17 +1288,15 @@ describe('SongsPage quick links', () => {
     expect(maxDiffButton.querySelector('span[style*="background-color"]')).toBeTruthy();
   });
 
-  it('opens the shared quick links modal on mobile layouts', async () => {
+  it('registers shared quick links on mobile layouts without rendering a header trigger', async () => {
     setViewportQueries({ mobile: true, wide: false });
     renderSongsPage('/songs');
 
     await settleSongsPage();
     expect(screen.queryByRole('heading', { name: 'Songs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
 
-    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
-    expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
-
-    await act(async () => { fireEvent.click(quickLinksButton); });
+    await act(async () => { fireEvent.click(screen.getByTestId('test-open-page-quick-links')); });
 
     expect(await screen.findByTestId('songs-quick-links-modal-list')).toBeTruthy();
     expect(screen.getByText('Title Quick Links')).toBeTruthy();

@@ -661,34 +661,38 @@ describe('App — mobile FAB branches', () => {
     expect(within(dialog).getByRole('tab', { name: 'Bands' }).getAttribute('aria-selected')).toBe('false');
   });
 
-  it('does not include unselected profile access in the mobile FAB menu', async () => {
+  it('keeps profile access out of the mobile Songs dock', async () => {
     setMobile();
     render(<App />);
 
     await screen.findByText('Test Song', undefined, { timeout: 5000 });
-    expect(screen.getByRole('button', { name: 'Select Profile' })).toBeDefined();
+    expect(screen.getByTestId('mobile-header-profile')).toBeDefined();
 
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
+    const dock = document.querySelector('.fab-search-dock') as HTMLElement;
+    expect(dock).toBeTruthy();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(within(dock).getByRole('button', { name: 'Search' })).toBeDefined();
+    expect(within(dock).getByRole('button', { name: 'Sort Songs' })).toBeDefined();
+    expect(within(dock).queryByRole('button', { name: 'Filter Songs' })).toBeNull();
 
-    expect(within(menu).queryByText('Select Profile')).toBeNull();
-    expect(within(menu).queryByText('Search')).toBeNull();
-    expect(within(menu).queryByText('Item Shop')).toBeNull();
-    expect(within(menu).getByText('Sort Songs')).toBeDefined();
+    expect(within(dock).queryByText('Select Profile')).toBeNull();
+    expect(within(dock).queryByText('Item Shop')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
   });
 
-  it('does not include the selected player in the mobile FAB menu', async () => {
+  it('keeps the selected player out of the mobile Songs dock and exposes Filter Songs', async () => {
     setMobile();
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
     render(<App />);
 
     await screen.findByText('Test Song', undefined, { timeout: 5000 });
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
+    const dock = document.querySelector('.fab-search-dock') as HTMLElement;
+    expect(dock).toBeTruthy();
 
-    expect(within(menu).queryByText('TrackedP')).toBeNull();
-    expect(within(menu).queryByText('Item Shop')).toBeNull();
-    expect(within(menu).getByText('Filter Songs')).toBeDefined();
+    expect(within(dock).queryByText('TrackedP')).toBeNull();
+    expect(within(dock).queryByText('Item Shop')).toBeNull();
+    expect(within(dock).getByRole('button', { name: 'Filter Songs' })).toBeDefined();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
   });
 
   it('does not include selected band profile access in the mobile FAB menu', async () => {
@@ -707,14 +711,13 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await screen.findByText('Test Song', undefined, { timeout: 5000 });
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
+    const dock = document.querySelector('.fab-search-dock') as HTMLElement;
+    expect(dock).toBeTruthy();
 
-    expect(within(menu).queryByText('Select Profile')).toBeNull();
-    expect(within(menu).queryByText('TrackedP + BandMate')).toBeNull();
-    expect(within(menu).queryByText('Item Shop')).toBeNull();
-    expect(within(menu).getByText('Duos')).toBeDefined();
-    fireEvent.click(within(menu).getByText('Filter Songs'));
+    expect(within(dock).queryByText('Select Profile')).toBeNull();
+    expect(within(dock).queryByText('TrackedP + BandMate')).toBeNull();
+    expect(within(dock).queryByText('Item Shop')).toBeNull();
+    fireEvent.click(within(dock).getByRole('button', { name: 'Filter Songs' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Filter Songs' });
     expect(within(dialog).getByText('Selected Band Scores')).toBeDefined();
