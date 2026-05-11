@@ -33,6 +33,79 @@ vi.mock('../../../src/components/modals/components/ModalShell', () => ({
   },
 }));
 
+const originalVisualViewportDescriptor = Object.getOwnPropertyDescriptor(window, 'visualViewport');
+const originalInnerHeightDescriptor = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+const originalClientHeightDescriptor = Object.getOwnPropertyDescriptor(document.documentElement, 'clientHeight');
+
+class MockVisualViewport extends EventTarget {
+  height: number;
+  offsetTop: number;
+
+  constructor(height = 844, offsetTop = 0) {
+    super();
+    this.height = height;
+    this.offsetTop = offsetTop;
+  }
+
+  set(height: number, offsetTop: number) {
+    this.height = height;
+    this.offsetTop = offsetTop;
+    this.dispatchEvent(new Event('resize'));
+    this.dispatchEvent(new Event('scroll'));
+  }
+}
+
+function restoreProperty(target: object, key: PropertyKey, descriptor: PropertyDescriptor | undefined) {
+  if (descriptor) {
+    Object.defineProperty(target, key, descriptor);
+  } else {
+    Reflect.deleteProperty(target, key);
+  }
+}
+
+function installVisualViewport({ height = 844, offsetTop = 0, innerHeight = 844, clientHeight = 844 } = {}) {
+  const visualViewport = new MockVisualViewport(height, offsetTop);
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: visualViewport });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+  Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: clientHeight });
+  return visualViewport;
+}
+
+function removeVisualViewport({ innerHeight = 844, clientHeight = 844 } = {}) {
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: undefined });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+  Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: clientHeight });
+}
+
+function setVisualViewport(visualViewport: MockVisualViewport, height: number, offsetTop = 0) {
+  act(() => { visualViewport.set(height, offsetTop); });
+}
+
+function getModalBody(): HTMLElement {
+  return screen.getByRole('dialog').querySelector('h2')?.nextElementSibling as HTMLElement;
+}
+
+function mockElementRect(element: HTMLElement, rect: Partial<DOMRect>) {
+  return vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+    x: rect.x ?? 0,
+    y: rect.y ?? rect.top ?? 0,
+    top: rect.top ?? 0,
+    right: rect.right ?? 0,
+    bottom: rect.bottom ?? 0,
+    left: rect.left ?? 0,
+    width: rect.width ?? 0,
+    height: rect.height ?? 0,
+    toJSON: () => ({}),
+  } as DOMRect);
+}
+
+function expectCenteredHint(element: HTMLElement) {
+  expect(element.style.display).toBe('flex');
+  expect(element.style.alignItems).toBe('center');
+  expect(element.style.justifyContent).toBe('center');
+  expect(element.style.textAlign).toBe('center');
+}
+
 function setViewportQueries({ mobile = false }: { mobile?: boolean } = {}) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -134,6 +207,9 @@ beforeEach(() => {
 afterEach(() => {
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
+  restoreProperty(window, 'visualViewport', originalVisualViewportDescriptor);
+  restoreProperty(window, 'innerHeight', originalInnerHeightDescriptor);
+  restoreProperty(document.documentElement, 'clientHeight', originalClientHeightDescriptor);
 });
 
 describe('SearchModal', () => {
@@ -188,8 +264,109 @@ describe('SearchModal', () => {
   it('pads mobile target buttons above safe-area bottoms', () => {
     setViewportQueries({ mobile: true });
     renderModal();
-    const body = screen.getByRole('dialog').querySelector('h2')?.nextElementSibling as HTMLElement;
+    const body = getModalBody();
     expect(body.style.padding).toContain('safe-area-inset-bottom');
+  });
+
+  it('lifts the mobile target buttons with a keyboard-aware transform while search is focused', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+
+    renderModal();
+    const filterGroup = screen.getByRole('group', { name: 'Search targets' });
+    mockElementRect(filterGroup, { top: 576, bottom: 620, height: 44 });
+    await advanceAndFlush(60);
+    fireEvent.focus(screen.getByPlaceholderText('Search songs, players, or bands…'));
+    setVisualViewport(visualViewport, 544);
+    await advanceAndFlush(0);
+
+    const body = getModalBody();
+    const panel = screen.getByTestId('search-results-panel');
+    expect(body.style.padding).toContain('safe-area-inset-bottom');
+    expect(body.style.padding).not.toContain('88px');
+    expect(body.style.padding).not.toContain('300px');
+    expect(filterGroup.style.transform).toBe('translate3d(0, -88px, 0)');
+    expect(panel.style.marginBottom).toBe('88px');
+    expect(filterGroup.parentElement).toBe(body);
+    expect(body.lastElementChild).toBe(filterGroup);
+  });
+
+  it('keeps the short-query hint centered in the keyboard-reduced result area', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+
+    renderModal();
+    const filterGroup = screen.getByRole('group', { name: 'Search targets' });
+    mockElementRect(filterGroup, { top: 576, bottom: 620, height: 44 });
+    await advanceAndFlush(60);
+    fireEvent.focus(screen.getByPlaceholderText('Search songs, players, or bands…'));
+    setVisualViewport(visualViewport, 544);
+    await advanceAndFlush(0);
+
+    const panel = screen.getByTestId('search-results-panel');
+    const resultList = screen.getByTestId('search-result-list');
+    const hint = screen.getByText('Enter at least two characters to search.');
+    expect(getModalBody().style.padding).not.toContain('88px');
+    expect(filterGroup.style.transform).toBe('translate3d(0, -88px, 0)');
+    expect(panel.style.marginBottom).toBe('88px');
+    expect(panel.style.display).toBe('flex');
+    expect(panel.style.flexDirection).toBe('column');
+    expect(panel.style.minHeight).toBe('0px');
+    expect(resultList.style.minHeight).toBe('0px');
+    expect(resultList.style.paddingTop).toBe('');
+    expect(resultList.style.paddingBottom).toBe('');
+    expectCenteredHint(hint);
+  });
+
+  it('uses visual viewport offsetTop when calculating the keyboard inset', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+
+    renderModal();
+    const filterGroup = screen.getByRole('group', { name: 'Search targets' });
+    mockElementRect(filterGroup, { top: 576, bottom: 620, height: 44 });
+    await advanceAndFlush(60);
+    fireEvent.focus(screen.getByPlaceholderText('Search songs, players, or bands…'));
+    setVisualViewport(visualViewport, 500, 44);
+    await advanceAndFlush(0);
+
+    expect(filterGroup.style.transform).toBe('translate3d(0, -88px, 0)');
+    expect(screen.getByTestId('search-results-panel').style.marginBottom).toBe('88px');
+  });
+
+  it('does not reapply keyboard transform after the focused mobile search input blurs', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+
+    renderModal();
+    const input = screen.getByPlaceholderText('Search songs, players, or bands…');
+    const filterGroup = screen.getByRole('group', { name: 'Search targets' });
+    mockElementRect(filterGroup, { top: 576, bottom: 620, height: 44 });
+    await advanceAndFlush(60);
+    fireEvent.focus(input);
+    setVisualViewport(visualViewport, 544);
+    await advanceAndFlush(0);
+    expect(filterGroup.style.transform).toBe('translate3d(0, -88px, 0)');
+
+    fireEvent.blur(input);
+    setVisualViewport(visualViewport, 444);
+
+    expect(getModalBody().style.padding).toContain('safe-area-inset-bottom');
+    expect(getModalBody().style.padding).not.toContain('300px');
+    expect(getModalBody().style.padding).not.toContain('400px');
+    expect(filterGroup.style.transform).toBe('');
+    expect(screen.getByTestId('search-results-panel').style.marginBottom).toBe('0px');
+  });
+
+  it('falls back safely when visualViewport is unavailable', () => {
+    removeVisualViewport();
+    setViewportQueries({ mobile: true });
+
+    renderModal();
+    act(() => { window.dispatchEvent(new Event('resize')); });
+
+    expect(getModalBody().style.padding).toContain('safe-area-inset-bottom');
+    expect(getModalBody().style.padding).not.toContain('NaNpx');
   });
 
   it('dismisses the mobile keyboard when the Search key is pressed', () => {
@@ -313,6 +490,37 @@ describe('SearchModal', () => {
     expect(screen.queryByTestId('search-section-songs')).toBeNull();
     expect(screen.queryByTestId('search-section-players')).toBeNull();
     expect(screen.queryByTestId('search-section-bands')).toBeNull();
+  });
+
+  it('keeps the global empty state centered while mobile keyboard transform is active', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+    mockApi.searchAccounts.mockResolvedValueOnce({ results: [] });
+    mockApi.searchBands.mockResolvedValueOnce({
+      query: 'zzzz', normalizedQuery: 'zzzz', rankBy: 'appearance', page: 1, pageSize: 10, totalCount: 0,
+      isAmbiguous: false, needsDisambiguation: false, interpretations: [], results: [],
+    });
+
+    renderModal();
+    const filterGroup = screen.getByRole('group', { name: 'Search targets' });
+    mockElementRect(filterGroup, { top: 576, bottom: 620, height: 44 });
+    await advanceAndFlush(60);
+    fireEvent.focus(screen.getByPlaceholderText('Search songs, players, or bands…'));
+    setVisualViewport(visualViewport, 544);
+    await advanceAndFlush(0);
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'zzzz' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+
+    const emptyState = await screen.findByText('No results found.');
+    const resultList = screen.getByTestId('search-result-list');
+    expect(getModalBody().style.padding).not.toContain('88px');
+    expect(filterGroup.style.transform).toBe('translate3d(0, -88px, 0)');
+    expect(screen.getByTestId('search-results-panel').style.marginBottom).toBe('88px');
+    expect(resultList.style.minHeight).toBe('0px');
+    expect(resultList.style.paddingTop).toBe('');
+    expect(resultList.style.paddingBottom).toBe('');
+    expectCenteredHint(emptyState);
   });
 
   it('matches songs the same way as the Songs page search', async () => {

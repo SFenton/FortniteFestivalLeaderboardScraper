@@ -21,13 +21,14 @@ import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 import {
   Align, Border, BoxSizing, Colors, Cursor, CssValue, Display, Font, Gap, Justify,
   LineHeight, Overflow, Radius, TextAlign, TextTransform, Weight, flexCenter, flexColumn,
-  border, frostedCard, padding, Shadow, FADE_DURATION, SPINNER_FADE_MS, STAGGER_INTERVAL,
+  border, frostedCard, padding, Shadow, FADE_DURATION, QUICK_FADE_MS, SPINNER_FADE_MS, STAGGER_INTERVAL,
 } from '@festival/theme';
 
 const SEARCH_MODAL_DESKTOP: CSSProperties = { width: 520, height: 640, maxHeight: '90vh' };
 const MODAL_TRANSITION_MS = 250;
 const SEARCH_STAGGER_VISIBLE_ITEMS = 8;
 const SEARCH_SCROLL_FADE_SIZE = 40;
+const SEARCH_KEYBOARD_CLEARANCE = 12;
 
 const SEARCH_TARGET_LABEL_KEYS: Record<SearchTarget, string> = {
   songs: 'search.tabs.songs',
@@ -73,15 +74,39 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const st = useStyles(isMobile);
   const inputRef = useRef<SearchBarRef>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const mobileFiltersRef = useRef<HTMLDivElement>(null);
   const wasVisibleRef = useRef(false);
+  const keyboardBaselineRef = useRef<number | null>(null);
+  const filterBottomBaselineRef = useRef<number | null>(null);
+  const keyboardInsetRef = useRef(0);
   const visibleTargets = useMemo(() => resolveSearchTargets(availableTargets), [availableTargets]);
   const resolvedPlaceholderKey = placeholderKey ?? getSearchPlaceholderKey(visibleTargets);
   const [query, setQuery] = useState('');
   const [activeTarget, setActiveTarget] = useState<SearchTarget | null>(null);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const st = useStyles(isMobile, keyboardInset);
   const search = useUnifiedSearch(query, { enabledTargets: visibleTargets });
+
+  const captureKeyboardBaseline = useCallback(() => {
+    const visualViewport = window.visualViewport;
+    const visualViewportBottom = visualViewport ? visualViewport.height + visualViewport.offsetTop : 0;
+    keyboardBaselineRef.current = Math.max(
+      keyboardBaselineRef.current ?? 0,
+      window.innerHeight || 0,
+      document.documentElement.clientHeight || 0,
+      visualViewportBottom,
+    );
+  }, []);
+
+  const resetKeyboardState = useCallback(() => {
+    keyboardBaselineRef.current = null;
+    filterBottomBaselineRef.current = null;
+    keyboardInsetRef.current = 0;
+    setKeyboardInset(0);
+  }, []);
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -91,13 +116,17 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     }
     if (!visible) {
       setQuery('');
+      setSearchFocused(false);
+      resetKeyboardState();
     }
     wasVisibleRef.current = visible;
-  }, [activeTarget, visible, visibleTargets]);
+  }, [activeTarget, resetKeyboardState, visible, visibleTargets]);
 
   const focusSearchWithoutScroll = useCallback(() => {
+    captureKeyboardBaseline();
+    setSearchFocused(true);
     inputRef.current?.focus({ preventScroll: true });
-  }, []);
+  }, [captureKeyboardBaseline]);
 
   useLayoutEffect(() => {
     if (!visible || !isMobileChrome) return;
@@ -105,7 +134,11 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   }, [focusSearchWithoutScroll, isMobileChrome, visible]);
 
   const handleOpenComplete = useCallback(() => {
-    setTimeout(() => focusSearchWithoutScroll(), 50);
+    setTimeout(() => {
+      focusSearchWithoutScroll();
+      window.visualViewport?.dispatchEvent(new Event('resize'));
+      window.dispatchEvent(new Event('resize'));
+    }, 50);
   }, [focusSearchWithoutScroll]);
 
   const handleSearchPressStart = useCallback((event: ReactPointerEvent<HTMLDivElement> | ReactTouchEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>) => {
@@ -114,6 +147,16 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     event.stopPropagation();
     focusSearchWithoutScroll();
   }, [focusSearchWithoutScroll]);
+
+  const handleSearchFocus = useCallback(() => {
+    captureKeyboardBaseline();
+    setSearchFocused(true);
+  }, [captureKeyboardBaseline]);
+
+  const handleSearchBlur = useCallback(() => {
+    setSearchFocused(false);
+    resetKeyboardState();
+  }, [resetKeyboardState]);
 
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (isMobileChrome && e.key === 'Enter') {
@@ -124,7 +167,60 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   const handleCloseComplete = useCallback(() => {
     setQuery('');
     setActiveTarget(null);
-  }, []);
+    setSearchFocused(false);
+    resetKeyboardState();
+  }, [resetKeyboardState]);
+
+  const updateKeyboardInset = useCallback(() => {
+    if (!visible || !isMobileChrome || !searchFocused) {
+      keyboardInsetRef.current = 0;
+      setKeyboardInset(0);
+      return;
+    }
+
+    captureKeyboardBaseline();
+    const baseline = keyboardBaselineRef.current ?? window.innerHeight;
+    const visualViewport = window.visualViewport;
+    const visibleBottom = visualViewport ? visualViewport.height + visualViewport.offsetTop : window.innerHeight;
+    const visualViewportLoss = baseline - visibleBottom;
+    const innerHeightLoss = baseline - window.innerHeight;
+    const viewportLoss = Math.max(0, Math.round(visualViewportLoss), Math.round(innerHeightLoss));
+    const desiredBottom = visibleBottom - SEARCH_KEYBOARD_CLEARANCE;
+    const filtersElement = mobileFiltersRef.current;
+    const filterRect = filtersElement?.getBoundingClientRect();
+    if (filterBottomBaselineRef.current == null && filterRect && filterRect.bottom > 0) {
+      const dialog = filtersElement?.closest('[role="dialog"]') as HTMLElement | null;
+      const dialogTransform = dialog ? getComputedStyle(dialog).transform : CssValue.none;
+      if (dialogTransform && dialogTransform !== CssValue.none && dialogTransform !== 'matrix(1, 0, 0, 1, 0, 0)') return;
+      filterBottomBaselineRef.current = Math.ceil(filterRect.bottom + keyboardInsetRef.current);
+    }
+    const unshiftedFilterBottom = filterBottomBaselineRef.current;
+    const measuredInset = unshiftedFilterBottom == null
+      ? viewportLoss
+      : Math.max(0, Math.ceil(unshiftedFilterBottom - desiredBottom));
+    const nextInset = Math.min(viewportLoss, measuredInset);
+
+    if (keyboardInsetRef.current === nextInset) return;
+    keyboardInsetRef.current = nextInset;
+    setKeyboardInset(nextInset);
+  }, [captureKeyboardBaseline, isMobileChrome, searchFocused, visible]);
+
+  useEffect(() => {
+    updateKeyboardInset();
+
+    if (!visible || !isMobileChrome || !searchFocused) return undefined;
+
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener('resize', updateKeyboardInset);
+    visualViewport?.addEventListener('scroll', updateKeyboardInset);
+    window.addEventListener('resize', updateKeyboardInset);
+
+    return () => {
+      visualViewport?.removeEventListener('resize', updateKeyboardInset);
+      visualViewport?.removeEventListener('scroll', updateKeyboardInset);
+      window.removeEventListener('resize', updateKeyboardInset);
+    };
+  }, [isMobileChrome, searchFocused, updateKeyboardInset, visible]);
 
   const closeAndNavigate = useCallback((path: string) => {
     onClose();
@@ -153,7 +249,7 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   }, []);
 
   const tabs = (
-    <div style={st.tabs} role="group" aria-label={t('search.targetTabs')}>
+    <div ref={mobileFiltersRef} style={st.tabs} role="group" aria-label={t('search.targetTabs')}>
       {visibleTargets.map(target => {
         const selected = activeTarget === target;
         return (
@@ -190,6 +286,8 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
           onChange={setQuery}
           placeholder={t(resolvedPlaceholderKey)}
           onKeyDown={handleSearchKeyDown}
+          onFocus={handleSearchFocus}
+          onBlur={handleSearchBlur}
           onPointerDownCapture={handleSearchPressStart}
           onTouchStartCapture={handleSearchPressStart}
           onMouseDownCapture={handleSearchPressStart}
@@ -242,6 +340,7 @@ function SearchResultsPanel(props: RenderResultsArgs) {
   const loading = !isShort && (waitingForDebounce || search.debouncing || (activeTarget == null
     ? visibleTargets.some(target => search.loading[target])
     : search.loading[activeTarget]));
+  const centeredMessage = !loading && shouldUseCenteredResultList(activeTarget, visibleTargets, trimmedQuery, search);
   const contentSignature = useMemo(
     () => getContentSignature(activeTarget, visibleTargets, trimmedQuery, search),
     [activeTarget, search, trimmedQuery, visibleTargets],
@@ -315,10 +414,16 @@ function SearchResultsPanel(props: RenderResultsArgs) {
   }
 
   return (
-    <div ref={resultListRef} style={activeTarget == null ? st.globalResultList : st.resultList} data-testid="search-result-list">
+    <div ref={resultListRef} style={centeredMessage ? st.centeredResultList : activeTarget == null ? st.globalResultList : st.resultList} data-testid="search-result-list">
       {renderResults({ ...props, shouldStagger: staggerSignature === contentSignature && loadPhase === LoadPhase.ContentIn })}
     </div>
   );
+}
+
+function shouldUseCenteredResultList(activeTarget: SearchTarget | null, visibleTargets: readonly SearchTarget[], query: string, search: ReturnType<typeof useUnifiedSearch>): boolean {
+  if (query.length < 2) return true;
+  if (activeTarget == null) return visibleTargets.every(target => !shouldRenderGlobalSection(target, search));
+  return !!search.errors[activeTarget] || getTargetResultCount(activeTarget, search) === 0;
 }
 
 function getContentSignature(activeTarget: SearchTarget | null, visibleTargets: readonly SearchTarget[], query: string, search: ReturnType<typeof useUnifiedSearch>): string {
@@ -480,12 +585,14 @@ function toPlayerBandEntry(band: BandSearchResult): PlayerBandEntry {
   };
 }
 
-function useStyles(isMobile: boolean) {
+function useStyles(isMobile: boolean, keyboardInset: number) {
   return useMemo(() => {
     const selectorPad = padding(Gap.lg, Gap.md + 4);
     const bodyPadding = isMobile
       ? paddingWithSafeAreaBottom(Gap.sm, Gap.section, Gap.section)
       : padding(Gap.sm, Gap.section, Gap.section);
+    const keyboardTransform = isMobile && keyboardInset > 0 ? `translate3d(0, -${keyboardInset}px, 0)` : undefined;
+    const keyboardResultsMargin = isMobile && keyboardInset > 0 ? keyboardInset : 0;
     const tabBase: CSSProperties = {
       ...frostedCard,
       flex: 1,
@@ -524,6 +631,8 @@ function useStyles(isMobile: boolean) {
         display: Display.flex,
         gap: Gap.sm,
         flexShrink: 0,
+        transform: keyboardTransform,
+        transition: `transform ${QUICK_FADE_MS}ms ease`,
       } as CSSProperties,
       tab: tabBase,
       tabSelected: {
@@ -546,6 +655,8 @@ function useStyles(isMobile: boolean) {
         minHeight: 0,
         ...flexColumn,
         overflowY: Overflow.auto,
+        marginBottom: keyboardResultsMargin,
+        transition: `margin-bottom ${QUICK_FADE_MS}ms ease`,
       } as CSSProperties,
       resultList: {
         ...flexColumn,
@@ -564,6 +675,12 @@ function useStyles(isMobile: boolean) {
         boxSizing: BoxSizing.borderBox,
         paddingTop: SEARCH_SCROLL_FADE_SIZE,
         paddingBottom: SEARCH_SCROLL_FADE_SIZE,
+      } as CSSProperties,
+      centeredResultList: {
+        ...flexColumn,
+        flex: 1,
+        minHeight: 0,
+        boxSizing: BoxSizing.borderBox,
       } as CSSProperties,
       section: {
         ...flexColumn,
@@ -655,5 +772,5 @@ function useStyles(isMobile: boolean) {
         lineHeight: LineHeight.relaxed,
       } as CSSProperties,
     };
-  }, [isMobile]);
+  }, [isMobile, keyboardInset]);
 }
