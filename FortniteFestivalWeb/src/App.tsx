@@ -377,7 +377,9 @@ function AppShell() {
   const notificationIds = notificationFeed.notificationIds;
   const notificationFeedReadyForHeader = useNotificationMockData || notificationFeed.status !== 'loading';
   const notificationFeedKey = notificationFeed.feedKey;
-  const { unreadNotificationIds, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
+  const { unreadNotificationIds, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds, {
+    isCurrentFeedLoaded: notificationFeed.status === 'ready',
+  });
   const { newNotificationIds } = useNotificationFreshnessState(notificationFeedKey, notificationIds, notificationFeed.sourceVersion);
   const notificationInstrumentFilter = useMemo(() => {
     if (notificationRequestProfile?.type !== 'player') return null;

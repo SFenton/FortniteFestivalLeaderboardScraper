@@ -143,4 +143,31 @@ describe('notificationSeenState', () => {
     expect(sortedSetValues(result.current.seenNotificationIds)).toEqual(['beta']);
     expect(sortedSetValues(result.current.unreadNotificationIds)).toEqual(['gamma']);
   });
+
+  it('keeps seen IDs while the current feed is still loading', () => {
+    writeSeenNotificationIds('player:p1', ['old', 'alpha']);
+
+    const { result, rerender } = renderHook(
+      ({ currentIds, isCurrentFeedLoaded }) => useNotificationSeenState('player:p1', currentIds, { isCurrentFeedLoaded }),
+      { initialProps: { currentIds: [] as string[], isCurrentFeedLoaded: false } },
+    );
+
+    expect(sortedSetValues(result.current.seenNotificationIds)).toEqual(['alpha', 'old']);
+    expect(storedSeenState()).toEqual({ 'player:p1': ['alpha', 'old'] });
+
+    rerender({ currentIds: ['alpha', 'beta'], isCurrentFeedLoaded: true });
+
+    expect(sortedSetValues(result.current.seenNotificationIds)).toEqual(['alpha']);
+    expect(sortedSetValues(result.current.unreadNotificationIds)).toEqual(['beta']);
+    expect(storedSeenState()).toEqual({ 'player:p1': ['alpha'] });
+  });
+
+  it('still prunes seen IDs when a loaded feed is empty', () => {
+    writeSeenNotificationIds('player:p1', ['alpha']);
+
+    const { result } = renderHook(() => useNotificationSeenState('player:p1', [], { isCurrentFeedLoaded: true }));
+
+    expect(sortedSetValues(result.current.seenNotificationIds)).toEqual([]);
+    expect(localStorage.getItem(NOTIFICATION_SEEN_STORAGE_KEY)).toBeNull();
+  });
 });
