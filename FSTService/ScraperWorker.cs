@@ -42,6 +42,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly ScrapeProgressTracker _progress;
     private readonly BackgroundWorkCoordinator _backgroundWork;
     private readonly UserSyncProgressTracker _syncTracker;
+    private readonly NotificationService _notifications;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
@@ -50,9 +51,6 @@ public sealed class ScraperWorker : BackgroundService
 
     private static readonly TimeSpan WebRegistrationStartupProtection = TimeSpan.FromHours(4);
     private static readonly TimeSpan BestEffortCleanupTimeout = TimeSpan.FromSeconds(30);
-
-    /// <summary>Background song sync task — stored so we can observe failures.</summary>
-    private Task? _backgroundSyncTask;
 
     public ScraperWorker(
         TokenManager tokenManager,
@@ -74,6 +72,7 @@ public sealed class ScraperWorker : BackgroundService
         ScrapeProgressTracker progress,
         BackgroundWorkCoordinator backgroundWork,
         UserSyncProgressTracker syncTracker,
+        NotificationService notifications,
         IOptions<ScraperOptions> options,
         IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
         IHostApplicationLifetime lifetime,
@@ -98,6 +97,7 @@ public sealed class ScraperWorker : BackgroundService
         _progress = progress;
         _backgroundWork = backgroundWork;
         _syncTracker = syncTracker;
+        _notifications = notifications;
         _options = options;
         _jsonOpts = jsonOptions.Value.SerializerOptions;
         _lifetime = lifetime;
@@ -168,11 +168,11 @@ public sealed class ScraperWorker : BackgroundService
             PrimeSongsCache(); // Rebuild with population tiers
         }
 
-        // --api-only mode: skip all background work, let the API serve requests
+        // --api-only mode: skip scrape work. Song catalog freshness is owned by
+        // SongCatalogRefreshWorker, which is registered directly by Program.cs.
         if (opts.ApiOnly)
         {
-            _log.LogInformation("Running in --api-only mode. Background scraping disabled. API is active.");
-            // Keep the worker alive (but idle) so the host doesn't shut down
+            _log.LogInformation("Running in --api-only mode. Scrape pipeline disabled.");
             try { await Task.Delay(Timeout.Infinite, stoppingToken); }
             catch (OperationCanceledException) { /* normal shutdown */ }
             return;
@@ -241,11 +241,6 @@ public sealed class ScraperWorker : BackgroundService
             return;
         }
 
-        // Start background song catalog refresh (every 15 minutes)
-        // This runs independently of scraping — new songs get added to the DB
-        // but won't be included in an already-running scrape pass.
-        _backgroundSyncTask = BackgroundSongSyncLoopAsync(_festivalService, opts.SongSyncInterval, stoppingToken);
-
         // Register next-rank-update provider so sync completion messages include
         // an estimated time for global rankings recalculation.
         DateTime? lastScrapeEndUtc = null;
@@ -289,67 +284,9 @@ public sealed class ScraperWorker : BackgroundService
 
         _log.LogInformation("ScraperWorker stopping.");
 
-        // Observe background task to surface any unhandled exceptions
-        if (_backgroundSyncTask is not null)
-        {
-            try { await _backgroundSyncTask; }
-            catch (OperationCanceledException) { /* expected on shutdown */ }
-            catch (Exception ex) { _log.LogError(ex, "Background song sync task faulted."); }
-        }
     }
 
     // ─── Auth helpers ───────────────────────────────────────────
-
-    /// <summary>
-    /// Periodically re-syncs the song catalog from Epic on clock-aligned
-    /// 15-minute boundaries (:00, :15, :30, :45).
-    /// Runs as a fire-and-forget background task. New songs are persisted but do
-    /// not affect any scrape pass that is already in progress.
-    /// </summary>
-    private async Task BackgroundSongSyncLoopAsync(
-        FestivalService service, TimeSpan interval, CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            // Sleep until the next clock-aligned boundary
-            var now = DateTime.UtcNow;
-            var intervalTicks = interval.Ticks;
-            var nextTick = new DateTime((now.Ticks / intervalTicks + 1) * intervalTicks, DateTimeKind.Utc);
-            var delay = nextTick - now;
-
-            try
-            {
-                await Task.Delay(delay, ct);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-
-            try
-            {
-                var before = service.Songs.Count;
-                await service.SyncSongsAsync();
-                var after = service.Songs.Count;
-                if (after > before)
-                {
-                    _log.LogInformation("Song catalog refresh: {NewCount} new song(s) discovered ({Total} total).",
-                        after - before, after);
-                    PrimeSongsCache();
-                    _persistence.InvalidateTotalSongCount();
-                }
-                else
-                    _log.LogDebug("Song catalog refresh: {Total} songs in catalog (no changes).", after);
-
-                // Fire-and-forget path generation for new/changed songs
-                _ = TryGeneratePathsAsync(service, force: false, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "Background song sync failed. Will retry at next interval.");
-            }
-        }
-    }
 
     private async Task<bool> EnsureAuthenticatedAsync(CancellationToken ct)
     {
@@ -438,13 +375,10 @@ public sealed class ScraperWorker : BackgroundService
             await service.SyncSongsAsync();
             _persistence.InvalidateTotalSongCount();
 
-            // Make new songs visible immediately — SongsCacheService is independent
-            // of the ResponseCacheService freeze, so this doesn't conflict with scrape
-            // atomicity. Without this, new songs are invisible until the scrape completes.
+            // Keep this worker's local song list current for scrape requests. Public
+            // /api/songs freshness, song-change pushes, and path generation are owned
+            // by SongCatalogRefreshWorker in fstservice.
             PrimeSongsCache();
-
-            // Fire-and-forget path generation (runs in parallel with the scrape)
-            var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);
 
             // ── Core scrape: delegate to ScrapeOrchestrator ──
             // Freeze all response caches so API consumers see consistent (stale) data
@@ -514,11 +448,6 @@ public sealed class ScraperWorker : BackgroundService
                 EpicReportedOver100Pages = false,
             };
 
-            // Observe the path generation task that ran in parallel with the scrape
-            try { await pathGenTask; }
-            catch (OperationCanceledException) { /* expected on shutdown */ }
-            catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
-
             // ── Post-pass: enrichment, refresh, rankings, rivals, derived publication ──
             var postProcessCompleted = false;
             try
@@ -566,6 +495,9 @@ public sealed class ScraperWorker : BackgroundService
 
             // Unfreeze all response caches and invalidate — API consumers now see fresh data atomically.
             _lifecycle.ScrapeCompleted();
+
+            // Notify connected clients that score-backed views should refresh.
+            await _notifications.NotifyScoresChangedAsync(result?.ScrapeId);
 
             // ── Cleanup: storage/query-health work that must not delay fresh data publication ──
             if (postProcessCompleted)

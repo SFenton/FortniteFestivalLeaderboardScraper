@@ -524,7 +524,11 @@ builder.Services.AddSingleton<StartupInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<StartupInitializer>());
 builder.Services.AddHealthChecks()
     .AddCheck<StartupInitializer>("database", tags: ["ready"]);
-if (!apiOnlyRequested)
+if (apiOnlyRequested)
+{
+    builder.Services.AddHostedService<SongCatalogRefreshWorker>();
+}
+else
 {
     if (!scraperWorkerDisabled)
         builder.Services.AddHostedService<ScraperWorker>();
@@ -537,7 +541,7 @@ var app = builder.Build();
 
 if (apiOnlyRequested)
 {
-    app.Logger.LogInformation("API-only mode enabled; scraper hosted services were not registered.");
+    app.Logger.LogInformation("API-only mode enabled; scraper hosted services were not registered. Song catalog refresh remains active.");
 }
 else if (scraperWorkerDisabled)
 {

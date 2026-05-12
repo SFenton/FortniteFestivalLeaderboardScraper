@@ -186,10 +186,25 @@ export type SyncProgressMessage = {
   probeAttempt?: number;
 };
 
+export type SongsChangedMessage = {
+  type: 'songs_changed';
+  total: number;
+  added?: number;
+  at: string;
+};
+
+export type ScoresChangedMessage = {
+  type: 'scores_changed';
+  scrapeId?: number;
+  at: string;
+};
+
 export type WsNotificationMessage =
   | ShopChangedMessage
   | ShopSnapshotMessage
   | SyncProgressMessage
+  | SongsChangedMessage
+  | ScoresChangedMessage
   | { type: 'backfill_complete' }
   | { type: 'history_recon_complete' }
   | { type: 'rivals_complete' };

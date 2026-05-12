@@ -250,6 +250,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new FSTService.Scraping.UserSyncProgressTracker(
                 new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
                 Substitute.For<ILogger<FSTService.Scraping.UserSyncProgressTracker>>()),
+            notifications,
             options,
             Options.Create(new Microsoft.AspNetCore.Http.Json.JsonOptions()),
             _lifetime, _log);

@@ -186,6 +186,35 @@ public sealed class NotificationService
     }
 
     /// <summary>
+    /// Broadcast that the song catalog has changed.
+    /// Clients use this to invalidate /api/songs-driven views.
+    /// </summary>
+    public Task NotifySongsChangedAsync(int total, int added)
+    {
+        return BroadcastAllAsync(new
+        {
+            type = "songs_changed",
+            total,
+            added,
+            at = DateTime.UtcNow.ToString("o"),
+        });
+    }
+
+    /// <summary>
+    /// Broadcast that score-backed read models were refreshed at the end of a scrape cycle.
+    /// Clients use this to invalidate leaderboard/player/ranking queries.
+    /// </summary>
+    public Task NotifyScoresChangedAsync(long? scrapeId)
+    {
+        return BroadcastAllAsync(new
+        {
+            type = "scores_changed",
+            scrapeId,
+            at = DateTime.UtcNow.ToString("o"),
+        });
+    }
+
+    /// <summary>
     /// Send the current shop snapshot to a single WebSocket (used on reconnect).
     /// Sends enriched song objects so the client can render the shop page without /api/songs.
     /// </summary>

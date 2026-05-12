@@ -146,6 +146,7 @@ import { writeSelectedProfile } from './state/selectedProfile';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
+import { useAppWebSocket } from './hooks/data/useAppWebSocket';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
@@ -214,6 +215,52 @@ const EMPTY_BAND_FILTER_ASSIGNMENTS: BandInstrumentFilterAssignment[] = [];
 
 export function getFabQuickLinksActionLabel(t: TFunction): string {
   return t('common.quickLinks', 'Quick Links');
+}
+
+function RealtimeDataWebSocketBridge() {
+  const { subscribe } = useAppWebSocket();
+
+  useEffect(() => subscribe((message) => {
+    if (message.type === 'songs_changed') {
+      console.debug('[WS] songs_changed', message);
+      void queryClient.invalidateQueries({ queryKey: ['songs'] });
+      return;
+    }
+
+    if (message.type === 'scores_changed') {
+      console.debug('[WS] scores_changed', message);
+      // Refresh all score-backed read models after publication.
+      const scoreRoots = new Set([
+        'player',
+        'playerHistory',
+        'playerStats',
+        'leaderboard',
+        'allLeaderboards',
+        'songBandLeaderboard',
+        'allSongBandLeaderboards',
+        'rankings',
+        'playerRanking',
+        'compositeRankings',
+        'playerCompositeRanking',
+        'comboRankings',
+        'playerComboRanking',
+        'bandRankings',
+        'bandRanking',
+        'bandRankHistory',
+        'bandSongs',
+        'bandSongRows',
+        'leaderboardNeighborhood',
+        'compositeNeighborhood',
+        'rankHistory',
+      ]);
+
+      void queryClient.invalidateQueries({
+        predicate: q => typeof q.queryKey[0] === 'string' && scoreRoots.has(q.queryKey[0]),
+      });
+    }
+  }), [subscribe]);
+
+  return null;
 }
 
 export function getEmptyBandFilterActionLabel(selectedProfile: SelectedProfile | null, t: TFunction): string {
@@ -1020,6 +1067,7 @@ function AppShell() {
         onNotificationsSeen={markNotificationsSeen}
         onNotificationOpen={handleNotificationOpen}
       />
+      <RealtimeDataWebSocketBridge />
       {selectedProfile && !useNotificationMockData && <NotificationFeedWebSocketBridge profile={selectedProfile} />}
       <BandInstrumentFilterModal
         visible={bandFilterModalOpen && selectedProfile?.type === 'band'}
