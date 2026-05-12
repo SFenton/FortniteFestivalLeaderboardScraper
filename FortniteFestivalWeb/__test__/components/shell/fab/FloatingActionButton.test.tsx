@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, within } from '@testing-library/react';
+import { Font } from '@festival/theme';
 import FloatingActionButton, { type ActionItem } from '../../../../src/components/shell/fab/FloatingActionButton';
 import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../../src/constants/keyboardLayoutVars';
 import { TestProviders } from '../../../helpers/TestProviders';
@@ -206,7 +207,7 @@ describe('FloatingActionButton', () => {
     expect(screen.queryByTestId('fab-menu')).toBeNull();
   });
 
-  it('shows labels on all non-FAB dock controls when measured width fits', () => {
+  it('shows the Search label while dock actions stay circular when measured width fits', () => {
     mockDockLabelMeasurements(420, [104, 84, 92]);
 
     renderFAB({
@@ -227,16 +228,16 @@ describe('FloatingActionButton', () => {
     const quickLinksButton = screen.getByRole('button', { name: 'Quick Links' });
 
     expect(within(searchButton).getByText('Search')).toBeTruthy();
-    expect(within(sortButton).getByText('Sort')).toBeTruthy();
-    expect(within(filterButton).getByText('Filter')).toBeTruthy();
+    expect(within(sortButton).queryByText('Sort')).toBeNull();
+    expect(within(filterButton).queryByText('Filter')).toBeNull();
     expect(within(quickLinksButton).queryByText(/quick links/i)).toBeNull();
     expect(screen.getByTestId('fab-dock-row')).toHaveStyle({ justifyContent: 'flex-start', gap: '4px' });
-    expect(searchButton.parentElement).toHaveStyle({ width: '168px', minWidth: '104px' });
+    expect(searchButton.parentElement).toHaveStyle({ width: '240px', minWidth: '104px' });
     expect(searchButton).toHaveStyle({ width: '100%', justifyContent: 'flex-start' });
-    expect(sortButton).toHaveStyle({ width: '100%' });
-    expect(sortButton.parentElement).toHaveStyle({ width: '92px' });
-    expect(filterButton).toHaveStyle({ width: '100%' });
-    expect(filterButton.parentElement).toHaveStyle({ width: '92px' });
+    expect(sortButton).toHaveStyle({ width: '56px', height: '56px' });
+    expect(sortButton.parentElement).toHaveStyle({ width: '56px' });
+    expect(filterButton).toHaveStyle({ width: '56px', height: '56px' });
+    expect(filterButton.parentElement).toHaveStyle({ width: '56px' });
     expect(sortButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
     expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
   });
@@ -270,7 +271,7 @@ describe('FloatingActionButton', () => {
     const searchButton = screen.getByRole('button', { name: 'Search' });
 
     expect(visibleContent).toHaveStyle({ opacity: '0' });
-    expect(searchButton.parentElement).toHaveStyle({ width: '168px', minWidth: '104px' });
+    expect(searchButton.parentElement).toHaveStyle({ width: '240px', minWidth: '104px' });
     expect(searchButton.parentElement).toHaveStyle({ transition: 'none' });
 
     const runNextAnimationFrame = (time: number) => {
@@ -308,6 +309,8 @@ describe('FloatingActionButton', () => {
 
     expect(sortButton.style.backgroundColor).toBe('rgb(45, 130, 230)');
     expect(sortButton.style.backgroundImage).toBe('none');
+    expect(sortButton).toHaveStyle({ width: '56px', height: '56px' });
+    expect(within(sortButton).queryByText('Sort')).toBeNull();
     expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
   });
 
@@ -338,7 +341,7 @@ describe('FloatingActionButton', () => {
     expect(filterButton.parentElement).toHaveStyle({ width: '56px' });
   });
 
-  it('can show Search and Sort labels when Filter is unavailable', () => {
+  it('can show the Search label when Filter is unavailable while Sort stays circular', () => {
     mockDockLabelMeasurements(300, [104, 84]);
 
     renderFAB({
@@ -356,7 +359,9 @@ describe('FloatingActionButton', () => {
     const sortButton = screen.getByRole('button', { name: 'Sort Songs' });
 
     expect(within(searchButton).getByText('Search')).toBeTruthy();
-    expect(within(sortButton).getByText('Sort')).toBeTruthy();
+    expect(within(sortButton).queryByText('Sort')).toBeNull();
+    expect(searchButton.parentElement).toHaveStyle({ width: '180px', minWidth: '104px' });
+    expect(sortButton).toHaveStyle({ width: '56px', height: '56px' });
     expect(screen.queryByRole('button', { name: 'Filter Songs' })).toBeNull();
   });
 
@@ -390,7 +395,7 @@ describe('FloatingActionButton', () => {
     fireEvent.blur(input);
     act(() => { vi.advanceTimersByTime(300); });
 
-    expect(searchSlot).toHaveStyle({ width: '168px', flexBasis: '168px' });
+    expect(searchSlot).toHaveStyle({ width: '240px', flexBasis: '240px' });
   });
 
   it('expands dock search, compacts on Enter blur, and preserves the query', () => {
@@ -428,7 +433,7 @@ describe('FloatingActionButton', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     fireEvent.blur(input);
     expect(screen.getByPlaceholderText('Search songs...')).toBeTruthy();
-    expect(input).toHaveStyle({ opacity: '0' });
+    expect(input).toHaveStyle({ opacity: '1' });
     act(() => { vi.advanceTimersByTime(300); });
     expect(screen.queryByPlaceholderText('Search songs...')).toBeTruthy();
     expect(sortSlot.style.width).not.toBe('0px');
@@ -436,12 +441,20 @@ describe('FloatingActionButton', () => {
     act(() => { vi.advanceTimersByTime(400); });
     expect(screen.queryByPlaceholderText('Search songs...')).toBeNull();
     act(() => { vi.advanceTimersByTime(40); });
+    const compactedSearchButton = screen.getByRole('button', { name: 'Search' });
+    const compactedQueryText = within(compactedSearchButton).getByText('alpha');
     expect(screen.getByTestId('fab-search-toggle-icon')).toHaveStyle({ opacity: '1' });
+    expect(compactedSearchButton.childElementCount).toBe(1);
+    expect(within(compactedSearchButton).queryByText('Search')).toBeNull();
+    expect(compactedQueryText).toHaveStyle({ fontSize: `${Font.md}px`, fontWeight: '400', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
     expect(sortSlot).toHaveStyle({ opacity: '1' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    fireEvent.click(compactedSearchButton);
+    const reopenedInput = screen.getByPlaceholderText('Search songs...') as HTMLInputElement;
+    expect(reopenedInput.value).toBe('alpha');
+    expect(reopenedInput).toHaveStyle({ opacity: '1' });
+    expect(document.activeElement).toBe(reopenedInput);
     act(() => { vi.advanceTimersByTime(700); });
-    expect((screen.getByPlaceholderText('Search songs...') as HTMLInputElement).value).toBe('alpha');
   });
 
   it('clears dock search without compacting while focused', () => {
@@ -461,13 +474,21 @@ describe('FloatingActionButton', () => {
     fireEvent.change(input, { target: { value: 'alpha' } });
 
     const clearButton = screen.getByRole('button', { name: 'Clear Search' });
-    const pointerDownSpies = fireCancelableEvent(clearButton, 'pointerdown');
-    fireEvent.click(clearButton);
+    const clearIcon = clearButton.querySelector('svg') as SVGElement;
+    const pointerDownSpies = fireCancelableEvent(clearIcon, 'pointerdown');
+    expect(input.value).toBe('');
 
     expect(pointerDownSpies.preventDefaultSpy).toHaveBeenCalled();
     expect(pointerDownSpies.stopPropagationSpy).toHaveBeenCalled();
     expect(screen.getByPlaceholderText('Search songs...')).toBeTruthy();
     expect(input.value).toBe('');
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.change(input, { target: { value: 'beta' } });
+    const clickClearButton = screen.getByRole('button', { name: 'Clear Search' });
+    fireEvent.click(clickClearButton);
+    expect(input.value).toBe('');
+    expect(document.activeElement).toBe(input);
   });
 
   it('search bar syncs with SearchQueryContext', () => {

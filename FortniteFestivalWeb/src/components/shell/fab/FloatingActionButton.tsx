@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { IoClose, IoMenu, IoSearch } from 'react-icons/io5';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { useSearchQuery } from '../../../contexts/SearchQueryContext';
-import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
+import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
 import { safeAreaBottomOffset } from '../../../utils/safeAreaStyles';
 import { useIOSKeyboardPanGuard } from '../../../hooks/ui/useIOSKeyboardPanGuard';
 import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../constants/keyboardLayoutVars';
@@ -82,6 +82,7 @@ export default function FloatingActionButton({
   const [keyboardInset, setKeyboardInset] = useState(0);
   const scrollContainerRef = useScrollContainer();
   const useSongsDock = mode === 'songs' && searchVisible && dockActions != null;
+  const dockActionCount = dockActions?.length ?? 0;
   const dockMeasurementSignature = (dockActions ?? [])
     .map(action => `${action.label}\u001f${action.displayLabel ?? ''}`)
     .join('\u001e');
@@ -190,9 +191,7 @@ export default function FloatingActionButton({
 
     const measuredWidths = measuredControls.map(control => Math.ceil(control.getBoundingClientRect().width || control.offsetWidth || Layout.fabSize));
     const searchWidth = Math.max(Layout.fabSize, measuredWidths[0] ?? Layout.fabSize);
-    const measuredActionWidths = measuredWidths.slice(1).map(width => Math.max(Layout.fabSize, width));
-    const actionWidth = measuredActionWidths.length > 0 ? Math.max(...measuredActionWidths) : Layout.fabSize;
-    const actionWidths = measuredActionWidths.map(() => actionWidth);
+    const actionWidths = Array.from({ length: dockActionCount }, () => Layout.fabSize);
     const visibleControlCount = 1 + actionWidths.length;
     const actionWidthsTotal = actionWidths.reduce((total, width) => total + width, 0);
     const labelGapTotal = DOCK_LABEL_MIN_GAP * visibleControlCount;
@@ -204,7 +203,7 @@ export default function FloatingActionButton({
     const nextLayout = {
       showLabels,
       searchWidth,
-      searchTargetWidth: showLabels ? availableSearchWidth : searchWidth,
+      searchTargetWidth: Math.max(Layout.fabSize, availableSearchWidth),
       actionWidths,
     };
 
@@ -221,7 +220,7 @@ export default function FloatingActionButton({
       return nextLayout;
     });
     revealDockLayout();
-  }, [revealDockLayout, useSongsDock]);
+  }, [dockActionCount, revealDockLayout, useSongsDock]);
 
   useLayoutEffect(() => {
     if (!useSongsDock) {
@@ -329,7 +328,7 @@ export default function FloatingActionButton({
   }, []);
 
   const isClearSearchGesture = useCallback((event: SearchGestureEvent) => (
-    event.target instanceof HTMLElement && event.target.closest('[data-fab-search-clear="true"]') != null
+    event.target instanceof Element && event.target.closest('[data-fab-search-clear="true"]') != null
   ), []);
 
   const handleSearchPressStart = useCallback((event: SearchGestureEvent) => {
@@ -469,8 +468,9 @@ export default function FloatingActionButton({
   const clearSearchLabel = t('common.clearSearch', 'Clear Search');
   const searchButtonLabel = t('common.searchAction');
   const dockLabelsEnabled = dockLabelLayout.showLabels;
-  const dockSearchMinWidth = dockLabelsEnabled ? dockLabelLayout.searchWidth : Layout.fabSize;
-  const dockSearchCollapsedWidth = dockLabelsEnabled ? dockLabelLayout.searchTargetWidth : Layout.fabSize;
+  const dockSearchTextVisible = dockLabelsEnabled || hasSearchQuery;
+  const dockSearchMinWidth = dockLabelsEnabled && !hasSearchQuery ? dockLabelLayout.searchWidth : Layout.fabSize;
+  const dockSearchCollapsedWidth = dockSearchTextVisible ? dockLabelLayout.searchTargetWidth : Layout.fabSize;
   const gateDockInitialTransition = useCallback((style: CSSProperties): CSSProperties => (
     dockLayoutReady ? style : { ...style, transition: CssValue.none }
   ), [dockLayoutReady]);
@@ -478,10 +478,10 @@ export default function FloatingActionButton({
     ? s.dockSearchExpanded
     : searchInputMounted
       ? { ...s.dockSearchCollapsing, width: dockSearchCollapsedWidth, flexBasis: dockSearchCollapsedWidth }
-      : dockLabelsEnabled
+      : dockSearchTextVisible
         ? { ...s.dockSearchCollapsed, width: dockSearchCollapsedWidth, flexBasis: dockSearchCollapsedWidth, minWidth: dockSearchMinWidth }
         : { ...s.dockSearchCollapsed, width: dockSearchCollapsedWidth, flexBasis: dockSearchCollapsedWidth });
-  const dockRowStyle = searchInputMounted ? s.dockRowExpanded : dockLabelsEnabled ? s.dockRowLabeled : s.dockRow;
+  const dockRowStyle = searchInputMounted ? s.dockRowExpanded : dockSearchTextVisible ? s.dockRowLabeled : s.dockRow;
   const dockVisibleContentStyle = dockLayoutReady ? s.dockVisibleContentReady : s.dockVisibleContentPending;
   const dockAnchorSpacerStyle = searchInputMounted ? s.dockAnchorSpacerExpanded : s.dockAnchorSpacer;
   const getDockActionSlotStyle = useCallback((actionIndex: number) => {
@@ -492,32 +492,35 @@ export default function FloatingActionButton({
     if (dockActionsPhase === 'expandingIn') return gateDockInitialTransition({ ...s.dockActionSlotExpandingIn, ...sizedSlotStyle });
     return gateDockInitialTransition(s.dockActionSlotCollapsed);
   }, [dockActionsPhase, dockLabelLayout.actionWidths, dockLabelsEnabled, gateDockInitialTransition, s.dockActionSlot, s.dockActionSlotCollapsed, s.dockActionSlotExpandingIn, s.dockActionSlotFadingOut]);
-  const dockSearchQueryDotStyle = dockActionsPhase === 'visible'
-    ? s.searchQueryDot
-    : s.searchQueryDotHidden;
-  const searchFieldContentStyle = searchFieldContentVisible
+  const dockFieldContentVisible = searchFieldContentVisible || hasSearchQuery;
+  const searchFieldContentStyle = dockFieldContentVisible
     ? s.searchFieldContentVisible
     : s.searchFieldContentHidden;
-  const collapsedSearchButtonStyle = dockLabelsEnabled
-    ? { ...(hasSearchQuery ? s.searchPillActive : s.searchPill), width: CssValue.full, justifyContent: Align.start }
-    : hasSearchQuery ? s.searchCircleActive : s.searchCircle;
+  const collapsedSearchButtonStyle = dockSearchTextVisible
+    ? { ...(hasSearchQuery ? s.searchPillActive : s.searchPill), width: CssValue.full, justifyContent: Align.start, overflow: Overflow.hidden }
+    : s.searchCircle;
+  const collapsedSearchText = hasSearchQuery ? searchQuery.query : searchButtonLabel;
+  const collapsedSearchTextStyle = hasSearchQuery ? s.dockSearchQueryText : s.dockButtonLabel;
   const getDockActionButtonStyle = useCallback((active?: boolean) => (
-    dockLabelsEnabled
-      ? { ...(active ? s.fabPillActive : s.fabPill), width: CssValue.full }
-      : active ? s.fabActionCircleActive : s.fabActionCircle
-  ), [dockLabelsEnabled, s.fabActionCircle, s.fabActionCircleActive, s.fabPill, s.fabPillActive]);
+    active ? s.fabActionCircleActive : s.fabActionCircle
+  ), [s.fabActionCircle, s.fabActionCircleActive]);
 
-  const stopClearGesture = useCallback((event: ReactPointerEvent<HTMLButtonElement> | ReactMouseEvent<HTMLButtonElement> | ReactTouchEvent<HTMLButtonElement>) => {
+  const clearSearchAndFocus = useCallback(() => {
+    searchQuery.setQuery('');
+    focusSearchWithoutScroll();
+  }, [focusSearchWithoutScroll, searchQuery]);
+
+  const handleClearSearchPressStart = useCallback((event: ReactPointerEvent<HTMLButtonElement> | ReactMouseEvent<HTMLButtonElement> | ReactTouchEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-  }, []);
+    clearSearchAndFocus();
+  }, [clearSearchAndFocus]);
 
   const handleClearSearch = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    searchQuery.setQuery('');
-    focusSearchWithoutScroll();
-  }, [focusSearchWithoutScroll, searchQuery]);
+    clearSearchAndFocus();
+  }, [clearSearchAndFocus]);
 
   if (useSongsDock) {
     return (
@@ -564,16 +567,17 @@ export default function FloatingActionButton({
                       iconStyle={s.searchFieldIconVisible}
                       iconSize={IconSize.fab}
                       inputStyle={searchFieldContentStyle}
+                      autoFocus
                       trailing={hasSearchQuery ? (
                         <button
                           type="button"
-                          style={searchFieldContentVisible ? s.clearSearchButton : s.clearSearchButtonHidden}
+                          style={dockFieldContentVisible ? s.clearSearchButton : s.clearSearchButtonHidden}
                           data-fab-search-clear="true"
                           aria-label={clearSearchLabel}
                           title={clearSearchLabel}
-                          onPointerDown={stopClearGesture}
-                          onMouseDown={stopClearGesture}
-                          onTouchStart={stopClearGesture}
+                          onPointerDown={handleClearSearchPressStart}
+                          onMouseDown={handleClearSearchPressStart}
+                          onTouchStart={handleClearSearchPressStart}
                           onClick={handleClearSearch}
                         >
                           <IoClose size={IconSize.sm} />
@@ -591,9 +595,8 @@ export default function FloatingActionButton({
                     >
                       <span style={s.dockSearchButtonIconVisible} data-testid="fab-search-toggle-icon">
                         <IoSearch size={IconSize.fab} />
-                        {dockLabelsEnabled && <span style={s.dockButtonLabel}>{searchButtonLabel}</span>}
+                        {dockSearchTextVisible && <span style={collapsedSearchTextStyle}>{collapsedSearchText}</span>}
                       </span>
-                      {hasSearchQuery && <span style={dockSearchQueryDotStyle} aria-hidden="true" />}
                     </button>
                   )}
                 </div>
@@ -607,7 +610,6 @@ export default function FloatingActionButton({
                       onClick={action.onPress}
                     >
                       {action.icon}
-                      {dockLabelsEnabled && <span style={s.dockButtonLabel}>{action.displayLabel ?? action.label}</span>}
                     </button>
                   </div>
                 ))}
@@ -1038,6 +1040,8 @@ function useFABStyles() {
     dockSearchButtonIconVisible: {
       ...flexCenter,
       gap: DOCK_LABEL_ICON_GAP,
+      minWidth: 0,
+      maxWidth: CssValue.full,
       opacity: 1,
       transition: `opacity ${DOCK_ACTION_FADE_MS}ms ease`,
       pointerEvents: PointerEvents.none,
@@ -1049,6 +1053,16 @@ function useFABStyles() {
       letterSpacing: 0,
       whiteSpace: 'nowrap',
     } as CSSProperties,
+    dockSearchQueryText: {
+      minWidth: 0,
+      overflow: Overflow.hidden,
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: Font.md,
+      fontWeight: 400,
+      lineHeight: 1,
+      letterSpacing: 0,
+    } as CSSProperties,
     searchFieldIconVisible: {
       opacity: 1,
       flexShrink: 0,
@@ -1058,30 +1072,6 @@ function useFABStyles() {
       transition: `opacity ${DOCK_ACTION_FADE_MS}ms ease`,
     } as CSSProperties,
     searchFieldContentHidden: {
-      opacity: 0,
-      transition: `opacity ${DOCK_ACTION_FADE_MS}ms ease`,
-    } as CSSProperties,
-    searchQueryDot: {
-      position: Position.absolute,
-      top: 10,
-      right: 10,
-      width: 7,
-      height: 7,
-      borderRadius: Radius.full,
-      backgroundColor: Colors.accentBlueBright,
-      pointerEvents: PointerEvents.none,
-      opacity: 1,
-      transition: `opacity ${DOCK_ACTION_FADE_MS}ms ease`,
-    } as CSSProperties,
-    searchQueryDotHidden: {
-      position: Position.absolute,
-      top: 10,
-      right: 10,
-      width: 7,
-      height: 7,
-      borderRadius: Radius.full,
-      backgroundColor: Colors.accentBlueBright,
-      pointerEvents: PointerEvents.none,
       opacity: 0,
       transition: `opacity ${DOCK_ACTION_FADE_MS}ms ease`,
     } as CSSProperties,
