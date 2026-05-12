@@ -10,6 +10,7 @@ import MathTex from '../../../../components/common/Math';
 import { RankingEntry } from '../../components/RankingEntry';
 import SongInfo from '../../../../components/songs/metadata/SongInfo';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
+import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import {
   Colors, Font, Weight, Gap, Radius, LineHeight, Layout, Size, Border,
   Display, Align, TextAlign, CssValue, PointerEvents,
@@ -29,6 +30,7 @@ export interface SongExampleRow {
   title: string;
   artist: string;
   valueLabel: string;
+  valueLines?: string[];
 }
 
 export interface StatBlockData {
@@ -39,6 +41,8 @@ export interface StatBlockData {
 export interface MetricInfoSlideProps {
   paragraphs: (string | ReactNode)[];
   formulas?: string[];
+  /** Formula-focused composition for compact one-formula explanation slides. */
+  layout?: 'standard' | 'formula';
   /** 1-2 labeled mini-leaderboards shown side-by-side. */
   cards?: RankCardData[];
   /** Blue left-border tip box for key takeaways. */
@@ -51,9 +55,17 @@ export interface MetricInfoSlideProps {
   stat?: StatBlockData;
 }
 
-export default function MetricInfoSlide({ paragraphs, formulas, cards, callout, songRows, songSummary, stat }: MetricInfoSlideProps) {
-  const s = useStyles();
+export default function MetricInfoSlide({ paragraphs, formulas, layout = 'standard', cards, callout, songRows, songSummary, stat }: MetricInfoSlideProps) {
+  const isMobile = useIsMobile();
+  const s = useStyles(isMobile);
   const slideHeight = useSlideHeight();
+  const isFormulaLayout = layout === 'formula';
+  const useStackedCards = isMobile && (cards?.length ?? 0) > 1;
+  const wrapperStyle = isFormulaLayout
+    ? { ...s.wrapper, ...s.formulaLayout, minHeight: slideHeight || undefined }
+    : s.wrapper;
+  const paragraphStyle = isFormulaLayout ? s.formulaPara : s.para;
+  const formulaStyle = isFormulaLayout ? { ...s.formula, ...s.formulaCompact } : s.formula;
 
   /**
    * Progressive height budget for cards.
@@ -66,6 +78,7 @@ export default function MetricInfoSlide({ paragraphs, formulas, cards, callout, 
   const { maxCardRows, showCallout } = useMemo(() => {
     if (!cards) return { maxCardRows: 0, showCallout: true };
     const budget = slideHeight || 400;
+    const cardCount = cards.length;
     const paraHeight = paragraphs.length * 48;
     const formulaHeight = (formulas?.length ?? 0) * 60;
     const songHeight = songRows ? songRows.length * 60 + (songSummary ? 24 : 0) : 0;
@@ -74,15 +87,17 @@ export default function MetricInfoSlide({ paragraphs, formulas, cards, callout, 
     const fixedHeight = paraHeight + formulaHeight + songHeight + gapHeight;
 
     const calloutCost = callout ? 56 + Gap.lg : 0; // content + its gap
-    const highlightCost = 18;      // Font.xs + marginTop per card
+    const highlightCost = useStackedCards ? 34 : 18; // mobile captions often wrap
     const cardLabelCost = 22;      // Font.sm + marginBottom per card
     const rowUnit = Layout.entryRowHeight + Gap.xs;
-    // Side-by-side cards share vertical space — chrome is per-column (same height)
-    const chrome = cardLabelCost + highlightCost;
+    const chrome = useStackedCards
+      ? cardCount * (cardLabelCost + highlightCost) + (cardCount - 1) * Gap.md
+      : cardLabelCost + highlightCost;
+    const rowCost = useStackedCards ? rowUnit * cardCount : rowUnit;
 
     const tryFit = (withCallout: boolean) => {
       const available = budget - fixedHeight - (withCallout ? calloutCost : 0) - chrome;
-      return Math.floor(available / rowUnit);
+      return Math.floor(available / rowCost);
     };
 
     // Phase 1: everything — trim rows to fit (min 2)
@@ -95,13 +110,13 @@ export default function MetricInfoSlide({ paragraphs, formulas, cards, callout, 
 
     // Phase 3: drop callout, allow rows down to 1
     return { maxCardRows: Math.max(1, rows), showCallout: false };
-  }, [slideHeight, paragraphs.length, callout, formulas?.length, cards, songRows, songSummary]);
+  }, [slideHeight, paragraphs.length, callout, formulas?.length, cards, songRows, songSummary, useStackedCards]);
 
   let delay = 0;
   return (
-    <div style={s.wrapper}>
+    <div style={wrapperStyle}>
       {paragraphs.map((p, i) => (
-        <FadeIn key={i} delay={(delay++) * 80} style={s.para}>
+        <FadeIn key={i} delay={(delay++) * 80} style={paragraphStyle}>
           {p}
         </FadeIn>
       ))}
@@ -120,15 +135,19 @@ export default function MetricInfoSlide({ paragraphs, formulas, cards, callout, 
         <FadeIn delay={(delay++) * 80} style={s.songSection}>
           {songRows.map((row, i) => (
             <div key={i} style={s.songRow}>
-              <SongInfo albumArt={row.albumArt} title={row.title} artist={row.artist} />
-              <span style={s.songValue}>{row.valueLabel}</span>
+              <SongInfo albumArt={row.albumArt} title={row.title} artist={row.artist} minWidth={0} />
+              <span style={s.songValue} aria-label={row.valueLabel}>
+                {getSongValueLines(row).map((line, lineIndex) => (
+                  <span key={lineIndex} style={s.songValueLine} data-testid="metric-song-value-line">{line}</span>
+                ))}
+              </span>
             </div>
           ))}
           {songSummary && <div style={s.songSummary}>{songSummary}</div>}
         </FadeIn>
       )}
       {cards && (
-        <FadeIn delay={(delay++) * 80} style={cards.length > 1 ? s.cardPair : s.cardSingle}>
+        <FadeIn delay={(delay++) * 80} style={cards.length > 1 ? (useStackedCards ? s.cardStack : s.cardPair) : s.cardSingle} data-testid="metric-rank-card-pair">
           {cards.map((card, ci) => {
             const trimmed = trimEntries(card.entries, maxCardRows);
             return (
@@ -146,12 +165,17 @@ export default function MetricInfoSlide({ paragraphs, formulas, cards, callout, 
         </FadeIn>
       )}
       {formulas && formulas.map((f, i) => (
-        <FadeIn key={`f${i}`} delay={(delay++) * 80} style={s.formula}>
+        <FadeIn key={`f${i}`} delay={(delay++) * 80} style={formulaStyle}>
           <MathTex tex={f} block />
         </FadeIn>
       ))}
     </div>
   );
+}
+
+function getSongValueLines(row: SongExampleRow) {
+  if (row.valueLines?.length) return row.valueLines;
+  return row.valueLabel.split(/\s+[·→]\s+/u).filter(Boolean);
 }
 
 /** Trim entries to fit maxRows, always keeping the player row. */
@@ -175,18 +199,32 @@ function trimEntries(
   return result;
 }
 
-function useStyles() {
+function useStyles(isMobile: boolean) {
   return useMemo(() => ({
     wrapper: {
       ...flexColumn,
       gap: Gap.lg,
       width: CssValue.full,
+      maxWidth: CssValue.full,
+      minWidth: 0,
+      overflowX: 'hidden' as const,
       pointerEvents: PointerEvents.none,
+    } as CSSProperties,
+    formulaLayout: {
+      justifyContent: 'center' as const,
+      gap: Gap.xl,
+      textAlign: TextAlign.center,
     } as CSSProperties,
     para: {
       fontSize: Font.md,
       color: Colors.textSecondary,
       lineHeight: LineHeight.relaxed,
+    } as CSSProperties,
+    formulaPara: {
+      fontSize: Font.md,
+      color: Colors.textSecondary,
+      lineHeight: LineHeight.relaxed,
+      textAlign: TextAlign.center,
     } as CSSProperties,
     callout: {
       fontSize: Font.sm,
@@ -224,6 +262,16 @@ function useStyles() {
       color: Colors.textPrimary,
       fontSize: Font.lg,
       fontWeight: Weight.normal,
+      width: CssValue.full,
+      maxWidth: CssValue.full,
+      minWidth: 0,
+      overflowX: 'hidden' as const,
+      overflowY: 'visible' as const,
+      pointerEvents: 'auto' as const,
+    } as CSSProperties,
+    formulaCompact: {
+      fontSize: Font.md,
+      padding: `${Gap.sm}px 0`,
     } as CSSProperties,
 
     /* ── Song example rows ── */
@@ -240,14 +288,26 @@ function useStyles() {
       borderRadius: Radius.sm,
       fontSize: Font.sm,
       minHeight: Size.thumb + Gap.sm * 2,
+      minWidth: 0,
+      overflow: 'hidden' as const,
     } as CSSProperties,
     songValue: {
+      ...flexColumn,
       flexShrink: 0,
+      minWidth: isMobile ? 94 : 118,
+      maxWidth: isMobile ? 118 : 160,
+      gap: 2,
       fontWeight: Weight.semibold,
       fontSize: Font.sm,
       color: Colors.accentBlueBright,
       textAlign: TextAlign.right,
       marginLeft: 'auto',
+      alignItems: 'flex-end' as const,
+    } as CSSProperties,
+    songValueLine: {
+      display: 'block',
+      whiteSpace: 'nowrap' as const,
+      lineHeight: 1.2,
     } as CSSProperties,
     songSummary: {
       fontSize: Font.sm,
@@ -260,6 +320,11 @@ function useStyles() {
     /* ── Rank cards ── */
     cardPair: {
       ...flexRow,
+      gap: Gap.md,
+      width: CssValue.full,
+    } as CSSProperties,
+    cardStack: {
+      ...flexColumn,
       gap: Gap.md,
       width: CssValue.full,
     } as CSSProperties,

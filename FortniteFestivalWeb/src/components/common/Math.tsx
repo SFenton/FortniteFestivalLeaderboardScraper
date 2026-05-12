@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
@@ -21,7 +21,18 @@ export default function Math({ tex, block }: MathProps) {
   );
 
   if (block) {
-    return <div dangerouslySetInnerHTML={{ __html: html }} />;
+    return <div style={blockMathStyle} dangerouslySetInnerHTML={{ __html: html }} />;
   }
   return <span dangerouslySetInnerHTML={{ __html: html }} />;
 }
+
+const blockMathStyle: CSSProperties = {
+  width: '100%',
+  maxWidth: '100%',
+  minWidth: 0,
+  overflowX: 'auto',
+  overflowY: 'visible',
+  padding: '2px 0',
+  boxSizing: 'border-box',
+  pointerEvents: 'auto',
+};

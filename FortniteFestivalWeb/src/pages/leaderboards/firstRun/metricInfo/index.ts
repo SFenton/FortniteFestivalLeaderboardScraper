@@ -9,17 +9,15 @@ import FcRateHowDemo from './FcRateHowDemo';
 
 function AdjustedHowDemo() {
   const buildRows = useCallback((songs: { albumArt?: string; title: string; artist: string }[]) => [
-    { ...songs[0]!, valueLabel: '#10 of 1,000 → Top 1.0%' },
-    { ...songs[1]!, valueLabel: '#50 of 500 → Top 10.0%' },
-    { ...songs[2]!, valueLabel: '#5 of 200 → Top 2.5%' },
+    { ...songs[0]!, valueLabel: 'Top 1.0%', valueLines: ['Top 1.0%'] },
+    { ...songs[1]!, valueLabel: 'Top 10.0%', valueLines: ['Top 10.0%'] },
+    { ...songs[2]!, valueLabel: 'Top 2.5%', valueLines: ['Top 2.5%'] },
   ], []);
 
   return createElement(SongDemoSlide, {
-    paragraphs: [
-      'Your rank on each song is turned into a rank percentile — how you compare to everyone else who played it. Adjusted Percentile averages these across your songs. Lower is better.',
-    ],
+    paragraphs: [],
     buildRows,
-    songSummary: 'Your average rank percentile: 4.5% — lower is better',
+    songSummary: 'Average rank percentile: 4.5%',
   });
 }
 
@@ -30,7 +28,7 @@ const adjustedSlides: FirstRunSlideDef[] = [
     title: 'firstRun.leaderboards.metricInfo.adjusted.how.title',
     description: 'firstRun.leaderboards.metricInfo.adjusted.how.description',
     render: () => createElement(AdjustedHowDemo),
-    contentStaggerCount: 3,
+    contentStaggerCount: 1,
   },
   {
     id: 'metric-info-adjusted-experience',
@@ -45,20 +43,20 @@ const adjustedSlides: FirstRunSlideDef[] = [
         {
           label: 'After 5 scores',
           entries: [
-            { rank: 52, displayName: 'FretPhenom' },
-            { rank: 53, displayName: 'NeonPick' },
-            { rank: 54, displayName: 'You', isPlayer: true },
-            { rank: 55, displayName: 'DrumSurge' },
+            { rank: 52, displayName: 'FretPhenom', ratingLabel: '45.8%' },
+            { rank: 53, displayName: 'NeonPick', ratingLabel: '46.0%' },
+            { rank: 54, displayName: 'You', ratingLabel: '46.2%', isPlayer: true },
+            { rank: 55, displayName: 'DrumSurge', ratingLabel: '46.5%' },
           ],
           highlight: 'Few scores — ranking is cautious',
         },
         {
           label: 'After 100 scores',
           entries: [
-            { rank: 7, displayName: 'BeatLegend' },
-            { rank: 8, displayName: 'TopClutch' },
-            { rank: 9, displayName: 'You', isPlayer: true },
-            { rank: 10, displayName: 'ComboKing' },
+            { rank: 7, displayName: 'BeatLegend', ratingLabel: '18.6%' },
+            { rank: 8, displayName: 'TopClutch', ratingLabel: '18.8%' },
+            { rank: 9, displayName: 'You', ratingLabel: '19.0%', isPlayer: true },
+            { rank: 10, displayName: 'ComboKing', ratingLabel: '19.3%' },
           ],
           highlight: 'Results drive more of the rating',
         },
@@ -79,9 +77,22 @@ const adjustedSlides: FirstRunSlideDef[] = [
       formulas: [
         '\\text{Rating} = \\frac{n \\cdot \\bar{p} + 50 \\cdot 0.5}{n + 50}',
       ],
-      callout: 'n = scores on the instrument, p̄ = average rank percentile, and 0.5 represents a neutral middle percentile.\nAfter 5 scores at 3% average: (5 × 0.03 + 50 × 0.5) ÷ 55 ≈ 46%.\nAfter 100 scores at 3% average: (100 × 0.03 + 50 × 0.5) ÷ 150 ≈ 19%.',
+      callout: 'n = scores on the instrument, p̄ = average rank percentile, and 0.5 represents a neutral middle percentile.',
     }),
     contentStaggerCount: 4,
+  },
+  {
+    id: 'metric-info-adjusted-hood-example',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.adjusted.hoodExample.title',
+    description: 'firstRun.leaderboards.metricInfo.adjusted.hoodExample.description',
+    render: () => createElement(MetricInfoSlide, {
+      paragraphs: [
+        'With a 3% average rank percentile, more scores move the rating farther from the neutral middle and closer to the earned result.',
+      ],
+      callout: 'After 5 scores: (5 × 0.03 + 50 × 0.5) ÷ 55 ≈ 46%.\nAfter 100 scores: (100 × 0.03 + 50 × 0.5) ÷ 150 ≈ 19%.',
+    }),
+    contentStaggerCount: 2,
   },
   {
     id: 'metric-info-adjusted-experimental',
@@ -102,8 +113,8 @@ const adjustedSlides: FirstRunSlideDef[] = [
 
 function WeightedHowDemo() {
   const buildRows = useCallback((songs: { albumArt?: string; title: string; artist: string }[]) => [
-    { ...songs[0]!, valueLabel: '12,000 players · Top 3%' },
-    { ...songs[1]!, valueLabel: '80 players · Top 3%' },
+    { ...songs[0]!, valueLabel: '12,000 players · Top 3%', valueLines: ['12,000 players', 'Top 3%'] },
+    { ...songs[1]!, valueLabel: '80 players · Top 3%', valueLines: ['80 players', 'Top 3%'] },
   ], []);
 
   return createElement(SongDemoSlide, {
@@ -138,18 +149,18 @@ const weightedSlides: FirstRunSlideDef[] = [
         {
           label: 'After 5 scores',
           entries: [
-            { rank: 38, displayName: 'StageKnight' },
-            { rank: 39, displayName: 'You', isPlayer: true },
-            { rank: 40, displayName: 'RhythmEdge' },
+            { rank: 38, displayName: 'StageKnight', ratingLabel: '44.8%' },
+            { rank: 39, displayName: 'You', ratingLabel: '45.1%', isPlayer: true },
+            { rank: 40, displayName: 'RhythmEdge', ratingLabel: '45.5%' },
           ],
           highlight: 'Few scores — ranking is cautious',
         },
         {
           label: 'After 100 scores',
           entries: [
-            { rank: 4, displayName: 'GoldStreak' },
-            { rank: 5, displayName: 'NoteHunter' },
-            { rank: 6, displayName: 'You', isPlayer: true },
+            { rank: 4, displayName: 'GoldStreak', ratingLabel: '16.7%' },
+            { rank: 5, displayName: 'NoteHunter', ratingLabel: '17.0%' },
+            { rank: 6, displayName: 'You', ratingLabel: '17.3%', isPlayer: true },
           ],
           highlight: 'Weighted average has more influence',
         },
@@ -158,22 +169,46 @@ const weightedSlides: FirstRunSlideDef[] = [
     contentStaggerCount: 3,
   },
   {
-    id: 'metric-info-weighted-hood',
+    id: 'metric-info-weighted-hood-weight',
     version: 2,
-    title: 'firstRun.leaderboards.metricInfo.weighted.hood.title',
-    description: 'firstRun.leaderboards.metricInfo.weighted.hood.description',
+    title: 'firstRun.leaderboards.metricInfo.weighted.hoodWeight.title',
+    description: 'firstRun.leaderboards.metricInfo.weighted.hoodWeight.description',
     render: () => createElement(MetricInfoSlide, {
-      paragraphs: [
-        'First, each song\'s rank percentile is weighted by leaderboard population using log₂(players). Then the number of scores on the instrument is factored in so players with only a few scores do not rank too highly.',
-      ],
+      layout: 'formula',
+      paragraphs: [],
       formulas: [
-        '\\text{Weight}_i = \\log_2(\\text{players}_i)',
-        '\\text{Raw weighted percentile} = \\frac{\\sum_i p_i \\cdot \\text{Weight}_i}{\\sum_i \\text{Weight}_i}',
-        '\\text{Rating} = \\frac{n \\cdot \\text{Raw weighted percentile} + 50 \\cdot 0.5}{n + 50}',
+        'w_i = \\log_2(N_i)',
       ],
-      callout: 'A song with 10,000 players gets about 13 weight units; one with 10 players gets about 3.3, so the larger board counts about 4× as much. The log scale keeps big boards from completely dominating.',
     }),
-    contentStaggerCount: 5,
+    contentStaggerCount: 1,
+  },
+  {
+    id: 'metric-info-weighted-hood-average',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.weighted.hoodAverage.title',
+    description: 'firstRun.leaderboards.metricInfo.weighted.hoodAverage.description',
+    render: () => createElement(MetricInfoSlide, {
+      layout: 'formula',
+      paragraphs: [],
+      formulas: [
+        '\\mathrm{RWP} = \\frac{\\sum_i p_i w_i}{\\sum_i w_i}',
+      ],
+    }),
+    contentStaggerCount: 1,
+  },
+  {
+    id: 'metric-info-weighted-hood-rating',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.weighted.hoodRating.title',
+    description: 'firstRun.leaderboards.metricInfo.weighted.hoodRating.description',
+    render: () => createElement(MetricInfoSlide, {
+      layout: 'formula',
+      paragraphs: [],
+      formulas: [
+        '\\text{Rating} = \\frac{n \\cdot \\mathrm{RWP} + 50 \\cdot 0.5}{n + 50}',
+      ],
+    }),
+    contentStaggerCount: 1,
   },
   {
     id: 'metric-info-weighted-experimental',
@@ -269,9 +304,9 @@ const fcRateSlides: FirstRunSlideDef[] = [
 
 function MaxScoreHowDemo() {
   const buildRows = useCallback((songs: { albumArt?: string; title: string; artist: string }[]) => [
-    { ...songs[0]!, valueLabel: '95,210 / 100,000 → 95.2%' },
-    { ...songs[1]!, valueLabel: '87,400 / 92,500 → 94.5%' },
-    { ...songs[2]!, valueLabel: '103,200 / 98,000 → 105% cap' },
+    { ...songs[0]!, valueLabel: '95,210 / 100,000 → 95.2%', valueLines: ['95,210 / 100,000', '95.2%'] },
+    { ...songs[1]!, valueLabel: '87,400 / 92,500 → 94.5%', valueLines: ['87,400 / 92,500', '94.5%'] },
+    { ...songs[2]!, valueLabel: '103,200 / 98,000 → 105% cap', valueLines: ['103,200 / 98,000', '105% cap'] },
   ], []);
 
   return createElement(SongDemoSlide, {
@@ -325,21 +360,32 @@ const maxScoreSlides: FirstRunSlideDef[] = [
     contentStaggerCount: 3,
   },
   {
-    id: 'metric-info-maxscore-hood',
+    id: 'metric-info-maxscore-hood-cap',
     version: 2,
-    title: 'firstRun.leaderboards.metricInfo.maxscore.hood.title',
-    description: 'firstRun.leaderboards.metricInfo.maxscore.hood.description',
+    title: 'firstRun.leaderboards.metricInfo.maxscore.hoodCap.title',
+    description: 'firstRun.leaderboards.metricInfo.maxscore.hoodCap.description',
     render: () => createElement(MetricInfoSlide, {
-      paragraphs: [
-        'Scores are capped at 105% per song to limit the impact of any inaccuracies in the computed maximum.',
-      ],
+      layout: 'formula',
+      paragraphs: [],
       formulas: [
         '\\bar{s} = \\text{avg}\\!\\left(\\min\\!\\left(\\frac{\\text{score}_i}{\\text{max}_i},\\; 1.05\\right)\\right)',
+      ],
+    }),
+    contentStaggerCount: 1,
+  },
+  {
+    id: 'metric-info-maxscore-hood-rating',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.maxscore.hoodRating.title',
+    description: 'firstRun.leaderboards.metricInfo.maxscore.hoodRating.description',
+    render: () => createElement(MetricInfoSlide, {
+      layout: 'formula',
+      paragraphs: [],
+      formulas: [
         '\\text{Rating} = \\frac{n \\cdot \\bar{s} + 50 \\cdot 0.5}{n + 50}',
       ],
-      callout: 'After 3 songs (avg 95%): (3 × 0.95 + 50 × 0.5) ÷ 53 ≈ 53%.\nAfter 100 songs (avg 95%): (100 × 0.95 + 50 × 0.5) ÷ 150 ≈ 80%.',
     }),
-    contentStaggerCount: 4,
+    contentStaggerCount: 1,
   },
   {
     id: 'metric-info-maxscore-experimental',

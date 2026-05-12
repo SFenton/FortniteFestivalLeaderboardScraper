@@ -1145,7 +1145,7 @@
         "adjusted": {
           "how": {
             "title": "How Adjusted Percentile Works",
-            "description": "Your rank on each song becomes a rank percentile. Your rating averages those percentiles and factors in how many scores you have on that instrument, so players with only a few scores do not rank too highly. Lower is better."
+            "description": "Ranks become top-percentile scores. Average them, then apply the score-count rule. Lower is better."
           },
           "experience": {
             "title": "Why Score Count Matters",
@@ -1154,6 +1154,10 @@
           "hood": {
             "title": "Under the Hood",
             "description": "The formula factors in the number of scores on the instrument. More scores means the player's actual percentile average determines more of the rating."
+          },
+          "hoodExample": {
+            "title": "What Changes With More Scores",
+            "description": "More scores move the rating closer to the player's earned average rank percentile."
           },
           "experimental": {
             "title": "Why It's Experimental",
@@ -1172,6 +1176,18 @@
           "hood": {
             "title": "Under the Hood",
             "description": "Each song's rank percentile is multiplied by a log₂ player-count weight before averaging, then the number of scores on the instrument is factored in so players with only a few scores do not rank too highly."
+          },
+          "hoodWeight": {
+            "title": "Song Population Weight",
+            "description": "N is the song's player count. The log scale lets bigger leaderboards count more without taking over."
+          },
+          "hoodAverage": {
+            "title": "Weighted Average",
+            "description": "p is rank percentile and w is population weight. Their weighted average becomes RWP."
+          },
+          "hoodRating": {
+            "title": "Final Rating",
+            "description": "RWP is blended with score count n so a few scores do not rank too highly."
           },
           "experimental": {
             "title": "Why It's Experimental",
@@ -1208,6 +1224,14 @@
           "hood": {
             "title": "Under the Hood",
             "description": "Scores are capped at 105% per song to limit the impact of inaccurate maximums."
+          },
+          "hoodCap": {
+            "title": "Per-Song Cap",
+            "description": "Each score is compared with the computed maximum, capped at 105%, then averaged."
+          },
+          "hoodRating": {
+            "title": "Final Rating",
+            "description": "The capped average is blended with score count n so a few near-perfect scores do not rank too highly."
           },
           "experimental": {
             "title": "Why It's Experimental",
