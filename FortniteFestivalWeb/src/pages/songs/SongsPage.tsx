@@ -30,6 +30,7 @@ import { LoadGate } from '../../components/page/LoadGate';
 import Page from '../Page';
 import { HEADER_PORTAL_HEIGHT_VAR, useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../constants/keyboardLayoutVars';
+import { safeAreaBottomOffset } from '../../utils/safeAreaStyles';
 import SyncBanner from '../../components/page/SyncBanner';
 import SyncCompleteBanner from '../../components/page/SyncCompleteBanner';
 import CollapseOnExit from '../../components/page/CollapseOnExit';
@@ -37,7 +38,6 @@ import EmptyState from '../../components/common/EmptyState';
 import { ActionPill } from '../../components/common/ActionPill';
 import { parseApiError } from '../../utils/apiError';
 import PageHeader from '../../components/common/PageHeader';
-import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { SongRow } from './components/SongRow';
 import { SongsToolbar } from './components/SongsToolbar';
 import { visibleInstruments } from '../../contexts/SettingsContext';
@@ -117,6 +117,8 @@ const ROW_FIXED_OVERHEAD = 262;
 
 /** Safety buffer (px) so compact mode fires before any metadata could clip. */
 const ROW_WIDTH_BUFFER = 60;
+const SONGS_MOBILE_CENTER_TOP = `max(${Layout.desktopNavHeight}px, var(${HEADER_PORTAL_HEIGHT_VAR}, 0px))`;
+const SONGS_MOBILE_CENTER_BOTTOM = `max(${safeAreaBottomOffset(Layout.fabBottom + Layout.fabSize)}, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`;
 
 const SONG_SORT_LABEL_KEYS: Partial<Record<SongSortMode, string>> = {
   title: 'sort.title',
@@ -1081,16 +1083,13 @@ export default function SongsPage() {
 
   const emptyStagger = useStaggerStyle(200, { skip: !shouldStagger });
   const songsStyles = useSongsStyles();
-  const showMobilePageHeader = !isMobileChrome || (appSettings.showButtonsInHeaderMobile && !!compactQuickLinksAction);
   const loadingSpinnerStyle = isMobileChrome ? songsStyles.keyboardAwareSpinnerOverlay : undefined;
   const keyboardAwareMessageStyle = isMobileChrome ? songsStyles.keyboardAwareMessage : undefined;
   const emptyStateStyle = keyboardAwareMessageStyle ? { ...emptyStagger.style, ...keyboardAwareMessageStyle } : emptyStagger.style;
-
-  if (error) {
-    const parsed = parseApiError(error);
-    const errorStyle = keyboardAwareMessageStyle ? { ...buildStaggerStyle(200), ...keyboardAwareMessageStyle } : buildStaggerStyle(200);
-    return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={errorStyle} onAnimationEnd={clearStaggerStyle} />;
-  }
+  const parsedError = error ? parseApiError(error) : null;
+  const errorStyle = parsedError
+    ? keyboardAwareMessageStyle ? { ...buildStaggerStyle(200), ...keyboardAwareMessageStyle } : buildStaggerStyle(200)
+    : undefined;
 
   return (
     <Page
@@ -1103,13 +1102,9 @@ export default function SongsPage() {
       quickLinks={pageQuickLinks}
       before={<>
         <LoadGate phase={loadPhase} overlay spinnerStyle={loadingSpinnerStyle} spinnerTestId="songs-loading-spinner">
-          {isMobileChrome ? compactQuickLinksAction ? (
-            <PageHeaderTransition visible={showMobilePageHeader}>
-              <PageHeader
-                actions={compactQuickLinksAction}
-              />
-            </PageHeaderTransition>
-          ) : null : (
+          {isMobileChrome ? (
+            null
+          ) : (
             <PageHeader
               title={
                 <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
@@ -1207,7 +1202,15 @@ export default function SongsPage() {
             ) : null}
           </CollapseOnExit>
         )}
-        {loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (
+        {parsedError ? (
+          <EmptyState
+            fullPage
+            title={parsedError.title}
+            subtitle={parsedError.subtitle}
+            style={errorStyle}
+            onAnimationEnd={clearStaggerStyle}
+          />
+        ) : loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (
           <EmptyState
             fullPage
             title={t('songs.noResults')}
@@ -1326,16 +1329,16 @@ function useSongsStyles() {
       fontSize: Font.lg,
     } as CSSProperties,
     keyboardAwareSpinnerOverlay: {
-      top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`,
-      bottom: `var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px)`,
+      top: SONGS_MOBILE_CENTER_TOP,
+      bottom: SONGS_MOBILE_CENTER_BOTTOM,
       transition: `top ${QUICK_FADE_MS}ms ease, bottom ${QUICK_FADE_MS}ms ease`,
     } as CSSProperties,
     keyboardAwareMessage: {
       position: 'fixed',
-      top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`,
+      top: SONGS_MOBILE_CENTER_TOP,
       left: 0,
       right: 0,
-      bottom: `max(${Layout.shellChromeHeight}px, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`,
+      bottom: SONGS_MOBILE_CENTER_BOTTOM,
       minHeight: 'auto',
       boxSizing: BoxSizing.borderBox,
       transition: `top ${QUICK_FADE_MS}ms ease, bottom ${QUICK_FADE_MS}ms ease`,

@@ -10,9 +10,13 @@ import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../src/hooks/ui/usePageQ
 import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLinks';
 import { clearPageTransitionCache } from '../../../src/hooks/ui/usePageTransition';
 import { defaultSongSettings } from '../../../src/utils/songSettings';
+import { safeAreaBottomOffset } from '../../../src/utils/safeAreaStyles';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
+
+const SONGS_MOBILE_CENTER_TOP_STYLE = `max(${Layout.desktopNavHeight}px, var(${HEADER_PORTAL_HEIGHT_VAR}, 0px))`;
+const SONGS_MOBILE_CENTER_BOTTOM_STYLE = `max(${safeAreaBottomOffset(Layout.fabBottom + Layout.fabSize)}, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`;
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -134,6 +138,21 @@ async function settleSongsPage() {
 async function openSongsQuickLinksModal() {
   await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
   return await screen.findByTestId('songs-quick-links-modal-list');
+}
+
+function querySongsMobileHeaderSpacer() {
+  return within(screen.getByTestId('test-header-portal')).queryByTestId('songs-mobile-page-header');
+}
+
+function expectNoSongsMobileHeaderSpacer() {
+  expect(querySongsMobileHeaderSpacer()).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+}
+
+function expectMobileSongsCenterBounds(element: HTMLElement) {
+  expect(element.style.top).toBe(SONGS_MOBILE_CENTER_TOP_STYLE);
+  expect(element.style.bottom).toBe(SONGS_MOBILE_CENTER_BOTTOM_STYLE);
+  expect(element.style.transition).toContain('bottom');
 }
 
 function selectTestBandProfile() {
@@ -259,10 +278,23 @@ describe('SongsPage', () => {
 
     const emptyState = screen.getByText('No songs match your filters.').parentElement as HTMLElement;
     expect(emptyState.style.position).toBe('fixed');
-    expect(emptyState.style.top).toBe(`var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`);
-    expect(emptyState.style.bottom).toBe(`max(200px, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`);
+    expectMobileSongsCenterBounds(emptyState);
     expect(emptyState.style.minHeight).toBe('auto');
-    expect(emptyState.style.transition).toContain('bottom');
+    expectNoSongsMobileHeaderSpacer();
+  });
+
+  it('keeps the mobile no-results area clear of empty header chrome', async () => {
+    setViewportQueries({ mobile: true });
+    mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1, scores: [
+      { songId: 's1', instrument: 'Solo_Bass', score: 100000, rank: 5, percentile: 80, accuracy: 90, stars: 4, season: 5 },
+    ] });
+    setSongSettingsFilter({ hasScores: { Solo_Guitar: true } });
+    renderSongsPage('/songs', 'test-player-1');
+    await settleSongsPage();
+
+    expect(screen.getByText('No songs match your filters.')).toBeDefined();
+    expect(screen.getByText('Try adjusting your search or filters.')).toBeDefined();
+    expectNoSongsMobileHeaderSpacer();
   });
 
   it('shows error message on API failure', async () => {
@@ -280,10 +312,9 @@ describe('SongsPage', () => {
 
     const errorState = screen.getByText('Something Went Wrong').parentElement as HTMLElement;
     expect(errorState.style.position).toBe('fixed');
-    expect(errorState.style.top).toBe(`var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`);
-    expect(errorState.style.bottom).toBe(`max(200px, var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px))`);
+    expectMobileSongsCenterBounds(errorState);
     expect(errorState.style.minHeight).toBe('auto');
-    expect(errorState.style.transition).toContain('bottom');
+    expectNoSongsMobileHeaderSpacer();
   });
 
   it('shows song count in toolbar', async () => {
@@ -451,9 +482,7 @@ describe('SongsPage', () => {
     renderSongsPage();
 
     const spinner = await screen.findByTestId('songs-loading-spinner');
-    expect(spinner.style.top).toBe(`var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)`);
-    expect(spinner.style.bottom).toBe(`var(${SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR}, 0px)`);
-    expect(spinner.style.transition).toContain('bottom');
+    expectMobileSongsCenterBounds(spinner);
   });
 
   it('re-synchs settings from localStorage on external event', async () => {
@@ -1288,13 +1317,13 @@ describe('SongsPage quick links', () => {
     expect(maxDiffButton.querySelector('span[style*="background-color"]')).toBeTruthy();
   });
 
-  it('registers shared quick links on mobile layouts without rendering a header trigger', async () => {
+  it('registers shared quick links on mobile layouts without rendering a header trigger or spacer', async () => {
     setViewportQueries({ mobile: true, wide: false });
     renderSongsPage('/songs');
 
     await settleSongsPage();
     expect(screen.queryByRole('heading', { name: 'Songs' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expectNoSongsMobileHeaderSpacer();
 
     await act(async () => { fireEvent.click(screen.getByTestId('test-open-page-quick-links')); });
 
@@ -1311,6 +1340,7 @@ describe('SongsPage quick links', () => {
     await settleSongsPage();
 
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(querySongsMobileHeaderSpacer()).toBeNull();
   });
 });
 
