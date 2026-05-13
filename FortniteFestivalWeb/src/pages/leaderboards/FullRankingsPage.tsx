@@ -8,7 +8,7 @@ import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../contexts/SettingsContext';
-import { RankingEntry } from './components/RankingEntry';
+import { COMPACT_PERCENTILE_ROW_HEIGHT, RankingEntry } from './components/RankingEntry';
 import { PaginatedLeaderboard } from '../../components/leaderboard/PaginatedLeaderboard';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
@@ -206,7 +206,7 @@ export default function FullRankingsPage() {
   const isMobile = useIsMobile();
   const loading = isFetching && !data;
   const useTwoRowPercentile = isMobile && usePercentileMetric;
-  const leaderboardRowHeight = useTwoRowPercentile ? Layout.entryRowHeight + 28 : Layout.entryRowHeight;
+  const leaderboardRowHeight = useTwoRowPercentile ? COMPACT_PERCENTILE_ROW_HEIGHT : Layout.entryRowHeight;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);

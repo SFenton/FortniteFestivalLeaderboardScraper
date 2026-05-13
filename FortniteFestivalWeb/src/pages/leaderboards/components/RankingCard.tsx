@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
-import { RankingEntry } from './RankingEntry';
+import { COMPACT_PERCENTILE_ROW_HEIGHT, RankingEntry } from './RankingEntry';
 import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, AccountRankingDto, RankingMetric } from '@festival/core/api/serverTypes';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import { Routes } from '../../../routes';
@@ -21,7 +21,6 @@ import {
 } from '@festival/theme';
 
 const PERCENTILE_TWO_ROW_WIDTH_THRESHOLD = 680;
-const PERCENTILE_TWO_ROW_HEIGHT = Layout.entryRowHeight + 28;
 
 interface RankingCardProps {
   instrument: InstrumentKey;
@@ -56,7 +55,7 @@ export default memo(function RankingCard({
   const usePercentileMetric = usesPercentileValueDisplay(metric);
   const isNarrowPercentileCard = cardBodyWidth > 0 && cardBodyWidth < PERCENTILE_TWO_ROW_WIDTH_THRESHOLD;
   const useTwoRowPercentile = usePercentileMetric && (isMobile || isNarrowPercentileCard);
-  const percentileRowHeight = useTwoRowPercentile ? PERCENTILE_TWO_ROW_HEIGHT : Layout.entryRowHeight;
+  const percentileRowHeight = useTwoRowPercentile ? COMPACT_PERCENTILE_ROW_HEIGHT : Layout.entryRowHeight;
   const twoRowStyle: CSSProperties | undefined = useTwoRowPercentile
     ? { height: percentileRowHeight, boxSizing: 'border-box' }
     : undefined;

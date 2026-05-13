@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { Colors, Gap } from '@festival/theme';
 import RankHistoryChart from '../../../../src/pages/leaderboards/components/RankHistoryChart';
 import { computeRankAxisWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
@@ -203,9 +203,24 @@ describe('RankHistoryChart', () => {
     expect(screen.getAllByText('Top 0.56%')).toHaveLength(2);
     expect(screen.getAllByText('Bayesian-Calculated Rank:')).toHaveLength(2);
     expect(screen.getAllByText('0.0409')).toHaveLength(2);
-    for (const label of screen.getAllByText('Bayesian-Calculated Rank:')) {
-      expect(label.parentElement?.style.paddingTop).toBe('');
-      expect(label.parentElement?.parentElement).toHaveStyle({ gap: `${Gap.xl}px` });
+    const primaryRows = screen.getAllByTestId('rank-history-compact-primary-row');
+    const primaryMetadataRows = screen.getAllByTestId('rank-history-compact-primary-metadata');
+    const bayesianRows = screen.getAllByTestId('rank-history-compact-bayesian-row');
+    expect(primaryRows).toHaveLength(2);
+    expect(primaryMetadataRows).toHaveLength(2);
+    expect(bayesianRows).toHaveLength(2);
+    for (const primaryMetadata of primaryMetadataRows) {
+      expect(within(primaryMetadata).getByText('123 / 500')).toBeTruthy();
+      expect(within(primaryMetadata).getByText('Top 0.56%')).toBeTruthy();
+    }
+    for (const primaryRow of primaryRows) {
+      expect(within(primaryRow).queryByText('Bayesian-Calculated Rank:')).toBeNull();
+    }
+    for (const bayesianRow of bayesianRows) {
+      expect(within(bayesianRow).getByText('Bayesian-Calculated Rank:')).toBeTruthy();
+      expect(within(bayesianRow).getByText('0.0409')).toBeTruthy();
+      expect(bayesianRow).toHaveStyle({ justifyContent: 'flex-end' });
+      expect(bayesianRow.parentElement).toHaveStyle({ gap: `${Gap.xl}px` });
     }
   });
 });

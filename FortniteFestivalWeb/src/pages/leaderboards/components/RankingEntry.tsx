@@ -8,6 +8,7 @@ import { Colors, Font, FontVariant, Gap, Layout, MetadataSize, TextAlign, Weight
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 
 const TEN_DIGIT_SCORE_MIN_WIDTH = Math.ceil('1,000,000,000'.length * Layout.rankCharWidth) + Layout.rankColumnPadding;
+export const COMPACT_PERCENTILE_ROW_HEIGHT = Layout.entryRowHeight + 28;
 
 export interface RankingEntryProps {
   rank: number;
@@ -139,17 +140,25 @@ export const RankingEntry = memo(function RankingEntry({
   if (hasPercentileMetricValue && twoRowPercentileMetadata) {
     return (
       <div style={s.twoRowLayout}>
-        <div style={s.twoRowPrimary}>
-          <span style={s.colRank}>#{rank.toLocaleString()}</span>
-          <span style={s.colName}>{displayName}</span>
+        <div data-testid="ranking-compact-primary-row" style={s.twoRowPrimary}>
+          <div style={s.twoRowIdentity}>
+            <span style={s.colRank}>#{rank.toLocaleString()}</span>
+            <span style={s.colName}>{displayName}</span>
+          </div>
+          <div data-testid="ranking-compact-primary-metadata" style={s.twoRowPrimaryMetadata}>
+            {renderPercentilePrimaryMetadata({
+              songsLabel,
+              songsLabelPrimary,
+              songsLabelGoldPrefix,
+              percentileValueDisplay,
+              percentileValueMinWidth,
+              isPlayer,
+              s,
+            })}
+          </div>
         </div>
-        <div style={s.twoRowMetadata}>
-          {renderPercentileMetadata({
-            songsLabel,
-            songsLabelPrimary,
-            songsLabelGoldPrefix,
-            percentileValueDisplay,
-            percentileValueMinWidth,
+        <div data-testid="ranking-compact-bayesian-row" style={s.twoRowBayesianMetadata}>
+          {renderBayesianMetadata({
             bayesianRankLabel,
             bayesianRankDisplay,
             bayesianRankColor,
@@ -218,6 +227,54 @@ function renderPercentileMetadata({
       {songsLabel && renderSongsLabel(songsLabel, songsLabelPrimary || songsLabelGoldPrefix, !!songsLabelGoldPrefix, s)}
       <PercentilePill display={percentileValueDisplay} minWidth={percentileValueMinWidth} bold={isPlayer} />
       {bayesianRankDisplay && <span style={s.bayesianRankLabel}>{bayesianRankLabel}</span>}
+      {bayesianRankDisplay && <PercentilePill display={bayesianRankDisplay} color={bayesianRankColor} minWidth={bayesianRankMinWidth ?? MetadataSize.valuePillMinWidth} bold={isPlayer} />}
+    </>
+  );
+}
+
+function renderPercentilePrimaryMetadata({
+  songsLabel,
+  songsLabelPrimary,
+  songsLabelGoldPrefix,
+  percentileValueDisplay,
+  percentileValueMinWidth,
+  isPlayer,
+  s,
+}: {
+  songsLabel?: string;
+  songsLabelPrimary?: boolean;
+  songsLabelGoldPrefix?: boolean;
+  percentileValueDisplay?: string;
+  percentileValueMinWidth?: number;
+  isPlayer?: boolean;
+  s: ReturnType<typeof useStyles>;
+}) {
+  return (
+    <>
+      {songsLabel && renderSongsLabel(songsLabel, songsLabelPrimary || songsLabelGoldPrefix, !!songsLabelGoldPrefix, s)}
+      <PercentilePill display={percentileValueDisplay} minWidth={percentileValueMinWidth} bold={isPlayer} />
+    </>
+  );
+}
+
+function renderBayesianMetadata({
+  bayesianRankLabel,
+  bayesianRankDisplay,
+  bayesianRankColor,
+  bayesianRankMinWidth,
+  isPlayer,
+  s,
+}: {
+  bayesianRankLabel: string;
+  bayesianRankDisplay?: string;
+  bayesianRankColor?: string;
+  bayesianRankMinWidth?: number;
+  isPlayer?: boolean;
+  s: ReturnType<typeof useStyles>;
+}) {
+  return (
+    <>
+      {bayesianRankDisplay && <span style={s.bayesianRankLabelCompact}>{bayesianRankLabel}</span>}
       {bayesianRankDisplay && <PercentilePill display={bayesianRankDisplay} color={bayesianRankColor} minWidth={bayesianRankMinWidth ?? MetadataSize.valuePillMinWidth} bold={isPlayer} />}
     </>
   );
@@ -296,17 +353,41 @@ function useStyles(isPlayer?: boolean, rankWidth?: number, reserveTenDigitScoreW
     twoRowPrimary: {
       display: 'flex',
       alignItems: 'center',
-      gap: Gap.xl,
+      gap: Gap.md,
       width: '100%',
       minWidth: 0,
     } as React.CSSProperties,
-    twoRowMetadata: {
+    twoRowIdentity: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: Gap.xl,
+      flex: 1,
+      minWidth: 0,
+    } as React.CSSProperties,
+    twoRowPrimaryMetadata: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: Gap.md,
+      minWidth: 0,
+      flexShrink: 0,
+    } as React.CSSProperties,
+    twoRowBayesianMetadata: {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'flex-end',
       gap: Gap.md,
       width: '100%',
       minWidth: 0,
+    } as React.CSSProperties,
+    bayesianRankLabelCompact: {
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: Font.sm,
+      color: Colors.textSecondary,
+      ...(isPlayer ? { fontWeight: Weight.bold } : { fontWeight: Weight.semibold }),
     } as React.CSSProperties,
     colRating: {
       flexShrink: 0,

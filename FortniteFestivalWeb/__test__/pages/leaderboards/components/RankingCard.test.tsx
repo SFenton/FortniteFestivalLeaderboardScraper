@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import type { AccountRankingDto, AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import RankingCard from '../../../../src/pages/leaderboards/components/RankingCard';
 import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
@@ -176,9 +176,16 @@ describe('RankingCard', () => {
     });
 
     await waitFor(() => expect(screen.getByText('Player 17').closest('a')).toHaveStyle({ height: '76px' }));
-    const metadata = screen.getByText('Bayesian-Calculated Rank:').parentElement;
-    expect(metadata?.style.paddingTop).toBe('');
-    expect(metadata?.parentElement).toHaveStyle({ gap: `${Gap.xl}px` });
+    const primaryRow = screen.getByTestId('ranking-compact-primary-row');
+    const primaryMetadata = screen.getByTestId('ranking-compact-primary-metadata');
+    const bayesianRow = screen.getByTestId('ranking-compact-bayesian-row');
+    expect(within(primaryRow).getByText('Player 17')).toBeTruthy();
+    expect(within(primaryMetadata).getByText('123 / 500')).toBeTruthy();
+    expect(within(primaryMetadata).getByText('Top 0.56%')).toBeTruthy();
+    expect(within(primaryRow).queryByText('Bayesian-Calculated Rank:')).toBeNull();
+    expect(within(bayesianRow).getByText('Bayesian-Calculated Rank:')).toBeTruthy();
+    expect(within(bayesianRow).getByText('0.0409')).toBeTruthy();
+    expect(bayesianRow).toHaveStyle({ justifyContent: 'flex-end' });
   });
 
   it('keeps one-row percentile metadata on desktop when measured card width is wide enough', async () => {

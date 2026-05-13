@@ -20,10 +20,11 @@ import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { parseSnapshotDate } from '../../../utils/fillRankHistoryGaps';
+import { COMPACT_PERCENTILE_ROW_HEIGHT } from './RankingEntry';
 import { computePillMinWidth, computeRankAxisWidth, computeRankWidth, formatBayesianRatingDisplay, formatRankLabel, formatRankingValueDisplay } from '../helpers/rankingHelpers';
 import {
   Colors, Font, FontVariant, Gap, Size, Layout, MetadataSize, Radius, Weight,
-  frostedCard, padding, border, transition,
+  frostedCard, padding, border, transition, truncate,
   CHART_ANIM_DURATION,
 } from '@festival/theme';
 
@@ -162,7 +163,7 @@ export default memo(function RankHistoryChart({
   const usePercentile = metric === 'adjusted' || metric === 'weighted';
   const totalAccounts = totalAccountsByInstrument?.[selected] ?? 0;
   const showMobilePercentileDetails = isMobile && usePercentile;
-  const historyTwoRowHeight = Layout.entryRowHeight + 28;
+  const historyTwoRowHeight = COMPACT_PERCENTILE_ROW_HEIGHT;
 
   const percentileValueWidth = useMemo(() => {
     if (!usePercentile) return undefined;
@@ -305,12 +306,17 @@ export default memo(function RankHistoryChart({
     if (showMobilePercentileDetails) {
       return (
         <div style={st.mobileHistoryLayout}>
-          <div style={st.mobileHistoryPrimary}>
-            <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
-            <span style={{ fontWeight: Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
+          <div data-testid="rank-history-compact-primary-row" style={st.mobileHistoryPrimary}>
+            <div style={st.mobileHistoryIdentity}>
+              <span style={st.mobileHistoryLabel}>{dateStr}</span>
+              <span style={{ fontWeight: Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
+            </div>
+            <div data-testid="rank-history-compact-primary-metadata" style={st.mobileHistoryPrimaryMetadata}>
+              {renderPercentileHistoryPrimaryMetadata(point, metric, percentileValueWidth)}
+            </div>
           </div>
-          <div style={st.mobileHistoryMetadata}>
-            {renderPercentileHistoryMetadata(point, metric, totalAccounts, percentileValueWidth, bayesianValueWidth)}
+          <div data-testid="rank-history-compact-bayesian-row" style={st.mobileHistoryBayesianMetadata}>
+            {renderBayesianHistoryMetadata(point, metric, totalAccounts, bayesianValueWidth)}
           </div>
         </div>
       );
@@ -353,12 +359,17 @@ export default memo(function RankHistoryChart({
     if (showMobilePercentileDetails) {
       return (
         <div key={`${point.date}:${point.rank}:${point.value}:${i}`} style={{ ...(i === 0 ? listCardBest : listCardBase), ...st.mobileHistoryListCard, ...animStyle }}>
-          <div style={st.mobileHistoryPrimary}>
-            <span style={{ flex: 1, color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{dateStr}</span>
-            <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
+          <div data-testid="rank-history-compact-primary-row" style={st.mobileHistoryPrimary}>
+            <div style={st.mobileHistoryIdentity}>
+              <span style={{ ...st.mobileHistoryLabel, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{dateStr}</span>
+              <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts), width: rankWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const }}>#{point.rank.toLocaleString()}</span>
+            </div>
+            <div data-testid="rank-history-compact-primary-metadata" style={st.mobileHistoryPrimaryMetadata}>
+              {renderPercentileHistoryPrimaryMetadata(point, metric, percentileValueWidth, i === 0)}
+            </div>
           </div>
-          <div style={st.mobileHistoryMetadata}>
-            {renderPercentileHistoryMetadata(point, metric, totalAccounts, percentileValueWidth, bayesianValueWidth, i === 0)}
+          <div data-testid="rank-history-compact-bayesian-row" style={st.mobileHistoryBayesianMetadata}>
+            {renderBayesianHistoryMetadata(point, metric, totalAccounts, bayesianValueWidth, i === 0)}
           </div>
         </div>
       );
@@ -403,18 +414,29 @@ export default memo(function RankHistoryChart({
   );
 });
 
-function renderPercentileHistoryMetadata(
+function renderPercentileHistoryPrimaryMetadata(
   point: RankHistoryChartPoint,
   metric: RankingMetric,
-  totalAccounts: number,
   percentileValueWidth: number | undefined,
-  bayesianValueWidth: number | undefined,
   bold = false,
 ) {
   return (
     <>
       <span style={{ flexShrink: 0, fontSize: Font.sm, color: Colors.textSecondary, fontVariantNumeric: FontVariant.tabularNums, ...(bold ? { fontWeight: Weight.bold } : undefined) }}>{formatSongsFraction(point)}</span>
       <PercentilePill display={formatRankingValueDisplay(point.value, metric)} minWidth={percentileValueWidth} bold={bold} />
+    </>
+  );
+}
+
+function renderBayesianHistoryMetadata(
+  point: RankHistoryChartPoint,
+  metric: RankingMetric,
+  totalAccounts: number,
+  bayesianValueWidth: number | undefined,
+  bold = false,
+) {
+  return (
+    <>
       <span style={{ flexShrink: 0, fontSize: Font.sm, color: Colors.textSecondary, fontWeight: bold ? Weight.bold : Weight.semibold }}>Bayesian-Calculated Rank:</span>
       <PercentilePill display={formatBayesianRatingDisplay(point.bayesianValue ?? point.value, metric)} color={rankColor(point.rank, totalAccounts)} minWidth={bayesianValueWidth ?? MetadataSize.valuePillMinWidth} bold={bold} />
     </>
@@ -442,11 +464,32 @@ function useRankHistoryChartStyles() {
     mobileHistoryPrimary: {
       display: 'flex',
       alignItems: 'center',
-      gap: Gap.xl,
+      gap: Gap.md,
       width: '100%',
       minWidth: 0,
     } as React.CSSProperties,
-    mobileHistoryMetadata: {
+    mobileHistoryIdentity: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: Gap.xl,
+      flex: 1,
+      minWidth: 0,
+    } as React.CSSProperties,
+    mobileHistoryLabel: {
+      ...truncate,
+      flex: 1,
+      minWidth: 0,
+      color: Colors.textPrimary,
+    } as React.CSSProperties,
+    mobileHistoryPrimaryMetadata: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: Gap.md,
+      minWidth: 0,
+      flexShrink: 0,
+    } as React.CSSProperties,
+    mobileHistoryBayesianMetadata: {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'flex-end',

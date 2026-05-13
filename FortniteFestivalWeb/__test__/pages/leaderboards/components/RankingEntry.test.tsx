@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { RankingEntry } from '../../../../src/pages/leaderboards/components/RankingEntry';
 import { TestProviders as W } from '../../../helpers/TestProviders';
 import { Colors, Gap } from '@festival/theme';
@@ -104,8 +104,17 @@ describe('RankingEntry', () => {
     expect(screen.getByText('123 / 500')).toBeTruthy();
     expect(screen.getByText('Top 0.56%')).toBeTruthy();
     expect(screen.getByText('0.0409')).toBeTruthy();
-    const metadata = screen.getByText('Bayesian-Calculated Rank:').parentElement;
-    expect(metadata?.style.paddingTop).toBe('');
-    expect(metadata?.parentElement).toHaveStyle({ gap: `${Gap.xl}px` });
+    const primaryRow = screen.getByTestId('ranking-compact-primary-row');
+    const primaryMetadata = screen.getByTestId('ranking-compact-primary-metadata');
+    const bayesianRow = screen.getByTestId('ranking-compact-bayesian-row');
+    expect(within(primaryRow).getByText('#17')).toBeTruthy();
+    expect(within(primaryRow).getByText('Tracked Player')).toBeTruthy();
+    expect(within(primaryMetadata).getByText('123 / 500')).toBeTruthy();
+    expect(within(primaryMetadata).getByText('Top 0.56%')).toBeTruthy();
+    expect(within(primaryRow).queryByText('Bayesian-Calculated Rank:')).toBeNull();
+    expect(within(bayesianRow).getByText('Bayesian-Calculated Rank:')).toBeTruthy();
+    expect(within(bayesianRow).getByText('0.0409')).toBeTruthy();
+    expect(bayesianRow).toHaveStyle({ justifyContent: 'flex-end' });
+    expect(bayesianRow.parentElement).toHaveStyle({ gap: `${Gap.xl}px` });
   });
 });
