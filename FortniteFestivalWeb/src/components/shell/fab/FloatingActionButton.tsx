@@ -20,6 +20,11 @@ const DOCK_LABEL_ICON_GAP = Gap.md;
 const DOCK_LABEL_HORIZONTAL_PADDING = Gap.xl;
 const LABELED_FAB_ICON_LEFT_PADDING = Math.round((Layout.fabSize - IconSize.fab) / 2) - 1;
 const LABELED_FAB_TEXT_SIDE_PADDING = LABELED_FAB_ICON_LEFT_PADDING;
+const OPAQUE_FAB_GLASS_BACKGROUND = 'rgba(18,24,38,0.96)';
+const FAB_SEARCH_SURFACE_TRANSITION = [
+  `border-color ${QUICK_FADE_MS}ms ease`,
+  `box-shadow ${QUICK_FADE_MS}ms ease`,
+].join(', ');
 
 export interface ActionItem {
   label: string;
@@ -1045,6 +1050,8 @@ function useFABStyles() {
       width: Layout.fabSize,
       height: Layout.fabSize,
       borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
+      opacity: 1,
       color: Colors.textPrimary,
       ...flexCenter,
       cursor: Cursor.pointer,
@@ -1067,10 +1074,12 @@ function useFABStyles() {
       boxShadow: CssValue.none,
     } as CSSProperties,
     fabSideActionCircle: {
-      ...purpleGlass,
+      ...frostedCard,
       minWidth: Layout.fabSize,
       height: Layout.fabSize,
       borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
+      opacity: 1,
       color: Colors.textPrimary,
       textDecoration: CssValue.none,
       gap: DOCK_LABEL_ICON_GAP,
@@ -1172,9 +1181,10 @@ function useFABStyles() {
       width: Layout.fabSize,
       height: Layout.fabSize,
       borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
       color: Colors.textPrimary,
       boxShadow: Shadow.tooltip,
-      opacity: 0.9,
+      opacity: 1,
       ...flexCenter,
       cursor: Cursor.pointer,
       position: Position.relative,
@@ -1185,6 +1195,7 @@ function useFABStyles() {
       width: Layout.fabSize,
       height: Layout.fabSize,
       borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
       color: Colors.textPrimary,
       boxShadow: `${Shadow.tooltip}, 0 0 0 1px ${Colors.purpleHighlightBorder}`,
       opacity: 1,
@@ -1198,9 +1209,10 @@ function useFABStyles() {
       minWidth: Layout.fabSize,
       height: Layout.fabSize,
       borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
       color: Colors.textPrimary,
       boxShadow: Shadow.tooltip,
-      opacity: 0.9,
+      opacity: 1,
       ...flexCenter,
       gap: DOCK_LABEL_ICON_GAP,
       padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
@@ -1215,6 +1227,7 @@ function useFABStyles() {
       minWidth: Layout.fabSize,
       height: Layout.fabSize,
       borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
       color: Colors.textPrimary,
       boxShadow: `${Shadow.tooltip}, 0 0 0 1px ${Colors.purpleHighlightBorder}`,
       opacity: 1,
@@ -1322,13 +1335,9 @@ function useFABStyles() {
       borderRadius: Radius.full,
       boxSizing: BoxSizing.borderBox,
       boxShadow: Shadow.tooltip,
-      opacity: 0.9,
-      transition: [
-        `opacity ${QUICK_FADE_MS}ms ease`,
-        `background-color ${QUICK_FADE_MS}ms ease`,
-        `border-color ${QUICK_FADE_MS}ms ease`,
-        `box-shadow ${QUICK_FADE_MS}ms ease`,
-      ].join(', '),
+      opacity: 1,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
+      transition: FAB_SEARCH_SURFACE_TRANSITION,
       cursor: Cursor.text,
     } as CSSProperties,
     searchInputWrapKeyboard: {
@@ -1342,14 +1351,9 @@ function useFABStyles() {
       boxSizing: BoxSizing.borderBox,
       boxShadow: `${Shadow.tooltip}, 0 0 0 1px ${Colors.purpleHighlightBorder}`,
       opacity: 1,
-      backgroundColor: 'rgba(18,24,38,0.96)',
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
       border: `1px solid ${Colors.purpleHighlightBorder}`,
-      transition: [
-        `opacity ${QUICK_FADE_MS}ms ease`,
-        `background-color ${QUICK_FADE_MS}ms ease`,
-        `border-color ${QUICK_FADE_MS}ms ease`,
-        `box-shadow ${QUICK_FADE_MS}ms ease`,
-      ].join(', '),
+      transition: FAB_SEARCH_SURFACE_TRANSITION,
       cursor: Cursor.text,
     } as CSSProperties,
     dockSearchInputWrap: {
@@ -1362,13 +1366,9 @@ function useFABStyles() {
       borderRadius: Radius.full,
       boxSizing: BoxSizing.borderBox,
       boxShadow: Shadow.tooltip,
-      opacity: 0.9,
-      transition: [
-        `opacity ${QUICK_FADE_MS}ms ease`,
-        `background-color ${QUICK_FADE_MS}ms ease`,
-        `border-color ${QUICK_FADE_MS}ms ease`,
-        `box-shadow ${QUICK_FADE_MS}ms ease`,
-      ].join(', '),
+      opacity: 1,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
+      transition: FAB_SEARCH_SURFACE_TRANSITION,
       cursor: Cursor.text,
     } as CSSProperties,
     dockSearchInputWrapKeyboard: {
@@ -1382,14 +1382,9 @@ function useFABStyles() {
       boxSizing: BoxSizing.borderBox,
       boxShadow: `${Shadow.tooltip}, 0 0 0 1px ${Colors.purpleHighlightBorder}`,
       opacity: 1,
-      backgroundColor: 'rgba(18,24,38,0.96)',
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
       border: `1px solid ${Colors.purpleHighlightBorder}`,
-      transition: [
-        `opacity ${QUICK_FADE_MS}ms ease`,
-        `background-color ${QUICK_FADE_MS}ms ease`,
-        `border-color ${QUICK_FADE_MS}ms ease`,
-        `box-shadow ${QUICK_FADE_MS}ms ease`,
-      ].join(', '),
+      transition: FAB_SEARCH_SURFACE_TRANSITION,
       cursor: Cursor.text,
     } as CSSProperties,
   }), []);

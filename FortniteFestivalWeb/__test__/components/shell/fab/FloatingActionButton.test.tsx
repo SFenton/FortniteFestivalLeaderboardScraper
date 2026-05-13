@@ -196,8 +196,8 @@ describe('FloatingActionButton', () => {
     const filterButton = screen.getByRole('button', { name: 'Filter Songs' });
     expect(sortButton).toBeTruthy();
     expect(filterButton).toBeTruthy();
-    expect(sortButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
-    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
+    expect(sortButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
     fireEvent.click(screen.getByRole('button', { name: 'Sort Songs' }));
     fireEvent.click(screen.getByRole('button', { name: 'Filter Songs' }));
     fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
@@ -221,6 +221,8 @@ describe('FloatingActionButton', () => {
     const pathsButton = within(sideActions).getByRole('button', { name: 'View Paths' });
     expect(within(pathsButton).getByText('View Paths')).toBeTruthy();
     expect(pathsButton).toHaveStyle({ minWidth: `${Layout.fabSize}px`, height: `${Layout.fabSize}px` });
+    expect(pathsButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(pathsButton.style.opacity).toBe('1');
 
     fireEvent.click(pathsButton);
     expect(onPaths).toHaveBeenCalledTimes(1);
@@ -253,7 +255,27 @@ describe('FloatingActionButton', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(within(link).getByText('Item Shop')).toBeTruthy();
     expect(link).toHaveStyle({ minWidth: `${Layout.fabSize}px`, height: `${Layout.fabSize}px` });
+    expect(link.style.backgroundColor).toBe('rgb(45, 130, 230)');
     expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+  });
+
+  it('uses opaque default glass for icon-only side actions while active side actions stay semantic', () => {
+    renderFAB({
+      mode: 'players',
+      sideActions: [
+        { label: 'Change Ranking', iconOnly: true, icon: <span>R</span>, onPress: vi.fn() },
+        { label: 'Filter', iconOnly: true, active: true, icon: <span>F</span>, onPress: vi.fn() },
+      ],
+    });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const rankingButton = within(sideActions).getByRole('button', { name: 'Change Ranking' });
+    const filterButton = within(sideActions).getByRole('button', { name: 'Filter' });
+
+    expect(rankingButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(rankingButton.style.opacity).toBe('1');
+    expect(filterButton.style.backgroundColor).toBe('rgb(45, 130, 230)');
+    expect(filterButton.style.backgroundImage).toBe('none');
   });
 
   it('shows the Search label while dock actions stay circular when measured width fits', () => {
@@ -287,8 +309,8 @@ describe('FloatingActionButton', () => {
     expect(sortButton.parentElement).toHaveStyle({ width: '56px' });
     expect(filterButton).toHaveStyle({ width: '56px', height: '56px' });
     expect(filterButton.parentElement).toHaveStyle({ width: '56px' });
-    expect(sortButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
-    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
+    expect(sortButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
   });
 
   it('keeps the initial songs dock hidden until measured widths settle', () => {
@@ -360,7 +382,7 @@ describe('FloatingActionButton', () => {
     expect(sortButton.style.backgroundImage).toBe('none');
     expect(sortButton).toHaveStyle({ width: '56px', height: '56px' });
     expect(within(sortButton).queryByText('Sort')).toBeNull();
-    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.78)');
+    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
   });
 
   it('keeps dock controls icon-only when measured labels do not fit', () => {
@@ -652,13 +674,15 @@ describe('FloatingActionButton', () => {
     expect(document.documentElement.style.getPropertyValue(SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR)).toContain('300px');
   });
 
-  it('strengthens the search bar opacity while the keyboard is open and restores it on dismiss', () => {
+  it('keeps the search bar opaque while the keyboard opens and dismisses', () => {
     renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
     const input = screen.getByPlaceholderText('Search songs...');
     const inputWrap = input.parentElement as HTMLElement;
     const searchOuter = input.closest('.fab-search-bar')?.parentElement as HTMLElement;
 
-    expect(inputWrap.style.opacity).toBe('0.9');
+    expect(inputWrap.style.opacity).toBe('1');
+    expect(inputWrap.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(inputWrap.style.transition).not.toContain('opacity');
 
     fireEvent.pointerDown(searchOuter);
     fireEvent.focus(input);
@@ -670,6 +694,7 @@ describe('FloatingActionButton', () => {
 
     expect(inputWrap.style.opacity).toBe('1');
     expect(inputWrap.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(inputWrap.style.transition).not.toContain('opacity');
 
     fireEvent.blur(input);
 
@@ -677,7 +702,7 @@ describe('FloatingActionButton', () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(inputWrap.style.opacity).toBe('0.9');
+    expect(inputWrap.style.opacity).toBe('1');
     expect(document.documentElement.style.getPropertyValue(SONGS_FAB_KEYBOARD_INSET_VAR)).toBe('0px');
   });
 
