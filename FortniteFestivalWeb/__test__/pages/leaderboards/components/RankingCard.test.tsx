@@ -76,6 +76,10 @@ function mockMeasuredCardWidth(width: number) {
   });
 }
 
+function expectBefore(first: Element, second: Element) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -126,6 +130,60 @@ describe('RankingCard', () => {
 
     expect(screen.getByText('#1')).toHaveStyle({ width: `${expectedWidth}px` });
     expect(screen.getByText('#12,345')).toHaveStyle({ width: `${expectedWidth}px` });
+  });
+
+  it('highlights selected member ranking rows when they are already in the top rows', () => {
+    renderCard({
+      entries: [makeEntry(1, { accountId: 'member-1' })],
+      totalAccounts: 100,
+      spotlightRankings: [makeEntry(1, {
+        accountId: 'member-1',
+        displayName: 'Member One',
+        instrument,
+        totalRankedAccounts: 100,
+      }) as AccountRankingDto],
+    });
+
+    expect(screen.getByText('#1').style.fontWeight).toBe('700');
+  });
+
+  it('renders selected member ranking rows below the top rows when needed', () => {
+    renderCard({
+      entries: [makeEntry(1)],
+      totalAccounts: 100,
+      spotlightRankings: [makeEntry(50, {
+        accountId: 'member-1',
+        displayName: 'Member One',
+        instrument,
+        totalRankedAccounts: 100,
+      }) as AccountRankingDto],
+    });
+
+    expect(screen.getByText('Member One')).toBeTruthy();
+    expect(screen.getByText('#50')).toBeTruthy();
+  });
+
+  it('sorts appended selected member ranking rows by active metric rank ascending', () => {
+    renderCard({
+      entries: [makeEntry(1)],
+      totalAccounts: 100,
+      spotlightRankings: [
+        makeEntry(90, {
+          accountId: 'member-lowest',
+          displayName: 'Lower Ranked Member',
+          instrument,
+          totalRankedAccounts: 100,
+        }) as AccountRankingDto,
+        makeEntry(12, {
+          accountId: 'member-highest',
+          displayName: 'Higher Ranked Member',
+          instrument,
+          totalRankedAccounts: 100,
+        }) as AccountRankingDto,
+      ],
+    });
+
+    expectBefore(screen.getByText('Higher Ranked Member'), screen.getByText('Lower Ranked Member'));
   });
 
   it('renders Max Score % values with the same top-tier styling as history cards', () => {

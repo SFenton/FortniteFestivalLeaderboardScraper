@@ -331,6 +331,16 @@ export type PlayerScore = {
   validTotalEntries?: number | null;
 };
 
+export type SelectedMemberSongScore = PlayerScore & {
+  accountId: string;
+  displayName?: string | null;
+};
+
+export type SelectedMemberSongScoresResponse = {
+  songId: string;
+  scores: SelectedMemberSongScore[];
+};
+
 /** A historical valid score with metadata for client-side leeway filtering. */
 export type ValidScoreVariant = {
   score: number;
@@ -1020,6 +1030,18 @@ export type RankingsPageResponse = {
 export type AccountRankingDto = AccountRankingEntry & {
   instrument: string;
   totalRankedAccounts: number;
+};
+
+export type SelectedMemberRankingsInstrumentResponse = {
+  instrument: string;
+  rankBy: string;
+  totalAccounts: number;
+  entries: AccountRankingDto[];
+};
+
+export type SelectedMemberRankingsResponse = {
+  rankBy: string;
+  instruments: SelectedMemberRankingsInstrumentResponse[];
 };
 
 /** Instrument skill/rank pair used in composite rankings. */

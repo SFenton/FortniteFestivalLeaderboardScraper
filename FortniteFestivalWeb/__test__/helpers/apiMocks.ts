@@ -198,6 +198,7 @@ export function createApiMock(overrides: Record<string, unknown> = {}) {
     getSongs: vi.fn().mockResolvedValue(MOCK_SONGS_RESPONSE),
     getLeaderboard: vi.fn().mockResolvedValue(MOCK_LEADERBOARD_RESPONSE),
     getAllLeaderboards: vi.fn().mockResolvedValue(MOCK_ALL_LEADERBOARDS_RESPONSE),
+    getSelectedMemberSongScores: vi.fn().mockResolvedValue({ songId: 'song-1', scores: [] }),
     getPlayer: vi.fn().mockResolvedValue(MOCK_PLAYER),
     getPlayerHistory: vi.fn().mockResolvedValue(MOCK_PLAYER_HISTORY_RESPONSE),
     getPlayerStats: vi.fn().mockResolvedValue(MOCK_PLAYER_STATS_RESPONSE),
@@ -205,6 +206,7 @@ export function createApiMock(overrides: Record<string, unknown> = {}) {
     trackPlayer: vi.fn().mockResolvedValue(MOCK_TRACK_PLAYER_RESPONSE),
     searchAccounts: vi.fn().mockResolvedValue(MOCK_ACCOUNT_SEARCH_RESPONSE),
     getVersion: vi.fn().mockResolvedValue({ version: '1.0.0' }),
+    getSelectedMemberRankings: vi.fn().mockResolvedValue({ rankBy: 'totalscore', instruments: [] }),
     ...overrides,
   };
 }

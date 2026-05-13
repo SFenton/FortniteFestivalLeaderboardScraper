@@ -10,6 +10,63 @@ public static partial class ApiEndpoints
 {
     public static void MapRankingsEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/rankings/selected-members", (
+            HttpContext httpContext,
+            string? accountIds,
+            string? instruments,
+            string? rankBy,
+            double? leeway,
+            GlobalLeaderboardPersistence persistence,
+            IMetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            var selectedAccountIds = ParseCsvParameter(accountIds, maxItems: 8);
+            if (selectedAccountIds.Count == 0)
+                return Results.BadRequest(new { error = "accountIds is required." });
+
+            var selectedInstruments = ParseCsvParameter(instruments, maxItems: 16);
+            if (selectedInstruments.Count == 0)
+                return Results.BadRequest(new { error = "instruments is required." });
+
+            foreach (var instrument in selectedInstruments)
+            {
+                if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                    return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+            }
+
+            var metric = rankBy ?? "adjusted";
+            var bucket = InstrumentDatabase.QuantizeBucket(leeway);
+            var names = metaDb.GetDisplayNames(selectedAccountIds);
+
+            var instrumentPayloads = selectedInstruments.Select(instrument =>
+            {
+                var db = persistence.GetOrCreateInstrumentDb(instrument);
+                var totalRanked = db.GetRankedAccountCount();
+                var entries = selectedAccountIds
+                    .Select(accountId => db.GetAccountRankingAtLeeway(accountId, bucket, metric))
+                    .Where(static ranking => ranking is not null)
+                    .Select(ranking => MapAccountRanking(ranking!, instrument, names, totalRanked))
+                    .ToList();
+
+                return new
+                {
+                    instrument,
+                    rankBy = metric,
+                    totalAccounts = totalRanked,
+                    entries,
+                };
+            }).ToList();
+
+            return Results.Ok(new
+            {
+                rankBy = metric,
+                instruments = instrumentPayloads,
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
         // ─── Per-instrument rankings (paginated) ───────────────
 
         app.MapGet("/api/rankings/{instrument}", (
@@ -146,6 +203,36 @@ public static partial class ApiEndpoints
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");
+
+        static object MapAccountRanking(AccountRankingDto ranking, string fallbackInstrument, IReadOnlyDictionary<string, string> names, int totalRankedAccounts) => new
+        {
+            ranking.AccountId,
+            displayName = names.GetValueOrDefault(ranking.AccountId),
+            Instrument = string.IsNullOrWhiteSpace(ranking.Instrument) ? fallbackInstrument : ranking.Instrument,
+            ranking.SongsPlayed,
+            ranking.TotalChartedSongs,
+            ranking.Coverage,
+            ranking.RawSkillRating,
+            ranking.AdjustedSkillRating,
+            ranking.AdjustedSkillRank,
+            ranking.WeightedRating,
+            ranking.WeightedRank,
+            ranking.FcRate,
+            ranking.FcRateRank,
+            ranking.TotalScore,
+            ranking.TotalScoreRank,
+            ranking.MaxScorePercent,
+            ranking.MaxScorePercentRank,
+            ranking.AvgAccuracy,
+            ranking.FullComboCount,
+            ranking.AvgStars,
+            ranking.BestRank,
+            ranking.AvgRank,
+            ranking.RawMaxScorePercent,
+            ranking.RawWeightedRating,
+            ranking.ComputedAt,
+            totalRankedAccounts,
+        };
 
         // ─── Rank history for a player on an instrument ────────
 

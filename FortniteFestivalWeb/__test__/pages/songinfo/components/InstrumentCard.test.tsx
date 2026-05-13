@@ -7,7 +7,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
 import { stubResizeObserver } from '../../../helpers/browserStubs';
 import InstrumentCard from '../../../../src/pages/songinfo/components/InstrumentCard';
-import type { LeaderboardEntry, PlayerScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { LeaderboardEntry, PlayerScore, SelectedMemberSongScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 
 let mockMeasuredCardWidth = 0;
 vi.mock('../../../../src/hooks/ui/useContainerWidth', () => ({
@@ -67,6 +67,7 @@ const baseProps = {
   playerScore: undefined as PlayerScore | undefined,
   playerName: undefined as string | undefined,
   playerAccountId: undefined as string | undefined,
+  spotlightScores: [] as SelectedMemberSongScore[],
   totalEntries: undefined as number | undefined,
   localEntries: undefined as number | undefined,
   showLeaderboardEntryTotals: undefined as boolean | undefined,
@@ -79,6 +80,10 @@ function renderCard(overrides: Partial<typeof baseProps> = {}) {
       <InstrumentCard {...baseProps} {...overrides} />
     </TestProviders>,
   );
+}
+
+function expectBefore(first: Element, second: Element) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
 
 describe('InstrumentCard', () => {
@@ -227,6 +232,72 @@ describe('InstrumentCard', () => {
     });
     expect(screen.getByText('MyPlayer')).toBeTruthy();
     expect(screen.getByText('#50')).toBeTruthy();
+  });
+
+  it('highlights selected member entries when they are already in the top rows', () => {
+    const entries = [makeEntry(1, { accountId: 'member-1' })];
+    renderCard({
+      prefetchedEntries: entries,
+      spotlightScores: [{
+        accountId: 'member-1',
+        displayName: 'Member One',
+        songId: 'song-1',
+        instrument: 'Solo_Guitar',
+        score: 149000,
+        rank: 1,
+      }],
+    });
+
+    expect(screen.getByText('#1').style.fontWeight).toBe('700');
+  });
+
+  it('renders selected member score rows below the top rows when needed', () => {
+    const entries = [makeEntry(1)];
+    renderCard({
+      prefetchedEntries: entries,
+      spotlightScores: [{
+        accountId: 'member-1',
+        displayName: 'Member One',
+        songId: 'song-1',
+        instrument: 'Solo_Guitar',
+        score: 120000,
+        rank: 50,
+        accuracy: 900000,
+        isFullCombo: false,
+        stars: 4,
+        season: 5,
+      }],
+    });
+
+    expect(screen.getByText('Member One')).toBeTruthy();
+    expect(screen.getByText('#50')).toBeTruthy();
+  });
+
+  it('sorts appended selected member score rows by rank ascending', () => {
+    const entries = [makeEntry(1)];
+    renderCard({
+      prefetchedEntries: entries,
+      spotlightScores: [
+        {
+          accountId: 'member-lowest',
+          displayName: 'Lower Ranked Member',
+          songId: 'song-1',
+          instrument: 'Solo_Guitar',
+          score: 110000,
+          rank: 90,
+        },
+        {
+          accountId: 'member-highest',
+          displayName: 'Higher Ranked Member',
+          songId: 'song-1',
+          instrument: 'Solo_Guitar',
+          score: 130000,
+          rank: 12,
+        },
+      ],
+    });
+
+    expectBefore(screen.getByText('Higher Ranked Member'), screen.getByText('Lower Ranked Member'));
   });
 
   it('keeps the extra player row mounted long enough to collapse on deselect', async () => {

@@ -16,7 +16,7 @@ import BandRankingCard from './components/BandRankingCard';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
-import type { BandType, RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { AccountRankingDto, BandType, RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import RankByModal from './modals/RankByModal';
@@ -43,6 +43,10 @@ import { BAND_TYPES } from '../../utils/bandTypes';
 /** Set to 1 to stagger the right column one slot (125 ms) after the left. */
 const COLUMN_STAGGER_OFFSET = 1;
 
+function normalizeAccountId(accountId: string | null | undefined): string {
+  return accountId?.trim().toLowerCase() ?? '';
+}
+
 export default function LeaderboardsOverviewPage() {
   const { t } = useTranslation();
   const { settings } = useSettings();
@@ -50,6 +54,21 @@ export default function LeaderboardsOverviewPage() {
   const selectedAccountId = player?.accountId;
   const selectedBandTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
   const selectedBandType = profile?.type === 'band' ? profile.bandType : undefined;
+  const selectedBandMembers = useMemo(() => {
+    if (profile?.type !== 'band') return [];
+    const memberNames = new Map(profile.members.map(member => [normalizeAccountId(member.accountId), member.displayName]));
+    const seen = new Set<string>();
+    return profile.teamKey.split(':').flatMap(accountId => {
+      const normalizedAccountId = normalizeAccountId(accountId);
+      if (!normalizedAccountId || seen.has(normalizedAccountId)) return [];
+      seen.add(normalizedAccountId);
+      return [{
+        accountId,
+        displayName: memberNames.get(normalizedAccountId) || accountId.slice(0, 8),
+      }];
+    });
+  }, [profile]);
+  const selectedBandMemberAccountIds = useMemo(() => selectedBandMembers.map(member => member.accountId), [selectedBandMembers]);
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const hasSelectedBandComboFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const isMobile = useIsMobileChrome();
@@ -137,14 +156,49 @@ export default function LeaderboardsOverviewPage() {
       : [],
   });
 
+  const selectedMemberRankingsQuery = useQuery({
+    queryKey: selectedBandMemberAccountIds.length > 0
+      ? queryKeys.selectedMemberRankings(selectedBandMemberAccountIds, instruments, metric)
+      : ['selectedMemberRankings', 'none'],
+    queryFn: () => api.getSelectedMemberRankings(selectedBandMemberAccountIds, instruments, metric),
+    enabled: selectedBandMemberAccountIds.length > 0 && instruments.length > 0,
+    retry: false,
+  });
+
+  const selectedMemberRankingsByInstrument = useMemo(() => {
+    const byAccountAndInstrument = new Map<string, AccountRankingDto>();
+    for (const instrumentPayload of selectedMemberRankingsQuery.data?.instruments ?? []) {
+      for (const ranking of instrumentPayload.entries) {
+        byAccountAndInstrument.set(`${normalizeAccountId(ranking.accountId)}:${instrumentPayload.instrument}`, {
+          ...ranking,
+          instrument: ranking.instrument || instrumentPayload.instrument,
+        });
+      }
+    }
+
+    const result = {} as Record<InstrumentKey, AccountRankingDto[]>;
+    for (const instrument of instruments) {
+      const rows: AccountRankingDto[] = [];
+      for (const member of selectedBandMembers) {
+        const ranking = byAccountAndInstrument.get(`${normalizeAccountId(member.accountId)}:${instrument}`);
+        if (ranking) rows.push({ ...ranking, displayName: ranking.displayName || member.displayName });
+      }
+      result[instrument] = rows;
+    }
+    return result;
+  }, [instruments, selectedBandMembers, selectedMemberRankingsQuery.data?.instruments]);
+
   // Hoist rank-history loading so the page waits for graph data before staggering.
   const allHistory = useRankHistoryAll(instruments, player?.accountId, metric);
   const historyLoading = player ? instruments.some(inst => allHistory[inst]?.loading) : false;
   const historyAllCached = !player || instruments.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
 
   const leaderboardQueries = useMemo(() => [...rankingQueries, ...bandRankingQueries], [rankingQueries, bandRankingQueries]);
-  const isLoading = leaderboardQueries.some(query => query.isLoading) || historyLoading;
-  const hasCachedData = leaderboardQueries.every(query => query.data != null) && historyAllCached;
+  const selectedMemberRankingsLoading = selectedBandMemberAccountIds.length > 0 && selectedMemberRankingsQuery.isLoading;
+  const isLoading = leaderboardQueries.some(query => query.isLoading) || historyLoading || selectedMemberRankingsLoading;
+  const hasCachedData = leaderboardQueries.every(query => query.data != null)
+    && historyAllCached
+    && (selectedBandMemberAccountIds.length === 0 || selectedMemberRankingsQuery.data != null);
   const allErrored = !isLoading && leaderboardQueries.length > 0 && leaderboardQueries.every(query => query.error);
   const { phase: loadPhase } = useLoadPhase(!isLoading, { skipAnimation: hasCachedData });
 
@@ -155,7 +209,8 @@ export default function LeaderboardsOverviewPage() {
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const [cols, gridRef] = useGridColumnCount();
-  const itemsPerCard = maxEntriesPerCard + (player ? 3 : 2); // header + entries + (player footer?) + button
+  const maxSpotlightRowsPerCard = Math.max(player ? 1 : 0, selectedBandMembers.length);
+  const itemsPerCard = maxEntriesPerCard + maxSpotlightRowsPerCard + 2; // header + entries + spotlight footer rows + button
 
   const totalAccountsByInstrument = useMemo(
     () => Object.fromEntries(instruments.map((inst, i) => [inst, rankingQueries[i]?.data?.totalAccounts ?? 0])),
@@ -296,6 +351,7 @@ export default function LeaderboardsOverviewPage() {
                   totalAccounts={q?.data?.totalAccounts ?? 0}
                   playerRanking={pq?.data ?? null}
                   playerAccountId={player?.accountId}
+                  spotlightRankings={selectedMemberRankingsByInstrument[inst] ?? []}
                   error={q?.error ? String(q.error) : null}
                   shouldStagger={shouldStagger}
                   staggerOffset={offset}

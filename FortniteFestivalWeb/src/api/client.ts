@@ -9,6 +9,7 @@ import type {
   PlayerHistoryResponse,
   ServerInstrumentKey as InstrumentKey,
   AllLeaderboardsResponse,
+  SelectedMemberSongScoresResponse,
   AllSongBandLeaderboardsResponse,
   SongBandLeaderboardResponse,
   PlayerStatsResponse,
@@ -23,6 +24,7 @@ import type {
   ShopResponse,
   RankingsPageResponse,
   AccountRankingDto,
+  SelectedMemberRankingsResponse,
   CompositePageResponse,
   CompositeRankingDto,
   ComboPageResponse,
@@ -255,6 +257,16 @@ export const api = {
       `/api/leaderboard/${encodeURIComponent(songId)}/all?top=${top}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 
+  getSelectedMemberSongScores: (songId: string, accountIds: string[], instruments?: InstrumentKey[], leeway?: number) => {
+    const params = new URLSearchParams();
+    params.set('accountIds', accountIds.join(','));
+    if (instruments?.length) params.set('instruments', instruments.join(','));
+    if (leeway != null) params.set('leeway', String(leeway));
+    return get<SelectedMemberSongScoresResponse>(
+      `/api/leaderboard/${encodeURIComponent(songId)}/members/scores?${params.toString()}`,
+    );
+  },
+
   getSongBandLeaderboard: (songId: string, bandType: BandType, top = 25, offset = 0, selectedAccountId?: string, selectedTeamKey?: string, comboId?: string) => {
     const params = new URLSearchParams();
     params.set('top', String(top));
@@ -345,6 +357,16 @@ export const api = {
     const params = rankBy ? `rankBy=${encodeURIComponent(rankBy)}` : '';
     return get<AccountRankingDto>(
       `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}${params ? `?${params}` : ''}`,
+    );
+  },
+
+  getSelectedMemberRankings: (accountIds: string[], instruments: InstrumentKey[], rankBy: RankingMetric = 'totalscore') => {
+    const params = new URLSearchParams();
+    params.set('accountIds', accountIds.join(','));
+    params.set('instruments', instruments.join(','));
+    params.set('rankBy', rankBy);
+    return get<SelectedMemberRankingsResponse>(
+      `/api/rankings/selected-members?${params.toString()}`,
     );
   },
 

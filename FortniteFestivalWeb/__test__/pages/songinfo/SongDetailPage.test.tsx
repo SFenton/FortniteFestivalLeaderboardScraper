@@ -42,6 +42,7 @@ const mockApi = vi.hoisted(() => {
     getSyncStatus: fn().mockResolvedValue({ accountId: 'test-player-1', isTracked: false, backfill: null, historyRecon: null }),
     getVersion: fn().mockResolvedValue({ version: '1.0.0' }),
     getLeaderboard: fn().mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
+    getSelectedMemberSongScores: fn().mockResolvedValue({ songId: 'song-1', scores: [] }),
     getAllSongBandLeaderboards: fn().mockResolvedValue({
       songId: 'song-1',
       bands: [
@@ -81,6 +82,22 @@ beforeAll(() => {
   stubScrollTo();
   stubResizeObserver();
   stubElementDimensions(800);
+  const createRange = document.createRange.bind(document);
+  document.createRange = () => {
+    const range = createRange();
+    range.getBoundingClientRect = () => ({
+      top: 0,
+      left: 0,
+      bottom: 20,
+      right: 120,
+      width: 120,
+      height: 20,
+      x: 0,
+      y: 0,
+      toJSON() { return this; },
+    });
+    return range;
+  };
 });
 
 function resetMocks() {
@@ -113,6 +130,7 @@ function resetMocks() {
   mockApi.getSyncStatus.mockResolvedValue({ accountId: 'test-player-1', isTracked: false, backfill: null, historyRecon: null });
   mockApi.getVersion.mockResolvedValue({ version: '1.0.0' });
   mockApi.getLeaderboard.mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] });
+  mockApi.getSelectedMemberSongScores.mockResolvedValue({ songId: 'song-1', scores: [] });
   mockApi.getAllSongBandLeaderboards.mockResolvedValue({
     songId: 'song-1',
     bands: [

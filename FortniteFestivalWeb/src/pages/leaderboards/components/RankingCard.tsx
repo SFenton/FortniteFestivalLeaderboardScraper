@@ -29,9 +29,14 @@ interface RankingCardProps {
   totalAccounts: number;
   playerRanking?: AccountRankingDto | null;
   playerAccountId?: string;
+  spotlightRankings?: AccountRankingDto[];
   error?: string | null;
   shouldStagger?: boolean;
   staggerOffset?: number;
+}
+
+function normalizeAccountId(accountId: string | null | undefined): string {
+  return accountId?.trim().toLowerCase() ?? '';
 }
 
 export default memo(function RankingCard({
@@ -41,6 +46,7 @@ export default memo(function RankingCard({
   totalAccounts,
   playerRanking,
   playerAccountId,
+  spotlightRankings,
   error,
   shouldStagger,
   staggerOffset = 0,
@@ -60,45 +66,70 @@ export default memo(function RankingCard({
     ? { height: percentileRowHeight, boxSizing: 'border-box' }
     : undefined;
 
-  const playerInTop = !!(playerAccountId && entries.some(e => e.accountId === playerAccountId));
+  const topAccountIds = useMemo(
+    () => new Set(entries.map(entry => normalizeAccountId(entry.accountId))),
+    [entries],
+  );
+  const spotlightRows = useMemo(() => {
+    const rows: AccountRankingDto[] = [];
+    const seen = new Set<string>();
+    const addRow = (ranking: AccountRankingDto | null | undefined) => {
+      if (!ranking) return;
+      const normalizedAccountId = normalizeAccountId(ranking.accountId);
+      if (!normalizedAccountId || seen.has(normalizedAccountId)) return;
+      seen.add(normalizedAccountId);
+      rows.push(ranking);
+    };
+
+    addRow(playerRanking);
+    for (const ranking of spotlightRankings ?? []) addRow(ranking);
+    return rows;
+  }, [playerRanking, spotlightRankings]);
+  const spotlightAccountIds = useMemo(
+    () => {
+      const accountIds = new Set(spotlightRows.map(ranking => normalizeAccountId(ranking.accountId)));
+      if (playerAccountId) accountIds.add(normalizeAccountId(playerAccountId));
+      return accountIds;
+    },
+    [playerAccountId, spotlightRows],
+  );
+  const spotlightFooterRows = useMemo(
+    () => spotlightRows
+      .filter(ranking => !topAccountIds.has(normalizeAccountId(ranking.accountId)))
+      .sort((a, b) => getRankForMetric(a, metric) - getRankForMetric(b, metric)),
+    [metric, spotlightRows, topAccountIds],
+  );
 
   // Use one shared rank width across the instrument card, including the player row.
   const rankWidth = useMemo(() => {
-    const allRanks = entries.map(e => getRankForMetric(e, metric));
-    if (playerRanking) {
-      allRanks.push(getRankForMetric(playerRanking, metric));
-    }
+    const allRanks = entries.map(entry => getRankForMetric(entry, metric));
+    for (const ranking of spotlightRows) allRanks.push(getRankForMetric(ranking, metric));
     return computeRankWidth(allRanks);
-  }, [entries, metric, playerRanking]);
+  }, [entries, metric, spotlightRows]);
 
-  const hasPlayerFooter = !!(playerRanking && !playerInTop);
+  const footerCount = spotlightFooterRows.length;
 
   const percentileValueMinWidth = useMemo(() => {
     if (!usePercentileMetric) return undefined;
-    const labels = entries.map(e => formatRankingValueDisplay(getRatingForMetric(e, metric), metric));
-    if (playerRanking) labels.push(formatRankingValueDisplay(getRatingForMetric(playerRanking, metric), metric));
+    const labels = entries.map(entry => formatRankingValueDisplay(getRatingForMetric(entry, metric), metric));
+    for (const ranking of spotlightRows) labels.push(formatRankingValueDisplay(getRatingForMetric(ranking, metric), metric));
     return computePillMinWidth(labels);
-  }, [entries, metric, playerRanking, usePercentileMetric]);
+  }, [entries, metric, spotlightRows, usePercentileMetric]);
 
   const bayesianRankMinWidth = useMemo(() => {
     if (!usePercentileMetric) return undefined;
-    const labels = entries.map(e => formatBayesianRatingDisplay(getBayesianRatingForMetric(e, metric), metric));
-    if (playerRanking) labels.push(formatBayesianRatingDisplay(getBayesianRatingForMetric(playerRanking, metric), metric));
+    const labels = entries.map(entry => formatBayesianRatingDisplay(getBayesianRatingForMetric(entry, metric), metric));
+    for (const ranking of spotlightRows) labels.push(formatBayesianRatingDisplay(getBayesianRatingForMetric(ranking, metric), metric));
     return computePillMinWidth(labels);
-  }, [entries, metric, playerRanking, usePercentileMetric]);
+  }, [entries, metric, spotlightRows, usePercentileMetric]);
 
-  const extraItems = hasPlayerFooter ? 3 : 2; // header + (player footer?) + button
+  const extraItems = footerCount + 2; // header + spotlight footer rows + button
   const totalStaggerItems = entries.length + extraItems + staggerOffset;
   const headerDelay = shouldStagger ? staggerDelay(0 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
   const headerStaggerStyle: CSSProperties | undefined = headerDelay != null
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${headerDelay}ms forwards` }
     : undefined;
-  const playerFooterIdx = entries.length + 1 + staggerOffset;
-  const playerFooterDelay = shouldStagger && hasPlayerFooter ? staggerDelay(playerFooterIdx, STAGGER_INTERVAL, totalStaggerItems) : undefined;
-  const playerFooterStaggerStyle: CSSProperties | undefined = playerFooterDelay != null
-    ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${playerFooterDelay}ms forwards` }
-    : undefined;
-  const buttonIdx = entries.length + (hasPlayerFooter ? 2 : 1) + staggerOffset;
+  const buttonIdx = entries.length + footerCount + 1 + staggerOffset;
   const buttonDelay = shouldStagger ? staggerDelay(buttonIdx, STAGGER_INTERVAL, totalStaggerItems) : undefined;
   const buttonStaggerStyle: CSSProperties | undefined = buttonDelay != null
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${buttonDelay}ms forwards` }
@@ -124,22 +155,22 @@ export default memo(function RankingCard({
         {!error && entries.length === 0 && (
           <InstrumentEmptyState instrument={instrument} t={t} noMargin titleKey="rankings.noRankings" subtitleKey="rankings.noRankingsSubtitle" />
         )}
-        {!error && entries.map((e, i) => {
-          const rank = getRankForMetric(e, metric);
-          const isPlayer = e.accountId === playerAccountId;
+        {!error && entries.map((entry, index) => {
+          const rank = getRankForMetric(entry, metric);
+          const isPlayer = spotlightAccountIds.has(normalizeAccountId(entry.accountId));
           const usePercentile = usePercentileMetric;
           const isFcRate = metric === 'fcrate';
-          const rating = getRatingForMetric(e, metric);
-          const bayesianRating = getBayesianRatingForMetric(e, metric);
+          const rating = getRatingForMetric(entry, metric);
+          const bayesianRating = getBayesianRatingForMetric(entry, metric);
           const rowStyle = isPlayer ? st.playerEntryRow : st.entryRow;
-          const delay = shouldStagger ? staggerDelay(i + 1 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
+          const delay = shouldStagger ? staggerDelay(index + 1 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
           const staggerStyle: CSSProperties | undefined = delay != null
             ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` }
             : undefined;
           return (
             <Link
-              key={e.accountId}
-              to={`/player/${e.accountId}`}
+              key={entry.accountId}
+              to={`/player/${entry.accountId}`}
               style={{ ...rowStyle, ...twoRowStyle, ...staggerStyle }}
               onAnimationEnd={(ev) => {
                 const el = ev.currentTarget;
@@ -149,9 +180,9 @@ export default memo(function RankingCard({
             >
               <RankingEntry
                 rank={rank}
-                displayName={e.displayName ?? e.accountId.slice(0, 8)}
+                displayName={entry.displayName ?? entry.accountId.slice(0, 8)}
                 ratingLabel={formatRating(rating, metric)}
-                songsLabel={getSongsLabel(e, metric)}
+                songsLabel={getSongsLabel(entry, metric)}
                 percentileValueDisplay={usePercentile ? formatRankingValueDisplay(rating, metric) : undefined}
                 percentileValueMinWidth={percentileValueMinWidth}
                 bayesianRankDisplay={usePercentile ? formatBayesianRatingDisplay(bayesianRating, metric) : undefined}
@@ -168,16 +199,23 @@ export default memo(function RankingCard({
             </Link>
           );
         })}
-        {playerRanking && !playerInTop && (() => {
-          const rank = getRankForMetric(playerRanking, metric);
+        {spotlightFooterRows.map((ranking, index) => {
+          const rank = getRankForMetric(ranking, metric);
           const usePercentile = usePercentileMetric;
           const isFcRate = metric === 'fcrate';
-          const rating = getRatingForMetric(playerRanking, metric);
-          const bayesianRating = getBayesianRatingForMetric(playerRanking, metric);
+          const rating = getRatingForMetric(ranking, metric);
+          const bayesianRating = getBayesianRatingForMetric(ranking, metric);
+          const footerDelay = shouldStagger
+            ? staggerDelay(entries.length + 1 + index + staggerOffset, STAGGER_INTERVAL, totalStaggerItems)
+            : undefined;
+          const footerStaggerStyle: CSSProperties | undefined = footerDelay != null
+            ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${footerDelay}ms forwards` }
+            : undefined;
           return (
             <Link
-              to={`/player/${playerRanking.accountId}`}
-              style={{ ...st.playerEntryRow, ...twoRowStyle, ...playerFooterStaggerStyle }}
+              key={ranking.accountId}
+              to={`/player/${ranking.accountId}`}
+              style={{ ...st.playerEntryRow, ...twoRowStyle, ...footerStaggerStyle }}
               onAnimationEnd={(ev) => {
                 const el = ev.currentTarget;
                 el.style.opacity = '';
@@ -186,9 +224,9 @@ export default memo(function RankingCard({
             >
               <RankingEntry
                 rank={rank}
-                displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}
+                displayName={ranking.displayName ?? ranking.accountId.slice(0, 8)}
                 ratingLabel={formatRating(rating, metric)}
-                songsLabel={getSongsLabel(playerRanking, metric)}
+                songsLabel={getSongsLabel(ranking, metric)}
                 percentileValueDisplay={usePercentile ? formatRankingValueDisplay(rating, metric) : undefined}
                 percentileValueMinWidth={percentileValueMinWidth}
                 bayesianRankDisplay={usePercentile ? formatBayesianRatingDisplay(bayesianRating, metric) : undefined}
@@ -204,7 +242,7 @@ export default memo(function RankingCard({
               />
             </Link>
           );
-        })()}
+        })}
         {!error && entries.length > 0 && (
           <div
             style={{ ...st.viewAllButton, ...buttonStaggerStyle }}

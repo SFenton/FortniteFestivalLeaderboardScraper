@@ -6,7 +6,7 @@ import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { leaderboardCache } from '../../../api/pageCache';
-import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, type SelectedMemberSongScore } from '@festival/core/api/serverTypes';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import { Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, TextAlign, WhiteSpace, WordBreak, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
@@ -24,6 +24,7 @@ interface InstrumentCardProps {
   playerScore?: PlayerScore;
   playerName?: string;
   playerAccountId?: string;
+  spotlightScores?: SelectedMemberSongScore[];
   prefetchedEntries: LeaderboardEntryType[];
   prefetchedError: string | null;
   /** Total entries reported by Epic for this instrument's leaderboard (if known). */
@@ -36,6 +37,21 @@ interface InstrumentCardProps {
   sig?: string;
 }
 
+type InstrumentSpotlightScore = PlayerScore & {
+  accountId: string;
+  displayName: string;
+};
+
+function normalizeAccountId(accountId: string | null | undefined): string {
+  return accountId?.trim().toLowerCase() ?? '';
+}
+
+function getSpotlightRowId(instrument: InstrumentKey, accountId: string, playerAccountId: string | undefined): string {
+  return normalizeAccountId(accountId) === normalizeAccountId(playerAccountId)
+    ? `player-score-${instrument}`
+    : `member-score-${instrument}-${accountId}`;
+}
+
 export default memo(function InstrumentCard({
   songId,
   instrument,
@@ -45,6 +61,7 @@ export default memo(function InstrumentCard({
   playerScore,
   playerName,
   playerAccountId,
+  spotlightScores,
   prefetchedEntries,
   prefetchedError,
   totalEntries,
@@ -67,17 +84,53 @@ export default memo(function InstrumentCard({
   const [viewAllNeedsCompact, setViewAllNeedsCompact] = useState(false);
   const effectiveScoreWidth = isCompactCard ? undefined : scoreWidth;
 
-  const playerInTop = !!(playerAccountId && prefetchedEntries.some(
-    (e) => e.accountId === playerAccountId,
-  ));
-  const showPlayerRow = !!(playerName && playerScore && !playerInTop);
-  const hasEntries = prefetchedEntries.length > 0 || (!!playerScore && !playerInTop);
+  const topAccountIds = useMemo(
+    () => new Set(prefetchedEntries.map(entry => normalizeAccountId(entry.accountId))),
+    [prefetchedEntries],
+  );
+  const spotlightRows = useMemo(() => {
+    const rows: InstrumentSpotlightScore[] = [];
+    const seen = new Set<string>();
+    const addRow = (score: PlayerScore, accountId: string, displayName: string | null | undefined) => {
+      const normalizedAccountId = normalizeAccountId(accountId);
+      if (!normalizedAccountId || seen.has(normalizedAccountId)) return;
+      seen.add(normalizedAccountId);
+      rows.push({
+        ...score,
+        accountId,
+        displayName: displayName || accountId.slice(0, 8),
+      });
+    };
+
+    if (playerScore && playerName && playerAccountId) {
+      addRow(playerScore, playerAccountId, playerName);
+    }
+    for (const score of spotlightScores ?? []) {
+      addRow(score, score.accountId, score.displayName);
+    }
+    return rows;
+  }, [playerAccountId, playerName, playerScore, spotlightScores]);
+  const spotlightAccountIds = useMemo(
+    () => {
+      const accountIds = new Set(spotlightRows.map(score => normalizeAccountId(score.accountId)));
+      if (playerAccountId) accountIds.add(normalizeAccountId(playerAccountId));
+      return accountIds;
+    },
+    [playerAccountId, spotlightRows],
+  );
+  const spotlightFooterRows = useMemo(
+    () => spotlightRows
+      .filter(score => !topAccountIds.has(normalizeAccountId(score.accountId)))
+      .sort((a, b) => a.rank - b.rank),
+    [spotlightRows, topAccountIds],
+  );
+  const hasEntries = prefetchedEntries.length > 0 || spotlightFooterRows.length > 0;
 
   const rankWidth = useMemo(() => {
-    const ranks = prefetchedEntries.map((e, i) => e.rank ?? i + 1);
-    if (playerScore && !playerInTop) ranks.push(playerScore.rank);
+    const ranks = prefetchedEntries.map((entry, index) => entry.rank ?? index + 1);
+    for (const score of spotlightRows) ranks.push(score.rank);
     return computeRankWidth(ranks);
-  }, [prefetchedEntries, playerScore, playerInTop]);
+  }, [prefetchedEntries, spotlightRows]);
 
   const hasViewAllCounts = showLeaderboardEntryTotals === true && totalEntries != null && localEntries != null && totalEntries > 0;
   const fullViewAllLabel = hasViewAllCounts
@@ -149,35 +202,35 @@ export default memo(function InstrumentCard({
       >
         <div style={st.cardBody}>
         {prefetchedError && <span style={st.cardError}>{parseApiError(prefetchedError).title}</span>}
-        {!prefetchedError && prefetchedEntries.length === 0 && !playerScore && (
+        {!prefetchedError && prefetchedEntries.length === 0 && spotlightFooterRows.length === 0 && (
           <div style={{ ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>
             <InstrumentEmptyState instrument={instrument} t={t} noMargin subtitleKey="songDetail.noScoresSubtitle" />
           </div>
         )}
         {!prefetchedError &&
-          prefetchedEntries.map((e, i) => {
-            const rowStagger = anim(baseDelay + STAGGER_ENTRY_OFFSET + i * STAGGER_ROW_MS);
-            const isPlayer = playerInTop && e.accountId === playerAccountId;
+          prefetchedEntries.map((entry, index) => {
+            const rowStagger = anim(baseDelay + STAGGER_ENTRY_OFFSET + index * STAGGER_ROW_MS);
+            const isPlayer = spotlightAccountIds.has(normalizeAccountId(entry.accountId));
             const rowStyle = { ...(isPlayer ? st.playerEntryRow : st.entryRow), ...(isCompactCard ? st.entryRowMobile : {}) };
             return (
             <Link
-              key={e.accountId}
-              id={isPlayer ? `player-score-${instrument}` : undefined}
-              to={`/player/${e.accountId}`}
+              key={entry.accountId}
+              id={isPlayer ? getSpotlightRowId(instrument, entry.accountId, playerAccountId) : undefined}
+              to={`/player/${entry.accountId}`}
               state={{ backTo: `/songs/${songId}` }}
               style={{ ...rowStyle, ...rowStagger }}
               onClick={(ev) => ev.stopPropagation()}
               onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
             >
               <LeaderboardEntry
-                rank={e.rank ?? i + 1}
-                displayName={e.displayName ?? e.accountId.slice(0, 8)}
-                score={e.score}
-                season={e.season}
-                accuracy={e.accuracy}
-                isFullCombo={!!e.isFullCombo}
+                rank={entry.rank ?? index + 1}
+                displayName={entry.displayName ?? entry.accountId.slice(0, 8)}
+                score={entry.score}
+                season={entry.season}
+                accuracy={entry.accuracy}
+                isFullCombo={!!entry.isFullCombo}
                 isPlayer={isPlayer}
-                difficulty={e.difficulty}
+                difficulty={entry.difficulty}
                 showDifficulty={showSeason}
                 showSeason={showSeason}
                 showAccuracy={showAccuracy}
@@ -187,43 +240,49 @@ export default memo(function InstrumentCard({
             </Link>
             );
           })}
-        {/* v8 ignore start — player score IIFE; conditionally rendered animation block */}
-        <CollapsePresence visible={showPlayerRow}>
-        {showPlayerRow && (() => {
-          const playerDelay = baseDelay + STAGGER_ENTRY_OFFSET + prefetchedEntries.length * STAGGER_ROW_MS;
+        {/* v8 ignore start — spotlight score rows; conditionally rendered animation block */}
+        <CollapsePresence visible={spotlightFooterRows.length > 0}>
+        {spotlightFooterRows.length > 0 && spotlightFooterRows.map((score, index) => {
+          const playerDelay = baseDelay + STAGGER_ENTRY_OFFSET + (prefetchedEntries.length + index) * STAGGER_ROW_MS;
           const playerStagger = anim(playerDelay);
           const playerRowStyle = { ...st.playerEntryRow, ...(isCompactCard ? st.entryRowMobile : {}) };
+          const isTrackedPlayerRow = playerAccountId != null && normalizeAccountId(score.accountId) === normalizeAccountId(playerAccountId);
+          const playerLeaderboardPage = Math.floor(((score.localRank ?? score.rank) - 1) / 25) + 1;
           return (
-          <Link
-            id={`player-score-${instrument}`}
-            to={`/songs/${songId}/${instrument}?page=${Math.floor(((playerScore.localRank ?? playerScore.rank) - 1) / 25) + 1}&navToPlayer=true`}
-            style={{ ...playerRowStyle, ...playerStagger }}
-            onClick={(ev) => ev.stopPropagation()}
-            onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
-          >
-            <LeaderboardEntry
-              rank={playerScore.rank}
-              displayName={playerName}
-              score={playerScore.score}
-              season={playerScore.season}
-              accuracy={playerScore.accuracy}
-              isFullCombo={!!playerScore.isFullCombo}
-              isPlayer
-              difficulty={playerScore.difficulty}
-              showDifficulty={showSeason}
-              showSeason={showSeason}
-              showAccuracy={showAccuracy}
-              scoreWidth={effectiveScoreWidth}
-              rankWidth={rankWidth}
-            />
-          </Link>
+            <Link
+              key={score.accountId}
+              id={getSpotlightRowId(instrument, score.accountId, playerAccountId)}
+              to={isTrackedPlayerRow
+                ? `/songs/${songId}/${instrument}?page=${playerLeaderboardPage}&navToPlayer=true`
+                : `/player/${score.accountId}`}
+              state={isTrackedPlayerRow ? undefined : { backTo: `/songs/${songId}` }}
+              style={{ ...playerRowStyle, ...playerStagger }}
+              onClick={(ev) => ev.stopPropagation()}
+              onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
+            >
+              <LeaderboardEntry
+                rank={score.rank}
+                displayName={score.displayName}
+                score={score.score}
+                season={score.season}
+                accuracy={score.accuracy}
+                isFullCombo={!!score.isFullCombo}
+                isPlayer
+                difficulty={score.difficulty}
+                showDifficulty={showSeason}
+                showSeason={showSeason}
+                showAccuracy={showAccuracy}
+                scoreWidth={effectiveScoreWidth}
+                rankWidth={rankWidth}
+              />
+            </Link>
           );
-        })()}
+        })}
         </CollapsePresence>
         {/* v8 ignore stop */}
         {/* v8 ignore start — view all IIFE; conditionally rendered animation block */}
         {!prefetchedError && prefetchedEntries.length > 0 && (() => {
-          const viewAllDelay = baseDelay + STAGGER_ENTRY_OFFSET + (prefetchedEntries.length + (playerScore && !playerInTop ? 1 : 0)) * STAGGER_ROW_MS;
+          const viewAllDelay = baseDelay + STAGGER_ENTRY_OFFSET + (prefetchedEntries.length + spotlightFooterRows.length) * STAGGER_ROW_MS;
           const viewAllStagger = anim(viewAllDelay);
           const shouldUseCompactViewAll = hasViewAllCounts && (isCompactCard || viewAllNeedsCompact);
           if (shouldUseCompactViewAll) {

@@ -3,13 +3,14 @@ import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback, typ
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
-import { useSelectedProfile } from '../../hooks/data/useSelectedProfile';
+import { useSelectedProfile, type SelectedProfile } from '../../hooks/data/useSelectedProfile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { api } from '../../api/client';
 import {
   INSTRUMENT_KEYS,
   type PlayerBandType,
+  type SelectedMemberSongScore,
   type ServerInstrumentKey as InstrumentKey,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
@@ -56,6 +57,31 @@ function getBandSelectionKey(bandType: PlayerBandType | undefined, teamKey: stri
   return `${bandType}:${teamKey}:${comboId ?? 'all'}`;
 }
 
+type SelectedBandMember = {
+  accountId: string;
+  displayName: string;
+};
+
+function normalizeAccountId(accountId: string | null | undefined): string {
+  return accountId?.trim().toLowerCase() ?? '';
+}
+
+function resolveSelectedBandMembers(profile: SelectedProfile | null): SelectedBandMember[] {
+  if (profile?.type !== 'band') return [];
+
+  const memberNames = new Map(profile.members.map(member => [normalizeAccountId(member.accountId), member.displayName]));
+  const seen = new Set<string>();
+  return profile.teamKey.split(':').flatMap(accountId => {
+    const normalizedAccountId = normalizeAccountId(accountId);
+    if (!normalizedAccountId || seen.has(normalizedAccountId)) return [];
+    seen.add(normalizedAccountId);
+    return [{
+      accountId,
+      displayName: memberNames.get(normalizedAccountId) || accountId.slice(0, 8),
+    }];
+  });
+}
+
 export default function SongDetailPage() {
   const { t } = useTranslation();
   const { songId } = useParams<{ songId: string }>();
@@ -81,6 +107,8 @@ export default function SongDetailPage() {
   const selectedAccountId = player?.accountId;
   const selectedBandType = profile?.type === 'band' ? profile.bandType as PlayerBandType : undefined;
   const selectedTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
+  const selectedBandMembers = useMemo(() => resolveSelectedBandMembers(profile), [profile]);
+  const selectedBandMemberAccountIds = useMemo(() => selectedBandMembers.map(member => member.accountId), [selectedBandMembers]);
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const activeBandComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType ? appliedBandComboFilter.comboId : undefined;
   const bandSelectionKey = getBandSelectionKey(selectedBandType, selectedTeamKey, activeBandComboId);
@@ -91,6 +119,8 @@ export default function SongDetailPage() {
     () => song ? configuredInstruments.filter((instrument) => serverSongSupportsInstrument(song, instrument)) : configuredInstruments,
     [configuredInstruments, song],
   );
+  const activeInstrumentKey = useMemo(() => activeInstruments.join(','), [activeInstruments]);
+  const selectedBandMemberKey = useMemo(() => selectedBandMemberAccountIds.join(','), [selectedBandMemberAccountIds]);
   const promotedSongBandType = useMemo(
     () => selectedBandType && SONG_BAND_TYPES.includes(selectedBandType) ? selectedBandType : undefined,
     [selectedBandType],
@@ -141,6 +171,8 @@ export default function SongDetailPage() {
   const [showLeaderboardEntryTotals, setShowLeaderboardEntryTotals] = useState(
     () => cached?.showLeaderboardEntryTotals === true,
   );
+  const [selectedMemberScores, setSelectedMemberScores] = useState<SelectedMemberSongScore[]>([]);
+  const [selectedMemberScoresReady, setSelectedMemberScoresReady] = useState(selectedBandMemberAccountIds.length === 0);
 
   // Track whether the component mounted with cached data so effects can skip the initial fetch.
   // After the first render cycle, clear the flag so future prop changes (e.g. player swap) refetch.
@@ -236,6 +268,26 @@ export default function SongDetailPage() {
     return () => { cancelled = true; };
   }, [songId, leewayParam]);
 
+  useEffect(() => {
+    if (!songId || selectedBandMemberAccountIds.length === 0 || activeInstruments.length === 0) {
+      setSelectedMemberScores([]);
+      setSelectedMemberScoresReady(true);
+      return;
+    }
+
+    let cancelled = false;
+    setSelectedMemberScoresReady(false);
+    api.getSelectedMemberSongScores(songId, selectedBandMemberAccountIds, activeInstruments, leewayParam).then((res) => {
+      if (!cancelled) setSelectedMemberScores(res.scores);
+    }).catch(() => {
+      if (!cancelled) setSelectedMemberScores([]);
+    }).finally(() => {
+      if (!cancelled) setSelectedMemberScoresReady(true);
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- stable keys intentionally drive array-valued fetch inputs
+  }, [activeInstrumentKey, leewayParam, selectedBandMemberKey, songId]);
+
   // Fetch generic band leaderboards in a single request.
   useEffect(() => {
     if (mountedWithCacheRef.current) return;
@@ -290,7 +342,7 @@ export default function SongDetailPage() {
   const playerDataReady = !player || scoreHistoryReady;
   const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
   const bandsReady = SONG_BAND_TYPES.every((bandType) => !bandData[bandType].loading);
-  const allReady = playerDataReady && instrumentsReady && bandsReady;
+  const allReady = playerDataReady && instrumentsReady && bandsReady && selectedMemberScoresReady;
 
   // Apply invalid score filtering
   const filteredScoreHistory = useMemo(() => {
@@ -308,6 +360,28 @@ export default function SongDetailPage() {
     return filterPlayerScores(playerScores);
   }, [playerScores, filterPlayerScores]);
 
+  const filteredSelectedMemberScores = useMemo(() => {
+    return filterPlayerScores(selectedMemberScores);
+  }, [filterPlayerScores, selectedMemberScores]);
+
+  const selectedMemberScoresByInstrument = useMemo(() => {
+    const byAccountAndInstrument = new Map<string, SelectedMemberSongScore>();
+    for (const score of filteredSelectedMemberScores) {
+      byAccountAndInstrument.set(`${normalizeAccountId(score.accountId)}:${score.instrument}`, score);
+    }
+
+    const result = {} as Record<InstrumentKey, SelectedMemberSongScore[]>;
+    for (const instrument of activeInstruments) {
+      const rows: SelectedMemberSongScore[] = [];
+      for (const member of selectedBandMembers) {
+        const score = byAccountAndInstrument.get(`${normalizeAccountId(member.accountId)}:${instrument}`);
+        if (score) rows.push({ ...score, displayName: score.displayName || member.displayName });
+      }
+      result[instrument] = rows;
+    }
+    return result;
+  }, [activeInstruments, filteredSelectedMemberScores, selectedBandMembers]);
+
   const showScoreHistoryChart = !!player && scoreHistoryReady && filteredScoreHistory.length > 0;
 
   const allErrored = activeInstruments.length > 0
@@ -324,6 +398,9 @@ export default function SongDetailPage() {
     for (const s of filteredPlayerScores) {
       maxLen = Math.max(maxLen, s.score.toLocaleString().length);
     }
+    for (const s of filteredSelectedMemberScores) {
+      maxLen = Math.max(maxLen, s.score.toLocaleString().length);
+    }
     for (const h of filteredScoreHistory) {
       maxLen = Math.max(maxLen, h.newScore.toLocaleString().length);
     }
@@ -337,7 +414,7 @@ export default function SongDetailPage() {
       }
     }
     return `${maxLen}ch`;
-  }, [activeInstruments, instrumentData, filteredPlayerScores, filteredScoreHistory, bandData]);
+  }, [activeInstruments, instrumentData, filteredPlayerScores, filteredSelectedMemberScores, filteredScoreHistory, bandData]);
 
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
@@ -552,6 +629,7 @@ export default function SongDetailPage() {
                       playerScore={filteredPlayerScores.find((s) => s.instrument === inst)}
                       playerName={player?.displayName}
                       playerAccountId={player?.accountId}
+                      spotlightScores={selectedMemberScoresByInstrument[inst] ?? []}
                       prefetchedEntries={instrumentData[inst].entries}
                       prefetchedError={instrumentData[inst].error}
                       totalEntries={instrumentData[inst].totalEntries}

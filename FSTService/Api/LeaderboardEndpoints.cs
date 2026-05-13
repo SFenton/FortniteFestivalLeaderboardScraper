@@ -131,6 +131,175 @@ public static partial class ApiEndpoints
         .WithTags("Leaderboards")
         .RequireRateLimiting("public");
 
+        app.MapGet("/api/leaderboard/{songId}/members/scores", (
+            HttpContext httpContext,
+            string songId,
+            string? accountIds,
+            string? instruments,
+            double? leeway,
+            GlobalLeaderboardPersistence persistence,
+            IMetaDatabase metaDb,
+            IPathDataStore pathStore) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            var selectedAccountIds = ParseCsvParameter(accountIds, maxItems: 8);
+            if (selectedAccountIds.Count == 0)
+                return Results.BadRequest(new { error = "accountIds is required." });
+
+            HashSet<string>? instrumentFilter = null;
+            var requestedInstruments = ParseCsvParameter(instruments, maxItems: 16);
+            if (requestedInstruments.Count > 0)
+            {
+                foreach (var instrument in requestedInstruments)
+                {
+                    if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                        return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+                }
+                instrumentFilter = new HashSet<string>(requestedInstruments, StringComparer.OrdinalIgnoreCase);
+            }
+
+            var profilesByAccount = persistence.GetCurrentStatePlayerProfiles(selectedAccountIds, songId, instrumentFilter);
+            var scoreRows = selectedAccountIds
+                .SelectMany(accountId => profilesByAccount.TryGetValue(accountId, out var scores)
+                    ? scores.Select(score => (AccountId: accountId, Score: score))
+                    : [])
+                .ToList();
+
+            Dictionary<string, Dictionary<string, int>>? maxScoresByInstrument = null;
+            Dictionary<(string SongId, string Instrument), int>? flatThresholds = null;
+            if (leeway.HasValue && scoreRows.Count > 0)
+            {
+                var allMax = pathStore.GetAllMaxScores();
+                if (allMax.Count > 0)
+                {
+                    maxScoresByInstrument = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+                    flatThresholds = new Dictionary<(string, string), int>();
+                    foreach (var (_, score) in scoreRows)
+                    {
+                        if (!allMax.TryGetValue(score.SongId, out var songMax)) continue;
+                        var raw = songMax.GetByInstrument(score.Instrument);
+                        if (!raw.HasValue) continue;
+                        var threshold = (int)(raw.Value * (1.0 + leeway.Value / 100.0));
+                        if (!maxScoresByInstrument.TryGetValue(score.Instrument, out var instDict))
+                        {
+                            instDict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                            maxScoresByInstrument[score.Instrument] = instDict;
+                        }
+
+                        instDict[score.SongId] = threshold;
+                        flatThresholds[(score.SongId, score.Instrument)] = threshold;
+                    }
+                }
+            }
+
+            var rankingsByAccount = new Dictionary<string, Dictionary<(string SongId, string Instrument), int>>(StringComparer.OrdinalIgnoreCase);
+            var validFallbacksByAccount = new Dictionary<string, Dictionary<(string SongId, string Instrument), ValidScoreFallback>>(StringComparer.OrdinalIgnoreCase);
+            if (maxScoresByInstrument is not null)
+            {
+                foreach (var accountId in selectedAccountIds)
+                {
+                    rankingsByAccount[accountId] = persistence.GetCurrentStatePlayerRankingsFiltered(accountId, maxScoresByInstrument, songId, instrumentFilter);
+                    if (flatThresholds is null) continue;
+
+                    var invalidThresholds = new Dictionary<(string, string), int>();
+                    foreach (var (rowAccountId, score) in scoreRows)
+                    {
+                        if (!string.Equals(rowAccountId, accountId, StringComparison.OrdinalIgnoreCase)) continue;
+                        var key = (score.SongId, score.Instrument);
+                        if (flatThresholds.TryGetValue(key, out var threshold) && score.Score > threshold)
+                            invalidThresholds[key] = threshold;
+                    }
+
+                    if (invalidThresholds.Count > 0)
+                        validFallbacksByAccount[accountId] = metaDb.GetBestValidScores(accountId, invalidThresholds);
+                }
+            }
+
+            var filteredPopulation = maxScoresByInstrument is not null
+                ? persistence.GetCurrentStateFilteredPopulation(maxScoresByInstrument, instrumentFilter)
+                : null;
+            var unfilteredPopulation = metaDb.GetAllLeaderboardPopulation();
+            var names = metaDb.GetDisplayNames(selectedAccountIds);
+
+            var responseScores = scoreRows.Select(row =>
+            {
+                var accountId = row.AccountId;
+                var score = row.Score;
+                var key = (score.SongId, score.Instrument);
+                var computedRank = rankingsByAccount.TryGetValue(accountId, out var accountRankings)
+                    ? accountRankings.GetValueOrDefault(key, 0)
+                    : 0;
+                var rank = score.ApiRank > 0 ? score.ApiRank : computedRank > 0 ? computedRank : score.Rank;
+                var totalEntries = unfilteredPopulation.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
+
+                bool? isValid = null;
+                int? validScore = null;
+                int? validAccuracy = null;
+                bool? validIsFullCombo = null;
+                int? validStars = null;
+                int? validRank = null;
+                int? validTotalEntries = null;
+
+                if (flatThresholds is not null)
+                {
+                    var hasThreshold = flatThresholds.TryGetValue(key, out var threshold);
+                    var scoreIsValid = !hasThreshold || score.Score <= threshold;
+                    isValid = scoreIsValid;
+
+                    if (scoreIsValid)
+                    {
+                        validScore = score.Score;
+                        validAccuracy = score.Accuracy;
+                        validIsFullCombo = score.IsFullCombo;
+                        validStars = score.Stars;
+                        validRank = computedRank > 0 ? computedRank : rank;
+                    }
+                    else if (validFallbacksByAccount.TryGetValue(accountId, out var fallbacks) && fallbacks.TryGetValue(key, out var fallback))
+                    {
+                        validScore = fallback.Score;
+                        validAccuracy = fallback.Accuracy;
+                        validIsFullCombo = fallback.IsFullCombo;
+                        validStars = fallback.Stars;
+                        validRank = persistence.GetCurrentStateRankForScore(score.Instrument, score.SongId, fallback.Score, threshold);
+                    }
+
+                    if (filteredPopulation is not null)
+                        validTotalEntries = filteredPopulation.GetValueOrDefault(key, totalEntries);
+                }
+
+                return new
+                {
+                    accountId,
+                    displayName = names.GetValueOrDefault(accountId),
+                    songId = score.SongId,
+                    instrument = score.Instrument,
+                    score = score.Score,
+                    rank,
+                    localRank = computedRank > 0 ? computedRank : (int?)null,
+                    percentile = score.Percentile,
+                    accuracy = score.Accuracy,
+                    isFullCombo = score.IsFullCombo,
+                    stars = score.Stars,
+                    season = score.Season,
+                    difficulty = score.Difficulty,
+                    endTime = score.EndTime,
+                    totalEntries,
+                    isValid,
+                    validScore,
+                    validAccuracy,
+                    validIsFullCombo,
+                    validStars,
+                    validRank,
+                    validTotalEntries,
+                };
+            }).ToList();
+
+            return Results.Ok(new { songId, scores = responseScores });
+        })
+        .WithTags("Leaderboards")
+        .RequireRateLimiting("public");
+
         app.MapGet("/api/leaderboard/{songId}/{instrument}", (
             HttpContext httpContext,
             string songId,
@@ -353,6 +522,16 @@ public static partial class ApiEndpoints
             .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
             .Value.SerializerOptions;
         return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+    }
+
+    private static List<string> ParseCsvParameter(string? value, int maxItems)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return [];
+        return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(0, maxItems))
+            .ToList();
     }
 
     private static List<object> MapSongBandLeaderboardEntries(

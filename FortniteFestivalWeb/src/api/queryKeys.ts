@@ -14,6 +14,8 @@ export const queryKeys = {
     ['leaderboard', songId, instrument, { top, offset, leeway }] as const,
   allLeaderboards: (songId: string, top: number, leeway?: number) =>
     ['allLeaderboards', songId, { top, leeway }] as const,
+  selectedMemberSongScores: (songId: string, accountIds: readonly string[], instruments?: readonly string[], leeway?: number) =>
+    ['selectedMemberSongScores', songId, { accountIds, instruments, leeway }] as const,
   songBandLeaderboard: (songId: string, bandType: string, top: number, offset: number, selectedAccountId?: string, selectedTeamKey?: string, comboId?: string) =>
     ['songBandLeaderboard', songId, bandType, { top, offset, selectedAccountId, selectedTeamKey, comboId }] as const,
   allSongBandLeaderboards: (songId: string, top: number, selectedAccountId?: string, selectedBandType?: string, selectedTeamKey?: string, comboId?: string) =>
@@ -28,6 +30,8 @@ export const queryKeys = {
     ['rankings', instrument, { rankBy, page, pageSize }] as const,
   playerRanking: (instrument: string, accountId: string, rankBy?: string) =>
     ['playerRanking', instrument, accountId, { rankBy }] as const,
+  selectedMemberRankings: (accountIds: readonly string[], instruments: readonly string[], rankBy?: string) =>
+    ['selectedMemberRankings', { accountIds, instruments, rankBy }] as const,
   compositeRankings: (page?: number, pageSize?: number) =>
     ['compositeRankings', { page, pageSize }] as const,
   playerCompositeRanking: (accountId: string) =>

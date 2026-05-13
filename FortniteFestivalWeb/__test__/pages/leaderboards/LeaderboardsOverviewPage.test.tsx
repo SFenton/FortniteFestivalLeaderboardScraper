@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
-import type { BandConfiguration, BandRankingEntry, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { AccountRankingDto, BandConfiguration, BandRankingEntry, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import LeaderboardsOverviewPage from '../../../src/pages/leaderboards/LeaderboardsOverviewPage';
@@ -12,6 +12,7 @@ import { BAND_TYPES } from '../../../src/utils/bandTypes';
 const mockApi = vi.hoisted(() => ({
   getRankings: vi.fn(),
   getPlayerRanking: vi.fn(),
+  getSelectedMemberRankings: vi.fn(),
   getBandRankings: vi.fn(),
   getBandRanking: vi.fn(),
   getSongs: vi.fn(),
@@ -58,6 +59,38 @@ function makeBandEntry(
     avgRank: 7.4,
     rawWeightedRating: 0.2345,
     computedAt: '2026-04-28T00:00:00Z',
+  };
+}
+
+function makeAccountRanking(rank: number, overrides: Partial<AccountRankingDto> = {}): AccountRankingDto {
+  return {
+    accountId: `account-${rank}`,
+    displayName: `Account ${rank}`,
+    instrument: 'Solo_Guitar',
+    songsPlayed: 120,
+    totalChartedSongs: 160,
+    coverage: 0.75,
+    rawSkillRating: 0.0123,
+    adjustedSkillRating: 0.1234,
+    adjustedSkillRank: rank,
+    weightedRating: 0.2345,
+    weightedRank: rank,
+    fcRate: 0.42,
+    fcRateRank: rank,
+    totalScore: 9_876_543 - rank,
+    totalScoreRank: rank,
+    maxScorePercent: 0.91,
+    maxScorePercentRank: rank,
+    avgAccuracy: 0.972,
+    fullComboCount: 65,
+    avgStars: 5.6,
+    bestRank: 1,
+    avgRank: 7.4,
+    rawMaxScorePercent: 0.91,
+    rawWeightedRating: 0.2345,
+    computedAt: '2026-04-28T00:00:00Z',
+    totalRankedAccounts: 160,
+    ...overrides,
   };
 }
 
@@ -115,6 +148,7 @@ beforeEach(() => {
   mockApi.getShop.mockResolvedValue({ songs: [] });
   mockApi.getRankings.mockResolvedValue({ entries: [], totalAccounts: 0, instrument: 'Solo_Guitar', rankBy: 'totalscore', page: 1, pageSize: 10 });
   mockApi.getPlayerRanking.mockResolvedValue(null);
+  mockApi.getSelectedMemberRankings.mockResolvedValue({ rankBy: 'totalscore', instruments: [] });
   mockApi.getBandRanking.mockRejectedValue(new Error('not found'));
   mockApi.getBandRankings.mockImplementation((bandType: BandType) => Promise.resolve({
     bandType,
@@ -188,6 +222,42 @@ describe('LeaderboardsOverviewPage band rankings', () => {
     const selectedHeader = selectedCard.firstElementChild as HTMLElement;
     const firstInstrumentHeader = instrumentGrid.firstElementChild?.firstElementChild as HTMLElement;
     expect(getAnimationDelayMs(selectedHeader)).toBeLessThan(getAnimationDelayMs(firstInstrumentHeader));
+  });
+
+  it('renders selected band member solo rankings from the selected-members endpoint', async () => {
+    writeSelectedBandProfile('Band_Duets');
+    mockApi.getSelectedMemberRankings.mockResolvedValue({
+      rankBy: 'adjusted',
+      instruments: [{
+        instrument: 'Solo_Guitar',
+        rankBy: 'adjusted',
+        totalAccounts: 160,
+        entries: [makeAccountRanking(42, {
+          accountId: 'selected-a',
+          displayName: 'Selected A',
+          instrument: '',
+        })],
+      }],
+    });
+
+    render(
+      <TestProviders route="/leaderboards?rankBy=adjusted">
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const instrumentGrid = await screen.findByTestId('leaderboards-instrument-grid');
+    expect(within(instrumentGrid).getByText('Selected A')).toBeTruthy();
+    expect(within(instrumentGrid).getByText('#42')).toBeTruthy();
+    await waitFor(() => {
+      expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(
+        ['selected-a', 'selected-b'],
+        expect.arrayContaining(['Solo_Guitar']),
+        'adjusted',
+      );
+    });
   });
 
   it('requests and renders selected-player band rankings using the active metric', async () => {
