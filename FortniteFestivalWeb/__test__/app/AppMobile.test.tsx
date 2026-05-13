@@ -783,7 +783,7 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
-  it('does not include selected band profile access in the mobile FAB menu', async () => {
+  it('keeps the selected band out of the mobile Songs dock and exposes Filter Songs beside the FAB', async () => {
     setMobile();
     localStorage.setItem('fst:selectedProfile', JSON.stringify({
       type: 'band',
@@ -802,16 +802,46 @@ describe('App — mobile FAB branches', () => {
     const dock = document.querySelector('.fab-search-dock') as HTMLElement;
     expect(dock).toBeTruthy();
 
+    expect(within(dock).getByRole('button', { name: 'Search' })).toBeDefined();
+    expect(within(dock).getByRole('button', { name: 'Sort Songs' })).toBeDefined();
+    const filterButton = within(dock).getByRole('button', { name: 'Filter Songs' });
+
     expect(within(dock).queryByText('Select Profile')).toBeNull();
     expect(within(dock).queryByText('TrackedP + BandMate')).toBeNull();
     expect(within(dock).queryByText('Item Shop')).toBeNull();
-    fireEvent.click(within(dock).getByRole('button', { name: 'Filter Songs' }));
+    fireEvent.click(filterButton);
 
     const dialog = await screen.findByRole('dialog', { name: 'Filter Songs' });
     expect(within(dialog).getByText('Selected Band Scores')).toBeDefined();
     expect(within(dialog).getByText('Filter songs by whether TrackedP + BandMate has a band score recorded.')).toBeDefined();
     expect(within(dialog).getByText('Has Selected Band Score')).toBeDefined();
     expect(within(dialog).queryByText('Global Score & FC Toggles')).toBeNull();
+  });
+
+  it('keeps the selected band type filter in the mobile Songs FAB menu', async () => {
+    setMobile();
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    }));
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    fireEvent.click(screen.getByLabelText('Actions'));
+    const menu = await screen.findByTestId('fab-menu');
+
+    expect(within(menu).queryByText('Select Profile')).toBeNull();
+    expect(within(menu).queryByText('TrackedP + BandMate')).toBeNull();
+    expect(within(menu).queryByText('Item Shop')).toBeNull();
+    expect(within(menu).getByRole('button', { name: 'Duos' })).toBeDefined();
+    expect(within(menu).queryByRole('button', { name: 'Filter Songs' })).toBeNull();
   });
 
   it('renders desktop nav on non-mobile', async () => {

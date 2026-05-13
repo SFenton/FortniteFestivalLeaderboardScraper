@@ -797,6 +797,10 @@ function AppShell() {
       bandFilterFabActions,
       mergePageQuickLinksIntoFabGroups(quickLinksActions, pageSpecificActions, ...groups),
     );
+  const songsDockActions: ActionItem[] = [
+    { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: fabSearch.songsSortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
+    ...(player || selectedProfile?.type === 'band' ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: fabSearch.songsFilterActive, icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
+  ];
   const showMobileFab = isMobile && !notificationsOpen;
 
   return (
@@ -889,13 +893,9 @@ function AppShell() {
           mode="songs"
           defaultOpen
           placeholder={t('songs.searchPlaceholder')}
-          dockActions={[
-            { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: fabSearch.songsSortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
-            ...(player || selectedProfile?.type === 'band' ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: fabSearch.songsFilterActive, icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
-          ]}
-          directAction
-          ariaLabel={getFabQuickLinksActionLabel(t)}
-          onPress={() => pageQuickLinks.openPageQuickLinks()}
+          dockActions={songsDockActions}
+          actionGroups={withPageQuickLinks([])}
+          onPress={() => {}}
         />
       )}
       {showMobileFab && location.pathname === AppRoutes.suggestions && (

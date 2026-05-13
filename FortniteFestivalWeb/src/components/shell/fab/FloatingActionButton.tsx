@@ -86,6 +86,8 @@ export default function FloatingActionButton({
   const [keyboardInset, setKeyboardInset] = useState(0);
   const scrollContainerRef = useScrollContainer();
   const useSongsDock = mode === 'songs' && searchVisible && dockActions != null;
+  const hasMenuActions = (actionGroups ?? []).some(group => group.length > 0);
+  const hasDockMainFab = directAction || hasMenuActions;
   const dockActionCount = dockActions?.length ?? 0;
   const dockMeasurementSignature = (dockActions ?? [])
     .map(action => `${action.label}\u001f${action.displayLabel ?? ''}`)
@@ -201,7 +203,7 @@ export default function FloatingActionButton({
     const labelGapTotal = DOCK_LABEL_MIN_GAP * visibleControlCount;
     const availableSearchWidth = stageWidth
       - actionWidthsTotal
-      - Layout.fabSize
+      - (hasDockMainFab ? Layout.fabSize : 0)
       - labelGapTotal;
     const showLabels = availableSearchWidth >= searchWidth;
     const nextLayout = {
@@ -224,7 +226,7 @@ export default function FloatingActionButton({
       return nextLayout;
     });
     revealDockLayout();
-  }, [dockActionCount, revealDockLayout, useSongsDock]);
+  }, [dockActionCount, hasDockMainFab, revealDockLayout, useSongsDock]);
 
   useLayoutEffect(() => {
     if (!useSongsDock) {
@@ -617,27 +619,29 @@ export default function FloatingActionButton({
                     </button>
                   </div>
                 ))}
-                <div style={dockAnchorSpacerStyle} aria-hidden="true" />
+                {hasDockMainFab && <div style={dockAnchorSpacerStyle} aria-hidden="true" />}
               </div>
-              <div ref={fabContainerRef} style={s.dockFabSlot}>
-                <button
-                  type="button"
-                  style={label ? s.fabLabeled : s.fab}
-                  onClick={handleFabPress}
-                  aria-label={ariaLabel ?? t('common.actions')}
-                  title={ariaLabel ?? t('common.actions')}
-                >
-                  {icon ?? <IoMenu size={IconSize.md} />}
-                  {label && <span style={s.fabLabel}>{label}</span>}
-                </button>
-                {!directAction && popupMounted && (
-                  <FABMenu
-                    groups={actionGroups ?? []}
-                    visible={popupVisible}
-                    onAction={(action) => { closeActions(); action.onPress(); }}
-                  />
-                )}
-              </div>
+              {hasDockMainFab && (
+                <div ref={fabContainerRef} style={s.dockFabSlot}>
+                  <button
+                    type="button"
+                    style={label ? s.fabLabeled : s.fab}
+                    onClick={handleFabPress}
+                    aria-label={ariaLabel ?? t('common.actions')}
+                    title={ariaLabel ?? t('common.actions')}
+                  >
+                    {icon ?? <IoMenu size={IconSize.md} />}
+                    {label && <span style={s.fabLabel}>{label}</span>}
+                  </button>
+                  {!directAction && popupMounted && (
+                    <FABMenu
+                      groups={actionGroups ?? []}
+                      visible={popupVisible}
+                      onAction={(action) => { closeActions(); action.onPress(); }}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
