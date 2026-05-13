@@ -269,6 +269,14 @@ describe('PathsModal', () => {
       expect(findMobileInstrumentToggle()).toBeDefined();
     });
 
+    it('reserves bottom safe-area space for mobile controls', () => {
+      render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
+
+      const controls = findMobileInstrumentToggle().parentElement?.parentElement;
+
+      expect(controls?.getAttribute('style')).toContain('safe-area-inset-bottom');
+    });
+
     it('opens instrument accordion on click and selects instrument', async () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 

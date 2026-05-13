@@ -23,6 +23,7 @@ import {
   frostedCard, border, padding, transition, transitions,
 } from '@festival/theme';
 import { modalStyles } from '../../../../components/modals/modalStyles';
+import { paddingWithSafeAreaBottom } from '../../../../utils/safeAreaStyles';
 import anim from '../../../../styles/animations.module.css';
 import { ZoomableImage } from './ZoomableImage';
 import PathDataTable, { type PathDataResponse, PathDataHeader, type ColumnKey } from './PathDataTable';
@@ -53,7 +54,7 @@ function usePathsModalStyles() {
       transition: DIFF_TRANSITION,
     };
     return {
-      controls: { flexShrink: 0, padding: padding(Gap.xl, Gap.section) } as CSSProperties,
+      controls: { flexShrink: 0, padding: paddingWithSafeAreaBottom(Gap.xl, Gap.section, Gap.xl) } as CSSProperties,
       mobileRow: { display: Display.flex, gap: Gap.md, overflow: Overflow.hidden } as CSSProperties,
       mobileSelector: {
         ...frostedCard, display: Display.flex, alignItems: 'center', justifyContent: 'space-between', gap: Gap.md,
