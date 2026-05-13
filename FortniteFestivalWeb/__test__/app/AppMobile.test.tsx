@@ -164,6 +164,18 @@ const mockApi = vi.hoisted(() => {
         ],
       }],
     }),
+    getShop: fn().mockResolvedValue({
+      songs: [{
+        songId: 's1',
+        title: 'Test Song',
+        artist: 'Artist A',
+        year: 2024,
+        albumArt: 'https://example.com/a.jpg',
+        shopUrl: 'https://example.com/shop/s1',
+        leavingTomorrow: false,
+      }],
+      lastUpdated: '2026-05-12T00:00:00Z',
+    }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' }),
   };
 });
@@ -174,6 +186,8 @@ import App, { getEmptyBandFilterActionLabel, getFabQuickLinksActionLabel, mergeP
 import type { SelectedProfile } from '../../src/hooks/data/useSelectedProfile';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
+import { contentHash } from '../../src/firstRun/types';
+import { shopSlides } from '../../src/pages/shop/firstRun';
 
 function setMobile() {
   Object.defineProperty(window, 'matchMedia', {
@@ -189,6 +203,29 @@ function setMobile() {
       removeListener: vi.fn(),
       dispatchEvent: vi.fn(),
     })),
+  });
+}
+
+function setMobileWidth(width: number, height = 844) {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => {
+      const max = query.match(/max-width:\s*(\d+)px/);
+      const min = query.match(/min-width:\s*(\d+)px/);
+      return {
+        matches: (max ? width <= Number(max[1]) : true) && (min ? width >= Number(min[1]) : true),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      };
+    }),
   });
 }
 
@@ -269,6 +306,15 @@ function storeSelectedProfile(profile: Record<string, unknown>) {
   }
   window.dispatchEvent(new Event('fst:selectedProfileChanged'));
   window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
+}
+
+function markShopFirstRunSeen() {
+  const seen = Object.fromEntries(shopSlides({ viewToggleAvailable: true }).map(slide => [slide.id, {
+    version: slide.version,
+    hash: contentHash(slide.contentKey ?? (slide.title + slide.description)),
+    seenAt: '2026-05-12T00:00:00.000Z',
+  }]));
+  localStorage.setItem('fst:firstRun', JSON.stringify(seen));
 }
 
 function playerNotificationItem(eventId: number, notificationGuid: string, instrument: string, eventKind = 'player_score_pb') {
@@ -693,6 +739,48 @@ describe('App — mobile FAB branches', () => {
     expect(within(dock).queryByText('Item Shop')).toBeNull();
     expect(within(dock).getByRole('button', { name: 'Filter Songs' })).toBeDefined();
     expect(screen.queryByTestId('fab-menu')).toBeNull();
+  });
+
+  it('renders the mobile Shop FAB as a direct List/Grid toggle above the narrow-grid breakpoint', async () => {
+    setMobileWidth(430);
+    markShopFirstRunSeen();
+    window.location.hash = '#/shop';
+    render(<App />);
+
+    const listButton = await screen.findByRole('button', { name: 'Switch to list view' }, { timeout: 5000 });
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    expect(within(listButton).getByText('List')).toBeDefined();
+    expect(listButton.getAttribute('title')).toBe('Switch to list view');
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+
+    fireEvent.click(listButton);
+
+    const gridButton = await screen.findByRole('button', { name: 'Switch to grid view' });
+    expect(within(gridButton).getByText('Grid')).toBeDefined();
+    expect(localStorage.getItem('fst:shopView')).toBe('list');
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+
+    fireEvent.click(gridButton);
+
+    await screen.findByRole('button', { name: 'Switch to list view' });
+    expect(localStorage.getItem('fst:shopView')).toBe('grid');
+    window.location.hash = '';
+  });
+
+  it('hides the mobile Shop view-toggle FAB below the narrow-grid breakpoint', async () => {
+    setMobileWidth(375);
+    markShopFirstRunSeen();
+    window.location.hash = '#/shop';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Switch to list view' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Switch to grid view' })).toBeNull();
+      expect(screen.queryByLabelText('Actions')).toBeNull();
+    }, { timeout: 5000 });
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    window.location.hash = '';
   });
 
   it('does not include selected band profile access in the mobile FAB menu', async () => {

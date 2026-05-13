@@ -524,6 +524,30 @@ describe('FloatingActionButton', () => {
     expect(screen.getByTestId('filter-icon')).toBeTruthy();
   });
 
+  it('renders a labeled direct-action FAB without opening a menu', () => {
+    const onPress = vi.fn();
+    renderFAB({
+      ariaLabel: 'Switch to list view',
+      label: 'List',
+      directAction: true,
+      icon: <span data-testid="list-icon">L</span>,
+      actionGroups: [[{ label: 'Sort', icon: <span>S</span>, onPress: vi.fn() }]],
+      onPress,
+    });
+
+    const button = screen.getByRole('button', { name: 'Switch to list view' });
+    expect(within(button).getByText('List')).toBeTruthy();
+    expect(button.getAttribute('title')).toBe('Switch to list view');
+    expect(button).toHaveStyle({ justifyContent: 'flex-start', gap: '8px', minWidth: '56px', padding: '0px 18px' });
+
+    fireEvent.click(button);
+
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(screen.queryByText('Sort')).toBeNull();
+    expect(screen.getByTestId('list-icon')).toBeTruthy();
+  });
+
   it('closes popup on outside click and prevents default', () => {
     const actionGroups: ActionItem[][] = [[
       { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },

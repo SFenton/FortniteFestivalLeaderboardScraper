@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigationType, useLocation } from 'react-router-dom';
 import { IoGrid, IoList } from 'react-icons/io5';
@@ -86,10 +86,10 @@ export default function ShopPage() {
   const toggleViewRef = useRef(toggleView);
   toggleViewRef.current = toggleView;
   /* v8 ignore start — FAB registration callback */
-  useEffect(() => {
+  useLayoutEffect(() => {
     fabSearch.registerShopActions({ toggleView: () => toggleViewRef.current() });
   }, [fabSearch]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     fabSearch.setShopViewMode(effectiveView);
   }, [fabSearch, effectiveView]);
   /* v8 ignore stop */

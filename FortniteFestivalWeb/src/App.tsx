@@ -946,17 +946,16 @@ function AppShell() {
         />
       )}
       {showMobileFab && location.pathname === AppRoutes.shop && (
-        <MobileFloatingActionButton
-          mode="players"
-          actionGroups={withPageQuickLinks(
-            !isNarrowGrid ? [{
-              label: fabSearch.shopViewMode === 'grid' ? t('common.listView', 'List View') : t('common.gridView', 'Grid View'),
-              icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
-              onPress: () => fabSearch.shopToggleView(),
-            }] : [],
-          )}
-          onPress={() => {}}
-        />
+        !isNarrowGrid ? (
+          <MobileFloatingActionButton
+            mode="players"
+            icon={fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />}
+            label={fabSearch.shopViewMode === 'grid' ? t('shop.viewList', 'List') : t('shop.viewGrid', 'Grid')}
+            ariaLabel={fabSearch.shopViewMode === 'grid' ? t('shop.switchToListView', 'Switch to list view') : t('shop.switchToGridView', 'Switch to grid view')}
+            directAction
+            onPress={() => fabSearch.shopToggleView()}
+          />
+        ) : null
       )}
       {showMobileFab && RoutePatterns.leaderboards.test(location.pathname) && (() => {
         const leaderboardActions = [

@@ -18,6 +18,8 @@ const DOCK_SEARCH_EXPAND_MS = 360;
 const DOCK_LABEL_MIN_GAP = Gap.sm;
 const DOCK_LABEL_ICON_GAP = Gap.md;
 const DOCK_LABEL_HORIZONTAL_PADDING = Gap.xl;
+const LABELED_FAB_ICON_LEFT_PADDING = Math.round((Layout.fabSize - IconSize.fab) / 2) - 1;
+const LABELED_FAB_TEXT_SIDE_PADDING = LABELED_FAB_ICON_LEFT_PADDING;
 
 export interface ActionItem {
   label: string;
@@ -32,6 +34,7 @@ interface Props {
   defaultOpen?: boolean;
   placeholder?: string;
   icon?: React.ReactNode;
+  label?: string;
   ariaLabel?: string;
   actionGroups?: ActionItem[][];
   dockActions?: ActionItem[];
@@ -61,6 +64,7 @@ export default function FloatingActionButton({
   defaultOpen,
   placeholder,
   icon,
+  label,
   ariaLabel,
   actionGroups,
   dockActions,
@@ -618,12 +622,13 @@ export default function FloatingActionButton({
               <div ref={fabContainerRef} style={s.dockFabSlot}>
                 <button
                   type="button"
-                  style={s.fab}
+                  style={label ? s.fabLabeled : s.fab}
                   onClick={handleFabPress}
                   aria-label={ariaLabel ?? t('common.actions')}
                   title={ariaLabel ?? t('common.actions')}
                 >
                   {icon ?? <IoMenu size={IconSize.md} />}
+                  {label && <span style={s.fabLabel}>{label}</span>}
                 </button>
                 {!directAction && popupMounted && (
                   <FABMenu
@@ -671,13 +676,15 @@ export default function FloatingActionButton({
       )}
       <div ref={fabContainerRef} style={{ ...s.container, transform: keyboardTransform, transition: keyboardTransition }}>
         <button
-          style={s.fab}
+          style={label ? s.fabLabeled : s.fab}
           /* v8 ignore start -- action toggle */
           onClick={handleFabPress}
           /* v8 ignore stop */
           aria-label={ariaLabel ?? t('common.actions')}
+          title={ariaLabel ?? t('common.actions')}
         >
           {icon ?? <IoMenu size={IconSize.md} />}
+          {label && <span style={s.fabLabel}>{label}</span>}
         </button>
         {!directAction && popupMounted && (
           <FABMenu
@@ -916,6 +923,34 @@ function useFABStyles() {
       cursor: Cursor.pointer,
       flexShrink: 0,
       pointerEvents: PointerEvents.auto,
+    } as CSSProperties,
+    fabLabeled: {
+      ...purpleGlass,
+      minWidth: Layout.fabSize,
+      maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      color: Colors.textPrimary,
+      ...flexCenter,
+      justifyContent: Align.start,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, LABELED_FAB_TEXT_SIDE_PADDING, 0, LABELED_FAB_ICON_LEFT_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    fabLabel: {
+      minWidth: 0,
+      overflow: Overflow.hidden,
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: 13,
+      fontWeight: 700,
+      lineHeight: 1,
+      letterSpacing: 0,
     } as CSSProperties,
     fabActionCircle: {
       ...frostedCard,

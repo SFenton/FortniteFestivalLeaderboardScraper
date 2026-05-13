@@ -785,6 +785,8 @@
   "shop": {
     "viewGrid": "Grid",
     "viewList": "List",
+    "switchToGridView": "Switch to grid view",
+    "switchToListView": "Switch to list view",
     "itemShop": "Item Shop",
     "empty": "No songs in the Item Shop",
     "emptyHint": "Check back later \u2014 the shop updates regularly."
