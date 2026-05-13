@@ -58,9 +58,11 @@ export function defaultSuggestionsFilterDraft(): SuggestionsFilterDraft {
   return d as SuggestionsFilterDraft;
 }
 
-export function isSuggestionsFilterActive(draft: SuggestionsFilterDraft): boolean {
+export function isSuggestionsFilterActive(draft: SuggestionsFilterDraft, mode: 'solo' | 'band' = 'solo'): boolean {
   const defaults = defaultSuggestionsFilterDraft();
-  return Object.keys(defaults).some(k => (draft[k] ?? defaults[k]) !== defaults[k]);
+  return Object.keys(defaults)
+    .filter(k => mode === 'solo' || BAND_SUGGESTION_TYPE_IDS.some(typeId => k === globalKeyFor(typeId)))
+    .some(k => (draft[k] ?? defaults[k]) !== defaults[k]);
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +80,8 @@ const INSTRUMENTS: { key: InstrumentKey; label: string; filterKey: keyof Suggest
   { key: 'peripheral_cymbals', label: 'Pro Drums + Cymbals', filterKey: 'suggestionsPeripheralCymbalsFilter', showKey: 'showPeripheralCymbals' },
   { key: 'peripheral_drums',   label: 'Pro Drums',           filterKey: 'suggestionsPeripheralDrumsFilter',   showKey: 'showPeripheralDrums' },
 ];
+
+const BAND_SUGGESTION_TYPE_IDS: SuggestionTypeId[] = ['NearFC', 'StarProgress', 'Unplayed', 'PercentilePush', 'PctImprove', 'Stale'];
 
 // ---------------------------------------------------------------------------
 // Component
@@ -99,6 +103,7 @@ type SuggestionsFilterModalProps = {
   visible: boolean;
   draft: SuggestionsFilterDraft;
   savedDraft?: SuggestionsFilterDraft;
+  mode?: 'solo' | 'band';
   instrumentVisibility: InstrumentVisibility;
   onChange: (d: SuggestionsFilterDraft) => void;
   onCancel: () => void;
@@ -106,12 +111,16 @@ type SuggestionsFilterModalProps = {
   onApply: () => void;
 };
 
-export default function SuggestionsFilterModal({ visible, draft, savedDraft, instrumentVisibility, onChange, onCancel, onReset, onApply }: SuggestionsFilterModalProps) {
+export default function SuggestionsFilterModal({ visible, draft, savedDraft, mode = 'solo', instrumentVisibility, onChange, onCancel, onReset, onApply }: SuggestionsFilterModalProps) {
   const { t } = useTranslation();
   const [selectedInstrument, setSelectedInstrument] = useState<InstrumentKey | null>(null);
   useEffect(() => { if (visible) setSelectedInstrument(null); }, [visible]);
 
+  const showInstrumentControls = mode === 'solo';
   const visibleInstruments = INSTRUMENTS.filter(i => instrumentVisibility[i.showKey as keyof InstrumentVisibility]);
+  const visibleSuggestionTypes = mode === 'band'
+    ? SUGGESTION_TYPES.filter(type => BAND_SUGGESTION_TYPE_IDS.includes(type.id))
+    : SUGGESTION_TYPES;
   const effectiveSelectedInstrument = selectedInstrument && visibleInstruments.some(i => i.key === selectedInstrument) ? selectedInstrument : null;
 
   const selectorItems = useMemo<InstrumentSelectorItem<InstrumentKey>[]>(
@@ -165,7 +174,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
         />
       ) : null}>
       {/* Instruments */}
-      <ModalSection>
+      {showInstrumentControls && <ModalSection>
         <Accordion title={t('suggestionsFilter.instruments')} hint={t('suggestionsFilter.instrumentsHint')}>
           {visibleInstruments.map(inst => (
             <ToggleRow
@@ -181,12 +190,12 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
             />
           ))}
         </Accordion>
-      </ModalSection>
+      </ModalSection>}
 
       {/* General type toggles */}
       <ModalSection>
         <Accordion title={t('suggestionsFilter.general')} hint={t('suggestionsFilter.generalHint')}>
-          {SUGGESTION_TYPES.map(st => (
+          {visibleSuggestionTypes.map(st => (
             <ToggleRow
               key={st.id}
               label={t(`suggestionFilterType.${st.id}`)}
@@ -199,14 +208,14 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
       </ModalSection>
 
       {/* Instrument-specific type toggles */}
-      <ModalSection title={t('suggestionsFilter.instrumentSpecific')} hint={t('suggestionsFilter.instrumentSpecificHint')}>
+      {showInstrumentControls && <ModalSection title={t('suggestionsFilter.instrumentSpecific')} hint={t('suggestionsFilter.instrumentSpecificHint')}>
         <InstrumentSelector<InstrumentKey>
           instruments={selectorItems}
           selected={effectiveSelectedInstrument}
           onSelect={handleInstrumentSelect}
           deferSelection
         >
-          {SUGGESTION_TYPES.map(st => {
+          {visibleSuggestionTypes.map(st => {
             const inst = effectiveSelectedInstrument ?? visibleInstruments[0]?.key ?? 'guitar';
             const key = perInstrumentKeyFor(inst, st.id);
             return (
@@ -220,7 +229,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
             );
           })}
         </InstrumentSelector>
-      </ModalSection>
+      </ModalSection>}
     </Modal>
   );
 }

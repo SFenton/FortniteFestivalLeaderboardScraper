@@ -8,6 +8,8 @@ import { Routes, Route } from 'react-router-dom';
 import SuggestionsPage from '../../../src/pages/suggestions/SuggestionsPage';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubIntersectionObserver } from '../../helpers/browserStubs';
+import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
+import type { SelectedBandProfile } from '../../../src/state/selectedProfile';
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -42,6 +44,7 @@ const mockApi = vi.hoisted(() => {
     trackPlayer: fn().mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' }),
     getRivalSuggestions: fn().mockResolvedValue({ accountId: 'test-player-1', combo: '', computedAt: null, rivals: [] }),
     getRivalsAll: fn().mockResolvedValue({ accountId: 'test-player-1', songs: [], combos: [] }),
+    getBandSongRows: fn().mockResolvedValue({ bandType: 'Band_Duets', teamKey: 'member-a|member-b', comboId: null, count: 0, entries: [] }),
     getShop: fn().mockResolvedValue({ songs: [] }),
     getVersions: fn().mockResolvedValue({ songs: '1' }),
     getShopSnapshot: fn().mockResolvedValue({ songIds: [] }),
@@ -54,6 +57,11 @@ beforeAll(() => {
   stubScrollTo();
   stubResizeObserver();
   stubIntersectionObserver();
+  document.createRange = vi.fn(() => ({
+    selectNodeContents: vi.fn(),
+    getBoundingClientRect: () => ({ width: 0, height: 0, top: 0, right: 0, bottom: 0, left: 0, x: 0, y: 0, toJSON: () => ({}) }),
+    detach: vi.fn(),
+  }) as unknown as Range);
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
@@ -94,6 +102,16 @@ function resetMocks() {
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'test-player-1', stats: [] });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' });
+  mockApi.getBandSongRows.mockResolvedValue({
+    bandType: 'Band_Duets',
+    teamKey: 'member-a|member-b',
+    comboId: null,
+    count: 2,
+    entries: [
+      { songId: 's1', comboId: null, rank: 12, totalEntries: 1000, percentile: 1.2, score: 980000, accuracy: 98, isFullCombo: false, stars: 6, season: 4 },
+      { songId: 's2', comboId: null, rank: 150, totalEntries: 1000, percentile: 15, score: 760000, accuracy: 88, isFullCombo: false, stars: 5, season: 5 },
+    ],
+  });
 }
 
 beforeEach(() => {
@@ -108,6 +126,28 @@ function renderSuggestions(route = '/suggestions', accountId = 'test-player-1') 
     <TestProviders route={route} accountId={accountId}>
       <Routes>
         <Route path="/suggestions" element={<SuggestionsPage accountId={accountId} />} />
+      </Routes>
+    </TestProviders>,
+  );
+}
+
+const selectedBand: SelectedBandProfile = {
+  type: 'band',
+  bandId: 'band-1',
+  bandType: 'Band_Duets',
+  teamKey: 'member-a|member-b',
+  displayName: 'Test Duo',
+  members: [
+    { accountId: 'member-a', displayName: 'Member A' },
+    { accountId: 'member-b', displayName: 'Member B' },
+  ],
+};
+
+function renderBandSuggestions(bandFilter?: AppliedBandComboFilter | null) {
+  return render(
+    <TestProviders route="/suggestions" bandFilter={bandFilter}>
+      <Routes>
+        <Route path="/suggestions" element={<SuggestionsPage selectedBand={selectedBand} />} />
       </Routes>
     </TestProviders>,
   );
@@ -274,6 +314,41 @@ describe('SuggestionsPage', () => {
     await waitFor(() => {
       expect(container.innerHTML).toBeTruthy();
     });
+  });
+
+  it('renders selected-band suggestions using the active band combo filter', async () => {
+    const bandFilter: AppliedBandComboFilter = {
+      bandId: selectedBand.bandId,
+      bandType: selectedBand.bandType,
+      teamKey: selectedBand.teamKey,
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'member-a', instrument: 'Solo_Guitar' },
+        { accountId: 'member-b', instrument: 'Solo_Bass' },
+      ],
+    };
+    mockApi.getBandSongRows.mockResolvedValue({
+      bandType: 'Band_Duets',
+      teamKey: selectedBand.teamKey,
+      comboId: bandFilter.comboId,
+      count: 2,
+      entries: [
+        { songId: 's1', comboId: bandFilter.comboId, rank: 12, totalEntries: 1000, percentile: 1.2, score: 980000, accuracy: 98, isFullCombo: false, stars: 6, season: 4 },
+        { songId: 's2', comboId: bandFilter.comboId, rank: 150, totalEntries: 1000, percentile: 15, score: 760000, accuracy: 88, isFullCombo: false, stars: 5, season: 5 },
+      ],
+    });
+
+    const { container } = renderBandSuggestions(bandFilter);
+
+    await waitFor(() => {
+      expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', selectedBand.teamKey, bandFilter.comboId);
+      expect(screen.getAllByText('First Plays for This Combo').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByText('Band FC Chase')).toBeTruthy();
+    const bandLinks = Array.from(container.querySelectorAll('a'))
+      .map(link => link.getAttribute('href'))
+      .filter(Boolean);
+    expect(bandLinks).toContain('/songs/s1/bands/Band_Duets');
   });
 
   it('renders visible categories after filtering', async () => {

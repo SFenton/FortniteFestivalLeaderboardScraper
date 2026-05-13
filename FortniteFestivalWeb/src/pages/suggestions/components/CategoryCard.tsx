@@ -6,6 +6,7 @@ import { memo, useMemo, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentKeys, type InstrumentKey } from '@festival/core/instruments';
+import type { BandType } from '@festival/core/api/serverTypes';
 import type { LeaderboardData } from '@festival/core/models';
 import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
 import { ACCURACY_SCALE } from '@festival/core';
@@ -21,6 +22,7 @@ import {
   flexRow, flexColumn, flexCenter, frostedCardSurface, border, padding, transition,
 } from '@festival/theme';
 import { resolveCategoryI18n } from '../suggestionsHelpers';
+import { Routes } from '../../../routes';
 
 const BASE = import.meta.env.BASE_URL;
 
@@ -31,6 +33,9 @@ const CORE_TO_SERVER_INSTRUMENT: Record<InstrumentKey, string> = {
   vocals: 'Solo_Vocals',
   pro_guitar: 'Solo_PeripheralGuitar',
   pro_bass: 'Solo_PeripheralBass',
+  peripheral_vocals: 'Solo_PeripheralVocals',
+  peripheral_cymbals: 'Solo_PeripheralCymbals',
+  peripheral_drums: 'Solo_PeripheralDrums',
 };
 
 // ── Category key helpers ──
@@ -53,6 +58,11 @@ type RowLayout = 'instrumentChips' | 'singleInstrument' | 'percentile' | 'season
 
 function getRowLayout(categoryKey: string): RowLayout {
   const k = categoryKey.toLowerCase();
+  if (k.startsWith('band_unplayed')) return 'hidden';
+  if (k.startsWith('band_near_fc')) return 'unfcAccuracy';
+  if (k.startsWith('band_star_progress')) return 'singleInstrument';
+  if (k.startsWith('band_pct_push') || k.startsWith('band_rank_improve')) return 'percentile';
+  if (k.startsWith('band_stale')) return 'season';
   // Rival categories use the rival layout
   if (k.startsWith('song_rival_') || k.startsWith('lb_rival_')) return 'rival';
   if (k.startsWith('variety_pack') || k.startsWith('artist_sampler_') || k.startsWith('artist_unplayed_')
@@ -73,10 +83,12 @@ export const CategoryCard = memo(function CategoryCard({
   category,
   albumArtMap,
   scoresIndex,
+  bandType,
 }: {
   category: SuggestionCategory;
   albumArtMap: Map<string, string>;
   scoresIndex: Record<string, LeaderboardData>;
+  bandType?: BandType;
 }) {
   const { t } = useTranslation();
   const st = useCategoryStyles();
@@ -96,13 +108,14 @@ export const CategoryCard = memo(function CategoryCard({
         </div>
       </div>
       <div style={st.songList}>
-        {category.songs.map((song) => (
+        {category.songs.map((song, index) => (
           <SongRow
-            key={`${song.songId}-${song.instrumentKey ?? 'any'}`}
+            key={`${category.key}-${song.songId}-${song.instrumentKey ?? bandType ?? 'any'}-${index}`}
             song={ song}
             categoryKey={category.key}
             albumArt={albumArtMap.get(song.songId)}
             leaderboardData={scoresIndex[song.songId]}
+            bandType={bandType}
           />
         ))}
       </div>
@@ -113,12 +126,13 @@ export const CategoryCard = memo(function CategoryCard({
 // ── SongRow ──
 
 /* v8 ignore start — SongRow: presentation component with layout-specific rendering */
-export function SongRow({ song, categoryKey, albumArt, leaderboardData,
+export function SongRow({ song, categoryKey, albumArt, leaderboardData, bandType,
 }: {
   song: SuggestionSongItem;
   categoryKey: string;
   albumArt?: string;
   leaderboardData?: LeaderboardData;
+  bandType?: BandType;
 }) {
   const layout = getRowLayout(categoryKey);
   const isNarrow = useIsNarrow();
@@ -126,9 +140,11 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData,
   const starCount = song.stars ?? 0;
   const isGold = starCount >= 6;
   const displayStars = isGold ? 5 : starCount;
-  const showStars = layout === 'singleInstrument' && categoryKey.startsWith('star_gains') && starCount > 0;
+  const showStars = layout === 'singleInstrument' && (categoryKey.startsWith('star_gains') || categoryKey.startsWith('band_star_progress')) && starCount > 0;
   const instrument = song.instrumentKey ?? getCatInstrument(categoryKey);
-  const songUrl = instrument
+  const songUrl = bandType
+    ? Routes.songBandLeaderboard(song.songId, bandType)
+    : instrument
     ? `/songs/${song.songId}?instrument=${CORE_TO_SERVER_INSTRUMENT[instrument]}`
     : `/songs/${song.songId}`;
   const starSrc = isGold ? `${BASE}star_gold.png` : `${BASE}star_white.png`;
@@ -222,7 +238,8 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
   }
 
   if (layout === 'singleInstrument') {
-    return song.instrumentKey ? (
+    if (!song.instrumentKey && starCount <= 0) return null;
+    return (
       <div style={categoryCardStyles.badges}>
         {starCount > 0 && starSrc && (
           <span style={categoryCardStyles.starPngInlineRow}>
@@ -231,9 +248,9 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
             ))}
           </span>
         )}
-        <InstrumentIcon instrument={song.instrumentKey} size={28} />
+        {song.instrumentKey && <InstrumentIcon instrument={song.instrumentKey} size={28} />}
       </div>
-    ) : null;
+    );
   }
 
   // instrumentChips

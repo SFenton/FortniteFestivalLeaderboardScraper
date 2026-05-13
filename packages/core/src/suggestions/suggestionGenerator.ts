@@ -81,6 +81,8 @@ export type SuggestionGeneratorOptions = {
   disableSkipping?: boolean;
   fixedDisplayCount?: number;
   currentSeason?: number;
+  mode?: 'solo' | 'band';
+  bandComboId?: string | null;
 };
 
 type SongPair = {song: Song; tracker: ScoreTracker | null; instrumentKey?: InstrumentKey};
@@ -90,6 +92,8 @@ export class SuggestionGenerator {
   private readonly disableSkipping: boolean;
   private readonly fixedDisplayCount?: number;
   private readonly currentSeason: number;
+  private readonly mode: 'solo' | 'band';
+  private readonly bandComboId?: string | null;
 
   private songs: Song[] = [];
   private scoresIndex: Readonly<Record<string, LeaderboardData | undefined>> = {};
@@ -111,6 +115,8 @@ export class SuggestionGenerator {
     this.disableSkipping = opts.disableSkipping ?? false;
     this.fixedDisplayCount = opts.fixedDisplayCount;
     this.currentSeason = opts.currentSeason ?? 0;
+    this.mode = opts.mode ?? 'solo';
+    this.bandComboId = opts.bandComboId;
   }
 
   setSource(songs: Song[], scoresIndex: Readonly<Record<string, LeaderboardData | undefined>>): void {
@@ -438,6 +444,20 @@ export class SuggestionGenerator {
   private ensurePipelines(): void {
     if (this.initialized) return;
     this.initialized = true;
+    if (this.mode === 'band') {
+      const bandList: Array<() => SuggestionCategory[]> = [
+        () => this.bandFirstPlays(),
+        () => this.bandNearFc(),
+        () => this.bandStarProgress(),
+        () => this.bandPercentilePush(),
+        () => this.bandRankImprove(),
+        () => this.bandStalePlays(),
+      ];
+      this.shuffleInPlace(bandList);
+      this.pipelines = bandList;
+      return;
+    }
+
     const list: Array<() => SuggestionCategory[]> = [
       () => this.fcTheseNext(),
       () => this.fcTheseNextDecade(),
@@ -619,6 +639,90 @@ export class SuggestionGenerator {
   }
 
   // --- Strategy implementations (ported from MAUI) ---
+  private getBandTracker(songId: string): ScoreTracker | undefined {
+    return getTracker(this.scoresIndex[songId], 'guitar');
+  }
+
+  private bandScoredPairs(predicate: (tracker: ScoreTracker) => boolean): SongPair[] {
+    const pool: SongPair[] = [];
+    for (const song of this.songs) {
+      const tracker = this.getBandTracker(song.track.su);
+      if (tracker && predicate(tracker)) pool.push({song, tracker});
+    }
+    this.shuffleInPlace(pool);
+    return pool;
+  }
+
+  private emitBandCategory(key: string, title: string, description: string, pool: SongPair[]): SuggestionCategory[] {
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const final = this.selectNewFirst(key, pool, this.getDisplayCount());
+    if (final.length === 0) return [];
+    return [{key, title, description, songs: final.map(p => this.mapUniqueSong(p))}];
+  }
+
+  private bandFirstPlays(): SuggestionCategory[] {
+    const pool = this.songs
+      .filter(song => !this.getBandTracker(song.track.su))
+      .map(song => ({song, tracker: null}));
+    this.shuffleInPlace(pool);
+    const key = this.bandComboId ? 'band_unplayed_combo' : 'band_unplayed';
+    return this.emitBandCategory(
+      key,
+      this.bandComboId ? 'First Plays for This Combo' : 'First Band Plays',
+      this.bandComboId
+        ? 'Songs this band has not played with the active combo yet.'
+        : 'Songs this band has not played yet.',
+      pool,
+    );
+  }
+
+  private bandNearFc(): SuggestionCategory[] {
+    return this.emitBandCategory(
+      'band_near_fc',
+      'Band FC Chase',
+      'Strong band runs that are close to a Full Combo.',
+      this.bandScoredPairs(tracker => !tracker.isFullCombo && tracker.numStars >= 5 && tracker.percentHit >= 920000),
+    );
+  }
+
+  private bandStarProgress(): SuggestionCategory[] {
+    return this.emitBandCategory(
+      'band_star_progress',
+      'Band Gold Star Push',
+      'Band scores with room to gain stars or turn gold.',
+      this.bandScoredPairs(tracker => tracker.numStars > 0 && tracker.numStars < 6),
+    );
+  }
+
+  private bandPercentilePush(): SuggestionCategory[] {
+    return this.emitBandCategory(
+      'band_pct_push',
+      'Band Rank Push',
+      'Band scores close to the next percentile bracket.',
+      this.bandScoredPairs(tracker => SuggestionGenerator.isNearNextBracket(tracker.rawPercentile)),
+    );
+  }
+
+  private bandRankImprove(): SuggestionCategory[] {
+    return this.emitBandCategory(
+      'band_rank_improve',
+      'Biggest Band Rank Ups',
+      'Lower-ranked band scores where a replay could move the team up.',
+      this.bandScoredPairs(tracker => tracker.totalEntries > 0 && tracker.rawPercentile * 100 > 10),
+    );
+  }
+
+  private bandStalePlays(): SuggestionCategory[] {
+    if (this.currentSeason <= 0) return [];
+    return this.emitBandCategory(
+      'band_stale',
+      'Band Plays This Season',
+      'Band scores that have not been refreshed this season.',
+      this.bandScoredPairs(tracker => tracker.seasonAchieved > 0 && this.currentSeason - tracker.seasonAchieved >= 1),
+    );
+  }
+
   private fcTheseNext(): SuggestionCategory[] {
     const pool: SongPair[] = [];
     for (const s of this.songs) {

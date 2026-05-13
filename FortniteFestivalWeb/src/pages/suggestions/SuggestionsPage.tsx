@@ -1,20 +1,27 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { IoFunnel } from 'react-icons/io5';
 import { ActionPill } from '../../components/common/ActionPill';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
+import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useSuggestions } from '../../hooks/data/useSuggestions';
 import { suggestionsSlides } from './firstRun';
 import { serverSongToCore, buildScoresIndex } from '../../utils/suggestionAdapter';
 import SuggestionsFilterModal from './modals/SuggestionsFilterModal';
 import type { SuggestionsFilterDraft } from './modals/SuggestionsFilterModal';
 import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from './modals/SuggestionsFilterModal';
+import { buildBandSuggestionSource } from './bandSuggestions';
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import { useSettings } from '../../contexts/SettingsContext';
+import { api } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
+import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
+import type { SelectedBandProfile } from '../../state/selectedProfile';
 import {
   Size, Gap, Layout, MaxWidth, Colors, Spinner, SpinnerSize,
   CssValue,
@@ -46,12 +53,17 @@ import {
   buildAlbumArtMap,
 } from './suggestionsHelpers';
 
-type SuggestionsPageProps = { accountId: string };
+type SuggestionsPageProps = {
+  accountId?: string;
+  selectedBand?: SelectedBandProfile | null;
+};
+type SuggestionsMode = 'solo' | 'band';
 
 /* v8 ignore start — render orchestrator; business logic tested in suggestionsHelpers.ts (35 unit tests), component exercised by 42 integration tests */
-export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
+export default function SuggestionsPage({ accountId, selectedBand = null }: SuggestionsPageProps) {
   const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
+  const mode: SuggestionsMode = selectedBand ? 'band' : 'solo';
 
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
   const {
@@ -64,12 +76,12 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
 
   
   const coreSongs = useMemo(
-    () => (playerData ? songs.map(serverSongToCore) : []),
-    [songs, playerData],
+    () => (mode === 'solo' && playerData ? songs.map(serverSongToCore) : []),
+    [songs, playerData, mode],
   );
-  const scoresIndex = useMemo(
-    () => (playerData ? buildScoresIndex(playerData.scores) : {}),
-    [playerData],
+  const soloScoresIndex = useMemo(
+    () => (mode === 'solo' && playerData ? buildScoresIndex(playerData.scores) : {}),
+    [playerData, mode],
   );
   
 
@@ -84,7 +96,50 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     [currentSeason, playerData],
   );
 
-  const { categories, loadMore, hasMore } = useSuggestions(accountId, coreSongs, scoresIndex, effectiveSeason);
+  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const selectedBandComboFilter = selectedBand && isBandFilterForSelectedProfile(appliedBandComboFilter, selectedBand)
+    ? appliedBandComboFilter
+    : null;
+  const activeBandComboId = selectedBandComboFilter?.comboId;
+
+  const bandSongRowsQuery = useQuery({
+    queryKey: queryKeys.bandSongRows(selectedBand?.bandType ?? '', selectedBand?.teamKey ?? '', activeBandComboId),
+    queryFn: () => api.getBandSongRows(selectedBand!.bandType, selectedBand!.teamKey, activeBandComboId),
+    enabled: !!selectedBand,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const bandSource = useMemo(
+    () => selectedBand
+      ? buildBandSuggestionSource({
+          songs,
+          performances: bandSongRowsQuery.data?.entries ?? [],
+          bandType: selectedBand.bandType,
+          comboId: activeBandComboId,
+          currentSeason: effectiveSeason,
+        })
+      : null,
+    [activeBandComboId, bandSongRowsQuery.data?.entries, effectiveSeason, selectedBand, songs],
+  );
+
+  const bandIdentity = selectedBand
+    ? `${selectedBand.bandType}|${selectedBand.teamKey}|${activeBandComboId ?? 'overall'}`
+    : 'solo';
+  const suggestionSongs = mode === 'band' ? (bandSource?.songs ?? []) : coreSongs;
+  const scoresIndex = mode === 'band' ? (bandSource?.scoresIndex ?? {}) : soloScoresIndex;
+  const suggestions = useSuggestions(
+    accountId ?? '',
+    suggestionSongs,
+    scoresIndex,
+    effectiveSeason,
+    {
+      mode,
+      cacheKey: mode === 'band' ? `band:${bandIdentity}` : `solo:${accountId ?? ''}`,
+      sourceReady: mode === 'band' ? !isLoading && !bandSongRowsQuery.isLoading : true,
+      bandComboId: activeBandComboId,
+    },
+  );
+  const { categories, loadMore, hasMore } = suggestions;
 
   // Suggestions filter state
   const [filterSettings, setFilterSettings] = useState<SuggestionsFilterDraft>(loadSuggestionsFilter);
@@ -104,7 +159,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   };
   
 
-  const filtersActive = isSuggestionsFilterActive(filterSettings);
+  const filtersActive = isSuggestionsFilterActive(filterSettings, mode);
 
   
   const fabSearch = useFabSearch();
@@ -164,7 +219,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     scrollContainerRef.current?.scrollTo(0, 0);
     clearScrollCache('suggestions');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterSettings]);
+  }, [filterSettings, bandIdentity]);
 
   
   useEffect(() => {
@@ -214,9 +269,11 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     loadMore();
   }, [loadMore, filterExhausted]);
 
-  const dataReady = !(isLoading || playerLoading) || categories.length > 0;
+  const dataReady = mode === 'band'
+    ? (!isLoading && !bandSongRowsQuery.isLoading) || categories.length > 0
+    : !(isLoading || playerLoading) || categories.length > 0;
   const hasCachedData = categories.length > 0;
-  const { phase, shouldStagger } = usePageTransition(`suggestions:${accountId}`, dataReady, hasCachedData);
+  const { phase, shouldStagger } = usePageTransition(`suggestions:${mode}:${accountId ?? ''}:${bandIdentity}`, dataReady, hasCachedData);
   const skipAnim = !shouldStagger;
 
   // Per-card scroll fade
@@ -239,7 +296,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   
 
   
-  if (!playerData && !playerLoading && categories.length === 0) {
+  if (mode === 'solo' && !playerData && !playerLoading && categories.length === 0) {
     return <EmptyState fullPage title={t('common.couldNotLoadPlayer')} subtitle={t('common.serviceDown')} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
   }
 
@@ -257,6 +314,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
           visible={filterModal.visible}
           draft={filterModal.draft}
           savedDraft={filterSettings}
+          mode={mode}
           instrumentVisibility={instrumentVisibility}
           onChange={filterModal.setDraft}
           onCancel={filterModal.close}
@@ -272,6 +330,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   const headerStagger: React.CSSProperties = phase === LoadPhase.ContentIn && !skipAnim
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
     : skipAnim ? {} : { opacity: 0 };
+  const bandTypeForCards = mode === 'band' ? selectedBand?.bandType : undefined;
 
   return (
     <Page
@@ -302,6 +361,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
           visible={filterModal.visible}
           draft={filterModal.draft}
           savedDraft={filterSettings}
+          mode={mode}
           instrumentVisibility={instrumentVisibility}
           onChange={filterModal.setDraft}
           onCancel={filterModal.close}
@@ -335,7 +395,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
               const delay = computeDelay(idx);
               return (
                 <FadeIn key={`${idx}-${cat.key}`} delay={delay === -1 ? undefined : (delay ?? 0)} hidden={delay === null}>
-                  <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
+                  <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} bandType={bandTypeForCards} />
                 </FadeIn>
               );
             })}

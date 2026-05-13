@@ -11,9 +11,18 @@ import { useSettings } from '../../contexts/SettingsContext';
 const BATCH_SIZE = 6;
 const INITIAL_BATCH = 10;
 
+type SuggestionsMode = 'solo' | 'band';
+
+type UseSuggestionsOptions = {
+  mode?: SuggestionsMode;
+  cacheKey?: string;
+  sourceReady?: boolean;
+  bandComboId?: string | null;
+};
+
 // Module-level cache so suggestions survive navigation
 let _cache: {
-  accountId: string;
+  cacheKey: string;
   categories: SuggestionCategory[];
   generator: SuggestionGenerator;
   scrollY: number;
@@ -24,11 +33,15 @@ export function useSuggestions(
   coreSongs: CoreSong[],
   scoresIndex: Record<string, LeaderboardData>,
   currentSeason = 0,
+  options: UseSuggestionsOptions = {},
 ) {
   const { settings } = useSettings();
+  const mode = options.mode ?? 'solo';
+  const cacheKey = options.cacheKey ?? `${mode}:${accountId}`;
+  const sourceReady = options.sourceReady ?? true;
 
-  // Restore from cache if same account
-  const cached = _cache?.accountId === accountId ? _cache : null;
+  // Restore from cache if same suggestion identity
+  const cached = _cache?.cacheKey === cacheKey ? _cache : null;
 
   const [categories, setCategories] = useState<SuggestionCategory[]>(
     () => cached?.categories ?? [],
@@ -37,12 +50,27 @@ export function useSuggestions(
   const generatorRef = useRef<SuggestionGenerator | null>(cached?.generator ?? null);
   const readyRef = useRef(!!cached);
   const initializedRef = useRef(!!cached);
+  const cacheKeyRef = useRef(cacheKey);
+  const rivalDataInjectedRef = useRef(false);
+
+  useEffect(() => {
+    if (cacheKeyRef.current === cacheKey) return;
+
+    cacheKeyRef.current = cacheKey;
+    const nextCached = _cache?.cacheKey === cacheKey ? _cache : null;
+    setCategories(nextCached?.categories ?? []);
+    setHasMore(true);
+    generatorRef.current = nextCached?.generator ?? null;
+    readyRef.current = !!nextCached;
+    initializedRef.current = !!nextCached;
+    rivalDataInjectedRef.current = false;
+  }, [cacheKey]);
 
   // Restore scroll position after mount — read from _cache directly
   // so it picks up the latest value even after StrictMode double-render
   const scrollContainerRef = useScrollContainer();
   useEffect(() => {
-    const scrollY = _cache?.accountId === accountId ? _cache.scrollY : 0;
+    const scrollY = _cache?.cacheKey === cacheKey ? _cache.scrollY : 0;
     /* v8 ignore start — scroll position restore */
     if (scrollY > 0) {
       /* v8 ignore start */
@@ -52,7 +80,7 @@ export function useSuggestions(
       /* v8 ignore stop */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [cacheKey]);
 
   // Continuously save scroll position so browser back works
   useEffect(() => {
@@ -60,7 +88,7 @@ export function useSuggestions(
     if (!scrollEl) return;
     /* v8 ignore start — scroll position tracking */
     const onScroll = () => {
-      if (_cache?.accountId === accountId && scrollEl.scrollTop > 0) {
+      if (_cache?.cacheKey === cacheKey && scrollEl.scrollTop > 0) {
         _cache.scrollY = scrollEl.scrollTop;
       /* v8 ignore stop */
       }
@@ -68,10 +96,14 @@ export function useSuggestions(
     scrollEl.addEventListener('scroll', onScroll, { passive: true });
     return () => scrollEl.removeEventListener('scroll', onScroll);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [cacheKey]);
 
   // Initialize generator once when source data is ready
   useEffect(() => {
+    if (!sourceReady) {
+      if (!initializedRef.current) readyRef.current = false;
+      return;
+    }
     if (coreSongs.length === 0) {
       // Don't reset readyRef if we have a cached generator
       if (!initializedRef.current) readyRef.current = false;
@@ -80,7 +112,12 @@ export function useSuggestions(
     if (initializedRef.current) return;
     initializedRef.current = true;
 
-    const gen = new SuggestionGenerator({ seed: Date.now(), currentSeason });
+    const gen = new SuggestionGenerator({
+      seed: Date.now(),
+      currentSeason,
+      mode,
+      bandComboId: options.bandComboId,
+    });
     gen.setSource(coreSongs, scoresIndex);
     generatorRef.current = gen;
     readyRef.current = true;
@@ -89,13 +126,14 @@ export function useSuggestions(
     setCategories(first);
     setHasMore(true);
 
-    _cache = { accountId, categories: first, generator: gen, scrollY: 0 };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- currentSeason only needed at init
-  }, [accountId, coreSongs, scoresIndex]);
+    _cache = { cacheKey, categories: first, generator: gen, scrollY: 0 };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- currentSeason/options only needed at init
+  }, [accountId, cacheKey, coreSongs, scoresIndex, sourceReady]);
 
   // Fetch rival data and inject into the generator when it becomes ready.
-  const rivalDataInjectedRef = useRef(false);
   useEffect(() => {
+    if (mode !== 'solo') return;
+    if (!accountId) return;
     if (!generatorRef.current || rivalDataInjectedRef.current) return;
 
     let cancelled = false;
@@ -114,7 +152,7 @@ export function useSuggestions(
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- inject once after generator init using the current settings snapshot
-  }, [accountId, settings, generatorRef.current]);
+  }, [accountId, mode, settings, generatorRef.current]);
 
   const loadMore = useCallback(() => {
     const gen = generatorRef.current;

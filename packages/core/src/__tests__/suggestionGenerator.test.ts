@@ -16,6 +16,23 @@ const mkScores = (songId: string, opts: {pct?: number; fc?: boolean; stars?: num
   return {songId, guitar: t};
 };
 
+const mkBandScore = (
+  songId: string,
+  opts: {accuracyPct?: number; fc?: boolean; stars?: number; topPct?: number; season?: number; rank?: number; totalEntries?: number},
+): LeaderboardData => {
+  const t = new ScoreTracker();
+  t.initialized = true;
+  t.percentHit = Math.round((opts.accuracyPct ?? 0) * 10000);
+  t.isFullCombo = opts.fc ?? false;
+  t.numStars = opts.stars ?? 0;
+  t.rawPercentile = opts.topPct ? opts.topPct / 100 : 0;
+  t.rank = opts.rank ?? 0;
+  t.totalEntries = opts.totalEntries ?? 0;
+  t.seasonAchieved = opts.season ?? 0;
+  t.refreshDerived();
+  return {songId, guitar: t};
+};
+
 describe('SuggestionGenerator', () => {
   test('constructor defaults are exercised', () => {
     const gen = new SuggestionGenerator();
@@ -71,6 +88,36 @@ describe('SuggestionGenerator', () => {
     const out = gen.getNext(1, songs, scoresIndex);
     expect(out.length).toBe(1);
     expect(out[0].key).toBe('first_plays_mixed');
+  });
+
+  test('band mode emits scored categories alongside large first-play pools', () => {
+    const songs: Song[] = Array.from({length: 30}).map((_, i) => mkSong(`s${i}`, `Song ${i}`, `Artist ${i}`, 2001));
+    const scoresIndex: Record<string, LeaderboardData> = {
+      s0: mkBandScore('s0', {accuracyPct: 98.4, fc: false, stars: 6, topPct: 8, season: 5, rank: 42, totalEntries: 2000}),
+      s1: mkBandScore('s1', {accuracyPct: 86, fc: false, stars: 5, topPct: 5, season: 5, rank: 84, totalEntries: 2000}),
+      s2: mkBandScore('s2', {accuracyPct: 100, fc: true, stars: 6, topPct: 4.4, season: 5, rank: 84, totalEntries: 2000}),
+      s3: mkBandScore('s3', {accuracyPct: 100, fc: true, stars: 6, topPct: 75, season: 5, rank: 1500, totalEntries: 2000}),
+      s4: mkBandScore('s4', {accuracyPct: 100, fc: true, stars: 6, topPct: 5, season: 3, rank: 100, totalEntries: 2000}),
+    };
+
+    const gen = new SuggestionGenerator({
+      seed: 12,
+      disableSkipping: true,
+      fixedDisplayCount: 5,
+      currentSeason: 5,
+      mode: 'band',
+      bandComboId: 'Solo_Guitar+Solo_Bass',
+    });
+    const out = gen.getNext(10, songs, scoresIndex);
+    const keys = out.map(category => category.key);
+
+    expect(keys).toContain('band_unplayed_combo');
+    expect(keys).toContain('band_near_fc');
+    expect(keys).toContain('band_star_progress');
+    expect(keys).toContain('band_pct_push');
+    expect(keys).toContain('band_rank_improve');
+    expect(keys).toContain('band_stale');
+    expect(keys.every(key => key.startsWith('band_'))).toBe(true);
   });
 
   test('does not treat absent Karaoke charts as unplayed Karaoke suggestions', () => {

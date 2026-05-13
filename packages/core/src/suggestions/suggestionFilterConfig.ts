@@ -112,6 +112,13 @@ export const instrumentSettingPrefix = (instrument: InstrumentKey): string =>
  */
 export function getCategoryTypeId(categoryKey: string): SuggestionTypeId | null {
   const key = categoryKey.toLowerCase();
+  // Band mode categories
+  if (key.startsWith('band_unplayed')) return 'Unplayed';
+  if (key.startsWith('band_near_fc')) return 'NearFC';
+  if (key.startsWith('band_star_progress')) return 'StarProgress';
+  if (key.startsWith('band_pct_push')) return 'PercentilePush';
+  if (key.startsWith('band_rank_improve')) return 'PctImprove';
+  if (key.startsWith('band_stale')) return 'Stale';
   // Song rivals: song_rival_*
   if (key.startsWith('song_rival_')) return 'SongRivals';
   // Leaderboard rivals: lb_rival_*

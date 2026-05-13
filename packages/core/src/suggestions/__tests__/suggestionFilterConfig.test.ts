@@ -83,6 +83,15 @@ describe('suggestionFilterConfig', () => {
     expect(getCategoryTypeId('pct_push_drums')).toBe('PercentilePush');
   });
 
+  test('getCategoryTypeId maps band category variants', () => {
+    expect(getCategoryTypeId('band_unplayed_combo')).toBe('Unplayed');
+    expect(getCategoryTypeId('band_near_fc')).toBe('NearFC');
+    expect(getCategoryTypeId('band_star_progress')).toBe('StarProgress');
+    expect(getCategoryTypeId('band_pct_push')).toBe('PercentilePush');
+    expect(getCategoryTypeId('band_rank_improve')).toBe('PctImprove');
+    expect(getCategoryTypeId('band_stale')).toBe('Stale');
+  });
+
   test('getCategoryTypeId maps unplayed variants', () => {
     expect(getCategoryTypeId('unplayed_guitar')).toBe('Unplayed');
     expect(getCategoryTypeId('first_plays_mixed')).toBe('Unplayed');
