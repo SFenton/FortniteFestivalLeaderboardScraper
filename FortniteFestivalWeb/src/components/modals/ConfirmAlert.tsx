@@ -91,6 +91,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
   return useMemo(() => {
     const viewportGutter = Gap.section * 2;
     const maxViewportWidth = `calc(100vw - ${viewportGutter}px)`;
+    const modalPointerEvents = animIn && !animOut ? 'auto' as const : 'none' as const;
 
     return ({
     overlay: {
@@ -98,7 +99,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
       zIndex: ZIndex.confirmOverlay,
       opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
       transition: transition(CssProp.opacity, TRANSITION_MS),
-      pointerEvents: animOut ? 'none' as const : undefined,
+      pointerEvents: modalPointerEvents,
     } as CSSProperties,
     card: {
       ...modalCard,
@@ -108,6 +109,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
       width: Layout.confirmMaxWidth,
       maxWidth: maxViewportWidth,
       boxSizing: 'border-box' as const,
+      pointerEvents: modalPointerEvents,
       opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
       transform: animOut ? scale(MODAL_SCALE_ENTER) : animIn ? scale(1) : scale(MODAL_SCALE_ENTER),
       transition: transitions(

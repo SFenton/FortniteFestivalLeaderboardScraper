@@ -145,6 +145,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   const cardBase = isMobile ? { ...S.card, ...S.cardMobile } : S.card;
   /* v8 ignore start -- animation style branches depend on requestAnimationFrame timing */
   const overlayOpacity = animOut ? 0 : (animIn ? 1 : 0);
+  const overlayPointerEvents = entranceDone && !animOut ? 'auto' as const : 'none' as const;
   const cardStyle = animOut
     ? { opacity: 0, transform: 'scale(0.95) translateY(10px)', transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease` }
     : entranceDone
@@ -154,7 +155,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
 
   return createPortal(
     <div
-      style={{ ...S.overlay, opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: animOut ? 'none' : undefined }}
+      style={{ ...S.overlay, opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: overlayPointerEvents }}
       onClick={handleDismiss}
       data-glow-scope=""
       data-testid="fre-overlay"

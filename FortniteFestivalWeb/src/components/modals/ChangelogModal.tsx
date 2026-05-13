@@ -85,14 +85,16 @@ export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismis
 }
 
 function useStyles(animIn: boolean, animOut: boolean) {
-  return useMemo(() => ({
+  return useMemo(() => {
+    const modalPointerEvents = animIn && !animOut ? 'auto' as const : 'none' as const;
+    return ({
     overlay: {
       ...modalOverlay,
       zIndex: ZIndex.changelogOverlay,
       padding: padding(Gap.section),
       opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
       transition: transition(CssProp.opacity, TRANSITION_MS),
-      pointerEvents: animOut ? 'none' as const : undefined,
+      pointerEvents: modalPointerEvents,
     } as CSSProperties,
     card: {
       ...modalCard,
@@ -102,6 +104,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
       maxWidth: Layout.changelogMaxWidth,
       maxHeight: Layout.changelogMaxHeight,
       overflow: Overflow.hidden,
+      pointerEvents: modalPointerEvents,
       opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
       transform: animOut ? scaleTranslateY(MODAL_SCALE_ENTER, MODAL_SLIDE_OFFSET) : animIn ? scaleTranslateY(1, 0) : scaleTranslateY(MODAL_SCALE_ENTER, MODAL_SLIDE_OFFSET),
       transition: transitions(
@@ -171,5 +174,6 @@ function useStyles(animIn: boolean, animOut: boolean) {
       fontWeight: Weight.bold,
       padding: padding(Gap.xl),
     } as CSSProperties,
-  }), [animIn, animOut]);
+  });
+  }, [animIn, animOut]);
 }

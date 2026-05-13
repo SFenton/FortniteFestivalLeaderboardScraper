@@ -91,9 +91,92 @@ test.describe('Mobile tap diagnostics', () => {
     });
     expect(dump?.records.some(record => record.kind === 'event' && record.eventType === 'click')).toBe(true);
   });
+
+  test('post-navigation overlays do not steal immediate mobile taps', async ({ page, fre }, testInfo) => {
+    await gotoWithTapDiagnostics(page, '/songs');
+    await fre.waitForVisible();
+    await dismissFre(page, fre, testInfo, 'dismiss songs FRE for no-FRE control');
+
+    await gotoWithTapDiagnostics(page, '/settings');
+    await dismissFreIfVisible(page, fre, testInfo, 'dismiss settings FRE for no-FRE control');
+    await page.getByTestId('bottom-nav-songs').click();
+    await expectHitTargetAvailable(page, testInfo, 'bottom nav no-FRE leaves header search tappable', '[data-testid="mobile-header-search"]');
+
+    await gotoWithTapDiagnostics(page, '/settings');
+    await dismissFreIfVisible(page, fre, testInfo, 'dismiss settings FRE before sidebar control');
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await expect(page.getByRole('link', { name: /^Songs$/ })).toBeVisible({ timeout: 5_000 });
+    await page.getByRole('link', { name: /^Songs$/ }).click();
+    await expectHitTargetAvailable(page, testInfo, 'sidebar no-FRE leaves header search tappable immediately', '[data-testid="mobile-header-search"]');
+
+    await page.evaluate(() => localStorage.removeItem('fst:firstRun'));
+    await gotoWithTapDiagnostics(page, '/settings');
+    await dismissFreIfVisible(page, fre, testInfo, 'dismiss settings FRE before songs FRE entry check');
+    await page.getByTestId('bottom-nav-songs').click();
+    await expectHitTargetAvailable(page, testInfo, 'entering songs FRE is not an invisible hit-test blocker', '[data-testid="mobile-header-search"]');
+    await dismissFreIfVisible(page, fre, testInfo, 'dismiss songs FRE after entry check');
+
+    const searchDialog = page.getByRole('dialog', { name: 'Search' });
+    await page.getByTestId('mobile-header-search').click();
+    await expect(searchDialog).toBeVisible({ timeout: 5_000 });
+    await searchDialog.getByRole('button', { name: 'Close' }).click();
+    await expectHitTargetAvailable(page, testInfo, 'closed search modal leaves bottom nav tappable immediately', '[data-testid="bottom-nav-settings"]');
+  });
 });
 
+async function expectHitTargetAvailable(page: Page, testInfo: TestInfo, label: string, targetSelector: string) {
+  const result = await page.evaluate((selector) => {
+    const target = document.querySelector(selector);
+    const rect = target?.getBoundingClientRect();
+    const point = rect
+      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      : null;
+    const top = point ? document.elementFromPoint(point.x, point.y) : null;
+    const stack = point ? document.elementsFromPoint(point.x, point.y) : [];
+    const describe = (element: Element | null) => {
+      if (!element) return null;
+      const htmlElement = element instanceof HTMLElement ? element : null;
+      const style = htmlElement ? getComputedStyle(htmlElement) : null;
+      const bounds = htmlElement?.getBoundingClientRect();
+      return {
+        tag: element.tagName.toLowerCase(),
+        testId: element.getAttribute('data-testid') || undefined,
+        aria: element.getAttribute('aria-label') || undefined,
+        text: htmlElement?.innerText?.replace(/\s+/g, ' ').trim().slice(0, 80) || undefined,
+        pointerEvents: style?.pointerEvents,
+        opacity: style?.opacity,
+        position: style?.position,
+        zIndex: style?.zIndex,
+        rect: bounds ? { x: Math.round(bounds.x), y: Math.round(bounds.y), w: Math.round(bounds.width), h: Math.round(bounds.height) } : undefined,
+      };
+    };
+    return {
+      selector,
+      url: window.location.href,
+      state: window.__fstTapDiagnostics?.dump(1).state,
+      target: describe(target),
+      top: describe(top),
+      targetOwnsTop: Boolean(target && top && (target === top || target.contains(top))),
+      stack: stack.slice(0, 8).map(describe),
+    };
+  }, targetSelector);
+
+  if (!result.targetOwnsTop) {
+    await testInfo.attach(`${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-hit-test.json`, {
+      body: JSON.stringify(result, null, 2),
+      contentType: 'application/json',
+    });
+  }
+  expect(result.targetOwnsTop, `${label}: top hit-test element should be the requested target or its child`).toBe(true);
+}
+
 async function rapidTab(page: Page, testInfo: TestInfo, tabKey: string, expectedRoute?: string) {
+  try {
+    await expect(page.getByTestId(`bottom-nav-${tabKey}`)).toBeVisible({ timeout: 10_000 });
+  } catch (error) {
+    await attachShellSnapshot(page, testInfo, `missing bottom nav ${tabKey}`);
+    throw error;
+  }
   await tapAndExpect(
     page,
     testInfo,
@@ -108,6 +191,43 @@ async function rapidTab(page: Page, testInfo: TestInfo, tabKey: string, expected
     ),
     { retryOnFailure: true, timeout: 2_500 },
   );
+}
+
+async function attachShellSnapshot(page: Page, testInfo: TestInfo, label: string) {
+  const snapshot = await page.evaluate(() => {
+    const describeElement = (element: Element | null) => {
+      if (!element) return null;
+      const htmlElement = element instanceof HTMLElement ? element : null;
+      const style = htmlElement ? getComputedStyle(htmlElement) : null;
+      const bounds = htmlElement?.getBoundingClientRect();
+      return {
+        tag: element.tagName.toLowerCase(),
+        testId: element.getAttribute('data-testid') || undefined,
+        aria: element.getAttribute('aria-label') || undefined,
+        text: htmlElement?.innerText?.replace(/\s+/g, ' ').trim().slice(0, 160) || undefined,
+        pointerEvents: style?.pointerEvents,
+        opacity: style?.opacity,
+        position: style?.position,
+        zIndex: style?.zIndex,
+        rect: bounds ? { x: Math.round(bounds.x), y: Math.round(bounds.y), w: Math.round(bounds.width), h: Math.round(bounds.height) } : undefined,
+      };
+    };
+    return {
+      href: window.location.href,
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      state: window.__fstTapDiagnostics?.dump(1).state,
+      bottomNavTestIds: Array.from(document.querySelectorAll('[data-testid^="bottom-nav-"]')).map(element => element.getAttribute('data-testid')),
+      mobileHeaderSearch: Boolean(document.querySelector('[data-testid="mobile-header-search"]')),
+      freOverlay: describeElement(document.querySelector('[data-testid="fre-overlay"]')),
+      searchDialog: describeElement(document.querySelector('[role="dialog"][aria-label="Search"]')),
+      bodyText: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 1_000),
+    };
+  });
+  await testInfo.attach(`${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-shell-snapshot.json`, {
+    body: JSON.stringify(snapshot, null, 2),
+    contentType: 'application/json',
+  });
 }
 
 async function dismissFreIfVisible(page: Page, fre: { closeButton: Locator; isVisible: () => Promise<boolean> }, testInfo: TestInfo, label: string) {
@@ -165,6 +285,11 @@ async function installApiMocks(page: Page) {
       return;
     }
 
+    if (path === `/api/player/${TEST_PLAYER.accountId}/notifications` || /^\/api\/bands\/[^/]+\/notifications$/.test(path)) {
+      await route.fulfill({ json: emptyNotificationsResponse() });
+      return;
+    }
+
     if (/^\/api\/rankings\/[^/]+\/[a-f0-9]+$/.test(path)) {
       await route.fulfill({ json: rankingResponse(path.split('/')[3] ?? 'Solo_Guitar') });
       return;
@@ -214,6 +339,17 @@ function syncStatusResponse() {
     historyRecon: null,
     rivals: null,
     postScrape: null,
+  };
+}
+
+function emptyNotificationsResponse() {
+  return {
+    generatedAt: new Date(0).toISOString(),
+    expiresAfterHours: 24,
+    sourceRunId: null,
+    sourceCompletedAt: null,
+    notificationsGenerated: false,
+    items: [],
   };
 }
 

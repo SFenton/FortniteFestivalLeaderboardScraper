@@ -60,16 +60,17 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
   if (!mounted) return null;
   const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
   const statisticsPath = getStatisticsNavigationPath(player, selectedProfile ?? null);
+  const sidebarPointerEvents = visible ? 'auto' as const : 'none' as const;
 
   return (
     <>
       <div
-        style={{ ...s.overlay, opacity: visible ? 1 : 0, transition: `opacity ${SIDEBAR_DURATION}ms ease` }}
+        style={{ ...s.overlay, opacity: visible ? 1 : 0, transition: `opacity ${SIDEBAR_DURATION}ms ease`, pointerEvents: sidebarPointerEvents }}
         onClick={onClose}
       />
       <div
         ref={sidebarRef}
-        style={{ ...s.sidebar, transform: visible ? 'translateX(0)' : 'translateX(-100%)', transition: `transform ${SIDEBAR_DURATION}ms ease` }}
+        style={{ ...s.sidebar, transform: visible ? 'translateX(0)' : 'translateX(-100%)', transition: `transform ${SIDEBAR_DURATION}ms ease`, pointerEvents: sidebarPointerEvents }}
         onTransitionEnd={handleTransitionEnd}
       >
         <div style={s.sidebarHeader}>

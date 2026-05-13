@@ -113,6 +113,7 @@ export default function ModalShell({
   const mobileTransition = `transform ${transMs} ease`;
   const desktopTransition = `opacity ${transMs} ease, transform ${transMs} ease`;
   const useDesktopPanel = desktopPlacement === 'rightDrawer' || !isMobile;
+  const modalPointerEvents = visible && animIn ? 'auto' as const : 'none' as const;
   const computedMobileTop = vvOffsetTop + vvHeight * 0.2;
   if (!useDesktopPanel && visible && mobilePanelTopRef.current === null) {
     mobilePanelTopRef.current = computedMobileTop;
@@ -120,15 +121,15 @@ export default function ModalShell({
   const mobilePanelTop = mobilePanelTopRef.current ?? computedMobileTop;
 
   const panelStyle: React.CSSProperties = !useDesktopPanel
-    ? { ...css.panelMobile, transition: mobileTransition, top: mobilePanelTop, bottom: 0, transform: animIn ? 'translateY(0)' : 'translateY(100%)' }
+    ? { ...css.panelMobile, transition: mobileTransition, top: mobilePanelTop, bottom: 0, transform: animIn ? 'translateY(0)' : 'translateY(100%)', pointerEvents: modalPointerEvents }
     : desktopPlacement === 'rightDrawer'
-      ? { ...css.panelDesktopRightDrawer, transition: desktopTransition, transform: animIn ? 'translateX(0)' : 'translateX(100%)', opacity: 1, ...desktopStyle }
-      : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, ...desktopStyle };
+      ? { ...css.panelDesktopRightDrawer, transition: desktopTransition, transform: animIn ? 'translateX(0)' : 'translateX(100%)', opacity: 1, pointerEvents: modalPointerEvents, ...desktopStyle }
+      : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, pointerEvents: modalPointerEvents, ...desktopStyle };
 
   return createPortal(
     <>
       <div
-        style={{ ...css.overlay, transition: overlayTransition, opacity: animIn ? 1 : 0 }}
+        style={{ ...css.overlay, transition: overlayTransition, opacity: animIn ? 1 : 0, pointerEvents: modalPointerEvents }}
         onClick={onClose}
         data-glow-scope=""
       />
