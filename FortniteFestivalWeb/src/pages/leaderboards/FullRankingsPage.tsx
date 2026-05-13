@@ -28,7 +28,7 @@ import type {
 import { InstrumentHeaderSize, rankColor } from '@festival/core';
 import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { LEADERBOARD_PAGE_SIZE, getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth, computePillMinWidth, formatBayesianRatingDisplay, formatRankingValueDisplay, getRatingPillTier, usesPercentileValueDisplay } from './helpers/rankingHelpers';
-import { coerceBandRankingMetric, formatBandTeamName, getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel } from './helpers/bandRankingHelpers';
+import { coerceBandRankingMetric, formatBandTeamName, getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel, getEnabledBandRankingMetrics } from './helpers/bandRankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -55,17 +55,17 @@ export default function FullRankingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { settings } = useSettings();
 
+  const { profile, player } = useTrackedPlayer();
+  const selectedBand = profile?.type === 'band' ? profile : null;
+
   const rawComboId = searchParams.get('combo');
   const comboId = rawComboId && isRankingScopeComboId(rawComboId) ? rawComboId : null;
   const isCombo = comboId != null;
   const instrument = (searchParams.get('instrument') ?? 'Solo_Guitar') as InstrumentKey;
-  const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
-  const metric = coerceRankingMetric(rawMetric, true);
+  const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
+  const metric = selectedBand ? coerceBandRankingMetric(rawMetric, true) : coerceRankingMetric(rawMetric, true);
   const bandMetric = coerceBandRankingMetric(metric, true);
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
-
-  const { profile, player } = useTrackedPlayer();
-  const selectedBand = profile?.type === 'band' ? profile : null;
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const hasSelectedBandComboFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const selectedBandComboId = isCombo
@@ -90,7 +90,7 @@ export default function FullRankingsPage() {
   }, [instrumentModal, instrument]);
 
   const applyMetric = useCallback(() => {
-    const nextMetric = coerceRankingMetric(metricModal.draft, true);
+    const nextMetric = selectedBand ? coerceBandRankingMetric(metricModal.draft, true) : coerceRankingMetric(metricModal.draft, true);
     metricModal.close();
     saveLeaderboardRankBy(nextMetric);
     scrollContainerRef.current?.scrollTo(0, 0);
@@ -101,7 +101,7 @@ export default function FullRankingsPage() {
         : { instrument, rankBy: nextMetric, page: '1' },
       { replace: true },
     );
-  }, [comboId, instrument, isCombo, metricModal, scrollContainerRef, setSearchParams]);
+  }, [comboId, instrument, isCombo, metricModal, scrollContainerRef, selectedBand, setSearchParams]);
 
   const applyInstrument = useCallback(() => {
     const nextInstrument = instrumentModal.draft;
@@ -119,6 +119,19 @@ export default function FullRankingsPage() {
   const cacheKey = isCombo ? `combo:${comboId}:${metric}` : `${instrument}:${metric}`;
   const cached = rankingsCache.get(cacheKey);
   const [page, setPage] = useState(cached?.page ?? pageParam);
+
+  useEffect(() => {
+    if (!selectedBand || rawMetric === metric) return;
+    saveLeaderboardRankBy(metric);
+    scrollContainerRef.current?.scrollTo(0, 0);
+    setPage(1);
+    setSearchParams(
+      isCombo
+        ? { combo: comboId!, rankBy: metric, page: '1' }
+        : { instrument, rankBy: metric, page: '1' },
+      { replace: true },
+    );
+  }, [comboId, instrument, isCombo, metric, rawMetric, scrollContainerRef, selectedBand, setSearchParams]);
 
   const { data, isFetching, error } = useQuery<FullRankingsData>({
     queryKey: isCombo
@@ -309,6 +322,8 @@ export default function FullRankingsPage() {
           onApply={applyMetric}
           onReset={metricModal.reset}
           experimentalRanksEnabled={true}
+          metrics={selectedBand ? getEnabledBandRankingMetrics(true) : undefined}
+          subject={selectedBand ? 'bands' : 'players'}
         />
       </>}
     >

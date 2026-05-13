@@ -133,6 +133,50 @@ const mockApi = vi.hoisted(() => {
       coverage: 0.8,
       computedAt: '2026-01-01T00:00:00Z',
     })),
+    getRankHistory: fn().mockImplementation(async (instrument: string, accountId: string, days: number) => ({
+      instrument,
+      accountId,
+      days,
+      history: [],
+    })),
+    getBandRankings: fn().mockImplementation(async (bandType: string, comboId?: string | null, rankBy = 'totalscore', page = 1, pageSize = 10) => ({
+      bandType,
+      comboId: comboId ?? null,
+      rankBy,
+      page,
+      pageSize,
+      totalTeams: 1,
+      entries: [],
+      selectedPlayerEntry: null,
+      selectedBandEntry: null,
+    })),
+    getBandRanking: fn().mockResolvedValue(null),
+    getSelectedMemberRankings: fn().mockResolvedValue({ instruments: [] }),
+    getBandDetail: fn().mockResolvedValue({
+      band: {
+        bandId: 'band-1',
+        teamKey: 'p1:p2',
+        bandType: 'Band_Duets',
+        members: [
+          { accountId: 'p1', displayName: 'TrackedP', instruments: ['Solo_Guitar', 'Solo_Bass'] },
+          { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Guitar', 'Solo_Bass'] },
+        ],
+      },
+      ranking: null,
+      configurations: [
+        {
+          rawInstrumentCombo: '0:1',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          instruments: ['Solo_Guitar', 'Solo_Bass'],
+          assignmentKey: 'p1=Solo_Guitar|p2=Solo_Bass',
+          appearanceCount: 1,
+          memberInstruments: {
+            p1: 'Solo_Guitar',
+            p2: 'Solo_Bass',
+          },
+        },
+      ],
+    }),
     getRivalsOverview: fn().mockResolvedValue({ computedAt: '2024-01-01T00:00:00Z' }),
     getRivalsList: fn().mockResolvedValue({
       combo: 'Solo_Guitar',
@@ -147,6 +191,7 @@ const mockApi = vi.hoisted(() => {
       above: [{ accountId: 'leader-rival-1', displayName: 'LeaderAbove', sharedSongCount: 6, aheadCount: 3, behindCount: 3, avgSignedDelta: 1.25, leaderboardRank: 12, userLeaderboardRank: 18 }],
       below: [{ accountId: 'leader-rival-2', displayName: 'LeaderBelow', sharedSongCount: 5, aheadCount: 2, behindCount: 3, avgSignedDelta: -0.75, leaderboardRank: 24, userLeaderboardRank: 18 }],
     }),
+    getBandSongRows: fn().mockResolvedValue({ bandType: 'Band_Duets', teamKey: 'p1:p2', comboId: null, count: 0, entries: [] }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'p1', stats: [] }),
     getPlayerBandsList: fn().mockResolvedValue({
@@ -844,6 +889,136 @@ describe('App — mobile FAB branches', () => {
     expect(within(menu).queryByRole('button', { name: 'Filter Songs' })).toBeNull();
   });
 
+  it('opens Leaderboards quick links from the main mobile FAB', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/leaderboards';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalled();
+    }, { timeout: 5000 });
+
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
+    const sideActions = screen.getByTestId('fab-side-actions');
+    expect(within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' })).toBeDefined();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+
+    fireEvent.click(quickLinksButton);
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    const dialog = await screen.findByRole('dialog', { name: 'Leaderboards Quick Links' });
+    expect(within(dialog).getByRole('button', { name: 'Rank History Graph' })).toBeDefined();
+    expect(within(dialog).getByRole('button', { name: 'Lead' })).toBeDefined();
+    expect(within(dialog).getByRole('button', { name: 'Bass' })).toBeDefined();
+    expect(within(dialog).getByRole('button', { name: 'Duos' })).toBeDefined();
+    expect(within(dialog).getByRole('button', { name: 'Trios' })).toBeDefined();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Leaderboards Quick Links' })).toBeNull();
+    });
+    window.location.hash = '';
+  });
+
+  it('opens Rank By from a separate mobile Leaderboards side action', async () => {
+    setMobile();
+    window.location.hash = '#/leaderboards';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalled();
+    }, { timeout: 5000 });
+
+    await screen.findByRole('button', { name: 'Quick Links' });
+    const sideActions = screen.getByTestId('fab-side-actions');
+    fireEvent.click(within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Rank By' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('shows the selected-band combo filter as an inactive icon circle beside the mobile Leaderboards FAB', async () => {
+    setMobile();
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    }));
+    window.location.hash = '#/leaderboards';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalled();
+    }, { timeout: 5000 });
+
+    await screen.findByRole('button', { name: 'Quick Links' });
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const filterButton = within(sideActions).getByRole('button', { name: 'Duos' });
+    expect(filterButton).not.toHaveStyle({ backgroundColor: '#2D82E6' });
+    expect(screen.getByRole('button', { name: 'Change Leaderboard Ranking' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+
+    fireEvent.click(filterButton);
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Filter Band Type' })).toBeDefined();
+    expect(await screen.findByText('Instrument #1')).toBeDefined();
+    expect(mockApi.getBandDetail).toHaveBeenCalledWith('band-1');
+    window.location.hash = '';
+  });
+
+  it('shows the active selected-band combo filter as a blue icon circle beside the mobile Leaderboards FAB', async () => {
+    setMobile();
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    }));
+    localStorage.setItem('fst:bandFilter', JSON.stringify({
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'p1', instrument: 'Solo_Guitar' },
+        { accountId: 'p2', instrument: 'Solo_Bass' },
+      ],
+    }));
+    window.location.hash = '#/leaderboards';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalled();
+    }, { timeout: 5000 });
+
+    await screen.findByRole('button', { name: 'Quick Links' });
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
+    expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
+    expect(within(filterButton).queryByAltText('Solo_Guitar')).toBeNull();
+    expect(within(filterButton).queryByText('Lead / Bass')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    window.location.hash = '';
+  });
+
   it('renders desktop nav on non-mobile', async () => {
     setDesktop();
     const { container } = render(<App />);
@@ -965,10 +1140,44 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       expect(mockApi.getRivalsAll).toHaveBeenCalled();
     });
-    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Filter Suggestions' }));
 
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Filter Suggestions' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('shows the selected-band filter beside the mobile Suggestions FAB', async () => {
+    setMobile();
+    localStorage.removeItem('fst:trackedPlayer');
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    }));
+    window.location.hash = '#/suggestions';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandSongRows).toHaveBeenCalled();
+    }, { timeout: 5000 });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const filterButton = within(sideActions).getByRole('button', { name: 'Duos' });
+    expect(filterButton.textContent?.trim()).toBe('');
+    expect(filterButton).not.toHaveStyle({ backgroundColor: '#2D82E6' });
+    expect(screen.getByRole('button', { name: 'Filter Suggestions' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filter Suggestions' }));
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Filter Suggestions' })).toBeDefined();
     window.location.hash = '';
@@ -1150,7 +1359,7 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
-  it('shows the View Paths FAB action on mobile song detail when a supported path instrument is enabled', async () => {
+  it('shows song detail actions beside the FAB on mobile when supported', async () => {
     setMobile();
     window.location.hash = '#/songs/s1';
     render(<App />);
@@ -1159,16 +1368,21 @@ describe('App — mobile FAB branches', () => {
       expect(screen.getByText('Test Song')).toBeDefined();
     });
 
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
-    expect(within(menu).queryByText('Search')).toBeNull();
-    expect(within(menu).queryByText('Item Shop')).toBeNull();
-    expect(within(menu).queryByText('View in Item Shop')).toBeNull();
-    expect(within(menu).getByText('View Paths')).toBeDefined();
+    await waitFor(() => {
+      const sideActions = screen.getByTestId('fab-side-actions');
+      expect(within(within(sideActions).getByRole('button', { name: 'View Paths' })).getByText('View Paths')).toBeDefined();
+      expect(within(within(sideActions).getByRole('link', { name: 'Item Shop' })).getByText('Item Shop')).toBeDefined();
+      expect(within(sideActions).getAllByTestId('fab-side-action').map(action => action.textContent?.trim())).toEqual(['Item Shop', 'View Paths']);
+    });
+
+    expect(screen.getAllByRole('button', { name: 'View Paths' })).toHaveLength(1);
+    expect(screen.getAllByRole('link', { name: 'Item Shop' })).toHaveLength(1);
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
     window.location.hash = '';
   });
 
-  it('hides the View Paths FAB action on mobile song detail when only unsupported path instruments are enabled', async () => {
+  it('hides only View Paths beside the FAB when only unsupported path instruments are enabled', async () => {
     setMobile();
     localStorage.setItem('fst:appSettings', JSON.stringify({
       showLead: false,
@@ -1188,7 +1402,39 @@ describe('App — mobile FAB branches', () => {
       expect(screen.getByText('Test Song')).toBeDefined();
     });
 
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: 'Item Shop' })).toBeDefined();
+    });
+    expect(screen.queryByRole('button', { name: 'View Paths' })).toBeNull();
     expect(screen.queryByLabelText('Actions')).toBeNull();
+    window.location.hash = '';
+  });
+
+  it('does not render an empty song detail FAB when shop and path actions are unavailable', async () => {
+    setMobile();
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      hideItemShop: true,
+      showLead: false,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+      showPeripheralVocals: true,
+      showPeripheralCymbals: true,
+      showPeripheralDrums: true,
+    }));
+    window.location.hash = '#/songs/s1';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Song')).toBeDefined();
+    });
+
+    expect(screen.queryByTestId('fab-side-actions')).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'View Paths' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Item Shop' })).toBeNull();
     window.location.hash = '';
   });
 

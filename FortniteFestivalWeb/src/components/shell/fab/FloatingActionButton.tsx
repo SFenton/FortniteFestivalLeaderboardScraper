@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { IoClose, IoMenu, IoSearch } from 'react-icons/io5';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { useSearchQuery } from '../../../contexts/SearchQueryContext';
-import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
+import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, Isolation, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
 import { safeAreaBottomOffset } from '../../../utils/safeAreaStyles';
 import { useIOSKeyboardPanGuard } from '../../../hooks/ui/useIOSKeyboardPanGuard';
 import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../constants/keyboardLayoutVars';
@@ -25,6 +25,12 @@ export interface ActionItem {
   label: string;
   displayLabel?: string;
   active?: boolean;
+  iconOnly?: boolean;
+  tone?: 'default' | 'accent' | 'pulse';
+  href?: string;
+  target?: string;
+  rel?: string;
+  className?: string;
   icon: React.ReactNode;
   onPress: () => void;
 }
@@ -38,6 +44,7 @@ interface Props {
   ariaLabel?: string;
   actionGroups?: ActionItem[][];
   dockActions?: ActionItem[];
+  sideActions?: ActionItem[];
   directAction?: boolean;
   onPress: () => void;
 }
@@ -68,6 +75,7 @@ export default function FloatingActionButton({
   ariaLabel,
   actionGroups,
   dockActions,
+  sideActions,
   directAction,
   onPress,
 }: Props) {
@@ -86,7 +94,9 @@ export default function FloatingActionButton({
   const [keyboardInset, setKeyboardInset] = useState(0);
   const scrollContainerRef = useScrollContainer();
   const useSongsDock = mode === 'songs' && searchVisible && dockActions != null;
+  const hasSideActions = (sideActions?.length ?? 0) > 0;
   const hasMenuActions = (actionGroups ?? []).some(group => group.length > 0);
+  const hasMainFab = !hasSideActions || directAction || searchVisible || hasMenuActions;
   const hasDockMainFab = directAction || hasMenuActions;
   const dockActionCount = dockActions?.length ?? 0;
   const dockMeasurementSignature = (dockActions ?? [])
@@ -510,6 +520,53 @@ export default function FloatingActionButton({
   const getDockActionButtonStyle = useCallback((active?: boolean) => (
     active ? s.fabActionCircleActive : s.fabActionCircle
   ), [s.fabActionCircle, s.fabActionCircleActive]);
+  const getSideActionButtonStyle = useCallback((action: ActionItem) => {
+    if (action.iconOnly) return action.active ? s.fabActionCircleActive : s.fabActionCircle;
+    if (action.tone === 'pulse') return s.fabSideActionCirclePulse;
+    if (action.tone === 'accent' || action.active) return s.fabSideActionCircleAccent;
+    return s.fabSideActionCircle;
+  }, [s.fabActionCircle, s.fabActionCircleActive, s.fabSideActionCircle, s.fabSideActionCircleAccent, s.fabSideActionCirclePulse]);
+
+  const renderSideAction = useCallback((action: ActionItem) => {
+    const content = action.iconOnly ? action.icon : (
+      <>
+        {action.icon}
+        <span style={s.sideActionLabel}>{action.displayLabel ?? action.label}</span>
+      </>
+    );
+    const style = getSideActionButtonStyle(action);
+    const commonProps = {
+      className: action.className,
+      style,
+      'aria-label': action.label,
+      title: action.label,
+      'data-testid': 'fab-side-action',
+    };
+    if (action.href) {
+      return (
+        <a
+          key={action.label}
+          {...commonProps}
+          href={action.href}
+          target={action.target}
+          rel={action.rel}
+          onClick={action.onPress}
+        >
+          {content}
+        </a>
+      );
+    }
+    return (
+      <button
+        key={action.label}
+        type="button"
+        {...commonProps}
+        onClick={action.onPress}
+      >
+        {content}
+      </button>
+    );
+  }, [getSideActionButtonStyle, s.sideActionLabel]);
 
   const clearSearchAndFocus = useCallback(() => {
     searchQuery.setQuery('');
@@ -678,19 +735,26 @@ export default function FloatingActionButton({
           </div>
         </div>
       )}
-      <div ref={fabContainerRef} style={{ ...s.container, transform: keyboardTransform, transition: keyboardTransition }}>
-        <button
-          style={label ? s.fabLabeled : s.fab}
-          /* v8 ignore start -- action toggle */
-          onClick={handleFabPress}
-          /* v8 ignore stop */
-          aria-label={ariaLabel ?? t('common.actions')}
-          title={ariaLabel ?? t('common.actions')}
-        >
-          {icon ?? <IoMenu size={IconSize.md} />}
-          {label && <span style={s.fabLabel}>{label}</span>}
-        </button>
-        {!directAction && popupMounted && (
+      <div ref={fabContainerRef} style={{ ...(hasSideActions ? s.sideActionContainer : s.container), transform: keyboardTransform, transition: keyboardTransition }}>
+        {hasSideActions && (
+          <div style={s.sideActions} data-testid="fab-side-actions">
+            {(sideActions ?? []).map(renderSideAction)}
+          </div>
+        )}
+        {hasMainFab && (
+          <button
+            style={label ? s.fabLabeled : s.fab}
+            /* v8 ignore start -- action toggle */
+            onClick={handleFabPress}
+            /* v8 ignore stop */
+            aria-label={ariaLabel ?? t('common.actions')}
+            title={ariaLabel ?? t('common.actions')}
+          >
+            {icon ?? <IoMenu size={IconSize.md} />}
+            {label && <span style={s.fabLabel}>{label}</span>}
+          </button>
+        )}
+        {hasMainFab && !directAction && popupMounted && (
           <FABMenu
             groups={actionGroups ?? []}
             visible={popupVisible}
@@ -917,6 +981,26 @@ function useFABStyles() {
       zIndex: ZIndex.popover,
       pointerEvents: PointerEvents.none,
     } as CSSProperties,
+    sideActionContainer: {
+      position: Position.fixed,
+      bottom: safeAreaBottomOffset(Layout.fabBottom),
+      right: Layout.paddingHorizontal,
+      ...flexRow,
+      alignItems: Align.center,
+      justifyContent: Align.end,
+      gap: Gap.md,
+      maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
+      zIndex: ZIndex.popover,
+      pointerEvents: PointerEvents.none,
+    } as CSSProperties,
+    sideActions: {
+      ...flexRow,
+      alignItems: Align.center,
+      justifyContent: Align.end,
+      gap: Gap.md,
+      minWidth: 0,
+      pointerEvents: PointerEvents.none,
+    } as CSSProperties,
     fab: {
       ...purpleGlass,
       width: Layout.fabSize,
@@ -981,6 +1065,73 @@ function useFABStyles() {
       backgroundImage: CssValue.none,
       border: '1px solid transparent',
       boxShadow: CssValue.none,
+    } as CSSProperties,
+    fabSideActionCircle: {
+      ...purpleGlass,
+      minWidth: Layout.fabSize,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      color: Colors.textPrimary,
+      textDecoration: CssValue.none,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+      ...flexCenter,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+    } as CSSProperties,
+    fabSideActionCircleAccent: {
+      minWidth: Layout.fabSize,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: Colors.accentBlue,
+      color: Colors.textPrimary,
+      textDecoration: CssValue.none,
+      border: CssValue.none,
+      boxShadow: Shadow.tooltip,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+      ...flexCenter,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+    } as CSSProperties,
+    fabSideActionCirclePulse: {
+      minWidth: Layout.fabSize,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: Colors.transparent,
+      color: Colors.textPrimary,
+      textDecoration: CssValue.none,
+      border: CssValue.none,
+      boxShadow: Shadow.tooltip,
+      position: Position.relative,
+      isolation: Isolation.isolate,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+      ...flexCenter,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+    } as CSSProperties,
+    sideActionLabel: {
+      minWidth: 0,
+      overflow: Overflow.hidden,
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: 13,
+      fontWeight: 700,
+      lineHeight: 1,
+      letterSpacing: 0,
     } as CSSProperties,
     fabPill: {
       ...frostedCard,

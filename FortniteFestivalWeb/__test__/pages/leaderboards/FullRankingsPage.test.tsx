@@ -169,6 +169,27 @@ describe('FullRankingsPage', () => {
     });
   });
 
+  it('coerces selected-band Max Score deep links to Total Score', async () => {
+    selectBandProfile();
+    localStorage.setItem('fst:leaderboardSettings', JSON.stringify({ rankBy: 'maxscore' }));
+    mockApi.getBandRanking.mockResolvedValue(makeBandRankingEntry());
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=maxscore&page=3">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getRankings.mock.calls.some(call => call[0] === 'Solo_Guitar' && call[1] === 'totalscore')).toBe(true);
+      expect(mockApi.getRankings.mock.calls.some(call => call[1] === 'maxscore')).toBe(false);
+      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'band-a:band-b', undefined, 'totalscore');
+      expect(JSON.parse(localStorage.getItem('fst:leaderboardSettings') || '{}').rankBy).toBe('totalscore');
+    });
+  });
+
   it('loads combo ranking routes with combo leaderboard queries', async () => {
     render(
       <TestProviders route="/leaderboards/all?combo=05&rankBy=totalscore" accountId="test-player">

@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
+import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy, IoBagHandle } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -75,8 +75,8 @@ function RoutesContent({ player, selectedProfile }: { player: TrackedPlayer | nu
           ? <ErrorBoundary fallback={<RouteErrorFallback />}><BandPage statisticsBand={selectedBand} /></ErrorBoundary>
           : <Navigate to={AppRoutes.songs} replace />}
       />
-      {player ? (
-        <Route path="/suggestions" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SuggestionsPage accountId={player.accountId} /></ErrorBoundary>} />
+      {player || selectedBand ? (
+        <Route path="/suggestions" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SuggestionsPage accountId={player?.accountId} selectedBand={selectedBand} /></ErrorBoundary>} />
       ) : (
         <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
@@ -107,6 +107,7 @@ import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/
 import { BandFilterActionProvider, type BandFilterActionContextValue } from './contexts/BandFilterActionContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visibleInstruments, visiblePathInstruments } from './contexts/SettingsContext';
+import { useShopState } from './hooks/data/useShopState';
 import { useProximityGlow } from './hooks/ui/useProximityGlow';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
@@ -146,12 +147,12 @@ import { writeSelectedProfile } from './state/selectedProfile';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
-import { useAppWebSocket } from './hooks/data/useAppWebSocket';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
 import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
+import anim from './styles/animations.module.css';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
 const showReactQueryDevtools = import.meta.env.DEV && import.meta.env.MODE !== 'e2e';
@@ -217,52 +218,6 @@ export function getFabQuickLinksActionLabel(t: TFunction): string {
   return t('common.quickLinks', 'Quick Links');
 }
 
-function RealtimeDataWebSocketBridge() {
-  const { subscribe } = useAppWebSocket();
-
-  useEffect(() => subscribe((message) => {
-    if (message.type === 'songs_changed') {
-      console.debug('[WS] songs_changed', message);
-      void queryClient.invalidateQueries({ queryKey: ['songs'] });
-      return;
-    }
-
-    if (message.type === 'scores_changed') {
-      console.debug('[WS] scores_changed', message);
-      // Refresh all score-backed read models after publication.
-      const scoreRoots = new Set([
-        'player',
-        'playerHistory',
-        'playerStats',
-        'leaderboard',
-        'allLeaderboards',
-        'songBandLeaderboard',
-        'allSongBandLeaderboards',
-        'rankings',
-        'playerRanking',
-        'compositeRankings',
-        'playerCompositeRanking',
-        'comboRankings',
-        'playerComboRanking',
-        'bandRankings',
-        'bandRanking',
-        'bandRankHistory',
-        'bandSongs',
-        'bandSongRows',
-        'leaderboardNeighborhood',
-        'compositeNeighborhood',
-        'rankHistory',
-      ]);
-
-      void queryClient.invalidateQueries({
-        predicate: q => typeof q.queryKey[0] === 'string' && scoreRoots.has(q.queryKey[0]),
-      });
-    }
-  }), [subscribe]);
-
-  return null;
-}
-
 export function getEmptyBandFilterActionLabel(selectedProfile: SelectedProfile | null, t: TFunction): string {
   if (selectedProfile?.type === 'band') return bandTypeLabel(selectedProfile.bandType, t);
   return t('common.filterBandType', 'Filter Band Type');
@@ -320,8 +275,14 @@ export function mergePageQuickLinksIntoFabGroups(
 function MobileFloatingActionButton(props: React.ComponentProps<typeof FloatingActionButton>) {
   const actionGroups = props.actionGroups ?? [];
   const hasActions = actionGroups.some(group => group.length > 0);
-  if (!props.defaultOpen && !hasActions && !props.directAction) return null;
+  const hasSideActions = (props.sideActions?.length ?? 0) > 0;
+  if (!props.defaultOpen && !hasActions && !hasSideActions && !props.directAction) return null;
   return <FloatingActionButton {...props} actionGroups={actionGroups} />;
+}
+
+function getSongDetailId(pathname: string): string | undefined {
+  const match = pathname.match(/^\/songs\/([^/]+)$/);
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
 const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
@@ -422,21 +383,15 @@ function AppShell() {
   const notificationIds = notificationFeed.notificationIds;
   const notificationFeedReadyForHeader = useNotificationMockData || notificationFeed.status !== 'loading';
   const notificationFeedKey = notificationFeed.feedKey;
-  const { unreadNotificationIds, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds, {
-    isCurrentFeedLoaded: notificationFeed.status === 'ready',
-  });
+  const { unreadNotificationIds, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
   const { newNotificationIds } = useNotificationFreshnessState(notificationFeedKey, notificationIds, notificationFeed.sourceVersion);
   const notificationInstrumentFilter = useMemo(() => {
     if (notificationRequestProfile?.type !== 'player') return null;
     return new Set(visibleInstruments(settings));
   }, [notificationRequestProfile?.type, settings]);
-  const notificationSurfaceFilter = useMemo(() => ({
-    visibleInstruments: notificationInstrumentFilter,
-    enableExperimentalRanks: settings.enableExperimentalRanks,
-  }), [notificationInstrumentFilter, settings.enableExperimentalRanks]);
   const surfaceNotifications = useMemo(
-    () => filterSurfaceNotifications(notificationFeed.notifications, notificationSurfaceFilter),
-    [notificationFeed.notifications, notificationSurfaceFilter],
+    () => filterSurfaceNotifications(notificationFeed.notifications, notificationInstrumentFilter),
+    [notificationFeed.notifications, notificationInstrumentFilter],
   );
   const surfaceNotificationIds = useMemo(
     () => new Set(surfaceNotifications.map(notification => notification.notificationGuid)),
@@ -464,6 +419,7 @@ function AppShell() {
   const isWideDesktop = useIsWideDesktop();
   const hasVisiblePathInstruments = visiblePathInstruments(settings).length > 0;
   const fabSearch = useFabSearch();
+  const { isShopVisible, isShopHighlighted, isLeavingTomorrow, getShopUrl } = useShopState();
   const pageQuickLinks = usePageQuickLinksController();
   const {
     scrollRef: shellScrollRef,
@@ -782,8 +738,24 @@ function AppShell() {
     appliedFilter: activeBandFilter,
     onPress: handleBandFilterPress,
   }), [activeBandFilter, bandFilterLabel, handleBandFilterPress, isMobile, selectedBandFilterInstruments, showBandFilterAction]);
-  const bandFilterFabActions: ActionItem[] = isMobile && showBandFilterAction
-    ? [{ label: bandFilterLabel, icon: <IoFunnel size={Size.iconFab} />, onPress: handleBandFilterPress }]
+  const bandFilterActive = selectedBandFilterInstruments.length > 0;
+  const leaderboardsSideActions: ActionItem[] = isMobile && location.pathname === AppRoutes.leaderboards
+    ? [
+      ...(showBandFilterAction ? [{
+      label: bandFilterLabel,
+      active: bandFilterActive,
+      iconOnly: true,
+      icon: <IoFunnel size={Size.iconFab} />,
+      onPress: handleBandFilterPress,
+    }] : []),
+      { label: t('rankings.changeRanking'), iconOnly: true, icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() },
+    ]
+    : [];
+  const bandFilterFabActions: ActionItem[] = isMobile && showBandFilterAction && location.pathname !== AppRoutes.leaderboards
+    ? [{ label: bandFilterLabel, active: bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, onPress: handleBandFilterPress }]
+    : [];
+  const suggestionsSideActions: ActionItem[] = isMobile && location.pathname === AppRoutes.suggestions
+    ? bandFilterFabActions.map(action => ({ ...action, iconOnly: true }))
     : [];
   const quickLinksActions = pageQuickLinks.hasPageQuickLinks && pageQuickLinks.pageQuickLinks
     ? [{
@@ -792,6 +764,26 @@ function AppShell() {
       onPress: () => pageQuickLinks.openPageQuickLinks(),
     }]
     : [];
+  const songDetailId = getSongDetailId(location.pathname);
+  const songDetailShopUrl = songDetailId ? getShopUrl(songDetailId) : undefined;
+  const showSongDetailShopAction = !!songDetailId && isShopVisible && !!songDetailShopUrl;
+  const songDetailSideActions: ActionItem[] = songDetailId ? [
+    ...(showSongDetailShopAction ? [{
+      label: t('common.itemShop', 'Item Shop'),
+      icon: <IoBagHandle size={Size.iconFab} />,
+      href: songDetailShopUrl,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      tone: isShopHighlighted(songDetailId) ? 'pulse' as const : 'accent' as const,
+      className: isShopHighlighted(songDetailId) ? (isLeavingTomorrow(songDetailId) ? anim.shopCircleBreatheRed : anim.shopCircleBreathe) : undefined,
+      onPress: () => {},
+    }] : []),
+    ...(hasVisiblePathInstruments ? [{
+      label: t('common.viewPaths'),
+      icon: <IoFlash size={Size.iconFab} />,
+      onPress: () => fabSearch.openPaths(),
+    }] : []),
+  ] : [];
   const withPageQuickLinks = (pageSpecificActions: ActionItem[], ...groups: ActionItem[][]) =>
     prependFabActionGroup(
       bandFilterFabActions,
@@ -901,8 +893,8 @@ function AppShell() {
       {showMobileFab && location.pathname === AppRoutes.suggestions && (
         <MobileFloatingActionButton
           mode="players"
-          icon={<IoFunnel size={Size.iconFab} />}
           ariaLabel={t('common.filterSuggestions')}
+          sideActions={suggestionsSideActions}
           directAction
           onPress={() => fabSearch.openSuggestionsFilter()}
         />
@@ -937,27 +929,34 @@ function AppShell() {
       {showMobileFab && RoutePatterns.songDetail.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
+          sideActions={songDetailSideActions}
+          actionGroups={withPageQuickLinks([])}
+          onPress={() => {}}
+        />
+      )}
+      {showMobileFab && location.pathname === AppRoutes.shop && (
+        <MobileFloatingActionButton
+          mode="players"
           actionGroups={withPageQuickLinks(
-            isNarrow && hasVisiblePathInstruments ? [{
-              label: t('common.viewPaths'), icon: <IoFlash size={Size.iconFab} />, onPress: () => fabSearch.openPaths(),
+            !isNarrowGrid ? [{
+              label: fabSearch.shopViewMode === 'grid' ? t('common.listView', 'List View') : t('common.gridView', 'Grid View'),
+              icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
+              onPress: () => fabSearch.shopToggleView(),
             }] : [],
           )}
           onPress={() => {}}
         />
       )}
-      {showMobileFab && location.pathname === AppRoutes.shop && (
-        !isNarrowGrid ? (
-          <MobileFloatingActionButton
-            mode="players"
-            icon={fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />}
-            label={fabSearch.shopViewMode === 'grid' ? t('shop.viewList', 'List') : t('shop.viewGrid', 'Grid')}
-            ariaLabel={fabSearch.shopViewMode === 'grid' ? t('shop.switchToListView', 'Switch to list view') : t('shop.switchToGridView', 'Switch to grid view')}
-            directAction
-            onPress={() => fabSearch.shopToggleView()}
-          />
-        ) : null
+      {showMobileFab && location.pathname === AppRoutes.leaderboards && pageQuickLinks.hasPageQuickLinks && (
+        <MobileFloatingActionButton
+          mode="players"
+          ariaLabel={getFabQuickLinksActionLabel(t)}
+          sideActions={leaderboardsSideActions}
+          directAction
+          onPress={() => pageQuickLinks.openPageQuickLinks()}
+        />
       )}
-      {showMobileFab && RoutePatterns.leaderboards.test(location.pathname) && (() => {
+      {showMobileFab && RoutePatterns.leaderboards.test(location.pathname) && location.pathname !== AppRoutes.leaderboards && (() => {
         const leaderboardActions = [
           ...(location.pathname === '/leaderboards/all' ? [{ label: t('rankings.changeInstrument'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
           { label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() },
@@ -1066,7 +1065,6 @@ function AppShell() {
         onNotificationsSeen={markNotificationsSeen}
         onNotificationOpen={handleNotificationOpen}
       />
-      <RealtimeDataWebSocketBridge />
       {selectedProfile && !useNotificationMockData && <NotificationFeedWebSocketBridge profile={selectedProfile} />}
       <BandInstrumentFilterModal
         visible={bandFilterModalOpen && selectedProfile?.type === 'band'}

@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, within } from '@testing-library/react';
-import { Font } from '@festival/theme';
+import { Font, Layout } from '@festival/theme';
 import FloatingActionButton, { type ActionItem } from '../../../../src/components/shell/fab/FloatingActionButton';
 import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../../src/constants/keyboardLayoutVars';
 import { TestProviders } from '../../../helpers/TestProviders';
@@ -205,6 +205,55 @@ describe('FloatingActionButton', () => {
     expect(onFilter).toHaveBeenCalledTimes(1);
     expect(onQuickLinks).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('fab-menu')).toBeNull();
+  });
+
+  it('renders non-search side actions beside the FAB without duplicating menu items', () => {
+    const onPaths = vi.fn();
+    const onQuickLinks = vi.fn();
+
+    renderFAB({
+      mode: 'players',
+      sideActions: [{ label: 'View Paths', icon: <span>P</span>, onPress: onPaths }],
+      actionGroups: [[{ label: 'Quick Links', icon: <span>Q</span>, onPress: onQuickLinks }]],
+    });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const pathsButton = within(sideActions).getByRole('button', { name: 'View Paths' });
+    expect(within(pathsButton).getByText('View Paths')).toBeTruthy();
+    expect(pathsButton).toHaveStyle({ minWidth: `${Layout.fabSize}px`, height: `${Layout.fabSize}px` });
+
+    fireEvent.click(pathsButton);
+    expect(onPaths).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions' }));
+    const menu = screen.getByTestId('fab-menu');
+    expect(within(menu).getByText('Quick Links')).toBeTruthy();
+    expect(within(menu).queryByText('View Paths')).toBeNull();
+  });
+
+  it('renders external side actions without an inert main FAB', () => {
+    const onShop = vi.fn();
+
+    renderFAB({
+      mode: 'players',
+      sideActions: [{
+        label: 'Item Shop',
+        icon: <span>S</span>,
+        href: 'https://example.com/shop/s1',
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        tone: 'accent',
+        onPress: onShop,
+      }],
+    });
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    expect(link).toHaveAttribute('href', 'https://example.com/shop/s1');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(within(link).getByText('Item Shop')).toBeTruthy();
+    expect(link).toHaveStyle({ minWidth: `${Layout.fabSize}px`, height: `${Layout.fabSize}px` });
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
   });
 
   it('shows the Search label while dock actions stay circular when measured width fits', () => {

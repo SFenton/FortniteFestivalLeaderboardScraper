@@ -16,7 +16,7 @@ import BandRankingCard from './components/BandRankingCard';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
-import type { AccountRankingDto, BandType, RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, type AccountRankingDto, type BandType, type RankingMetric, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import RankByModal from './modals/RankByModal';
@@ -24,12 +24,14 @@ import RankHistoryChart from './components/RankHistoryChart';
 import { useRankHistoryAll } from '../../hooks/chart/useRankHistory';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { useModalState } from '../../hooks/ui/useModalState';
-import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useGridColumnCount } from '../../hooks/ui/useGridColumnCount';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
+import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
+import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 
 import {
   Display, Overflow, Gap,
@@ -37,11 +39,21 @@ import {
 } from '@festival/theme';
 import { leaderboardsSlides } from './firstRun';
 import { coerceRankingMetric } from './helpers/rankingHelpers';
-import { coerceBandRankingMetric } from './helpers/bandRankingHelpers';
-import { BAND_TYPES } from '../../utils/bandTypes';
+import { coerceBandRankingMetric, getEnabledBandRankingMetrics } from './helpers/bandRankingHelpers';
+import { BAND_TYPES, bandTypeLabel } from '../../utils/bandTypes';
 
 /** Set to 1 to stagger the right column one slot (125 ms) after the left. */
 const COLUMN_STAGGER_OFFSET = 1;
+
+type LeaderboardsQuickLink = PageQuickLinkItem;
+
+function instrumentQuickLinkId(instrument: InstrumentKey): string {
+  return `instrument:${instrument}`;
+}
+
+function bandQuickLinkId(bandType: BandType): string {
+  return `band:${bandType}`;
+}
 
 function normalizeAccountId(accountId: string | null | undefined): string {
   return accountId?.trim().toLowerCase() ?? '';
@@ -52,7 +64,8 @@ export default function LeaderboardsOverviewPage() {
   const { settings } = useSettings();
   const { profile, player } = useTrackedPlayer();
   const selectedAccountId = player?.accountId;
-  const selectedBandTeamKey = profile?.type === 'band' ? profile.teamKey : undefined;
+  const selectedBand = profile?.type === 'band' ? profile : null;
+  const selectedBandTeamKey = selectedBand?.teamKey;
   const selectedBandType = profile?.type === 'band' ? profile.bandType : undefined;
   const selectedBandMembers = useMemo(() => {
     if (profile?.type !== 'band') return [];
@@ -72,11 +85,12 @@ export default function LeaderboardsOverviewPage() {
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const hasSelectedBandComboFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const isMobile = useIsMobileChrome();
+  const isWideDesktop = useIsWideDesktop();
   const fabSearch = useFabSearch();
   const scrollContainerRef = useScrollContainer();
   const [searchParams, setSearchParams] = useSearchParams();
-  const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
-  const metric = coerceRankingMetric(rawMetric, true);
+  const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
+  const metric = selectedBand ? coerceBandRankingMetric(rawMetric, true) : coerceRankingMetric(rawMetric, true);
   const bandMetric = coerceBandRankingMetric(metric, true);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
@@ -89,13 +103,20 @@ export default function LeaderboardsOverviewPage() {
   const resetRush = useCallback(() => staggerRushRef.current?.(), []);
 
   const applyMetric = useCallback(() => {
+    const nextMetric = selectedBand ? coerceBandRankingMetric(metricModal.draft, true) : coerceRankingMetric(metricModal.draft, true);
     scrollContainerRef.current?.scrollTo(0, 0);
     resetRush();
     setShouldStagger(true);
-    saveLeaderboardRankBy(metricModal.draft);
-    setSearchParams({ rankBy: metricModal.draft }, { replace: true });
+    saveLeaderboardRankBy(nextMetric);
+    setSearchParams({ rankBy: nextMetric }, { replace: true });
     metricModal.close();
-  }, [metricModal, setSearchParams, scrollContainerRef, resetRush]);
+  }, [metricModal, resetRush, scrollContainerRef, selectedBand, setSearchParams]);
+
+  useEffect(() => {
+    if (!selectedBand || rawMetric === metric) return;
+    saveLeaderboardRankBy(metric);
+    setSearchParams({ rankBy: metric }, { replace: true });
+  }, [metric, rawMetric, selectedBand, setSearchParams]);
 
   useEffect(() => {
     fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: () => {} });
@@ -278,6 +299,66 @@ export default function LeaderboardsOverviewPage() {
     );
   }, [appliedBandComboFilter, bandMetric, bandRankingQueries, bandTypes, selectedAccountId, selectedBandRankingQuery.data, selectedBandType, shouldStagger]);
 
+  const quickLinksTitle = t('rankings.quickLinks.title', 'Leaderboards Quick Links');
+  const quickLinkItems = useMemo<LeaderboardsQuickLink[]>(() => {
+    const rankHistoryLabel = t('rankings.quickLinks.rankHistory', 'Rank History Graph');
+    return [
+      ...(player ? [{ id: 'rank-history', label: rankHistoryLabel, landmarkLabel: rankHistoryLabel }] : []),
+      ...(promotedBandType ? [{ id: bandQuickLinkId(promotedBandType), label: bandTypeLabel(promotedBandType, t), landmarkLabel: bandTypeLabel(promotedBandType, t) }] : []),
+      ...instruments.map(instrument => {
+        const label = serverInstrumentLabel(instrument);
+        return { id: instrumentQuickLinkId(instrument), label, landmarkLabel: label };
+      }),
+      ...trailingBandTypes.map(bandType => {
+        const label = bandTypeLabel(bandType, t);
+        return { id: bandQuickLinkId(bandType), label, landmarkLabel: label };
+      }),
+    ];
+  }, [instruments, player, promotedBandType, t, trailingBandTypes]);
+
+  const {
+    activeItemId,
+    quickLinksOpen,
+    openQuickLinks,
+    closeQuickLinks,
+    handleQuickLinkSelect,
+    registerSectionRef,
+  } = usePageQuickLinks<LeaderboardsQuickLink>({
+    items: quickLinkItems,
+    scrollContainerRef,
+    isDesktopRailEnabled: isWideDesktop,
+  });
+
+  const handleModalQuickLinkSelect = useCallback((item: LeaderboardsQuickLink) => {
+    if (isWideDesktop) {
+      handleQuickLinkSelect(item);
+      return;
+    }
+    closeQuickLinks();
+    handleQuickLinkSelect(item);
+  }, [closeQuickLinks, handleQuickLinkSelect, isWideDesktop]);
+
+  const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
+    if (loadPhase !== LoadPhase.ContentIn || allErrored || quickLinkItems.length < 2) return undefined;
+    return {
+      title: quickLinksTitle,
+      items: quickLinkItems,
+      activeItemId,
+      visible: quickLinksOpen,
+      onOpen: openQuickLinks,
+      onClose: closeQuickLinks,
+      onSelect: (item) => handleModalQuickLinkSelect(item as LeaderboardsQuickLink),
+      testIdPrefix: 'leaderboards',
+    };
+  }, [activeItemId, allErrored, closeQuickLinks, handleModalQuickLinkSelect, loadPhase, openQuickLinks, quickLinkItems, quickLinksOpen, quickLinksTitle]);
+
+  const setRankHistoryRef = useCallback((element: HTMLDivElement | null) => {
+    registerSectionRef('rank-history', element);
+  }, [registerSectionRef]);
+  const setInstrumentGridRef = useCallback((element: HTMLDivElement | null) => {
+    gridRef(element);
+  }, [gridRef]);
+
   return (
     <Page
       scrollRef={scrollRef}
@@ -285,6 +366,7 @@ export default function LeaderboardsOverviewPage() {
       scrollRestoreKey="leaderboards"
       loadPhase={loadPhase}
       fabSpacer={loadPhase === LoadPhase.ContentIn && allErrored ? 'none' : 'end'}
+      quickLinks={pageQuickLinks}
       firstRun={{ key: 'leaderboards', label: t('nav.leaderboards'), slides: leaderboardsSlides, gateContext: firstRunGateCtx }}
       before={
         isMobile ? undefined : (
@@ -312,6 +394,8 @@ export default function LeaderboardsOverviewPage() {
           onApply={applyMetric}
           onReset={metricModal.reset}
           experimentalRanksEnabled={true}
+          metrics={selectedBand ? getEnabledBandRankingMetrics(true) : undefined}
+          subject={selectedBand ? 'bands' : 'players'}
         />
       }
     >
@@ -320,7 +404,7 @@ export default function LeaderboardsOverviewPage() {
         return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
       })()}
       {loadPhase === LoadPhase.ContentIn && !allErrored && player && (
-        <div style={{ ...s.chartWrapper, ...buildStaggerStyle(shouldStagger ? 0 : null) }} onAnimationEnd={clearStaggerStyle}>
+        <div ref={setRankHistoryRef} style={{ ...s.chartWrapper, ...buildStaggerStyle(shouldStagger ? 0 : null) }} onAnimationEnd={clearStaggerStyle}>
           <RankHistoryChart
             accountId={player.accountId}
             instruments={instruments}
@@ -333,35 +417,44 @@ export default function LeaderboardsOverviewPage() {
       {loadPhase === LoadPhase.ContentIn && !allErrored && (
         <div style={s.contentStack}>
           {promotedBandType && (
-            <div data-testid="leaderboards-promoted-band-section-stack" style={s.bandSectionStack}>
+            <div
+              ref={(element) => registerSectionRef(bandQuickLinkId(promotedBandType), element)}
+              data-testid="leaderboards-promoted-band-section-stack"
+              style={s.bandSectionStack}
+            >
               {renderBandRankingCard(promotedBandType, chartSlots)}
             </div>
           )}
-          <div ref={gridRef} data-testid="leaderboards-instrument-grid" style={s.grid}>
+          <div ref={setInstrumentGridRef} data-testid="leaderboards-instrument-grid" style={s.grid}>
             {instruments.map((inst, idx) => {
               const q = rankingQueries[idx];
               const pq = player ? playerQueries[idx] : undefined;
               const offset = getInstrumentCardStaggerOffset(idx);
               return (
-                <RankingCard
-                  key={inst}
-                  instrument={inst as InstrumentKey}
-                  metric={metric}
-                  entries={q?.data?.entries ?? []}
-                  totalAccounts={q?.data?.totalAccounts ?? 0}
-                  playerRanking={pq?.data ?? null}
-                  playerAccountId={player?.accountId}
-                  spotlightRankings={selectedMemberRankingsByInstrument[inst] ?? []}
-                  error={q?.error ? String(q.error) : null}
-                  shouldStagger={shouldStagger}
-                  staggerOffset={offset}
-                />
+                <div key={inst} ref={(element) => registerSectionRef(instrumentQuickLinkId(inst), element)} style={s.quickLinkAnchor}>
+                  <RankingCard
+                    instrument={inst as InstrumentKey}
+                    metric={metric}
+                    entries={q?.data?.entries ?? []}
+                    totalAccounts={q?.data?.totalAccounts ?? 0}
+                    playerRanking={pq?.data ?? null}
+                    playerAccountId={player?.accountId}
+                    spotlightRankings={selectedMemberRankingsByInstrument[inst] ?? []}
+                    error={q?.error ? String(q.error) : null}
+                    shouldStagger={shouldStagger}
+                    staggerOffset={offset}
+                  />
+                </div>
               );
             })}
           </div>
           {trailingBandTypes.length > 0 && (
             <div data-testid="leaderboards-band-section-stack" style={s.bandSectionStack}>
-              {trailingBandTypes.map((bandType, idx) => renderBandRankingCard(bandType, getTrailingBandCardStaggerOffset(idx)))}
+              {trailingBandTypes.map((bandType, idx) => (
+                <div key={bandType} ref={(element) => registerSectionRef(bandQuickLinkId(bandType), element)} style={s.quickLinkAnchor}>
+                  {renderBandRankingCard(bandType, getTrailingBandCardStaggerOffset(idx))}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -385,6 +478,10 @@ function useLeaderboardsStyles() {
     bandSectionStack: {
       ...flexColumn,
       gap: Gap.section,
+      width: '100%',
+    } as CSSProperties,
+    quickLinkAnchor: {
+      minWidth: 0,
       width: '100%',
     } as CSSProperties,
     chartWrapper: {

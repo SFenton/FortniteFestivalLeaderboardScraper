@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import type { AccountRankingDto, BandConfiguration, BandRankingEntry, BandType, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
@@ -113,7 +113,10 @@ function expectBefore(first: Element, second: Element) {
 }
 
 function getAnimationDelayMs(element: HTMLElement): number {
-  const match = element.style.animation.match(/ease-out\s+(\d+(?:\.\d+)?)ms\s+forwards/);
+  const target = [element, ...Array.from(element.querySelectorAll<HTMLElement>('*'))]
+    .find(candidate => candidate.style.animation.includes('fadeInUp'));
+  expect(target).toBeDefined();
+  const match = target!.style.animation.match(/ease-out\s+(\d+(?:\.\d+)?)ms\s+forwards/);
   expect(match?.[1]).toBeDefined();
   return Number(match![1]);
 }
@@ -162,6 +165,64 @@ beforeEach(() => {
 });
 
 describe('LeaderboardsOverviewPage band rankings', () => {
+  it('keeps Max Score selectable when no band is selected', async () => {
+    render(
+      <TestProviders route="/leaderboards?rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Total Score' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Rank By' });
+    expect(within(dialog).getByText('Max Score %')).toBeTruthy();
+  });
+
+  it('hides Max Score when a band is selected', async () => {
+    writeSelectedBandProfile('Band_Duets');
+
+    render(
+      <TestProviders route="/leaderboards?rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Total Score' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Rank By' });
+    expect(within(dialog).queryByText('Max Score %')).toBeNull();
+    expect(within(dialog).getByText('Choose how bands are ranked.')).toBeTruthy();
+  });
+
+  it('coerces selected-band Max Score deep links to Total Score', async () => {
+    writeSelectedBandProfile('Band_Duets');
+    localStorage.setItem('fst:leaderboardSettings', JSON.stringify({ rankBy: 'maxscore' }));
+
+    render(
+      <TestProviders route="/leaderboards?rankBy=maxscore">
+        <Routes>
+          <Route path="/leaderboards" element={<LeaderboardsOverviewPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'totalscore', 1, 10);
+      expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(
+        ['selected-a', 'selected-b'],
+        expect.arrayContaining(['Solo_Guitar']),
+        'totalscore',
+      );
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 10, undefined, 'selected-a:selected-b');
+      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'selected-a:selected-b', undefined, 'totalscore');
+      expect(JSON.parse(localStorage.getItem('fst:leaderboardSettings') || '{}').rankBy).toBe('totalscore');
+    });
+  });
+
   it('renders all-up Duos, Trios, and Quads band ranking cards behind the feature flag', async () => {
     render(
       <TestProviders route="/leaderboards">
