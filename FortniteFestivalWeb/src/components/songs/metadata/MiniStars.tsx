@@ -8,7 +8,6 @@ type MiniStarsAlignment = 'start' | 'end';
 
 const MiniStars = memo(function MiniStars({
   starsCount,
-  isFullCombo,
   align = 'end',
 }: {
   starsCount: number;
@@ -18,7 +17,7 @@ const MiniStars = memo(function MiniStars({
   const allGold = starsCount >= 6;
   const displayCount = allGold ? 5 : Math.max(1, starsCount);
   const src = allGold ? `${BASE}star_gold.png` : `${BASE}star_white.png`;
-  const outline = (isFullCombo || allGold) ? Colors.gold : 'transparent';
+  const outline = allGold ? Colors.gold : 'transparent';
   const s = useStyles(outline, align);
   return (
     <span style={s.row}>
