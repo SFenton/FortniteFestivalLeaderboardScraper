@@ -37,6 +37,8 @@ export interface RankingEntryProps {
   bayesianRankMinWidth?: number;
   /** On compact percentile rows, place songs + percentile + Bayesian value on a second row. */
   twoRowPercentileMetadata?: boolean;
+  /** Alignment for standalone compact metadata rows. */
+  twoRowMetadataAlign?: 'center' | 'right';
   /** When set, renders ratingLabel as a PercentilePill with the given tier instead of plain text. */
   ratingPillTier?: 'top1' | 'top5' | 'default';
   /** When true, songs label uses primary (white) text at standard font size. */
@@ -62,6 +64,8 @@ export type RankingMetadataProps = Pick<RankingEntryProps,
   | 'bayesianRankColor'
   | 'percentileValueMinWidth'
   | 'bayesianRankMinWidth'
+  | 'twoRowPercentileMetadata'
+  | 'twoRowMetadataAlign'
   | 'ratingPillTier'
   | 'songsLabelPrimary'
   | 'songsLabelGoldPrefix'
@@ -81,6 +85,8 @@ export const RankingMetadata = memo(function RankingMetadata({
   bayesianRankColor,
   percentileValueMinWidth,
   bayesianRankMinWidth,
+  twoRowPercentileMetadata,
+  twoRowMetadataAlign = 'center',
   ratingPillTier,
   songsLabelPrimary,
   songsLabelGoldPrefix,
@@ -89,6 +95,54 @@ export const RankingMetadata = memo(function RankingMetadata({
 }: RankingMetadataProps) {
   const s = useStyles(isPlayer, undefined, reserveTenDigitScoreWidth);
   const hasPercentileMetricValue = !!percentileValueDisplay;
+  const rating = ratingPillTier
+    ? <PercentilePill display={ratingLabel} tier={ratingPillTier} bold={isPlayer} />
+    : ratingLabel && <span data-testid="ranking-rating-label" style={s.colRating}>{ratingLabel}</span>;
+
+  if (hasPercentileMetricValue && twoRowPercentileMetadata) {
+    const compactPillMinWidth = percentileValueMinWidth ?? bayesianRankMinWidth ?? MetadataSize.percentilePillMinWidth;
+    const compactMetadataJustifyContent = twoRowMetadataAlign === 'right' ? 'flex-end' : 'center';
+    const compactPrimaryRowStyle = compactMetadataJustifyContent === 'center'
+      ? s.twoRowMetadataPrimary
+      : { ...s.twoRowMetadataPrimary, justifyContent: compactMetadataJustifyContent };
+    const compactPrimaryMetadataStyle = compactMetadataJustifyContent === 'center'
+      ? s.twoRowMetadataPrimaryMetadata
+      : { ...s.twoRowMetadataPrimaryMetadata, justifyContent: compactMetadataJustifyContent };
+    const compactBayesianRowStyle = compactMetadataJustifyContent === 'center'
+      ? s.twoRowMetadataBayesianMetadata
+      : { ...s.twoRowMetadataBayesianMetadata, justifyContent: compactMetadataJustifyContent };
+
+    return (
+      <>
+        <div style={s.twoRowMetadataLayout}>
+          <div data-testid="ranking-compact-primary-row" style={compactPrimaryRowStyle}>
+            <div data-testid="ranking-compact-primary-metadata" style={compactPrimaryMetadataStyle}>
+              {renderPercentilePrimaryMetadata({
+                songsLabel,
+                songsLabelPrimary,
+                songsLabelGoldPrefix,
+                percentileValueDisplay,
+                percentileValueMinWidth: compactPillMinWidth,
+                isPlayer,
+                s,
+              })}
+            </div>
+          </div>
+          <div data-testid="ranking-compact-bayesian-row" style={compactBayesianRowStyle}>
+            {renderBayesianMetadata({
+              bayesianRankLabel,
+              bayesianRankDisplay,
+              bayesianRankColor,
+              bayesianRankMinWidth: compactPillMinWidth,
+              isPlayer,
+              s,
+            })}
+          </div>
+        </div>
+        {rating}
+      </>
+    );
+  }
 
   return (
     <>
@@ -107,7 +161,7 @@ export const RankingMetadata = memo(function RankingMetadata({
         isPlayer,
         s,
       })}
-      {ratingPillTier ? <PercentilePill display={ratingLabel} tier={ratingPillTier} bold={isPlayer} /> : ratingLabel && <span data-testid="ranking-rating-label" style={s.colRating}>{ratingLabel}</span>}
+      {rating}
     </>
   );
 });
@@ -138,6 +192,8 @@ export const RankingEntry = memo(function RankingEntry({
   const hasPercentileMetricValue = !!percentileValueDisplay;
 
   if (hasPercentileMetricValue && twoRowPercentileMetadata) {
+    const compactPillMinWidth = percentileValueMinWidth ?? bayesianRankMinWidth ?? MetadataSize.percentilePillMinWidth;
+
     return (
       <div style={s.twoRowLayout}>
         <div data-testid="ranking-compact-primary-row" style={s.twoRowPrimary}>
@@ -151,7 +207,7 @@ export const RankingEntry = memo(function RankingEntry({
               songsLabelPrimary,
               songsLabelGoldPrefix,
               percentileValueDisplay,
-              percentileValueMinWidth,
+              percentileValueMinWidth: compactPillMinWidth,
               isPlayer,
               s,
             })}
@@ -162,7 +218,7 @@ export const RankingEntry = memo(function RankingEntry({
             bayesianRankLabel,
             bayesianRankDisplay,
             bayesianRankColor,
-            bayesianRankMinWidth,
+            bayesianRankMinWidth: compactPillMinWidth,
             isPlayer,
             s,
           })}
@@ -379,6 +435,39 @@ function useStyles(isPlayer?: boolean, rankWidth?: number, reserveTenDigitScoreW
       gap: Gap.md,
       width: '100%',
       minWidth: 0,
+    } as React.CSSProperties,
+    twoRowMetadataLayout: {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      justifyContent: 'center',
+      gap: Gap.md,
+      width: '100%',
+      minWidth: 0,
+    } as React.CSSProperties,
+    twoRowMetadataPrimary: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '100%',
+      minWidth: 0,
+    } as React.CSSProperties,
+    twoRowMetadataPrimaryMetadata: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: Gap.md,
+      minWidth: 0,
+      maxWidth: '100%',
+    } as React.CSSProperties,
+    twoRowMetadataBayesianMetadata: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: Gap.md,
+      width: '100%',
+      minWidth: 0,
+      maxWidth: '100%',
     } as React.CSSProperties,
     bayesianRankLabelCompact: {
       minWidth: 0,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
-import { RankingEntry } from '../../../../src/pages/leaderboards/components/RankingEntry';
+import { RankingEntry, RankingMetadata } from '../../../../src/pages/leaderboards/components/RankingEntry';
 import { TestProviders as W } from '../../../helpers/TestProviders';
 import { Colors, Gap } from '@festival/theme';
 
@@ -116,5 +116,61 @@ describe('RankingEntry', () => {
     expect(within(bayesianRow).getByText('0.0409')).toBeTruthy();
     expect(bayesianRow).toHaveStyle({ justifyContent: 'flex-end' });
     expect(bayesianRow.parentElement).toHaveStyle({ gap: `${Gap.xl}px` });
+  });
+
+  it('renders compact RankingMetadata with Bayesian rank separated from primary metadata', () => {
+    render(
+      <W>
+        <div>
+          <RankingMetadata
+            ratingLabel=""
+            songsLabel="123 / 500"
+            percentileValueDisplay="Top 0.56%"
+            bayesianRankDisplay="0.0409"
+            bayesianRankColor={Colors.statusGreen}
+            percentileValueMinWidth={120}
+            twoRowPercentileMetadata
+          />
+        </div>
+      </W>,
+    );
+
+    const primaryRow = screen.getByTestId('ranking-compact-primary-row');
+    const primaryMetadata = screen.getByTestId('ranking-compact-primary-metadata');
+    const bayesianRow = screen.getByTestId('ranking-compact-bayesian-row');
+    expect(within(primaryMetadata).getByText('123 / 500')).toBeTruthy();
+    expect(within(primaryMetadata).getByText('Top 0.56%')).toBeTruthy();
+    expect(within(primaryRow).queryByText('Bayesian-Calculated Rank:')).toBeNull();
+    expect(within(bayesianRow).getByText('Bayesian-Calculated Rank:')).toBeTruthy();
+    expect(within(bayesianRow).getByText('0.0409')).toHaveStyle({ backgroundColor: Colors.statusGreen });
+    expect(within(primaryMetadata).getByText('Top 0.56%')).toHaveStyle({ minWidth: '120px' });
+    expect(within(bayesianRow).getByText('0.0409')).toHaveStyle({ minWidth: '120px' });
+    expect(bayesianRow).toHaveStyle({ justifyContent: 'center' });
+    const label = within(bayesianRow).getByText('Bayesian-Calculated Rank:');
+    expect(label.style.minWidth).toBe('0px');
+    expect(label.style.overflow).toBe('hidden');
+    expect(label.style.textOverflow).toBe('ellipsis');
+    expect(label.style.whiteSpace).toBe('nowrap');
+  });
+
+  it('right-aligns compact RankingMetadata rows when requested', () => {
+    render(
+      <W>
+        <div>
+          <RankingMetadata
+            ratingLabel=""
+            songsLabel="123 / 500"
+            percentileValueDisplay="Top 0.56%"
+            bayesianRankDisplay="0.0409"
+            twoRowPercentileMetadata
+            twoRowMetadataAlign="right"
+          />
+        </div>
+      </W>,
+    );
+
+    expect(screen.getByTestId('ranking-compact-primary-row')).toHaveStyle({ justifyContent: 'flex-end' });
+    expect(screen.getByTestId('ranking-compact-primary-metadata')).toHaveStyle({ justifyContent: 'flex-end' });
+    expect(screen.getByTestId('ranking-compact-bayesian-row')).toHaveStyle({ justifyContent: 'flex-end' });
   });
 });

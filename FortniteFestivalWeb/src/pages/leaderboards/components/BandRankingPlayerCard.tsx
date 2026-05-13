@@ -5,9 +5,10 @@ import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, 
 import { Gap } from '@festival/theme';
 import { rankColor } from '@festival/core';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
-import { formatBayesianRatingDisplay, formatRankingValueDisplay, formatRating, getRatingPillTier } from '../helpers/rankingHelpers';
+import { formatBayesianRatingDisplay, formatRankingValueDisplay, formatRating, getRatingPillTier, usesPercentileValueDisplay } from '../helpers/rankingHelpers';
 import { getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel } from '../helpers/bandRankingHelpers';
 import { RankingMetadata } from './RankingEntry';
+import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 
 type BandRankingPlayerCardProps = {
   entry: BandRankingEntry;
@@ -192,21 +193,25 @@ function orderFilteredInstruments(instruments: Iterable<ServerInstrumentKey>, ac
 function BandRankingFooter({ entry, metric, rank, totalTeams }: { entry: BandRankingEntry; metric: BandRankingMetric; rank: number; totalTeams?: number }) {
   const rating = getBandRatingForMetric(entry, metric);
   const bayesianRating = getBandBayesianRatingForMetric(entry, metric);
+  const isMobile = useIsMobile();
+  const useCompactMetadata = isMobile && usesPercentileValueDisplay(metric);
 
   return (
-    <span data-testid="band-ranking-metadata" style={bandRankingFooterStyles.metadataRow}>
+    <div data-testid="band-ranking-metadata" style={bandRankingFooterStyles.metadataRow}>
       <RankingMetadata
         ratingLabel={formatRating(rating, metric)}
         songsLabel={getBandSongsLabel(entry, metric)}
         percentileValueDisplay={formatRankingValueDisplay(rating, metric)}
         bayesianRankDisplay={formatBayesianRatingDisplay(bayesianRating, metric)}
         bayesianRankColor={totalTeams ? rankColor(rank, totalTeams) : undefined}
+        twoRowPercentileMetadata={useCompactMetadata}
+        twoRowMetadataAlign="right"
         ratingPillTier={getRatingPillTier(rating, metric)}
         songsLabelPrimary={metric === 'fcrate'}
         songsLabelGoldPrefix={metric === 'fcrate'}
         reserveTenDigitScoreWidth={metric === 'totalscore'}
       />
-    </span>
+    </div>
   );
 }
 

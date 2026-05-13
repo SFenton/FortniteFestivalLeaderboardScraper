@@ -116,6 +116,46 @@ describe('BandRankingsPage', () => {
     });
   });
 
+  it('uses compact Bayesian metadata for mobile adjusted band ranking cards', async () => {
+    stubMatchMedia(true);
+    mockApi.getBandRankings.mockResolvedValue({
+      bandType: 'Band_Duets',
+      comboId: null,
+      rankBy: 'adjusted',
+      page: 1,
+      pageSize: 25,
+      totalTeams: 42,
+      entries: [{
+        ...makeBandEntry(1, ['Alpha', 'Beta']),
+        rawSkillRating: 0.0056,
+        adjustedSkillRating: 0.0409,
+      }],
+    });
+
+    render(
+      <TestProviders route="/leaderboards/bands/Band_Duets?rankBy=adjusted">
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const row = await screen.findByTestId('band-rankings-entry-0');
+    const metadata = within(row).getByTestId('band-ranking-metadata');
+    const primaryRow = within(metadata).getByTestId('ranking-compact-primary-row');
+    const primaryMetadata = within(metadata).getByTestId('ranking-compact-primary-metadata');
+    const bayesianRow = within(metadata).getByTestId('ranking-compact-bayesian-row');
+    expect(within(primaryMetadata).getByTestId('ranking-songs-label')).toHaveTextContent('120 / 160');
+    expect(within(primaryMetadata).getByText('Top 0.56%')).toBeTruthy();
+    expect(within(primaryRow).queryByText('Bayesian-Calculated Rank:')).toBeNull();
+    expect(within(bayesianRow).getByText('Bayesian-Calculated Rank:')).toBeTruthy();
+    expect(within(bayesianRow).getByText('0.0409')).toBeTruthy();
+    expect(within(bayesianRow).getByText('0.0409').style.minWidth).toBe(within(primaryMetadata).getByText('Top 0.56%').style.minWidth);
+    expect(primaryRow).toHaveStyle({ justifyContent: 'flex-end' });
+    expect(primaryMetadata).toHaveStyle({ justifyContent: 'flex-end' });
+    expect(bayesianRow).toHaveStyle({ justifyContent: 'flex-end' });
+  });
+
   it('uses the applied selected-band combo when the route band type matches', async () => {
     render(
       <TestProviders
