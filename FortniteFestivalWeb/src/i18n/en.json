@@ -364,6 +364,7 @@
     "songNotFound": "Song not found",
     "noEntries": "No {{instrument}} entries",
     "noBandScores": "No band scores recorded yet.",
+    "noBandScoresSubtitle": "When {{type}} scores are submitted for this song, they will show up here on the next leaderboard update.",
     "bandScoreFooter": "Rank {{rank}}, season {{season}}, score {{score}}, {{stars}} stars, {{accuracy}}"
   },
   "songBandLeaderboard": {

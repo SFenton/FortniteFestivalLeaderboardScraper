@@ -7,6 +7,7 @@ import type { PlayerBandType, SongBandLeaderboardEntry } from '@festival/core/ap
 import type { SongBandData } from '../../../api/pageCache';
 import { Align, Border, Colors, Cursor, Display, Font, Gap, Justify, Layout, Opacity, Radius, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, TRANSITION_MS, Weight, border, flexColumn, flexRow, frostedCard, padding } from '@festival/theme';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
+import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import SongBandScoreFooter, { SongBandMemberMetadata, formatSongBandAccuracy, getSongBandMemberScoreWidth, getSongBandScoreWidth, hasSongBandMemberAccuracy, hasSongBandMemberStars } from '../../../components/bands/SongBandScoreFooter';
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
@@ -75,8 +76,13 @@ export default function SongBandLeaderboardPreview({
       )}
 
       {!data.error && !hasEntries && (
-        <div style={{ ...styles.messageCard, ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>
-          {t('songDetail.noBandScores')}
+        <div style={{ ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>
+          <InstrumentEmptyState
+            t={t}
+            noMargin
+            subtitleText={t('songDetail.noBandScoresSubtitle', { type: title })}
+            testId={`song-band-empty-${bandType}`}
+          />
         </div>
       )}
 

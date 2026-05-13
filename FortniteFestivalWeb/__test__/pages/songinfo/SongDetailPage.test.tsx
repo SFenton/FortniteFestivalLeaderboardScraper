@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
 import SongDetailPage, { clearSongDetailCache } from '../../../src/pages/songinfo/SongDetailPage';
 import { useSettings } from '../../../src/contexts/SettingsContext';
@@ -220,6 +220,12 @@ function getFirstInstrumentHeader(): HTMLElement {
   return card!.firstElementChild!.firstElementChild as HTMLElement;
 }
 
+const songBandLabels: Record<PlayerBandType, string> = {
+  Band_Duets: 'Duos',
+  Band_Trios: 'Trios',
+  Band_Quad: 'Quads',
+};
+
 function SettingsLeewayButton({ leeway }: { leeway: number; }) {
   const { updateSettings } = useSettings();
 
@@ -409,6 +415,30 @@ describe('SongDetailPage', () => {
     const duosPreview = await screen.findByTestId('song-band-preview-Band_Duets');
     expectBefore(grid, duosPreview);
     expect(getAnimationDelayMs(getFirstInstrumentHeader())).toBeLessThan(getAnimationDelayMs(getSongBandHeader('Band_Duets')));
+  });
+
+  it('renders empty song band previews with the shared title and subtitle treatment', async () => {
+    mockApi.getAllSongBandLeaderboards.mockResolvedValue({
+      songId: 'song-1',
+      bands: SONG_BAND_TYPES.map((bandType) => ({
+        bandType,
+        count: 0,
+        totalEntries: 0,
+        localEntries: 0,
+        entries: [],
+        selectedPlayerEntry: null,
+        selectedBandEntry: null,
+      })),
+    });
+
+    renderSongDetail();
+
+    for (const bandType of SONG_BAND_TYPES) {
+      const emptyState = await screen.findByTestId(`song-band-empty-${bandType}`);
+      expect(within(emptyState).getByText('No scores yet')).toBeDefined();
+      expect(within(emptyState).getByText(`When ${songBandLabels[bandType]} scores are submitted for this song, they will show up here on the next leaderboard update.`)).toBeDefined();
+    }
+    expect(screen.queryByText('No band scores recorded yet.')).toBeNull();
   });
 
   it.each(SONG_BAND_TYPES)('renders selected %s preview before solo instruments and staggers it first', async (bandType) => {
