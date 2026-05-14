@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor, within } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
 import type { QueryClient } from '@tanstack/react-query';
 import { ACCURACY_SCALE } from '@festival/core';
-import { Colors, IconSize, Layout } from '@festival/theme';
+import { Colors } from '@festival/theme';
 import { DEFAULT_INSTRUMENT, type BandDetailResponse } from '@festival/core/api/serverTypes';
 import { queryKeys } from '../../../src/api/queryKeys';
 import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 import type { SelectedBandProfile } from '../../../src/hooks/data/useSelectedProfile';
+import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { useBandPageSelect } from '../../../src/contexts/FabSearchContext';
 
 const mockApi = vi.hoisted(() => ({
   getSongs: vi.fn(),
@@ -50,6 +52,23 @@ const DUET_COMBO_FILTER: AppliedBandComboFilter = {
   ],
   configurations: DEFAULT_CONFIGURATIONS,
 };
+const MATCHING_DUET_COMBO_FILTER: AppliedBandComboFilter = {
+  ...DUET_COMBO_FILTER,
+  bandId: 'band-guid-1',
+  teamKey: 'p1:p2',
+  assignments: [
+    { accountId: 'p1', instrument: 'Solo_Guitar' },
+    { accountId: 'p2', instrument: 'Solo_Bass' },
+  ],
+};
+const MATCHING_ALT_DUET_COMBO_FILTER: AppliedBandComboFilter = {
+  ...MATCHING_DUET_COMBO_FILTER,
+  comboId: 'Solo_Drums+Solo_Vocals',
+  assignments: [
+    { accountId: 'p1', instrument: 'Solo_Drums' },
+    { accountId: 'p2', instrument: 'Solo_Vocals' },
+  ],
+};
 
 beforeAll(() => {
   stubScrollTo();
@@ -77,6 +96,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   localStorage.clear();
   vi.clearAllMocks();
+  setViewportQueries();
   mockUseIsMobile.mockReturnValue(false);
   mockApi.getSongs.mockResolvedValue({
     count: 6,
@@ -252,6 +272,62 @@ afterEach(() => {
 
 const { default: BandPage } = await import('../../../src/pages/band/BandPage');
 
+function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean } = {}) {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query.includes('max-width') ? mobile : query.includes('min-width') ? wide : false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
+function createSelectedBandProfile(): SelectedBandProfile {
+  return {
+    type: 'band',
+    bandId: 'band-guid-1',
+    bandType: 'Band_Duets',
+    teamKey: 'p1:p2',
+    displayName: 'Player One + Player Two',
+    members: [
+      { accountId: 'p1', displayName: 'Player One' },
+      { accountId: 'p2', displayName: 'Player Two' },
+    ],
+  };
+}
+
+function PageQuickLinksHarness() {
+  const pageQuickLinks = usePageQuickLinksController();
+
+  if (!pageQuickLinks.hasPageQuickLinks) return null;
+
+  return (
+    <button type="button" data-testid="test-open-page-quick-links" onClick={() => pageQuickLinks.openPageQuickLinks()}>
+      Open Band Quick Links
+    </button>
+  );
+}
+
+function BandPageSelectHarness() {
+  const { bandPageSelect } = useBandPageSelect();
+
+  return (
+    <>
+      <span data-testid="fab-band-select-registered">{String(!!bandPageSelect)}</span>
+      <button type="button" data-testid="fab-band-select-open" onClick={() => bandPageSelect?.onSelect()}>
+        Select Band
+      </button>
+    </>
+  );
+}
+
 function LocationProbe() {
   const location = useLocation();
   const state = location.state as { preserveShellScrollKey?: string } | null;
@@ -263,7 +339,13 @@ function LocationProbe() {
   );
 }
 
-function renderBandPage(route: string, queryClient: QueryClient = createTestQueryClient(), bandFilter?: AppliedBandComboFilter | null, statisticsBand?: SelectedBandProfile | null) {
+function renderBandPage(
+  route: string,
+  queryClient: QueryClient = createTestQueryClient(),
+  bandFilter?: AppliedBandComboFilter | null,
+  statisticsBand?: SelectedBandProfile | null,
+  options?: { withQuickLinksHarness?: boolean; withBandSelectHarness?: boolean },
+) {
   return render(
     <TestProviders route={route} queryClient={queryClient} bandFilter={bandFilter}>
       <LocationProbe />
@@ -272,6 +354,8 @@ function renderBandPage(route: string, queryClient: QueryClient = createTestQuer
         <Route path="/bands" element={<BandPage />} />
         <Route path="/bands/:bandId" element={<BandPage />} />
       </Routes>
+      {options?.withQuickLinksHarness ? <PageQuickLinksHarness /> : null}
+      {options?.withBandSelectHarness ? <BandPageSelectHarness /> : null}
     </TestProviders>,
   );
 }
@@ -285,17 +369,7 @@ async function advancePastSpinner() {
 
 describe('BandPage', () => {
   it('renders selected band statistics on /statistics without canonicalizing to band detail', async () => {
-    const selectedBand: SelectedBandProfile = {
-      type: 'band',
-      bandId: 'band-guid-1',
-      bandType: 'Band_Duets',
-      teamKey: 'p1:p2',
-      displayName: 'Player One + Player Two',
-      members: [
-        { accountId: 'p1', displayName: 'Player One' },
-        { accountId: 'p2', displayName: 'Player Two' },
-      ],
-    };
+    const selectedBand = createSelectedBandProfile();
 
     renderBandPage('/statistics', createTestQueryClient(), null, selectedBand);
     await advancePastSpinner();
@@ -308,6 +382,143 @@ describe('BandPage', () => {
     const statisticsSection = screen.getByTestId('band-section-statistics');
     expect(statisticsSection).toHaveTextContent('2 / 10');
     expect(statisticsSection).toHaveTextContent('#7');
+  });
+
+  it('suppresses the empty selected band statistics header on mobile without an active combo', async () => {
+    mockUseIsMobile.mockReturnValue(true);
+
+    renderBandPage('/statistics', createTestQueryClient(), null, createSelectedBandProfile());
+    await advancePastSpinner();
+
+    expect(screen.getByTestId('test-header-portal').childElementCount).toBe(0);
+    expect(screen.getByTestId('test-quick-links-portal').childElementCount).toBe(0);
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/statistics');
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
+    expect(screen.getByTestId('band-section-statistics')).toHaveTextContent('2 / 10');
+  });
+
+  it('suppresses the selected band statistics header on mobile with an active combo', async () => {
+    mockUseIsMobile.mockReturnValue(true);
+
+    renderBandPage('/statistics', createTestQueryClient(), MATCHING_DUET_COMBO_FILTER, createSelectedBandProfile());
+    await advancePastSpinner();
+
+    expect(screen.getByTestId('test-header-portal').childElementCount).toBe(0);
+    expect(screen.queryByTestId('band-header-filter-instruments')).toBeNull();
+    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2', 'Solo_Guitar+Solo_Bass');
+    expect(screen.queryByRole('heading', { level: 1, name: 'Player One + Player Two' })).toBeNull();
+  });
+
+  it('filters member card instruments by active combo assignments', async () => {
+    renderBandPage('/statistics', createTestQueryClient(), MATCHING_ALT_DUET_COMBO_FILTER, createSelectedBandProfile());
+    await advancePastSpinner();
+
+    const memberCards = screen.getAllByTestId('band-member-card');
+    expect(within(memberCards[0]!).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(memberCards[0]!).queryByAltText('Solo_Guitar')).toBeNull();
+    expect(within(memberCards[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
+    expect(within(memberCards[1]!).queryByAltText('Solo_Bass')).toBeNull();
+  });
+
+  it('does not fall back to unfiltered member instruments when an active filter lacks a member assignment', async () => {
+    const partialFilter: AppliedBandComboFilter = {
+      ...MATCHING_ALT_DUET_COMBO_FILTER,
+      assignments: [{ accountId: 'p1', instrument: 'Solo_Drums' }],
+    };
+
+    renderBandPage('/statistics', createTestQueryClient(), partialFilter, createSelectedBandProfile());
+    await advancePastSpinner();
+
+    const memberCards = screen.getAllByTestId('band-member-card');
+    expect(within(memberCards[0]!).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(memberCards[1]!).queryAllByRole('img')).toHaveLength(0);
+  });
+
+  it('renders selected band statistics quick links in visual order on wide desktop', async () => {
+    setViewportQueries({ wide: true });
+
+    renderBandPage('/statistics', createTestQueryClient(), null, createSelectedBandProfile());
+    await advancePastSpinner();
+
+    const portal = screen.getByTestId('test-quick-links-portal');
+    const rail = within(portal).getByTestId('band-quick-links-rail');
+    expect(within(rail).getByRole('navigation', { name: 'Quick Links' })).toBeDefined();
+    expect(within(rail).getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Members',
+      'Summary',
+      'Statistics',
+      'Rank History',
+      'Songs',
+    ]);
+    expect(within(rail).getByTestId('band-quick-link-members')).toBeDefined();
+    expect(within(rail).getByTestId('band-quick-link-summary')).toBeDefined();
+    expect(within(rail).getByTestId('band-quick-link-statistics')).toBeDefined();
+    expect(within(rail).getByTestId('band-quick-link-rank-history')).toBeDefined();
+    expect(within(rail).getByTestId('band-quick-link-songs')).toBeDefined();
+  });
+
+  it('scrolls selected band statistics quick links to existing section nodes', async () => {
+    setViewportQueries({ wide: true });
+
+    renderBandPage('/statistics', createTestQueryClient(), null, createSelectedBandProfile());
+    await advancePastSpinner();
+
+    const scrollContainer = screen.getByTestId('test-scroll-container') as HTMLElement;
+    const scrollTo = vi.fn();
+    scrollContainer.scrollTo = scrollTo as unknown as typeof scrollContainer.scrollTo;
+    Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, writable: true, configurable: true });
+    Object.defineProperty(scrollContainer, 'scrollHeight', { value: 5000, writable: true, configurable: true });
+    Object.defineProperty(scrollContainer, 'clientHeight', { value: 800, writable: true, configurable: true });
+    scrollContainer.getBoundingClientRect = vi.fn(() => ({
+      top: 0,
+      left: 0,
+      bottom: 800,
+      right: 1024,
+      width: 1024,
+      height: 800,
+      x: 0,
+      y: 0,
+      toJSON() { return this; },
+    }));
+    screen.getByTestId('band-section-songs').getBoundingClientRect = vi.fn(() => ({
+      top: 640,
+      left: 0,
+      bottom: 1200,
+      right: 1024,
+      width: 1024,
+      height: 560,
+      x: 0,
+      y: 640,
+      toJSON() { return this; },
+    }));
+
+    fireEvent.click(screen.getByTestId('band-quick-link-songs'));
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 608, behavior: 'smooth' });
+  });
+
+  it('registers selected band statistics quick links with the shared controller modal', async () => {
+    renderBandPage('/statistics', createTestQueryClient(), null, createSelectedBandProfile(), { withQuickLinksHarness: true });
+    await advancePastSpinner();
+
+    fireEvent.click(await screen.findByTestId('test-open-page-quick-links'));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Quick Links' });
+    const modalList = screen.getByTestId('band-quick-links-modal-list');
+    expect(within(modalList).getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Members',
+      'Summary',
+      'Statistics',
+      'Rank History',
+      'Songs',
+    ]);
+
+    fireEvent.click(within(modalList).getByTestId('band-quick-link-rank-history'));
+    fireEvent.transitionEnd(dialog);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Quick Links' })).toBeNull();
+    });
   });
 
   it('renders band details from a direct band id route', async () => {
@@ -370,6 +581,30 @@ describe('BandPage', () => {
     expect(screen.getByText('#4.5')).toBeTruthy();
     expect(screen.getByText('Song Alpha')).toBeTruthy();
     expect(screen.getByText('Song Zeta')).toBeTruthy();
+  });
+
+  it('uses instrument empty sections when band best and worst songs are empty', async () => {
+    mockApi.getBandSongs.mockResolvedValueOnce({
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      comboId: null,
+      limit: 5,
+      best: [],
+      worst: [],
+    });
+
+    renderBandPage('/bands/band-guid-1');
+    await advancePastSpinner();
+
+    const bestEmpty = await screen.findByTestId('band-best-songs-empty');
+    const worstEmpty = await screen.findByTestId('band-worst-songs-empty');
+
+    expect(bestEmpty).toHaveTextContent('No ranked band songs yet.');
+    expect(bestEmpty).toHaveTextContent("Player One + Player Two's highest-ranked band songs, sorted by percentile.");
+    expect(worstEmpty).toHaveTextContent('No additional ranked band songs yet.');
+    expect(worstEmpty).toHaveTextContent("Player One + Player Two's lowest-ranked band songs, sorted by percentile.");
+    expect(screen.queryByText('Song Alpha')).toBeNull();
+    expect(screen.queryByText('Song Zeta')).toBeNull();
   });
 
   it.each([
@@ -438,28 +673,37 @@ describe('BandPage', () => {
     expect(localStorage.getItem(SELECTED_PROFILE_STORAGE_KEY)).toBeNull();
   });
 
-  it('renders Select Band Profile on mobile as a compact pulsing two-person circle', async () => {
+  it('registers Select Band for the mobile FAB and keeps select out of PageHeader actions', async () => {
     mockUseIsMobile.mockReturnValue(true);
 
-    renderBandPage('/bands/band-guid-1');
+    renderBandPage('/bands/band-guid-1', createTestQueryClient(), undefined, undefined, { withBandSelectHarness: true });
     await advancePastSpinner();
 
-    const selectButton = screen.getByRole('button', { name: 'Select Band Profile' });
-    const selectButtonStyle = selectButton.getAttribute('style') ?? '';
-    expect(selectButtonStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
-    expect(selectButtonStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
-    expect(selectButtonStyle).toContain('border-radius: 999px');
-    expect(selectButton.className).toContain('profileCircleBreathe');
-
-    const selectIcon = selectButton.querySelector('svg');
-    expect(selectIcon).not.toBeNull();
-    expect(selectIcon).toHaveAttribute('height', `${IconSize.action}`);
-    expect(selectIcon).toHaveAttribute('width', `${IconSize.action}`);
-
-    expect(screen.getByTestId('band-select-profile-slot')).toHaveStyle({
-      maxWidth: `${Layout.pillButtonHeight}px`,
-      opacity: '1',
+    await waitFor(() => {
+      expect(screen.getByTestId('fab-band-select-registered').textContent).toBe('true');
     });
+    expect(screen.queryByRole('button', { name: 'Select Band Profile' })).toBeNull();
+    expect(screen.queryByTestId('band-select-profile-slot')).toBeNull();
+    expect(within(screen.getByTestId('scroll-area')).getByRole('heading', { name: 'Player One + Player Two' })).toBeDefined();
+    expect(within(screen.getByTestId('test-header-portal')).queryByRole('heading', { name: 'Player One + Player Two' })).toBeNull();
+
+    fireEvent.click(screen.getByTestId('fab-band-select-open'));
+
+    expect(JSON.parse(localStorage.getItem(SELECTED_PROFILE_STORAGE_KEY)!)).toEqual({
+      type: 'band',
+      bandId: 'band-guid-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'Player One + Player Two',
+      members: [
+        { accountId: 'p1', displayName: 'Player One' },
+        { accountId: 'p2', displayName: 'Player Two' },
+      ],
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('current-location')).toHaveTextContent('/statistics');
+    });
+    expect(screen.getByTestId('location-preserve-scroll')).toHaveTextContent('true');
   });
 
   it('selects the current band with member summaries when Select Band Profile is clicked', async () => {
@@ -729,6 +973,7 @@ describe('BandPage', () => {
     expect(mockApi.getBandRanking).not.toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', DUET_COMBO_FILTER.comboId);
     expect(mockApi.getBandRankHistory).toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', 30, undefined);
     expect(mockApi.getBandSongs).toHaveBeenCalledWith('Band_Quad', 'q1:q2:q3:q4', 5, undefined);
+    expect(screen.queryByTestId('band-header-filter-instruments')).toBeNull();
   });
 
   it('seeds band detail cache from contextual ranking configurations', async () => {

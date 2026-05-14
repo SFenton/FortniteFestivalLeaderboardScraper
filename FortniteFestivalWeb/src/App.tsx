@@ -837,7 +837,7 @@ function AppShell() {
     );
   const songsDockActions: ActionItem[] = [
     { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: fabSearch.songsSortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
-    ...(player || selectedProfile?.type === 'band' ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: fabSearch.songsFilterActive, icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
+    ...(player || selectedProfile?.type === 'band' ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: fabSearch.songsFilterActive || bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: bandFilterIconAccessory, onPress: () => fabSearch.openFilter() }] : []),
   ];
   const showMobileFab = isMobile && !notificationsOpen;
 
@@ -1024,14 +1024,16 @@ function AppShell() {
       {showMobileFab && RoutePatterns.rivals.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
-          actionGroups={withPageQuickLinks(
-            [{
+          ariaLabel={getFabQuickLinksActionLabel(t)}
+          sideActions={[
+            {
               label: fabSearch.rivalsActiveTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong'),
               icon: fabSearch.rivalsActiveTab === 'song' ? <IoTrophy size={Size.iconFab} /> : <IoMusicalNotes size={Size.iconFab} />,
               onPress: () => fabSearch.rivalsToggleTab(),
-            }],
-          )}
-          onPress={() => {}}
+            },
+          ]}
+          directAction={pageQuickLinks.hasPageQuickLinks}
+          onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
       {showMobileFab && RoutePatterns.playerBands.test(location.pathname) && (

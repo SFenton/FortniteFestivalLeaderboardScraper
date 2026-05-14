@@ -248,6 +248,7 @@ import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
 import { contentHash } from '../../src/firstRun/types';
 import { shopSlides } from '../../src/pages/shop/firstRun';
+import { defaultSongSettings } from '../../src/utils/songSettings';
 
 function setMobile() {
   Object.defineProperty(window, 'matchMedia', {
@@ -869,13 +870,78 @@ describe('App — mobile FAB branches', () => {
     expect(within(dock).queryByText('Select Profile')).toBeNull();
     expect(within(dock).queryByText('TrackedP + BandMate')).toBeNull();
     expect(within(dock).queryByText('Item Shop')).toBeNull();
+    expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(within(filterButton).queryByAltText('Solo_Guitar')).toBeNull();
+    expect(screen.queryByTestId('fab-side-actions')).toBeNull();
     fireEvent.click(filterButton);
 
     const dialog = await screen.findByRole('dialog', { name: 'Filter Songs' });
+    expect(await within(dialog).findByText('Instrument #1')).toBeDefined();
     expect(within(dialog).getByText('Selected Band Scores')).toBeDefined();
     expect(within(dialog).getByText('Filter songs by whether TrackedP + BandMate has a band score recorded.')).toBeDefined();
     expect(within(dialog).getByText('Has Selected Band Score')).toBeDefined();
     expect(within(dialog).queryByText('Global Score & FC Toggles')).toBeNull();
+  });
+
+  it('shows active selected-band combo instruments in the mobile Songs filter dock action', async () => {
+    setMobile();
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    }));
+    localStorage.setItem('fst:bandFilter', JSON.stringify({
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'p1', instrument: 'Solo_Guitar' },
+        { accountId: 'p2', instrument: 'Solo_Bass' },
+      ],
+    }));
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandSongRows).toHaveBeenCalledWith('Band_Duets', 'p1:p2', 'Solo_Guitar+Solo_Bass');
+    }, { timeout: 5000 });
+
+    const dock = document.querySelector('.fab-search-dock') as HTMLElement;
+    const filterButton = within(dock).getByRole('button', { name: 'Filter Songs' });
+    expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
+    expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
+    expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterButton).getByTestId('fab-band-filter-instruments')).toBeDefined();
+    expect(screen.queryByTestId('fab-side-actions')).toBeNull();
+
+    fireEvent.click(filterButton);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Filter Songs' });
+    expect(await within(dialog).findByText('Instrument #1')).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('shows Songs filter-only active state without combo instruments in the mobile dock action', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    const songSettings = defaultSongSettings();
+    songSettings.filters.hasScores = { Solo_Guitar: true };
+    localStorage.setItem('fst:songSettings', JSON.stringify(songSettings));
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+
+    const dock = document.querySelector('.fab-search-dock') as HTMLElement;
+    const filterButton = within(dock).getByRole('button', { name: 'Filter Songs' });
+    expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
+    expect(within(filterButton).queryByAltText('Solo_Guitar')).toBeNull();
+    expect(screen.queryByTestId('fab-band-filter-instruments')).toBeNull();
   });
 
   it('keeps the selected band type filter in the mobile Songs FAB menu', async () => {
@@ -1356,6 +1422,8 @@ describe('App — mobile FAB branches', () => {
     expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
     expect(within(filterButton).getByTestId('fab-band-filter-instruments')).toBeDefined();
     expect(within(filterButton).queryByText('Lead / Bass')).toBeNull();
+    expect(screen.queryByTestId('band-header-filter-instruments')).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1, name: 'TrackedP + BandMate' })).toBeNull();
 
     fireEvent.click(filterButton);
 
@@ -1464,25 +1532,33 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
-  it('keeps Rivals quick links in the same FAB section as the tab toggle on mobile', async () => {
+  it('opens Rivals quick links directly from the mobile FAB with the tab toggle beside it', async () => {
     setMobile();
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
     window.location.hash = '#/rivals';
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getAllByText('Quick Links').length).toBeGreaterThan(0);
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
     }, { timeout: 5000 });
 
-    fireEvent.click(screen.getByLabelText('Actions'));
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const toggleButton = within(sideActions).getByRole('button', { name: 'Leaderboard Rivals' });
+    expect(within(toggleButton).getByText('Leaderboard Rivals')).toBeDefined();
+    expect(screen.getAllByRole('button', { name: 'Quick Links' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Leaderboard Rivals' })).toHaveLength(1);
+    expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    const menu = await screen.findByTestId('fab-menu');
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
+
+    fireEvent.click(toggleButton);
+
     await waitFor(() => {
-      expect(within(menu).getByText('Quick Links')).toBeDefined();
-      expect(within(menu).getByText('Leaderboard Rivals')).toBeDefined();
+      expect(window.location.hash).toBe('#/rivals?tab=leaderboard');
     });
-    expect(within(menu).queryByText('Item Shop')).toBeNull();
-    expect(within(menu).queryAllByTestId('fab-menu-divider')).toHaveLength(0);
 
     window.location.hash = '';
   });

@@ -31,7 +31,6 @@ import Page from '../Page';
 import { rivalsSlides } from './firstRun';
 import LeaderboardRivalsTab, { type LeaderboardRivalQuickLink } from './LeaderboardRivalsTab';
 import { ActionPill } from '../../components/common/ActionPill';
-import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import RankByModal from '../leaderboards/modals/RankByModal';
@@ -435,7 +434,7 @@ export default function RivalsPage() {
     };
   }, [activeItemId, activeTab, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, leaderboardRailRevealDelayMs, openQuickLinks, phase, quickLinkItems, quickLinksOpen, songTabDesktopRailRevealDelayMs, t]);
 
-  const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
+  const compactQuickLinksAction = !isWideDesktop && !isMobile && pageQuickLinks
     ? (
       <ActionPill
         icon={<IoCompass size={Size.iconAction} />}
@@ -453,14 +452,6 @@ export default function RivalsPage() {
     />
   );
 
-  const mobileHeaderActions = (
-    <>
-      {toggleTabAction}
-      {compactQuickLinksAction}
-    </>
-  );
-  const showMobilePageHeader = !isMobile || settings.showButtonsInHeaderMobile;
-
   /* v8 ignore start -- JSX render tree */
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
 
@@ -472,31 +463,22 @@ export default function RivalsPage() {
       containerStyle={styles.container}
       quickLinks={pageQuickLinks}
       before={
-        isMobile ? (
-          <PageHeaderTransition visible={showMobilePageHeader}>
-            <PageHeader
-              title={undefined}
-              actions={phase === LoadPhase.ContentIn ? mobileHeaderActions : undefined}
-            />
-          </PageHeaderTransition>
-        ) : showMobilePageHeader ? (
+        !isMobile ? (
           <PageHeader
-            title={isMobile ? undefined : (activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard'))}
+            title={activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard')}
             actions={phase === LoadPhase.ContentIn ? (
-              isMobile ? mobileHeaderActions : (
-                <>
-                  {toggleTabAction}
-                  {compactQuickLinksAction}
-                  {activeTab === 'leaderboard' && (
-                    <ActionPill
-                      icon={<IoOptions size={Size.iconAction} />}
-                      label={t(`rankings.metric.${rankBy}`)}
-                      onClick={openMetricModal}
-                      active={rankBy !== 'totalscore'}
-                    />
-                  )}
-                </>
-              )
+              <>
+                {toggleTabAction}
+                {compactQuickLinksAction}
+                {activeTab === 'leaderboard' && (
+                  <ActionPill
+                    icon={<IoOptions size={Size.iconAction} />}
+                    label={t(`rankings.metric.${rankBy}`)}
+                    onClick={openMetricModal}
+                    active={rankBy !== 'totalscore'}
+                  />
+                )}
+              </>
             ) : undefined}
           />
         ) : undefined

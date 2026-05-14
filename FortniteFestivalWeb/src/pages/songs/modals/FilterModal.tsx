@@ -12,6 +12,14 @@ import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/se
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '@festival/core/api/serverTypes';
 import type { SongFilters } from '../../../utils/songSettings';
+import type { SelectedBandProfile } from '../../../hooks/data/useSelectedProfile';
+import type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
+import {
+  areBandInstrumentDraftsEqual,
+  BandInstrumentFilterInvalidSelectionAlert,
+  BandInstrumentFilterPicker,
+  useBandInstrumentFilterController,
+} from '../../band/modals/BandInstrumentFilterPicker';
 import { useSettings, isInstrumentVisible } from '../../../contexts/SettingsContext';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import { useShopState } from '../../../hooks/data/useShopState';
@@ -21,6 +29,18 @@ export type FilterDraft = SongFilters & {
   instrumentFilter: InstrumentKey | null;
 };
 
+type BandComboFilterProps = {
+  selectedBand: SelectedBandProfile;
+  appliedAssignments: readonly BandInstrumentFilterAssignment[];
+  onApply: (payload: BandInstrumentFilterApplyPayload) => void;
+  onReset: () => void;
+};
+
+type FilterModalDraftState = {
+  filters: FilterDraft;
+  bandCombo: readonly (InstrumentKey | null)[];
+};
+
 type FilterModalProps = {
   visible: boolean;
   draft: FilterDraft;
@@ -28,6 +48,9 @@ type FilterModalProps = {
   availableSeasons: number[];
   selectedBandMode?: boolean;
   selectedBandName?: string;
+  selectedBandMembers?: readonly { accountId: string; displayName: string }[];
+  bandComboInstruments?: readonly InstrumentKey[];
+  bandComboFilter?: BandComboFilterProps;
   onChange: (d: FilterDraft) => void;
   onCancel: () => void;
   onReset: () => void;
@@ -35,12 +58,22 @@ type FilterModalProps = {
 };
 
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
+const noopBandApply = () => {};
+const noopBandReset = () => {};
 
-export default function FilterModal({ visible, draft, savedDraft, availableSeasons, selectedBandMode = false, selectedBandName, onChange, onCancel, onReset, onApply }: FilterModalProps) {
+export default function FilterModal({ visible, draft, savedDraft, availableSeasons, selectedBandMode = false, selectedBandName, selectedBandMembers = [], bandComboInstruments = [], bandComboFilter, onChange, onCancel, onReset, onApply }: FilterModalProps) {
   const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
   const { isShopVisible } = useShopState();
   const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
+  const showBandComboSection = selectedBandMode && !!bandComboFilter;
+  const bandComboController = useBandInstrumentFilterController({
+    visible: visible && showBandComboSection,
+    selectedBand: bandComboFilter?.selectedBand ?? null,
+    appliedAssignments: bandComboFilter?.appliedAssignments ?? [],
+    onApply: bandComboFilter?.onApply ?? noopBandApply,
+    onReset: bandComboFilter?.onReset ?? noopBandReset,
+  });
 
   const toggleMissingScores = (key: InstrumentKey) => {
     onChange({ ...draft, missingScores: { ...draft.missingScores, [key]: !(draft.missingScores[key] ?? false) } });
@@ -65,6 +98,28 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
     const next = !draft.selectedBandMissingScore;
     onChange({ ...draft, selectedBandMissingScore: next, selectedBandHasScore: next ? false : draft.selectedBandHasScore });
   };
+  const toggleIndividualBandMemberHasScore = (accountId: string) => {
+    const current = draft.individualBandMemberScoreFilters[accountId] ?? {};
+    const next = !(current.hasScore ?? false);
+    onChange({
+      ...draft,
+      individualBandMemberScoreFilters: {
+        ...draft.individualBandMemberScoreFilters,
+        [accountId]: { hasScore: next, missingScore: next ? false : current.missingScore ?? false },
+      },
+    });
+  };
+  const toggleIndividualBandMemberMissingScore = (accountId: string) => {
+    const current = draft.individualBandMemberScoreFilters[accountId] ?? {};
+    const next = !(current.missingScore ?? false);
+    onChange({
+      ...draft,
+      individualBandMemberScoreFilters: {
+        ...draft.individualBandMemberScoreFilters,
+        [accountId]: { missingScore: next, hasScore: next ? false : current.hasScore ?? false },
+      },
+    });
+  };
 
   // Global toggles: set/unset all visible instruments at once
   const allOn = (map: Record<string, boolean>) => visibleKeys.every(k => map[k] === true);
@@ -85,10 +140,36 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
     onChange({ ...draft, instrumentFilter: key });
   }, [draft, onChange]);
 
-  const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(draft, savedDraft, onCancel);
+  const showIndividualBandMemberFilters = selectedBandMode && selectedBandMembers.length > 0 && bandComboInstruments.length > 0;
+
+  const modalDraft = useMemo<FilterModalDraftState>(() => ({
+    filters: draft,
+    bandCombo: showBandComboSection ? bandComboController.draft : [],
+  }), [bandComboController.draft, draft, showBandComboSection]);
+  const modalSavedDraft = useMemo<FilterModalDraftState | undefined>(() => (
+    savedDraft ? {
+      filters: savedDraft,
+      bandCombo: showBandComboSection ? bandComboController.savedDraft : [],
+    } : undefined
+  ), [bandComboController.savedDraft, savedDraft, showBandComboSection]);
+
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(modalDraft, modalSavedDraft, onCancel, areFilterModalDraftsEqual);
+  const bandComboBlocksApply = showBandComboSection && bandComboController.hasChanges && bandComboController.applyDisabled;
+
+  const handleReset = useCallback(() => {
+    onReset();
+    if (showBandComboSection) bandComboController.resetDraft();
+  }, [bandComboController, onReset, showBandComboSection]);
+
+  const handleApply = useCallback(() => {
+    if (showBandComboSection && bandComboController.hasChanges && !bandComboController.apply()) return;
+    onApply();
+  }, [bandComboController, onApply, showBandComboSection]);
 
   return (
-    <Modal visible={visible} title={t('common.filterSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('filter.resetLabel')} resetHint={t('filter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (
+    <Modal visible={visible} title={t('common.filterSongs')} onClose={handleClose} onApply={handleApply} onReset={handleReset} resetLabel={t('filter.resetLabel')} resetHint={t('filter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges || bandComboBlocksApply} afterPanel={showBandComboSection && bandComboController.pendingInvalidSelection ? (
+        <BandInstrumentFilterInvalidSelectionAlert controller={bandComboController} />
+      ) : confirmOpen ? (
         <ConfirmAlert
           title={t('filter.cancelTitle')}
           message={t('filter.cancelMessage')}
@@ -97,6 +178,10 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
           onExitComplete={() => setConfirmOpen(false)}
         />
       ) : null}>
+      {showBandComboSection ? (
+        <BandInstrumentFilterPicker controller={bandComboController} compact />
+      ) : null}
+
       {selectedBandMode ? (
         <ModalSection title={t('filter.selectedBandScores')} hint={t('filter.selectedBandScoresHint', { band: selectedBandName ?? t('band.title') })}>
           <ToggleRow
@@ -192,6 +277,32 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
         </ModalSection>
       </>)}
 
+      {showIndividualBandMemberFilters ? (
+        <ModalSection>
+          <Accordion title={t('filter.individualBandMemberFilters')} hint={t('filter.individualBandMemberFiltersHint')}>
+            {selectedBandMembers.map(member => {
+              const memberFilter = draft.individualBandMemberScoreFilters[member.accountId] ?? {};
+              return (
+                <div key={member.accountId}>
+                  <ToggleRow
+                    label={t('filter.individualBandMemberHasScore', { bandmate: member.displayName })}
+                    description={t('filter.individualBandMemberHasScoreDesc', { bandmate: member.displayName })}
+                    checked={memberFilter.hasScore ?? false}
+                    onToggle={() => toggleIndividualBandMemberHasScore(member.accountId)}
+                  />
+                  <ToggleRow
+                    label={t('filter.individualBandMemberMissingScore', { bandmate: member.displayName })}
+                    description={t('filter.individualBandMemberMissingScoreDesc', { bandmate: member.displayName })}
+                    checked={memberFilter.missingScore ?? false}
+                    onToggle={() => toggleIndividualBandMemberMissingScore(member.accountId)}
+                  />
+                </div>
+              );
+            })}
+          </Accordion>
+        </ModalSection>
+      ) : null}
+
       {/* Item Shop filters */}
       {isShopVisible && (
         <ModalSection>
@@ -262,6 +373,11 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       )}
     </Modal>
   );
+}
+
+function areFilterModalDraftsEqual(a: FilterModalDraftState, b: FilterModalDraftState) {
+  return JSON.stringify(a.filters) === JSON.stringify(b.filters)
+    && areBandInstrumentDraftsEqual(a.bandCombo, b.bandCombo);
 }
 
 /* -- Toggle components for composite filters -- */

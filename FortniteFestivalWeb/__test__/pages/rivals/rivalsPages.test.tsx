@@ -59,6 +59,22 @@ beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
   stubElementDimensions(800);
+  const createRange = document.createRange.bind(document);
+  document.createRange = () => {
+    const range = createRange();
+    range.getBoundingClientRect = () => ({
+      top: 0,
+      left: 0,
+      bottom: 20,
+      right: 120,
+      width: 120,
+      height: 20,
+      x: 0,
+      y: 0,
+      toJSON() { return this; },
+    });
+    return range;
+  };
 });
 
 beforeEach(() => {
@@ -372,7 +388,7 @@ describe('RivalsPage quick links', () => {
     expect(guitarIcon).toHaveStyle({ transform: 'scale(1.15)', transformOrigin: 'center' });
   });
 
-  it('opens the rivals quick links modal from the mobile header trigger', async () => {
+  it('registers mobile quick links without rendering header action space', async () => {
     setViewportQueries({ mobile: true, wide: false });
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-mobile', displayName: 'TestPlayer' }));
 
@@ -380,22 +396,17 @@ describe('RivalsPage quick links', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(screen.queryByRole('heading', { name: 'Song Rivals' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Leaderboard Rivals' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
 
-    const toggleButton = await screen.findByRole('button', { name: 'Leaderboard Rivals' });
-    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
-    const actionButtons = within(toggleButton.parentElement as HTMLElement).getAllByRole('button');
-
-    expect(toggleButton.parentElement).toBe(quickLinksButton.parentElement);
-    expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
-    expect(actionButtons.indexOf(toggleButton)).toBeLessThan(actionButtons.indexOf(quickLinksButton));
-    await act(async () => { fireEvent.click(quickLinksButton); });
+    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
 
     const list = await screen.findByTestId('rivals-quick-links-modal-list');
     expect(within(list).getByTestId('rivals-quick-link-common')).toBeTruthy();
     expect(within(list).queryByTestId('rivals-quick-link-combo')).toBeNull();
   });
 
-  it('shows the leaderboard toggle and quick links pill on mobile even when legacy overrides disable leaderboards', async () => {
+  it('does not render mobile header action space when legacy overrides disable leaderboards', async () => {
     setViewportQueries({ mobile: true, wide: false });
     localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ leaderboards: false }));
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-mobile-no-leaderboards', displayName: 'TestPlayer' }));
@@ -404,13 +415,12 @@ describe('RivalsPage quick links', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
-    const toggleButton = await screen.findByRole('button', { name: 'Leaderboard Rivals' });
-    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
-    expect(toggleButton.parentElement).toBe(quickLinksButton.parentElement);
-    expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
+    expect(screen.queryByRole('button', { name: 'Leaderboard Rivals' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(await screen.findByTestId('test-open-page-quick-links')).toBeTruthy();
   });
 
-  it('shows quick links to the right of Song Rivals on the mobile leaderboard tab', async () => {
+  it('registers mobile leaderboard-tab quick links without rendering header action space', async () => {
     setViewportQueries({ mobile: true, wide: false });
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-rivals-quick-links-mobile-leaderboard', displayName: 'TestPlayer' }));
 
@@ -419,16 +429,10 @@ describe('RivalsPage quick links', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
     expect(screen.queryByRole('heading', { name: 'Leaderboard Rivals' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Song Rivals' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
 
-    const toggleButton = await screen.findByRole('button', { name: 'Song Rivals' });
-    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
-    const actionButtons = within(toggleButton.parentElement as HTMLElement).getAllByRole('button');
-
-    expect(toggleButton.parentElement).toBe(quickLinksButton.parentElement);
-    expect(quickLinksButton.parentElement).toHaveStyle({ marginLeft: 'auto' });
-    expect(actionButtons.indexOf(toggleButton)).toBeLessThan(actionButtons.indexOf(quickLinksButton));
-
-    await act(async () => { fireEvent.click(quickLinksButton); });
+    await act(async () => { fireEvent.click(await screen.findByTestId('test-open-page-quick-links')); });
 
     const list = await screen.findByTestId('rivals-quick-links-modal-list');
     expect(within(list).getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();

@@ -113,7 +113,7 @@ export default function FloatingActionButton({
   const hasDockMainFab = directAction || hasMenuActions;
   const dockActionCount = dockActions?.length ?? 0;
   const dockMeasurementSignature = (dockActions ?? [])
-    .map(action => `${action.label}\u001f${action.displayLabel ?? ''}`)
+    .map(action => `${action.label}\u001f${action.displayLabel ?? ''}\u001f${action.iconAccessory ? 'accessory' : ''}`)
     .join('\u001e');
   const searchGuardActive = searchVisible && searchFocused;
   const isSongsSearch = mode === 'songs' && searchVisible;
@@ -220,7 +220,9 @@ export default function FloatingActionButton({
 
     const measuredWidths = measuredControls.map(control => Math.ceil(control.getBoundingClientRect().width || control.offsetWidth || Layout.fabSize));
     const searchWidth = Math.max(Layout.fabSize, measuredWidths[0] ?? Layout.fabSize);
-    const actionWidths = Array.from({ length: dockActionCount }, () => Layout.fabSize);
+    const actionWidths = (dockActions ?? []).map((action, index) => (
+      action.iconAccessory ? Math.max(Layout.fabSize, measuredWidths[index + 1] ?? Layout.fabSize) : Layout.fabSize
+    ));
     const visibleControlCount = 1 + actionWidths.length;
     const actionWidthsTotal = actionWidths.reduce((total, width) => total + width, 0);
     const labelGapTotal = DOCK_LABEL_MIN_GAP * visibleControlCount;
@@ -249,7 +251,7 @@ export default function FloatingActionButton({
       return nextLayout;
     });
     revealDockLayout();
-  }, [dockActionCount, hasDockMainFab, revealDockLayout, useSongsDock]);
+  }, [dockActionCount, dockMeasurementSignature, hasDockMainFab, revealDockLayout, useSongsDock]);
 
   useLayoutEffect(() => {
     if (!useSongsDock) {
@@ -514,7 +516,7 @@ export default function FloatingActionButton({
   const dockVisibleContentStyle = dockLayoutReady ? s.dockVisibleContentReady : s.dockVisibleContentPending;
   const dockAnchorSpacerStyle = searchInputMounted ? s.dockAnchorSpacerExpanded : s.dockAnchorSpacer;
   const getDockActionSlotStyle = useCallback((actionIndex: number) => {
-    const actionWidth = dockLabelsEnabled ? (dockLabelLayout.actionWidths[actionIndex] ?? Layout.fabSize) : Layout.fabSize;
+    const actionWidth = dockLabelLayout.actionWidths[actionIndex] ?? Layout.fabSize;
     const sizedSlotStyle = { width: actionWidth, flex: `0 0 ${actionWidth}px` };
     if (dockActionsPhase === 'visible') return gateDockInitialTransition({ ...s.dockActionSlot, ...sizedSlotStyle });
     if (dockActionsPhase === 'fadingOut') return gateDockInitialTransition({ ...s.dockActionSlotFadingOut, ...sizedSlotStyle });
@@ -542,9 +544,10 @@ export default function FloatingActionButton({
       {label && <span style={s.fabLabel}>{label}</span>}
     </>
   );
-  const getDockActionButtonStyle = useCallback((active?: boolean) => (
-    active ? s.fabActionCircleActive : s.fabActionCircle
-  ), [s.fabActionCircle, s.fabActionCircleActive]);
+  const getDockActionButtonStyle = useCallback((action: ActionItem) => {
+    if (action.iconAccessory) return action.active ? s.fabActionPillActive : s.fabActionPill;
+    return action.active ? s.fabActionCircleActive : s.fabActionCircle;
+  }, [s.fabActionCircle, s.fabActionCircleActive, s.fabActionPill, s.fabActionPillActive]);
   const getSideActionButtonStyle = useCallback((action: ActionItem) => {
     if (action.iconOnly && action.iconAccessory) return action.active ? s.fabActionPillActive : s.fabActionPill;
     if (action.iconOnly) return action.active ? s.fabActionCircleActive : s.fabActionCircle;
@@ -630,7 +633,7 @@ export default function FloatingActionButton({
               {(dockActions ?? []).map((action, index) => (
                 <div key={action.label} style={s.fabPill} data-dock-label-measure="control" data-dock-label-index={index + 1}>
                   {action.icon}
-                  <span style={s.dockButtonLabel}>{action.displayLabel ?? action.label}</span>
+                  {action.iconAccessory ?? <span style={s.dockButtonLabel}>{action.displayLabel ?? action.label}</span>}
                 </div>
               ))}
             </div>
@@ -699,12 +702,13 @@ export default function FloatingActionButton({
                   <div key={action.label} style={getDockActionSlotStyle(index)}>
                     <button
                       type="button"
-                      style={getDockActionButtonStyle(action.active)}
+                      style={getDockActionButtonStyle(action)}
                       aria-label={action.label}
                       title={action.label}
                       onClick={action.onPress}
                     >
                       {action.icon}
+                      {action.iconAccessory}
                     </button>
                   </div>
                 ))}

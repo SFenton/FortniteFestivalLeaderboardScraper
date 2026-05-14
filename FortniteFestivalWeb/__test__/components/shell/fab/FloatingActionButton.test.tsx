@@ -434,6 +434,43 @@ describe('FloatingActionButton', () => {
     expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
   });
 
+  it('renders dock action accessories inside a compact active pill', () => {
+    mockDockLabelMeasurements(420, [104, 84, 112]);
+
+    renderFAB({
+      defaultOpen: true,
+      placeholder: 'Search songs...',
+      dockActions: [
+        { label: 'Sort Songs', displayLabel: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+        {
+          label: 'Filter Songs',
+          displayLabel: 'Filter',
+          active: true,
+          icon: <span data-testid="filter-icon">F</span>,
+          iconAccessory: (
+            <span data-testid="combo-icons">
+              <img alt="Solo_Guitar" />
+              <img alt="Solo_Bass" />
+            </span>
+          ),
+          onPress: vi.fn(),
+        },
+      ],
+      directAction: true,
+      ariaLabel: 'Quick Links',
+      onPress: vi.fn(),
+    });
+
+    const filterButton = screen.getByRole('button', { name: 'Filter Songs' });
+
+    expect(within(filterButton).getByTestId('filter-icon')).toBeTruthy();
+    expect(within(filterButton).getByTestId('combo-icons')).toBeTruthy();
+    expect(within(filterButton).queryByText('Filter')).toBeNull();
+    expect(filterButton.parentElement).toHaveStyle({ width: '112px' });
+    expect(filterButton.style.backgroundColor).toBe('rgb(45, 130, 230)');
+    expect(filterButton.style.backgroundImage).toBe('none');
+  });
+
   it('keeps dock controls icon-only when measured labels do not fit', () => {
     mockDockLabelMeasurements(280, [104, 84, 92]);
 

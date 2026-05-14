@@ -3,12 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type AnimationEvent,
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { IoChevronForward, IoPeople } from 'react-icons/io5';
+import { IoChevronForward, IoList, IoMusicalNotes, IoPeople, IoStatsChart, IoTrophy } from 'react-icons/io5';
 import { DEFAULT_INSTRUMENT, type BandDetailResponse, type BandRankingDto, type BandRankingMetric, type BandType, type PlayerBandEntry, type PlayerBandMember, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { ACCURACY_SCALE, LoadPhase } from '@festival/core';
 import { Colors, Font, Gap, IconSize, Layout, Radius, TRANSITION_MS, Weight, flexColumn, flexRow, frostedCard, transition, transitions } from '@festival/theme';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
+import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
@@ -16,9 +17,12 @@ import { SelectProfilePill } from '../../components/player/SelectProfilePill';
 import StatBox from '../../components/player/StatBox';
 import GoldStars from '../../components/songs/metadata/GoldStars';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
+import { useBandPageSelect } from '../../contexts/FabSearchContext';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useBandRankHistory } from '../../hooks/chart/useBandRankHistory';
+import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
-import { useIsMobile } from '../../hooks/ui/useIsMobile';
+import { useIsMobile, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useSelectedProfile, type SelectedBandProfile } from '../../hooks/data/useSelectedProfile';
 import { defaultSongFilters, loadSongSettings, saveSongSettings, type SongSettings } from '../../utils/songSettings';
@@ -51,6 +55,20 @@ const SELECT_BAND_PROFILE_ACTION_SLOT_SHADOW_SAFE_STYLE: CSSProperties = {
   padding: SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER,
   margin: -SELECT_BAND_PROFILE_ACTION_SHADOW_GUTTER,
 };
+const INLINE_MOBILE_PAGE_HEADER_STYLE: CSSProperties = {
+  paddingLeft: 0,
+  paddingRight: 0,
+};
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
+const HEADER_FILTER_INSTRUMENT_ICON_SIZE = 32;
+
+type BandQuickLinkId = 'members' | 'summary' | 'statistics' | 'rank-history' | 'songs';
+
+type BandQuickLink = PageQuickLinkItem & {
+  id: BandQuickLinkId;
+};
+
+type MemberInstrumentFilter = ReadonlyMap<string, ServerInstrumentKey>;
 
 type BandPageProps = {
   statisticsBand?: SelectedBandProfile | null;
@@ -64,6 +82,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { profile, selectBand } = useSelectedProfile();
+  const { registerBandPageSelect } = useBandPageSelect();
   const appliedBandComboFilter = useAppliedBandComboFilter();
 
   const isStatisticsBandMode = !!statisticsBand;
@@ -204,6 +223,8 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const { phase, shouldStagger } = usePageTransition(`band:${scopedPageKey}`, !loading && !secondaryLoading, hasCachedData);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   const isMobile = useIsMobile();
+  const isWideDesktop = useIsWideDesktop();
+  const scrollContainerRef = useScrollContainer();
   const styles = useStyles();
 
   const title = resolvedTitle ?? routeNames ?? genericBandTitle;
@@ -213,6 +234,27 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
         count: payload.band.appearanceCount ?? 0,
       })
     : undefined;
+  const activeFilterInstrumentByAccountId = useMemo<MemberInstrumentFilter | null>(
+    () => activeComboId && appliedBandComboFilter?.assignments.length
+      ? new Map(appliedBandComboFilter.assignments.map(assignment => [assignment.accountId, assignment.instrument]))
+      : null,
+    [activeComboId, appliedBandComboFilter],
+  );
+  const activeFilterInstruments = activeFilterInstrumentByAccountId
+    ? Array.from(activeFilterInstrumentByAccountId.values())
+    : [];
+  const bandFilterHeaderIcons = activeFilterInstruments.length > 0 ? (
+    <div data-testid="band-header-filter-instruments" aria-hidden="true" style={styles.headerFilterInstruments}>
+      {activeFilterInstruments.map((instrument, index) => (
+        <InstrumentIcon
+          key={`${instrument}:${index}`}
+          instrument={instrument}
+          size={HEADER_FILTER_INSTRUMENT_ICON_SIZE}
+          style={styles.headerFilterInstrumentIcon}
+        />
+      ))}
+    </div>
+  ) : undefined;
 
   const isCurrentBandSelected = !!payload && profile?.type === 'band'
     && profile.bandId === payload.band.bandId
@@ -276,6 +318,16 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
     }
   }, [buildSelectedBand, location.pathname, navigate, selectBand]);
 
+  useEffect(() => {
+    if (!selectBandProfileVisible) {
+      registerBandPageSelect(null);
+      return;
+    }
+
+    registerBandPageSelect({ onSelect: handleBandProfileClick });
+    return () => registerBandPageSelect(null);
+  }, [handleBandProfileClick, registerBandPageSelect, selectBandProfileVisible]);
+
   const navigateToBandLeaderboard = useCallback((metric: BandRankingMetric, rank: number) => {
     if (!payload || rank <= 0) return;
     navigate(Routes.bandRankings(payload.band.bandType, metric, getLeaderboardPageForRank(rank)));
@@ -298,21 +350,20 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
     ? SELECT_BAND_PROFILE_ACTION_SLOT_STYLE
     : SELECT_BAND_PROFILE_ACTION_SLOT_SHADOW_SAFE_STYLE;
 
-  const bandProfileAction = selectBandProfileMounted ? (
+  const bandProfileAction = !isMobile && selectBandProfileMounted ? (
     <div
       data-testid="band-select-profile-slot"
       aria-hidden={!selectBandProfileVisible}
       style={{
         ...selectBandProfileSlotStyle,
         maxWidth: selectBandProfileVisible
-          ? (isMobile ? Layout.pillButtonHeight : SELECT_BAND_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
+          ? SELECT_BAND_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH
           : 0,
         opacity: selectBandProfileVisible ? 1 : 0,
       }}
     >
       <SelectProfilePill
         visible={selectBandProfileVisible}
-        isMobile={isMobile}
         label={t('band.selectProfile')}
         ariaLabel={t('band.selectProfile')}
         icon={<IoPeople size={IconSize.action} />}
@@ -321,14 +372,108 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
     </div>
   ) : undefined;
 
+  const quickLinks = useMemo<BandQuickLink[]>(() => {
+    if (!payload) return [];
+
+    return [
+      {
+        id: 'members',
+        label: t('band.members'),
+        landmarkLabel: t('band.members'),
+        icon: <IoPeople size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      },
+      {
+        id: 'summary',
+        label: t('band.summaryShort'),
+        landmarkLabel: t('band.summary'),
+        icon: <IoList size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      },
+      {
+        id: 'statistics',
+        label: t('band.statisticsShort'),
+        landmarkLabel: t('band.statistics'),
+        icon: <IoStatsChart size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      },
+      {
+        id: 'rank-history',
+        label: t('band.rankHistoryShort'),
+        landmarkLabel: t('band.rankHistory'),
+        icon: <IoTrophy size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      },
+      {
+        id: 'songs',
+        label: t('band.songsShort'),
+        landmarkLabel: t('band.songs'),
+        icon: <IoMusicalNotes size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      },
+    ];
+  }, [payload, t]);
+
+  const {
+    activeItemId,
+    quickLinksOpen,
+    openQuickLinks,
+    closeQuickLinks,
+    handleQuickLinkSelect,
+    registerSectionRef,
+  } = usePageQuickLinks<BandQuickLink>({
+    items: quickLinks,
+    scrollContainerRef,
+    isDesktopRailEnabled: isWideDesktop,
+  });
+
+  const handleModalQuickLinkSelect = useCallback((link: BandQuickLink) => {
+    closeQuickLinks();
+    handleQuickLinkSelect(link);
+  }, [closeQuickLinks, handleQuickLinkSelect]);
+
+  const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
+    if (phase !== LoadPhase.ContentIn || error || quickLinks.length < 2) return undefined;
+
+    return {
+      title: t('band.quickLinks'),
+      items: quickLinks,
+      activeItemId,
+      visible: quickLinksOpen,
+      onOpen: openQuickLinks,
+      onClose: closeQuickLinks,
+      onSelect: (item) => {
+        const nextItem = item as BandQuickLink;
+        if (isWideDesktop) {
+          handleQuickLinkSelect(nextItem);
+          return;
+        }
+        handleModalQuickLinkSelect(nextItem);
+      },
+      testIdPrefix: 'band',
+    };
+  }, [activeItemId, closeQuickLinks, error, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, phase, quickLinks, quickLinksOpen, t]);
+
+  const registerMembersSectionRef = useCallback((element: HTMLElement | null) => registerSectionRef('members', element), [registerSectionRef]);
+  const registerSummarySectionRef = useCallback((element: HTMLElement | null) => registerSectionRef('summary', element), [registerSectionRef]);
+  const registerStatisticsSectionRef = useCallback((element: HTMLElement | null) => registerSectionRef('statistics', element), [registerSectionRef]);
+  const registerRankHistorySectionRef = useCallback((element: HTMLElement | null) => registerSectionRef('rank-history', element), [registerSectionRef]);
+  const registerSongsSectionRef = useCallback((element: HTMLElement | null) => registerSectionRef('songs', element), [registerSectionRef]);
+  const useInlineMobileHeader = isMobile && !isStatisticsBandMode && selectBandProfileVisible;
+  const suppressMobileStatisticsHeader = isMobile && isStatisticsBandMode;
+  const headerTitle = isMobile && (isStatisticsBandMode || useInlineMobileHeader) ? undefined : title;
+  const portalHeader = useInlineMobileHeader || suppressMobileStatisticsHeader ? undefined : (
+    <PageHeader title={headerTitle} subtitle={subtitle} reserveSubtitleSpace={loading} titleAccessory={bandFilterHeaderIcons} actions={bandProfileAction} />
+  );
+  const inlineMobileHeader = useInlineMobileHeader ? (
+    <PageHeader title={title} subtitle={subtitle} reserveSubtitleSpace={loading} titleAccessory={bandFilterHeaderIcons} style={INLINE_MOBILE_PAGE_HEADER_STYLE} />
+  ) : null;
+
   return (
     <Page
       scrollRestoreKey={`band:${scopedPageKey}`}
       scrollDeps={[phase, effectiveBandId, activeComboId]}
       loadPhase={phase}
       containerStyle={styles.container}
-      before={<PageHeader title={title} subtitle={subtitle} reserveSubtitleSpace={loading} actions={bandProfileAction} />}
+      quickLinks={pageQuickLinks}
+      before={portalHeader}
     >
+      {inlineMobileHeader}
       {phase === LoadPhase.ContentIn && error && (
         <EmptyState
           fullPage
@@ -341,9 +486,10 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
 
       {phase === LoadPhase.ContentIn && !error && payload && (
         <div style={styles.content}>
-          <MembersSection band={payload.band} style={stagger(0)} onAnimationEnd={clearAnim} />
-          <BandSummarySection band={payload.band} style={stagger(1)} onAnimationEnd={clearAnim} />
+          <MembersSection band={payload.band} activeFilterInstrumentByAccountId={activeFilterInstrumentByAccountId} sectionRef={registerMembersSectionRef} style={stagger(0)} onAnimationEnd={clearAnim} />
+          <BandSummarySection band={payload.band} sectionRef={registerSummarySectionRef} style={stagger(1)} onAnimationEnd={clearAnim} />
           <BandStatisticsSection
+            sectionRef={registerStatisticsSectionRef}
             ranking={payload.ranking ?? null}
             bestSongId={bandSongsQuery.data?.best?.[0]?.songId}
             canNavigateToBandSongs={canNavigateToBandSongs}
@@ -353,8 +499,8 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
             style={stagger(2)}
             onAnimationEnd={clearAnim}
           />
-          <BandRankHistorySection band={payload.band} ranking={payload.ranking ?? null} comboId={activeComboId} style={stagger(3)} onAnimationEnd={clearAnim} />
-          <BandSongsSection bandType={payload.band.bandType} teamKey={payload.band.teamKey} displayName={title} comboId={activeComboId} style={stagger(4)} onAnimationEnd={clearAnim} />
+          <BandRankHistorySection band={payload.band} ranking={payload.ranking ?? null} comboId={activeComboId} sectionRef={registerRankHistorySectionRef} style={stagger(3)} onAnimationEnd={clearAnim} />
+          <BandSongsSection bandType={payload.band.bandType} teamKey={payload.band.teamKey} displayName={title} comboId={activeComboId} sectionRef={registerSongsSectionRef} style={stagger(4)} onAnimationEnd={clearAnim} />
         </div>
       )}
     </Page>
@@ -405,24 +551,24 @@ function splitRouteNames(routeNames?: string): string[] {
     .filter(Boolean);
 }
 
-function MembersSection({ band, style, onAnimationEnd }: { band: PlayerBandEntry; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
+function MembersSection({ band, activeFilterInstrumentByAccountId, sectionRef, style, onAnimationEnd }: { band: PlayerBandEntry; activeFilterInstrumentByAccountId?: MemberInstrumentFilter | null; sectionRef?: (element: HTMLElement | null) => void; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
   const { t } = useTranslation();
   const styles = useStyles();
   return (
-    <section data-testid="band-section-members" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.members')}>
+    <section ref={sectionRef} data-testid="band-section-members" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.members')}>
       <PlayerSectionHeading title={t('band.members')} />
       <div style={styles.memberGrid}>
-        {band.members.map(member => <BandMemberCard key={member.accountId} member={member} fallbackName={t('common.unknownUser')} />)}
+        {band.members.map(member => <BandMemberCard key={member.accountId} member={member} activeFilterInstrumentByAccountId={activeFilterInstrumentByAccountId} fallbackName={t('common.unknownUser')} />)}
       </div>
     </section>
   );
 }
 
-function BandSummarySection({ band, style, onAnimationEnd }: { band: PlayerBandEntry; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
+function BandSummarySection({ band, sectionRef, style, onAnimationEnd }: { band: PlayerBandEntry; sectionRef?: (element: HTMLElement | null) => void; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
   const { t } = useTranslation();
   const styles = useStyles();
   return (
-    <section data-testid="band-section-summary" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.summary')}>
+    <section ref={sectionRef} data-testid="band-section-summary" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.summary')}>
       <PlayerSectionHeading title={t('band.summary')} />
       <div style={styles.statsGrid}>
         <StatCard label={t('band.type')} value={formatBandType(band.bandType)} />
@@ -433,10 +579,13 @@ function BandSummarySection({ band, style, onAnimationEnd }: { band: PlayerBandE
   );
 }
 
-function BandMemberCard({ member, fallbackName }: { member: PlayerBandMember; fallbackName: string }) {
+function BandMemberCard({ member, activeFilterInstrumentByAccountId, fallbackName }: { member: PlayerBandMember; activeFilterInstrumentByAccountId?: MemberInstrumentFilter | null; fallbackName: string }) {
   const styles = useStyles();
   const displayName = formatMemberName(member, fallbackName);
-  const instruments = Array.from(new Set(member.instruments));
+  const assignedInstrument = activeFilterInstrumentByAccountId?.get(member.accountId);
+  const instruments = activeFilterInstrumentByAccountId
+    ? (assignedInstrument ? [assignedInstrument] : [])
+    : Array.from(new Set(member.instruments));
 
   return (
     <Link data-testid="band-member-card" to={Routes.player(member.accountId)} aria-label={`View ${displayName}`} style={styles.memberCard}>
@@ -456,6 +605,7 @@ function BandMemberCard({ member, fallbackName }: { member: PlayerBandMember; fa
 }
 
 function BandStatisticsSection({
+  sectionRef,
   ranking,
   bestSongId,
   canNavigateToBandSongs,
@@ -465,6 +615,7 @@ function BandStatisticsSection({
   style,
   onAnimationEnd,
 }: {
+  sectionRef?: (element: HTMLElement | null) => void;
   ranking: BandRankingDto | null;
   bestSongId?: string;
   canNavigateToBandSongs: boolean;
@@ -485,7 +636,7 @@ function BandStatisticsSection({
     : undefined;
 
   return (
-    <section data-testid="band-section-statistics" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.statistics')}>
+    <section ref={sectionRef} data-testid="band-section-statistics" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.statistics')}>
       <PlayerSectionHeading title={t('band.statistics')} />
       {!ranking ? (
         <div style={styles.emptyCard}><span style={styles.emptyText}>{t('band.noRanking')}</span></div>
@@ -509,10 +660,10 @@ function BandStatisticsSection({
   );
 }
 
-function BandRankHistorySection({ band, ranking, comboId, style, onAnimationEnd }: { band: PlayerBandEntry; ranking: BandRankingDto | null; comboId?: string; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
+function BandRankHistorySection({ band, ranking, comboId, sectionRef, style, onAnimationEnd }: { band: PlayerBandEntry; ranking: BandRankingDto | null; comboId?: string; sectionRef?: (element: HTMLElement | null) => void; style?: CSSProperties; onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void }) {
   const styles = useStyles();
   return (
-    <section data-testid="band-section-rank-history" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd}>
+    <section ref={sectionRef} data-testid="band-section-rank-history" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd}>
       <BandRankHistoryChart bandType={band.bandType} teamKey={band.teamKey} comboId={comboId} totalRankedTeams={ranking?.totalRankedTeams} />
     </section>
   );
@@ -660,6 +811,18 @@ function useStyles() {
     memberChevron: {
       flexShrink: 0,
       color: Colors.textSubtle,
+    } as CSSProperties,
+    headerFilterInstruments: {
+      ...flexRow,
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      gap: Gap.xs,
+      flexShrink: 0,
+      lineHeight: 0,
+    } as CSSProperties,
+    headerFilterInstrumentIcon: {
+      display: 'block',
+      flexShrink: 0,
     } as CSSProperties,
     emptyCard: {
       ...frostedCard,

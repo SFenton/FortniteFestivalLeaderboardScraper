@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import FilterModal, { type FilterDraft } from '../../../../src/pages/songs/modals/FilterModal';
 import { INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
 import { defaultSongFilters } from '../../../../src/utils/songSettings';
 import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';
+import type { SelectedBandProfile } from '../../../../src/hooks/data/useSelectedProfile';
+import type { BandInstrumentFilterAssignment } from '../../../../src/types/bandFilter';
+
+const apiMock = vi.hoisted(() => ({
+  getBandDetail: vi.fn(),
+}));
+
+vi.mock('../../../../src/api/client', () => ({
+  api: apiMock,
+}));
 
 /* ── Helpers ── */
 
@@ -12,7 +23,7 @@ function baseDraft(): FilterDraft {
   return { ...defaultSongFilters(), instrumentFilter: null };
 }
 
-const defaultProps = () => ({
+const defaultProps = (): ComponentProps<typeof FilterModal> => ({
   visible: true,
   draft: baseDraft(),
   savedDraft: baseDraft(),
@@ -25,15 +36,54 @@ const defaultProps = () => ({
   onApply: vi.fn(),
 });
 
-function renderModal(overrides: Partial<ReturnType<typeof defaultProps>> = {}) {
+function renderModal(overrides: Partial<ComponentProps<typeof FilterModal>> = {}) {
   const props = { ...defaultProps(), ...overrides };
   return { ...render(<TestProviders><FilterModal {...props} /></TestProviders>), props };
+}
+
+const selectedBand: SelectedBandProfile = {
+  type: 'band',
+  bandId: 'band-duo',
+  bandType: 'Band_Duets',
+  teamKey: 'acct-a:acct-b',
+  displayName: 'Alpha + Bravo',
+  members: [
+    { accountId: 'acct-a', displayName: 'Alpha' },
+    { accountId: 'acct-b', displayName: 'Bravo' },
+  ],
+};
+
+const appliedAssignments: BandInstrumentFilterAssignment[] = [
+  { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+  { accountId: 'acct-b', instrument: 'Solo_Bass' },
+];
+
+function bandComboFilter(overrides: Partial<NonNullable<ComponentProps<typeof FilterModal>['bandComboFilter']>> = {}) {
+  return {
+    selectedBand,
+    appliedAssignments: [] as BandInstrumentFilterAssignment[],
+    onApply: vi.fn(),
+    onReset: vi.fn(),
+    ...overrides,
+  };
+}
+
+async function clickCurrentCompactInstrument(alt: string, index = 0) {
+  const instrument = (await screen.findAllByAltText(alt))[index];
+  fireEvent.click(instrument.closest('button') ?? instrument);
+}
+
+function instrumentSelectionScale(alt: string, index = 0) {
+  return screen.getAllByAltText(alt)[index]?.closest('button')?.querySelector('div')?.style.transform;
 }
 
 /* ── Tests ── */
 
 describe('FilterModal', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.getBandDetail.mockResolvedValue(makeBandDetail());
+  });
 
   /* ── Visibility ── */
 
@@ -234,6 +284,73 @@ describe('FilterModal', () => {
     expect(screen.queryByText('Global Score & FC Toggles')).toBeNull();
   });
 
+  it('renders the selected-band combo picker above selected band song filters', async () => {
+    renderModal({ selectedBandMode: true, selectedBandName: 'Test Duo', bandComboFilter: bandComboFilter() });
+
+    const firstSlot = await screen.findByText('Instrument #1');
+    const selectedBandScores = screen.getByText('Selected Band Scores');
+    expect(firstSlot.compareDocumentPosition(selectedBandScores) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('Instrument #2')).toBeDefined();
+    expect(apiMock.getBandDetail).toHaveBeenCalledWith('band-duo');
+  });
+
+  it('applies a valid embedded combo through the Songs filter modal Apply button', async () => {
+    const combo = bandComboFilter();
+    const { props } = renderModal({ selectedBandMode: true, selectedBandName: 'Test Duo', bandComboFilter: combo });
+
+    await clickCurrentCompactInstrument('Solo_Guitar', 0);
+    fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
+    await clickCurrentCompactInstrument('Solo_Bass', 0);
+
+    await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled());
+    fireEvent.click(screen.getByText('Apply Filter Changes'));
+
+    expect(combo.onApply).toHaveBeenCalledWith(expect.objectContaining({
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+        { accountId: 'acct-b', instrument: 'Solo_Bass' },
+      ],
+    }));
+    expect(props.onApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets the embedded combo draft and clears the applied combo on Apply', async () => {
+    const combo = bandComboFilter({ appliedAssignments });
+    const { props } = renderModal({ selectedBandMode: true, selectedBandName: 'Test Duo', bandComboFilter: combo });
+
+    await screen.findByText('Instrument #1');
+    await waitFor(() => expect(instrumentSelectionScale('Solo_Guitar', 0)).toBe('scale(1)'));
+
+    const resetBtn = screen.getAllByRole('button', { name: 'Reset' });
+    fireEvent.click(resetBtn[resetBtn.length - 1]!);
+
+    expect(props.onReset).toHaveBeenCalledTimes(1);
+    expect(combo.onReset).not.toHaveBeenCalled();
+    await waitFor(() => expect(instrumentSelectionScale('Solo_Guitar', 0)).toBe('scale(0)'));
+    await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled());
+
+    fireEvent.click(screen.getByText('Apply Filter Changes'));
+
+    expect(combo.onReset).toHaveBeenCalledTimes(1);
+    expect(combo.onApply).not.toHaveBeenCalled();
+    expect(props.onApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows invalid combo confirmation and keeps Apply disabled for impossible combo drafts', async () => {
+    const combo = bandComboFilter();
+    renderModal({ selectedBandMode: true, selectedBandName: 'Test Duo', bandComboFilter: combo });
+
+    await clickCurrentCompactInstrument('Solo_Guitar', 0);
+    fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
+    fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
+    await clickCurrentCompactInstrument('Solo_Drums', 0);
+
+    expect(await screen.findByText('Invalid Configuration')).toBeDefined();
+    expect(screen.getByText('Apply Filter Changes').closest('button')).toBeDisabled();
+    expect(combo.onApply).not.toHaveBeenCalled();
+  });
+
   it('toggles selected band score filters without touching solo maps', () => {
     const onChange = vi.fn();
     renderModal({ selectedBandMode: true, onChange });
@@ -244,6 +361,51 @@ describe('FilterModal', () => {
       selectedBandMissingScore: false,
       hasScores: {},
       missingScores: {},
+    }));
+  });
+
+  it('shows individual band member filters for active band configurations', () => {
+    const onChange = vi.fn();
+    renderModal({
+      selectedBandMode: true,
+      selectedBandName: 'Test Trio',
+      selectedBandMembers: [{ accountId: 'sfentonx', displayName: 'SFentonX' }],
+      bandComboInstruments: ['Solo_Guitar'],
+      onChange,
+    });
+
+    expect(screen.getByText('Individual Band Member Filters')).toBeDefined();
+    expect(screen.getByText("Check each bandmate's solo scores on instruments used by this band setup.")).toBeDefined();
+    fireEvent.click(screen.getByText('Individual Band Member Filters'));
+    expect(screen.getByText('SFentonX has score')).toBeDefined();
+    expect(screen.getByText('SFentonX missing score')).toBeDefined();
+
+    fireEvent.click(screen.getByText('SFentonX has score'));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      individualBandMemberScoreFilters: {
+        sfentonx: { hasScore: true, missingScore: false },
+      },
+    }));
+  });
+
+  it('keeps individual band member has and missing filters mutually exclusive', () => {
+    const draft = baseDraft();
+    draft.individualBandMemberScoreFilters = { sfentonx: { hasScore: true, missingScore: false } };
+    const onChange = vi.fn();
+    renderModal({
+      selectedBandMode: true,
+      selectedBandMembers: [{ accountId: 'sfentonx', displayName: 'SFentonX' }],
+      bandComboInstruments: ['Solo_Guitar'],
+      draft,
+      onChange,
+    });
+
+    fireEvent.click(screen.getByText('Individual Band Member Filters'));
+    fireEvent.click(screen.getByText('SFentonX missing score'));
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
+      individualBandMemberScoreFilters: {
+        sfentonx: { hasScore: false, missingScore: true },
+      },
     }));
   });
 
@@ -595,3 +757,42 @@ describe('FilterModal', () => {
     expect(screen.getByTitle('Pro Bass')).toBeDefined();
   });
 });
+
+function makeBandDetail() {
+  return {
+    band: {
+      bandId: 'band-duo',
+      teamKey: 'acct-a:acct-b',
+      bandType: 'Band_Duets',
+      members: [
+        { accountId: 'acct-a', displayName: 'Alpha', instruments: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums'] },
+        { accountId: 'acct-b', displayName: 'Bravo', instruments: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums'] },
+      ],
+    },
+    ranking: null,
+    configurations: [
+      {
+        rawInstrumentCombo: '0:1',
+        comboId: 'Solo_Guitar+Solo_Bass',
+        instruments: ['Solo_Guitar', 'Solo_Bass'],
+        assignmentKey: 'acct-a=Solo_Guitar|acct-b=Solo_Bass',
+        appearanceCount: 1,
+        memberInstruments: {
+          'acct-a': 'Solo_Guitar',
+          'acct-b': 'Solo_Bass',
+        },
+      },
+      {
+        rawInstrumentCombo: '1:3',
+        comboId: 'Solo_Bass+Solo_Drums',
+        instruments: ['Solo_Bass', 'Solo_Drums'],
+        assignmentKey: 'acct-a=Solo_Bass|acct-b=Solo_Drums',
+        appearanceCount: 1,
+        memberInstruments: {
+          'acct-a': 'Solo_Bass',
+          'acct-b': 'Solo_Drums',
+        },
+      },
+    ],
+  };
+}

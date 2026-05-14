@@ -20,7 +20,7 @@ import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useShopState } from '../../hooks/data/useShopState';
 import { useShop } from '../../contexts/ShopContext';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
-import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
+import { useBandFilterAction } from '../../contexts/BandFilterActionContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
 import { type BandSongPerformance, type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT, INSTRUMENT_LABELS } from '@festival/core/api/serverTypes';
@@ -142,6 +142,9 @@ const SONG_SORT_LABEL_KEYS: Partial<Record<SongSortMode, string>> = {
 type SongQuickLink = PageQuickLinkItem & {
   rowIndex: number;
 };
+
+const noopBandComboApply = () => {};
+const noopBandComboReset = () => {};
 
 const SONG_QUICK_LINK_PERCENTAGE_PILL_STYLE: CSSProperties = {
   padding: padding(Gap.xs, Gap.sm),
@@ -350,16 +353,36 @@ export default function SongsPage() {
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   const { profile } = useTrackedPlayer();
   const selectedBand = profile?.type === 'band' ? profile : null;
-  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const bandFilterAction = useBandFilterAction();
+  const appliedBandComboFilter = bandFilterAction.appliedFilter ?? null;
   const selectedBandComboFilter = selectedBand && isBandFilterForSelectedProfile(appliedBandComboFilter, profile)
     ? appliedBandComboFilter
     : null;
   const activeBandComboId = selectedBandComboFilter?.comboId;
+  const bandComboFilterProps = useMemo(() => {
+    if (!isMobile || !selectedBand) return undefined;
+    return {
+      selectedBand,
+      appliedAssignments: selectedBandComboFilter?.assignments ?? [],
+      onApply: bandFilterAction.onApplyFilter ?? noopBandComboApply,
+      onReset: bandFilterAction.onResetFilter ?? noopBandComboReset,
+    };
+  }, [bandFilterAction.onApplyFilter, bandFilterAction.onResetFilter, isMobile, selectedBand, selectedBandComboFilter?.assignments]);
   const isSelectedBand = selectedBand != null;
   const bandComboInstruments = useMemo<InstrumentKey[]>(() => {
     if (!selectedBandComboFilter) return [];
     return Array.from(new Set(selectedBandComboFilter.assignments.map(assignment => assignment.instrument)));
   }, [selectedBandComboFilter]);
+  const selectedBandMemberFilterOptions = useMemo(() => {
+    if (!selectedBandComboFilter) return [];
+    const displayNames = new Map((selectedBand?.members ?? []).map(member => [member.accountId, member.displayName]));
+    const seen = new Set<string>();
+    return selectedBandComboFilter.assignments.flatMap(assignment => {
+      if (seen.has(assignment.accountId)) return [];
+      seen.add(assignment.accountId);
+      return [{ accountId: assignment.accountId, displayName: displayNames.get(assignment.accountId) ?? assignment.accountId }];
+    });
+  }, [selectedBand?.members, selectedBandComboFilter]);
   const effectiveSortMode: SongSortMode = (() => {
     if (!isSelectedBand) return isBandIntensitySortMode(settings.sortMode) ? 'title' : settings.sortMode;
     const bandIntensityInstrument = parseBandIntensityInstrument(settings.sortMode);
@@ -567,6 +590,7 @@ export default function SongsPage() {
         ...filterModal.draft,
         selectedBandHasScore: defaults.selectedBandHasScore,
         selectedBandMissingScore: defaults.selectedBandMissingScore,
+        individualBandMemberScoreFilters: defaults.individualBandMemberScoreFilters,
         shopInShop: defaults.shopInShop,
         shopLeavingTomorrow: defaults.shopLeavingTomorrow,
         instrumentFilter: null,
@@ -627,7 +651,46 @@ export default function SongsPage() {
   const hasFilterableProfile = isSelectedBand || !!playerData;
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: hasFilterableProfile, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [hasFilterableProfile, isShopVisible, appSettings.disableShopHighlighting]);
 
-  const { isScoreValid, enabled: scoreFilterEnabled, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
+  const { isScoreValid, enabled: scoreFilterEnabled, leeway: userLeeway, leewayParam, getFilteredRank, getFilteredTotal } = useScoreFilter();
+
+  const individualBandMemberFilterAccounts = useMemo(() => {
+    const hasAccountIds: string[] = [];
+    const missingAccountIds: string[] = [];
+    const filters = scopedFilters.individualBandMemberScoreFilters ?? {};
+    for (const member of selectedBandMemberFilterOptions) {
+      const filter = filters[member.accountId];
+      if (!filter || filter.hasScore === filter.missingScore) continue;
+      if (filter.hasScore) hasAccountIds.push(member.accountId);
+      if (filter.missingScore) missingAccountIds.push(member.accountId);
+    }
+    return { hasAccountIds, missingAccountIds };
+  }, [scopedFilters.individualBandMemberScoreFilters, selectedBandMemberFilterOptions]);
+
+  const individualBandMemberFiltersActive = isSelectedBand
+    && bandComboInstruments.length > 0
+    && (individualBandMemberFilterAccounts.hasAccountIds.length > 0 || individualBandMemberFilterAccounts.missingAccountIds.length > 0);
+
+  const individualBandMemberSongIdsQuery = useQuery({
+    queryKey: queryKeys.memberScoreFilter(
+      individualBandMemberFilterAccounts.hasAccountIds,
+      individualBandMemberFilterAccounts.missingAccountIds,
+      bandComboInstruments,
+      leewayParam,
+    ),
+    queryFn: () => api.getMemberScoreFilter({
+      hasAccountIds: individualBandMemberFilterAccounts.hasAccountIds,
+      missingAccountIds: individualBandMemberFilterAccounts.missingAccountIds,
+      instruments: bandComboInstruments,
+      leeway: leewayParam,
+    }),
+    enabled: individualBandMemberFiltersActive,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const individualBandMemberSongIds = useMemo(() => {
+    if (!individualBandMemberFiltersActive || !individualBandMemberSongIdsQuery.data) return null;
+    return new Set(individualBandMemberSongIdsQuery.data.songIds);
+  }, [individualBandMemberFiltersActive, individualBandMemberSongIdsQuery.data]);
 
   // Apply invalid-score substitution/dropping (same logic as filterPlayerScores but
   // also builds an invalidity map for the UI indicator, and exempts instruments where
@@ -771,6 +834,8 @@ export default function SongsPage() {
     shopVisible: isShopVisible,
     visibleInstruments: enabledInstruments,
     selectedBandMode: isSelectedBand,
+    individualBandMemberSongIds,
+    individualBandMemberFiltersActive,
   });
 
   const sectionModel = useMemo(() => buildSongQuickLinkSections({
@@ -831,7 +896,7 @@ export default function SongsPage() {
   }, [bandScoreMap, isSelectedBand, playerData]);
 
   // ── Spinner → staggered-content transition ──
-  const dataReady = !isLoading && !playerLoading && !(isSelectedBand && bandSongRowsQuery.isLoading);
+  const dataReady = !isLoading && !playerLoading && !(isSelectedBand && bandSongRowsQuery.isLoading) && !individualBandMemberSongIdsQuery.isLoading;
   // Capture "first visit this session" before marking as rendered
   const skipAnimRef = useRef((hasVisitedPage('songs') || isBackNav) && !forceRestagger);
   const skipAnim = skipAnimRef.current;
@@ -1166,6 +1231,9 @@ export default function SongsPage() {
           availableSeasons={availableSeasons}
           selectedBandMode={isSelectedBand}
           selectedBandName={selectedBand?.displayName}
+          selectedBandMembers={selectedBandMemberFilterOptions}
+          bandComboInstruments={bandComboInstruments}
+          bandComboFilter={bandComboFilterProps}
           onChange={filterModal.setDraft}
           onCancel={filterModal.close}
           onReset={resetFilter}
