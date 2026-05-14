@@ -375,31 +375,146 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
-    public void Precompute_ExpiresOlderBandRankNotification_WhenNewSameComboMetricNotificationArrives()
+    public void Precompute_DoesNotEmitBandAggregateRankImprovements_WhenRanksImproveWithoutAggregateProgress()
     {
-        InsertCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 100);
+        const string trioBandType = "Band_Trios";
+        const string trioTeamKey = "kahnyri:phankie:sfentonx";
+        const string leadLeadLeadCombo = "Solo_Guitar+Solo_Guitar+Solo_Guitar";
+
+        InsertCurrentBandRanking(
+            rankingScope: "combo",
+            comboId: leadLeadLeadCombo,
+            weightedRank: 100,
+            totalScoreRank: 200,
+            fcRateRank: 300,
+            totalScore: 200000,
+            fullComboCount: 1,
+            bandType: trioBandType,
+            teamKey: trioTeamKey,
+            teamMembers: new[] { "kahnyri", "phankie", "sfentonx" });
         BaselineBandRankState();
 
-        UpdateCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 90);
-        var firstReport = DetectBandRankEvents();
-        Assert.Equal(1, firstReport.BandRankEventsInserted);
+        UpdateCurrentBandRanking(
+            rankingScope: "combo",
+            comboId: leadLeadLeadCombo,
+            weightedRank: 90,
+            totalScoreRank: 180,
+            fcRateRank: 250,
+            totalScore: 200000,
+            fullComboCount: 1,
+            bandType: trioBandType,
+            teamKey: trioTeamKey);
 
-        UpdateCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 80);
+        var report = DetectBandRankEvents();
+        var notifications = _sut.GetBandNotificationsByTeamKey(
+            trioBandType,
+            trioTeamKey,
+            includeExpired: true,
+            rankingScope: "combo",
+            comboId: leadLeadLeadCombo);
+
+        Assert.Equal(0, report.BandRankEventsInserted);
+        Assert.Empty(notifications.Items);
+    }
+
+    [Fact]
+    public void Precompute_DoesNotEmitBandMetricRankImprovement_WhenOnlyOtherAggregateProgressChanged()
+    {
+        const string totalScoreRankCombo = "Solo_Guitar+Solo_Bass";
+        const string fcRateRankCombo = "Solo_Drums+Solo_Vocals";
+
+        InsertCurrentBandRanking(rankingScope: "combo", comboId: totalScoreRankCombo, weightedRank: 100, totalScoreRank: 200, fcRateRank: 300, totalScore: 200000, fullComboCount: 1);
+        InsertCurrentBandRanking(rankingScope: "combo", comboId: fcRateRankCombo, weightedRank: 100, totalScoreRank: 200, fcRateRank: 300, totalScore: 200000, fullComboCount: 1);
+        BaselineBandRankState();
+
+        UpdateCurrentBandRanking(rankingScope: "combo", comboId: totalScoreRankCombo, weightedRank: 100, totalScoreRank: 180, fcRateRank: 300, totalScore: 200000, fullComboCount: 2);
+        UpdateCurrentBandRanking(rankingScope: "combo", comboId: fcRateRankCombo, weightedRank: 100, totalScoreRank: 200, fcRateRank: 250, totalScore: 201000, fullComboCount: 1);
+
+        var report = DetectBandRankEvents();
+        var totalScoreRankNotifications = _sut.GetBandNotificationsByTeamKey(
+            BandType,
+            TeamKey,
+            includeExpired: true,
+            rankingScope: "combo",
+            comboId: totalScoreRankCombo,
+            kind: "band_total_score_rank_improved");
+        var fcRateRankNotifications = _sut.GetBandNotificationsByTeamKey(
+            BandType,
+            TeamKey,
+            includeExpired: true,
+            rankingScope: "combo",
+            comboId: fcRateRankCombo,
+            kind: "band_fc_rate_rank_improved");
+
+        Assert.Equal(2, report.BandRankEventsInserted);
+        Assert.Empty(totalScoreRankNotifications.Items);
+        Assert.Empty(fcRateRankNotifications.Items);
+    }
+
+    [Fact]
+    public void Precompute_EmitsBandWeightedRankImprovement_WhenScoreOrFullComboProgressChanged()
+    {
+        const string scoreProgressCombo = "Solo_Guitar+Solo_Bass";
+        const string fullComboProgressCombo = "Solo_Drums+Solo_Vocals";
+
+        InsertCurrentBandRanking(rankingScope: "combo", comboId: scoreProgressCombo, weightedRank: 100, totalScoreRank: 200, fcRateRank: 300, totalScore: 200000, fullComboCount: 1);
+        InsertCurrentBandRanking(rankingScope: "combo", comboId: fullComboProgressCombo, weightedRank: 100, totalScoreRank: 200, fcRateRank: 300, totalScore: 200000, fullComboCount: 1);
+        BaselineBandRankState();
+
+        UpdateCurrentBandRanking(rankingScope: "combo", comboId: scoreProgressCombo, weightedRank: 90, totalScoreRank: 200, fcRateRank: 300, totalScore: 201000, fullComboCount: 1);
+        UpdateCurrentBandRanking(rankingScope: "combo", comboId: fullComboProgressCombo, weightedRank: 80, totalScoreRank: 200, fcRateRank: 300, totalScore: 200000, fullComboCount: 2);
+
+        var report = DetectBandRankEvents();
+        var scoreProgressNotifications = _sut.GetBandNotificationsByTeamKey(
+            BandType,
+            TeamKey,
+            includeExpired: true,
+            rankingScope: "combo",
+            comboId: scoreProgressCombo,
+            kind: "band_weighted_rank_improved");
+        var fullComboProgressNotifications = _sut.GetBandNotificationsByTeamKey(
+            BandType,
+            TeamKey,
+            includeExpired: true,
+            rankingScope: "combo",
+            comboId: fullComboProgressCombo,
+            kind: "band_weighted_rank_improved");
+
+        Assert.Equal(4, report.BandRankEventsInserted);
+        var scoreProgressNotification = Assert.Single(scoreProgressNotifications.Items);
+        Assert.Equal(90, scoreProgressNotification.NewRank);
+        var fullComboProgressNotification = Assert.Single(fullComboProgressNotifications.Items);
+        Assert.Equal(80, fullComboProgressNotification.NewRank);
+    }
+
+    [Fact]
+    public void Precompute_ExpiresOlderBandRankNotification_WhenNewSameComboMetricNotificationArrives()
+    {
+        InsertCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 100, totalScore: 200000);
+        BaselineBandRankState();
+
+        UpdateCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 90, totalScore: 201000);
+        var firstReport = DetectBandRankEvents();
+        Assert.Equal(2, firstReport.BandRankEventsInserted);
+
+        UpdateCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 80, totalScore: 202000);
         var secondReport = DetectBandRankEvents();
 
         var liveNotifications = _sut.GetBandNotificationsByTeamKey(
             BandType,
             TeamKey,
             rankingScope: "combo",
-            comboId: "Solo_Guitar+Solo_Bass");
+            comboId: "Solo_Guitar+Solo_Bass",
+            kind: "band_weighted_rank_improved");
         var allNotifications = _sut.GetBandNotificationsByTeamKey(
             BandType,
             TeamKey,
             includeExpired: true,
             rankingScope: "combo",
-            comboId: "Solo_Guitar+Solo_Bass");
+            comboId: "Solo_Guitar+Solo_Bass",
+            kind: "band_weighted_rank_improved");
 
-        Assert.Equal(1, secondReport.BandRankEventsInserted);
+        Assert.Equal(2, secondReport.BandRankEventsInserted);
         var liveNotification = Assert.Single(liveNotifications.Items);
         Assert.Equal("band_weighted_rank_improved", liveNotification.EventKind);
         AssertValidNotificationGuid(liveNotification);
@@ -412,10 +527,10 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     [Fact]
     public void Precompute_CoalescesBandAggregateRankImprovements_FromSameScopeRun()
     {
-        InsertCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 100, totalScoreRank: 200, fcRateRank: 300);
+        InsertCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 100, totalScoreRank: 200, fcRateRank: 300, totalScore: 200000, fullComboCount: 1);
         BaselineBandRankState();
 
-        UpdateCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 90, totalScoreRank: 180, fcRateRank: 250);
+        UpdateCurrentBandRanking(rankingScope: "combo", comboId: "Solo_Guitar+Solo_Bass", weightedRank: 90, totalScoreRank: 180, fcRateRank: 250, totalScore: 201000, fullComboCount: 2);
 
         var report = DetectBandRankEvents();
         var notifications = _sut.GetBandNotificationsByTeamKey(
@@ -423,9 +538,10 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
             TeamKey,
             includeExpired: true,
             rankingScope: "combo",
-            comboId: "Solo_Guitar+Solo_Bass");
+            comboId: "Solo_Guitar+Solo_Bass",
+            kind: "band_total_score_rank_improved");
 
-        Assert.Equal(1, report.BandRankEventsInserted);
+        Assert.Equal(3, report.BandRankEventsInserted);
         var notification = Assert.Single(notifications.Items);
         Assert.Equal("band_total_score_rank_improved", notification.EventKind);
         Assert.Equal("aggregateRank", notification.Payload.GetProperty("coalescedGroup").GetString());
@@ -649,12 +765,17 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         string comboId,
         int weightedRank = 1000,
         int totalScoreRank = 1000,
-        int fcRateRank = 1000)
+        int fcRateRank = 1000,
+        int totalScore = 200000,
+        int fullComboCount = 1,
+        string bandType = BandType,
+        string teamKey = TeamKey,
+        string[]? teamMembers = null)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO band_team_rankings_current_band_duets (
+        cmd.CommandText = $"""
+            INSERT INTO {CurrentBandRankingTable(bandType)} (
                 band_type, ranking_scope, combo_id, team_key, team_members,
                 songs_played, total_charted_songs, coverage,
                 raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank,
@@ -666,17 +787,19 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
                 1, 1, 1,
                 0, 0, 1000,
                 0, @weightedRank, 0, @fcRateRank,
-                200000, @totalScoreRank, 100, 1,
+                @totalScore, @totalScoreRank, 100, @fullComboCount,
                 6, 1, 1, NULL, now());
             """;
-        cmd.Parameters.AddWithValue("bandType", BandType);
+        cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("rankingScope", rankingScope);
         cmd.Parameters.AddWithValue("comboId", comboId);
-        cmd.Parameters.AddWithValue("teamKey", TeamKey);
-        cmd.Parameters.AddWithValue("teamMembers", new[] { "account-1", "account-2" });
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("teamMembers", teamMembers ?? new[] { "account-1", "account-2" });
         cmd.Parameters.AddWithValue("weightedRank", weightedRank);
         cmd.Parameters.AddWithValue("totalScoreRank", totalScoreRank);
         cmd.Parameters.AddWithValue("fcRateRank", fcRateRank);
+        cmd.Parameters.AddWithValue("totalScore", totalScore);
+        cmd.Parameters.AddWithValue("fullComboCount", fullComboCount);
         cmd.ExecuteNonQuery();
     }
 
@@ -685,30 +808,46 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         string comboId,
         int weightedRank = 1000,
         int totalScoreRank = 1000,
-        int fcRateRank = 1000)
+        int fcRateRank = 1000,
+        int totalScore = 200000,
+        int fullComboCount = 1,
+        string bandType = BandType,
+        string teamKey = TeamKey)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE band_team_rankings_current_band_duets
+        cmd.CommandText = $"""
+            UPDATE {CurrentBandRankingTable(bandType)}
             SET weighted_rank = @weightedRank,
                 total_score_rank = @totalScoreRank,
                 fc_rate_rank = @fcRateRank,
+                total_score = @totalScore,
+                full_combo_count = @fullComboCount,
                 computed_at = now()
             WHERE band_type = @bandType
               AND ranking_scope = @rankingScope
               AND combo_id = @comboId
               AND team_key = @teamKey;
             """;
-        cmd.Parameters.AddWithValue("bandType", BandType);
+        cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("rankingScope", rankingScope);
         cmd.Parameters.AddWithValue("comboId", comboId);
-        cmd.Parameters.AddWithValue("teamKey", TeamKey);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
         cmd.Parameters.AddWithValue("weightedRank", weightedRank);
         cmd.Parameters.AddWithValue("totalScoreRank", totalScoreRank);
         cmd.Parameters.AddWithValue("fcRateRank", fcRateRank);
+        cmd.Parameters.AddWithValue("totalScore", totalScore);
+        cmd.Parameters.AddWithValue("fullComboCount", fullComboCount);
         cmd.ExecuteNonQuery();
     }
+
+    private static string CurrentBandRankingTable(string bandType) => bandType switch
+    {
+        "Band_Duets" => "band_team_rankings_current_band_duets",
+        "Band_Trios" => "band_team_rankings_current_band_trios",
+        "Band_Quad" => "band_team_rankings_current_band_quad",
+        _ => throw new ArgumentOutOfRangeException(nameof(bandType), bandType, "Unknown band type."),
+    };
 
     private void InsertCurrentEntry(int score, int rank, int stars = 6, bool isFullCombo = true, string instrument = Instrument)
     {
