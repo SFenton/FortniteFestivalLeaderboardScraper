@@ -9,7 +9,16 @@ import { InstrumentSelector, type InstrumentSelectorItem } from '../../../compon
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { InstrumentKey } from '@festival/core/instruments';
 import { InstrumentKeys } from '@festival/core/instruments';
+import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
+import type { SelectedBandProfile } from '../../../hooks/data/useSelectedProfile';
+import type { BandInstrumentFilterApplyPayload, BandInstrumentFilterAssignment } from '../../../types/bandFilter';
+import {
+  areBandInstrumentDraftsEqual,
+  BandInstrumentFilterInvalidSelectionAlert,
+  BandInstrumentFilterPicker,
+  useBandInstrumentFilterController,
+} from '../../band/modals/BandInstrumentFilterPicker';
 import {
   SUGGESTION_TYPES,
   globalKeyFor,
@@ -99,23 +108,47 @@ type InstrumentVisibility = {
   showPeripheralDrums: boolean;
 };
 
+type BandComboFilterProps = {
+  selectedBand: SelectedBandProfile;
+  appliedAssignments: readonly BandInstrumentFilterAssignment[];
+  onApply: (payload: BandInstrumentFilterApplyPayload) => void;
+  onReset: () => void;
+};
+
+type SuggestionsModalDraftState = {
+  suggestions: SuggestionsFilterDraft;
+  bandCombo: readonly (ServerInstrumentKey | null)[];
+};
+
 type SuggestionsFilterModalProps = {
   visible: boolean;
   draft: SuggestionsFilterDraft;
   savedDraft?: SuggestionsFilterDraft;
   mode?: 'solo' | 'band';
   instrumentVisibility: InstrumentVisibility;
+  bandComboFilter?: BandComboFilterProps;
   onChange: (d: SuggestionsFilterDraft) => void;
   onCancel: () => void;
   onReset: () => void;
   onApply: () => void;
 };
 
-export default function SuggestionsFilterModal({ visible, draft, savedDraft, mode = 'solo', instrumentVisibility, onChange, onCancel, onReset, onApply }: SuggestionsFilterModalProps) {
+const noopBandApply = () => {};
+const noopBandReset = () => {};
+
+export default function SuggestionsFilterModal({ visible, draft, savedDraft, mode = 'solo', instrumentVisibility, bandComboFilter, onChange, onCancel, onReset, onApply }: SuggestionsFilterModalProps) {
   const { t } = useTranslation();
   const [selectedInstrument, setSelectedInstrument] = useState<InstrumentKey | null>(null);
   useEffect(() => { if (visible) setSelectedInstrument(null); }, [visible]);
 
+  const showBandComboSection = mode === 'band' && !!bandComboFilter;
+  const bandComboController = useBandInstrumentFilterController({
+    visible: visible && showBandComboSection,
+    selectedBand: bandComboFilter?.selectedBand ?? null,
+    appliedAssignments: bandComboFilter?.appliedAssignments ?? [],
+    onApply: bandComboFilter?.onApply ?? noopBandApply,
+    onReset: bandComboFilter?.onReset ?? noopBandReset,
+  });
   const showInstrumentControls = mode === 'solo';
   const visibleInstruments = INSTRUMENTS.filter(i => instrumentVisibility[i.showKey as keyof InstrumentVisibility]);
   const visibleSuggestionTypes = mode === 'band'
@@ -134,7 +167,29 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, mod
 
   const toggle = (key: string) => onChange({ ...draft, [key]: !draft[key] });
 
-  const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(draft, savedDraft, onCancel);
+  const modalDraft = useMemo<SuggestionsModalDraftState>(() => ({
+    suggestions: draft,
+    bandCombo: showBandComboSection ? bandComboController.draft : [],
+  }), [bandComboController.draft, draft, showBandComboSection]);
+  const modalSavedDraft = useMemo<SuggestionsModalDraftState | undefined>(() => (
+    savedDraft ? {
+      suggestions: savedDraft,
+      bandCombo: showBandComboSection ? bandComboController.savedDraft : [],
+    } : undefined
+  ), [bandComboController.savedDraft, savedDraft, showBandComboSection]);
+
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(modalDraft, modalSavedDraft, onCancel, areSuggestionsModalDraftsEqual);
+  const bandComboBlocksApply = showBandComboSection && bandComboController.hasChanges && bandComboController.applyDisabled;
+
+  const handleReset = useCallback(() => {
+    onReset();
+    if (showBandComboSection) bandComboController.resetDraft();
+  }, [bandComboController, onReset, showBandComboSection]);
+
+  const handleApply = useCallback(() => {
+    if (showBandComboSection && bandComboController.hasChanges && !bandComboController.apply()) return;
+    onApply();
+  }, [bandComboController, onApply, showBandComboSection]);
 
   const toggleGlobal = (typeId: SuggestionTypeId) => {
     const gk = globalKeyFor(typeId);
@@ -164,7 +219,9 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, mod
   };
 
   return (
-    <Modal visible={visible} title={t('common.filterSuggestions')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('suggestionsFilter.resetLabel')} resetHint={t('suggestionsFilter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (
+    <Modal visible={visible} title={t('common.filterSuggestions')} onClose={handleClose} onApply={handleApply} onReset={handleReset} resetLabel={t('suggestionsFilter.resetLabel')} resetHint={t('suggestionsFilter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges || bandComboBlocksApply} afterPanel={showBandComboSection && bandComboController.pendingInvalidSelection ? (
+        <BandInstrumentFilterInvalidSelectionAlert controller={bandComboController} />
+      ) : confirmOpen ? (
         <ConfirmAlert
           title={t('suggestionsFilter.cancelTitle')}
           message={t('suggestionsFilter.cancelMessage')}
@@ -173,6 +230,10 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, mod
           onExitComplete={() => setConfirmOpen(false)}
         />
       ) : null}>
+      {showBandComboSection ? (
+        <BandInstrumentFilterPicker controller={bandComboController} compact />
+      ) : null}
+
       {/* Instruments */}
       {showInstrumentControls && <ModalSection>
         <Accordion title={t('suggestionsFilter.instruments')} hint={t('suggestionsFilter.instrumentsHint')}>
@@ -232,5 +293,10 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, mod
       </ModalSection>}
     </Modal>
   );
+}
+
+function areSuggestionsModalDraftsEqual(a: SuggestionsModalDraftState, b: SuggestionsModalDraftState) {
+  return JSON.stringify(a.suggestions) === JSON.stringify(b.suggestions)
+    && areBandInstrumentDraftsEqual(a.bandCombo, b.bandCombo);
 }
 

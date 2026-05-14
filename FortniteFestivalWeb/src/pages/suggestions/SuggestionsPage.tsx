@@ -7,7 +7,7 @@ import { ActionPill } from '../../components/common/ActionPill';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
-import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
+import { useBandFilterAction } from '../../contexts/BandFilterActionContext';
 import { useSuggestions } from '../../hooks/data/useSuggestions';
 import { suggestionsSlides } from './firstRun';
 import { serverSongToCore, buildScoresIndex } from '../../utils/suggestionAdapter';
@@ -58,6 +58,8 @@ type SuggestionsPageProps = {
   selectedBand?: SelectedBandProfile | null;
 };
 type SuggestionsMode = 'solo' | 'band';
+const noopBandComboApply = () => {};
+const noopBandComboReset = () => {};
 
 /* v8 ignore start — render orchestrator; business logic tested in suggestionsHelpers.ts (35 unit tests), component exercised by 42 integration tests */
 export default function SuggestionsPage({ accountId, selectedBand = null }: SuggestionsPageProps) {
@@ -71,7 +73,7 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   } = useFestival();
 
   const { playerData, playerLoading } = usePlayerData();
-  useIsMobile();
+  const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
 
   
@@ -96,11 +98,21 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     [currentSeason, playerData],
   );
 
-  const appliedBandComboFilter = useAppliedBandComboFilter();
+  const bandFilterAction = useBandFilterAction();
+  const appliedBandComboFilter = bandFilterAction.appliedFilter ?? null;
   const selectedBandComboFilter = selectedBand && isBandFilterForSelectedProfile(appliedBandComboFilter, selectedBand)
     ? appliedBandComboFilter
     : null;
   const activeBandComboId = selectedBandComboFilter?.comboId;
+  const bandComboFilterProps = useMemo(() => {
+    if (!isMobile || mode !== 'band' || !selectedBand) return undefined;
+    return {
+      selectedBand,
+      appliedAssignments: selectedBandComboFilter?.assignments ?? [],
+      onApply: bandFilterAction.onApplyFilter ?? noopBandComboApply,
+      onReset: bandFilterAction.onResetFilter ?? noopBandComboReset,
+    };
+  }, [bandFilterAction.onApplyFilter, bandFilterAction.onResetFilter, isMobile, mode, selectedBand, selectedBandComboFilter?.assignments]);
 
   const bandSongRowsQuery = useQuery({
     queryKey: queryKeys.bandSongRows(selectedBand?.bandType ?? '', selectedBand?.teamKey ?? '', activeBandComboId),
@@ -162,12 +174,12 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   const filtersActive = isSuggestionsFilterActive(filterSettings, mode);
 
   
-  const fabSearch = useFabSearch();
+  const { registerSuggestionsActions } = useFabSearch();
   const openFilterRef = useRef(openFilter);
   openFilterRef.current = openFilter;
   useEffect(() => {
-    fabSearch.registerSuggestionsActions({ openFilter: () => openFilterRef.current() });
-  }, [fabSearch]);
+    registerSuggestionsActions({ openFilter: () => openFilterRef.current(), filterActive: filtersActive });
+  }, [filtersActive, registerSuggestionsActions]);
   
 
   const instrumentVisibility = useMemo(() => ({
@@ -316,6 +328,7 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
           savedDraft={filterSettings}
           mode={mode}
           instrumentVisibility={instrumentVisibility}
+          bandComboFilter={bandComboFilterProps}
           onChange={filterModal.setDraft}
           onCancel={filterModal.close}
           onReset={resetFilter}
@@ -363,6 +376,7 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
           savedDraft={filterSettings}
           mode={mode}
           instrumentVisibility={instrumentVisibility}
+          bandComboFilter={bandComboFilterProps}
           onChange={filterModal.setDraft}
           onCancel={filterModal.close}
           onReset={resetFilter}

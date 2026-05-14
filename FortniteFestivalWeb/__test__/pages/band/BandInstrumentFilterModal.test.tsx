@@ -17,6 +17,25 @@ beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
   stubElementDimensions(800);
+  const originalCreateRange = document.createRange.bind(document);
+  document.createRange = () => {
+    const range = originalCreateRange();
+    Object.assign(range, {
+      getBoundingClientRect: () => ({
+        top: 0,
+        left: 0,
+        bottom: 16,
+        right: 120,
+        width: 120,
+        height: 16,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      }),
+      getClientRects: () => [] as unknown as DOMRectList,
+    });
+    return range;
+  };
 });
 
 beforeEach(() => {

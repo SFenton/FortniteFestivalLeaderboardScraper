@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import SuggestionsFilterModal, {
   type SuggestionsFilterDraft,
   defaultSuggestionsFilterDraft,
@@ -10,8 +11,19 @@ import {
   globalKeyFor,
   perInstrumentKeyFor,
 } from '@festival/core/suggestions/suggestionFilterConfig';
+import { InstrumentKeys } from '@festival/core/instruments';
 import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';
+import type { SelectedBandProfile } from '../../../../src/hooks/data/useSelectedProfile';
+import type { BandInstrumentFilterAssignment } from '../../../../src/types/bandFilter';
+
+const apiMock = vi.hoisted(() => ({
+  getBandDetail: vi.fn(),
+}));
+
+vi.mock('../../../../src/api/client', () => ({
+  api: apiMock,
+}));
 
 /* ── Helpers ── */
 
@@ -29,7 +41,7 @@ const allVisible = () => ({
 
 const baseDraft = (): SuggestionsFilterDraft => defaultSuggestionsFilterDraft();
 
-const defaultProps = () => ({
+const defaultProps = (): ComponentProps<typeof SuggestionsFilterModal> => ({
   visible: true,
   draft: baseDraft(),
   savedDraft: baseDraft(),
@@ -40,15 +52,54 @@ const defaultProps = () => ({
   onApply: vi.fn(),
 });
 
-function renderModal(overrides: Partial<ReturnType<typeof defaultProps>> = {}) {
+function renderModal(overrides: Partial<ComponentProps<typeof SuggestionsFilterModal>> = {}) {
   const props = { ...defaultProps(), ...overrides };
   return { ...render(<TestProviders><SuggestionsFilterModal {...props} /></TestProviders>), props };
+}
+
+const selectedBand: SelectedBandProfile = {
+  type: 'band',
+  bandId: 'band-duo',
+  bandType: 'Band_Duets',
+  teamKey: 'acct-a:acct-b',
+  displayName: 'Alpha + Bravo',
+  members: [
+    { accountId: 'acct-a', displayName: 'Alpha' },
+    { accountId: 'acct-b', displayName: 'Bravo' },
+  ],
+};
+
+const appliedAssignments: BandInstrumentFilterAssignment[] = [
+  { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+  { accountId: 'acct-b', instrument: 'Solo_Bass' },
+];
+
+function bandComboFilter(overrides: Partial<NonNullable<ComponentProps<typeof SuggestionsFilterModal>['bandComboFilter']>> = {}) {
+  return {
+    selectedBand,
+    appliedAssignments: [] as BandInstrumentFilterAssignment[],
+    onApply: vi.fn(),
+    onReset: vi.fn(),
+    ...overrides,
+  };
+}
+
+function instrumentSelectionScale(title: string, index = 0) {
+  return screen.getAllByAltText(title)[index]?.closest('button')?.querySelector('div')?.style.transform;
+}
+
+async function clickCurrentCompactInstrument(alt: string, index = 0) {
+  const instrument = (await screen.findAllByAltText(alt))[index];
+  fireEvent.click(instrument.closest('button') ?? instrument);
 }
 
 /* ── Tests ── */
 
 describe('SuggestionsFilterModal', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiMock.getBandDetail.mockResolvedValue(makeBandDetail());
+  });
 
   /* ── Visibility ── */
 
@@ -72,9 +123,12 @@ describe('SuggestionsFilterModal', () => {
     expect(screen.getByText('Lead')).toBeDefined();
     expect(screen.getByText('Bass')).toBeDefined();
     expect(screen.getByText('Drums')).toBeDefined();
-    expect(screen.getByText('Vocals')).toBeDefined();
+    expect(screen.getByText('Tap Vocals')).toBeDefined();
     expect(screen.getByText('Pro Lead')).toBeDefined();
     expect(screen.getByText('Pro Bass')).toBeDefined();
+    expect(screen.getByText('Karaoke')).toBeDefined();
+    expect(screen.getByText('Pro Drums + Cymbals')).toBeDefined();
+    expect(screen.getByText('Pro Drums')).toBeDefined();
   });
 
   it('toggles an instrument filter off', () => {
@@ -197,7 +251,7 @@ describe('SuggestionsFilterModal', () => {
   it('toggles per-instrument suggestion type off and disables global when all per-instrument are off', () => {
     const draft = baseDraft();
     // Turn off all per-instrument NearFC except guitar
-    for (const inst of ['bass', 'drums', 'vocals', 'pro_guitar', 'pro_bass'] as const) {
+    for (const inst of InstrumentKeys.filter(inst => inst !== 'guitar')) {
       draft[perInstrumentKeyFor(inst, 'NearFC')] = false;
     }
     const props = defaultProps();
@@ -299,6 +353,59 @@ describe('SuggestionsFilterModal', () => {
     expect(props.onReset).toHaveBeenCalledTimes(1);
   });
 
+  it('renders the selected-band combo picker inside the band-mode modal', async () => {
+    renderModal({ mode: 'band', bandComboFilter: bandComboFilter() });
+
+    expect(await screen.findByText('Instrument #1')).toBeDefined();
+    expect(screen.getByText('Instrument #2')).toBeDefined();
+    expect(screen.queryByText('Instruments')).toBeNull();
+    expect(apiMock.getBandDetail).toHaveBeenCalledWith('band-duo');
+  });
+
+  it('applies a valid embedded combo through the modal Apply button', async () => {
+    const combo = bandComboFilter();
+    const { props } = renderModal({ mode: 'band', bandComboFilter: combo });
+
+    await screen.findByText('Instrument #1');
+    await clickCurrentCompactInstrument('Solo_Guitar', 0);
+    fireEvent.click(screen.getAllByLabelText('Next instrument')[1]!);
+    await clickCurrentCompactInstrument('Solo_Bass', 0);
+
+    await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled());
+    fireEvent.click(screen.getByText('Apply Filter Changes'));
+
+    expect(combo.onApply).toHaveBeenCalledWith(expect.objectContaining({
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+        { accountId: 'acct-b', instrument: 'Solo_Bass' },
+      ],
+    }));
+    expect(props.onApply).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets the embedded combo draft and clears the applied combo on Apply', async () => {
+    const combo = bandComboFilter({ appliedAssignments });
+    const { props } = renderModal({ mode: 'band', bandComboFilter: combo });
+
+    await screen.findByText('Instrument #1');
+    await waitFor(() => expect(instrumentSelectionScale('Solo_Guitar', 0)).toBe('scale(1)'));
+
+    const resetBtn = screen.getAllByRole('button', { name: 'Reset' });
+    fireEvent.click(resetBtn[resetBtn.length - 1]!);
+
+    expect(props.onReset).toHaveBeenCalledTimes(1);
+    expect(combo.onReset).not.toHaveBeenCalled();
+    await waitFor(() => expect(instrumentSelectionScale('Solo_Guitar', 0)).toBe('scale(0)'));
+    await waitFor(() => expect(screen.getByText('Apply Filter Changes').closest('button')).not.toBeDisabled());
+
+    fireEvent.click(screen.getByText('Apply Filter Changes'));
+
+    expect(combo.onReset).toHaveBeenCalledTimes(1);
+    expect(combo.onApply).not.toHaveBeenCalled();
+    expect(props.onApply).toHaveBeenCalledTimes(1);
+  });
+
   /* ── Confirm dialog ── */
 
   it('calls onCancel directly when no changes', () => {
@@ -380,6 +487,56 @@ describe('isSuggestionsFilterActive', () => {
     expect(isSuggestionsFilterActive(d)).toBe(false);
   });
 });
+
+function makeBandDetail() {
+  return {
+    band: {
+      bandId: 'band-duo',
+      teamKey: 'acct-a:acct-b',
+      bandType: 'Band_Duets',
+      members: [
+        { accountId: 'acct-a', displayName: 'Alpha', instruments: ['Solo_Guitar', 'Solo_Bass'] },
+        { accountId: 'acct-b', displayName: 'Bravo', instruments: ['Solo_Guitar', 'Solo_Bass'] },
+      ],
+    },
+    ranking: null,
+    configurations: [
+      {
+        rawInstrumentCombo: '0:1',
+        comboId: 'Solo_Guitar+Solo_Bass',
+        instruments: ['Solo_Guitar', 'Solo_Bass'],
+        assignmentKey: 'acct-a=Solo_Guitar|acct-b=Solo_Bass',
+        appearanceCount: 1,
+        memberInstruments: {
+          'acct-a': 'Solo_Guitar',
+          'acct-b': 'Solo_Bass',
+        },
+      },
+      {
+        rawInstrumentCombo: '0:1',
+        comboId: 'Solo_Guitar+Solo_Bass',
+        instruments: ['Solo_Guitar', 'Solo_Bass'],
+        assignmentKey: 'acct-a=Solo_Bass|acct-b=Solo_Guitar',
+        appearanceCount: 1,
+        memberInstruments: {
+          'acct-a': 'Solo_Bass',
+          'acct-b': 'Solo_Guitar',
+        },
+      },
+      {
+        rawInstrumentCombo: '0:3',
+        comboId: 'Solo_Guitar+Solo_Drums',
+        instruments: ['Solo_Guitar', 'Solo_Drums'],
+        assignmentKey: 'acct-a=Solo_Guitar|acct-b=Solo_Drums',
+        appearanceCount: 1,
+        memberInstruments: {
+          'acct-a': 'Solo_Guitar',
+          'acct-b': 'Solo_Drums',
+        },
+      },
+    ],
+  };
+}
 
 describe('defaultSuggestionsFilterDraft', () => {
   it('has all instrument filters set to true', () => {

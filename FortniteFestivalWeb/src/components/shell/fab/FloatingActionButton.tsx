@@ -21,6 +21,7 @@ const DOCK_LABEL_HORIZONTAL_PADDING = Gap.xl;
 const LABELED_FAB_ICON_LEFT_PADDING = Math.round((Layout.fabSize - IconSize.fab) / 2) - 1;
 const LABELED_FAB_TEXT_SIDE_PADDING = LABELED_FAB_ICON_LEFT_PADDING;
 const OPAQUE_FAB_GLASS_BACKGROUND = 'rgba(18,24,38,0.96)';
+const SIDE_ACTION_LABEL_MAX_WIDTH = `calc(100vw - ${(Layout.paddingHorizontal * 2) + Layout.fabSize + Gap.md}px)`;
 const FAB_SEARCH_SURFACE_TRANSITION = [
   `border-color ${QUICK_FADE_MS}ms ease`,
   `box-shadow ${QUICK_FADE_MS}ms ease`,
@@ -37,6 +38,7 @@ export interface ActionItem {
   rel?: string;
   className?: string;
   icon: React.ReactNode;
+  iconAccessory?: React.ReactNode;
   onPress: () => void;
 }
 
@@ -45,8 +47,11 @@ interface Props {
   defaultOpen?: boolean;
   placeholder?: string;
   icon?: React.ReactNode;
+  iconAccessory?: React.ReactNode;
   label?: string;
   ariaLabel?: string;
+  active?: boolean;
+  surface?: 'default' | 'glass';
   actionGroups?: ActionItem[][];
   dockActions?: ActionItem[];
   sideActions?: ActionItem[];
@@ -76,8 +81,11 @@ export default function FloatingActionButton({
   defaultOpen,
   placeholder,
   icon,
+  iconAccessory,
   label,
   ariaLabel,
+  active,
+  surface = 'default',
   actionGroups,
   dockActions,
   sideActions,
@@ -522,20 +530,39 @@ export default function FloatingActionButton({
     : s.searchCircle;
   const collapsedSearchText = hasSearchQuery ? searchQuery.query : searchButtonLabel;
   const collapsedSearchTextStyle = hasSearchQuery ? s.dockSearchQueryText : s.dockButtonLabel;
+  const glassSurface = surface === 'glass';
+  const mainFabStyle = iconAccessory
+    ? active ? s.fabIconAccessoryActive : glassSurface ? s.fabIconAccessoryGlass : s.fabIconAccessory
+    : label ? active ? s.fabLabeledActive : glassSurface ? s.fabLabeledGlass : s.fabLabeled
+      : active ? s.fabActive : glassSurface ? s.fabGlass : s.fab;
+  const mainFabContent = (
+    <>
+      {icon ?? <IoMenu size={IconSize.md} />}
+      {iconAccessory}
+      {label && <span style={s.fabLabel}>{label}</span>}
+    </>
+  );
   const getDockActionButtonStyle = useCallback((active?: boolean) => (
     active ? s.fabActionCircleActive : s.fabActionCircle
   ), [s.fabActionCircle, s.fabActionCircleActive]);
   const getSideActionButtonStyle = useCallback((action: ActionItem) => {
+    if (action.iconOnly && action.iconAccessory) return action.active ? s.fabActionPillActive : s.fabActionPill;
     if (action.iconOnly) return action.active ? s.fabActionCircleActive : s.fabActionCircle;
     if (action.tone === 'pulse') return s.fabSideActionCirclePulse;
     if (action.tone === 'accent' || action.active) return s.fabSideActionCircleAccent;
     return s.fabSideActionCircle;
-  }, [s.fabActionCircle, s.fabActionCircleActive, s.fabSideActionCircle, s.fabSideActionCircleAccent, s.fabSideActionCirclePulse]);
+  }, [s.fabActionCircle, s.fabActionCircleActive, s.fabActionPill, s.fabActionPillActive, s.fabSideActionCircle, s.fabSideActionCircleAccent, s.fabSideActionCirclePulse]);
 
   const renderSideAction = useCallback((action: ActionItem) => {
-    const content = action.iconOnly ? action.icon : (
+    const content = action.iconOnly ? (
       <>
         {action.icon}
+        {action.iconAccessory}
+      </>
+    ) : (
+      <>
+        {action.icon}
+        {action.iconAccessory}
         <span style={s.sideActionLabel}>{action.displayLabel ?? action.label}</span>
       </>
     );
@@ -687,13 +714,12 @@ export default function FloatingActionButton({
                 <div ref={fabContainerRef} style={s.dockFabSlot}>
                   <button
                     type="button"
-                    style={label ? s.fabLabeled : s.fab}
+                    style={mainFabStyle}
                     onClick={handleFabPress}
                     aria-label={ariaLabel ?? t('common.actions')}
                     title={ariaLabel ?? t('common.actions')}
                   >
-                    {icon ?? <IoMenu size={IconSize.md} />}
-                    {label && <span style={s.fabLabel}>{label}</span>}
+                    {mainFabContent}
                   </button>
                   {!directAction && popupMounted && (
                     <FABMenu
@@ -748,15 +774,14 @@ export default function FloatingActionButton({
         )}
         {hasMainFab && (
           <button
-            style={label ? s.fabLabeled : s.fab}
+            style={mainFabStyle}
             /* v8 ignore start -- action toggle */
             onClick={handleFabPress}
             /* v8 ignore stop */
             aria-label={ariaLabel ?? t('common.actions')}
             title={ariaLabel ?? t('common.actions')}
           >
-            {icon ?? <IoMenu size={IconSize.md} />}
-            {label && <span style={s.fabLabel}>{label}</span>}
+            {mainFabContent}
           </button>
         )}
         {hasMainFab && !directAction && popupMounted && (
@@ -1017,12 +1042,80 @@ function useFABStyles() {
       flexShrink: 0,
       pointerEvents: PointerEvents.auto,
     } as CSSProperties,
+    fabActive: {
+      width: Layout.fabSize,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: Colors.accentBlue,
+      backgroundImage: CssValue.none,
+      color: Colors.textPrimary,
+      border: '1px solid transparent',
+      boxShadow: CssValue.none,
+      ...flexCenter,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+    } as CSSProperties,
+    fabGlass: {
+      ...frostedCard,
+      width: Layout.fabSize,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
+      opacity: 1,
+      color: Colors.textPrimary,
+      ...flexCenter,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+    } as CSSProperties,
     fabLabeled: {
       ...purpleGlass,
       minWidth: Layout.fabSize,
       maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
       height: Layout.fabSize,
       borderRadius: Radius.full,
+      color: Colors.textPrimary,
+      ...flexCenter,
+      justifyContent: Align.start,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, LABELED_FAB_TEXT_SIDE_PADDING, 0, LABELED_FAB_ICON_LEFT_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    fabLabeledActive: {
+      minWidth: Layout.fabSize,
+      maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: Colors.accentBlue,
+      backgroundImage: CssValue.none,
+      color: Colors.textPrimary,
+      border: '1px solid transparent',
+      boxShadow: CssValue.none,
+      ...flexCenter,
+      justifyContent: Align.start,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, LABELED_FAB_TEXT_SIDE_PADDING, 0, LABELED_FAB_ICON_LEFT_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    fabLabeledGlass: {
+      ...frostedCard,
+      minWidth: Layout.fabSize,
+      maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
+      opacity: 1,
       color: Colors.textPrimary,
       ...flexCenter,
       justifyContent: Align.start,
@@ -1044,6 +1137,62 @@ function useFABStyles() {
       fontWeight: 700,
       lineHeight: 1,
       letterSpacing: 0,
+    } as CSSProperties,
+    fabIconAccessory: {
+      ...purpleGlass,
+      minWidth: Layout.fabSize,
+      maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      color: Colors.textPrimary,
+      ...flexCenter,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    fabIconAccessoryActive: {
+      minWidth: Layout.fabSize,
+      maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: Colors.accentBlue,
+      backgroundImage: CssValue.none,
+      color: Colors.textPrimary,
+      border: '1px solid transparent',
+      boxShadow: CssValue.none,
+      ...flexCenter,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    fabIconAccessoryGlass: {
+      ...frostedCard,
+      minWidth: Layout.fabSize,
+      maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
+      opacity: 1,
+      color: Colors.textPrimary,
+      ...flexCenter,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      pointerEvents: PointerEvents.auto,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
     } as CSSProperties,
     fabActionCircle: {
       ...frostedCard,
@@ -1073,9 +1222,49 @@ function useFABStyles() {
       border: '1px solid transparent',
       boxShadow: CssValue.none,
     } as CSSProperties,
+    fabActionPill: {
+      ...frostedCard,
+      minWidth: Layout.fabSize,
+      maxWidth: SIDE_ACTION_LABEL_MAX_WIDTH,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
+      opacity: 1,
+      color: Colors.textPrimary,
+      ...flexCenter,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      cursor: Cursor.pointer,
+      flexShrink: 1,
+      pointerEvents: PointerEvents.auto,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    fabActionPillActive: {
+      minWidth: Layout.fabSize,
+      maxWidth: SIDE_ACTION_LABEL_MAX_WIDTH,
+      height: Layout.fabSize,
+      borderRadius: Radius.full,
+      backgroundColor: Colors.accentBlue,
+      backgroundImage: CssValue.none,
+      color: Colors.textPrimary,
+      border: '1px solid transparent',
+      boxShadow: CssValue.none,
+      ...flexCenter,
+      gap: DOCK_LABEL_ICON_GAP,
+      padding: padding(0, DOCK_LABEL_HORIZONTAL_PADDING),
+      boxSizing: BoxSizing.borderBox,
+      cursor: Cursor.pointer,
+      flexShrink: 1,
+      pointerEvents: PointerEvents.auto,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
     fabSideActionCircle: {
       ...frostedCard,
       minWidth: Layout.fabSize,
+      maxWidth: SIDE_ACTION_LABEL_MAX_WIDTH,
       height: Layout.fabSize,
       borderRadius: Radius.full,
       backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND,
@@ -1089,11 +1278,12 @@ function useFABStyles() {
       overflow: Overflow.hidden,
       ...flexCenter,
       cursor: Cursor.pointer,
-      flexShrink: 0,
+      flexShrink: 1,
       pointerEvents: PointerEvents.auto,
     } as CSSProperties,
     fabSideActionCircleAccent: {
       minWidth: Layout.fabSize,
+      maxWidth: SIDE_ACTION_LABEL_MAX_WIDTH,
       height: Layout.fabSize,
       borderRadius: Radius.full,
       backgroundColor: Colors.accentBlue,
@@ -1108,11 +1298,12 @@ function useFABStyles() {
       overflow: Overflow.hidden,
       ...flexCenter,
       cursor: Cursor.pointer,
-      flexShrink: 0,
+      flexShrink: 1,
       pointerEvents: PointerEvents.auto,
     } as CSSProperties,
     fabSideActionCirclePulse: {
       minWidth: Layout.fabSize,
+      maxWidth: SIDE_ACTION_LABEL_MAX_WIDTH,
       height: Layout.fabSize,
       borderRadius: Radius.full,
       backgroundColor: Colors.transparent,
@@ -1129,7 +1320,7 @@ function useFABStyles() {
       overflow: Overflow.hidden,
       ...flexCenter,
       cursor: Cursor.pointer,
-      flexShrink: 0,
+      flexShrink: 1,
       pointerEvents: PointerEvents.auto,
     } as CSSProperties,
     sideActionLabel: {

@@ -7,14 +7,20 @@ type SongsFabActions = {
   filterActive?: boolean;
 };
 
+type SuggestionsFabActions = {
+  openFilter: () => void;
+  filterActive?: boolean;
+};
+
 type FabSearchContextType = {
   registerActions: (actions: SongsFabActions) => void;
   openSort: () => void;
   openFilter: () => void;
   songsSortActive: boolean;
   songsFilterActive: boolean;
-  registerSuggestionsActions: (actions: { openFilter: () => void }) => void;
+  registerSuggestionsActions: (actions: SuggestionsFabActions) => void;
   openSuggestionsFilter: () => void;
+  suggestionsFilterActive: boolean;
   registerPlayerHistoryActions: (actions: { openSort: () => void }) => void;
   openPlayerHistorySort: () => void;
   registerSongDetailActions: (actions: { openPaths: () => void }) => void;
@@ -37,11 +43,13 @@ type FabSearchContextType = {
   hasPlayerQuickLinks: boolean;
   registerPlayerPageSelect: (action: { displayName: string; onSelect: () => void } | null) => void;
   playerPageSelect: { displayName: string; onSelect: () => void } | null;
+  registerBandPageSelect: (action: { onSelect: () => void } | null) => void;
+  bandPageSelect: { onSelect: () => void } | null;
 };
 
 const FabSearchContext = createContext<FabSearchContextType>({
   registerActions: () => {}, openSort: () => {}, openFilter: () => {}, songsSortActive: false, songsFilterActive: false,
-  registerSuggestionsActions: () => {}, openSuggestionsFilter: () => {},
+  registerSuggestionsActions: () => {}, openSuggestionsFilter: () => {}, suggestionsFilterActive: false,
   registerPlayerHistoryActions: () => {}, openPlayerHistorySort: () => {},
   registerSongDetailActions: () => {}, openPaths: () => {},
   registerShopActions: () => {}, shopToggleView: () => {}, shopViewMode: 'grid', setShopViewMode: () => {},
@@ -50,12 +58,14 @@ const FabSearchContext = createContext<FabSearchContextType>({
   registerBandActions: () => {}, openBandFilter: () => {},
   registerPlayerQuickLinks: () => {}, openPlayerQuickLinks: () => {}, hasPlayerQuickLinks: false,
   registerPlayerPageSelect: () => {}, playerPageSelect: null,
+  registerBandPageSelect: () => {}, bandPageSelect: null,
 });
 
 export function FabSearchProvider({ children }: { children: ReactNode }) {
   const actionsRef = useRef<SongsFabActions>({ openSort: () => {}, openFilter: () => {}, sortActive: false, filterActive: false });
   const [songsActionState, setSongsActionState] = useState({ sortActive: false, filterActive: false });
-  const suggestionsActionsRef = useRef<{ openFilter: () => void }>({ openFilter: () => {} });
+  const suggestionsActionsRef = useRef<SuggestionsFabActions>({ openFilter: () => {}, filterActive: false });
+  const [suggestionsFilterActive, setSuggestionsFilterActive] = useState(false);
   const playerHistoryActionsRef = useRef<{ openSort: () => void }>({ openSort: () => {} });
   const songDetailActionsRef = useRef<{ openPaths: () => void }>({ openPaths: () => {} });
   const shopActionsRef = useRef<{ toggleView: () => void }>({ toggleView: () => {} });
@@ -74,8 +84,10 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     ));
   }, []);
 
-  const registerSuggestionsActions = useCallback((actions: { openFilter: () => void }) => {
+  const registerSuggestionsActions = useCallback((actions: SuggestionsFabActions) => {
     suggestionsActionsRef.current = actions;
+    const nextActive = !!actions.filterActive;
+    setSuggestionsFilterActive(previous => previous === nextActive ? previous : nextActive);
   }, []);
 
   const registerPlayerHistoryActions = useCallback((actions: { openSort: () => void }) => {
@@ -128,9 +140,14 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     setPlayerPageSelect(action);
   }, []);
 
+  const [bandPageSelect, setBandPageSelect] = useState<{ onSelect: () => void } | null>(null);
+  const registerBandPageSelect = useCallback((action: { onSelect: () => void } | null) => {
+    setBandPageSelect(action);
+  }, []);
+
   const value = useMemo<FabSearchContextType>(() => ({
     registerActions, openSort, openFilter, songsSortActive: songsActionState.sortActive, songsFilterActive: songsActionState.filterActive,
-    registerSuggestionsActions, openSuggestionsFilter,
+    registerSuggestionsActions, openSuggestionsFilter, suggestionsFilterActive,
     registerPlayerHistoryActions, openPlayerHistorySort,
     registerSongDetailActions, openPaths,
     registerShopActions, shopToggleView, shopViewMode, setShopViewMode,
@@ -139,8 +156,9 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerBandActions, openBandFilter,
     registerPlayerQuickLinks, openPlayerQuickLinks, hasPlayerQuickLinks,
     registerPlayerPageSelect, playerPageSelect,
+    registerBandPageSelect, bandPageSelect,
   }), [registerActions, openSort, openFilter, songsActionState.sortActive, songsActionState.filterActive,
-    registerSuggestionsActions, openSuggestionsFilter,
+    registerSuggestionsActions, openSuggestionsFilter, suggestionsFilterActive,
     registerPlayerHistoryActions, openPlayerHistorySort,
     registerSongDetailActions, openPaths,
     registerShopActions, shopToggleView, shopViewMode, setShopViewMode,
@@ -148,7 +166,8 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerRivalsActions, rivalsToggleTab, rivalsActiveTab, setRivalsActiveTab,
     registerBandActions, openBandFilter,
     registerPlayerQuickLinks, openPlayerQuickLinks, hasPlayerQuickLinks,
-    registerPlayerPageSelect, playerPageSelect]);
+    registerPlayerPageSelect, playerPageSelect,
+    registerBandPageSelect, bandPageSelect]);
 
   return (
     <FabSearchContext.Provider value={value}>
@@ -164,4 +183,9 @@ export function useFabSearch() {
 export function usePlayerPageSelect() {
   const { playerPageSelect, registerPlayerPageSelect } = useContext(FabSearchContext);
   return { playerPageSelect, registerPlayerPageSelect };
+}
+
+export function useBandPageSelect() {
+  const { bandPageSelect, registerBandPageSelect } = useContext(FabSearchContext);
+  return { bandPageSelect, registerBandPageSelect };
 }

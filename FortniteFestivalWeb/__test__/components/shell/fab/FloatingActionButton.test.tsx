@@ -104,6 +104,20 @@ describe('FloatingActionButton', () => {
     expect(screen.getByRole('button', { name: /actions/i })).toBeTruthy();
   });
 
+  it('uses glass styling for inactive icon-only main FABs when requested', () => {
+    renderFAB({
+      mode: 'players',
+      directAction: true,
+      surface: 'glass',
+      ariaLabel: 'Filter Suggestions',
+      icon: <span>F</span>,
+    });
+
+    const fab = screen.getByRole('button', { name: 'Filter Suggestions' });
+    expect(fab.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(fab).not.toHaveStyle({ backgroundColor: '#2D82E6' });
+  });
+
   it('positions the FAB above the bottom safe area', () => {
     renderFAB();
     const fabContainer = screen.getByRole('button', { name: /actions/i }).parentElement!;
@@ -276,6 +290,41 @@ describe('FloatingActionButton', () => {
     expect(rankingButton.style.opacity).toBe('1');
     expect(filterButton.style.backgroundColor).toBe('rgb(45, 130, 230)');
     expect(filterButton.style.backgroundImage).toBe('none');
+  });
+
+  it('renders icon-only side action accessories inside a compact active pill', () => {
+    renderFAB({
+      mode: 'players',
+      sideActions: [
+        { label: 'Change Ranking', iconOnly: true, icon: <span data-testid="ranking-icon">R</span>, onPress: vi.fn() },
+        {
+          label: 'Lead / Bass',
+          iconOnly: true,
+          active: true,
+          icon: <span data-testid="filter-icon">F</span>,
+          iconAccessory: (
+            <span data-testid="combo-icons">
+              <img alt="Solo_Guitar" />
+              <img alt="Solo_Bass" />
+            </span>
+          ),
+          onPress: vi.fn(),
+        },
+      ],
+    });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const rankingButton = within(sideActions).getByRole('button', { name: 'Change Ranking' });
+    const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
+
+    expect(within(rankingButton).getByTestId('ranking-icon')).toBeTruthy();
+    expect(within(rankingButton).queryByTestId('combo-icons')).toBeNull();
+    expect(within(filterButton).getByTestId('filter-icon')).toBeTruthy();
+    expect(within(filterButton).getByTestId('combo-icons')).toBeTruthy();
+    expect(within(filterButton).queryByText('Lead / Bass')).toBeNull();
+    expect(filterButton).toHaveStyle({ minWidth: `${Layout.fabSize}px`, height: `${Layout.fabSize}px` });
+    expect(filterButton.style.backgroundColor).toBe('rgb(45, 130, 230)');
+    expect(Array.from(filterButton.children).map(child => child.getAttribute('data-testid'))).toEqual(['filter-icon', 'combo-icons']);
   });
 
   it('shows the Search label while dock actions stay circular when measured width fits', () => {

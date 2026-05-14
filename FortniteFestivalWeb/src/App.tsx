@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy, IoBagHandle } from 'react-icons/io5';
+import { IoCompass, IoPerson, IoPersonAdd, IoSwapVerticalSharp, IoFunnel, IoFlash, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy, IoBagHandle, IoPeople } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -114,6 +114,7 @@ import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
 import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
+import { InstrumentIcon } from './components/display/InstrumentIcons';
 import SearchModal from './components/search/SearchModal';
 import MobileNotificationsModal, { filterSurfaceNotifications, type MobileNotification } from './components/notifications/MobileNotificationsModal';
 import { getNotificationDestination } from './components/notifications/notificationDestination';
@@ -126,6 +127,7 @@ import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
 import ConfirmAlert from './components/modals/ConfirmAlert';
 import BandInstrumentFilterModal, { type BandInstrumentFilterApplyPayload, type BandInstrumentFilterAssignment } from './pages/band/modals/BandInstrumentFilterModal';
+import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type { AppliedBandComboFilter } from './types/bandFilter';
 import { APP_VERSION } from './hooks/data/useVersions';
 import { changelogHash } from './changelog';
@@ -160,6 +162,17 @@ const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
 const MOCK_NOTIFICATION_SOURCE_VERSION = 'mock-source-2026-05-09';
 const PROFILE_SEARCH_TARGETS: readonly SearchTarget[] = ['players', 'bands'];
+const FAB_COMBO_INSTRUMENT_ICON_SIZE = Size.iconSm;
+const FAB_COMBO_INSTRUMENTS_STYLE = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  lineHeight: 0,
+} as const;
+const FAB_COMBO_INSTRUMENT_ICON_STYLE = {
+  display: 'block',
+  flexShrink: 0,
+} as const;
 
 type SearchModalConfig = {
   availableTargets?: readonly SearchTarget[];
@@ -278,6 +291,23 @@ function MobileFloatingActionButton(props: React.ComponentProps<typeof FloatingA
   const hasSideActions = (props.sideActions?.length ?? 0) > 0;
   if (!props.defaultOpen && !hasActions && !hasSideActions && !props.directAction) return null;
   return <FloatingActionButton {...props} actionGroups={actionGroups} />;
+}
+
+function ComboInstrumentFabAccessory({ instruments }: { instruments: readonly ServerInstrumentKey[] }) {
+  if (instruments.length === 0) return null;
+
+  return (
+    <span data-testid="fab-band-filter-instruments" aria-hidden="true" style={FAB_COMBO_INSTRUMENTS_STYLE}>
+      {instruments.map((instrument, index) => (
+        <InstrumentIcon
+          key={`${instrument}:${index}`}
+          instrument={instrument}
+          size={FAB_COMBO_INSTRUMENT_ICON_SIZE}
+          style={FAB_COMBO_INSTRUMENT_ICON_STYLE}
+        />
+      ))}
+    </span>
+  );
 }
 
 function getSongDetailId(pathname: string): string | undefined {
@@ -662,7 +692,9 @@ function AppShell() {
     [AppRoutes.leaderboards]: t('rankings.title'),
     [AppRoutes.shop]: t('nav.shop'),
   };
-  const navTitle = NAV_TITLES[location.pathname] ?? null;
+  const navTitle = location.pathname === AppRoutes.statistics
+    ? (player?.displayName ?? (selectedProfile?.type === 'band' ? selectedProfile.displayName : t('nav.statistics')))
+    : (NAV_TITLES[location.pathname] ?? null);
 
   // Hierarchical back-navigation fallback for detail pages only.
   // Tab routes (songs, suggestions, statistics, settings) never show a back button.
@@ -706,6 +738,10 @@ function AppShell() {
   );
   const showBandFilterAction = shouldShowBandFilterAction(selectedProfile, location.pathname);
   const bandFilterLabel = getBandFilterActionLabel(selectedBandFilterInstruments, emptyBandFilterLabel);
+  const bandFilterActive = selectedBandFilterInstruments.length > 0;
+  const bandFilterIconAccessory = bandFilterActive
+    ? <ComboInstrumentFabAccessory instruments={selectedBandFilterInstruments} />
+    : undefined;
   const handleBandFilterPress = useCallback(() => setBandFilterModalOpen(true), []);
   const handleApplyBandFilter = useCallback((payload: BandInstrumentFilterApplyPayload) => {
     if (selectedProfile?.type !== 'band') return;
@@ -736,9 +772,11 @@ function AppShell() {
     label: bandFilterLabel,
     selectedInstruments: selectedBandFilterInstruments,
     appliedFilter: activeBandFilter,
+    appliedAssignments: activeBandFilterAssignments,
     onPress: handleBandFilterPress,
-  }), [activeBandFilter, bandFilterLabel, handleBandFilterPress, isMobile, selectedBandFilterInstruments, showBandFilterAction]);
-  const bandFilterActive = selectedBandFilterInstruments.length > 0;
+    onApplyFilter: handleApplyBandFilter,
+    onResetFilter: handleResetBandFilter,
+  }), [activeBandFilter, activeBandFilterAssignments, bandFilterLabel, handleApplyBandFilter, handleBandFilterPress, handleResetBandFilter, isMobile, selectedBandFilterInstruments, showBandFilterAction]);
   const leaderboardsSideActions: ActionItem[] = isMobile && location.pathname === AppRoutes.leaderboards
     ? [
       ...(showBandFilterAction ? [{
@@ -746,17 +784,25 @@ function AppShell() {
       active: bandFilterActive,
       iconOnly: true,
       icon: <IoFunnel size={Size.iconFab} />,
+      iconAccessory: bandFilterIconAccessory,
       onPress: handleBandFilterPress,
     }] : []),
       { label: t('rankings.changeRanking'), iconOnly: true, icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() },
     ]
     : [];
   const bandFilterFabActions: ActionItem[] = isMobile && showBandFilterAction && location.pathname !== AppRoutes.leaderboards
-    ? [{ label: bandFilterLabel, active: bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, onPress: handleBandFilterPress }]
+    ? [{ label: bandFilterLabel, active: bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: bandFilterIconAccessory, onPress: handleBandFilterPress }]
     : [];
-  const suggestionsSideActions: ActionItem[] = isMobile && location.pathname === AppRoutes.suggestions
+  const statisticsSideActions: ActionItem[] = isMobile && location.pathname === AppRoutes.statistics && !player && selectedProfile?.type === 'band'
     ? bandFilterFabActions.map(action => ({ ...action, iconOnly: true }))
     : [];
+  const playerSelectSideActions: ActionItem[] = isMobile && RoutePatterns.player.test(location.pathname) && fabSearch.playerPageSelect
+    ? [{ label: t('common.selectPlayerName', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect }]
+    : [];
+  const bandSelectSideActions: ActionItem[] = isMobile && RoutePatterns.bands.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && fabSearch.bandPageSelect
+    ? [{ label: t('common.selectBand'), icon: <IoPeople size={Size.iconFab} />, onPress: fabSearch.bandPageSelect.onSelect }]
+    : [];
+  const suggestionsFabActive = bandFilterActive || fabSearch.suggestionsFilterActive;
   const quickLinksActions = pageQuickLinks.hasPageQuickLinks && pageQuickLinks.pageQuickLinks
     ? [{
       label: getFabQuickLinksActionLabel(t),
@@ -894,7 +940,10 @@ function AppShell() {
         <MobileFloatingActionButton
           mode="players"
           ariaLabel={t('common.filterSuggestions')}
-          sideActions={suggestionsSideActions}
+          icon={<IoFunnel size={Size.iconFab} />}
+          iconAccessory={bandFilterIconAccessory}
+          active={suggestionsFabActive}
+          surface="glass"
           directAction
           onPress={() => fabSearch.openSuggestionsFilter()}
         />
@@ -907,11 +956,12 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && (location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname)) && pageQuickLinks.hasPageQuickLinks && (
+      {showMobileFab && (location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname)) && (pageQuickLinks.hasPageQuickLinks || statisticsSideActions.length > 0 || playerSelectSideActions.length > 0) && (
         <MobileFloatingActionButton
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
-          directAction
+          sideActions={[...statisticsSideActions, ...playerSelectSideActions]}
+          directAction={pageQuickLinks.hasPageQuickLinks}
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
@@ -993,6 +1043,15 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
+      {showMobileFab && RoutePatterns.bands.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (pageQuickLinks.hasPageQuickLinks || bandFilterFabActions.length > 0 || bandSelectSideActions.length > 0) && (
+        <MobileFloatingActionButton
+          mode="players"
+          ariaLabel={getFabQuickLinksActionLabel(t)}
+          sideActions={[...bandFilterFabActions, ...bandSelectSideActions]}
+          directAction={pageQuickLinks.hasPageQuickLinks}
+          onPress={() => pageQuickLinks.openPageQuickLinks()}
+        />
+      )}
       {showMobileFab && location.pathname === AppRoutes.compete && (
         <MobileFloatingActionButton
           mode="players"
@@ -1035,13 +1094,13 @@ function AppShell() {
         />
         ) : null;
       })()}
-      {showMobileFab && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.settings && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
+      {showMobileFab && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.settings && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.bands.test(location.pathname) && (
         <MobileFloatingActionButton
           mode="players"
           actionGroups={withPageQuickLinks(
             pageQuickLinks.hasPageQuickLinks || fabSearch.playerPageSelect ? [
               ...(fabSearch.playerPageSelect
-                ? [{ label: t('common.selectAsProfile', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect }]
+                ? [{ label: t('common.selectPlayerName', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect }]
                 : []),
             ] : [],
           )}
