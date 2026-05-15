@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
@@ -7,6 +7,7 @@ import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankin
 import type { ComboPageResponse, RankingsPageResponse, RivalsListResponse } from '@festival/core/api/serverTypes';
 import { contentHash } from '../../../src/firstRun/types';
 import { competeSlides } from '../../../src/pages/compete/firstRun';
+import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 
 const mockApi = vi.hoisted(() => ({
   getComboRankings: vi.fn(),
@@ -27,6 +28,7 @@ beforeAll(() => {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.clearAllMocks();
+  setDesktopMatchMedia();
   localStorage.clear();
   localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player', displayName: 'Test Player' }));
   seedCompeteFirstRun();
@@ -158,6 +160,53 @@ function RivalDetailEcho() {
       </button>
     </>
   );
+}
+
+function QuickLinksControllerProbe() {
+  const pageQuickLinks = usePageQuickLinksController();
+
+  return (
+    <>
+      <span data-testid="page-quick-links-registered">{pageQuickLinks.hasPageQuickLinks ? 'true' : 'false'}</span>
+      <button type="button" data-testid="open-registered-quick-links" onClick={pageQuickLinks.openPageQuickLinks}>
+        Open Registered Quick Links
+      </button>
+    </>
+  );
+}
+
+function setMobileMatchMedia() {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query.includes('max-width'),
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
+function setDesktopMatchMedia() {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
 }
 
 async function advancePastPageTransition() {
@@ -449,6 +498,33 @@ describe('CompetePage', () => {
     expect(list.querySelectorAll('button')).toHaveLength(2);
     expect(screen.queryByTestId('compete-quick-link-solo-guitar')).not.toBeInTheDocument();
     expect(screen.queryByTestId('compete-quick-link-05')).not.toBeInTheDocument();
+  });
+
+  it('registers mobile quick links without rendering the header trigger space', async () => {
+    setMobileMatchMedia();
+
+    render(
+      <TestProviders route="/compete" accountId="test-player">
+        <QuickLinksControllerProbe />
+        <Routes>
+          <Route path="/compete" element={<CompetePage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await advancePastPageTransition();
+    await waitFor(() => {
+      expect(screen.getByTestId('page-quick-links-registered')).toHaveTextContent('true');
+    });
+
+    expect(screen.getByTestId('test-header-portal').childElementCount).toBe(0);
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+
+    fireEvent.click(screen.getByTestId('open-registered-quick-links'));
+
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeInTheDocument();
+    expect(screen.getByTestId('compete-quick-link-leaderboards')).toBeInTheDocument();
+    expect(screen.getByTestId('compete-quick-link-rivals')).toBeInTheDocument();
   });
 
   it('restores compete immediately when returning from rival detail', async () => {

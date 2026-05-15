@@ -1563,26 +1563,28 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
-  it('keeps Compete quick links in the same FAB section as the direct top-level section actions on mobile', async () => {
+  it('opens Compete quick links directly from the mobile FAB with section pills beside it', async () => {
     setMobile();
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
     window.location.hash = '#/compete';
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getAllByText('Quick Links').length).toBeGreaterThan(0);
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
     }, { timeout: 5000 });
 
-    fireEvent.click(screen.getByLabelText('Actions'));
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const leaderboardsButton = within(sideActions).getByRole('button', { name: 'Leaderboards' });
+    const rivalsButton = within(sideActions).getByRole('button', { name: 'Rivals' });
+    expect(within(leaderboardsButton).getByText('Leaderboard')).toBeDefined();
+    expect(within(rivalsButton).getByText('Rivals')).toBeDefined();
+    expect(screen.getAllByRole('button', { name: 'Quick Links' })).toHaveLength(1);
+    expect(screen.queryByLabelText('Actions')).toBeNull();
 
-    const menu = await screen.findByTestId('fab-menu');
-    await waitFor(() => {
-      expect(within(menu).getByText('Quick Links')).toBeDefined();
-      expect(within(menu).getByText('Leaderboards')).toBeDefined();
-      expect(within(menu).getByText('Rivals')).toBeDefined();
-    });
-    expect(within(menu).queryByText('Item Shop')).toBeNull();
-    expect(within(menu).queryAllByTestId('fab-menu-divider')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
 
     window.location.hash = '';
   });
@@ -1594,12 +1596,10 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getAllByText('Quick Links').length).toBeGreaterThan(0);
+      expect(screen.getByTestId('fab-side-actions')).toBeDefined();
     }, { timeout: 5000 });
 
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
-    fireEvent.click(within(menu).getByText('Leaderboards'));
+    fireEvent.click(within(screen.getByTestId('fab-side-actions')).getByRole('button', { name: 'Leaderboards' }));
 
     await waitFor(() => {
       expect(window.location.hash).toBe('#/leaderboards');
@@ -1615,12 +1615,10 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getAllByText('Quick Links').length).toBeGreaterThan(0);
+      expect(screen.getByTestId('fab-side-actions')).toBeDefined();
     }, { timeout: 5000 });
 
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
-    fireEvent.click(within(menu).getByText('Rivals'));
+    fireEvent.click(within(screen.getByTestId('fab-side-actions')).getByRole('button', { name: 'Rivals' }));
 
     await waitFor(() => {
       expect(window.location.hash).toBe('#/rivals');

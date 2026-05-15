@@ -272,7 +272,7 @@ export default function CompetePage() {
     };
   }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
 
-  const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
+  const compactQuickLinksAction = !isMobile && !isWideDesktop && pageQuickLinks
     ? (
       <ActionPill
         icon={<IoCompass size={Size.iconAction} />}
@@ -289,7 +289,7 @@ export default function CompetePage() {
       quickLinks={pageQuickLinks}
       before={
         isMobile
-          ? (compactQuickLinksAction ? <PageHeader actions={compactQuickLinksAction} /> : undefined)
+          ? undefined
           : <PageHeader title={t('compete.title')} actions={compactQuickLinksAction} />
       }
       firstRun={{ key: 'compete', label: t('nav.compete'), slides: competeSlides, gateContext: firstRunGateCtx }}

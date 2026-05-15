@@ -1054,16 +1054,25 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && location.pathname === AppRoutes.compete && (
+      {showMobileFab && location.pathname === AppRoutes.compete && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
           mode="players"
-          actionGroups={withPageQuickLinks(
-            [
-              { label: t('compete.leaderboards'), icon: <IoTrophy size={Size.iconFab} />, onPress: () => navigate(AppRoutes.leaderboards) },
-              { label: t('compete.rivals'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => navigate(AppRoutes.rivals) },
-            ],
-          )}
-          onPress={() => {}}
+          ariaLabel={getFabQuickLinksActionLabel(t)}
+          sideActions={[
+            {
+              label: t('compete.leaderboards'),
+              displayLabel: t('leaderboard.title'),
+              icon: <IoTrophy size={Size.iconFab} />,
+              onPress: () => navigate(AppRoutes.leaderboards),
+            },
+            {
+              label: t('compete.rivals'),
+              icon: <IoPeople size={Size.iconFab} />,
+              onPress: () => navigate(AppRoutes.rivals),
+            },
+          ]}
+          directAction
+          onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
       {showMobileFab && RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.allRivals.test(location.pathname) && (() => {
