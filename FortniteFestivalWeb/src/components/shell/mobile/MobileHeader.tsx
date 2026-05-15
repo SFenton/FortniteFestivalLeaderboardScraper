@@ -6,6 +6,7 @@ import { InstrumentIcon } from '../../display/InstrumentIcons';
 import HamburgerButton from '../HamburgerButton';
 import HeaderActions, { type HeaderActionProfileType, type HeaderNotificationVisualState } from '../HeaderActions';
 import BackLink from './BackLink';
+import MarqueeText from '../../common/MarqueeText';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
   Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
@@ -97,7 +98,7 @@ export default function MobileHeader({
         ) : (
           <>
             {onOpenSidebar && <HamburgerButton onClick={onOpenSidebar} size={IconSize.nav} style={{ marginLeft: Layout.headerIconNudge, color: Colors.textPrimary }} />}
-            <span style={s.title}>{navTitle}</span>
+            <MarqueeText text={navTitle} style={s.title} overflowInset={6} />
           </>
         )}
         {rightActionGroup}
@@ -129,6 +130,8 @@ function useStyles() {
       touchAction: CssValue.none,
     } as CSSProperties,
     title: {
+      flex: 1,
+      minWidth: 0,
       fontSize: Font.title,
       fontWeight: Weight.bold,
       color: Colors.textPrimary,

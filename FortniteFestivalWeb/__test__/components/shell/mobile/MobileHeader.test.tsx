@@ -1,13 +1,38 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import MobileHeader from '../../../../src/components/shell/mobile/MobileHeader';
+import { stubElementDimensions, stubResizeObserver } from '../../../helpers/browserStubs';
 
 function renderWithRouter(ui: React.ReactElement, { route = '/songs' } = {}) {
   return render(<MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>);
 }
 
 describe('MobileHeader', () => {
+  beforeAll(() => {
+    stubElementDimensions();
+    stubResizeObserver();
+    const originalCreateRange = document.createRange.bind(document);
+    document.createRange = () => {
+      const range = originalCreateRange();
+      Object.assign(range, {
+        getBoundingClientRect: () => ({
+          top: 0,
+          left: 0,
+          bottom: 16,
+          right: 120,
+          width: 120,
+          height: 16,
+          x: 0,
+          y: 0,
+          toJSON() { return this; },
+        }),
+        getClientRects: () => [] as unknown as DOMRectList,
+      });
+      return range;
+    };
+  });
+
   it('renders nav title when provided', () => {
     renderWithRouter(
       <MobileHeader
@@ -21,6 +46,10 @@ describe('MobileHeader', () => {
       />,
     );
     expect(screen.getByText('Songs')).toBeDefined();
+    const titleContainer = screen.getByText('Songs').parentElement;
+    expect(titleContainer?.style.flex).toContain('1');
+    expect(titleContainer?.style.minWidth).toBe('0px');
+    expect(titleContainer?.style.overflow).toBe('hidden');
   });
 
   it('renders search action and calls onOpenSearch', () => {
@@ -239,7 +268,7 @@ describe('MobileHeader', () => {
       />,
     );
 
-    const header = screen.getByText('Songs').parentElement;
+    const header = screen.getByTestId('mobile-header-actions').parentElement;
     expect(header).toBeTruthy();
     const searchButton = within(header!).getByRole('button', { name: 'Search' });
     const profileButton = within(header!).getByRole('button', { name: 'Select Player Profile' });

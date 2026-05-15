@@ -161,6 +161,74 @@ describe('MarqueeText', () => {
     expect(container.querySelector('[class*="track"]')).toBeNull();
   });
 
+  it('remeasures when text changes without a container resize', () => {
+    const { container, rerender } = render(<MarqueeText text="Song Rivals" />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    const inner = wrapper.querySelector('span')!;
+
+    mockWidths(wrapper, 120, 120);
+    mockWidths(inner, 80, 80);
+    fireResize();
+    expect(container.querySelector('[class*="track"]')).toBeNull();
+
+    rangeWidth = 220;
+    rerender(<MarqueeText text="Leaderboard Rivals" />);
+
+    const track = container.querySelector('[class*="track"]');
+    expect(track).not.toBeNull();
+    expect(container.querySelectorAll('span')).toHaveLength(2);
+  });
+
+  it('activates marquee when rendered text is ellipsis-clipped', () => {
+    const { container } = render(<MarqueeText text="Leaderboard Rivals" />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    const inner = wrapper.querySelector('span')!;
+
+    mockWidths(wrapper, 200, 220);
+    mockWidths(inner, 180, 180);
+    fireResize();
+
+    const track = container.querySelector('[class*="track"]');
+    expect(track).not.toBeNull();
+    expect(container.querySelectorAll('span')).toHaveLength(2);
+  });
+
+  it('activates marquee when rendered clipping is within measurement tolerance', () => {
+    const { container } = render(<MarqueeText text="Leaderboard Rivals" />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    const inner = wrapper.querySelector('span')!;
+
+    mockWidths(wrapper, 200, 201);
+    mockWidths(inner, 199, 199);
+    fireResize();
+
+    expect(container.querySelector('[class*="track"]')).not.toBeNull();
+  });
+
+  it('keeps near-fit text static by default', () => {
+    const { container } = render(<MarqueeText text="Leaderboard Rivals" />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    const inner = wrapper.querySelector('span')!;
+
+    mockWidths(wrapper, 200, 200);
+    mockWidths(inner, 196, 196);
+    fireResize();
+
+    expect(container.querySelector('[class*="track"]')).toBeNull();
+  });
+
+  it('activates marquee for near-fit text when overflowInset is provided', () => {
+    const { container } = render(<MarqueeText text="Leaderboard Rivals" overflowInset={6} />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    const inner = wrapper.querySelector('span')!;
+
+    mockWidths(wrapper, 200, 200);
+    mockWidths(inner, 196, 196);
+    fireResize();
+
+    expect(container.querySelector('[class*="track"]')).not.toBeNull();
+  });
+
   it('disconnects ResizeObserver on unmount', () => {
     const { unmount } = render(<MarqueeText text="Hello" />);
     expect(observedElements.length).toBe(1);

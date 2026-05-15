@@ -16,6 +16,8 @@ export interface MarqueeTextProps {
   gap?: number;
   /** Override translate distance (pixels) for synchronized scrolling. */
   syncDistance?: number;
+  /** Treat text as overflowing when it is within this many pixels of the container edge. */
+  overflowInset?: number;
   /** Called with the measured text width when overflow is detected (0 when not overflowing). */
   onMeasure?: (textWidth: number) => void;
 }
@@ -48,6 +50,7 @@ export default function MarqueeText({
   cycleDuration = DEFAULT_CYCLE,
   gap = DEFAULT_GAP,
   syncDistance,
+  overflowInset = 0,
   onMeasure,
 }: MarqueeTextProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -63,9 +66,14 @@ export default function MarqueeText({
     const check = () => {
       const measure = measureRef.current;
       if (!measure) return;
-      const tw = getTextWidth(measure);
+      const isTrackRender = container.firstElementChild instanceof HTMLElement && container.firstElementChild.classList.contains(cls.track);
+      const renderedTextWidth = isTrackRender ? 0 : container.scrollWidth;
+      const measuredTextWidth = getTextWidth(measure);
+      const tw = Math.max(measuredTextWidth, renderedTextWidth);
       const availableWidth = container.clientWidth;
-      const nowOverflows = tw > availableWidth + 1;
+      const isRenderedClipped = !isTrackRender && renderedTextWidth > availableWidth;
+      const isNearEdge = overflowInset > 0 && measuredTextWidth > availableWidth - overflowInset;
+      const nowOverflows = isRenderedClipped || isNearEdge || measuredTextWidth > availableWidth + 1;
       setOverflows(prev => prev === nowOverflows ? prev : nowOverflows);
       setTextWidth(prev => prev === tw ? prev : tw);
       onMeasure?.(nowOverflows ? tw : 0);
@@ -73,9 +81,14 @@ export default function MarqueeText({
 
     const ro = new ResizeObserver(check);
     ro.observe(container);
+    check();
+    const frame = window.requestAnimationFrame(check);
 
-    return () => ro.disconnect();
-  }, [text, cycleDuration, gap, onMeasure]);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [text, cycleDuration, gap, overflowInset, onMeasure]);
 
   /** Reset UA styles so the inner element inherits font sizing from the container. */
   const tagReset: CSSProperties = { margin: 0, fontSize: 'inherit', fontWeight: 'inherit' };
