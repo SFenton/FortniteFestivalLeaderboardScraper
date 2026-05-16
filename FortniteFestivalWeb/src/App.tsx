@@ -22,6 +22,7 @@ const PlayerHistoryPage = lazy(() => import('./pages/leaderboard/player/PlayerHi
 const PlayerPage = lazy(() => import('./pages/player/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/suggestions/SuggestionsPage'));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
+const LicensesPage = lazy(() => import('./pages/settings/LicensesPage'));
 const ShopPage = lazy(() => import('./pages/shop/ShopPage'));
 const RivalsPage = lazy(() => import('./pages/rivals/RivalsPage'));
 const RivalDetailPage = lazy(() => import('./pages/rivals/RivalDetailPage'));
@@ -93,6 +94,7 @@ function RoutesContent({ player, selectedProfile }: { player: TrackedPlayer | nu
         <Route path="/compete" element={<Navigate to={AppRoutes.songs} replace />} />
       )}
       <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
+      <Route path="/settings/licenses" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LicensesPage /></ErrorBoundary>} />
     </Routes>
     </Suspense>
   );
@@ -237,7 +239,7 @@ export function getEmptyBandFilterActionLabel(selectedProfile: SelectedProfile |
 }
 
 export function shouldShowBandFilterAction(selectedProfile: SelectedProfile | null, pathname: string): boolean {
-  return selectedProfile?.type === 'band' && pathname !== AppRoutes.settings;
+  return selectedProfile?.type === 'band' && !pathname.startsWith(AppRoutes.settings);
 }
 
 export function prependFabActionGroup(leadingActions: ActionItem[], actionGroups: ActionItem[][]): ActionItem[][] {
@@ -246,6 +248,7 @@ export function prependFabActionGroup(leadingActions: ActionItem[], actionGroups
 
 export function getBackFallback(pathname: string, search = ''): string | null {
   const parts = pathname.split('/').filter(Boolean);
+  if (pathname === AppRoutes.settingsLicenses) return AppRoutes.settings;
   if (parts[0] === 'songs' && parts.length === 4) return `/songs/${parts[1]}/${parts[2]}`;
   if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
   if (parts[0] === 'songs' && parts.length === 2) return AppRoutes.songs;
@@ -315,7 +318,7 @@ function getSongDetailId(pathname: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
-const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
+const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.settingsLicenses, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
   return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals') || pathname.startsWith('/leaderboards') || pathname.startsWith('/bands');

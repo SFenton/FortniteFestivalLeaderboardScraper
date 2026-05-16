@@ -67,6 +67,8 @@ Every page uses the `<Page>` shell:
 
 React 19, React Router 7.1, @tanstack/react-query 5.x, Recharts 3.x, @dnd-kit 6.x, @tanstack/react-virtual 3.x, react-i18next 16.x, KaTeX 0.16.x
 
+When changing any package manifest, lockfile, or related NuGet/package reference that is surfaced in the web Licenses page, run `npm run licenses:generate` and `npm run licenses:check` from `FortniteFestivalWeb`. Add unresolved package license metadata to `../tools/license-overrides.json`.
+
 ## Monorepo Packages
 
 - `@festival/core` — shared types, API client, enums, instruments

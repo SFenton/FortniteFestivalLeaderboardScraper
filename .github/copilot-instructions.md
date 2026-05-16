@@ -38,6 +38,12 @@ ALL implementation requests follow a mandatory two-phase flow:
 
 Always use the `memory` tool (create, str_replace, insert) to write to `/memories/session/` files. **NEVER** use terminal commands (`Set-Content`, `echo`, `cat >`) to write session memory — these cause encoding corruption.
 
+## Dependency License Maintenance
+
+- When adding, removing, or changing any third-party npm, NuGet, or manually bundled package, update the license manifest workflow in code as part of the same change.
+- Run `cd FortniteFestivalWeb && npm run licenses:generate` after dependency changes, then run `npm run licenses:check` to verify `FortniteFestivalWeb/src/generated/licenseManifest.ts` is current.
+- If a package's license metadata cannot be inferred from installed metadata, lockfiles, or NuGet cache, add an explicit entry to `tools/license-overrides.json` rather than leaving the package unclassified.
+
 ### Session Memory Files
 - `task-context.md` — Triage context + user context
 - `plan-negotiation.md` — Full agent negotiation during plan phase

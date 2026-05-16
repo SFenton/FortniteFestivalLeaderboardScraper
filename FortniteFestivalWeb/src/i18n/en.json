@@ -656,6 +656,11 @@
     "quickLinks": "Quick Links",
     "appSettings": "App Settings",
     "appSettingsHint": "General Festival Score Tracker app settings.",
+    "licensesNavTitle": "Licenses",
+    "licensesNavDescription": "Open source package license details.",
+    "licenses": {
+      "title": "Licenses"
+    },
     "showInstrumentIcons": "Show Instrument Icons",
     "showInstrumentIconsDesc": "Display instrument icons on each song row showing which parts have leaderboard scores or FCs.",
     "enableVisualOrder": "Enable Independent Song Row Visual Order",

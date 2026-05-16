@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
@@ -41,8 +42,9 @@ import PageHeader from '../../components/common/PageHeader';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
-import { IoCompass } from 'react-icons/io5';
+import { IoChevronForward, IoCompass } from 'react-icons/io5';
 import type { SearchTarget } from '../../types/search';
+import { Routes as AppRoutes } from '../../routes';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
@@ -53,7 +55,7 @@ const SETTINGS_ACTION_BUTTON_WIDTH = 168;
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;
 
- type SettingsQuickLinkId = 'app-settings' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'export' | 'reset';
+ type SettingsQuickLinkId = 'app-settings' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'export' | 'reset';
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
@@ -687,6 +689,7 @@ export default function SettingsPage() {
     { id: 'version', label: t('settings.versionTitle'), landmarkLabel: t('settings.versionTitle') },
     { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title') },
     { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle') },
+    { id: 'licenses', label: t('settings.licensesNavTitle'), landmarkLabel: t('settings.licensesNavTitle') },
     { id: 'export', label: t('settings.exportDataSection'), landmarkLabel: t('settings.exportDataSection') },
     { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection') },
   ]), [settingsQuickLinksTitle, t]);
@@ -1065,6 +1068,22 @@ export default function SettingsPage() {
             </div>
           </FadeInDiv>
 
+          {/* ── Licenses ── */}
+          <FadeInDiv delay={stagger(staggerIndex++)}>
+            <div ref={(element) => registerSectionRef('licenses', element)}>
+              <Link to={AppRoutes.settingsLicenses} style={st.navigationRow} aria-label={t('settings.licensesNavTitle')}>
+                <div style={st.navigationContent}>
+                  <SectionHeader
+                    title={t('settings.licensesNavTitle')}
+                    description={t('settings.licensesNavDescription')}
+                    flush
+                  />
+                </div>
+                <IoChevronForward size={Size.iconAction} aria-hidden="true" style={st.navigationChevron} />
+              </Link>
+            </div>
+          </FadeInDiv>
+
           {/* ── Export Data ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
             <div ref={(element) => registerSectionRef('export', element)}>
@@ -1288,6 +1307,21 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     } as CSSProperties,
     serviceInfoSpinner: {
       flexShrink: 0,
+    } as CSSProperties,
+    navigationRow: {
+      ...flexBetween,
+      gap: Gap.xl,
+      color: Colors.textPrimary,
+      textDecoration: 'none',
+      cursor: 'pointer',
+    } as CSSProperties,
+    navigationContent: {
+      flex: '1 1 auto',
+      minWidth: 0,
+    } as CSSProperties,
+    navigationChevron: {
+      flexShrink: 0,
+      color: Colors.textMuted,
     } as CSSProperties,
     resetRow: {
       ...flexBetween,

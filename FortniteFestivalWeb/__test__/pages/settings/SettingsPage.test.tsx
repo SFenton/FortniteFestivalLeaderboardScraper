@@ -216,6 +216,13 @@ describe('SettingsPage', () => {
     expect(screen.getByText('App Settings')).toBeDefined();
   });
 
+  it('renders a Licenses navigation row', () => {
+    renderSettings();
+    const licensesLink = screen.getByRole('link', { name: 'Licenses' });
+    expect(licensesLink).toHaveAttribute('href', '/settings/licenses');
+    expect(screen.getByText('Open source package license details.')).toBeDefined();
+  });
+
   it('registers quick links with the shared page controller', async () => {
     renderSettings({ withQuickLinksHarness: true });
     expect(await screen.findByTestId('test-open-page-quick-links')).toBeDefined();
@@ -267,6 +274,7 @@ describe('SettingsPage', () => {
     expect(within(list).getByTestId('settings-quick-link-item-shop')).toHaveTextContent('Item Shop');
     expect(within(list).getByTestId('settings-quick-link-service-info')).toHaveTextContent('Service Info');
     expect(within(list).getByTestId('settings-quick-link-first-run')).toHaveTextContent('First Run Guides');
+    expect(within(list).getByTestId('settings-quick-link-licenses')).toHaveTextContent('Licenses');
     expect(within(list).getByTestId('settings-quick-link-export')).toHaveTextContent('Export Data');
     expect(within(list).getByTestId('settings-quick-link-reset')).toHaveTextContent('Reset Settings');
 

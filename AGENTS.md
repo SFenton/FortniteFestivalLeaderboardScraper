@@ -35,6 +35,7 @@ cd FortniteFestivalWeb && npx playwright test             # E2E (4 viewports)
 - **API contract**: `FSTService/Api/ApiEndpoints.cs` defines routes; `FortniteFestivalWeb/src/api/client.ts` consumes them. Changes to one MUST be reflected in the other.
 - **Feature flags**: `FSTService/FeatureOptions.cs` ↔ `FortniteFestivalWeb/src/contexts/FeatureFlagsContext.tsx`. Both sides must agree on flag names and defaults.
 - **Shared types**: Instrument enums, song models — defined in `FortniteFestival.Core/Config/InstrumentType.cs` and `packages/core/src/`.
+- **Dependency licenses**: Any npm, NuGet, or other third-party package add/remove/change MUST update the generated license manifest. Run `cd FortniteFestivalWeb && npm run licenses:generate && npm run licenses:check`; add missing metadata to `tools/license-overrides.json`.
 
 ## Design Documents
 

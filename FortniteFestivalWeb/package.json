@@ -13,6 +13,8 @@
     "e2e:headed": "playwright test --headed",
     "lint": "eslint src/",
     "lint:css": "stylelint 'src/**/*.module.css'",
+    "licenses:generate": "node ../tools/generate-license-manifest.mjs",
+    "licenses:check": "node ../tools/generate-license-manifest.mjs --check",
     "check:encoding": "node ../tools/check-encoding.mjs"
   },
   "dependencies": {

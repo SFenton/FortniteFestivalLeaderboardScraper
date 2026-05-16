@@ -41,6 +41,7 @@ export const Routes = {
   },
   shop: '/shop',
   settings: '/settings',
+  settingsLicenses: '/settings/licenses',
 } as const;
 
 function buildBandQuery(context?: { accountId?: string; bandType?: string; teamKey?: string; names?: string }): string {
