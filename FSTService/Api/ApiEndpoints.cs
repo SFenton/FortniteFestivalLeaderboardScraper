@@ -14,6 +14,8 @@ public static partial class ApiEndpoints
         app.MapSongEndpoints();
         app.MapLeaderboardEndpoints();
         app.MapPlayerEndpoints();
+        app.MapExportEndpoints();
+        app.MapBandSyncEndpoints();
         app.MapRivalsEndpoints();
         app.MapLeaderboardRivalsEndpoints();
         app.MapRankingsEndpoints();

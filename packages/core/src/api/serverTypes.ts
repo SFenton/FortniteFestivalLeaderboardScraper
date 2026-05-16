@@ -474,6 +474,22 @@ export type SyncStatusResponse = {
   } | null;
 };
 
+export type BandSyncStatusResponse = {
+  bandId: string;
+  bandType: BandType;
+  teamKey: string;
+  isTracked: boolean;
+  processing: {
+    status: string;
+    lookupsChecked: number;
+    totalLookupsToCheck: number;
+    entriesFound: number;
+    startedAt: string | null;
+    completedAt: string | null;
+    lastResumedAt?: string | null;
+  } | null;
+};
+
 export type ServiceInfoResponse = {
   lastCompletedUpdate: {
     startedAt: string;

@@ -17,7 +17,7 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { ActionPill } from '../../components/common/ActionPill';
-import type { ServerInstrumentKey as InstrumentKey, ServiceInfoResponse, SyncStatusResponse } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey, BandSyncStatusResponse, ServiceInfoResponse, SyncStatusResponse } from '@festival/core/api/serverTypes';
 import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
@@ -48,11 +48,12 @@ import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVe
 
 const SERVICE_INFO_POLL_MS = 5_000;
 const SERVICE_INFO_INLINE_KEY_MIN_WIDTH = 300;
+const SETTINGS_ACTION_BUTTON_WIDTH = 168;
 
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;
 
- type SettingsQuickLinkId = 'app-settings' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'reset';
+ type SettingsQuickLinkId = 'app-settings' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'export' | 'reset';
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
@@ -277,6 +278,27 @@ function describeTrackedPlayerRivalsStatus(t: TFunction, syncStatus: SyncStatusR
   }
 }
 
+function isCompleteStatus(status: string | null | undefined): boolean {
+  return status === 'complete';
+}
+
+function isPlayerExportSyncComplete(syncStatus: SyncStatusResponse | null): boolean {
+  if (!syncStatus?.isTracked || syncStatus.pendingRankUpdate) return false;
+
+  const statuses = [
+    syncStatus.backfill?.status,
+    syncStatus.historyRecon?.status,
+    syncStatus.rivals?.status,
+    syncStatus.postScrape?.status,
+  ].filter((status): status is string => !!status);
+
+  return statuses.length > 0 && statuses.every(isCompleteStatus);
+}
+
+function isBandExportSyncComplete(syncStatus: BandSyncStatusResponse | null): boolean {
+  return !!syncStatus?.isTracked && isCompleteStatus(syncStatus.processing?.status);
+}
+
 function estimateTextWidth(text: string, fontSize = Font.md): number {
   return Math.ceil(Array.from(text).length * fontSize * 0.62);
 }
@@ -360,7 +382,7 @@ function ServiceInfoRows({ rows, styles }: { rows: ServiceInfoRowItem[]; styles:
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { settings, updateSettings, resetSettings } = useSettings();
-  const { player: trackedPlayer } = useTrackedPlayer();
+  const { profile: selectedProfile, player: trackedPlayer } = useTrackedPlayer();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
@@ -397,12 +419,18 @@ export default function SettingsPage() {
   const [serviceInfo, setServiceInfo] = useState<ServiceInfoResponse | null>(null);
   const [serviceInfoLoadFailed, setServiceInfoLoadFailed] = useState(false);
   const [trackedPlayerSyncStatus, setTrackedPlayerSyncStatus] = useState<SyncStatusResponse | null>(null);
-  const [trackedPlayerSyncLoadFailed, setTrackedPlayerSyncLoadFailed] = useState(false);
+  const [selectedBandSyncStatus, setSelectedBandSyncStatus] = useState<BandSyncStatusResponse | null>(null);
+  const [selectedProfileSyncLoadFailed, setSelectedProfileSyncLoadFailed] = useState(false);
+  const [isExportingData, setIsExportingData] = useState(false);
+  const [exportDataFailed, setExportDataFailed] = useState(false);
   // Skip stagger on revisit
   const skipAnimRef = useRef(_hasRendered);
   _hasRendered = true;
 
   const st = useSettingsStyles(isMobile, settings.filterInvalidScores, settings.songRowVisualOrderEnabled);
+  const selectedPlayerAccountId = selectedProfile?.type === 'player' ? selectedProfile.accountId : null;
+  const selectedBandType = selectedProfile?.type === 'band' ? selectedProfile.bandType : null;
+  const selectedBandTeamKey = selectedProfile?.type === 'band' ? selectedProfile.teamKey : null;
 
   /* v8 ignore start — version fetch + settings callbacks */
   useEffect(() => {
@@ -444,41 +472,52 @@ export default function SettingsPage() {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
-    if (!trackedPlayer?.accountId) {
+    if (!selectedProfile) {
       setTrackedPlayerSyncStatus(null);
-      setTrackedPlayerSyncLoadFailed(false);
+      setSelectedBandSyncStatus(null);
+      setSelectedProfileSyncLoadFailed(false);
       return undefined;
     }
 
     setTrackedPlayerSyncStatus(null);
-    setTrackedPlayerSyncLoadFailed(false);
+    setSelectedBandSyncStatus(null);
+    setSelectedProfileSyncLoadFailed(false);
 
-    const loadTrackedPlayerSyncStatus = async () => {
+    const loadSelectedProfileSyncStatus = async () => {
       try {
-        const data = await api.getSyncStatus(trackedPlayer.accountId);
+        if (selectedPlayerAccountId) {
+          const data = await api.getSyncStatus(selectedPlayerAccountId);
+          if (cancelled) return;
+          setTrackedPlayerSyncStatus(data);
+          setSelectedBandSyncStatus(null);
+        } else if (selectedBandType && selectedBandTeamKey) {
+          const data = await api.getBandSyncStatus(selectedBandType, selectedBandTeamKey);
+          if (cancelled) return;
+          setSelectedBandSyncStatus(data);
+          setTrackedPlayerSyncStatus(null);
+        }
         if (cancelled) return;
-        setTrackedPlayerSyncStatus(data);
-        setTrackedPlayerSyncLoadFailed(false);
+        setSelectedProfileSyncLoadFailed(false);
       } catch {
-        if (!cancelled) setTrackedPlayerSyncLoadFailed(true);
+        if (!cancelled) setSelectedProfileSyncLoadFailed(true);
       } finally {
         if (!cancelled) {
-          timer = setTimeout(loadTrackedPlayerSyncStatus, SERVICE_INFO_POLL_MS);
+          timer = setTimeout(loadSelectedProfileSyncStatus, SERVICE_INFO_POLL_MS);
         }
       }
     };
 
-    void loadTrackedPlayerSyncStatus();
+    void loadSelectedProfileSyncStatus();
 
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [trackedPlayer?.accountId]);
+  }, [selectedBandTeamKey, selectedBandType, selectedPlayerAccountId, selectedProfile]);
   /* v8 ignore stop */
 
   const serviceInfoFallback = serviceInfoLoadFailed ? t('common.failedToLoad') : serviceInfo ? t('settings.serviceInfo.unavailable') : t('common.loading');
-  const trackedPlayerFallback = trackedPlayerSyncLoadFailed ? t('common.failedToLoad') : trackedPlayerSyncStatus ? t('settings.serviceInfo.unavailable') : t('common.loading');
+  const selectedProfileFallback = selectedProfileSyncLoadFailed ? t('common.failedToLoad') : (trackedPlayerSyncStatus || selectedBandSyncStatus) ? t('settings.serviceInfo.unavailable') : t('common.loading');
 
   const lastLeaderboardUpdateStart = formatLocalDateTime(
     serviceInfo?.currentUpdate.status === 'updating'
@@ -506,8 +545,30 @@ export default function SettingsPage() {
         : t('settings.serviceInfo.awaitingFirstUpdate')
     : serviceInfoFallback;
   const trackedPlayerRivalsStatus = trackedPlayer
-    ? describeTrackedPlayerRivalsStatus(t, trackedPlayerSyncStatus, trackedPlayerFallback)
+    ? describeTrackedPlayerRivalsStatus(t, trackedPlayerSyncStatus, selectedProfileFallback)
     : null;
+  const selectedProfileSyncStatusLoaded = selectedProfile?.type === 'player'
+    ? trackedPlayerSyncStatus !== null
+    : selectedProfile?.type === 'band'
+      ? selectedBandSyncStatus !== null
+      : false;
+  const selectedProfileSyncComplete = selectedProfile?.type === 'player'
+    ? isPlayerExportSyncComplete(trackedPlayerSyncStatus)
+    : selectedProfile?.type === 'band'
+      ? isBandExportSyncComplete(selectedBandSyncStatus)
+      : false;
+  const canExportData = !!selectedProfile && selectedProfileSyncComplete && !isExportingData;
+  const selectedProfileName = selectedProfile?.displayName?.trim()
+    || (selectedProfile?.type === 'band' ? t('common.unknownBand') : 'Unknown Player');
+  const exportDataDescription = !selectedProfile
+    ? t('settings.exportDataNoProfileDescription')
+    : selectedProfileSyncLoadFailed
+      ? t('settings.exportDataSyncStatusFailed', { profile: selectedProfileName })
+      : !selectedProfileSyncStatusLoaded
+        ? t('settings.exportDataSyncStatusLoading', { profile: selectedProfileName })
+        : !selectedProfileSyncComplete
+          ? t('settings.exportDataSyncIncomplete', { profile: selectedProfileName })
+          : t('settings.exportDataDescription', { player: selectedProfileName });
 
   const serviceInfoRows = useMemo<ServiceInfoRowItem[]>(() => {
     const isUpdating = serviceInfo?.currentUpdate.status === 'updating';
@@ -522,7 +583,7 @@ export default function SettingsPage() {
     if (trackedPlayer) {
       rows.push(
         { id: 'selected-player-id', label: t('settings.serviceInfo.selectedPlayerId'), value: trackedPlayer.accountId },
-        { id: 'selected-player-rivals-status', label: t('settings.serviceInfo.selectedPlayerRivalsStatus'), value: trackedPlayerRivalsStatus ?? trackedPlayerFallback },
+        { id: 'selected-player-rivals-status', label: t('settings.serviceInfo.selectedPlayerRivalsStatus'), value: trackedPlayerRivalsStatus ?? selectedProfileFallback },
       );
     }
 
@@ -536,7 +597,7 @@ export default function SettingsPage() {
     serviceInfo,
     t,
     trackedPlayer,
-    trackedPlayerFallback,
+    selectedProfileFallback,
     trackedPlayerRivalsStatus,
   ]);
 
@@ -555,6 +616,24 @@ export default function SettingsPage() {
     },
     [settings, updateSettings],
   );
+
+  const handleExportData = useCallback(async () => {
+    if (!selectedProfile || !selectedProfileSyncComplete || isExportingData) return;
+
+    setIsExportingData(true);
+    setExportDataFailed(false);
+    try {
+      if (selectedProfile.type === 'player') {
+        await api.downloadPlayerExport(selectedProfile.accountId);
+      } else {
+        await api.downloadBandExport(selectedProfile.bandType, selectedProfile.teamKey);
+      }
+    } catch {
+      setExportDataFailed(true);
+    } finally {
+      setIsExportingData(false);
+    }
+  }, [isExportingData, selectedProfile, selectedProfileSyncComplete]);
 
   /* v8 ignore start — presentation-only metadata display mapping */
   const hiddenMetadataKeys = useMemo(() => {
@@ -608,6 +687,7 @@ export default function SettingsPage() {
     { id: 'version', label: t('settings.versionTitle'), landmarkLabel: t('settings.versionTitle') },
     { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title') },
     { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle') },
+    { id: 'export', label: t('settings.exportDataSection'), landmarkLabel: t('settings.exportDataSection') },
     { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection') },
   ]), [settingsQuickLinksTitle, t]);
 
@@ -985,6 +1065,33 @@ export default function SettingsPage() {
             </div>
           </FadeInDiv>
 
+          {/* ── Export Data ── */}
+          <FadeInDiv delay={stagger(staggerIndex++)}>
+            <div ref={(element) => registerSectionRef('export', element)}>
+              <div style={st.exportRow}>
+                <div>
+                  <SectionHeader
+                    title={t('settings.exportDataSection')}
+                    description={exportDataDescription}
+                    flush
+                  />
+                  {exportDataFailed && (
+                    <div role="status" aria-live="polite" style={st.exportErrorText}>
+                      {t('settings.exportDataFailed')}
+                    </div>
+                  )}
+                </div>
+                <button
+                  style={!canExportData ? st.exportButtonDisabled : st.exportButton}
+                  onClick={handleExportData}
+                  disabled={!canExportData}
+                >
+                  {isExportingData ? t('settings.exportDataPreparing') : t('settings.exportDataButton')}
+                </button>
+              </div>
+            </div>
+          </FadeInDiv>
+
           {/* ── Reset ── */}
           <FadeInDiv delay={stagger(staggerIndex)}>
             <div ref={(element) => registerSectionRef('reset', element)}>
@@ -1192,7 +1299,36 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
       padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
       fontSize: isMobile ? Font.md : Font.sm,
       flexShrink: 0,
-      ...(isMobile ? { width: CssValue.full, textAlign: TextAlign.center } : {}),
+      textAlign: TextAlign.center,
+      ...(isMobile ? { width: CssValue.full } : { width: SETTINGS_ACTION_BUTTON_WIDTH }),
+    } as CSSProperties,
+    exportRow: {
+      ...flexBetween,
+      gap: Gap.xl,
+      ...(isMobile ? { ...flexColumn, alignItems: Align.stretch } : {}),
+    } as CSSProperties,
+    exportButton: {
+      ...btnPrimary,
+      padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
+      fontSize: isMobile ? Font.md : Font.sm,
+      flexShrink: 0,
+      textAlign: TextAlign.center,
+      ...(isMobile ? { width: CssValue.full } : { width: SETTINGS_ACTION_BUTTON_WIDTH }),
+    } as CSSProperties,
+    exportButtonDisabled: {
+      ...btnPrimary,
+      padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
+      fontSize: isMobile ? Font.md : Font.sm,
+      flexShrink: 0,
+      opacity: 0.55,
+      cursor: 'not-allowed',
+      textAlign: TextAlign.center,
+      ...(isMobile ? { width: CssValue.full } : { width: SETTINGS_ACTION_BUTTON_WIDTH }),
+    } as CSSProperties,
+    exportErrorText: {
+      color: Colors.statusRed,
+      fontSize: isMobile ? Font.md : Font.sm,
+      marginTop: Gap.sm,
     } as CSSProperties,
     firstRunBtn: {
       ...btnPrimary,

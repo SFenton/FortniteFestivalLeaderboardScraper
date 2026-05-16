@@ -42,10 +42,36 @@ const defaultSyncStatus = {
   },
 };
 
+const defaultBandSyncStatus = {
+  bandId: 'band-1',
+  bandType: 'Band_Duets',
+  teamKey: 'member-a:member-b',
+  isTracked: true,
+  processing: {
+    status: 'complete',
+    lookupsChecked: 10,
+    totalLookupsToCheck: 10,
+    entriesFound: 4,
+    startedAt: '2026-04-20T12:31:00Z',
+    completedAt: '2026-04-20T12:32:00Z',
+  },
+};
+
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver();
   stubElementDimensions();
+  if (typeof Range !== 'undefined') {
+    const rect = { top: 0, left: 0, bottom: 16, right: 120, width: 120, height: 16, x: 0, y: 0, toJSON() { return this; } };
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect,
+    });
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [] as unknown as DOMRectList,
+    });
+  }
   if (!HTMLElement.prototype.animate) {
     HTMLElement.prototype.animate = vi.fn().mockReturnValue({
       cancel: vi.fn(), pause: vi.fn(), play: vi.fn(), finish: vi.fn(),
@@ -61,12 +87,15 @@ beforeEach(() => {
   localStorage.clear();
   setViewportQueries();
   // Mock fetch for /api/version
-  global.fetch = vi.fn().mockImplementation((url: string) => {
+  globalThis.fetch = vi.fn().mockImplementation((url: string) => {
     if (typeof url === 'string' && url.includes('/api/version')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
     }
     if (typeof url === 'string' && url.includes('/api/service-info')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
+    }
+    if (typeof url === 'string' && url.includes('/api/bands/') && url.includes('/sync-status')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultBandSyncStatus) });
     }
     if (typeof url === 'string' && url.includes('/sync-status')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
@@ -91,7 +120,7 @@ function mockScrollWidths(scale = 7) {
       return;
     }
 
-    delete (HTMLElement.prototype as Partial<HTMLElement>).scrollWidth;
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>)['scrollWidth'];
   };
 }
 
@@ -238,6 +267,7 @@ describe('SettingsPage', () => {
     expect(within(list).getByTestId('settings-quick-link-item-shop')).toHaveTextContent('Item Shop');
     expect(within(list).getByTestId('settings-quick-link-service-info')).toHaveTextContent('Service Info');
     expect(within(list).getByTestId('settings-quick-link-first-run')).toHaveTextContent('First Run Guides');
+    expect(within(list).getByTestId('settings-quick-link-export')).toHaveTextContent('Export Data');
     expect(within(list).getByTestId('settings-quick-link-reset')).toHaveTextContent('Reset Settings');
 
     const dialog = screen.getByRole('dialog', { name: 'Quick Links' });
@@ -275,6 +305,193 @@ describe('SettingsPage', () => {
     renderSettings();
     expect(screen.getByText('Reset Settings')).toBeDefined();
     expect(screen.getByText('Reset All Settings')).toBeDefined();
+  });
+
+  it('renders Export Data section disabled until a profile is selected', () => {
+    renderSettings();
+    expect(screen.getAllByText('Export Data').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('Select a player or band profile to export data.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', true);
+  });
+
+  it('downloads the selected player export from Settings', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
+
+    const createObjectUrl = vi.fn().mockReturnValue('blob:test-export');
+    const revokeObjectUrl = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectUrl });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/api/bands/') && url.includes('/sync-status')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultBandSyncStatus) });
+      }
+      if (typeof url === 'string' && url.includes('/sync-status')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
+      }
+      if (typeof url === 'string' && url.includes('/api/player/tracked-player-1/export')) {
+        return Promise.resolve({
+          ok: true,
+          blob: () => Promise.resolve(new Blob(['xlsx'])),
+          headers: { get: (name: string) => name.toLowerCase() === 'content-disposition' ? 'attachment; filename="fst-export.xlsx"' : null },
+        });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+    const exportButton = await screen.findByRole('button', { name: 'Export Data' });
+    await waitFor(() => {
+      expect(exportButton).toHaveProperty('disabled', false);
+    });
+    fireEvent.click(exportButton);
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith('/api/player/tracked-player-1/export', expect.objectContaining({ cache: 'no-store' }));
+      expect(clickSpy).toHaveBeenCalled();
+      expect(revokeObjectUrl).toHaveBeenCalledWith('blob:test-export');
+    });
+
+    clickSpy.mockRestore();
+  });
+
+  it('keeps player export disabled until selected player sync is complete', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/sync-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            ...defaultSyncStatus,
+            backfill: {
+              status: 'pending',
+              songsChecked: 0,
+              totalSongsToCheck: 100,
+              entriesFound: 0,
+              startedAt: null,
+              completedAt: null,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByText('Data export will be available after sync completes for Tracked Player.')).toBeDefined();
+    });
+    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', true);
+    expect(globalThis.fetch).not.toHaveBeenCalledWith('/api/player/tracked-player-1/export', expect.anything());
+  });
+
+  it('downloads the selected band export without using a stale tracked player', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'stale-player-1', displayName: 'Stale Player' }));
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'member-a:member-b',
+      displayName: 'Band Buddies',
+      members: [
+        { accountId: 'member-a', displayName: 'Member A' },
+        { accountId: 'member-b', displayName: 'Member B' },
+      ],
+    }));
+
+    const createObjectUrl = vi.fn().mockReturnValue('blob:test-band-export');
+    const revokeObjectUrl = vi.fn();
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectUrl });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/api/bands/Band_Duets/member-a%3Amember-b/sync-status')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultBandSyncStatus) });
+      }
+      if (typeof url === 'string' && url.includes('/api/bands/Band_Duets/member-a%3Amember-b/export')) {
+        return Promise.resolve({
+          ok: true,
+          blob: () => Promise.resolve(new Blob(['zip'])),
+          headers: { get: (name: string) => name.toLowerCase() === 'content-disposition' ? 'attachment; filename="band-export.zip"' : null },
+        });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+    const exportButton = await screen.findByRole('button', { name: 'Export Data' });
+    await waitFor(() => {
+      expect(exportButton).toHaveProperty('disabled', false);
+    });
+    fireEvent.click(exportButton);
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith('/api/bands/Band_Duets/member-a%3Amember-b/export', expect.objectContaining({ cache: 'no-store' }));
+      expect(globalThis.fetch).not.toHaveBeenCalledWith('/api/player/stale-player-1/export', expect.anything());
+      expect(clickSpy).toHaveBeenCalled();
+      expect(revokeObjectUrl).toHaveBeenCalledWith('blob:test-band-export');
+    });
+
+    clickSpy.mockRestore();
+  });
+
+  it('keeps band export disabled until selected band sync is complete', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'member-a:member-b',
+      displayName: 'Band Buddies',
+      members: [],
+    }));
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/api/bands/') && url.includes('/sync-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            ...defaultBandSyncStatus,
+            processing: { ...defaultBandSyncStatus.processing, status: 'pending', lookupsChecked: 2 },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByText('Data export will be available after sync completes for Band Buddies.')).toBeDefined();
+    });
+    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', true);
   });
 
   it('toggles Show Instrument Icons', () => {
@@ -432,7 +649,7 @@ describe('SettingsPage', () => {
         subOperation: null,
       },
     };
-    global.fetch = vi.fn().mockImplementation((url: string) => {
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       if (typeof url === 'string' && url.includes('/api/version')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
       }
@@ -492,7 +709,7 @@ describe('SettingsPage', () => {
   });
 
   it('handles version fetch failure gracefully', async () => {
-    global.fetch = vi.fn().mockImplementation(() =>
+    globalThis.fetch = vi.fn().mockImplementation(() =>
       Promise.reject(new Error('Network error')),
     ) as unknown as typeof fetch;
     renderSettings();

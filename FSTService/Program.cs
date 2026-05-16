@@ -293,6 +293,7 @@ builder.Services.AddSingleton<IPathDataStore>(sp =>
 builder.Services.AddSingleton(sp => (FSTService.Scraping.PathDataStore)sp.GetRequiredService<IPathDataStore>());
 
 builder.Services.AddSingleton<FSTService.Api.DbStatsService>();
+builder.Services.AddSingleton<FSTService.Exports.PlayerDataExportService>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabasePressureMonitor, FSTService.Persistence.Maintenance.DatabasePressureMonitor>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DatabaseMaintenanceDryRunReporter>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetentionMaintenanceService, FSTService.Persistence.Maintenance.DatabaseRetentionMaintenanceService>();

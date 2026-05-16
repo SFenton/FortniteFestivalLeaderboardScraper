@@ -5,6 +5,7 @@ import type {
   AccountSearchResponse,
   TrackPlayerResponse,
   SyncStatusResponse,
+  BandSyncStatusResponse,
   ServiceInfoResponse,
   PlayerHistoryResponse,
   ServerInstrumentKey as InstrumentKey,
@@ -57,6 +58,7 @@ const SELECTED_PROFILE_ID_HEADER = 'X-FST-Selected-Profile-Id';
 const SELECTED_BAND_ID_HEADER = 'X-FST-Selected-Band-Id';
 const SELECTED_BAND_TYPE_HEADER = 'X-FST-Selected-Band-Type';
 const SELECTED_BAND_TEAM_KEY_HEADER = 'X-FST-Selected-Band-Team-Key';
+const EXPORT_TIME_ZONE_HEADER = 'X-FST-Time-Zone';
 
 type ApiRequestOptions = {
   signal?: AbortSignal;
@@ -109,6 +111,54 @@ async function post<T>(path: string): Promise<T> {
     throw new Error(`API ${res.status}: ${res.statusText}`);
   }
   return res.json() as Promise<T>;
+}
+
+function getDownloadFileName(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) return fallback;
+
+  const encodedMatch = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
+  if (encodedMatch?.[1]) {
+    try {
+      return decodeURIComponent(encodedMatch[1].replace(/"/g, '').trim());
+    } catch {
+      return encodedMatch[1].replace(/"/g, '').trim() || fallback;
+    }
+  }
+
+  const quotedMatch = /filename="?([^";]+)"?/i.exec(contentDisposition);
+  return quotedMatch?.[1]?.trim() || fallback;
+}
+
+function getBrowserTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+async function download(path: string, fallbackFileName: string, headers: Record<string, string> = {}): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: withSelectedProfileHeaders(headers),
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${res.statusText}`);
+  }
+
+  const blob = await res.blob();
+  const fileName = getDownloadFileName(res.headers.get('content-disposition'), fallbackFileName);
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 const UNKNOWN_USER = 'Unknown User';
@@ -233,6 +283,9 @@ export const api = {
   getSyncStatus: (accountId: string) =>
     get<SyncStatusResponse>(`/api/player/${encodeURIComponent(accountId)}/sync-status`),
 
+  getBandSyncStatus: (bandType: BandType, teamKey: string) =>
+    get<BandSyncStatusResponse>(`/api/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/sync-status`),
+
   getPlayerNotifications: (accountId: string, limit = 50, options?: ApiRequestOptions) =>
     get<ImprovementNotificationsEnvelope>(`/api/player/${encodeURIComponent(accountId)}/notifications?limit=${limit}`, options),
 
@@ -249,6 +302,24 @@ export const api = {
     const qs = params.toString();
     return get<PlayerHistoryResponse>(
       `/api/player/${encodeURIComponent(accountId)}/history${qs ? `?${qs}` : ''}`,
+    );
+  },
+
+  downloadPlayerExport: (accountId: string) => {
+    const timeZone = getBrowserTimeZone();
+    return download(
+      `/api/player/${encodeURIComponent(accountId)}/export`,
+      `fst-export-${accountId}.zip`,
+      timeZone ? { [EXPORT_TIME_ZONE_HEADER]: timeZone } : {},
+    );
+  },
+
+  downloadBandExport: (bandType: BandType, teamKey: string) => {
+    const timeZone = getBrowserTimeZone();
+    return download(
+      `/api/bands/${encodeURIComponent(bandType)}/${encodeURIComponent(teamKey)}/export`,
+      `fst-band-export-${bandType}-${teamKey}.zip`,
+      timeZone ? { [EXPORT_TIME_ZONE_HEADER]: timeZone } : {},
     );
   },
 
