@@ -19,6 +19,7 @@
     "ok": "OK",
     "failedToLoad": "Failed to load data",
     "searchPlayer": "Search player…",
+    "selectProfile": "Select Profile",
     "selectPlayerProfile": "Select Player Profile",
     "selectBandProfile": "Select Band Profile",
     "selectAsProfile": "Select {{name}} as Player Profile",
