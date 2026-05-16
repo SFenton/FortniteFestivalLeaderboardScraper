@@ -69,6 +69,118 @@ describe('useSyncStatus', () => {
     expect(result.current.progress).toBe(0);
   });
 
+  it('resets queued state when accountId becomes undefined', async () => {
+    mockGetStatus.mockResolvedValue({
+      accountId: 'acc1',
+      isTracked: true,
+      pendingRankUpdate: true,
+      backfill: { status: 'deferred', songsChecked: 0, totalSongsToCheck: 100, entriesFound: 12, startedAt: null, completedAt: null, rankingsPending: true, deferredReason: 'server_update_in_progress' },
+      historyRecon: null,
+      rivals: null,
+      postScrape: null,
+    } as any);
+
+    const { result, rerender } = renderHook(
+      ({ accountId }) => useSyncStatus(accountId, { track: false, useWebSocket: false }),
+      { initialProps: { accountId: 'acc1' as string | undefined }, wrapper },
+    );
+    await flush();
+
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('queued');
+    expect(result.current.totalItems).toBe(100);
+    expect(result.current.entriesFound).toBe(12);
+    expect(result.current.pendingRankUpdate).toBe(true);
+
+    rerender({ accountId: undefined });
+    await flush();
+
+    expect(result.current.isTracked).toBe(false);
+    expect(result.current.syncStatusLoaded).toBe(false);
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('idle');
+    expect(result.current.progress).toBe(0);
+    expect(result.current.totalItems).toBe(0);
+    expect(result.current.entriesFound).toBe(0);
+    expect(result.current.currentSongName).toBeNull();
+    expect(result.current.pendingRankUpdate).toBe(false);
+    expect(result.current.justCompleted).toBe(false);
+    expect(mockGetStatus).not.toHaveBeenCalledWith(undefined);
+  });
+
+  it('does not expose previous account queued state while the next account loads', async () => {
+    mockTrackPlayer
+      .mockResolvedValueOnce({ syncDeferred: true } as any)
+      .mockResolvedValue(undefined as any);
+    mockGetStatus.mockResolvedValue({ accountId: 'acc2', isTracked: true, backfill: null, historyRecon: null } as any);
+
+    const { result, rerender } = renderHook(
+      ({ accountId }) => useSyncStatus(accountId, { useWebSocket: false }),
+      { initialProps: { accountId: 'acc1' as string | undefined }, wrapper },
+    );
+    await flush();
+
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('queued');
+
+    rerender({ accountId: 'acc2' });
+
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('idle');
+    expect(result.current.progress).toBe(0);
+
+    await flush();
+
+    expect(mockTrackPlayer).toHaveBeenCalledWith('acc2');
+    expect(mockGetStatus).toHaveBeenCalledWith('acc2');
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('idle');
+  });
+
+  it('ignores late status responses for a deselected account', async () => {
+    let resolveAcc1Status: ((value: unknown) => void) | undefined;
+    mockGetStatus.mockImplementation((requestedAccountId: string) => {
+      if (requestedAccountId === 'acc1') {
+        return new Promise(resolve => { resolveAcc1Status = resolve; }) as any;
+      }
+
+      return Promise.resolve({ accountId: requestedAccountId, isTracked: false, backfill: null, historyRecon: null } as any);
+    });
+
+    const { result, rerender } = renderHook(
+      ({ accountId }) => useSyncStatus(accountId, { track: false, useWebSocket: false }),
+      { initialProps: { accountId: 'acc1' as string | undefined }, wrapper },
+    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+    expect(resolveAcc1Status).toBeDefined();
+
+    rerender({ accountId: undefined });
+    await flush();
+
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('idle');
+
+    await act(async () => {
+      resolveAcc1Status?.({
+        accountId: 'acc1',
+        isTracked: true,
+        pendingRankUpdate: true,
+        backfill: { status: 'deferred', songsChecked: 0, totalSongsToCheck: 100, entriesFound: 12, startedAt: null, completedAt: null, rankingsPending: true, deferredReason: 'server_update_in_progress' },
+        historyRecon: null,
+        rivals: null,
+        postScrape: null,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(result.current.isTracked).toBe(false);
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('idle');
+    expect(result.current.pendingRankUpdate).toBe(false);
+  });
+
   it('tracks player and checks status on mount', async () => {
     mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
     renderHook(() => useSyncStatus('acc1'), { wrapper });

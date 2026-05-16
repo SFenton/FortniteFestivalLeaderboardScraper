@@ -46,6 +46,32 @@ type SyncState = {
   nextRetrySeconds: number | null;
 };
 
+const idleSyncState: SyncState = {
+  isTracked: false,
+  syncStatusLoaded: false,
+  isSyncing: false,
+  phase: SyncPhase.Idle,
+  backfillProgress: 0,
+  historyProgress: 0,
+  rivalsProgress: 0,
+  entriesFound: 0,
+  itemsCompleted: 0,
+  totalItems: 0,
+  currentSongName: null,
+  seasonsQueried: 0,
+  rivalsFound: 0,
+  isThrottled: false,
+  throttleStatusKey: null,
+  pendingRankUpdate: false,
+  estimatedRankUpdateMinutes: null,
+  probeStatusKey: null,
+  nextRetrySeconds: null,
+};
+
+function createIdleSyncState(): SyncState {
+  return { ...idleSyncState };
+}
+
 import { SYNC_POLL_ACTIVE_MS, SYNC_POLL_IDLE_MS } from '@festival/theme';
 
 /** How long to wait without a WS message before falling back to HTTP polling */
@@ -54,27 +80,8 @@ const WS_STALE_MS = 10_000;
 export function useSyncStatus(accountId: string | undefined, options?: { track?: boolean; useWebSocket?: boolean }) {
   const track = options?.track ?? true;
   const useWebSocket = options?.useWebSocket ?? true;
-  const [syncState, setSyncState] = useState<SyncState>({
-    isTracked: false,
-    syncStatusLoaded: false,
-    isSyncing: false,
-    phase: SyncPhase.Idle,
-    backfillProgress: 0,
-    historyProgress: 0,
-    rivalsProgress: 0,
-    entriesFound: 0,
-    itemsCompleted: 0,
-    totalItems: 0,
-    currentSongName: null,
-    seasonsQueried: 0,
-    rivalsFound: 0,
-    isThrottled: false,
-    throttleStatusKey: null,
-    pendingRankUpdate: false,
-    estimatedRankUpdateMinutes: null,
-    probeStatusKey: null,
-    nextRetrySeconds: null,
-  });
+  const [syncState, setSyncState] = useState<SyncState>(createIdleSyncState);
+  const [syncStateAccountId, setSyncStateAccountId] = useState<string | null>(() => accountId ?? null);
   const [justCompleted, setJustCompleted] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout>>(null);
   const wasSyncingRef = useRef(false);
@@ -94,9 +101,21 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     }
   }, []);
 
+  const resetSyncTracking = useCallback((nextAccountId: string | null) => {
+    desiredAccountRef.current = nextAccountId;
+    stopPolling();
+    wasSyncingRef.current = false;
+    syncKickedRef.current = false;
+    lastWsMsgRef.current = 0;
+    probeLockedUntilRef.current = 0;
+    setJustCompleted(false);
+    setSyncStateAccountId(nextAccountId);
+    setSyncState(createIdleSyncState());
+  }, [stopPolling]);
+
   // ── WebSocket message handler ──
   const handleWsMessage = useCallback((msg: WsNotificationMessage) => {
-    if (!accountId || !mountedRef.current) return;
+    if (!accountId || !mountedRef.current || desiredAccountRef.current !== accountId) return;
 
     if (msg.type === 'sync_progress') {
       const sp = msg as SyncProgressMessage;
@@ -187,8 +206,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   // Tell the server which accountId this client cares about so per-account
   // sync_progress messages are routed to this connection.
   useEffect(() => {
-    desiredAccountRef.current = accountId ?? null;
-  }, [accountId]);
+    resetSyncTracking(accountId ?? null);
+  }, [accountId, resetSyncTracking]);
 
   const replayAccountSubscription = useCallback(() => {
     if (!useWebSocket) return;
@@ -232,7 +251,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   /* v8 ignore start — async polling callback */
   const checkStatus = useCallback(async () => {
     /* v8 ignore start */
-    if (!accountId || !mountedRef.current) return;
+    const requestedAccountId = accountId;
+    if (!requestedAccountId || !mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
     /* v8 ignore stop */
 
     // Skip HTTP poll if we received a WS message recently AND the WS is still connected
@@ -245,7 +265,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     }
 
     try {
-      const res: SyncStatusResponse = await api.getSyncStatus(accountId);
+      const res: SyncStatusResponse = await api.getSyncStatus(requestedAccountId);
 
       const bf = res.backfill;
       const hr = res.historyRecon;
@@ -287,7 +307,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       else phase = SyncPhase.Idle;
 
       /* v8 ignore start */
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
       /* v8 ignore stop */
 
       setSyncState(prev => ({
@@ -325,13 +345,13 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
 
       // Schedule next poll: fast while syncing, slow when idle
       /* v8 ignore start — timer scheduling + document.hidden: DOM visibility API */
-      if (!document.hidden && mountedRef.current) {
+      if (!document.hidden && mountedRef.current && desiredAccountRef.current === requestedAccountId) {
         stopPolling();
         pollRef.current = setTimeout(checkStatus, isSyncing ? SYNC_POLL_ACTIVE_MS : SYNC_POLL_IDLE_MS);
       }
     } catch {
       // On error, retry after a longer delay
-      if (!document.hidden && mountedRef.current) {
+      if (!document.hidden && mountedRef.current && desiredAccountRef.current === requestedAccountId) {
         stopPolling();
         pollRef.current = setTimeout(checkStatus, SYNC_POLL_IDLE_MS);
       }
@@ -341,23 +361,19 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
 
   // Track player and start polling on mount; pause when tab is hidden
   useEffect(() => {
-    if (!accountId) return;
+    if (!accountId) {
+      mountedRef.current = false;
+      return;
+    }
+    const requestedAccountId = accountId;
     mountedRef.current = true;
-    wasSyncingRef.current = false;
-    syncKickedRef.current = false;
-    lastWsMsgRef.current = 0;
-    setJustCompleted(false);
-    setSyncState(prev => ({
-      ...prev,
-      isTracked: false,
-      syncStatusLoaded: false,
-    }));
 
     const init = async () => {
       // Fire track request (idempotent) and capture whether a sync was kicked
       if (track) {
         try {
-          const res = await api.trackPlayer(accountId);
+          const res = await api.trackPlayer(requestedAccountId);
+          if (!mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
           if (res.syncDeferred) {
             syncKickedRef.current = true;
             wasSyncingRef.current = true;
@@ -386,6 +402,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
           // Ignore if track fails (e.g. in api-only mode without scraper)
         }
       }
+
+      if (!mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
 
       // If backfill was just kicked, the backend hasn't registered live progress
       // yet (syncTracker.BeginBackfill runs inside Task.Run). An immediate
@@ -426,27 +444,30 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
 
   // Combined progress (0..1) across all 3 phases (equally weighted at 1/3 each)
   // PostScrape is standalone and uses its own itemsCompleted/totalItems ratio
+  const effectiveSyncState = accountId && syncStateAccountId === accountId ? syncState : idleSyncState;
+  const effectiveJustCompleted = accountId && syncStateAccountId === accountId ? justCompleted : false;
+
   const progress = useMemo(() => {
-    switch (syncState.phase) {
+    switch (effectiveSyncState.phase) {
       case SyncPhase.Backfill:
-        return syncState.backfillProgress * (1 / 3);
+        return effectiveSyncState.backfillProgress * (1 / 3);
       case SyncPhase.Queued:
         return 0;
       case SyncPhase.History:
-        return (1 / 3) + syncState.historyProgress * (1 / 3);
+        return (1 / 3) + effectiveSyncState.historyProgress * (1 / 3);
       case SyncPhase.Rivals:
-        return (2 / 3) + syncState.rivalsProgress * (1 / 3);
+        return (2 / 3) + effectiveSyncState.rivalsProgress * (1 / 3);
       case SyncPhase.PostScrape:
-        return syncState.totalItems > 0 ? syncState.itemsCompleted / syncState.totalItems : 0;
+        return effectiveSyncState.totalItems > 0 ? effectiveSyncState.itemsCompleted / effectiveSyncState.totalItems : 0;
       case SyncPhase.Complete:
         return 1;
       default:
         return 0;
     }
-  }, [syncState.phase, syncState.backfillProgress, syncState.historyProgress, syncState.rivalsProgress, syncState.itemsCompleted, syncState.totalItems]);
+  }, [effectiveSyncState.phase, effectiveSyncState.backfillProgress, effectiveSyncState.historyProgress, effectiveSyncState.rivalsProgress, effectiveSyncState.itemsCompleted, effectiveSyncState.totalItems]);
 
   return useMemo(
-    () => ({ ...syncState, progress, justCompleted, clearCompleted }),
-    [syncState, progress, justCompleted, clearCompleted],
+    () => ({ ...effectiveSyncState, progress, justCompleted: effectiveJustCompleted, clearCompleted }),
+    [effectiveSyncState, progress, effectiveJustCompleted, clearCompleted],
   );
 }

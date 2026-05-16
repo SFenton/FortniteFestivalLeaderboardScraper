@@ -11,7 +11,7 @@ import { buildSongQuickLinkSections } from '../../../src/pages/songs/songQuickLi
 import { clearPageTransitionCache } from '../../../src/hooks/ui/usePageTransition';
 import { defaultSongSettings } from '../../../src/utils/songSettings';
 import { safeAreaBottomOffset } from '../../../src/utils/safeAreaStyles';
-import { TestProviders } from '../../helpers/TestProviders';
+import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import type { AppliedBandComboFilter } from '../../../src/types/bandFilter';
 
@@ -364,6 +364,44 @@ describe('SongsPage', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     await act(async () => { await vi.advanceTimersByTimeAsync(600); });
     expect(container.textContent).toContain('Alpha Song');
+  });
+
+  it('removes queued sync banner when the selected player is deselected', async () => {
+    mockApi.getSyncStatus.mockResolvedValue({
+      accountId: 'test-player-1',
+      isTracked: true,
+      pendingRankUpdate: false,
+      backfill: { status: 'deferred', songsChecked: 0, totalSongsToCheck: 100, entriesFound: 0, startedAt: null, completedAt: null, rankingsPending: false, deferredReason: 'server_update_in_progress' },
+      historyRecon: null,
+      rivals: null,
+      postScrape: null,
+    });
+    const queryClient = createTestQueryClient();
+    function SongsHarness({ accountId }: { accountId?: string }) {
+      return (
+        <TestProviders route="/songs" accountId={accountId} queryClient={queryClient}>
+          <Routes>
+            <Route path="/songs" element={<SongsPage />} />
+          </Routes>
+          <PageQuickLinksHarness />
+        </TestProviders>
+      );
+    }
+
+    const { rerender } = render(<SongsHarness accountId="test-player-1" />);
+    await settleSongsPage();
+
+    expect(screen.getByText('Queued for score sync')).toBeDefined();
+
+    mockApi.getSyncStatus.mockClear();
+    rerender(<SongsHarness />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Queued for score sync')).toBeNull();
+    });
+    expect(mockApi.getSyncStatus).not.toHaveBeenCalledWith(undefined);
+    expect(screen.getByText('Alpha Song')).toBeDefined();
   });
 
   it('hides completion banner when globally dismissed via localStorage', async () => {
