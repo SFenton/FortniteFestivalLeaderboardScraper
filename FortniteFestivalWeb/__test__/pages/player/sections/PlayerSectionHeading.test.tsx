@@ -23,6 +23,20 @@ describe('PlayerSectionHeading', () => {
     expect(screen.getByTestId('icon-Solo_Guitar')).toBeTruthy();
   });
 
+  it('stacks multi-instrument icons above the title', () => {
+    render(<PlayerSectionHeading title="Pad Global Statistics" instruments={['Solo_Guitar', 'Solo_Bass']} />);
+
+    const title = screen.getByRole('heading', { name: 'Pad Global Statistics' });
+    const iconCluster = screen.getByTestId('icon-Solo_Guitar').parentElement;
+    const titleRow = title.parentElement;
+
+    expect(iconCluster).toBeTruthy();
+    expect(titleRow).toHaveStyle({ flexDirection: 'column', alignItems: 'flex-start' });
+    expect(titleRow?.children[0]).toBe(iconCluster);
+    expect(titleRow?.children[1]).toBe(title);
+    expect(Array.from(iconCluster!.children).map(child => child.textContent)).toEqual(['Solo_Guitar', 'Solo_Bass']);
+  });
+
   it('renders compact mode', () => {
     const { container } = render(<PlayerSectionHeading title="Section" compact />);
     expect(container.textContent).toContain('Section');

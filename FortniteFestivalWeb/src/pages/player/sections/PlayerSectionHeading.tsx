@@ -14,6 +14,7 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
   title,
   description,
   instrument,
+  instruments,
   compact,
   actionLabel,
   actionTo,
@@ -23,6 +24,8 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
   description?: string;
   /** Show an instrument icon to the left. */
   instrument?: InstrumentKey;
+  /** Show a cluster of instrument icons above the heading title. */
+  instruments?: readonly InstrumentKey[];
   /** Use tighter top margin (Gap.md instead of Gap.section). */
   compact?: boolean;
   /** Optional header action link label. */
@@ -33,6 +36,20 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
   actionTestId?: string;
 }) {
   const s = useStyles(compact);
+
+  if (instruments?.length) {
+    return (
+      <div style={s.sectionWrapper}>
+        <div style={s.iconSectionTitleRow}>
+          <span aria-hidden="true" style={s.iconCluster}>
+            {instruments.map(inst => <InstrumentIcon key={inst} instrument={inst} size={InstrumentSize.md} />)}
+          </span>
+          <h2 style={s.sectionTitle}>{title}</h2>
+        </div>
+        {description && <p style={s.sectionDesc}>{description}</p>}
+      </div>
+    );
+  }
 
   if (instrument) {
     return (
@@ -103,6 +120,19 @@ function useStyles(compact?: boolean) {
       color: Colors.textPrimary,
       marginBottom: Gap.xs,
       marginTop: Gap.none,
+    } as CSSProperties,
+    iconSectionTitleRow: {
+      ...flexColumn,
+      alignItems: 'flex-start',
+      gap: Gap.md,
+      minWidth: 0,
+    } as CSSProperties,
+    iconCluster: {
+      ...flexRow,
+      alignItems: 'center',
+      gap: Gap.xs,
+      flexShrink: 0,
+      minHeight: InstrumentSize.md,
     } as CSSProperties,
     sectionDesc: {
       fontSize: Font.sm,

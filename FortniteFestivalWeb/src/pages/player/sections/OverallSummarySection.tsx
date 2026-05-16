@@ -3,13 +3,14 @@
  * Returns Item[] for: songs played, full combos, gold stars, avg accuracy, best rank.
  */
 import { ACCURACY_SCALE } from '@festival/core';
-import { type ServerInstrumentKey as InstrumentKey, type CompositeRanks, type RankingMetric } from '@festival/core/api/serverTypes';
+import { SOLO_FAMILY_SCOPE_LABELS, type ServerInstrumentKey as InstrumentKey, type RankingMetric, type SoloFamilyRanksByScope, type SoloFamilyScopeId } from '@festival/core/api/serverTypes';
 import { Colors } from '@festival/theme';
 import { formatClamped, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';
 import { defaultSongFilters, type SongSettings } from '../../../utils/songSettings';
 import type { PlayerItem, NavigateToSongs, NavigateToSongDetail } from '../helpers/playerPageTypes';
 import { DEFAULT_METRICS, EXPERIMENTAL_METRICS } from '../../leaderboards/helpers/rankingHelpers';
+import PlayerSectionHeading from './PlayerSectionHeading';
 
 const METRIC_I18N_KEY: Record<RankingMetric, string> = {
   totalscore: 'player.totalScoreRank',
@@ -17,6 +18,27 @@ const METRIC_I18N_KEY: Record<RankingMetric, string> = {
   weighted: 'player.weightedRank',
   fcrate: 'player.fcRateRank',
   maxscore: 'player.maxScoreRank',
+};
+
+type GlobalStatisticsFamilyScopeId = Extract<SoloFamilyScopeId, 'pad' | 'pro_strings' | 'pro_drums'>;
+
+const FAMILY_SCOPE_INSTRUMENTS: Record<GlobalStatisticsFamilyScopeId, readonly InstrumentKey[]> = {
+  pad: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'],
+  pro_strings: ['Solo_PeripheralGuitar', 'Solo_PeripheralBass'],
+  pro_drums: ['Solo_PeripheralCymbals', 'Solo_PeripheralDrums'],
+};
+
+const FAMILY_SCOPE_ORDER: GlobalStatisticsFamilyScopeId[] = ['pad', 'pro_strings', 'pro_drums'];
+
+const FAMILY_SCOPE_DESCRIPTIONS: Record<GlobalStatisticsFamilyScopeId, string> = {
+  pad: 'The overall rankings for Lead, Bass, Drums, and Tap Vocals. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pad instruments combined.',
+  pro_strings: 'The overall rankings for Pro Lead and Pro Bass. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pro strings instruments combined.',
+  pro_drums: 'The overall rankings for Pro Drums and Pro Cymbals. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pro drums instruments combined.',
+};
+
+export type GlobalStatisticsFamilySection = {
+  scopeId: GlobalStatisticsFamilyScopeId;
+  activeInstruments: InstrumentKey[];
 };
 
 export interface OverallStats {
@@ -56,9 +78,6 @@ export function buildOverallSummaryItems(
   navigateToSongs: NavigateToSongs,
   navigateToSongDetail: NavigateToSongDetail,
   cardStyle: React.CSSProperties,
-  compositeRanks?: CompositeRanks | null,
-  enableExperimentalRanks?: boolean,
-  navigateToLeaderboard?: (instrument: InstrumentKey | null, metric: RankingMetric, rank?: number) => void,
 ): PlayerItem[] {
   const items: PlayerItem[] = [];
 
@@ -87,30 +106,76 @@ export function buildOverallSummaryItems(
     } : undefined },
   ];
 
-  // Composite rank cards (after Best Rank)
-  if (compositeRanks) {
-    const rankMap: Record<RankingMetric, number | null | undefined> = {
-      adjusted: compositeRanks.adjusted,
-      weighted: compositeRanks.weighted,
-      fcrate: compositeRanks.fcRate,
-      totalscore: compositeRanks.totalScore,
-      maxscore: compositeRanks.maxScore,
-    };
-    const metrics: RankingMetric[] = [...DEFAULT_METRICS, ...(enableExperimentalRanks ? EXPERIMENTAL_METRICS : [])];
-    for (const metric of metrics) {
-      const rank = rankMap[metric];
-      if (rank != null && rank > 0) {
-        boxes.push({
-          label: t(METRIC_I18N_KEY[metric]),
-          value: `#${rank.toLocaleString()}`,
-          onClick: navigateToLeaderboard ? () => navigateToLeaderboard(null, metric, rank) : undefined,
-        });
-      }
-    }
-  }
-
   for (const box of boxes) {
     items.push({ key: `sum-${box.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={box.label} value={box.value} color={box.color} onClick={box.onClick} /> });
+  }
+
+  return items;
+}
+
+export function resolveVisibleFamilyRankSections(visibleKeys: readonly InstrumentKey[]): GlobalStatisticsFamilySection[] {
+  const visible = new Set(visibleKeys);
+  return FAMILY_SCOPE_ORDER
+    .map(scopeId => ({
+      scopeId,
+      activeInstruments: FAMILY_SCOPE_INSTRUMENTS[scopeId].filter(instrument => visible.has(instrument)),
+    }))
+    .filter(section => section.activeInstruments.length > 0);
+}
+
+export function resolveVisibleFamilyRankScopes(visibleKeys: readonly InstrumentKey[]): GlobalStatisticsFamilyScopeId[] {
+  return resolveVisibleFamilyRankSections(visibleKeys).map(section => section.scopeId);
+}
+
+export function buildFamilyGlobalStatisticsItems(
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  visibleKeys: InstrumentKey[],
+  cardStyle: React.CSSProperties,
+  familyRanks?: SoloFamilyRanksByScope | null,
+  enableExperimentalRanks?: boolean,
+  navigateToFamilyLeaderboard?: (scopeId: SoloFamilyScopeId, metric: RankingMetric, rank?: number) => void,
+): PlayerItem[] {
+  if (!familyRanks) return [];
+
+  const items: PlayerItem[] = [];
+  const metrics: RankingMetric[] = [...DEFAULT_METRICS, ...(enableExperimentalRanks ? EXPERIMENTAL_METRICS : [])];
+
+  for (const section of resolveVisibleFamilyRankSections(visibleKeys)) {
+    const ranks = familyRanks[section.scopeId];
+    if (!ranks) continue;
+
+    const rankMap: Record<RankingMetric, number | null | undefined> = {
+      adjusted: ranks.adjusted,
+      weighted: ranks.weighted,
+      fcrate: ranks.fcRate,
+      totalscore: ranks.totalScore,
+      maxscore: ranks.maxScore,
+    };
+
+    const cards: PlayerItem[] = [];
+    for (const metric of metrics) {
+      const rank = rankMap[metric];
+      if (rank == null || rank <= 0) continue;
+
+      const label = t(METRIC_I18N_KEY[metric]);
+      cards.push({
+        key: `family-${section.scopeId}-${metric}`,
+        span: false,
+        heightEstimate: 100,
+        style: cardStyle,
+        node: <StatBox label={label} value={`#${rank.toLocaleString()}`} onClick={navigateToFamilyLeaderboard ? () => navigateToFamilyLeaderboard(section.scopeId, metric, rank) : undefined} />,
+      });
+    }
+
+    if (cards.length === 0) continue;
+
+    items.push({
+      key: `family-${section.scopeId}-heading`,
+      span: true,
+      heightEstimate: 120,
+      node: <PlayerSectionHeading title={`${SOLO_FAMILY_SCOPE_LABELS[section.scopeId]} ${t('player.globalStatistics')}`} description={FAMILY_SCOPE_DESCRIPTIONS[section.scopeId]} instruments={section.activeInstruments} />,
+    });
+    items.push(...cards);
   }
 
   return items;
