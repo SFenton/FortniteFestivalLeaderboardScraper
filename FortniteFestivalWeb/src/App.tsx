@@ -129,7 +129,7 @@ import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
 import ConfirmAlert from './components/modals/ConfirmAlert';
 import BandInstrumentFilterModal, { type BandInstrumentFilterApplyPayload, type BandInstrumentFilterAssignment } from './pages/band/modals/BandInstrumentFilterModal';
-import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, SERVER_INSTRUMENT_KEYS, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type { AppliedBandComboFilter } from './types/bandFilter';
 import { APP_VERSION } from './hooks/data/useVersions';
 import { changelogHash } from './changelog';
@@ -313,6 +313,13 @@ function ComboInstrumentFabAccessory({ instruments }: { instruments: readonly Se
   );
 }
 
+function resolveLeaderboardInstrument(search: string): ServerInstrumentKey {
+  const value = new URLSearchParams(search).get('instrument');
+  return value && SERVER_INSTRUMENT_KEYS.includes(value as ServerInstrumentKey)
+    ? value as ServerInstrumentKey
+    : DEFAULT_INSTRUMENT;
+}
+
 function getSongDetailId(pathname: string): string | undefined {
   const match = pathname.match(/^\/songs\/([^/]+)$/);
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
@@ -446,6 +453,7 @@ function AppShell() {
   usePlayerBandsPrefetch(player?.accountId);
 
   const location = useLocation();
+  const leaderboardInstrument = useMemo(() => resolveLeaderboardInstrument(location.search), [location.search]);
   const isMobile = useIsMobileChrome();
   const isNarrow = useIsMobile();
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
@@ -1011,7 +1019,7 @@ function AppShell() {
       )}
       {showMobileFab && RoutePatterns.leaderboards.test(location.pathname) && location.pathname !== AppRoutes.leaderboards && (() => {
         const leaderboardActions = [
-          ...(location.pathname === '/leaderboards/all' ? [{ label: t('rankings.changeInstrument'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
+          ...(location.pathname === '/leaderboards/all' ? [{ label: t('rankings.changeInstrument'), icon: <InstrumentIcon instrument={leaderboardInstrument} size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
           { label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() },
         ];
         return (

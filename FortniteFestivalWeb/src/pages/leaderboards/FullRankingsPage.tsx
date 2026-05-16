@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
-import { IoOptions, IoMusicalNotes } from 'react-icons/io5';
+import { IoOptions } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
@@ -15,6 +15,7 @@ import PageHeader from '../../components/common/PageHeader';
 import { ActionPill } from '../../components/common/ActionPill';
 import PageHeaderTransition from '../../components/common/PageHeaderTransition';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
+import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import type {
   ServerInstrumentKey as InstrumentKey,
   RankingMetric,
@@ -286,7 +287,7 @@ export default function FullRankingsPage() {
               <>
                 {!isCombo && (
                   <ActionPill
-                    icon={<IoMusicalNotes size={Size.iconAction} />}
+                    icon={<InstrumentIcon instrument={instrument} size={Size.iconAction} />}
                     label={serverInstrumentLabel(instrument)}
                     onClick={openInstrumentModal}
                     active={instrument !== DEFAULT_INSTRUMENT}

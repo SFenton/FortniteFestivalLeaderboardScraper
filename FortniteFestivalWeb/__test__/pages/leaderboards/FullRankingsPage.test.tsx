@@ -169,6 +169,25 @@ describe('FullRankingsPage', () => {
     });
   });
 
+  it('renders the selected instrument icon in the instrument action pill', async () => {
+    mockApi.getRankings.mockResolvedValue({ entries: [], totalAccounts: 0, instrument: 'Solo_Bass', rankBy: 'totalscore', page: 1, pageSize: 25 });
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Bass&rankBy=totalscore" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Bass', 'totalscore', 1, 25);
+    });
+
+    const instrumentButton = screen.getByRole('button', { name: 'Bass' });
+    expect(instrumentButton.querySelector('img[alt="Solo_Bass"]')).not.toBeNull();
+  });
+
   it('coerces selected-band Max Score deep links to Total Score', async () => {
     selectBandProfile();
     localStorage.setItem('fst:leaderboardSettings', JSON.stringify({ rankBy: 'maxscore' }));
