@@ -25,7 +25,7 @@ import { loadSongSettings, saveSongSettings } from '../../../../utils/songSettin
 import Page from '../../../Page';
 import PageHeader from '../../../../components/common/PageHeader';
 import { ActionPill } from '../../../../components/common/ActionPill';
-import { useIsMobile, useIsWideDesktop } from '../../../../hooks/ui/useIsMobile';
+import { useIsMobileChrome, useIsWideDesktop } from '../../../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
 import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
@@ -489,7 +489,7 @@ export default function PlayerContent({
   }
 
   // --- Top Songs heading ---
-  const hasFab = useIsMobile();
+  const hasFab = useIsMobileChrome();
   const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
 
   items.push({
@@ -749,7 +749,7 @@ export default function PlayerContent({
     >
         <div style={{ ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}) }}>
         {inlineMobileHeader}
-            <div data-testid="player-grid-list" ref={gridListRef} style={{ ...pps.gridList, ...(hasFab ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
+            <div data-testid="player-grid-list" ref={gridListRef} style={pps.gridList}>
             {(() => {
               const visibleCount = visibleStaggerItemCount;
               const lastVisibleDelay = visibleCount * STAGGER_ENTRY_OFFSET;

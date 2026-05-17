@@ -47,6 +47,7 @@ function useStyles(animate: boolean) {
       boxSizing: BoxSizing.borderBox,
       position: Position.relative,
       zIndex: ZIndex.popover,
+      touchAction: CssValue.none,
       ...(animate ? { animation: `fadeIn ${TRANSITION_MS}ms ease-out` } : {}),
     } as const,
     backLink: {

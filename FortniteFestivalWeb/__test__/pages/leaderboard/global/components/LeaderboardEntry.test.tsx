@@ -3,6 +3,10 @@ import { render, screen } from '@testing-library/react';
 import { LeaderboardEntry } from '../../../../../src/pages/leaderboard/global/components/LeaderboardEntry';
 import { TestProviders as W } from '../../../../helpers/TestProviders';
 
+function expectBefore(first: Element, second: Element) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+}
+
 describe('LeaderboardEntry', () => {
   it('renders rank and name', () => {
     render(<W><LeaderboardEntry rank={1} displayName="Player One" score={145000} /></W>);
@@ -28,6 +32,11 @@ describe('LeaderboardEntry', () => {
   it('shows accuracy when showAccuracy is true', () => {
     const { container } = render(<W><LeaderboardEntry rank={1} displayName="P" score={100000} showAccuracy accuracy={95.5} isFullCombo={false} /></W>);
     expect(container.innerHTML).toBeTruthy();
+  });
+
+  it('shows inline accuracy after score when requested', () => {
+    render(<W><LeaderboardEntry rank={1} displayName="P" score={100000} showInlineAccuracyAfterScore accuracy={955000} isFullCombo={false} /></W>);
+    expectBefore(screen.getByText('100,000'), screen.getByText('95.5%'));
   });
 
   it('shows stars when showStars is true', () => {

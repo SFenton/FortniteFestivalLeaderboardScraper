@@ -12,6 +12,8 @@ export const TAB_ROOTS: Record<TabKey, string> = {
   [TabKey.Songs]: '/songs',
   [TabKey.Suggestions]: '/suggestions',
   [TabKey.Compete]: '/compete',
+  [TabKey.Leaderboards]: '/leaderboards',
+  [TabKey.Rivals]: '/rivals',
   [TabKey.Statistics]: '/statistics',
   [TabKey.Settings]: '/settings',
 };
@@ -24,11 +26,20 @@ export function inferTab(pathname: string): TabKey | null {
   if (path === '/songs' || path.startsWith('/songs/')) return TabKey.Songs;
   if (path === '/shop') return TabKey.Songs;
   if (path === '/suggestions') return TabKey.Suggestions;
-  if (path === '/compete' || path.startsWith('/leaderboards')) return TabKey.Compete;
-  if (path === '/rivals' || path.startsWith('/rivals/')) return TabKey.Compete;
+  if (path === '/compete') return TabKey.Compete;
+  if (path === '/leaderboards' || path.startsWith('/leaderboards/')) return TabKey.Leaderboards;
+  if (path === '/rivals' || path.startsWith('/rivals/')) return TabKey.Rivals;
   if (path === '/statistics') return TabKey.Statistics;
   if (path === '/settings') return TabKey.Settings;
   return null;
+}
+
+function migrateTabRoutes(routes: Record<TabKey, string>): Record<TabKey, string> {
+  const competeRoute = routes[TabKey.Compete];
+  const next = { ...routes };
+  if (competeRoute?.startsWith('/leaderboards')) next[TabKey.Leaderboards] = competeRoute;
+  if (competeRoute?.startsWith('/rivals')) next[TabKey.Rivals] = competeRoute;
+  return next;
 }
 
 function loadTabRoutes(): Record<TabKey, string> {
@@ -36,7 +47,7 @@ function loadTabRoutes(): Record<TabKey, string> {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      return { ...TAB_ROOTS, ...parsed };
+      return migrateTabRoutes({ ...TAB_ROOTS, ...parsed });
     }
   } catch { /* ignore */ }
   return { ...TAB_ROOTS };

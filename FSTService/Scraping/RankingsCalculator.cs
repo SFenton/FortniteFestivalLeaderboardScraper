@@ -47,6 +47,7 @@ public sealed class RankingsCalculator
     private readonly ScraperOptions _scraperOptions;
     private readonly BandRankHistoryOptions _bandRankHistoryOptions;
     private readonly BandTeamRankingRebuildOptions _bandTeamRankingOptions;
+    private readonly WorkerStatusPublisher? _workerStatus;
     private readonly ILogger<RankingsCalculator> _log;
     private long _activeScrapeId;
 
@@ -59,7 +60,8 @@ public sealed class RankingsCalculator
         ILogger<RankingsCalculator> log,
         IOptions<BandRankHistoryOptions>? bandRankHistoryOptions = null,
         IOptions<BandTeamRankingRebuildOptions>? bandTeamRankingOptions = null,
-        IOptions<ScraperOptions>? scraperOptions = null)
+        IOptions<ScraperOptions>? scraperOptions = null,
+        WorkerStatusPublisher? workerStatus = null)
     {
         _persistence = persistence;
         _metaDb = metaDb;
@@ -69,6 +71,7 @@ public sealed class RankingsCalculator
         _scraperOptions = scraperOptions?.Value ?? new ScraperOptions();
         _bandRankHistoryOptions = bandRankHistoryOptions?.Value ?? new BandRankHistoryOptions();
         _bandTeamRankingOptions = bandTeamRankingOptions?.Value ?? BandTeamRankingRebuildOptions.Default;
+        _workerStatus = workerStatus;
         _log = log;
     }
 
@@ -108,6 +111,30 @@ public sealed class RankingsCalculator
         }
     }
 
+    private static string FriendlyInstrumentName(string instrument)
+        => instrument switch
+        {
+            "Solo_Guitar" => "Lead",
+            "Solo_Bass" => "Bass",
+            "Solo_Drums" => "Drums",
+            "Solo_Vocals" => "Vocals",
+            "Solo_PeripheralGuitar" => "Pro Lead",
+            "Solo_PeripheralBass" => "Pro Bass",
+            "Solo_PeripheralVocals" => "Karaoke",
+            "Solo_PeripheralCymbals" => "Pro Drums + Cymbals",
+            "Solo_PeripheralDrums" => "Pro Drums",
+            _ => instrument.Replace('_', ' '),
+        };
+
+    private static string FriendlyBandTypeName(string bandType)
+        => bandType switch
+        {
+            "Band_Duets" => "Band Duos",
+            "Band_Trios" => "Band Trios",
+            "Band_Quad" => "Band Quads",
+            _ => bandType.Replace('_', ' '),
+        };
+
     /// <summary>
     /// Compute all rankings: per-instrument (parallel) → composite → combo → history snapshots → band.
     /// </summary>
@@ -128,6 +155,7 @@ public sealed class RankingsCalculator
         // Total steps: instruments(9) + composite(1) + family(1) + combos(1) + snapshots(instruments+1) + bandTypes(3) = 25
         _progress.BeginPhaseProgress(instruments.Count + 1 + 1 + instruments.Count + 1 + 1 + bandTypes.Count);
         _progress.SetSubOperation("per_instrument_rankings");
+        _workerStatus?.BeginOperation("rankings.per_instrument", "Computing solo instrument rankings", phase: "ComputingRankings", subOperation: "per_instrument_rankings");
 
         // Cap at 2 concurrent instruments to avoid OOM-killing PostgreSQL.
         // Each instrument's ranking pipeline boosts work_mem to 256MB per-session
@@ -140,6 +168,12 @@ public sealed class RankingsCalculator
             innerCt.ThrowIfCancellationRequested();
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             var instrumentSw = System.Diagnostics.Stopwatch.StartNew();
+            var operationKey = $"rankings.instrument.{instrument}";
+            _workerStatus?.BeginOperation(operationKey, $"Computing {FriendlyInstrumentName(instrument)} Rankings",
+                phase: "ComputingRankings", subOperation: "per_instrument_rankings", detail: instrument);
+
+            try
+            {
 
             // Build per-song max scores for this instrument
             var maxScoresForInstrument = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
@@ -215,6 +249,7 @@ public sealed class RankingsCalculator
             if (totalCharted == 0)
             {
                 _log.LogWarning("No charted songs for {Instrument}, skipping rankings.", instrument);
+                _workerStatus?.CompleteOperation(operationKey, "skipped", "No charted songs");
                 return ValueTask.CompletedTask;
             }
 
@@ -251,10 +286,23 @@ public sealed class RankingsCalculator
 
             instrumentSw.Stop();
             LogPhase("per_instrument.total", instrument, instrumentSw.Elapsed);
+            _workerStatus?.CompleteOperation(operationKey);
 
             return ValueTask.CompletedTask;
+            }
+            catch (OperationCanceledException)
+            {
+                _workerStatus?.CompleteOperation(operationKey, "cancelled");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _workerStatus?.FailOperation(operationKey, ex);
+                throw;
+            }
         });
 
+        _workerStatus?.CompleteOperation("rankings.per_instrument");
         _log.LogInformation("Per-instrument rankings + deltas complete in {Elapsed}.", sw.Elapsed);
         LogPhase("per_instrument.all", instrument: null, sw.Elapsed);
         var perInstrumentEndMs = sw.ElapsedMilliseconds;
@@ -297,10 +345,12 @@ public sealed class RankingsCalculator
 
         // ── Phase 3: Composite rankings ──
         _progress.SetSubOperation("composite_rankings");
+        _workerStatus?.BeginOperation("rankings.composite", "Computing composite rankings", phase: "ComputingRankings", subOperation: "composite_rankings");
         var compositeSw = System.Diagnostics.Stopwatch.StartNew();
         ComputeCompositeRankings(instruments, rankingDataFull, rankingDataRanks);
         compositeSw.Stop();
         _progress.ReportPhaseItemComplete();
+        _workerStatus?.CompleteOperation("rankings.composite");
         _log.LogInformation("Composite rankings complete in {Elapsed}.", compositeSw.Elapsed);
         LogPhase("composite_rankings", instrument: null, compositeSw.Elapsed);
 
@@ -308,19 +358,23 @@ public sealed class RankingsCalculator
 
         // ── Phase 3.5: Fixed solo family rankings for Statistics global cards ──
         _progress.SetSubOperation("solo_family_rankings");
+        _workerStatus?.BeginOperation("rankings.solo_family", "Computing solo family rankings", phase: "ComputingRankings", subOperation: "solo_family_rankings");
         var familySw = System.Diagnostics.Stopwatch.StartNew();
         ComputeSoloFamilyRankings(rankingDataFull, totalChartedByInstrument);
         familySw.Stop();
         _progress.ReportPhaseItemComplete();
+        _workerStatus?.CompleteOperation("rankings.solo_family");
         _log.LogInformation("Solo family rankings complete in {Elapsed}.", familySw.Elapsed);
         LogPhase("solo_family_rankings", instrument: null, familySw.Elapsed);
 
         // ── Phase 4: All-combo rankings ──
         _progress.SetSubOperation("combo_rankings");
+        _workerStatus?.BeginOperation("rankings.combo", "Computing combo rankings", phase: "ComputingRankings", subOperation: "combo_rankings");
         var comboSw = System.Diagnostics.Stopwatch.StartNew();
         ComputeAllCombos(instruments, rankingDataFull);
         comboSw.Stop();
         _progress.ReportPhaseItemComplete();
+        _workerStatus?.CompleteOperation("rankings.combo");
         _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
         LogPhase("all_combo_rankings", instrument: null, comboSw.Elapsed);
 
@@ -636,8 +690,12 @@ public sealed class RankingsCalculator
         if (totalChartedSongs <= 0)
         {
             _log.LogWarning("No charted songs available, skipping band rankings.");
-            foreach (var _ in bandTypes)
+            foreach (var bandType in bandTypes)
             {
+                var operationKey = $"rankings.band.{bandType}";
+                _workerStatus?.BeginOperation(operationKey, $"Computing {FriendlyBandTypeName(bandType)} Rankings",
+                    phase: "ComputingRankings", subOperation: "band_rankings", detail: bandType);
+                _workerStatus?.CompleteOperation(operationKey, "skipped", "No charted songs");
                 if (progressBranchId is not null)
                     _progress.IncrementBranchProgress(progressBranchId);
                 onBandComplete?.Invoke();
@@ -654,6 +712,9 @@ public sealed class RankingsCalculator
         {
             ct.ThrowIfCancellationRequested();
             var perBandSw = System.Diagnostics.Stopwatch.StartNew();
+            var operationKey = $"rankings.band.{bandType}";
+            _workerStatus?.BeginOperation(operationKey, $"Computing {FriendlyBandTypeName(bandType)} Rankings",
+                phase: "ComputingRankings", subOperation: "band_rankings", detail: bandType);
             try
             {
                 _metaDb.RebuildBandTeamRankings(
@@ -684,10 +745,12 @@ public sealed class RankingsCalculator
                 Interlocked.Increment(ref successfulBandTypes);
 
                 HandleBandRankHistoryAfterPublish(bandType, scrapeId, ct);
+                _workerStatus?.CompleteOperation(operationKey);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 perBandSw.Stop();
+                _workerStatus?.FailOperation(operationKey, ex);
                 _log.LogWarning(ex,
                     "Band team ranking rebuild failed for {BandType}. Continuing with remaining band types.",
                     bandType);

@@ -65,6 +65,94 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void WorkerStatus_roundtrips_heartbeat_and_activity()
+    {
+        var startedAt = DateTime.UtcNow.AddMinutes(-5);
+        var heartbeatAt = DateTime.UtcNow.AddSeconds(-10);
+        var operationStartedAt = DateTime.UtcNow.AddMinutes(-2);
+        var operationUpdatedAt = DateTime.UtcNow.AddMinutes(-1);
+
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "instance-1",
+            startedAt,
+            heartbeatAt,
+            "ready");
+
+        Db.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                OperationKey = "rankings.instrument.Solo_Guitar",
+                OperationLabel = "Computing Lead Rankings",
+                Status = "running",
+                Phase = "ComputingRankings",
+                SubOperation = "per_instrument_rankings",
+                Detail = "Solo_Guitar",
+                StartedAtUtc = operationStartedAt,
+                UpdatedAtUtc = operationUpdatedAt,
+                ProgressPercent = 50,
+            },
+            updatedAtUtc: operationUpdatedAt);
+
+        var status = Db.GetWorkerStatus(WorkerStatusPublisher.ScraperWorkerKey);
+
+        Assert.NotNull(status);
+        Assert.Equal("running", status.Status);
+        Assert.Equal("scraper", status.Mode);
+        Assert.Equal("instance-1", status.InstanceId);
+        Assert.NotNull(status.StartedAtUtc);
+        Assert.NotNull(status.LastHeartbeatAtUtc);
+        Assert.Equal("ready", status.Message);
+        Assert.NotNull(status.CurrentOperation);
+        Assert.Equal("Computing Lead Rankings", status.CurrentOperation.OperationLabel);
+        Assert.Equal("ComputingRankings", status.CurrentOperation.Phase);
+        Assert.Equal(50, status.CurrentOperation.ProgressPercent);
+    }
+
+    [Fact]
+    public void WorkerStatus_moves_completed_operation_to_last_operation()
+    {
+        var now = DateTime.UtcNow;
+        var current = new WorkerOperationInfo
+        {
+            OperationKey = "rankings.band.Band_Trios",
+            OperationLabel = "Computing Band Trios Rankings",
+            Status = "running",
+            Phase = "ComputingRankings",
+            SubOperation = "band_rankings",
+            StartedAtUtc = now.AddMinutes(-3),
+            UpdatedAtUtc = now.AddMinutes(-1),
+        };
+        var completed = new WorkerOperationInfo
+        {
+            OperationKey = current.OperationKey,
+            OperationLabel = current.OperationLabel,
+            Status = "completed",
+            Phase = current.Phase,
+            SubOperation = current.SubOperation,
+            StartedAtUtc = current.StartedAtUtc,
+            UpdatedAtUtc = now,
+            EndedAtUtc = now,
+            ElapsedSeconds = 180,
+        };
+
+        Db.UpdateWorkerActivity(WorkerStatusPublisher.ScraperWorkerKey, current, updatedAtUtc: current.UpdatedAtUtc);
+        Db.UpdateWorkerActivity(WorkerStatusPublisher.ScraperWorkerKey, null, completed, updatedAtUtc: now);
+
+        var status = Db.GetWorkerStatus(WorkerStatusPublisher.ScraperWorkerKey);
+
+        Assert.NotNull(status);
+        Assert.Null(status.CurrentOperation);
+        Assert.NotNull(status.LastOperation);
+        Assert.Equal("Computing Band Trios Rankings", status.LastOperation.OperationLabel);
+        Assert.Equal("completed", status.LastOperation.Status);
+        Assert.NotNull(status.LastOperation.EndedAtUtc);
+    }
+
+    [Fact]
     public void PublishScrapeRun_requires_completed_scrape()
     {
         var id = Db.StartScrapeRun();

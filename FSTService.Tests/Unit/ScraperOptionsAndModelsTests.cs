@@ -29,6 +29,7 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.RunOnce);
         Assert.False(opts.ResolveOnly);
         Assert.Null(opts.TestSongQuery);
+        Assert.Equal(RegistrationBackfillMode.BackgroundLowPriority, opts.RegistrationBackfillMode);
     }
 
     [Fact]
@@ -49,6 +50,7 @@ public class ScraperOptionsAndModelsTests
             ApiOnly = true,
             DisableScraperWorker = true,
             RegistrationSyncWorkerOnly = true,
+            RegistrationBackfillMode = RegistrationBackfillMode.ForegroundEpicExclusive,
             TestSongQuery = "Test Song",
         };
 
@@ -59,6 +61,7 @@ public class ScraperOptionsAndModelsTests
         Assert.True(opts.ApiOnly);
         Assert.True(opts.DisableScraperWorker);
         Assert.True(opts.RegistrationSyncWorkerOnly);
+        Assert.Equal(RegistrationBackfillMode.ForegroundEpicExclusive, opts.RegistrationBackfillMode);
         Assert.Equal("Test Song", opts.TestSongQuery);
     }
 

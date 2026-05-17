@@ -324,6 +324,7 @@ export type LeaderboardEntry = {
 export type LeaderboardResponse = {
   songId: string;
   instrument: string;
+  showLeaderboardEntryTotals?: boolean;
   count: number;
   totalEntries: number;
   localEntries: number;
@@ -549,7 +550,37 @@ export type ServiceInfoResponse = {
       message?: string | null;
     }> | null;
   };
+  workerStatus: {
+    workerKey: string;
+    status: 'online' | 'offline' | 'stale' | 'starting' | 'stopping' | 'unknown' | string;
+    rawStatus?: string | null;
+    mode?: string | null;
+    instanceId?: string | null;
+    startedAt?: string | null;
+    lastHeartbeatAt?: string | null;
+    lastStatusChangeAt?: string | null;
+    heartbeatAgeSeconds?: number | null;
+    staleAfterSeconds?: number | null;
+    message?: string | null;
+    currentOperation?: ServiceInfoWorkerOperation | null;
+    lastOperation?: ServiceInfoWorkerOperation | null;
+  } | null;
   nextScheduledUpdateAt: string | null;
+};
+
+export type ServiceInfoWorkerOperation = {
+  operationKey: string;
+  operationLabel: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped' | string;
+  phase?: string | null;
+  subOperation?: string | null;
+  detail?: string | null;
+  startedAt?: string | null;
+  updatedAt?: string | null;
+  endedAt?: string | null;
+  progressPercent?: number | null;
+  elapsedSeconds?: number | null;
+  estimatedRemainingSeconds?: number | null;
 };
 
 /** Score history entry as returned by /api/player/{id}/history. */
@@ -686,6 +717,7 @@ export type SongBandLeaderboardEntry = {
 export type SongBandLeaderboardResponse = {
   songId: string;
   bandType: PlayerBandType;
+  showLeaderboardEntryTotals?: boolean;
   count: number;
   totalEntries: number;
   localEntries: number;

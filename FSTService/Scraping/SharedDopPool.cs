@@ -21,6 +21,7 @@ public sealed class SharedDopPool : IDisposable
 {
     private readonly AdaptiveConcurrencyLimiter _inner;
     private readonly SemaphoreSlim _lowPriorityGate;
+    private readonly EpicTrafficCoordinator _trafficCoordinator;
     private readonly bool _ownsInner;
     private int _highPriorityActive;
 
@@ -43,21 +44,23 @@ public sealed class SharedDopPool : IDisposable
     /// <param name="log">Logger for AIMD adjustments.</param>
     /// <param name="maxRequestsPerSecond">Hard cap on requests per second (0 = unlimited).</param>
     public SharedDopPool(int initialDop, int minDop, int maxDop, int lowPriorityPercent, ILogger log,
-        int maxRequestsPerSecond = 0, int initialSsthresh = 0)
+        int maxRequestsPerSecond = 0, int initialSsthresh = 0, EpicTrafficCoordinator? trafficCoordinator = null)
     {
         _inner = new AdaptiveConcurrencyLimiter(initialDop, minDop, maxDop, log, maxRequestsPerSecond, initialSsthresh);
         int lowPrioritySlots = Math.Max(1, maxDop * Math.Clamp(lowPriorityPercent, 1, 100) / 100);
         _lowPriorityGate = new SemaphoreSlim(lowPrioritySlots, lowPrioritySlots);
+        _trafficCoordinator = trafficCoordinator ?? new EpicTrafficCoordinator();
         _ownsInner = true;
     }
 
     /// <summary>
     /// Create a pool wrapping an existing limiter (for testing).
     /// </summary>
-    internal SharedDopPool(AdaptiveConcurrencyLimiter inner, int lowPrioritySlots)
+    internal SharedDopPool(AdaptiveConcurrencyLimiter inner, int lowPrioritySlots, EpicTrafficCoordinator? trafficCoordinator = null)
     {
         _inner = inner;
         _lowPriorityGate = new SemaphoreSlim(lowPrioritySlots, lowPrioritySlots);
+        _trafficCoordinator = trafficCoordinator ?? new EpicTrafficCoordinator();
         _ownsInner = false;
     }
 
@@ -67,11 +70,16 @@ public sealed class SharedDopPool : IDisposable
     /// <summary>The inner limiter, for registering with <see cref="ScrapeProgressTracker"/>.</summary>
     public AdaptiveConcurrencyLimiter Limiter => _inner;
 
+    public EpicTrafficCoordinator TrafficCoordinator => _trafficCoordinator;
+
     // ─── High-priority access ────────────────────────────────
 
     /// <summary>Acquire a slot at high priority (direct access to full DOP).</summary>
-    public async Task AcquireHighAsync(CancellationToken ct)
+    public async Task AcquireHighAsync(CancellationToken ct, EpicTrafficKind trafficKind = EpicTrafficKind.Background)
     {
+        using var scope = _trafficCoordinator.BeginRequest(trafficKind);
+        await _trafficCoordinator.WaitForTurnAsync(ct);
+
         Interlocked.Increment(ref _highPriorityActive);
         try
         {
@@ -99,8 +107,11 @@ public sealed class SharedDopPool : IDisposable
     /// first (capping concurrent low-priority holders).
     /// When no high-priority work is active, bypasses the gate to use the full DOP budget.
     /// </summary>
-    public async Task<LowPriorityToken> AcquireLowAsync(CancellationToken ct)
+    public async Task<LowPriorityToken> AcquireLowAsync(CancellationToken ct, EpicTrafficKind trafficKind = EpicTrafficKind.Background)
     {
+        using var scope = _trafficCoordinator.BeginRequest(trafficKind);
+        await _trafficCoordinator.WaitForTurnAsync(ct);
+
         bool gateAcquired = false;
 
         // Enforce the low-priority cap when any high-priority work is present:

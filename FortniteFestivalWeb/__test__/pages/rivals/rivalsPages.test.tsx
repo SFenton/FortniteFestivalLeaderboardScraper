@@ -54,7 +54,17 @@ const mockApi = vi.hoisted(() => ({
   searchAccounts: vi.fn().mockResolvedValue({ results: [{ accountId: 'searched-rival', displayName: 'SearchRival' }] }),
 }));
 
+const mockIsMobileChromeOverride = vi.hoisted(() => ({ value: null as boolean | null }));
+
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
+
+vi.mock('../../../src/hooks/ui/useIsMobile', async () => {
+  const actual = await vi.importActual<typeof import('../../../src/hooks/ui/useIsMobile')>('../../../src/hooks/ui/useIsMobile');
+  return {
+    ...actual,
+    useIsMobileChrome: () => mockIsMobileChromeOverride.value ?? window.matchMedia('(max-width: 768px)').matches,
+  };
+});
 
 /* ── Browser stubs ── */
 
@@ -82,6 +92,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
+  mockIsMobileChromeOverride.value = null;
   localStorage.clear();
   // Set tracked player so page components have an accountId
   localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-1', displayName: 'TestPlayer' }));
@@ -719,6 +730,22 @@ describe('RivalDetailPage', () => {
     expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeTruthy();
     expect(screen.getByTestId('rival-detail-quick-links-modal-list')).toBeTruthy();
   });
+
+  it('registers quick links under PWA mobile chrome at desktop width', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    mockIsMobileChromeOverride.value = true;
+    renderRivalDetailPageWithQuickLinks('/rivals/rival-1?name=TestRival');
+
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    const openQuickLinksButton = await screen.findByTestId('test-open-rivalry-page-quick-links');
+  expect(screen.queryByTestId('rival-detail-quick-links-rail')).toBeNull();
+    fireEvent.click(openQuickLinksButton);
+
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeTruthy();
+    expect(screen.getByTestId('rival-detail-quick-links-modal-list')).toBeTruthy();
+  });
 });
 
 /* ── RivalryPage ── */
@@ -752,6 +779,22 @@ describe('RivalryPage', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
 
     const openQuickLinksButton = await screen.findByTestId('test-open-rivalry-page-quick-links');
+    fireEvent.click(openQuickLinksButton);
+
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeTruthy();
+    expect(screen.getByTestId('rivalry-quick-links-modal-list')).toBeTruthy();
+  });
+
+  it('registers quick links under PWA mobile chrome at desktop width', async () => {
+    setViewportQueries({ mobile: false, wide: true });
+    mockIsMobileChromeOverride.value = true;
+    renderRivalryPageWithQuickLinks('/rivals/rival-1/rivalry?mode=closest_battles&name=TestRival');
+
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    const openQuickLinksButton = await screen.findByTestId('test-open-rivalry-page-quick-links');
+  expect(screen.queryByTestId('rivalry-quick-links-rail')).toBeNull();
     fireEvent.click(openQuickLinksButton);
 
     expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeTruthy();

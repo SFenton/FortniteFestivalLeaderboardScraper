@@ -166,6 +166,7 @@ const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
 const MOCK_NOTIFICATION_SOURCE_VERSION = 'mock-source-2026-05-09';
 const PROFILE_SEARCH_TARGETS: readonly SearchTarget[] = ['players', 'bands'];
+const PLAYER_BANDS_ACTIVE_FILTER_GROUPS = new Set(['duos', 'trios', 'quads']);
 const FAB_COMBO_INSTRUMENT_ICON_SIZE = Size.iconSm;
 const FAB_COMBO_INSTRUMENTS_STYLE = {
   display: 'flex',
@@ -877,6 +878,8 @@ function AppShell() {
     { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: fabSearch.songsSortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
     ...(player || selectedProfile?.type === 'band' ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: fabSearch.songsFilterActive || bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: bandFilterIconAccessory, onPress: () => fabSearch.openFilter() }] : []),
   ];
+  const playerBandsFilterGroup = useMemo(() => new URLSearchParams(location.search).get('group') ?? 'all', [location.search]);
+  const playerBandsFilterActive = PLAYER_BANDS_ACTIVE_FILTER_GROUPS.has(playerBandsFilterGroup);
   const showMobileFab = isMobile && !notificationsOpen;
 
   return (
@@ -1089,13 +1092,15 @@ function AppShell() {
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && RoutePatterns.playerBands.test(location.pathname) && (
+      {showMobileFab && RoutePatterns.playerBands.test(location.pathname) && fabSearch.bandActionsReady && (
         <MobileFloatingActionButton
           mode="players"
-          actionGroups={withPageQuickLinks(
-            fabSearch.bandActionsReady ? [{ label: t('common.filterBands'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openBandFilter() }] : [],
-          )}
-          onPress={() => {}}
+          ariaLabel={t('common.filterBands')}
+          icon={<IoFunnel size={Size.iconFab} />}
+          active={playerBandsFilterActive}
+          surface="glass"
+          directAction
+          onPress={() => fabSearch.openBandFilter()}
         />
       )}
       {showMobileFab && RoutePatterns.bands.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (pageQuickLinks.hasPageQuickLinks || bandFilterFabActions.length > 0 || bandSelectSideActions.length > 0) && (

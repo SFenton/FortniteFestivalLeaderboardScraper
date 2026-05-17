@@ -184,11 +184,11 @@ describe('InstrumentCard', () => {
     expect(screen.getByTestId('accuracy')).toBeTruthy();
   });
 
-  it('hides accuracy on narrow width', () => {
+  it('shows inline accuracy after score on narrow width', () => {
     setViewportWidth(300);
     const entries = [makeEntry(1)];
     renderCard({ prefetchedEntries: entries, windowWidth: 300 });
-    expect(screen.queryByTestId('accuracy')).toBeNull();
+    expectBefore(screen.getByText('149,000'), screen.getByTestId('accuracy'));
   });
 
   it('hides accuracy when a two-column layout makes the card too narrow', () => {

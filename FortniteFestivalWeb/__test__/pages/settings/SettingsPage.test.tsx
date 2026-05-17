@@ -10,6 +10,16 @@ vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true }),
 }));
 
+const mockIsMobileChromeOverride = vi.hoisted(() => ({ value: null as boolean | null }));
+
+vi.mock('../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/hooks/ui/useIsMobile')>();
+  return {
+    ...actual,
+    useIsMobileChrome: () => mockIsMobileChromeOverride.value ?? window.matchMedia('(max-width: 768px)').matches,
+  };
+});
+
 import SettingsPage from '../../../src/pages/settings/SettingsPage';
 import { stubResizeObserver, stubScrollTo, stubElementDimensions } from '../../helpers/browserStubs';
 
@@ -27,6 +37,34 @@ const defaultServiceInfo = {
     elapsedSeconds: null,
     estimatedRemainingSeconds: null,
     branches: null,
+  },
+  workerStatus: {
+    workerKey: 'scraper',
+    status: 'online',
+    rawStatus: 'running',
+    mode: 'scraper',
+    instanceId: 'settings-test-worker',
+    startedAt: '2026-04-20T11:55:00Z',
+    lastHeartbeatAt: '2026-04-20T12:35:00Z',
+    lastStatusChangeAt: '2026-04-20T11:55:00Z',
+    heartbeatAgeSeconds: 5,
+    staleAfterSeconds: 90,
+    message: 'ready',
+    currentOperation: null,
+    lastOperation: {
+      operationKey: 'rankings.instrument.Solo_Guitar',
+      operationLabel: 'Computing Lead Rankings',
+      status: 'completed',
+      phase: 'ComputingRankings',
+      subOperation: 'per_instrument_rankings',
+      detail: 'Solo_Guitar',
+      startedAt: '2026-04-20T12:20:00Z',
+      updatedAt: '2026-04-20T12:25:00Z',
+      endedAt: '2026-04-20T12:25:00Z',
+      progressPercent: 100,
+      elapsedSeconds: 300,
+      estimatedRemainingSeconds: null,
+    },
   },
   nextScheduledUpdateAt: '2026-04-20T16:30:00Z',
 };
@@ -89,6 +127,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   localStorage.clear();
+  mockIsMobileChromeOverride.value = null;
   setViewportQueries();
   // Mock fetch for /api/version
   globalThis.fetch = vi.fn().mockImplementation((url: string) => {
@@ -209,6 +248,18 @@ describe('SettingsPage', () => {
   it('renders content on mobile', () => {
     setViewportQueries({ mobile: true, wide: false });
     renderSettings();
+    expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.getByTestId('test-header-portal').childElementCount).toBe(0);
+    expect(screen.getByText('App Settings')).toBeDefined();
+  });
+
+  it('hides the settings title and header quick links in PWA mobile chrome', () => {
+    mockIsMobileChromeOverride.value = true;
+    setViewportQueries({ mobile: false, wide: false });
+
+    renderSettings();
+
     expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
     expect(screen.getByTestId('test-header-portal').childElementCount).toBe(0);
@@ -670,6 +721,12 @@ describe('SettingsPage', () => {
 
     expect(within(screen.getByTestId('settings-service-info-row-last-update-complete')).getByText(new Date(defaultServiceInfo.lastCompletedUpdate.completedAt).toLocaleString())).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText('N/A')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-status')).getByText('Online')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-activity')).getByText('Computing Lead Rankings')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-start')).getByText(new Date(defaultServiceInfo.workerStatus.lastOperation.startedAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-update')).getByText(new Date(defaultServiceInfo.workerStatus.lastOperation.updatedAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-end')).getByText(new Date(defaultServiceInfo.workerStatus.lastOperation.endedAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-heartbeat')).getByText(new Date(defaultServiceInfo.workerStatus.lastHeartbeatAt).toLocaleString())).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Idle')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).getByText('Waiting for the next scheduled update')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-step-position')).getByText('N/A')).toBeDefined();
@@ -738,6 +795,58 @@ describe('SettingsPage', () => {
     });
     expect(within(statusRow).queryByTestId('arc-spinner')).toBeNull();
     expect(within(stepRow).queryByTestId('arc-spinner')).toBeNull();
+  });
+
+  it('shows stale worker activity without treating leaderboard update as active', async () => {
+    const staleServiceInfo = {
+      ...defaultServiceInfo,
+      workerStatus: {
+        ...defaultServiceInfo.workerStatus,
+        status: 'stale',
+        rawStatus: 'running',
+        lastHeartbeatAt: '2026-04-20T12:10:00Z',
+        currentOperation: {
+          operationKey: 'rankings.band.Band_Trios',
+          operationLabel: 'Computing Band Trios Rankings',
+          status: 'running',
+          phase: 'ComputingRankings',
+          subOperation: 'band_rankings',
+          detail: 'Band_Trios',
+          startedAt: '2026-04-20T12:00:00Z',
+          updatedAt: '2026-04-20T12:10:00Z',
+          endedAt: null,
+          progressPercent: null,
+          elapsedSeconds: 600,
+          estimatedRemainingSeconds: null,
+        },
+        lastOperation: defaultServiceInfo.workerStatus.lastOperation,
+      },
+    };
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(staleServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/sync-status')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+
+    await waitFor(() => {
+      expect(within(screen.getByTestId('settings-service-info-row-worker-status')).getByText('Stale')).toBeDefined();
+    });
+
+    expect(within(screen.getByTestId('settings-service-info-row-worker-activity')).getByText('Computing Band Trios Rankings')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-start')).getByText(new Date(staleServiceInfo.workerStatus.currentOperation.startedAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-update')).getByText(new Date(staleServiceInfo.workerStatus.currentOperation.updatedAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-worker-activity-end')).getByText('N/A')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-status')).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).queryByTestId('arc-spinner')).toBeNull();
   });
 
   it('shows tracked player rows when a player is selected', async () => {

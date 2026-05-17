@@ -445,6 +445,70 @@ public class TokenManagerTests
         Assert.Single(handler.Requests);
     }
 
+    [Fact]
+    public async Task ForceRefreshAccessTokenAsync_RefreshesCachedToken()
+    {
+        var handler = new Helpers.MockHttpMessageHandler();
+        handler.EnqueueJsonOk(MakeTokenJson("at_old", "rt_old", "acct1", hoursFromNow: 2));
+        handler.EnqueueJsonOk(MakeTokenJson("at_new", "rt_new", "acct1", hoursFromNow: 2));
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+
+        _store.LoadAsync(Arg.Any<CancellationToken>())
+            .Returns(new StoredCredentials { AccountId = "acct1", RefreshToken = "rt_stored" });
+
+        var mgr = new TokenManager(auth, _store, _log);
+        var oldToken = await mgr.GetAccessTokenAsync();
+
+        var refreshed = await mgr.ForceRefreshAccessTokenAsync(oldToken);
+
+        Assert.Equal("at_new", refreshed);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAccessTokenAsync_ReturnsAlreadyRefreshedToken_WhenRejectedTokenDiffers()
+    {
+        var handler = new Helpers.MockHttpMessageHandler();
+        handler.EnqueueJsonOk(MakeTokenJson("at_current", "rt_current", "acct1", hoursFromNow: 2));
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+
+        _store.LoadAsync(Arg.Any<CancellationToken>())
+            .Returns(new StoredCredentials { AccountId = "acct1", RefreshToken = "rt_stored" });
+
+        var mgr = new TokenManager(auth, _store, _log);
+        await mgr.GetAccessTokenAsync();
+
+        var refreshed = await mgr.ForceRefreshAccessTokenAsync("at_rejected_by_another_request");
+
+        Assert.Equal("at_current", refreshed);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAccessTokenAsync_UsesStoredCredentials_WhenNoCurrentToken()
+    {
+        var handler = new Helpers.MockHttpMessageHandler();
+        handler.EnqueueJsonOk(MakeTokenJson("at_from_store", "rt_from_store", "acct1", hoursFromNow: 2));
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+
+        _store.LoadAsync(Arg.Any<CancellationToken>())
+            .Returns(new StoredCredentials { AccountId = "acct1", RefreshToken = "rt_stored" });
+
+        var mgr = new TokenManager(auth, _store, _log);
+
+        var refreshed = await mgr.ForceRefreshAccessTokenAsync("at_rejected");
+
+        Assert.Equal("at_from_store", refreshed);
+        Assert.Single(handler.Requests);
+        await _store.Received(1).LoadAsync(Arg.Any<CancellationToken>());
+    }
+
     // ─── Helpers ────────────────────────────────────────
 
     private static string MakeTokenJson(string accessToken, string refreshToken, string accountId, double hoursFromNow)

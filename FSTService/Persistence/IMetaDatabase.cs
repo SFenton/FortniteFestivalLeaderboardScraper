@@ -20,6 +20,14 @@ public interface IMetaDatabase : IDisposable
     bool ShouldShowLeaderboardEntryTotals();
     void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);
 
+    // ── Worker status ────────────────────────────────────────────────
+    void UpsertWorkerHeartbeat(string workerKey, string status, string mode, string instanceId,
+        DateTime startedAtUtc, DateTime heartbeatAtUtc, string? message = null);
+    void UpdateWorkerActivity(string workerKey, WorkerOperationInfo? currentOperation,
+        WorkerOperationInfo? lastOperation = null, string? status = null, string? message = null,
+        DateTime? updatedAtUtc = null);
+    WorkerStatusInfo? GetWorkerStatus(string workerKey);
+
     // ── Score history ────────────────────────────────────────────────
     void InsertScoreChange(string songId, string instrument, string accountId,
         int? oldScore, int newScore, int? oldRank, int newRank,

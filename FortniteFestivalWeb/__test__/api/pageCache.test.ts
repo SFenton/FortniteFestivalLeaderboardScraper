@@ -19,9 +19,9 @@ describe('pageCache', () => {
     it('stores and retrieves entries', () => {
       const entry: SongDetailCache = {
         instrumentData: {} as SongDetailCache['instrumentData'],
-        playerScores: [],
         scoreHistory: [],
-        accountId: 'acc-1',
+        scoreHistoryAccountId: 'acc-1',
+        bandSelectionKey: undefined,
         scrollTop: 42,
       };
       songDetailCache.set('song-1', entry);
@@ -40,6 +40,7 @@ describe('pageCache', () => {
     it('stores and retrieves entries', () => {
       const entry: LeaderboardCache = {
         entries: [],
+        showLeaderboardEntryTotals: true,
         totalEntries: 100,
         localEntries: 100,
         page: 2,
@@ -47,6 +48,7 @@ describe('pageCache', () => {
       };
       leaderboardCache.set('key-1', entry);
       expect(leaderboardCache.get('key-1')).toBe(entry);
+      expect(leaderboardCache.get('key-1')?.showLeaderboardEntryTotals).toBe(true);
     });
 
     it('clearLeaderboardCache removes all entries', () => {

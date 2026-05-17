@@ -514,6 +514,30 @@ public static class DatabaseInitializer
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id);
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_reason TEXT;
 
+        CREATE TABLE IF NOT EXISTS service_worker_status (
+            worker_key             TEXT        PRIMARY KEY,
+            status                 TEXT        NOT NULL,
+            mode                   TEXT,
+            instance_id            TEXT,
+            started_at             TIMESTAMPTZ,
+            last_heartbeat_at      TIMESTAMPTZ,
+            last_status_change_at  TIMESTAMPTZ NOT NULL,
+            message                TEXT,
+            current_operation_json JSONB,
+            last_operation_json    JSONB,
+            updated_at             TIMESTAMPTZ NOT NULL
+        );
+
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS mode TEXT;
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS instance_id TEXT;
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS last_status_change_at TIMESTAMPTZ NOT NULL DEFAULT now();
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS message TEXT;
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS current_operation_json JSONB;
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS last_operation_json JSONB;
+        ALTER TABLE service_worker_status ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
         INSERT INTO scrape_publication_state (id, published_scrape_id, published_at, updated_at)
         SELECT TRUE, latest.id, latest.completed_at, now()
         FROM (

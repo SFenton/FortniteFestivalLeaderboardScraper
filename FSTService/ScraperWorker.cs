@@ -45,6 +45,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly NotificationService _notifications;
     private readonly DeferredRetentionMaintenanceRunner? _deferredRetentionMaintenance;
+    private readonly WorkerStatusPublisher? _workerStatus;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
@@ -79,7 +80,8 @@ public sealed class ScraperWorker : BackgroundService
         IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
         IHostApplicationLifetime lifetime,
         ILogger<ScraperWorker> log,
-        DeferredRetentionMaintenanceRunner? deferredRetentionMaintenance = null)
+        DeferredRetentionMaintenanceRunner? deferredRetentionMaintenance = null,
+        WorkerStatusPublisher? workerStatus = null)
     {
         _tokenManager = tokenManager;
         _globalScraper = globalScraper;
@@ -102,6 +104,7 @@ public sealed class ScraperWorker : BackgroundService
         _syncTracker = syncTracker;
         _notifications = notifications;
         _deferredRetentionMaintenance = deferredRetentionMaintenance;
+        _workerStatus = workerStatus;
         _options = options;
         _jsonOpts = jsonOptions.Value.SerializerOptions;
         _lifetime = lifetime;
@@ -194,12 +197,16 @@ public sealed class ScraperWorker : BackgroundService
 
         _log.LogInformation("ScraperWorker starting. Interval={Interval}, DOP={Dop}",
             opts.ScrapeInterval, opts.DegreeOfParallelism);
+        _workerStatus?.PublishHeartbeat("running", "Worker ready");
 
         // Ensure we have a valid auth session before entering the loop
+        _workerStatus?.BeginOperation("worker.authentication", "Checking Epic authentication", phase: "Starting");
         if (!await EnsureAuthenticatedAsync(stoppingToken))
         {
+            _workerStatus?.FailOperation("worker.authentication", detail: "Epic authentication unavailable");
             return;
         }
+        _workerStatus?.CompleteOperation("worker.authentication");
 
         // --test mode: fetch one song and exit
         if (!string.IsNullOrEmpty(opts.TestSongQuery))
@@ -287,6 +294,7 @@ public sealed class ScraperWorker : BackgroundService
         }
 
         _log.LogInformation("ScraperWorker stopping.");
+        _workerStatus?.MarkOffline("ScraperWorker stopping");
 
     }
 
@@ -354,6 +362,7 @@ public sealed class ScraperWorker : BackgroundService
     {
         var processMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
         _log.LogInformation("Starting scrape pass... (Process memory: {MemoryMB} MB)", processMemMb);
+        _workerStatus?.BeginOperation("scrape.pass", "Running leaderboard update", phase: "Scraping", subOperation: "scrape_pass");
         _backgroundWork.RequestPauseForScrape();
         try
         {
@@ -372,6 +381,7 @@ public sealed class ScraperWorker : BackgroundService
             if (accessToken is null)
             {
                 _log.LogError("Cannot obtain access token. Skipping this pass.");
+                _workerStatus?.FailOperation("scrape.pass", detail: "Access token unavailable");
                 return;
             }
 
@@ -393,15 +403,27 @@ public sealed class ScraperWorker : BackgroundService
                                || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
 
             ScrapePassResult? result = null;
+            var authFailureAborted = false;
             if (anyScrapePhase)
             {
                 try
                 {
+                    _workerStatus?.BeginOperation("scrape.leaderboards", "Scraping leaderboard scores", phase: "Scraping", subOperation: "fetching_leaderboards");
                     result = await _scrapeOrchestrator.RunAsync(
-                        accessToken, _tokenManager.AccountId!, service, ct);
+                        accessToken, _tokenManager.AccountId!, service, ct, _tokenManager);
+                    _workerStatus?.CompleteOperation("scrape.leaderboards");
+                }
+                catch (ScrapeAuthenticationException ex)
+                {
+                    _workerStatus?.FailOperation("scrape.leaderboards", ex);
+                    authFailureAborted = true;
+                    _log.LogError(ex,
+                        "Scrape pass aborted due to unrecoverable authorization failure. " +
+                        "Partial scrape data from this pass will not be post-processed or published.");
                 }
                 catch (CdnBlockedException ex)
                 {
+                    _workerStatus?.FailOperation("scrape.leaderboards", ex, "CDN block detected");
                     _log.LogError(ex,
                         "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
                         "Partial data from this pass was already persisted via pipelined writers. " +
@@ -411,6 +433,7 @@ public sealed class ScraperWorker : BackgroundService
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
+                    _workerStatus?.FailOperation("scrape.leaderboards", detail: "Internal cancellation source triggered");
                     _log.LogWarning(
                         "Scrape pass was canceled by an internal cancellation source. " +
                         "Partial data from this pass was already persisted. " +
@@ -419,6 +442,7 @@ public sealed class ScraperWorker : BackgroundService
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    _workerStatus?.FailOperation("scrape.leaderboards", ex);
                     _log.LogError(ex,
                         "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
                         "Continuing to post-scrape phases on whatever data was captured.");
@@ -428,6 +452,13 @@ public sealed class ScraperWorker : BackgroundService
             else
             {
                 _log.LogInformation("Scrape phases not requested. Skipping ScrapeOrchestrator.");
+            }
+
+            if (authFailureAborted)
+            {
+                _progress.EndPass();
+                _lifecycle.ScrapeCompleted();
+                return;
             }
 
             // Build a minimal context when scrape was skipped (post-scrape phases
@@ -458,12 +489,15 @@ public sealed class ScraperWorker : BackgroundService
             var postProcessCompleted = false;
             try
             {
+                _workerStatus?.BeginOperation("scrape.post_process", "Post-processing leaderboard update", phase: "PostScrapeEnrichment");
                 await _postScrapeOrchestrator.RunAsync(ctx, service, resolvedPhases, ct);
                 postProcessCompleted = true;
+                _workerStatus?.CompleteOperation("scrape.post_process");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
+                _workerStatus?.FailOperation("scrape.post_process", ex);
                 _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
             }
 
@@ -564,6 +598,7 @@ public sealed class ScraperWorker : BackgroundService
         {
             await CleanupActiveScrapeResourcesAsync("scrape pass exit", CancellationToken.None);
             _backgroundWork.ResumeAfterScrape();
+            _workerStatus?.CompleteOperation("scrape.pass");
         }
     }
 

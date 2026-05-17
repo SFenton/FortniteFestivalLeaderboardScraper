@@ -455,11 +455,10 @@ export default function SongDetailPage() {
     : phase === LoadPhase.ContentIn
       ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
       : { opacity: 0 };
-  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (skipAnim && (cached?.scrollTop ?? 0) > 40));
   const userScrolledRef = useRef(false);
   const scrollContainerRef = useScrollContainer();
 
-  // Cache scroll position on scroll (header collapse is handled by Page's headerCollapse prop)
+  // Cache scroll position on scroll.
   useEffect(() => {
     const scrollEl = scrollContainerRef.current;
     if (!scrollEl) return;
@@ -658,7 +657,6 @@ export default function SongDetailPage() {
       variant="withBgClip"
       fabSpacer={phase === LoadPhase.ContentIn && allErrored ? 'none' : 'end'}
       quickLinks={pageQuickLinks}
-      headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
       firstRun={{ key: 'songinfo', label: t('nav.songInfo', 'Song Info'), slides: songInfoSlidesMemo, gateContext: firstRunGateCtx }}
       background={<PageBackground src={song?.albumArt} />}
       before={
@@ -666,8 +664,7 @@ export default function SongDetailPage() {
           <SongInfoHeader
             song={song}
             songId={songId!}
-            collapsed={!!(hasFab || headerCollapsed)}
-            animate={!hasFab}
+            collapsed
             onOpenPaths={!isMobileChrome && canViewPaths ? openPaths : undefined}
             shopUrl={!isMobileChrome && showShop ? shopUrl : undefined}
             shopPulse={showShop && song ? isShopHighlighted(song.songId) : false}

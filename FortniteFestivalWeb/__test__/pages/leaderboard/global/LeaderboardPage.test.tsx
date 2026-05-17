@@ -24,6 +24,7 @@ const mockApi = vi.hoisted(() => {
     }),
     getLeaderboard: fn().mockResolvedValue({
       songId: 'song-1', instrument: 'Solo_Guitar', count: 5, totalEntries: 50, localEntries: 50,
+      showLeaderboardEntryTotals: false,
       entries: [
         { accountId: 'acc-1', displayName: 'Player One', score: 145000, rank: 1, percentile: 99, accuracy: 99.5, isFullCombo: true, stars: 6, season: 5 },
         { accountId: 'acc-2', displayName: 'Player Two', score: 140000, rank: 2, percentile: 97, accuracy: 98.0, isFullCombo: false, stars: 5, season: 5 },
@@ -103,6 +104,7 @@ function resetMocks() {
   ], count: 1, currentSeason: 5 });
   mockApi.getLeaderboard.mockResolvedValue({
     songId: 'song-1', instrument: 'Solo_Guitar', count: 5, totalEntries: 50, localEntries: 50,
+    showLeaderboardEntryTotals: false,
     entries: defaultEntries,
   });
   mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1, scores: [
@@ -143,6 +145,10 @@ function renderLeaderboard(route = '/songs/song-1/Solo_Guitar', accountId?: stri
       </Routes>
     </TestProviders>,
   );
+}
+
+function expectBefore(first: Element, second: Element) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
 
 const selectedBandProfile = {
@@ -252,6 +258,57 @@ describe('LeaderboardPage', () => {
     });
   });
 
+  it('shows inline percentage after score on mobile rows', async () => {
+    stubViewportWidth(300);
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 1, totalEntries: 1, localEntries: 1,
+      entries: [{ ...defaultEntries[0], accuracy: 995000 }],
+    });
+
+    renderLeaderboard();
+
+    await screen.findByText('Player One');
+    expectBefore(screen.getByText('145,000'), screen.getByText('99.5%'));
+  });
+
+  it('shows the header entry count only when leaderboard totals are enabled', async () => {
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 5, totalEntries: 50, localEntries: 50,
+      showLeaderboardEntryTotals: true,
+      entries: defaultEntries,
+    });
+
+    renderLeaderboard();
+
+    await screen.findByText('Player One');
+    expect(screen.getByText('50 Lead entries')).toBeDefined();
+  });
+
+  it('hides the header entry count when leaderboard totals are disabled', async () => {
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 5, totalEntries: 50, localEntries: 50,
+      showLeaderboardEntryTotals: false,
+      entries: defaultEntries,
+    });
+
+    renderLeaderboard();
+
+    await screen.findByText('Player One');
+    expect(screen.queryByText('50 Lead entries')).toBeNull();
+  });
+
+  it('hides the header entry count when leaderboard total visibility is omitted', async () => {
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 5, totalEntries: 50, localEntries: 50,
+      entries: defaultEntries,
+    });
+
+    renderLeaderboard();
+
+    await screen.findByText('Player One');
+    expect(screen.queryByText('50 Lead entries')).toBeNull();
+  });
+
   it('renders pagination when total pages > 1', async () => {
     renderLeaderboard();
     await waitFor(() => {
@@ -318,6 +375,30 @@ describe('LeaderboardPage', () => {
     renderLeaderboard();
     expect(screen.getByText('Player One')).toBeDefined();
     // getLeaderboard should have been called only once (first render)
+    expect(mockApi.getLeaderboard).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the header entry-count visibility decision from cache', async () => {
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 5, totalEntries: 50, localEntries: 50,
+      showLeaderboardEntryTotals: true,
+      entries: defaultEntries,
+    });
+    const { unmount } = renderLeaderboard();
+    await screen.findByText('Player One');
+    expect(screen.getByText('50 Lead entries')).toBeDefined();
+    unmount();
+
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 5, totalEntries: 50, localEntries: 50,
+      showLeaderboardEntryTotals: false,
+      entries: defaultEntries,
+    });
+
+    renderLeaderboard();
+
+    expect(screen.getByText('Player One')).toBeDefined();
+    expect(screen.getByText('50 Lead entries')).toBeDefined();
     expect(mockApi.getLeaderboard).toHaveBeenCalledTimes(1);
   });
 
@@ -610,6 +691,25 @@ describe('LeaderboardPage — coverage: player footer with tracked score', () =>
     expect(footerButton?.parentElement?.style.bottom).toContain('84px');
     const pagination = await screen.findByTestId('leaderboard-fixed-pagination');
     expect(pagination.style.bottom).toContain('136px');
+  });
+
+  it('does not reserve the mobile player footer position when the tracked player has no score for the instrument', async () => {
+    stubViewportWidth(375);
+    mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 1, scores: [
+      { songId: 'song-1', instrument: 'Solo_Drums', score: 120000, rank: 4, percentile: 90, accuracy: 93.1, isFullCombo: false, stars: 4, season: 5 },
+    ] });
+
+    renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
+
+    await screen.findByText('Player One');
+
+    expect(screen.queryByText('TestPlayer')).toBeNull();
+    const pagination = await screen.findByTestId('leaderboard-fixed-pagination');
+    expect(pagination.style.bottom).toBe('96px');
+    const scrollContainer = screen.getByTestId('test-scroll-container');
+    const marginBottom = parseFloat(scrollContainer.style.marginBottom);
+    const bottomChromeHeight = window.innerHeight - scrollContainer.getBoundingClientRect().top - scrollContainer.clientHeight;
+    expect(marginBottom + bottomChromeHeight).toBeGreaterThanOrEqual(152);
   });
 
   it('footer click navigates to statistics', async () => {

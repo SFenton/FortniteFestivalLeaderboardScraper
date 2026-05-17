@@ -88,6 +88,7 @@ vi.mock('../../../../src/pages/Page', () => ({
 const response: SongBandLeaderboardResponse = {
   songId: 'song-a',
   bandType: 'Band_Duets',
+  showLeaderboardEntryTotals: false,
   count: 2,
   totalEntries: 42,
   localEntries: 42,
@@ -225,6 +226,7 @@ describe('SongBandLeaderboardPage', () => {
 
     const fixedPagination = screen.getByTestId('leaderboard-fixed-pagination');
     expect(fixedPagination).toHaveStyle({ position: 'fixed', bottom: '96px' });
+    expect(fixedPagination.style.touchAction).toBe('none');
     expect(list).not.toContainElement(fixedPagination);
     expect(screen.getByTestId('leaderboard-page-info')).toHaveTextContent('1 / 2');
     expect(mockScrollElement.style.marginBottom).toBe('164px');
@@ -236,6 +238,42 @@ describe('SongBandLeaderboardPage', () => {
       expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 25, undefined, undefined, undefined);
     });
     expect(mockScrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('shows the band header count only when leaderboard totals are enabled', async () => {
+    mockGetSongBandLeaderboard.mockResolvedValue({
+      ...response,
+      showLeaderboardEntryTotals: true,
+    });
+
+    renderPage();
+
+    await screen.findByTestId('song-band-leaderboard-list');
+    expect(screen.getByText('Duos • 42 entries')).toBeInTheDocument();
+  });
+
+  it('hides the band header count when leaderboard totals are disabled', async () => {
+    mockGetSongBandLeaderboard.mockResolvedValue({
+      ...response,
+      showLeaderboardEntryTotals: false,
+    });
+
+    renderPage();
+
+    await screen.findByTestId('song-band-leaderboard-list');
+    expect(screen.getByText('Duos')).toBeInTheDocument();
+    expect(screen.queryByText('Duos • 42 entries')).toBeNull();
+  });
+
+  it('hides the band header count when leaderboard total visibility is omitted', async () => {
+    const { showLeaderboardEntryTotals: _omitted, ...responseWithoutVisibility } = response;
+    mockGetSongBandLeaderboard.mockResolvedValue(responseWithoutVisibility);
+
+    renderPage();
+
+    await screen.findByTestId('song-band-leaderboard-list');
+    expect(screen.getByText('Duos')).toBeInTheDocument();
+    expect(screen.queryByText('Duos • 42 entries')).toBeNull();
   });
 
   it('shows only member score before instrument icons on mobile song-band rows', async () => {
@@ -326,8 +364,10 @@ describe('SongBandLeaderboardPage', () => {
     const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
     expect(footer).toHaveStyle({ position: 'fixed' });
     expect(footer.style.bottom).toContain('84px');
+    expect(footer.style.touchAction).toBe('none');
     const pagination = await screen.findByTestId('leaderboard-fixed-pagination');
     expect(pagination.style.bottom).toContain('136px');
+    expect(pagination.style.touchAction).toBe('none');
     expect(within(footer).getByText('Selected + Partner')).toBeTruthy();
     expect(within(footer).getByText('#13')).toBeTruthy();
     const footerLink = within(footer).getByText('Selected + Partner').closest('a');

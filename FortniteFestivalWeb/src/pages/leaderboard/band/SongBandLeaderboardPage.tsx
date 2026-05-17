@@ -116,7 +116,7 @@ export default function SongBandLeaderboardPage() {
     return <PageMessage>{t('songBandLeaderboard.notFound')}</PageMessage>;
   }
 
-  const subtitle = data
+  const subtitle = data?.showLeaderboardEntryTotals === true
     ? t('songBandLeaderboard.subtitle', {
         type: bandLabel,
         count: totalEntries,
@@ -135,8 +135,7 @@ export default function SongBandLeaderboardPage() {
         <SongInfoHeader
           song={song}
           songId={songId}
-          collapsed={isMobile}
-          animate={!isMobile}
+          collapsed
           hideBackground
           onTitleClick={goToSongDetail}
           subtitle2={subtitle}

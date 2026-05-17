@@ -68,7 +68,6 @@ export default function LeaderboardPage() {
   const isMobile = !showAccuracy;
   const isNarrow = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const hasFab = isMobileChrome;
   const reserveFabSpace = false;
   const showFooterScore = useMediaQuery('(min-width: 310px)');
 
@@ -113,6 +112,7 @@ export default function LeaderboardPage() {
   }, [selectedBand, selectedBandFooterName]);
 
   const [entries, setEntries] = useState<LeaderboardEntryType[]>(hasCached ? cached.entries : []);
+  const [showLeaderboardEntryTotals, setShowLeaderboardEntryTotals] = useState(hasCached ? cached.showLeaderboardEntryTotals === true : false);
   const [totalEntries, setTotalEntries] = useState(hasCached ? cached.totalEntries : 0);
   const [localEntries, setLocalEntries] = useState(hasCached ? cached.localEntries : 0);
   const [page, setPage] = useState(hasCached ? cached.page : 0);
@@ -203,6 +203,7 @@ export default function LeaderboardPage() {
     && (isScoreValid(songId, instKey, effectivePlayerScore.score) || resolvedPlayerScore));
   const hasBandFooter = !!(selectedBand && selectedBandSongScore && selectedBandFooterRoute && selectedBandFooterName);
   const hasFooter = hasPlayerFooter || hasBandFooter;
+  const hasFab = hasFooter ? isMobileChrome : false;
 
   const fetchPage = useCallback(
     async (pageNum: number, mode: 'first' | 'paginate' = 'paginate') => {
@@ -235,6 +236,7 @@ export default function LeaderboardPage() {
           }
         }
         setEntries(res.entries);
+        setShowLeaderboardEntryTotals(res.showLeaderboardEntryTotals === true);
         setTotalEntries(res.totalEntries);
         setLocalEntries(effectiveLocal);
         setPage(pageNum);
@@ -274,13 +276,14 @@ export default function LeaderboardPage() {
     if (entries.length === 0 && page > 0) return;
     leaderboardCache.set(cacheKey, {
       entries,
+      showLeaderboardEntryTotals,
       totalEntries,
       localEntries,
       page,
       /* v8 ignore next -- scrollTop: DOM scroll API */
       scrollTop: scrollContainerRef.current?.scrollTop ?? 0,
     });
-  }, [loading, error, entries, totalEntries, localEntries, page, songId, cacheKey]);
+  }, [loading, error, entries, showLeaderboardEntryTotals, totalEntries, localEntries, page, songId, cacheKey]);
 
   // Spinner -> staggered-content transition
   const hasLoadedOnce = useRef(hasCached);
@@ -424,7 +427,7 @@ export default function LeaderboardPage() {
             animate={!isNarrow}
             hideBackground
             onTitleClick={goToSongDetail}
-            subtitle2={totalEntries > 0 ? t('leaderboard.instrumentEntryCount', {
+            subtitle2={showLeaderboardEntryTotals && totalEntries > 0 ? t('leaderboard.instrumentEntryCount', {
               count: totalEntries.toLocaleString() as unknown as number,
               instrument: serverInstrumentLabel(instKey),
             }) : undefined}
@@ -458,6 +461,7 @@ export default function LeaderboardPage() {
                     showDifficulty={showSeason}
                     showSeason={showSeason}
                     showAccuracy={showAccuracy}
+                    showInlineAccuracyAfterScore={isMobile}
                     showStars={showStars}
                     scoreWidth={scoreWidth}
                     rankWidth={rankWidth}
@@ -482,6 +486,7 @@ export default function LeaderboardPage() {
                       showDifficulty={showSeason}
                       showSeason={showSeason}
                       showAccuracy={showAccuracy}
+                      showInlineAccuracyAfterScore={isMobile}
                       showStars={showStars}
                       starsAfterScore
                       showScore={showFooterScore}
@@ -509,6 +514,7 @@ export default function LeaderboardPage() {
                         showDifficulty={showSeason}
                         showSeason={showSeason}
                         showAccuracy={showAccuracy}
+                        showInlineAccuracyAfterScore={isMobile}
                         showStars={showStars}
                         showScore={showFooterScore}
                         scoreWidth={playerScoreWidth}
@@ -521,6 +527,7 @@ export default function LeaderboardPage() {
                 isMobile={isMobile}
                 hasFab={hasFab}
                 reserveFabSpace={reserveFabSpace}
+                reserveFooterScrollSpace={hasFooter}
                 error={!!error}
                 emptyMessage={t('leaderboard.noEntriesOnPage')}
                 staggerRushRef={staggerRushRef}

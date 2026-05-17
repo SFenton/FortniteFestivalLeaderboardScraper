@@ -5,6 +5,7 @@ using System.Text.Json;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
+using FSTService.Auth;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
@@ -23,6 +24,28 @@ public class GlobalLeaderboardScraperTests
         var http = new HttpClient(handler);
         var scraper = new GlobalLeaderboardScraper(http, _progress, _log, maxLookupRetries: 0, festivalService: festivalService);
         return (scraper, handler);
+    }
+
+    private static async Task<ScrapeAccessTokenProvider> CreateAccessTokenProviderAsync(
+        string oldAccessToken,
+        string newAccessToken)
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(MakeTokenJson(oldAccessToken, "rt_old", "acct", hoursFromNow: 2));
+        handler.EnqueueJsonOk(MakeTokenJson(newAccessToken, "rt_new", "acct", hoursFromNow: 2));
+
+        var auth = new EpicAuthService(
+            new HttpClient(handler),
+            Substitute.For<ILogger<EpicAuthService>>());
+        var store = Substitute.For<ICredentialStore>();
+        store.LoadAsync(Arg.Any<CancellationToken>())
+            .Returns(new StoredCredentials { AccountId = "acct", RefreshToken = "rt_stored" });
+        var tokenManager = new TokenManager(auth, store, Substitute.For<ILogger<TokenManager>>());
+
+        var seeded = await tokenManager.GetAccessTokenAsync();
+        Assert.Equal(oldAccessToken, seeded);
+
+        return new ScrapeAccessTokenProvider(tokenManager, oldAccessToken, Substitute.For<ILogger>());
     }
 
     private static FestivalService CreateFestivalServiceWithMicModeDifficulty(int bd)
@@ -612,6 +635,43 @@ public class GlobalLeaderboardScraperTests
     private const string OnePage = """{"page":0,"totalPages":1,"entries":[{"teamId":"a1","rank":1,"percentile":1.0,"sessionHistory":[{"trackedStats":{"SCORE":100}}]}]}""";
 
     [Fact]
+    public async Task ScrapeLeaderboardAsync_Unauthorized_RefreshesAndRetriesWithNewToken()
+    {
+        var (scraper, handler) = CreateScraper();
+        var provider = await CreateAccessTokenProviderAsync("old_token", "new_token");
+
+        handler.EnqueueError(HttpStatusCode.Unauthorized, "expired");
+        handler.EnqueueJsonOk(OnePage);
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "old_token", "acct", accessTokenProvider: provider);
+
+        Assert.Single(result.Entries);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("old_token", handler.Requests[0].Headers.Authorization?.Parameter);
+        Assert.Equal("new_token", handler.Requests[1].Headers.Authorization?.Parameter);
+        Assert.Equal(1, provider.RefreshCount);
+    }
+
+    [Fact]
+    public async Task ScrapeLeaderboardAsync_UnauthorizedAfterRefresh_ThrowsAuthenticationException()
+    {
+        var (scraper, handler) = CreateScraper();
+        var provider = await CreateAccessTokenProviderAsync("old_token", "new_token");
+
+        handler.EnqueueError(HttpStatusCode.Unauthorized, "expired");
+        handler.EnqueueError(HttpStatusCode.Unauthorized, "still expired");
+
+        await Assert.ThrowsAsync<ScrapeAuthenticationException>(() =>
+            scraper.ScrapeLeaderboardAsync(
+                "song1", "Solo_Guitar", "old_token", "acct", accessTokenProvider: provider));
+
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("old_token", handler.Requests[0].Headers.Authorization?.Parameter);
+        Assert.Equal("new_token", handler.Requests[1].Headers.Authorization?.Parameter);
+    }
+
+    [Fact]
     public async Task ScrapeLeaderboardAsync_ServerError_RetriesAndSucceeds()
     {
         var (scraper, handler) = CreateScraper();
@@ -1058,6 +1118,34 @@ public class GlobalLeaderboardScraperTests
     }
 
     [Fact]
+    public async Task ScrapeManySongsAsync_Sequential_Unauthorized_RefreshesAndRetriesWithNewToken()
+    {
+        var (scraper, handler) = CreateScraper();
+        var provider = await CreateAccessTokenProviderAsync("old_token", "new_token");
+
+        handler.EnqueueError(HttpStatusCode.Unauthorized, "expired");
+        handler.EnqueueJsonOk(OnePage);
+
+        var requests = new List<GlobalLeaderboardScraper.SongScrapeRequest>
+        {
+            new() { SongId = "s1", Instruments = new[] { "Solo_Guitar" }, Label = "Test Song" },
+        };
+
+        var results = await scraper.ScrapeManySongsAsync(
+            requests,
+            "old_token",
+            "acct",
+            sequential: true,
+            pageConcurrency: 1,
+            accessTokenProvider: provider);
+
+        Assert.Equal(1, results["s1"][0].EntriesCount);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("old_token", handler.Requests[0].Headers.Authorization?.Parameter);
+        Assert.Equal("new_token", handler.Requests[1].Headers.Authorization?.Parameter);
+    }
+
+    [Fact]
     public async Task ScrapeManySongsAsync_Sequential_MultiPage_FetchesAll()
     {
         var (scraper, handler) = CreateScraper();
@@ -1209,6 +1297,25 @@ public class GlobalLeaderboardScraperTests
             "song1", "Solo_Guitar", "token", "acct", limiter: limiter);
 
         Assert.Single(result.Entries); // Only page 0 had valid data
+    }
+
+    private static string MakeTokenJson(string accessToken, string refreshToken, string accountId, double hoursFromNow)
+    {
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(hoursFromNow).ToString("o");
+        return $$"""
+        {
+            "access_token": "{{accessToken}}",
+            "expires_in": {{(int)(hoursFromNow * 3600)}},
+            "expires_at": "{{expiresAt}}",
+            "token_type": "bearer",
+            "refresh_token": "{{refreshToken}}",
+            "refresh_expires": 28800,
+            "refresh_expires_at": "2099-12-31T23:59:59.000Z",
+            "account_id": "{{accountId}}",
+            "client_id": "test_client",
+            "displayName": "TestUser"
+        }
+        """;
     }
 
 }

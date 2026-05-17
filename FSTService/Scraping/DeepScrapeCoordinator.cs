@@ -98,7 +98,8 @@ public sealed class DeepScrapeCoordinator
         string accountId,
         int seedBatch,
         Func<GlobalLeaderboardResult, ValueTask>? onJobComplete,
-        CancellationToken ct)
+        CancellationToken ct,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         if (jobs.Count == 0)
             return [];
@@ -275,10 +276,10 @@ public sealed class DeepScrapeCoordinator
                         if (job.Done)
                             return ((GlobalLeaderboardScraper.ParsedPage?)null, 0, GlobalLeaderboardScraper.FetchStatus.OtherFailure);
                         return await _scraper.FetchPageAsync(
-                            job.SongId, job.Instrument, page, accessToken, accountId, limiter, job.Cts!.Token);
+                            job.SongId, job.Instrument, page, accessToken, accountId, limiter, job.Cts!.Token, accessTokenProvider);
                     },
                     ct,
-                    acquireSlot: () => limiter.WaitAsync(job.Cts!.Token),
+                    acquireSlot: () => _scraper.AcquireEpicSlotAsync(limiter, job.Cts!.Token),
                     releaseSlot: limiter.Release);
 
                 Interlocked.Increment(ref job.RequestCount);

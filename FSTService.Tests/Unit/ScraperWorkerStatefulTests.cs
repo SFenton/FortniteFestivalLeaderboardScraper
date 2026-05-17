@@ -144,7 +144,52 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Is<SongMachineSource>(source => source == SongMachineSource.Backfill),
             Arg.Is<bool>(isHighPriority => !isHighPriority),
             Arg.Any<CancellationToken>(),
-            Arg.Is<bool>(preserveProgressPhaseOnIdle => !preserveProgressPhaseOnIdle));
+            Arg.Is<bool>(preserveProgressPhaseOnIdle => !preserveProgressPhaseOnIdle),
+            Arg.Is<EpicTrafficKind>(kind => kind == EpicTrafficKind.Background));
+    }
+
+    [Fact]
+    public async Task RunQueuedRegistrationBackfillBatch_ForegroundMode_AttachesHighPriorityAndReleasesGate()
+    {
+        _metaDb.DeferBackfill("acctForeground", 9, "worker_backfill_queue");
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+
+        var windows = new List<SeasonWindowInfo>
+        {
+            new() { WindowId = "s1", SeasonNumber = 1, EventId = "evt1" }
+        };
+        _historyReconstructor.DiscoverSeasonWindowsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<SeasonWindowInfo>>(windows));
+
+        var orchestrator = CreateBackfillOrchestrator(new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
+            RegistrationBackfillMode = RegistrationBackfillMode.ForegroundEpicExclusive,
+        });
+
+        var claimed = await orchestrator.RunQueuedRegistrationBackfillBatchAsync(
+            _festivalService,
+            maxAccounts: 4,
+            CancellationToken.None);
+
+        Assert.Equal(1, claimed);
+        Assert.False(_pool.TrafficCoordinator.ForegroundRegistrationActive);
+
+        await _cyclicalMachine.Received(1).AttachAsync(
+            Arg.Is<IReadOnlyList<UserWorkItem>>(u => u.Count == 1
+                && u[0].AccountId == "acctForeground"),
+            Arg.Is<IReadOnlyList<string>>(songs => songs.Count == 1 && songs[0] == "test-song-1"),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            Arg.Is<SongMachineSource>(source => source == SongMachineSource.Backfill),
+            Arg.Is<bool>(isHighPriority => isHighPriority),
+            Arg.Any<CancellationToken>(),
+            Arg.Is<bool>(preserveProgressPhaseOnIdle => !preserveProgressPhaseOnIdle),
+            Arg.Is<EpicTrafficKind>(kind => kind == EpicTrafficKind.ForegroundRegistration));
     }
 
     // ═══════════════════════════════════════════════════════════════

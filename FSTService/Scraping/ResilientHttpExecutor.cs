@@ -172,6 +172,7 @@ public sealed class ResilientHttpExecutor
 
     private readonly HttpClient _http;
     private readonly ILogger _log;
+    private readonly EpicTrafficCoordinator? _trafficCoordinator;
 
     // ── In-flight operation tracking (for /api/diag/inflight) ──────────
     // Keyed by Guid so removal is O(1) and independent of label collisions.
@@ -247,6 +248,9 @@ public sealed class ResilientHttpExecutor
     public ResilientHttpExecutor(HttpClient http, ILogger log)
         : this(http, log, probeSendTimeout: null, sendWallClockTimeout: null, executorLifetime: default) { }
 
+    public ResilientHttpExecutor(HttpClient http, ILogger log, EpicTrafficCoordinator trafficCoordinator)
+        : this(http, log, probeSendTimeout: null, sendWallClockTimeout: null, executorLifetime: default, trafficCoordinator) { }
+
     /// <param name="probeSendTimeout">Per-attempt timeout for the background CDN probe
     /// send. Defaults to <see cref="DefaultProbeSendTimeout"/>. A single probe
     /// <c>HttpClient.SendAsync</c> call will not block longer than this, regardless of
@@ -265,10 +269,12 @@ public sealed class ResilientHttpExecutor
         ILogger log,
         TimeSpan? probeSendTimeout,
         TimeSpan? sendWallClockTimeout,
-        CancellationToken executorLifetime)
+        CancellationToken executorLifetime,
+        EpicTrafficCoordinator? trafficCoordinator = null)
     {
         _http = http;
         _log = log;
+        _trafficCoordinator = trafficCoordinator;
         _probeSendTimeout = probeSendTimeout ?? DefaultProbeSendTimeout;
         _sendWallClockTimeout = sendWallClockTimeout ?? DefaultSendWallClockTimeout;
         _executorLifetime = executorLifetime;
@@ -324,6 +330,9 @@ public sealed class ResilientHttpExecutor
         for (int attempt = 0; ; attempt++)
         {
             op.SetAttempt(attempt, statusAttempt, networkErrors);
+
+            if (_trafficCoordinator is not null)
+                await _trafficCoordinator.WaitForTurnAsync(ct);
 
             // If CDN is blocked, throw immediately — don't waste a wire send.
             // The caller (SongMachine) will release its DOP slot and wait for the probe.
@@ -757,6 +766,8 @@ public sealed class ResilientHttpExecutor
         while (true)
         {
             ct.ThrowIfCancellationRequested();
+            if (_trafficCoordinator is not null)
+                await _trafficCoordinator.WaitForTurnAsync(ct);
             await WaitForCdnClearAsync(ct);
 
             bool acquired = false;

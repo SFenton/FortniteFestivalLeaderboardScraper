@@ -34,8 +34,8 @@ const t = (key: string, opts?: Record<string, unknown>) => {
       return 'Quads';
     case 'player.viewAllBands':
       return `View all bands (${opts?.count as string})`;
-    case 'common.viewAll':
-      return 'View All';
+    case 'player.seeAll':
+      return 'See all';
     case 'player.noBandsYet':
       return 'No bands yet';
     case 'player.noBandsYetSubtitle':
@@ -101,6 +101,7 @@ describe('buildPlayerBandsItems', () => {
 
     expect(items.find(item => item.key === 'bands-empty-trios')?.span).toBe(true);
     expect(items.find(item => item.key === 'bands-empty-quads')?.span).toBe(true);
+    expect(items.find(item => item.key === 'bands-empty-trios')?.style).toBeUndefined();
   });
 
   it('renders one member row per band member with name left and instrument icons on the right', () => {
@@ -179,7 +180,7 @@ describe('buildPlayerBandsItems', () => {
     renderNode(heading?.node);
 
     expect(screen.getByTestId('player-bands-view-all')).toHaveAttribute('href', '/bands/player/p1?group=all&page=1&name=TestPlayer');
-    expect(screen.getByTestId('player-bands-view-all')).toHaveTextContent('View All');
+    expect(screen.getByTestId('player-bands-view-all')).toHaveTextContent('See all');
   });
 
   it('omits the heading view-all action when no source account is available', () => {

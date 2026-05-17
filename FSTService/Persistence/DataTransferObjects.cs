@@ -923,6 +923,42 @@ public sealed class ScrapeRunInfo
 }
 
 /// <summary>
+/// Structured activity published by a background worker for cross-process API visibility.
+/// </summary>
+public sealed class WorkerOperationInfo
+{
+    public string OperationKey { get; init; } = "";
+    public string OperationLabel { get; init; } = "";
+    public string Status { get; init; } = "running";
+    public string? Phase { get; init; }
+    public string? SubOperation { get; init; }
+    public string? Detail { get; init; }
+    public DateTime StartedAtUtc { get; init; }
+    public DateTime UpdatedAtUtc { get; init; }
+    public DateTime? EndedAtUtc { get; init; }
+    public double? ProgressPercent { get; init; }
+    public double? ElapsedSeconds { get; init; }
+    public double? EstimatedRemainingSeconds { get; init; }
+}
+
+/// <summary>
+/// Last known liveness and activity for a background worker process.
+/// </summary>
+public sealed class WorkerStatusInfo
+{
+    public string WorkerKey { get; init; } = "";
+    public string Status { get; init; } = "unknown";
+    public string? Mode { get; init; }
+    public string? InstanceId { get; init; }
+    public DateTime? StartedAtUtc { get; init; }
+    public DateTime? LastHeartbeatAtUtc { get; init; }
+    public DateTime LastStatusChangeAtUtc { get; init; }
+    public string? Message { get; init; }
+    public WorkerOperationInfo? CurrentOperation { get; init; }
+    public WorkerOperationInfo? LastOperation { get; init; }
+}
+
+/// <summary>
 /// Max attainable scores for a song, one per instrument.
 /// </summary>
 public sealed class SongMaxScores

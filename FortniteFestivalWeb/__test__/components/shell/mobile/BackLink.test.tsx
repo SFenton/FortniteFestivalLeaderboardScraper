@@ -42,6 +42,12 @@ describe('BackLink', () => {
     expect(wrapper.style.animation).toBeFalsy();
   });
 
+  it('prevents native touch scrolling on the wrapper', () => {
+    const { container } = renderWithRouter(<BackLink fallback="/songs" />);
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.style.touchAction).toBe('none');
+  });
+
   it('calls navigate(-1) on click', () => {
     renderWithRouter(<BackLink fallback="/songs" />);
     const links = screen.getAllByRole('link');

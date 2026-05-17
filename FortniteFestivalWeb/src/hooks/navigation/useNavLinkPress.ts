@@ -7,6 +7,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useNavigate, type NavigateOptions, type To } from 'react-router-dom';
+import { scheduleCompatibilityClickSuppression } from '../ui/pressCompatibilityClickSuppression';
+import { clearPressPulse, startPressPulse } from '../ui/pressVisualFeedback';
 
 const DEFAULT_MOVEMENT_THRESHOLD = 12;
 const DEFAULT_LONG_PRESS_MS = 500;
@@ -56,11 +58,14 @@ export function useNavLinkPress<T extends HTMLAnchorElement>({
   const navigate = useNavigate();
   const pendingPointerRef = useRef<PendingPointer | null>(null);
   const lastPointerNavigationRef = useRef<number | null>(null);
+  const pressPulseTargetRef = useRef<HTMLElement | null>(null);
   const [isPressed, setIsPressed] = useState(false);
 
   const cancelPendingPress = useCallback(() => {
     pendingPointerRef.current = null;
     setIsPressed(false);
+    clearPressPulse(pressPulseTargetRef.current);
+    pressPulseTargetRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -102,6 +107,7 @@ export function useNavLinkPress<T extends HTMLAnchorElement>({
       clientY: event.clientY,
       timeStamp: event.timeStamp,
     };
+    pressPulseTargetRef.current = startPressPulse(event);
     setIsPressed(true);
   }, [canInterceptPointer]);
 
@@ -113,16 +119,28 @@ export function useNavLinkPress<T extends HTMLAnchorElement>({
 
   const onPointerUp = useCallback((event: ReactPointerEvent<T>) => {
     const pendingPointer = pendingPointerRef.current;
+    const pressPulseTarget = pressPulseTargetRef.current;
     pendingPointerRef.current = null;
+    pressPulseTargetRef.current = null;
     setIsPressed(false);
-    if (!pendingPointer || pendingPointer.pointerId !== event.pointerId || !canInterceptPointer(event)) return;
-    if (movedBeyondThreshold(event, pendingPointer)) return;
-    if (event.timeStamp - pendingPointer.timeStamp > longPressMs) return;
+    if (!pendingPointer || pendingPointer.pointerId !== event.pointerId || !canInterceptPointer(event)) {
+      clearPressPulse(pressPulseTarget);
+      return;
+    }
+    if (movedBeyondThreshold(event, pendingPointer)) {
+      clearPressPulse(pressPulseTarget);
+      return;
+    }
+    if (event.timeStamp - pendingPointer.timeStamp > longPressMs) {
+      clearPressPulse(pressPulseTarget);
+      return;
+    }
 
     event.preventDefault();
     lastPointerNavigationRef.current = event.timeStamp;
+    scheduleCompatibilityClickSuppression(event, clickSuppressionMs);
     navigateNow();
-  }, [canInterceptPointer, longPressMs, movedBeyondThreshold, navigateNow]);
+  }, [canInterceptPointer, clickSuppressionMs, longPressMs, movedBeyondThreshold, navigateNow]);
 
   const onClick = useCallback((event: ReactMouseEvent<T>) => {
     const lastPointerNavigation = lastPointerNavigationRef.current;

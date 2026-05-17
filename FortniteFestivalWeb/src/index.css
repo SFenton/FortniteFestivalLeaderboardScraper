@@ -58,7 +58,7 @@ input[type='button'],
 input[type='submit'],
 input[type='reset'] {
   touch-action: manipulation;
-  -webkit-tap-highlight-color: rgba(76, 125, 255, 0.2);
+  -webkit-tap-highlight-color: transparent;
 }
 
 button:focus-visible,
@@ -73,16 +73,49 @@ input[type='reset']:focus-visible {
   outline-offset: 3px;
 }
 
-@media (hover: none), (pointer: coarse) {
-  button:not(:disabled):not([aria-disabled='true']):active,
-  a:active,
-  [role='button']:not([aria-disabled='true']):active,
-  summary:active,
-  label[for]:active,
-  input[type='button']:not(:disabled):active,
-  input[type='submit']:not(:disabled):active,
-  input[type='reset']:not(:disabled):active {
-    opacity: 0.88;
+[data-press-pulse] {
+  position: relative;
+}
+
+[data-press-pulse]::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at var(--press-pulse-x, 50%) var(--press-pulse-y, 50%),
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.13) 18%,
+    rgba(255, 255, 255, 0.05) 38%,
+    transparent 68%
+  );
+  clip-path: circle(0 at var(--press-pulse-x, 50%) var(--press-pulse-y, 50%));
+  opacity: 0;
+  pointer-events: none;
+  animation: pressGlassPulse 420ms cubic-bezier(0.2, 0.9, 0.25, 1) forwards;
+}
+
+@keyframes pressGlassPulse {
+  0% {
+    clip-path: circle(0 at var(--press-pulse-x, 50%) var(--press-pulse-y, 50%));
+    opacity: 0.24;
+  }
+
+  55% {
+    clip-path: circle(var(--press-pulse-mid-size, 94px) at var(--press-pulse-x, 50%) var(--press-pulse-y, 50%));
+    opacity: 0.15;
+  }
+
+  100% {
+    clip-path: circle(var(--press-pulse-size, 180px) at var(--press-pulse-x, 50%) var(--press-pulse-y, 50%));
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-press-pulse]::before {
+    animation: none;
+    opacity: 0;
   }
 }
 
@@ -101,6 +134,21 @@ button svg {
 .recharts-surface,
 .recharts-surface * {
   outline: none !important;
+}
+
+html.fst-disable-scroll-fade,
+html.fst-disable-scroll-fade *,
+html.fst-disable-scroll-fade *::before,
+html.fst-disable-scroll-fade *::after {
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
+
+html.fst-disable-scroll-fade [style*='fadeInUp'] {
+  opacity: 1 !important;
+  animation: none !important;
+  transform: none !important;
+  will-change: auto !important;
 }
 
 /* Safe-area padding for PWA / Add-to-Home-Screen on iOS (top only) */

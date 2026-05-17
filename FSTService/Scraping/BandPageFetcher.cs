@@ -28,8 +28,9 @@ public sealed class BandPageFetcher : PageFetcherBase<BandLeaderboardEntry>
         SharedDopPool pool,
         SpoolWriter<BandLeaderboardEntry> spool,
         ScrapeProgressTracker progress,
-        ILogger log)
-        : base(executor, pool, progress, log)
+        ILogger log,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
+        : base(executor, pool, progress, log, accessTokenProvider)
     {
         _spool = spool;
     }

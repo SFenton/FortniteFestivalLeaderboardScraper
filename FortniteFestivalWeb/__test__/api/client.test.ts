@@ -80,9 +80,10 @@ describe('api/client', () => {
 
   describe('getLeaderboard', () => {
     it('fetches leaderboard with correct URL params', async () => {
-      const data = { songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] };
+      const data = { songId: 's1', instrument: 'Solo_Guitar', showLeaderboardEntryTotals: true, count: 0, totalEntries: 0, localEntries: 0, entries: [] };
       mockFetchOk(data);
-      await api.getLeaderboard('s1', 'Solo_Guitar' as any, 50, 10);
+      const result = await api.getLeaderboard('s1', 'Solo_Guitar' as any, 50, 10);
+      expect(result.showLeaderboardEntryTotals).toBe(true);
       expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/Solo_Guitar?top=50&offset=10', { headers: {} });
     });
 
@@ -112,12 +113,13 @@ describe('api/client', () => {
 
   describe('song band leaderboards', () => {
     it('fetches a single song band leaderboard with selected context and combo', async () => {
-      const data = { songId: 's1', bandType: 'Band_Duets', count: 0, totalEntries: 0, localEntries: 0, entries: [] };
+      const data = { songId: 's1', bandType: 'Band_Duets', showLeaderboardEntryTotals: true, count: 0, totalEntries: 0, localEntries: 0, entries: [] };
       mockFetchOk(data);
 
       const result = await api.getSongBandLeaderboard('s1', 'Band_Duets', 25, 50, 'acct-1', 'acct-1:acct-2', 'Solo_Guitar+Solo_Bass');
 
       expect(result).toEqual(data);
+      expect(result.showLeaderboardEntryTotals).toBe(true);
       expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/bands/Band_Duets?top=25&offset=50&accountId=acct-1&teamKey=acct-1%3Aacct-2&combo=Solo_Guitar%2BSolo_Bass', { headers: {} });
     });
 

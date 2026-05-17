@@ -35,6 +35,8 @@ export interface LeaderboardEntryProps {
   showSeason?: boolean;
   /** Show the accuracy column. */
   showAccuracy?: boolean;
+  /** Show accuracy inline after the score instead of as a trailing column. */
+  showInlineAccuracyAfterScore?: boolean;
   /** Show the stars column. */
   showStars?: boolean;
   /** When true, place stars inside the score metadata group before accuracy. */
@@ -61,6 +63,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   showDifficulty,
   showSeason,
   showAccuracy,
+  showInlineAccuracyAfterScore,
   showStars,
   starsAfterScore,
   showScore = true,
@@ -68,6 +71,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   rankWidth,
 }: LeaderboardEntryProps) {
   const s = useStyles(isPlayer, rankWidth);
+  const showInlineAccuracy = !!showInlineAccuracyAfterScore && !showAccuracy;
   return (
     <>
       {rank != null
@@ -86,6 +90,11 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
             : <span style={s.hidden} aria-hidden="true"><SeasonPill season={0} /></span>
         )}
         {showScore && <ScorePill score={score} width={scoreWidth} />}
+        {showInlineAccuracy && (
+          <span data-testid="leaderboard-inline-accuracy" style={s.inlineAccuracy}>
+            <AccuracyDisplay accuracy={accuracy ?? null} isFullCombo={isFullCombo} />
+          </span>
+        )}
         {showStars && starsAfterScore && (
           <span data-testid="leaderboard-stars-after-score" style={s.inlineStars}>
             {stars != null && stars > 0
@@ -153,6 +162,12 @@ function useStyles(isPlayer?: boolean, rankWidth?: number) {
       display: Display.inlineFlex,
       alignItems: Align.center,
       justifyContent: Justify.start,
+    },
+    inlineAccuracy: {
+      flexShrink: 0,
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
     },
     hidden: {
       visibility: 'hidden' as const,

@@ -5,6 +5,7 @@ import { IoChevronForward } from 'react-icons/io5';
 import { Colors, Font, Gap, InstrumentSize, Layout, Radius, Weight, frostedCard, flexColumn, flexRow } from '@festival/theme';
 import type { PlayerItem } from '../helpers/playerPageTypes';
 import PlayerSectionHeading from '../sections/PlayerSectionHeading';
+import InstrumentEmptyState from '../sections/InstrumentEmptyState';
 import { Routes } from '../../../routes';
 import PlayerBandCard, { estimatePlayerBandCardHeight } from './PlayerBandCard';
 import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
@@ -38,7 +39,7 @@ export function buildPlayerBandsItems(
       node: (
         <PlayerSectionHeading
           title={t('player.bands', { name: displayName })}
-          actionLabel={t('common.viewAll')}
+          actionLabel={t('player.seeAll')}
           actionTo={sourceAccountId ? Routes.playerBands(sourceAccountId, 'all', 1, displayName) : undefined}
           actionTestId="player-bands-view-all"
         />
@@ -69,8 +70,14 @@ export function buildPlayerBandsItems(
         key: `bands-empty-${group.key}`,
         span: true,
         heightEstimate: EMPTY_GROUP_HEIGHT,
-        style: bandStyles.emptyCard,
-        node: <BandGroupEmptyState t={t} />,
+        node: (
+          <InstrumentEmptyState
+            t={t}
+            titleText={t('player.noBandsYet')}
+            subtitleText={t('player.noBandsYetSubtitle')}
+            noMargin
+          />
+        ),
       });
     }
 
@@ -142,15 +149,6 @@ function BandViewAllCard({ label, to }: { label: string; to?: string }) {
   );
 }
 
-function BandGroupEmptyState({ t }: { t: Translate }) {
-  return (
-    <div style={bandStyles.emptyState}>
-      <span style={bandStyles.emptyTitle}>{t('player.noBandsYet')}</span>
-      <span style={bandStyles.emptySubtitle}>{t('player.noBandsYetSubtitle')}</span>
-    </div>
-  );
-}
-
 const bandStyles = {
   groupHeader: {
     ...flexRow,
@@ -177,28 +175,6 @@ const bandStyles = {
   entryChevron: {
     flexShrink: 0,
     color: Colors.textSubtle,
-  } as CSSProperties,
-  emptyCard: {
-    ...frostedCard,
-    borderRadius: Radius.md,
-    padding: Gap.container,
-  } as CSSProperties,
-  emptyState: {
-    ...flexColumn,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Gap.sm,
-    minHeight: 116,
-    textAlign: 'center',
-  } as CSSProperties,
-  emptyTitle: {
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    fontWeight: Weight.heavy,
-  } as CSSProperties,
-  emptySubtitle: {
-    color: Colors.textSecondary,
-    fontSize: Font.sm,
   } as CSSProperties,
   viewAllCard: {
     ...frostedCard,

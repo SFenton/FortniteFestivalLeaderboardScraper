@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, within } from '@testing-library/react';
-import { Font, Layout } from '@festival/theme';
+import { Colors, Font, Layout } from '@festival/theme';
 import FloatingActionButton, { type ActionItem } from '../../../../src/components/shell/fab/FloatingActionButton';
 import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../../src/constants/keyboardLayoutVars';
 import { TestProviders } from '../../../helpers/TestProviders';
@@ -101,7 +101,9 @@ function fireCancelableEvent(target: Element, type: string) {
 describe('FloatingActionButton', () => {
   it('renders the FAB button', () => {
     renderFAB();
-    expect(screen.getByRole('button', { name: /actions/i })).toBeTruthy();
+    const fab = screen.getByRole('button', { name: /actions/i });
+    expect(fab).toBeTruthy();
+    expect(fab.parentElement?.style.touchAction).toBe('none');
   });
 
   it('uses glass styling for inactive icon-only main FABs when requested', () => {
@@ -133,7 +135,10 @@ describe('FloatingActionButton', () => {
     const fab = screen.getByRole('button', { name: /actions/i });
     fireEvent.click(fab);
 
-    expect(screen.getByText('Sort')).toBeTruthy();
+    const menuItem = screen.getByText('Sort').closest('button')!;
+    expect(menuItem).toBeTruthy();
+    expect(screen.getByTestId('fab-menu').style.touchAction).toBe('none');
+    expect(menuItem.style.touchAction).toBe('none');
   });
 
   it('opens the popup menu from touch pointerup without the following click closing it', () => {
@@ -199,6 +204,8 @@ describe('FloatingActionButton', () => {
   it('shows search bar when defaultOpen is true', () => {
     renderFAB({ defaultOpen: true, placeholder: 'Search songs...' });
     expect(screen.getByPlaceholderText('Search songs...')).toBeTruthy();
+    const searchOuter = document.querySelector('.fab-search-bar')?.parentElement as HTMLElement;
+    expect(searchOuter.style.touchAction).toBe('none');
   });
 
   it('renders a collapsed songs dock with evenly distributed direct actions', () => {
@@ -220,6 +227,7 @@ describe('FloatingActionButton', () => {
 
     const dock = document.querySelector('.fab-search-dock') as HTMLElement;
     expect(dock).toBeTruthy();
+    expect(dock.style.touchAction).toBe('none');
     expect(screen.getByTestId('fab-dock-row')).toHaveStyle({ justifyContent: 'space-between' });
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.getByRole('button', { name: 'Search' })).toBeTruthy();
@@ -249,6 +257,7 @@ describe('FloatingActionButton', () => {
     });
 
     const sideActions = screen.getByTestId('fab-side-actions');
+    expect(sideActions.parentElement?.style.touchAction).toBe('none');
     const pathsButton = within(sideActions).getByRole('button', { name: 'View Paths' });
     expect(within(pathsButton).getByText('View Paths')).toBeTruthy();
     expect(pathsButton).toHaveStyle({ minWidth: `${Layout.fabSize}px`, height: `${Layout.fabSize}px` });
@@ -307,8 +316,8 @@ describe('FloatingActionButton', () => {
 
     const link = screen.getByRole('link', { name: 'Item Shop' });
     expect(link).toHaveClass('shop-pulse');
-    expect(link.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
-    expect(link.style.border).toBe('1px solid rgba(255, 255, 255, 0.08)');
+    expect(link).toHaveStyle({ backgroundColor: Colors.accentPurple });
+    expect(link.style.boxShadow).toContain('rgba(0,0,0,0.4)');
     expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
   });
 

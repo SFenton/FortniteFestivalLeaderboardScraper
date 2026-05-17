@@ -10,6 +10,7 @@ import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../..
 import { SearchQueryProvider, useSearchQuery } from '../../../../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../../../../src/contexts/PlayerDataContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { GridTemplate } from '@festival/theme';
 import { stubMatchMedia, stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../../helpers/browserStubs';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQuickLinksRailPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
 import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../../../src/hooks/ui/usePageQuickLinks';
@@ -20,12 +21,15 @@ const PlayerContent = PlayerContentBase as unknown as (props: any) => React.JSX.
 
 let mockIsWideDesktop = true;
 let mockHasFab = false;
+let mockIsMobileOverride: boolean | null = null;
+let mockIsMobileChromeOverride: boolean | null = null;
 
 vi.mock('../../../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../../src/hooks/ui/useIsMobile')>();
   return {
     ...actual,
-    useIsMobile: () => mockHasFab,
+    useIsMobile: () => mockIsMobileOverride ?? mockHasFab,
+    useIsMobileChrome: () => mockIsMobileChromeOverride ?? mockHasFab,
     useIsWideDesktop: () => mockIsWideDesktop,
   };
 });
@@ -76,6 +80,8 @@ beforeEach(() => {
   localStorage.clear();
   mockIsWideDesktop = true;
   mockHasFab = false;
+  mockIsMobileOverride = null;
+  mockIsMobileChromeOverride = null;
   stubMatchMedia(false);
   mockApi.getSongs.mockResolvedValue({ songs: [{ songId: 's1', title: 'Test Song', artist: 'Artist A', year: 2024, difficulty: { guitar: 3 }, albumArt: 'art.jpg' }], count: 1, currentSeason: 5 });
   mockApi.getPlayer.mockResolvedValue({ accountId: 'p1', displayName: 'TestPlayer', totalScores: 1, scores: [{ songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 3, percentile: 90, accuracy: 95, isFullCombo: false, stars: 5, season: 5, totalEntries: 500 }] });
@@ -464,7 +470,7 @@ describe('PlayerContent', () => {
     await waitFor(() => { expect(screen.getByText("TestPlayer's Bands")).toBeDefined(); });
   });
 
-  it('uses a single-column player grid on mobile widths above the narrow breakpoint', async () => {
+  it('uses a container-width player grid when mobile chrome is active', async () => {
     mockIsWideDesktop = false;
     mockHasFab = true;
     stubMatchMedia(false);
@@ -497,10 +503,10 @@ describe('PlayerContent', () => {
       expect(screen.getByText("TestPlayer's Bands")).toBeDefined();
     });
 
-    expect(screen.getByTestId('player-grid-list').style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(screen.getByTestId('player-grid-list').style.gridTemplateColumns).toBe(GridTemplate.autoFitDetailCards);
   });
 
-  it('keeps the two-column player grid on desktop widths', async () => {
+  it('uses the same container-width player grid on desktop widths', async () => {
     mockIsWideDesktop = true;
     mockHasFab = false;
     stubMatchMedia(false);
@@ -533,7 +539,7 @@ describe('PlayerContent', () => {
       expect(screen.getByText("TestPlayer's Bands")).toBeDefined();
     });
 
-    expect(screen.getByTestId('player-grid-list').style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
+    expect(screen.getByTestId('player-grid-list').style.gridTemplateColumns).toBe(GridTemplate.autoFitDetailCards);
   });
 
   it('renders visible family global statistics sections with active group icons and no Pro Vocals section', async () => {
@@ -595,9 +601,9 @@ describe('PlayerContent', () => {
     expect(proStringsHeadingRow.querySelector('img[alt="Solo_PeripheralBass"]')).toBeNull();
     expect(proDrumsHeadingRow.querySelector('img[alt="Solo_PeripheralDrums"]')).not.toBeNull();
     expect(proDrumsHeadingRow.querySelector('img[alt="Solo_PeripheralCymbals"]')).toBeNull();
-    expect(screen.getByText('The overall rankings for Lead, Bass, Drums, and Tap Vocals. Instrument icons to the left indicate selected instruments in app settings, but these statistics cards apply to all pad instruments combined.')).toBeDefined();
-    expect(screen.getByText('The overall rankings for Pro Lead and Pro Bass. Instrument icons to the left indicate selected instruments in app settings, but these statistics cards apply to all pro strings instruments combined.')).toBeDefined();
-    expect(screen.getByText('The overall rankings for Pro Drums and Pro Cymbals. Instrument icons to the left indicate selected instruments in app settings, but these statistics cards apply to all pro drums instruments combined.')).toBeDefined();
+    expect(screen.getByText('The overall rankings for Lead, Bass, Drums, and Tap Vocals. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pad instruments combined.')).toBeDefined();
+    expect(screen.getByText('The overall rankings for Pro Lead and Pro Bass. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pro strings instruments combined.')).toBeDefined();
+    expect(screen.getByText('The overall rankings for Pro Drums and Pro Cymbals. Selected instrument icons indicate instruments enabled in app settings, but these statistics cards apply to all pro drums instruments combined.')).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Pro Vocals Global Statistics' })).toBeNull();
   });
 
@@ -979,6 +985,28 @@ describe('PlayerContent', () => {
       accountId: 'p1',
       displayName: 'TestPlayer',
     });
+  });
+
+  it('treats PWA mobile chrome as FAB mode without requiring a mobile viewport', async () => {
+    mockIsWideDesktop = false;
+    mockHasFab = false;
+    mockIsMobileOverride = false;
+    mockIsMobileChromeOverride = true;
+
+    render(
+      <Providers route="/statistics">
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim statsData={null} rankingQueryResults={[]} />
+        <FabQuickLinksSpy />
+      </Providers>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fab-player-quick-links').textContent).toBe('true');
+    });
+    expect(screen.queryByRole('heading', { name: 'TestPlayer' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.queryByTestId('player-header-actions')).toBeNull();
+    expect(screen.queryByTestId('player-header-actions-transition')).toBeNull();
   });
 
   it('hides the mobile player header actions when the setting is off', async () => {

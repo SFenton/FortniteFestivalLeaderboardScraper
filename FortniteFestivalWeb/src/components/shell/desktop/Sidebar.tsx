@@ -13,10 +13,12 @@ import { Routes } from '../../../routes';
 import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import { markTapDiagnosticsAction } from '../../../diagnostics/tapDiagnostics';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
+import { scheduleCompatibilityClickSuppression } from '../../../hooks/ui/pressCompatibilityClickSuppression';
 import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 
 const SIDEBAR_DURATION = 250;
 const TOUCH_NAV_MOVEMENT_THRESHOLD = 12;
+const TOUCH_NAV_CLICK_SUPPRESSION_MS = 700;
 
 type SidebarNavHandlers = {
   onPointerDown: (event: ReactPointerEvent<HTMLAnchorElement>) => void;
@@ -78,6 +80,7 @@ export default function Sidebar({ player, selectedProfile, open, onClose, onDese
       if (moved > TOUCH_NAV_MOVEMENT_THRESHOLD) return;
 
       event.preventDefault();
+      scheduleCompatibilityClickSuppression(event, TOUCH_NAV_CLICK_SUPPRESSION_MS);
       handleNavigationLink(label, to, 'pointerup');
     },
     onPointerCancel: () => {

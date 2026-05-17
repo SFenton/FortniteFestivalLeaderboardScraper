@@ -10,6 +10,7 @@ import {
   Display,
   Font,
   Gap,
+  GridTemplate,
   Justify,
   Layout,
   LINK_TRANSITION_MS,
@@ -36,7 +37,7 @@ export const playerPageStyles = {
   scrollArea: { overflowX: Overflow.visible } as CSSProperties,
   gridList: {
     display: Display.grid,
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gridTemplateColumns: GridTemplate.autoFitDetailCards,
     gap: Gap.md,
     minWidth: 0,
     overflow: Overflow.hidden,

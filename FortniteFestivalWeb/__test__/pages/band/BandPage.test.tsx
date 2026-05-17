@@ -3,7 +3,7 @@ import { render, screen, act, fireEvent, waitFor, within } from '@testing-librar
 import { Route, Routes, useLocation } from 'react-router-dom';
 import type { QueryClient } from '@tanstack/react-query';
 import { ACCURACY_SCALE } from '@festival/core';
-import { Colors } from '@festival/theme';
+import { Colors, GridTemplate } from '@festival/theme';
 import { DEFAULT_INSTRUMENT, type BandDetailResponse } from '@festival/core/api/serverTypes';
 import { queryKeys } from '../../../src/api/queryKeys';
 import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
@@ -22,11 +22,12 @@ const mockApi = vi.hoisted(() => ({
   getBandSongs: vi.fn(),
 }));
 const mockUseIsMobile = vi.hoisted(() => vi.fn(() => false));
+const mockUseIsMobileChrome = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
 vi.mock('../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/hooks/ui/useIsMobile')>();
-  return { ...actual, useIsMobile: mockUseIsMobile };
+  return { ...actual, useIsMobile: mockUseIsMobile, useIsMobileChrome: mockUseIsMobileChrome };
 });
 
 const SELECTED_PROFILE_STORAGE_KEY = 'fst:selectedProfile';
@@ -98,6 +99,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   setViewportQueries();
   mockUseIsMobile.mockReturnValue(false);
+  mockUseIsMobileChrome.mockReturnValue(false);
   mockApi.getSongs.mockResolvedValue({
     count: 6,
     currentSeason: 1,
@@ -386,6 +388,7 @@ describe('BandPage', () => {
 
   it('suppresses the empty selected band statistics header on mobile without an active combo', async () => {
     mockUseIsMobile.mockReturnValue(true);
+    mockUseIsMobileChrome.mockReturnValue(true);
 
     renderBandPage('/statistics', createTestQueryClient(), null, createSelectedBandProfile());
     await advancePastSpinner();
@@ -399,6 +402,7 @@ describe('BandPage', () => {
 
   it('suppresses the selected band statistics header on mobile with an active combo', async () => {
     mockUseIsMobile.mockReturnValue(true);
+    mockUseIsMobileChrome.mockReturnValue(true);
 
     renderBandPage('/statistics', createTestQueryClient(), MATCHING_DUET_COMBO_FILTER, createSelectedBandProfile());
     await advancePastSpinner();
@@ -547,7 +551,7 @@ describe('BandPage', () => {
     const memberCards = screen.getAllByTestId('band-member-card');
     expect(memberCards).toHaveLength(2);
     expect(screen.getAllByTestId('band-member-chevron')).toHaveLength(2);
-    expect(screen.getByTestId('band-section-members').querySelector('[style*="grid-template-columns"]')).toHaveStyle({ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
+    expect(screen.getByTestId('band-section-members').querySelector('[style*="grid-template-columns"]')).toHaveStyle({ gridTemplateColumns: GridTemplate.autoFitDetailCards });
     expect(memberCards[0]).toHaveTextContent('Player One');
     expect(memberCards[0]).not.toHaveTextContent('p1');
     expect(memberCards[0]).toHaveAttribute('href', '/player/p1');
@@ -559,10 +563,10 @@ describe('BandPage', () => {
     expect(summarySection).toHaveTextContent('Appearances');
     expect(summarySection).toHaveTextContent('Members');
     expect(summarySection).not.toHaveTextContent('p1:p2');
-    expect(summarySection.querySelector('[style*="grid-template-columns"]')).toHaveStyle({ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
+    expect(summarySection.querySelector('[style*="grid-template-columns"]')).toHaveStyle({ gridTemplateColumns: GridTemplate.autoFitDetailCards });
 
     const statisticsSection = screen.getByTestId('band-section-statistics');
-    expect(statisticsSection.querySelector('[style*="grid-template-columns"]')).toHaveStyle({ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
+    expect(statisticsSection.querySelector('[style*="grid-template-columns"]')).toHaveStyle({ gridTemplateColumns: GridTemplate.autoFitDetailCards });
 
     expect(screen.getAllByTestId('band-stat-card')).toHaveLength(15);
     expect(screen.getByText('Adjusted Percentile Rank')).toBeTruthy();
@@ -675,6 +679,7 @@ describe('BandPage', () => {
 
   it('registers Select Band for the mobile FAB and keeps select out of PageHeader actions', async () => {
     mockUseIsMobile.mockReturnValue(true);
+    mockUseIsMobileChrome.mockReturnValue(true);
 
     renderBandPage('/bands/band-guid-1', createTestQueryClient(), undefined, undefined, { withBandSelectHarness: true });
     await advancePastSpinner();
@@ -704,6 +709,22 @@ describe('BandPage', () => {
       expect(screen.getByTestId('current-location')).toHaveTextContent('/statistics');
     });
     expect(screen.getByTestId('location-preserve-scroll')).toHaveTextContent('true');
+  });
+
+  it('treats PWA mobile chrome as FAB header mode without requiring a mobile viewport', async () => {
+    mockUseIsMobile.mockReturnValue(false);
+    mockUseIsMobileChrome.mockReturnValue(true);
+
+    renderBandPage('/bands/band-guid-1', createTestQueryClient(), undefined, undefined, { withBandSelectHarness: true });
+    await advancePastSpinner();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fab-band-select-registered').textContent).toBe('true');
+    });
+    expect(screen.queryByRole('button', { name: 'Select Band Profile' })).toBeNull();
+    expect(screen.queryByTestId('band-select-profile-slot')).toBeNull();
+    expect(within(screen.getByTestId('scroll-area')).getByRole('heading', { name: 'Player One + Player Two' })).toBeDefined();
+    expect(within(screen.getByTestId('test-header-portal')).queryByRole('heading', { name: 'Player One + Player Two' })).toBeNull();
   });
 
   it('selects the current band with member summaries when Select Band Profile is clicked', async () => {
@@ -741,7 +762,6 @@ describe('BandPage', () => {
         { accountId: 'p2', displayName: 'Player Two' },
       ],
     }));
-
     renderBandPage('/bands/band-guid-1');
     await advancePastSpinner();
 

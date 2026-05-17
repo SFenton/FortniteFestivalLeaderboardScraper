@@ -319,6 +319,151 @@ public sealed class MetaDatabase : IMetaDatabase
         }
     }
 
+    // ── Worker status ────────────────────────────────────────────────
+
+    public void UpsertWorkerHeartbeat(string workerKey, string status, string mode, string instanceId,
+        DateTime startedAtUtc, DateTime heartbeatAtUtc, string? message = null)
+    {
+        if (string.IsNullOrWhiteSpace(workerKey))
+            throw new ArgumentException("Worker key is required.", nameof(workerKey));
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            """
+            INSERT INTO service_worker_status (
+                worker_key, status, mode, instance_id, started_at, last_heartbeat_at,
+                last_status_change_at, message, updated_at)
+            VALUES (@workerKey, @status, @mode, @instanceId, @startedAt, @heartbeatAt,
+                @changedAt, @message, @updatedAt)
+            ON CONFLICT (worker_key) DO UPDATE SET
+                status = EXCLUDED.status,
+                mode = EXCLUDED.mode,
+                instance_id = EXCLUDED.instance_id,
+                started_at = CASE
+                    WHEN service_worker_status.instance_id IS DISTINCT FROM EXCLUDED.instance_id THEN EXCLUDED.started_at
+                    ELSE COALESCE(service_worker_status.started_at, EXCLUDED.started_at)
+                END,
+                last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+                last_status_change_at = CASE
+                    WHEN service_worker_status.status IS DISTINCT FROM EXCLUDED.status THEN EXCLUDED.last_status_change_at
+                    ELSE service_worker_status.last_status_change_at
+                END,
+                message = COALESCE(EXCLUDED.message, service_worker_status.message),
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("workerKey", workerKey);
+        cmd.Parameters.AddWithValue("status", status);
+        cmd.Parameters.AddWithValue("mode", mode);
+        cmd.Parameters.AddWithValue("instanceId", instanceId);
+        cmd.Parameters.AddWithValue("startedAt", NormalizeUtc(startedAtUtc));
+        cmd.Parameters.AddWithValue("heartbeatAt", NormalizeUtc(heartbeatAtUtc));
+        cmd.Parameters.AddWithValue("changedAt", NormalizeUtc(heartbeatAtUtc));
+        cmd.Parameters.AddWithValue("message", (object?)message ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("updatedAt", NormalizeUtc(heartbeatAtUtc));
+        cmd.ExecuteNonQuery();
+    }
+
+    public void UpdateWorkerActivity(string workerKey, WorkerOperationInfo? currentOperation,
+        WorkerOperationInfo? lastOperation = null, string? status = null, string? message = null,
+        DateTime? updatedAtUtc = null)
+    {
+        if (string.IsNullOrWhiteSpace(workerKey))
+            throw new ArgumentException("Worker key is required.", nameof(workerKey));
+
+        var now = NormalizeUtc(updatedAtUtc ?? DateTime.UtcNow);
+
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            """
+            INSERT INTO service_worker_status (
+                worker_key, status, last_status_change_at, message,
+                current_operation_json, last_operation_json, updated_at)
+            VALUES (@workerKey, COALESCE(@status, 'running'), @changedAt, @message,
+                @currentOperation, @lastOperation, @updatedAt)
+            ON CONFLICT (worker_key) DO UPDATE SET
+                status = COALESCE(EXCLUDED.status, service_worker_status.status),
+                last_status_change_at = CASE
+                    WHEN EXCLUDED.status IS NOT NULL
+                     AND service_worker_status.status IS DISTINCT FROM EXCLUDED.status THEN EXCLUDED.last_status_change_at
+                    ELSE service_worker_status.last_status_change_at
+                END,
+                message = COALESCE(EXCLUDED.message, service_worker_status.message),
+                current_operation_json = EXCLUDED.current_operation_json,
+                last_operation_json = COALESCE(EXCLUDED.last_operation_json, service_worker_status.last_operation_json),
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("workerKey", workerKey);
+        cmd.Parameters.AddWithValue("status", (object?)status ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("changedAt", now);
+        cmd.Parameters.AddWithValue("message", (object?)message ?? DBNull.Value);
+        AddJsonbParameter(cmd, "currentOperation", currentOperation);
+        AddJsonbParameter(cmd, "lastOperation", lastOperation);
+        cmd.Parameters.AddWithValue("updatedAt", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    public WorkerStatusInfo? GetWorkerStatus(string workerKey)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            """
+            SELECT worker_key, status, mode, instance_id, started_at, last_heartbeat_at,
+                   last_status_change_at, message, current_operation_json, last_operation_json
+            FROM service_worker_status
+            WHERE worker_key = @workerKey
+            """;
+        cmd.Parameters.AddWithValue("workerKey", workerKey);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new WorkerStatusInfo
+        {
+            WorkerKey = reader.GetString(0),
+            Status = reader.GetString(1),
+            Mode = reader.IsDBNull(2) ? null : reader.GetString(2),
+            InstanceId = reader.IsDBNull(3) ? null : reader.GetString(3),
+            StartedAtUtc = GetNullableUtc(reader, 4),
+            LastHeartbeatAtUtc = GetNullableUtc(reader, 5),
+            LastStatusChangeAtUtc = GetUtc(reader, 6),
+            Message = reader.IsDBNull(7) ? null : reader.GetString(7),
+            CurrentOperation = DeserializeOperation(reader, 8),
+            LastOperation = DeserializeOperation(reader, 9),
+        };
+    }
+
+    private static void AddJsonbParameter(NpgsqlCommand cmd, string name, WorkerOperationInfo? operation)
+    {
+        var parameter = cmd.Parameters.Add(name, NpgsqlDbType.Jsonb);
+        parameter.Value = operation is null ? DBNull.Value : JsonSerializer.Serialize(operation);
+    }
+
+    private static WorkerOperationInfo? DeserializeOperation(NpgsqlDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+            return null;
+
+        return JsonSerializer.Deserialize<WorkerOperationInfo>(reader.GetString(ordinal));
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+        => value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+        };
+
+    private static DateTime GetUtc(NpgsqlDataReader reader, int ordinal)
+        => NormalizeUtc(reader.GetDateTime(ordinal));
+
+    private static DateTime? GetNullableUtc(NpgsqlDataReader reader, int ordinal)
+        => reader.IsDBNull(ordinal) ? null : GetUtc(reader, ordinal);
+
     // ── Score history ────────────────────────────────────────────────
 
     public void InsertScoreChange(string songId, string instrument, string accountId,

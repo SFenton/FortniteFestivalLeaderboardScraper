@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
+using FSTService.Auth;
 using FSTService.Persistence;
 using Microsoft.Extensions.Options;
 
@@ -53,12 +54,16 @@ public sealed class ScrapeOrchestrator
         string accessToken,
         string callerAccountId,
         FestivalService service,
-        CancellationToken ct)
+        CancellationToken ct,
+        TokenManager? tokenManager = null)
     {
         var opts = _options.Value;
         var resolvedPhases = opts.ResolvedPhases;
         bool doSoloScrape = resolvedPhases.HasFlag(ScrapePhase.SoloScrape);
         bool doBandScrape = resolvedPhases.HasFlag(ScrapePhase.BandScrape);
+        var accessTokenProvider = tokenManager is not null
+            ? new ScrapeAccessTokenProvider(tokenManager, accessToken, _log)
+            : null;
 
         // Reset CDN cooldown state from any previous pass to avoid stale backoff
         _globalScraper.ResetCdnState();
@@ -226,7 +231,7 @@ public sealed class ScrapeOrchestrator
             var bandSongIds = scrapeRequests.Select(r => r.SongId).ToList();
             bandTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(passCt);
             bandFetcher = new BandPageFetcher(
-                _globalScraper.Executor, _pool, bandSpool, _progress, _log);
+                _globalScraper.Executor, _pool, bandSpool, _progress, _log, accessTokenProvider);
             bandTask = bandFetcher.FetchAllAsync(
                 bandSongIds, bandInstruments, accessToken, callerAccountId,
                 opts.MaxPagesPerLeaderboard, bandTimeoutCts.Token);
@@ -256,7 +261,8 @@ public sealed class ScrapeOrchestrator
                 sharedLimiter: _pool.Limiter,
                 deferDeepScrape: true,
                 validCutoffMultiplier: opts.ValidCutoffMultiplier,
-                onBandPageScraped: null);
+                onBandPageScraped: null,
+                accessTokenProvider: accessTokenProvider);
 
         // Wait for solo only — band runs independently in the background.
         // Solo post-processing (flush, score changes, rankings) proceeds immediately.
@@ -325,6 +331,12 @@ public sealed class ScrapeOrchestrator
             "{Requests} HTTP requests, {Bytes} bytes, {Changes} score changes detected, elapsed={Elapsed:F1}s",
             scrapeId, aggregates.SongsWithData, aggregates.TotalEntries, totalRequests, totalBytes,
             aggregates.TotalChanges, sw.Elapsed.TotalSeconds);
+
+        if (accessTokenProvider?.RefreshCount > 0)
+        {
+            _log.LogInformation("Scrape run #{ScrapeId} refreshed its access token {RefreshCount} time(s) during page fetches.",
+                scrapeId, accessTokenProvider.RefreshCount);
+        }
 
         // Report entry counts per instrument
         if (_persistence.WriteLegacyLiveLeaderboardDuringScrape)

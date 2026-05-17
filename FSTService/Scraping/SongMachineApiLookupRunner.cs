@@ -20,6 +20,7 @@ internal sealed class SongMachineApiLookupRunner
     public async Task<SongMachineLookupResult<T>> TryRunAsync<T>(
         SharedDopPool pool,
         bool isHighPriority,
+        EpicTrafficKind trafficKind,
         CancellationToken ct,
         Func<Task<T>> work,
         Action<Exception> onFailure)
@@ -29,8 +30,8 @@ internal sealed class SongMachineApiLookupRunner
 
         Func<Task> acquireSlot = async () =>
         {
-            if (isHighPriority) await pool.AcquireHighAsync(ct);
-            else lowPriorityToken = await pool.AcquireLowAsync(ct);
+            if (isHighPriority) await pool.AcquireHighAsync(ct, trafficKind);
+            else lowPriorityToken = await pool.AcquireLowAsync(ct, trafficKind);
         };
 
         Action releaseSlot = () =>
@@ -41,6 +42,7 @@ internal sealed class SongMachineApiLookupRunner
 
         try
         {
+            using var trafficScope = pool.TrafficCoordinator.BeginRequest(trafficKind);
             var value = _executor is not null
                 ? await _executor.WithCdnResilienceAsync(work, ct, acquireSlot, releaseSlot)
                 : await FallbackAcquireAndRunAsync(acquireSlot, work, releaseSlot);

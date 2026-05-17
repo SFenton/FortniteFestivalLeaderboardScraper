@@ -355,6 +355,26 @@ function describeServiceSubStatus(t: TFunction, serviceInfo: ServiceInfoResponse
   return t('settings.serviceInfo.subStatusWorking');
 }
 
+function describeWorkerStatus(t: TFunction, serviceInfo: ServiceInfoResponse, fallback: string): string {
+  const status = serviceInfo.workerStatus?.status;
+  switch (status) {
+    case 'online':
+      return t('settings.serviceInfo.workerStatusOnline');
+    case 'offline':
+      return t('settings.serviceInfo.workerStatusOffline');
+    case 'stale':
+      return t('settings.serviceInfo.workerStatusStale');
+    case 'starting':
+      return t('settings.serviceInfo.workerStatusStarting');
+    case 'stopping':
+      return t('settings.serviceInfo.workerStatusStopping');
+    case 'unknown':
+      return t('settings.serviceInfo.workerStatusUnknown');
+    default:
+      return status || fallback;
+  }
+}
+
 function describeTrackedPlayerRivalsStatus(t: TFunction, syncStatus: SyncStatusResponse | null, fallback: string): string {
   switch (syncStatus?.rivals?.status) {
     case 'pending':
@@ -636,6 +656,29 @@ export default function SettingsPage() {
   const leaderboardUpdateSubStatus = serviceInfo
     ? describeServiceSubStatus(t, serviceInfo)
     : serviceInfoFallback;
+  const workerOperation = serviceInfo?.workerStatus?.currentOperation ?? serviceInfo?.workerStatus?.lastOperation ?? null;
+  const workerStatusText = serviceInfo
+    ? describeWorkerStatus(t, serviceInfo, serviceInfoFallback)
+    : serviceInfoFallback;
+  const workerActivityText = serviceInfo
+    ? workerOperation?.operationLabel ?? t('settings.serviceInfo.workerActivityIdle')
+    : serviceInfoFallback;
+  const workerActivityStarted = formatLocalDateTime(
+    workerOperation?.startedAt,
+    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
+  );
+  const workerActivityUpdated = formatLocalDateTime(
+    workerOperation?.updatedAt,
+    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
+  );
+  const workerActivityEnded = formatLocalDateTime(
+    workerOperation?.endedAt,
+    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
+  );
+  const workerLastHeartbeat = formatLocalDateTime(
+    serviceInfo?.workerStatus?.lastHeartbeatAt,
+    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
+  );
   const nextLeaderboardScheduledUpdate = serviceInfo
     ? serviceInfo.nextScheduledUpdateAt
       ? formatLocalDateTime(serviceInfo.nextScheduledUpdateAt, serviceInfoFallback)
@@ -694,6 +737,12 @@ export default function SettingsPage() {
   const serviceInfoRows = useMemo<ServiceInfoRowItem[]>(() => {
     const isUpdating = serviceInfo?.currentUpdate.status === 'updating';
     const rows: ServiceInfoRowItem[] = [
+      { id: 'worker-status', label: t('settings.serviceInfo.workerStatus'), value: workerStatusText },
+      { id: 'worker-activity', label: t('settings.serviceInfo.workerActivity'), value: workerActivityText },
+      { id: 'worker-activity-start', label: t('settings.serviceInfo.workerActivityStart'), value: workerActivityStarted },
+      { id: 'worker-activity-update', label: t('settings.serviceInfo.workerActivityUpdate'), value: workerActivityUpdated },
+      { id: 'worker-activity-end', label: t('settings.serviceInfo.workerActivityEnd'), value: workerActivityEnded },
+      { id: 'worker-heartbeat', label: t('settings.serviceInfo.workerHeartbeat'), value: workerLastHeartbeat },
       { id: 'last-update-start', label: t('settings.serviceInfo.lastUpdateStart'), value: lastLeaderboardUpdateStart },
       { id: 'last-update-complete', label: t('settings.serviceInfo.lastUpdateComplete'), value: lastLeaderboardUpdateComplete },
       { id: 'current-update-start', label: t('settings.serviceInfo.currentUpdateStart'), value: currentLeaderboardUpdateStart },
@@ -730,6 +779,12 @@ export default function SettingsPage() {
     trackedPlayerRivalsStatus,
     updateEtaText,
     updateStepPositionText,
+    workerActivityEnded,
+    workerActivityStarted,
+    workerActivityText,
+    workerActivityUpdated,
+    workerLastHeartbeat,
+    workerStatusText,
   ]);
 
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
@@ -890,7 +945,7 @@ export default function SettingsPage() {
     };
   }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, handleQuickLinkSelect, isWideDesktop, openQuickLinks, quickLinkItems, quickLinksOpen, settingsQuickLinksTitle]);
 
-  const compactQuickLinksAction = !isWideDesktop && pageQuickLinks
+  const compactQuickLinksAction = !isWideDesktop && !isMobileChrome && pageQuickLinks
     ? (
       <ActionPill
         icon={<IoCompass size={Size.iconAction} />}
@@ -905,14 +960,14 @@ export default function SettingsPage() {
   const headerStagger: CSSProperties = !skipAnimRef.current
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
     : {};
-  const settingsHeader = <PageHeader title={isMobile ? undefined : t('settings.title')} style={isMobile ? undefined : headerStagger} actions={compactQuickLinksAction} />;
+  const settingsHeader = <PageHeader title={isMobileChrome ? undefined : t('settings.title')} style={isMobileChrome ? undefined : headerStagger} actions={compactQuickLinksAction} />;
 
   return (
     <Page
       scrollRestoreKey="settings"
       containerStyle={st.container}
       quickLinks={pageQuickLinks}
-      before={isMobile ? undefined : settingsHeader}
+      before={isMobileChrome ? undefined : settingsHeader}
       after={<>
         {showResetConfirm && (
           /* v8 ignore start — confirm dialog callbacks */

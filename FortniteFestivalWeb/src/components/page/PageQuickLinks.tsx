@@ -40,6 +40,7 @@ export type PageQuickLinksConfig<T extends PageQuickLinkItem = PageQuickLinkItem
   items: readonly T[];
   activeItemId: string | null;
   visible: boolean;
+  showDesktopRail?: boolean;
   onOpen: () => void;
   onClose: () => void;
   onSelect: (item: T) => void;

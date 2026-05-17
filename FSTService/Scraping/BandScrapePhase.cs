@@ -55,7 +55,8 @@ public sealed class BandScrapePhase
         IReadOnlyList<Song> songs,
         string accessToken,
         string callerAccountId,
-        CancellationToken ct)
+        CancellationToken ct,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         var opts = _options.Value;
         if (!opts.EnableBandScraping)
@@ -100,7 +101,7 @@ public sealed class BandScrapePhase
             {
                 var result = await ScrapeBandLeaderboardAsync(
                     songId, item.BandType, accessToken, callerAccountId,
-                    songMaxScores, _pool.Limiter, opts, innerCt);
+                    songMaxScores, _pool.Limiter, opts, innerCt, accessTokenProvider);
 
                 if (result.Entries.Count > 0)
                 {
@@ -149,7 +150,8 @@ public sealed class BandScrapePhase
         SongMaxScores? maxScores,
         AdaptiveConcurrencyLimiter? limiter,
         ScraperOptions opts,
-        CancellationToken ct)
+        CancellationToken ct,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         var allEntries = new List<BandLeaderboardEntry>();
         int validCount = 0;
@@ -159,7 +161,7 @@ public sealed class BandScrapePhase
         int validTarget = opts.BandValidEntryTarget;
 
         // Fetch page 0 to discover totalPages
-        var (page0, page0Len, page0Status) = await _scraper.FetchBandPageAsync(songId, bandType, 0, accessToken, callerAccountId, limiter, ct);
+        var (page0, page0Len, page0Status) = await _scraper.FetchBandPageAsync(songId, bandType, 0, accessToken, callerAccountId, limiter, ct, accessTokenProvider);
         requests++;
         bytesReceived += page0Len;
         _progress.ReportPhaseRequest();
@@ -184,7 +186,7 @@ public sealed class BandScrapePhase
         {
             ct.ThrowIfCancellationRequested();
 
-            var (parsed, parsedLen, parsedStatus) = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct);
+            var (parsed, parsedLen, parsedStatus) = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct, accessTokenProvider);
             requests++;
             bytesReceived += parsedLen;
             _progress.ReportPhaseRequest();
@@ -213,7 +215,7 @@ public sealed class BandScrapePhase
             {
                 ct.ThrowIfCancellationRequested();
 
-                var (parsed, parsedLen, parsedStatus) = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct);
+                var (parsed, parsedLen, parsedStatus) = await _scraper.FetchBandPageAsync(songId, bandType, page, accessToken, callerAccountId, limiter, ct, accessTokenProvider);
                 requests++;
                 bytesReceived += parsedLen;
                 _progress.ReportPhaseRequest();

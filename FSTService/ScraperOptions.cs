@@ -6,6 +6,12 @@ public enum LeaderboardWriteMode
     OnlineBounded,
 }
 
+public enum RegistrationBackfillMode
+{
+    BackgroundLowPriority,
+    ForegroundEpicExclusive,
+}
+
 /// <summary>
 /// Configuration for the scraping service, loaded from appsettings.json.
 /// </summary>
@@ -360,6 +366,14 @@ public sealed class ScraperOptions
     /// becoming a large user fan-out during an active scrape.
     /// </summary>
     public int RegistrationBackfillBatchSize { get; set; } = 4;
+
+    /// <summary>
+    /// Controls how API-queued registration sync uses Epic request capacity.
+    /// BackgroundLowPriority preserves the legacy low-priority behavior.
+    /// ForegroundEpicExclusive pauses new background Epic requests while queued
+    /// registration sync is actively checking scores.
+    /// </summary>
+    public RegistrationBackfillMode RegistrationBackfillMode { get; set; } = RegistrationBackfillMode.BackgroundLowPriority;
 
     /// <summary>
     /// How often the worker checks for API-queued registration backfills.

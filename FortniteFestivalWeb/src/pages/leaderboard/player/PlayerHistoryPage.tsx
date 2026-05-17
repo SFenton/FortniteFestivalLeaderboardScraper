@@ -67,7 +67,6 @@ export default function PlayerHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { filterHistory } = useScoreFilter();
-  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
   const historyKey = `history:${songId}:${instKey}`;
   const skipHistoryAnim = hasVisitedPage(historyKey);
   markPageVisited(historyKey);
@@ -197,7 +196,6 @@ export default function PlayerHistoryPage() {
       scrollRestoreKey={`history:${songId}:${instKey}`}
       scrollDeps={[loadPhase, history.length]}
       staggerRushRef={staggerRushRef}
-      headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
       firstRun={{ key: 'playerhistory', label: t('history.title'), slides: historySlidesMemo, gateContext: firstRunGateCtx }}
       background={<PageBackground src={song?.albumArt} />}
       before={
@@ -205,10 +203,9 @@ export default function PlayerHistoryPage() {
           <SongInfoHeader
             song={song}
             songId={songId!}
-            collapsed={!!(hasFab || headerCollapsed)}
+            collapsed
             instrument={instKey}
             sig={song?.sig}
-            animate={!hasFab}
             hideBackground
             onTitleClick={goToSongDetail}
             /* v8 ignore start — platform-conditional sort button */

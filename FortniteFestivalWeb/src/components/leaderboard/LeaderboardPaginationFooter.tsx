@@ -12,6 +12,7 @@ type LeaderboardFooterScrollMarginOptions = {
   hasFab: boolean;
   hasPagination: boolean;
   hasPlayerFooter?: boolean;
+  reserveBottomSpace?: boolean;
   rowHeight?: number;
 };
 
@@ -33,10 +34,32 @@ type FixedLeaderboardPlayerFooterProps = {
   children: (props: { className: string; style: CSSProperties }) => ReactNode;
 };
 
+function getPaginationBottomOffset(hasFab: boolean, hasPlayerFooter: boolean, rowHeight: number, safeAreaBottom: number): number {
+  if (hasFab) {
+    return hasPlayerFooter
+      ? Layout.fabBottom + safeAreaBottom + (Layout.fabSize - rowHeight) / 2 + rowHeight + Gap.sm
+      : Layout.fabBottom + safeAreaBottom + Layout.fabSize + Gap.sm;
+  }
+
+  return hasPlayerFooter
+    ? Layout.fabPaddingBottom + rowHeight + Gap.xl
+    : Layout.fabPaddingBottom;
+}
+
+function addMarginForFixedControl(el: HTMLElement, margin: number, controlTopOffset: number, gap: number): number {
+  const naturalHeight = el.clientHeight + (parseFloat(el.style.marginBottom) || 0);
+  const headerHeight = el.getBoundingClientRect().top;
+  const viewportHeight = window.innerHeight;
+  const bottomChromeHeight = viewportHeight - headerHeight - naturalHeight;
+  const scrollBottomOffset = margin + bottomChromeHeight;
+  return margin + Math.max(0, controlTopOffset - scrollBottomOffset) + gap;
+}
+
 export function useLeaderboardFooterScrollMargin({
   hasFab,
   hasPagination,
   hasPlayerFooter = false,
+  reserveBottomSpace = true,
   rowHeight = Layout.entryRowHeight,
 }: LeaderboardFooterScrollMarginOptions) {
   const scrollContainerRef = useScrollContainer();
@@ -45,21 +68,26 @@ export function useLeaderboardFooterScrollMargin({
     const el = scrollContainerRef.current;
     if (!el) return;
     const safeAreaBottom = readSafeAreaBottomPx();
+    if (!reserveBottomSpace) {
+      const margin = hasPagination
+        ? addMarginForFixedControl(
+          el,
+          0,
+          getPaginationBottomOffset(hasFab, hasPlayerFooter, rowHeight, safeAreaBottom) + Layout.paginationHeight,
+          Gap.sm,
+        )
+        : 0;
+      el.style.marginBottom = margin > 0 ? `${margin}px` : '';
+      return () => { el.style.marginBottom = ''; };
+    }
 
     let margin: number;
     if (hasFab) {
       margin = Layout.fabPaddingBottom;
       if (hasPagination) {
-        const paginationCssBottom = hasPlayerFooter
-          ? Layout.fabBottom + safeAreaBottom + (Layout.fabSize - rowHeight) / 2 + rowHeight + Gap.sm
-          : Layout.fabBottom + safeAreaBottom + Layout.fabSize + Gap.sm;
+        const paginationCssBottom = getPaginationBottomOffset(hasFab, hasPlayerFooter, rowHeight, safeAreaBottom);
         const paginationTop = paginationCssBottom + Layout.paginationHeight;
-        const naturalHeight = el.clientHeight + (parseFloat(el.style.marginBottom) || 0);
-        const headerHeight = el.getBoundingClientRect().top;
-        const viewportHeight = window.innerHeight;
-        const bottomNavHeight = viewportHeight - headerHeight - naturalHeight;
-        const scrollBottomOffset = margin + bottomNavHeight;
-        margin += Math.max(0, paginationTop - scrollBottomOffset) + Gap.sm;
+        margin = addMarginForFixedControl(el, margin, paginationTop, Gap.sm);
       }
     } else {
       margin = Layout.fabPaddingBottom;
@@ -69,7 +97,7 @@ export function useLeaderboardFooterScrollMargin({
 
     el.style.marginBottom = `${margin}px`;
     return () => { el.style.marginBottom = ''; };
-  }, [hasFab, hasPagination, hasPlayerFooter, rowHeight, scrollContainerRef]);
+  }, [hasFab, hasPagination, hasPlayerFooter, reserveBottomSpace, rowHeight, scrollContainerRef]);
 }
 
 export function FixedLeaderboardPagination({

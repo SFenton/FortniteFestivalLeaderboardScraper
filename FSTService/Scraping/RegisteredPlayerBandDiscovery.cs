@@ -265,6 +265,7 @@ public sealed class RegisteredPlayerBandDiscoveryOrchestrator
             var lookupResult = await _lookupRunner.TryRunAsync(
                 pool,
                 isHighPriority: false,
+                EpicTrafficKind.Background,
                 ct,
                 work,
                 ex => _log.LogDebug(ex, "Registered-player band discovery failed for {Account}/{Song}/{BandType}/{Scope}/{Season}.",

@@ -7,10 +7,11 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { scheduleCompatibilityClickSuppression } from './pressCompatibilityClickSuppression';
+import { clearPressPulse, startPressPulse } from './pressVisualFeedback';
 
 const DEFAULT_MOVEMENT_THRESHOLD = 12;
 const DEFAULT_CLICK_SUPPRESSION_MS = 700;
-const CLICK_SUPPRESSION_DISTANCE = 24;
 const DEFAULT_CARD_VERTICAL_MOVEMENT_THRESHOLD = 4;
 const DEFAULT_CARD_HORIZONTAL_MOVEMENT_THRESHOLD = 10;
 const DEFAULT_CARD_LONG_PRESS_MS = 500;
@@ -39,72 +40,6 @@ interface UseCardPressActionOptions<T extends HTMLElement> {
   longPressMs?: number;
   clickSuppressionMs?: number;
   ignoreDescendantSelector?: string;
-}
-
-type GlobalClickSuppression = {
-  clientX: number;
-  clientY: number;
-  timeStamp: number;
-  expiresAt: number;
-};
-
-let pendingGlobalClickSuppression: GlobalClickSuppression | null = null;
-let globalClickSuppressorInstalled = false;
-let globalClickSuppressorTimeout: ReturnType<typeof window.setTimeout> | null = null;
-
-function eventTime(event: { timeStamp: number }) {
-  return event.timeStamp || performance.now();
-}
-
-function scheduleGlobalClickSuppression(event: ReactPointerEvent<Element>, clickSuppressionMs: number) {
-  if (typeof document === 'undefined') return;
-  const timeStamp = eventTime(event);
-  pendingGlobalClickSuppression = {
-    clientX: event.clientX,
-    clientY: event.clientY,
-    timeStamp,
-    expiresAt: timeStamp + clickSuppressionMs,
-  };
-
-  if (!globalClickSuppressorInstalled) {
-    document.addEventListener('click', suppressGlobalCompatibilityClick, true);
-    globalClickSuppressorInstalled = true;
-  }
-  if (globalClickSuppressorTimeout !== null) window.clearTimeout(globalClickSuppressorTimeout);
-  globalClickSuppressorTimeout = window.setTimeout(clearGlobalClickSuppressor, clickSuppressionMs + 50);
-}
-
-function clearGlobalClickSuppressor() {
-  pendingGlobalClickSuppression = null;
-  if (globalClickSuppressorTimeout !== null) {
-    window.clearTimeout(globalClickSuppressorTimeout);
-    globalClickSuppressorTimeout = null;
-  }
-  if (!globalClickSuppressorInstalled || typeof document === 'undefined') return;
-  document.removeEventListener('click', suppressGlobalCompatibilityClick, true);
-  globalClickSuppressorInstalled = false;
-}
-
-function suppressGlobalCompatibilityClick(event: MouseEvent) {
-  const suppression = pendingGlobalClickSuppression;
-  if (!suppression) {
-    clearGlobalClickSuppressor();
-    return;
-  }
-
-  const clickTime = eventTime(event);
-  if (clickTime > suppression.expiresAt) {
-    clearGlobalClickSuppressor();
-    return;
-  }
-
-  const moved = Math.hypot(event.clientX - suppression.clientX, event.clientY - suppression.clientY);
-  clearGlobalClickSuppressor();
-  if (clickTime >= suppression.timeStamp && moved <= CLICK_SUPPRESSION_DISTANCE) {
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-  }
 }
 
 export function usePressAction<T extends Element>({
@@ -142,7 +77,7 @@ export function usePressAction<T extends Element>({
     if (moved > movementThreshold) return;
 
     lastPointerPressRef.current = event.timeStamp;
-    scheduleGlobalClickSuppression(event, clickSuppressionMs);
+    scheduleCompatibilityClickSuppression(event, clickSuppressionMs);
     commitPress(event, 'pointerup');
   }, [clickSuppressionMs, commitPress, disabled, movementThreshold]);
 
@@ -179,11 +114,14 @@ export function useCardPressAction<T extends HTMLElement>({
 }: UseCardPressActionOptions<T>) {
   const pendingPointerRef = useRef<{ pointerId: number; clientX: number; clientY: number; timeStamp: number } | null>(null);
   const lastPointerPressRef = useRef<number | null>(null);
+  const pressPulseTargetRef = useRef<HTMLElement | null>(null);
   const [isPressed, setIsPressed] = useState(false);
 
   const cancelPendingPress = useCallback(() => {
     pendingPointerRef.current = null;
     setIsPressed(false);
+    clearPressPulse(pressPulseTargetRef.current);
+    pressPulseTargetRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -218,6 +156,7 @@ export function useCardPressAction<T extends HTMLElement>({
       clientY: event.clientY,
       timeStamp: event.timeStamp,
     };
+    pressPulseTargetRef.current = startPressPulse(event);
     setIsPressed(true);
   }, [disabled, isNestedInteractive]);
 
@@ -229,14 +168,25 @@ export function useCardPressAction<T extends HTMLElement>({
 
   const onPointerUp = useCallback((event: ReactPointerEvent<T>) => {
     const pendingPointer = pendingPointerRef.current;
+    const pressPulseTarget = pressPulseTargetRef.current;
     pendingPointerRef.current = null;
+    pressPulseTargetRef.current = null;
     setIsPressed(false);
-    if (disabled || !pendingPointer || pendingPointer.pointerId !== event.pointerId || isNestedInteractive(event)) return;
-    if (movedBeyondThreshold(event, pendingPointer)) return;
-    if (event.timeStamp - pendingPointer.timeStamp > longPressMs) return;
+    if (disabled || !pendingPointer || pendingPointer.pointerId !== event.pointerId || isNestedInteractive(event)) {
+      clearPressPulse(pressPulseTarget);
+      return;
+    }
+    if (movedBeyondThreshold(event, pendingPointer)) {
+      clearPressPulse(pressPulseTarget);
+      return;
+    }
+    if (event.timeStamp - pendingPointer.timeStamp > longPressMs) {
+      clearPressPulse(pressPulseTarget);
+      return;
+    }
 
     lastPointerPressRef.current = event.timeStamp;
-    scheduleGlobalClickSuppression(event, clickSuppressionMs);
+  scheduleCompatibilityClickSuppression(event, clickSuppressionMs);
     onPress(event, 'pointerup');
   }, [clickSuppressionMs, disabled, isNestedInteractive, longPressMs, movedBeyondThreshold, onPress]);
 

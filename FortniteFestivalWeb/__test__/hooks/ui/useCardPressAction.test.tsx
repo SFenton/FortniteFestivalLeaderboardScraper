@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { useState } from 'react';
 import { useCardPressAction, usePressAction } from '../../../src/hooks/ui/usePressAction';
 
@@ -29,6 +29,20 @@ function dispatchClick(target: Element, timeStampOrProps: number | { clientX?: n
   Object.defineProperty(event, 'timeStamp', { value: props.timeStamp ?? 0 });
   fireEvent(target, event);
   return event;
+}
+
+function mockRect(element: Element, rect: Partial<DOMRect> = {}) {
+  vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+    x: rect.x ?? rect.left ?? 10,
+    y: rect.y ?? rect.top ?? 20,
+    left: rect.left ?? 10,
+    top: rect.top ?? 20,
+    right: rect.right ?? 210,
+    bottom: rect.bottom ?? 120,
+    width: rect.width ?? 200,
+    height: rect.height ?? 100,
+    toJSON: () => ({}),
+  } as DOMRect);
 }
 
 function CardHarness({ onPress, disabled = false, withNested = false }: { onPress: () => void; disabled?: boolean; withNested?: boolean }) {
@@ -89,6 +103,48 @@ describe('useCardPressAction', () => {
 
     dispatchPointer(card, 'pointerup', { clientX: 10, clientY: 16, timeStamp: 30 });
     expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it('adds neutral press pulse metadata and lets it finish after release', () => {
+    vi.useFakeTimers();
+    try {
+      const onPress = vi.fn();
+      render(<CardHarness onPress={onPress} />);
+      const card = screen.getByTestId('card') as HTMLElement;
+      mockRect(card);
+
+      dispatchPointer(card, 'pointerdown', { clientX: 60, clientY: 70, timeStamp: 10 });
+      expect(card).toHaveAttribute('data-press-pulse', 'true');
+      expect(card.style.getPropertyValue('--press-pulse-x')).toBe('50px');
+      expect(card.style.getPropertyValue('--press-pulse-y')).toBe('50px');
+      expect(card.style.getPropertyValue('--press-pulse-size')).toBe('360px');
+      expect(card.style.getPropertyValue('--press-pulse-mid-size')).toBe('187px');
+
+      dispatchPointer(card, 'pointerup', { clientX: 60, clientY: 70, timeStamp: 30 });
+      expect(card).toHaveAttribute('data-press-pulse', 'true');
+
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(card).not.toHaveAttribute('data-press-pulse');
+      expect(card.style.getPropertyValue('--press-pulse-x')).toBe('');
+      expect(card.style.getPropertyValue('--press-pulse-mid-size')).toBe('');
+      expect(onPress).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the press pulse when movement becomes a scroll', () => {
+    const onPress = vi.fn();
+    render(<CardHarness onPress={onPress} />);
+    const card = screen.getByTestId('card') as HTMLElement;
+    mockRect(card);
+
+    dispatchPointer(card, 'pointerdown', { clientX: 60, clientY: 70, timeStamp: 10 });
+    expect(card).toHaveAttribute('data-press-pulse', 'true');
+
+    dispatchPointer(card, 'pointermove', { clientX: 60, clientY: 76, timeStamp: 20 });
+    expect(card).not.toHaveAttribute('data-press-pulse');
+    expect(card.style.getPropertyValue('--press-pulse-x')).toBe('');
   });
 
   it('cancels on horizontal movement', () => {

@@ -6,13 +6,13 @@ import { useTranslation } from 'react-i18next';
 import { IoFunnel } from 'react-icons/io5';
 import { LoadPhase } from '@festival/core';
 import type { PlayerBandEntry, PlayerBandListGroup } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap, Layout, Radius, Size, Weight, flexColumn, frostedCard } from '@festival/theme';
+import { Gap, GridTemplate, Size, flexColumn } from '@festival/theme';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { ActionPill } from '../../components/common/ActionPill';
-import Paginator from '../../components/common/Paginator';
+import { FixedLeaderboardPagination, useLeaderboardFooterScrollMargin } from '../../components/leaderboard/LeaderboardPaginationFooter';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -33,6 +33,7 @@ export default function PlayerBandsPage() {
   const scrollContainerRef = useScrollContainer();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
+  const hasFab = isMobileChrome;
   const fabSearch = useFabSearch();
 
   const group = coerceBandGroup(searchParams.get('group'));
@@ -83,6 +84,7 @@ export default function PlayerBandsPage() {
     queryKey: queryKeys.playerBandsList(accountId, group, page, PLAYER_BANDS_PAGE_SIZE),
     queryFn: () => api.getPlayerBandsList(accountId, group, page, PLAYER_BANDS_PAGE_SIZE),
     enabled: !!accountId,
+    placeholderData: (previous) => previous,
     staleTime: 5 * 60_000,
   });
 
@@ -105,7 +107,7 @@ export default function PlayerBandsPage() {
 
   const { phase, shouldStagger } = usePageTransition(`playerBands:${accountId}:${group}:${page}`, !loading);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
-  const styles = useStyles(isMobile);
+  const styles = useStyles();
 
   const title = routeName ? t('bandList.titleForName', { name: routeName }) : t('bandList.title');
   const groupLabel = t(`bandList.groups.${group}`);
@@ -122,6 +124,9 @@ export default function PlayerBandsPage() {
     setRoute(group, nextPage);
   }, [group, setRoute, totalPages]);
 
+  const hasPagination = !!data && !bandsQuery.error && totalPages > 1;
+  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter: false });
+
   const showDesktopActions = !isMobileChrome;
 
   return (
@@ -129,7 +134,7 @@ export default function PlayerBandsPage() {
       scrollRestoreKey={`playerBands:${accountId}:${group}:${page}`}
       scrollDeps={[phase, entries.length, page, group]}
       loadPhase={phase}
-      containerStyle={styles.container}
+      fabSpacer="none"
       before={(
         <PageHeader
           title={title}
@@ -176,7 +181,7 @@ export default function PlayerBandsPage() {
               onAnimationEnd={clearAnim}
             />
           ) : (
-            <div style={styles.cardGrid}>
+            <div data-testid="player-bands-card-grid" style={styles.cardGrid}>
               {entries.map((entry, index) => (
                 <BandListRow
                   key={`${entry.bandType}:${entry.teamKey}`}
@@ -189,18 +194,15 @@ export default function PlayerBandsPage() {
             </div>
           )}
 
-          {totalPages > 1 && (
-            <Paginator
-              style={styles.pagination}
-              onSkipPrev={() => goToPage(1)}
-              onPrev={() => goToPage(page - 1)}
-              onNext={() => goToPage(page + 1)}
-              onSkipNext={() => goToPage(totalPages)}
-              prevDisabled={page <= 1}
-              nextDisabled={page >= totalPages}
-            >
-              <span style={styles.pageInfoBadge}>{page.toLocaleString()} / {totalPages.toLocaleString()}</span>
-            </Paginator>
+          {hasPagination && (
+            <FixedLeaderboardPagination
+              page={page}
+              totalPages={totalPages}
+              onGoToPage={goToPage}
+              isMobile={isMobile}
+              hasFab={hasFab}
+              hasPlayerFooter={false}
+            />
           )}
         </div>
       )}
@@ -239,31 +241,16 @@ function coerceBandGroup(value: string | null): PlayerBandListGroup {
   return BAND_GROUPS.includes(value as PlayerBandListGroup) ? (value as PlayerBandListGroup) : 'all';
 }
 
-function useStyles(isMobile: boolean) {
+function useStyles() {
   return useMemo(() => ({
-    container: {
-      paddingBottom: Layout.fabPaddingBottom,
-    } as CSSProperties,
     content: {
       ...flexColumn,
       gap: Gap.section,
     } as CSSProperties,
     cardGrid: {
       display: 'grid',
-      gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))',
+      gridTemplateColumns: GridTemplate.autoFitDetailCards,
       gap: Gap.md,
     } as CSSProperties,
-    pagination: {
-      marginTop: Gap.sm,
-      marginBottom: Gap.xl,
-    } as CSSProperties,
-    pageInfoBadge: {
-      ...frostedCard,
-      color: Colors.textPrimary,
-      fontSize: Font.sm,
-      fontWeight: Weight.semibold,
-      padding: `${Gap.sm}px ${Gap.lg}px`,
-      borderRadius: Radius.full,
-    } as CSSProperties,
-  }), [isMobile]);
+  }), []);
 }

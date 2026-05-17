@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { IoClose, IoMenu, IoSearch } from 'react-icons/io5';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { useSearchQuery } from '../../../contexts/SearchQueryContext';
-import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, Isolation, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, opaqueGlass, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
+import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, Isolation, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
 import { safeAreaBottomOffset } from '../../../utils/safeAreaStyles';
 import { useIOSKeyboardPanGuard } from '../../../hooks/ui/useIOSKeyboardPanGuard';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
@@ -829,6 +829,7 @@ function useFABStyles() {
       boxSizing: BoxSizing.borderBox,
       zIndex: ZIndex.popover,
       pointerEvents: PointerEvents.none,
+      touchAction: CssValue.none,
     } as CSSProperties,
     dockStage: {
       position: Position.relative,
@@ -1030,6 +1031,7 @@ function useFABStyles() {
       gap: Gap.md,
       zIndex: ZIndex.popover,
       pointerEvents: PointerEvents.none,
+      touchAction: CssValue.none,
     } as CSSProperties,
     sideActionContainer: {
       position: Position.fixed,
@@ -1042,6 +1044,7 @@ function useFABStyles() {
       maxWidth: `calc(100vw - ${Layout.paddingHorizontal * 2}px)`,
       zIndex: ZIndex.popover,
       pointerEvents: PointerEvents.none,
+      touchAction: CssValue.none,
     } as CSSProperties,
     sideActions: {
       ...flexRow,
@@ -1322,7 +1325,7 @@ function useFABStyles() {
       pointerEvents: PointerEvents.auto,
     } as CSSProperties,
     fabSideActionCirclePulse: {
-      ...opaqueGlass,
+      ...purpleGlass,
       minWidth: Layout.fabSize,
       maxWidth: SIDE_ACTION_LABEL_MAX_WIDTH,
       height: Layout.fabSize,
@@ -1527,6 +1530,7 @@ function useFABStyles() {
       boxSizing: BoxSizing.borderBox,
       zIndex: ZIndex.popover,
       pointerEvents: PointerEvents.none,
+      touchAction: CssValue.none,
     } as CSSProperties,
     searchBar: {
       ...flexColumn,

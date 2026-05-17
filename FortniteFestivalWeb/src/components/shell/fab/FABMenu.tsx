@@ -64,6 +64,7 @@ function useFABMenuStyles(visible: boolean) {
       transition: visible
         ? `transform ${FAB_OPEN_MS}ms ${EASE_OVERSHOOT}, opacity ${TRANSITION_MS}ms ease`
         : `transform ${TRANSITION_MS}ms ease, opacity ${TRANSITION_MS}ms ease`,
+      touchAction: CssValue.none,
     } as CSSProperties,
     item: {
       '--frosted-card': '1',
@@ -80,6 +81,7 @@ function useFABMenuStyles(visible: boolean) {
       textAlign: TextAlign.left,
       position: Position.relative,
       overflow: Overflow.hidden,
+      touchAction: CssValue.none,
     } as CSSProperties,
     itemIcon: {
       ...flexCenter,

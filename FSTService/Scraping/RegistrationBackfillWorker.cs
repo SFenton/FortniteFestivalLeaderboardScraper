@@ -43,13 +43,19 @@ public sealed class RegistrationBackfillWorker : BackgroundService
             while (!stoppingToken.IsCancellationRequested)
             {
                 var opts = _options.Value;
-                var claimed = await _backfillOrchestrator.RunQueuedRegistrationBackfillBatchAsync(
-                    _festivalService,
+                var claimed = await DrainQueuedRegistrationBackfillsAsync(
                     opts.RegistrationBackfillBatchSize,
+                    (batchSize, token) => _backfillOrchestrator.RunQueuedRegistrationBackfillBatchAsync(
+                        _festivalService,
+                        batchSize,
+                        token),
+                    claimedInBatch => _log.LogInformation(
+                        "Claimed {Count} queued registration backfill account(s).",
+                        claimedInBatch),
                     stoppingToken);
 
                 if (claimed > 0)
-                    _log.LogInformation("Claimed {Count} queued registration backfill account(s).", claimed);
+                    continue;
 
                 var delay = opts.RegistrationBackfillPollInterval <= TimeSpan.Zero
                     ? TimeSpan.FromSeconds(30)
@@ -65,5 +71,26 @@ public sealed class RegistrationBackfillWorker : BackgroundService
         {
             _log.LogError(ex, "RegistrationBackfillWorker failed unexpectedly.");
         }
+    }
+
+    internal static async Task<int> DrainQueuedRegistrationBackfillsAsync(
+        int batchSize,
+        Func<int, CancellationToken, Task<int>> runBatchAsync,
+        Action<int> onBatchClaimed,
+        CancellationToken ct)
+    {
+        var totalClaimed = 0;
+        while (!ct.IsCancellationRequested)
+        {
+            var claimed = await runBatchAsync(batchSize, ct);
+            if (claimed <= 0)
+                return totalClaimed;
+
+            totalClaimed += claimed;
+            onBatchClaimed(claimed);
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return totalClaimed;
     }
 }

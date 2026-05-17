@@ -90,4 +90,35 @@ public class SharedDopPoolTests : IDisposable
         Assert.True(inner.CurrentDop > 0);
         inner.Dispose();
     }
+
+    [Fact]
+    public async Task AcquireLowAsync_BackgroundWaitsDuringForegroundRegistration()
+    {
+        var coordinator = new EpicTrafficCoordinator();
+        _pool = new SharedDopPool(1, 1, 1, 100, _log, trafficCoordinator: coordinator);
+
+        using var lease = coordinator.BeginForegroundRegistration();
+        var acquireTask = _pool.AcquireLowAsync(CancellationToken.None);
+
+        var completedWhileForeground = await Task.WhenAny(acquireTask, Task.Delay(TimeSpan.FromMilliseconds(50))) == acquireTask;
+        Assert.False(completedWhileForeground);
+
+        lease.Dispose();
+        var token = await acquireTask.WaitAsync(TimeSpan.FromSeconds(1));
+        _pool.ReleaseLow(token);
+    }
+
+    [Fact]
+    public async Task AcquireHighAsync_ForegroundRegistrationBypassesForegroundGate()
+    {
+        var coordinator = new EpicTrafficCoordinator();
+        _pool = new SharedDopPool(1, 1, 1, 100, _log, trafficCoordinator: coordinator);
+
+        using var lease = coordinator.BeginForegroundRegistration();
+
+        await _pool.AcquireHighAsync(
+            CancellationToken.None,
+            EpicTrafficKind.ForegroundRegistration).WaitAsync(TimeSpan.FromSeconds(1));
+        _pool.ReleaseHigh();
+    }
 }

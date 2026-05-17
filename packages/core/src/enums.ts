@@ -82,6 +82,8 @@ export enum TabKey {
   Songs = 'songs',
   Suggestions = 'suggestions',
   Compete = 'compete',
+  Leaderboards = 'leaderboards',
+  Rivals = 'rivals',
   Statistics = 'statistics',
   Settings = 'settings',
 }

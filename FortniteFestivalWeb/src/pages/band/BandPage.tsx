@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { IoChevronForward, IoList, IoMusicalNotes, IoPeople, IoStatsChart, IoTrophy } from 'react-icons/io5';
 import { DEFAULT_INSTRUMENT, type BandDetailResponse, type BandRankingDto, type BandRankingMetric, type BandType, type PlayerBandEntry, type PlayerBandMember, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { ACCURACY_SCALE, LoadPhase } from '@festival/core';
-import { Colors, Font, Gap, IconSize, Layout, Radius, TRANSITION_MS, Weight, flexColumn, flexRow, frostedCard, transition, transitions } from '@festival/theme';
+import { Colors, Font, Gap, GridTemplate, IconSize, Layout, Radius, TRANSITION_MS, Weight, flexColumn, flexRow, frostedCard, transition, transitions } from '@festival/theme';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
@@ -23,7 +23,7 @@ import { useBandRankHistory } from '../../hooks/chart/useBandRankHistory';
 import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
-import { useIsMobile, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
+import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useSelectedProfile, type SelectedBandProfile } from '../../hooks/data/useSelectedProfile';
 import { defaultSongFilters, loadSongSettings, saveSongSettings, type SongSettings } from '../../utils/songSettings';
@@ -224,6 +224,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const { phase, shouldStagger } = usePageTransition(`band:${scopedPageKey}`, !loading && !secondaryLoading, hasCachedData);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   const isMobile = useIsMobile();
+  const isMobileChrome = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
   const scrollContainerRef = useScrollContainer();
   const styles = useStyles();
@@ -351,7 +352,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
     ? SELECT_BAND_PROFILE_ACTION_SLOT_STYLE
     : SELECT_BAND_PROFILE_ACTION_SLOT_SHADOW_SAFE_STYLE;
 
-  const bandProfileAction = !isMobile && selectBandProfileMounted ? (
+  const bandProfileAction = !isMobileChrome && selectBandProfileMounted ? (
     <div
       data-testid="band-select-profile-slot"
       aria-hidden={!selectBandProfileVisible}
@@ -455,9 +456,9 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const registerStatisticsSectionRef = useCallback((element: HTMLElement | null) => registerSectionRef('statistics', element), [registerSectionRef]);
   const registerRankHistorySectionRef = useCallback((element: HTMLElement | null) => registerSectionRef('rank-history', element), [registerSectionRef]);
   const registerSongsSectionRef = useCallback((element: HTMLElement | null) => registerSectionRef('songs', element), [registerSectionRef]);
-  const useInlineMobileHeader = isMobile && !isStatisticsBandMode && selectBandProfileVisible;
-  const suppressMobileStatisticsHeader = isMobile && isStatisticsBandMode;
-  const headerTitle = isMobile && (isStatisticsBandMode || useInlineMobileHeader) ? undefined : title;
+  const useInlineMobileHeader = isMobileChrome && !isStatisticsBandMode && selectBandProfileVisible;
+  const suppressMobileStatisticsHeader = isMobileChrome && isStatisticsBandMode;
+  const headerTitle = isMobileChrome && (isStatisticsBandMode || useInlineMobileHeader) ? undefined : title;
   const portalHeader = useInlineMobileHeader || suppressMobileStatisticsHeader ? undefined : (
     <PageHeader title={headerTitle} subtitle={subtitle} reserveSubtitleSpace={loading} titleAccessory={bandFilterHeaderIcons} actions={bandProfileAction} />
   );
@@ -755,7 +756,6 @@ function formatAverageRank(rank: number): string {
 }
 
 function useStyles() {
-  const isMobile = useIsMobile();
   return useMemo(() => ({
     container: {
       paddingBottom: Layout.fabPaddingBottom,
@@ -770,7 +770,7 @@ function useStyles() {
     } as CSSProperties,
     statsGrid: {
       display: 'grid',
-      gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+      gridTemplateColumns: GridTemplate.autoFitDetailCards,
       gap: Gap.md,
     } as CSSProperties,
     statCard: {
@@ -782,7 +782,7 @@ function useStyles() {
     } as CSSProperties,
     memberGrid: {
       display: 'grid',
-      gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+      gridTemplateColumns: GridTemplate.autoFitDetailCards,
       gap: Gap.md,
     } as CSSProperties,
     memberCard: {
@@ -846,5 +846,5 @@ function useStyles() {
       color: Colors.textSecondary,
       fontSize: Font.md,
     } as CSSProperties,
-  }), [isMobile]);
+  }), []);
 }

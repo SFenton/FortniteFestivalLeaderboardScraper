@@ -16,6 +16,7 @@ public class PostScrapeRefresher
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
     private readonly ScrapeProgressTracker _progress;
+    private readonly EpicTrafficCoordinator? _trafficCoordinator;
     private readonly ILogger<PostScrapeRefresher> _log;
 
     public PostScrapeRefresher(
@@ -23,12 +24,29 @@ public class PostScrapeRefresher
         GlobalLeaderboardPersistence persistence,
         ScrapeProgressTracker progress,
         ILogger<PostScrapeRefresher> log)
+        : this(scraper, persistence, progress, log, trafficCoordinator: null) { }
+
+    public PostScrapeRefresher(
+        ILeaderboardQuerier scraper,
+        GlobalLeaderboardPersistence persistence,
+        ScrapeProgressTracker progress,
+        ILogger<PostScrapeRefresher> log,
+        EpicTrafficCoordinator? trafficCoordinator = null)
     {
         _scraper = scraper;
         _persistence = persistence;
         _metaDb = persistence.Meta;
         _progress = progress;
+        _trafficCoordinator = trafficCoordinator;
         _log = log;
+    }
+
+    private async Task AcquireEpicSlotAsync(AdaptiveConcurrencyLimiter limiter, CancellationToken ct)
+    {
+        if (_trafficCoordinator is not null)
+            await _trafficCoordinator.WaitForTurnAsync(ct);
+
+        await limiter.WaitAsync(ct);
     }
 
     /// <summary>
@@ -135,7 +153,7 @@ public class PostScrapeRefresher
                 chunk.Where(c => c.IsStale).Select(c => c.AccountId),
                 StringComparer.OrdinalIgnoreCase);
 
-            await limiter.WaitAsync(ct);
+            await AcquireEpicSlotAsync(limiter, ct);
             try
             {
                 _progress.ReportPhaseRequest();
@@ -295,7 +313,7 @@ public class PostScrapeRefresher
         {
             var chunk = targetIds.Skip(offset).Take(batchSize).ToList();
 
-            await limiter.WaitAsync(ct);
+            await AcquireEpicSlotAsync(limiter, ct);
             try
             {
                 _progress.ReportPhaseRequest();

@@ -48,6 +48,33 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   return { ...render(<MemoryRouter><SettingsProvider><Sidebar {...defaults} /></SettingsProvider></MemoryRouter>), props: defaults };
 }
 
+function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperties(event, {
+    pointerId: { value: props.pointerId ?? 1 },
+    pointerType: { value: props.pointerType ?? 'touch' },
+    isPrimary: { value: props.isPrimary ?? true },
+    button: { value: props.button ?? 0 },
+    clientX: { value: props.clientX ?? 0 },
+    clientY: { value: props.clientY ?? 0 },
+    timeStamp: { value: props.timeStamp ?? 0 },
+  });
+  fireEvent(target, event);
+  return event;
+}
+
+function dispatchClick(target: Element, props: { clientX?: number; clientY?: number; timeStamp?: number } = {}) {
+  const event = new MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    clientX: props.clientX ?? 0,
+    clientY: props.clientY ?? 0,
+  });
+  Object.defineProperty(event, 'timeStamp', { value: props.timeStamp ?? 0 });
+  fireEvent(target, event);
+  return event;
+}
+
 const selectedBandProfile = {
   type: 'band' as const,
   bandId: 'band-1',
@@ -207,11 +234,74 @@ describe('Sidebar', () => {
     const { props } = renderSidebar({ player: { accountId: 'a1', displayName: 'P' } });
     const suggestionsLink = screen.getByText('Suggestions').closest('a')!;
 
-    fireEvent.pointerDown(suggestionsLink, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 54, clientY: 208 });
-    fireEvent.pointerUp(suggestionsLink, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 55, clientY: 209 });
+    dispatchPointer(suggestionsLink, 'pointerdown', { pointerId: 1, pointerType: 'touch', button: 0, clientX: 54, clientY: 208, timeStamp: 10 });
+    dispatchPointer(suggestionsLink, 'pointerup', { pointerId: 1, pointerType: 'touch', button: 0, clientX: 55, clientY: 209, timeStamp: 20 });
 
     expect(props.onClose).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('Festival Score Tracker')).toBeNull();
+    dispatchClick(document.body, { clientX: 55, clientY: 209, timeStamp: 80 });
+  });
+
+  it('suppresses a compatibility click retargeted beneath a closing sidebar nav link', () => {
+    const onUnderlyingPress = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <MemoryRouter>
+        <SettingsProvider>
+          <button type="button" data-testid="underlying" onClick={onUnderlyingPress}>Underlying</button>
+          <Sidebar player={{ accountId: 'a1', displayName: 'P' }} open={true} onClose={onClose} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
+      </MemoryRouter>,
+    );
+    const suggestionsLink = screen.getByText('Suggestions').closest('a')!;
+
+    dispatchPointer(suggestionsLink, 'pointerdown', { clientX: 55, clientY: 209, timeStamp: 10 });
+    dispatchPointer(suggestionsLink, 'pointerup', { clientX: 55, clientY: 209, timeStamp: 20 });
+    const syntheticClick = dispatchClick(screen.getByTestId('underlying'), { clientX: 55, clientY: 209, timeStamp: 80 });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(syntheticClick.defaultPrevented).toBe(true);
+    expect(onUnderlyingPress).not.toHaveBeenCalled();
+  });
+
+  it('allows an immediate click outside the sidebar nav compatibility-click radius', () => {
+    const onUnderlyingPress = vi.fn();
+    render(
+      <MemoryRouter>
+        <SettingsProvider>
+          <button type="button" data-testid="underlying" onClick={onUnderlyingPress}>Underlying</button>
+          <Sidebar player={{ accountId: 'a1', displayName: 'P' }} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
+      </MemoryRouter>,
+    );
+    const suggestionsLink = screen.getByText('Suggestions').closest('a')!;
+
+    dispatchPointer(suggestionsLink, 'pointerdown', { clientX: 55, clientY: 209, timeStamp: 10 });
+    dispatchPointer(suggestionsLink, 'pointerup', { clientX: 55, clientY: 209, timeStamp: 20 });
+    const distantClick = dispatchClick(screen.getByTestId('underlying'), { clientX: 110, clientY: 209, timeStamp: 80 });
+
+    expect(distantClick.defaultPrevented).toBe(false);
+    expect(onUnderlyingPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows a later real click after sidebar nav compatibility-click suppression expires', () => {
+    const onUnderlyingPress = vi.fn();
+    render(
+      <MemoryRouter>
+        <SettingsProvider>
+          <button type="button" data-testid="underlying" onClick={onUnderlyingPress}>Underlying</button>
+          <Sidebar player={{ accountId: 'a1', displayName: 'P' }} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
+      </MemoryRouter>,
+    );
+    const suggestionsLink = screen.getByText('Suggestions').closest('a')!;
+
+    dispatchPointer(suggestionsLink, 'pointerdown', { clientX: 55, clientY: 209, timeStamp: 10 });
+    dispatchPointer(suggestionsLink, 'pointerup', { clientX: 55, clientY: 209, timeStamp: 20 });
+    const laterClick = dispatchClick(screen.getByTestId('underlying'), { clientX: 55, clientY: 209, timeStamp: 900 });
+
+    expect(laterClick.defaultPrevented).toBe(false);
+    expect(onUnderlyingPress).toHaveBeenCalledTimes(1);
   });
 
   it('calls onClose on outside mousedown', () => {

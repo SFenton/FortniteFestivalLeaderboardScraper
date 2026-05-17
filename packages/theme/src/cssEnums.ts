@@ -155,10 +155,14 @@ export const CssProp = {
 } as const;
 
 /* ── Grid ── */
+const AUTO_FIT_DETAIL_CARD_GRID = 'repeat(auto-fit, minmax(min(max(420px, calc(50% - 4px)), 100%), 1fr))';
+
 export const GridTemplate = {
   single: '1fr',
   twoEqual: '1fr 1fr',
   threeEqual: '1fr 1fr 1fr',
+  /** repeat(auto-fit, …) — responsive 420 px min detail cards, max 2 columns, single card stretches to fill. */
+  autoFitDetailCards: AUTO_FIT_DETAIL_CARD_GRID,
   /** repeat(auto-fit, …) — responsive 420 px min cards, max 2 columns, single card stretches to fill. */
-  autoFillInstrument: 'repeat(auto-fit, minmax(min(max(420px, calc(50% - 4px)), 100%), 1fr))',
+  autoFillInstrument: AUTO_FIT_DETAIL_CARD_GRID,
 } as const;

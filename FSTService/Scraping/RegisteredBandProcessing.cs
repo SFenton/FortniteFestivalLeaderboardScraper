@@ -286,6 +286,7 @@ public sealed class RegisteredBandProcessingOrchestrator
             var lookupResult = await _lookupRunner.TryRunAsync(
                 pool,
                 isHighPriority: false,
+                EpicTrafficKind.Background,
                 ct,
                 work,
                 ex => _log.LogDebug(ex, "Registered-band lookup failed for {BandType}/{TeamKey}/{Song}/{Scope}/{Season}.",

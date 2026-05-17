@@ -174,8 +174,9 @@ public sealed class PostScrapeOrchestrator
             if (bandAccessToken is not null)
             {
                 var bandCallerAccountId = _tokenManager.AccountId!;
+                var bandAccessTokenProvider = new ScrapeAccessTokenProvider(_tokenManager, bandAccessToken, _log);
                 bandScrapeTask = Task.Run(
-                    () => _bandScrapePhase.ExecuteAsync(chartedSongs, bandAccessToken, bandCallerAccountId, ct),
+                    () => _bandScrapePhase.ExecuteAsync(chartedSongs, bandAccessToken, bandCallerAccountId, ct, bandAccessTokenProvider),
                     ct);
                 _log.LogInformation("Band scrape launched in background ({Songs} songs).", chartedSongs.Count);
             }

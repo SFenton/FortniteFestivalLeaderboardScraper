@@ -123,8 +123,7 @@ public static partial class ApiEndpoints
             {
                 var key = (s.SongId, s.Instrument);
                 var computedRank = rankings.GetValueOrDefault(key, 0);
-                // Priority: Epic ApiRank (authoritative) > computed rank (local DB) > stored rank
-                var rank = s.ApiRank > 0 ? s.ApiRank : (computedRank > 0 ? computedRank : s.Rank);
+                var rank = LeaderboardResponseRanks.Resolve(s.ApiRank, computedRank, s.Rank, maxScoresByInstrument is not null);
                 var totalEntries = unfilteredPopulation.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
 
                 // ── Score validity (only when leeway is provided) ──

@@ -14,7 +14,7 @@ import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import PressableButton from '../../components/common/PressableButton';
 import PageHeader from '../../components/common/PageHeader';
-import { useIsMobile } from '../../hooks/ui/useIsMobile';
+import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { IoPerson } from 'react-icons/io5';
 import { serverInstrumentLabel, type RivalSongComparison } from '@festival/core/api/serverTypes';
@@ -61,7 +61,7 @@ export default function RivalryPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { settings } = useSettings();
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileChrome();
   const scrollContainerRef = useScrollContainer();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
@@ -186,6 +186,7 @@ export default function RivalryPage() {
       items: quickLinkItems,
       activeItemId,
       visible: quickLinksOpen,
+      showDesktopRail: false,
       onOpen: openQuickLinks,
       onClose: closeQuickLinks,
       onSelect: (item) => handleModalQuickLinkSelect(item as RivalryQuickLink),

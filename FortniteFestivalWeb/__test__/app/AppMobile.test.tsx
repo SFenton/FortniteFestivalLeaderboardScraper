@@ -6,6 +6,9 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { act, render, waitFor, fireEvent, screen, within } from '@testing-library/react';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
+import { Colors } from '@festival/theme';
+
+const OPAQUE_FAB_GLASS_BACKGROUND = 'rgba(18,24,38,0.96)';
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -1779,7 +1782,7 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
-  it('shows the Filter Bands FAB action on mobile player bands pages', async () => {
+  it('opens the Filter Bands modal directly from the mobile player bands FAB', async () => {
     setMobile();
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
     window.location.hash = '#/bands/player/p1?group=all&page=1&name=TrackedP';
@@ -1790,14 +1793,33 @@ describe('App — mobile FAB branches', () => {
       expect(screen.getByText('BandMate')).toBeDefined();
     }, { timeout: 5000 });
 
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
-    expect(within(menu).getByText('Filter Bands')).toBeDefined();
-    fireEvent.click(within(menu).getByText('Filter Bands'));
+    const filterFab = screen.getByRole('button', { name: 'Filter Bands' });
+    expect(filterFab).toHaveStyle({ backgroundColor: OPAQUE_FAB_GLASS_BACKGROUND });
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    fireEvent.click(filterFab);
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
 
     await waitFor(() => {
       expect(screen.getAllByText('Band Type').length).toBeGreaterThan(0);
     });
+
+    window.location.hash = '';
+  });
+
+  it('shows the mobile player bands Filter Bands FAB as active when a band group is selected', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/bands/player/p1?group=duos&page=1&name=TrackedP';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('TrackedP')).toBeDefined();
+      expect(screen.getByText('BandMate')).toBeDefined();
+    }, { timeout: 5000 });
+
+    const filterFab = screen.getByRole('button', { name: 'Filter Bands' });
+    expect(filterFab).toHaveStyle({ backgroundColor: Colors.accentBlue });
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
 
     window.location.hash = '';
   });

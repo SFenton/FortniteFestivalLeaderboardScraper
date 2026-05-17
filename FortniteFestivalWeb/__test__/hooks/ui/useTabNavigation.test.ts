@@ -16,8 +16,11 @@ describe('inferTab', () => {
   it('returns songs for /songs/detail', () => expect(inferTab('/songs/abc123')).toBe(TabKey.Songs));
   it('returns songs for /shop', () => expect(inferTab('/shop')).toBe(TabKey.Songs));
   it('returns suggestions', () => expect(inferTab('/suggestions')).toBe(TabKey.Suggestions));
-  it('returns compete for /rivals', () => expect(inferTab('/rivals')).toBe(TabKey.Compete));
-  it('returns compete for /rivals/detail', () => expect(inferTab('/rivals/abc')).toBe(TabKey.Compete));
+  it('returns compete for /compete', () => expect(inferTab('/compete')).toBe(TabKey.Compete));
+  it('returns leaderboards for /leaderboards', () => expect(inferTab('/leaderboards')).toBe(TabKey.Leaderboards));
+  it('returns leaderboards for /leaderboards/detail', () => expect(inferTab('/leaderboards/all')).toBe(TabKey.Leaderboards));
+  it('returns rivals for /rivals', () => expect(inferTab('/rivals')).toBe(TabKey.Rivals));
+  it('returns rivals for /rivals/detail', () => expect(inferTab('/rivals/abc')).toBe(TabKey.Rivals));
   it('returns statistics', () => expect(inferTab('/statistics')).toBe(TabKey.Statistics));
   it('returns null for band lookup route', () => expect(inferTab('/bands?bandType=Band_Duets&teamKey=p1%3Ap2')).toBeNull());
   it('returns null for band detail route', () => expect(inferTab('/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2')).toBeNull());
@@ -30,6 +33,8 @@ describe('inferTab', () => {
 describe('TAB_ROOTS', () => {
   it('has correct root paths', () => {
     expect(TAB_ROOTS[TabKey.Songs]).toBe('/songs');
+    expect(TAB_ROOTS[TabKey.Leaderboards]).toBe('/leaderboards');
+    expect(TAB_ROOTS[TabKey.Rivals]).toBe('/rivals');
     expect(TAB_ROOTS[TabKey.Settings]).toBe('/settings');
   });
 });
@@ -277,21 +282,19 @@ describe('useTabNavigation', () => {
     expect(result.current.activeTab).toBe(TabKey.Suggestions);
   });
 
-  it('uses rootOverride instead of TAB_ROOTS when provided', () => {
+  it('navigates to leaderboards with its own tab key', () => {
     const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
-    act(() => { result.current.handleTabClick(TabKey.Compete, '/leaderboards'); });
-    expect(result.current.activeTab).toBe(TabKey.Compete);
-    expect(result.current.tabRoutes[TabKey.Compete]).toBe('/leaderboards');
+    act(() => { result.current.handleTabClick(TabKey.Leaderboards); });
+    expect(result.current.activeTab).toBe(TabKey.Leaderboards);
+    expect(result.current.tabRoutes[TabKey.Leaderboards]).toBe('/leaderboards');
   });
 
-  it('rootOverride is used for stale-route guard fallback', () => {
-    // Stale sessionStorage: Compete tab has /shop (a Songs route)
-    sessionStorage.setItem('fst:tabRoutes', JSON.stringify({ [TabKey.Compete]: '/shop' }));
+  it('leaderboards stale-route guard falls back to its tab root', () => {
+    sessionStorage.setItem('fst:tabRoutes', JSON.stringify({ [TabKey.Leaderboards]: '/shop' }));
     const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
-    act(() => { result.current.handleTabClick(TabKey.Compete, '/leaderboards'); });
-    // Should fall back to /leaderboards (the rootOverride), not /compete (TAB_ROOTS)
-    expect(result.current.tabRoutes[TabKey.Compete]).toBe('/leaderboards');
-    expect(result.current.activeTab).toBe(TabKey.Compete);
+    act(() => { result.current.handleTabClick(TabKey.Leaderboards); });
+    expect(result.current.tabRoutes[TabKey.Leaderboards]).toBe('/leaderboards');
+    expect(result.current.activeTab).toBe(TabKey.Leaderboards);
   });
 
   it('resets unowned saved routes to the tab root', () => {
@@ -302,10 +305,9 @@ describe('useTabNavigation', () => {
     expect(result.current.activeTab).toBe(TabKey.Songs);
   });
 
-  it('re-tap with rootOverride navigates to override root', () => {
+  it('re-tap leaderboards navigates to leaderboards root', () => {
     const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/leaderboards') });
-    // First switch to Compete tab with override
-    act(() => { result.current.handleTabClick(TabKey.Compete, '/leaderboards'); });
+    act(() => { result.current.handleTabClick(TabKey.Leaderboards); });
     // Now navigate deeper within the tab
     function useTestHook() {
       const tab = useTabNavigation();
@@ -314,8 +316,34 @@ describe('useTabNavigation', () => {
     }
     const { result: result2 } = renderHook(() => useTestHook(), { wrapper: wrapper('/leaderboards') });
     act(() => { result2.current.nav('/leaderboards/all?instrument=guitar'); });
-    // Re-tap with override should go to /leaderboards
-    act(() => { result2.current.tab.handleTabClick(TabKey.Compete, '/leaderboards'); });
-    expect(result2.current.tab.tabRoutes[TabKey.Compete]).toBe('/leaderboards');
+    act(() => { result2.current.tab.handleTabClick(TabKey.Leaderboards); });
+    expect(result2.current.tab.tabRoutes[TabKey.Leaderboards]).toBe('/leaderboards');
+  });
+
+  it('keeps leaderboards and rivals routes in separate tab stacks', () => {
+    function useTestHook() {
+      const tab = useTabNavigation();
+      const nav = useNavigate();
+      return { tab, nav };
+    }
+
+    const { result } = renderHook(() => useTestHook(), { wrapper: wrapper('/leaderboards/all') });
+    act(() => { result.current.nav('/rivals/rival-1'); });
+
+    expect(result.current.tab.activeTab).toBe(TabKey.Rivals);
+    expect(result.current.tab.tabRoutes[TabKey.Leaderboards]).toBe('/leaderboards/all');
+    expect(result.current.tab.tabRoutes[TabKey.Rivals]).toBe('/rivals/rival-1');
+  });
+
+  it('migrates a stale compete leaderboards route into the leaderboards tab route', () => {
+    sessionStorage.setItem('fst:tabRoutes', JSON.stringify({ [TabKey.Compete]: '/leaderboards/all' }));
+    const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
+    expect(result.current.tabRoutes[TabKey.Leaderboards]).toBe('/leaderboards/all');
+  });
+
+  it('migrates a stale compete rivals route into the rivals tab route', () => {
+    sessionStorage.setItem('fst:tabRoutes', JSON.stringify({ [TabKey.Compete]: '/rivals/rival-1' }));
+    const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
+    expect(result.current.tabRoutes[TabKey.Rivals]).toBe('/rivals/rival-1');
   });
 });

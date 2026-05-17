@@ -38,6 +38,17 @@ describe('PageHeader band filter action', () => {
     expect(screen.queryByRole('heading', { level: 1, name: 'Custom Header' })).toBeNull();
   });
 
+  it('prevents native touch scrolling on the header wrapper', () => {
+    const { container } = render(
+      <BandFilterActionProvider value={{ visible: false, label: 'Filter Band Type', selectedInstruments: [], onPress: vi.fn() }}>
+        <PageHeader title="Test Header" />
+      </BandFilterActionProvider>,
+    );
+
+    const headerWrapper = container.firstElementChild as HTMLElement;
+    expect(headerWrapper.style.touchAction).toBe('none');
+  });
+
   it('renders the band filter pill before existing header actions', () => {
     render(
       <BandFilterActionProvider value={{ visible: true, label: 'Filter Band Type', selectedInstruments: [], onPress: vi.fn() }}>

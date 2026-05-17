@@ -222,7 +222,8 @@ public class CyclicalSongMachineTests
             seasonWindows: Array.Empty<SeasonWindowInfo>(),
             source: SongMachineSource.PostScrape,
             isHighPriority: true,
-                preserveProgressPhaseOnIdle: preserveProgressPhaseOnIdle,
+            preserveProgressPhaseOnIdle: preserveProgressPhaseOnIdle,
+            epicTrafficKind: EpicTrafficKind.Background,
             callerCt: CancellationToken.None);
     }
 

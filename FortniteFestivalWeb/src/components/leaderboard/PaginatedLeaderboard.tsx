@@ -56,6 +56,8 @@ export interface PaginatedLeaderboardProps<T> {
   hasFab: boolean;
   /** Whether fixed footer content should reserve horizontal space for the FAB. Defaults to hasFab. */
   reserveFabSpace?: boolean;
+  /** Whether the scroll container should reserve space below fixed footer chrome. Defaults to true. */
+  reserveFooterScrollSpace?: boolean;
   /** Pixel height for each row. Defaults to the standard leaderboard row height. */
   rowHeight?: number;
 
@@ -106,6 +108,7 @@ export function PaginatedLeaderboard<T>({
   isMobile,
   hasFab,
   reserveFabSpace = hasFab,
+  reserveFooterScrollSpace = true,
   rowHeight = Layout.entryRowHeight,
   error = false,
   emptyMessage,
@@ -194,7 +197,7 @@ export function PaginatedLeaderboard<T>({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- scheduleRetire is stable
   }, [page]);
 
-  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter, rowHeight });
+  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter, reserveBottomSpace: reserveFooterScrollSpace, rowHeight });
 
   const contentVisible = loadPhase === LoadPhase.ContentIn;
 

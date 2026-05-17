@@ -228,7 +228,56 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.TryGetProperty("lastCompletedUpdate", out _));
         Assert.Equal("idle", json.GetProperty("currentUpdate").GetProperty("status").GetString());
+        Assert.True(json.TryGetProperty("workerStatus", out _));
         Assert.True(json.TryGetProperty("nextScheduledUpdateAt", out _));
+    }
+
+    [Fact]
+    public async Task ApiServiceInfo_ReflectsWorkerStatusActivity()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var startedAt = DateTime.UtcNow.AddMinutes(-10);
+        var heartbeatAt = DateTime.UtcNow.AddSeconds(-5);
+        var operationStartedAt = DateTime.UtcNow.AddMinutes(-2);
+        var operationUpdatedAt = DateTime.UtcNow.AddSeconds(-20);
+
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "integration-instance",
+            startedAt,
+            heartbeatAt,
+            "testing");
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                OperationKey = "rankings.band.Band_Trios",
+                OperationLabel = "Computing Band Trios Rankings",
+                Status = "running",
+                Phase = "ComputingRankings",
+                SubOperation = "band_rankings",
+                Detail = "Band_Trios",
+                StartedAtUtc = operationStartedAt,
+                UpdatedAtUtc = operationUpdatedAt,
+            },
+            updatedAtUtc: operationUpdatedAt);
+
+        var response = await _client.GetAsync("/api/service-info");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var workerStatus = json.GetProperty("workerStatus");
+        Assert.Equal("online", workerStatus.GetProperty("status").GetString());
+        Assert.Equal("running", workerStatus.GetProperty("rawStatus").GetString());
+        Assert.Equal("integration-instance", workerStatus.GetProperty("instanceId").GetString());
+        Assert.Equal("testing", workerStatus.GetProperty("message").GetString());
+
+        var operation = workerStatus.GetProperty("currentOperation");
+        Assert.Equal("Computing Band Trios Rankings", operation.GetProperty("operationLabel").GetString());
+        Assert.Equal("ComputingRankings", operation.GetProperty("phase").GetString());
+        Assert.Equal("band_rankings", operation.GetProperty("subOperation").GetString());
     }
 
     [Fact]
@@ -499,8 +548,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
             db.UpsertEntries(songId, new List<LeaderboardEntry>
             {
-                new() { AccountId = "valid1",   Score = 85_000, Accuracy = 99, Stars = 6 },
-                new() { AccountId = "valid2",   Score = 80_000, Accuracy = 98, Stars = 5 },
+                new() { AccountId = "valid1",   Score = 85_000, Accuracy = 99, Stars = 6, ApiRank = 55_942 },
+                new() { AccountId = "valid2",   Score = 80_000, Accuracy = 98, Stars = 5, ApiRank = 95_205 },
                 new() { AccountId = "cheater1", Score = 200_000, Accuracy = 100, Stars = 6 },
             });
         }
@@ -575,7 +624,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             guitarDb.UpsertEntries(songId, new List<LeaderboardEntry>
             {
                 new() { AccountId = "g1", Score = 200_000, Accuracy = 100, Stars = 6 },
-                new() { AccountId = "g2", Score = 85_000,  Accuracy = 99,  Stars = 5 },
+                new() { AccountId = "g2", Score = 85_000,  Accuracy = 99,  Stars = 5, ApiRank = 55_942 },
             });
 
             var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
@@ -594,10 +643,50 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         {
             var name = inst.GetProperty("instrument").GetString();
             if (name == "Solo_Guitar")
+            {
                 Assert.Equal(1, inst.GetProperty("count").GetInt32());
+                Assert.Equal(1, inst.GetProperty("entries")[0].GetProperty("rank").GetInt32());
+            }
             else if (name == "Solo_Bass")
                 Assert.Equal(1, inst.GetProperty("count").GetInt32());
         }
+    }
+
+    [Fact]
+    public async Task ApiLeaderboardMemberScores_Leeway_Rank_UsesFilteredRankOverApiRank()
+    {
+        const string songId = "memberScoreLeewayRankSong";
+        const string accountId = "memberScoreLeewayRankAcct";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores
+            {
+                MaxLeadScore = 90_000,
+            }, "memberScoreLeewayRankHash");
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(songId, new List<LeaderboardEntry>
+            {
+                new() { AccountId = "memberScoreLeewayRankInvalid", Score = 200_000, ApiRank = 1 },
+                new() { AccountId = "memberScoreLeewayRankOther", Score = 85_000, ApiRank = 55_942 },
+                new() { AccountId = accountId, Score = 80_000, ApiRank = 95_205 },
+            });
+            InsertCurrentLeaderboardEntry(dataSource, songId, "Solo_Guitar", accountId, 80_000, rank: 3, apiRank: 95_205);
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/members/scores?accountIds={accountId}&instruments=Solo_Guitar&leeway=0");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var score = json.GetProperty("scores")[0];
+
+        Assert.Equal(2, score.GetProperty("rank").GetInt32());
+        Assert.Equal(2, score.GetProperty("validRank").GetInt32());
     }
 
     // ─── Player profile ─────────────────────────────────────────
@@ -839,6 +928,43 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var score = json.GetProperty("scores")[0];
         // ApiRank=10001 should take priority over computed rank (2)
         Assert.Equal(10_001, score.GetProperty("rk").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiPlayer_Leeway_Rank_UsesFilteredRankOverApiRank()
+    {
+        const string song = "apiRankPlayerLeewaySong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            EnsureSongRow(pathStore, song);
+            pathStore.UpdateMaxScores(song, new SongMaxScores
+            {
+                MaxLeadScore = 90_000,
+            }, "apiRankPlayerLeewayHash");
+
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "apiRkLeewayInvalid", Score = 200_000, ApiRank = 1 },
+                new LeaderboardEntry { AccountId = "apiRkLeewayOther", Score = 85_000, ApiRank = 55_942 },
+                new LeaderboardEntry { AccountId = "apiRkLeewayPlayer", Score = 80_000, ApiRank = 95_205 },
+            });
+            InsertCurrentLeaderboardEntry(dataSource, song, inst, "apiRkLeewayPlayer", 80_000, rank: 3, apiRank: 95_205);
+        }
+
+        var response = await _client.GetAsync($"/api/player/apiRkLeewayPlayer?songId={song}&leeway=0");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var score = json.GetProperty("scores")[0];
+        Assert.Equal(2, score.GetProperty("rk").GetInt32());
+        Assert.Equal(2, score.GetProperty("validRank").GetInt32());
     }
 
     [Fact]
@@ -1944,6 +2070,50 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task ApiLeaderboard_ExposesEntryTotalVisibilityFromLatestCompletedScrape()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+
+        var cappedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(cappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: false);
+
+        var cappedResponse = await _client.GetAsync("/api/leaderboard/testSong1/Solo_Guitar?top=10");
+        Assert.Equal(HttpStatusCode.OK, cappedResponse.StatusCode);
+        var cappedJson = await cappedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(cappedJson.GetProperty("showLeaderboardEntryTotals").GetBoolean());
+
+        var uncappedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(uncappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: true);
+
+        var uncappedResponse = await _client.GetAsync("/api/leaderboard/testSong1/Solo_Guitar?top=10");
+        Assert.Equal(HttpStatusCode.OK, uncappedResponse.StatusCode);
+        var uncappedJson = await uncappedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(uncappedJson.GetProperty("showLeaderboardEntryTotals").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ApiSongBandLeaderboard_ExposesEntryTotalVisibilityFromLatestCompletedScrape()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+
+        var cappedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(cappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: false);
+
+        var cappedResponse = await _client.GetAsync("/api/leaderboard/testSong1/bands/Band_Duets?top=10");
+        Assert.Equal(HttpStatusCode.OK, cappedResponse.StatusCode);
+        var cappedJson = await cappedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(cappedJson.GetProperty("showLeaderboardEntryTotals").GetBoolean());
+
+        var uncappedScrapeId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(uncappedScrapeId, songsScraped: 1, totalEntries: 100, totalRequests: 1, totalBytes: 1, epicReportedOver100Pages: true);
+
+        var uncappedResponse = await _client.GetAsync("/api/leaderboard/testSong1/bands/Band_Duets?top=10");
+        Assert.Equal(HttpStatusCode.OK, uncappedResponse.StatusCode);
+        var uncappedJson = await uncappedResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(uncappedJson.GetProperty("showLeaderboardEntryTotals").GetBoolean());
+    }
+
+    [Fact]
     public async Task ApiLeaderboardAll_EmptySong_ReturnsEmptyInstruments()
     {
         var response = await _client.GetAsync("/api/leaderboard/nonexistentSong/all");
@@ -2924,6 +3094,45 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("overlayReason", overlayReason);
         cmd.Parameters.AddWithValue("sourcePriority", sourcePriority);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void InsertCurrentLeaderboardEntry(NpgsqlDataSource dataSource, string songId, string instrument, string accountId, int score, int rank, int apiRank)
+    {
+        using var conn = dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO current_leaderboard_entries
+            (song_id, instrument, account_id, score, accuracy, is_full_combo, stars,
+             season, percentile, rank, api_rank, source, difficulty, end_time,
+             first_seen_at, last_updated_at, projection_generation, computed_at)
+            VALUES
+            (@songId, @instrument, @accountId, @score, 95, false, 5,
+             3, 99.0, @rank, @apiRank, 'projection', 3, '2025-01-15T12:00:00Z',
+             @now, @now, 1, @now)
+            ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+                score = EXCLUDED.score,
+                accuracy = EXCLUDED.accuracy,
+                is_full_combo = EXCLUDED.is_full_combo,
+                stars = EXCLUDED.stars,
+                season = EXCLUDED.season,
+                percentile = EXCLUDED.percentile,
+                rank = EXCLUDED.rank,
+                api_rank = EXCLUDED.api_rank,
+                source = EXCLUDED.source,
+                difficulty = EXCLUDED.difficulty,
+                end_time = EXCLUDED.end_time,
+                last_updated_at = EXCLUDED.last_updated_at,
+                projection_generation = EXCLUDED.projection_generation,
+                computed_at = EXCLUDED.computed_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("rank", rank);
+        cmd.Parameters.AddWithValue("apiRank", apiRank);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }
@@ -5095,7 +5304,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             SongMachineSource source,
             bool isHighPriority,
             CancellationToken ct = default,
-            bool preserveProgressPhaseOnIdle = false)
+            bool preserveProgressPhaseOnIdle = false,
+            EpicTrafficKind epicTrafficKind = EpicTrafficKind.Background)
         {
             return Task.FromResult(new SongProcessingMachine.MachineResult
             {

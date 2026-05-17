@@ -91,6 +91,7 @@ function useStyles() {
       width: CssValue.full,
       padding: padding(Gap.md, Layout.paddingHorizontal),
       boxSizing: BoxSizing.borderBox,
+      touchAction: CssValue.none,
     } as CSSProperties,
     row: {
       ...flexBetween,

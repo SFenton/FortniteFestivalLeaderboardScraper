@@ -101,6 +101,9 @@ public sealed class BackfillOrchestrator
             return 0;
         }
 
+        var opts = _options.Value;
+        var foregroundRegistration = opts.RegistrationBackfillMode == RegistrationBackfillMode.ForegroundEpicExclusive;
+
         var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
         IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows = [];
         if (accessToken is not null)
@@ -157,11 +160,17 @@ public sealed class BackfillOrchestrator
         }
 
         _log.LogInformation(
-            "Queued registration backfill attaching {Users} user(s), {Songs} songs, priority=low.",
-            users.Count, chartedSongIds.Count);
+            "Queued registration backfill attaching {Users} user(s), {Songs} songs, mode={Mode}, priority={Priority}.",
+            users.Count, chartedSongIds.Count, opts.RegistrationBackfillMode,
+            foregroundRegistration ? "high" : "low");
 
+        IDisposable? foregroundLease = null;
         try
         {
+            foregroundLease = foregroundRegistration
+                ? _pool.TrafficCoordinator.BeginForegroundRegistration()
+                : null;
+
             _resultProcessor.SetStagingAccounts(accountIds);
 
             var result = await _cyclicalMachine.AttachAsync(
@@ -169,8 +178,13 @@ public sealed class BackfillOrchestrator
                 chartedSongIds,
                 seasonWindows,
                 SongMachineSource.Backfill,
-                isHighPriority: false,
-                ct: ct);
+                isHighPriority: foregroundRegistration,
+                ct: ct,
+                epicTrafficKind: foregroundRegistration
+                    ? EpicTrafficKind.ForegroundRegistration
+                    : EpicTrafficKind.Background);
+            foregroundLease?.Dispose();
+            foregroundLease = null;
 
             _log.LogInformation(
                 "Queued registration backfill completed: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",
@@ -228,6 +242,7 @@ public sealed class BackfillOrchestrator
         }
         finally
         {
+            foregroundLease?.Dispose();
             _resultProcessor.ClearStagingAccounts();
         }
     }

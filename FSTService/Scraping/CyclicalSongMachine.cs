@@ -122,13 +122,14 @@ public class CyclicalSongMachine
         SongMachineSource source,
         bool isHighPriority,
         CancellationToken ct = default,
-        bool preserveProgressPhaseOnIdle = false)
+        bool preserveProgressPhaseOnIdle = false,
+        EpicTrafficKind epicTrafficKind = EpicTrafficKind.Background)
     {
         if (users.Count == 0)
             return Task.FromResult(new SongProcessingMachine.MachineResult());
 
         var callerId = $"attach-{Interlocked.Increment(ref _attachmentCounter)}";
-        var attachment = new MachineAttachment(callerId, users, songIds, seasonWindows, source, isHighPriority, preserveProgressPhaseOnIdle, ct);
+        var attachment = new MachineAttachment(callerId, users, songIds, seasonWindows, source, isHighPriority, preserveProgressPhaseOnIdle, epicTrafficKind, ct);
 
         _attachments[callerId] = attachment;
         _progress.RegisterAttachment(callerId, source, users, songIds.Count);
@@ -450,7 +451,7 @@ public class CyclicalSongMachine
     private async Task RunSongPassAsync(
         IReadOnlyList<SongCycleEntry> songsToProcess,
         IReadOnlyList<string> instruments,
-        Func<string, (List<UserWorkItem> Users, bool HighPriority)> gatherUsers,
+        Func<string, SongPassWork> gatherUsers,
         IReadOnlyDictionary<int, string> seasonPrefixMap,
         string accessToken,
         string callerAccountId,
@@ -489,7 +490,9 @@ public class CyclicalSongMachine
 
                 try
                 {
-                    var (users, highPriority) = gatherUsers(songEntry.SongId);
+                    var work = gatherUsers(songEntry.SongId);
+                    var users = work.Users;
+                    var highPriority = work.HighPriority;
                     if (users.Count == 0)
                     {
                         if (OwnsProgress)
@@ -500,7 +503,7 @@ public class CyclicalSongMachine
                     var result = await _inner.ProcessSongForUsersAsync(
                         songEntry.SongId, instruments, users, seasonPrefixMap,
                         accessToken, callerAccountId, _pool, highPriority,
-                        opts.LookupBatchSize, ct);
+                        opts.LookupBatchSize, work.EpicTrafficKind, ct);
 
                     // Check CDN throttle state and surface to each user's sync progress.
                     // Throttle when limiter DOP drops below 25% of max.
@@ -639,10 +642,11 @@ public class CyclicalSongMachine
     /// Gather users for the <b>core pass</b> (alltime + current season only).
     /// All users are included, but their <c>SeasonsNeeded</c> is clamped to the current season.
     /// </summary>
-    private (List<UserWorkItem> Users, bool HighPriority) GatherCoreUsersForSong(string songId, int currentSeason)
+    private SongPassWork GatherCoreUsersForSong(string songId, int currentSeason)
     {
         var users = new List<UserWorkItem>();
         bool highPriority = false;
+        var epicTrafficKind = EpicTrafficKind.Background;
 
         foreach (var (_, att) in _attachments)
         {
@@ -667,19 +671,21 @@ public class CyclicalSongMachine
             }
 
             if (att.IsHighPriority) highPriority = true;
+            epicTrafficKind = CombineTrafficKind(epicTrafficKind, att.EpicTrafficKind);
         }
 
-        return (DeduplicateUsers(users), highPriority);
+        return new SongPassWork(DeduplicateUsers(users), highPriority, epicTrafficKind);
     }
 
     /// <summary>
     /// Gather users for the <b>historical pass</b> (remaining seasons, no alltime).
     /// Only includes users whose original <c>SeasonsNeeded</c> contains historical seasons.
     /// </summary>
-    private (List<UserWorkItem> Users, bool HighPriority) GatherHistoricalUsersForSong(string songId, int currentSeason)
+    private SongPassWork GatherHistoricalUsersForSong(string songId, int currentSeason)
     {
         var users = new List<UserWorkItem>();
         bool highPriority = false;
+        var epicTrafficKind = EpicTrafficKind.Background;
 
         foreach (var (_, att) in _attachments)
         {
@@ -704,10 +710,16 @@ public class CyclicalSongMachine
             }
 
             if (att.IsHighPriority) highPriority = true;
+            epicTrafficKind = CombineTrafficKind(epicTrafficKind, att.EpicTrafficKind);
         }
 
-        return (DeduplicateUsers(users), highPriority);
+        return new SongPassWork(DeduplicateUsers(users), highPriority, epicTrafficKind);
     }
+
+    private static EpicTrafficKind CombineTrafficKind(EpicTrafficKind current, EpicTrafficKind next)
+        => current == EpicTrafficKind.ForegroundRegistration || next == EpicTrafficKind.ForegroundRegistration
+            ? EpicTrafficKind.ForegroundRegistration
+            : EpicTrafficKind.Background;
 
     /// <summary>
     /// Deduplicate users by AccountId, merging purposes, alltime requirement, and seasons
@@ -984,6 +996,11 @@ public class CyclicalSongMachine
 
     private readonly record struct SongCycleEntry(string SongId, int GlobalIndex);
 
+    private readonly record struct SongPassWork(
+        List<UserWorkItem> Users,
+        bool HighPriority,
+        EpicTrafficKind EpicTrafficKind);
+
     /// <summary>
     /// Represents one caller's attachment to the cyclical machine.
     /// Tracks join point, processed songs, and aggregated results.
@@ -997,6 +1014,7 @@ public class CyclicalSongMachine
         public SongMachineSource Source { get; }
         public bool IsHighPriority { get; }
         public bool PreserveProgressPhaseOnIdle { get; }
+        public EpicTrafficKind EpicTrafficKind { get; }
         public TaskCompletionSource<SongProcessingMachine.MachineResult> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         /// <summary>The song index at which this attachment joined the cycle. -1 = not yet stamped.</summary>
@@ -1029,6 +1047,7 @@ public class CyclicalSongMachine
             SongMachineSource source,
             bool isHighPriority,
             bool preserveProgressPhaseOnIdle,
+            EpicTrafficKind epicTrafficKind,
             CancellationToken callerCt)
         {
             CallerId = callerId;
@@ -1038,6 +1057,7 @@ public class CyclicalSongMachine
             Source = source;
             IsHighPriority = isHighPriority;
             PreserveProgressPhaseOnIdle = preserveProgressPhaseOnIdle;
+            EpicTrafficKind = epicTrafficKind;
             _callerCt = callerCt;
             _songIdSet = new HashSet<string>(songIds, StringComparer.Ordinal);
         }

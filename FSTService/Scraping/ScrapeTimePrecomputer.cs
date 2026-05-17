@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FSTService;
+using FSTService.Api;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
@@ -682,7 +683,7 @@ public sealed class ScrapeTimePrecomputer
         bool showLeaderboardEntryTotals)
     {
         var instrumentArr = instrumentKeys.ToArray();
-        var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)?[instrumentArr.Length];
+        var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank)?[instrumentArr.Length];
 
         var instrumentParallelism = Math.Max(1, _scraperOptions.PrecomputeLeaderboardInstrumentParallelism);
         Parallel.For(0, instrumentArr.Length, new ParallelOptions { MaxDegreeOfParallelism = instrumentParallelism }, i =>
@@ -694,6 +695,7 @@ public sealed class ScrapeTimePrecomputer
                 var raw = ms.GetByInstrument(instrument);
                 if (raw.HasValue) maxScore = (int)(raw.Value * (1.0 + leeway.Value / 100.0));
             }
+            var useFilteredRank = maxScore.HasValue;
             var result = _persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, 10, maxScore: maxScore);
             if (result is null) return;
 
@@ -703,11 +705,11 @@ public sealed class ScrapeTimePrecomputer
                 unfilteredPopulation.TryGetValue(popKey, out var pop) && pop > 0 ? (int)pop : 0,
                 dbCount);
 
-            rawResults[i] = (instrument, entries, dbCount, totalEntries);
+            rawResults[i] = (instrument, entries, dbCount, totalEntries, useFilteredRank);
         });
 
         var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)>();
+        var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank)>();
         foreach (var r in rawResults)
         {
             if (r is null) continue;
@@ -729,7 +731,7 @@ public sealed class ScrapeTimePrecomputer
                 e.AccountId,
                 DisplayName = names.GetValueOrDefault(e.AccountId),
                 e.Score,
-                Rank = e.ApiRank > 0 ? e.ApiRank : e.Rank,
+                Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank),
                 e.Accuracy,
                 e.IsFullCombo,
                 e.Stars,

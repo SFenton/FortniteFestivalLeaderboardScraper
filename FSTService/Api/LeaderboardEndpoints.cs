@@ -140,11 +140,13 @@ public static partial class ApiEndpoints
             if (selectedBandEntry is not null)
                 entriesForNames = entriesForNames.Append(selectedBandEntry);
             var names = metaDb.GetDisplayNames(entriesForNames.SelectMany(entry => entry.Members.Select(member => member.AccountId)));
+            var showLeaderboardEntryTotals = metaDb.ShouldShowLeaderboardEntryTotals();
 
             return Results.Ok(new
             {
                 songId,
                 bandType,
+                showLeaderboardEntryTotals,
                 count = entries.Count,
                 totalEntries,
                 localEntries = totalEntries,
@@ -259,7 +261,7 @@ public static partial class ApiEndpoints
                 var computedRank = rankingsByAccount.TryGetValue(accountId, out var accountRankings)
                     ? accountRankings.GetValueOrDefault(key, 0)
                     : 0;
-                var rank = score.ApiRank > 0 ? score.ApiRank : computedRank > 0 ? computedRank : score.Rank;
+                var rank = LeaderboardResponseRanks.Resolve(score.ApiRank, computedRank, score.Rank, maxScoresByInstrument is not null);
                 var totalEntries = unfilteredPopulation.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
 
                 bool? isValid = null;
@@ -364,15 +366,17 @@ public static partial class ApiEndpoints
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
             var (entries, dbCount) = result.Value;
+            var useFilteredRank = maxScore.HasValue;
             var pop = metaDb.GetLeaderboardPopulation(songId, instrument);
             var totalEntries = Math.Max(pop > 0 ? (int)pop : 0, dbCount);
+            var showLeaderboardEntryTotals = metaDb.ShouldShowLeaderboardEntryTotals();
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
             var enriched = entries.Select(e => new
             {
                 e.AccountId,
                 DisplayName = names.GetValueOrDefault(e.AccountId),
                 e.Score,
-                Rank = e.ApiRank > 0 ? e.ApiRank : e.Rank,
+                Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, useFilteredRank),
                 e.Accuracy,
                 e.IsFullCombo,
                 e.Stars,
@@ -387,6 +391,7 @@ public static partial class ApiEndpoints
             {
                 songId,
                 instrument,
+                showLeaderboardEntryTotals,
                 count = enriched.Count,
                 totalEntries,
                 localEntries = dbCount,
@@ -444,7 +449,7 @@ public static partial class ApiEndpoints
 
             // Collect raw data per instrument (parallel — each instrument is a separate SQLite DB)
             var instrumentArr = instrumentKeys.ToArray();
-            var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)?[instrumentArr.Length];
+            var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank)?[instrumentArr.Length];
             Parallel.For(0, instrumentArr.Length, i =>
             {
                 var instrument = instrumentArr[i];
@@ -455,6 +460,7 @@ public static partial class ApiEndpoints
                     if (raw.HasValue)
                         maxScore = (int)(raw.Value * (1.0 + leeway!.Value / 100.0));
                 }
+                var useFilteredRank = maxScore.HasValue;
                 var result = persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, effectiveTop, maxScore: maxScore);
                 if (result is null) return;
 
@@ -464,11 +470,11 @@ public static partial class ApiEndpoints
                     population.TryGetValue(popKey, out var pop) && pop > 0 ? (int)pop : 0,
                     dbCount);
 
-                rawResults[i] = (instrument, entries, dbCount, totalEntries);
+                rawResults[i] = (instrument, entries, dbCount, totalEntries, useFilteredRank);
             });
 
             var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)>();
+            var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank)>();
             foreach (var r in rawResults)
             {
                 if (r is null) continue;
@@ -492,7 +498,7 @@ public static partial class ApiEndpoints
                     e.AccountId,
                     DisplayName = names.GetValueOrDefault(e.AccountId),
                     e.Score,
-                    Rank = e.ApiRank > 0 ? e.ApiRank : e.Rank,
+                    Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank),
                     e.Accuracy,
                     e.IsFullCombo,
                     e.Stars,

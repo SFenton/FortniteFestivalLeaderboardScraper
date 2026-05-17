@@ -83,6 +83,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     private readonly ILogger<GlobalLeaderboardScraper> _log;
     private readonly ScrapeProgressTracker _progress;
     private readonly ResilientHttpExecutor _executor;
+    private readonly EpicTrafficCoordinator? _trafficCoordinator;
     private readonly int _maxLookupRetries;
     private readonly FestivalService? _festivalService;
 
@@ -93,15 +94,35 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         HttpClient http,
         ScrapeProgressTracker progress,
         ILogger<GlobalLeaderboardScraper> log,
+        int maxLookupRetries,
+        FestivalService? festivalService)
+        : this(http, progress, log, maxLookupRetries, festivalService, trafficCoordinator: null) { }
+
+    public GlobalLeaderboardScraper(
+        HttpClient http,
+        ScrapeProgressTracker progress,
+        ILogger<GlobalLeaderboardScraper> log,
         int maxLookupRetries = ResilientHttpExecutor.DefaultMaxRetries,
-        FestivalService? festivalService = null)
+        FestivalService? festivalService = null,
+        EpicTrafficCoordinator? trafficCoordinator = null)
     {
         _http = http;
         _progress = progress;
         _log = log;
+        _trafficCoordinator = trafficCoordinator;
         _maxLookupRetries = maxLookupRetries;
         _festivalService = festivalService;
-        _executor = new ResilientHttpExecutor(http, log);
+        _executor = trafficCoordinator is null
+            ? new ResilientHttpExecutor(http, log)
+            : new ResilientHttpExecutor(http, log, trafficCoordinator);
+    }
+
+    internal async Task AcquireEpicSlotAsync(AdaptiveConcurrencyLimiter limiter, CancellationToken ct)
+    {
+        if (_trafficCoordinator is not null)
+            await _trafficCoordinator.WaitForTurnAsync(ct);
+
+        await limiter.WaitAsync(ct);
     }
 
     private bool SupportsSongInstrument(string songId, string instrument)
@@ -980,7 +1001,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     private const int ForbiddenThreshold = 3;
 
     /// <summary>Outcome of a single page fetch.</summary>
-    public enum FetchStatus { Success, Forbidden, OtherFailure }
+    public enum FetchStatus { Success, Forbidden, Unauthorized, OtherFailure }
 
     /// <summary>
     /// Fetch and parse a single leaderboard page with automatic retry on
@@ -995,17 +1016,22 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         string accessToken,
         string accountId,
         AdaptiveConcurrencyLimiter? limiter,
-        CancellationToken ct)
+        CancellationToken ct,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
                   $"/alltime/{accountId}?page={page}&rank=0&appId=Fortnite&showLiveSessions=false";
 
         var label = $"{songId}/{instrument}/page({page})";
 
+        var authRetryCount = 0;
+        string sentAccessToken = accessToken;
+
         HttpRequestMessage CreateRequest()
         {
+            sentAccessToken = accessTokenProvider?.CurrentAccessToken ?? accessToken;
             var req = new HttpRequestMessage(HttpMethod.Get, url);
-            ApplyFortniteHeaders(req, accessToken);
+            ApplyFortniteHeaders(req, sentAccessToken);
             return req;
         }
 
@@ -1048,6 +1074,35 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 }
 
                 var statusCode = (int)res.StatusCode;
+
+                if (statusCode == 401)
+                {
+                    if (accessTokenProvider is null)
+                    {
+                        _log.LogWarning("Leaderboard request failed for {Song}/{Instrument} page {Page}: 401 unauthorized and no refresh provider is available.",
+                            songId, instrument, page);
+                        return (null, 0, FetchStatus.Unauthorized);
+                    }
+
+                    if (authRetryCount > 0)
+                    {
+                        throw new ScrapeAuthenticationException(
+                            $"Leaderboard request for {songId}/{instrument} page {page} still returned 401 after token refresh.");
+                    }
+
+                    authRetryCount++;
+                    _progress.ReportRetry();
+
+                    var refreshed = await accessTokenProvider.RefreshAfterUnauthorizedAsync(sentAccessToken, label, ct);
+                    if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, sentAccessToken, StringComparison.Ordinal))
+                    {
+                        throw new ScrapeAuthenticationException(
+                            $"Unable to refresh access token after 401 for {songId}/{instrument} page {page}.");
+                    }
+
+                    fetchAttempt--;
+                    continue;
+                }
 
                 if (statusCode == 403 || statusCode == 500)
                 {
@@ -1096,7 +1151,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
         bool deferDeepScrape = false,
-        double validCutoffMultiplier = 0.95)
+        double validCutoffMultiplier = 0.95,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         if (!SupportsSongInstrument(songId, instrument))
         {
@@ -1118,11 +1174,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         // ── Page 0: discover totalPages ──
         bool page0Acquired = false;
-        if (limiter is not null) { await limiter.WaitAsync(ct); page0Acquired = true; }
+        if (limiter is not null) { await AcquireEpicSlotAsync(limiter, ct); page0Acquired = true; }
         (ParsedPage? firstPage, int firstLen, FetchStatus firstStatus) page0;
         try
         {
-            page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);
+            page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct, accessTokenProvider);
         }
         finally
         {
@@ -1224,9 +1280,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 {
                     var (parsed, bodyLen, status) = await _executor.WithCdnResilienceAsync(
                         work: () => FetchPageAsync(
-                            songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token),
+                            songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token, accessTokenProvider),
                         ct,
-                        acquireSlot: limiter is not null ? () => limiter.WaitAsync(pageCts.Token) : null,
+                        acquireSlot: limiter is not null ? () => AcquireEpicSlotAsync(limiter, pageCts.Token) : null,
                         releaseSlot: limiter is not null ? limiter.Release : null);
                     Interlocked.Increment(ref requestCount);
                     Interlocked.Add(ref totalBytes, bodyLen);
@@ -1354,12 +1410,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         {
                             if (limiter is not null)
                             {
-                                await limiter.WaitAsync(batchCts.Token);
+                                await AcquireEpicSlotAsync(limiter, batchCts.Token);
                                 acquired = true;
                             }
 
                             var (parsed, bodyLen, status) = await FetchPageAsync(
-                                songId, instrument, pageNum, accessToken, accountId, limiter, batchCts.Token);
+                                songId, instrument, pageNum, accessToken, accountId, limiter, batchCts.Token, accessTokenProvider);
                             Interlocked.Increment(ref requestCount);
                             Interlocked.Add(ref totalBytes, bodyLen);
                             _progress.ReportPageFetched(bodyLen);
@@ -1469,12 +1525,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         {
                             if (limiter is not null)
                             {
-                                await limiter.WaitAsync(wave2Cts.Token);
+                                await AcquireEpicSlotAsync(limiter, wave2Cts.Token);
                                 acquired = true;
                             }
 
                             var (parsed, bodyLen, status) = await FetchPageAsync(
-                                songId, instrument, pageNum, accessToken, accountId, limiter, wave2Cts.Token);
+                                songId, instrument, pageNum, accessToken, accountId, limiter, wave2Cts.Token, accessTokenProvider);
                             Interlocked.Increment(ref requestCount);
                             Interlocked.Add(ref totalBytes, bodyLen);
                             _progress.ReportPageFetched(bodyLen);
@@ -1573,7 +1629,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
         bool deferDeepScrape = false,
-        double validCutoffMultiplier = 0.95)
+        double validCutoffMultiplier = 0.95,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
@@ -1589,7 +1646,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 overThresholdExtraPages: overThresholdExtraPages,
                 validEntryTarget: validEntryTarget,
                 deferDeepScrape: deferDeepScrape,
-                validCutoffMultiplier: validCutoffMultiplier);
+                validCutoffMultiplier: validCutoffMultiplier,
+                accessTokenProvider: accessTokenProvider);
         }).ToList();
 
         var resultsArr = await Task.WhenAll(tasks);
@@ -1644,7 +1702,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         bool deferDeepScrape = false,
         double validCutoffMultiplier = 0.95,
         Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>? onPageScraped = null,
-        Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>? onBandPageScraped = null)
+        Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>? onBandPageScraped = null,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         if (sequential)
         {
@@ -1654,8 +1713,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 validCutoffMultiplier: validCutoffMultiplier,
                 onPageScraped: onPageScraped,
                 onBandPageScraped: onBandPageScraped,
-                sharedLimiter: sharedLimiter,
-                maxConcurrency: maxConcurrency);
+                accessTokenProvider: accessTokenProvider);
         }
 
         var ownsLimiter = sharedLimiter is null;
@@ -1684,7 +1742,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 overThresholdExtraPages: overThresholdExtraPages,
                 validEntryTarget: validEntryTarget,
                 deferDeepScrape: deferDeepScrape,
-                validCutoffMultiplier: validCutoffMultiplier);
+                validCutoffMultiplier: validCutoffMultiplier,
+                accessTokenProvider: accessTokenProvider);
 
             results[req.SongId] = songResults;
 
@@ -1745,7 +1804,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         // Release entry data after persistence callback
                         deepResult.Entries = [];
                     },
-                    ct);
+                    ct,
+                    accessTokenProvider);
             }
         }
 
@@ -1781,14 +1841,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>? onPageScraped = null,
         Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>? onBandPageScraped = null,
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
-        int maxConcurrency = DefaultMaxConcurrency)
+        int maxConcurrency = DefaultMaxConcurrency,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
 
-        var ownsLimiter = sharedLimiter is null;
-        var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
-            maxConcurrency, minDop: Math.Min(32, maxConcurrency), maxDop: maxConcurrency, _log, maxRequestsPerSecond);
+        var limiter = new AdaptiveConcurrencyLimiter(
+            pageConcurrency, minDop: Math.Min(32, pageConcurrency), maxDop: pageConcurrency, _log, maxRequestsPerSecond);
 
         _log.LogInformation(
             "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, DOP={MaxDop}, adaptive)",
@@ -1816,7 +1876,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         validCutoffMultiplier: validCutoffMultiplier,
                         onPageScraped: onPageScraped,
                         onBandPageScraped: onBandPageScraped,
-                        maxScores: req.MaxScores);
+                        maxScores: req.MaxScores,
+                        accessTokenProvider: accessTokenProvider);
 
                     // When entries accumulated in-memory (onPageScraped was null),
                     // enqueue per-instrument immediately so memory is freed before
@@ -1870,7 +1931,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         finally
         {
             _progress.SetAdaptiveLimiter(null);
-            if (ownsLimiter && limiter is IDisposable d) d.Dispose();
+            limiter.Dispose();
         }
     }
 
@@ -1895,7 +1956,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         double validCutoffMultiplier = 0.95,
         Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>? onPageScraped = null,
         Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>? onBandPageScraped = null,
-        SongMaxScores? maxScores = null)
+        SongMaxScores? maxScores = null,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         bool isBand = BandInstrumentMapping.AllBandTypes.Contains(instrument);
 
@@ -1910,9 +1972,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         if (isBand)
         {
             var bandFetched = await _executor.WithCdnResilienceAsync(
-                work: () => FetchBandPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct),
+                work: () => FetchBandPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct, accessTokenProvider),
                 ct,
-                acquireSlot: limiter is not null ? () => limiter.WaitAsync(ct) : null,
+                acquireSlot: limiter is not null ? () => AcquireEpicSlotAsync(limiter, ct) : null,
                 releaseSlot: limiter is not null ? limiter.Release : null);
             bandPage0 = bandFetched.Page;
             page0BodyLen = bandFetched.BodyLength;
@@ -1926,9 +1988,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         else
         {
             var fetched = await _executor.WithCdnResilienceAsync(
-                work: () => FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct),
+                work: () => FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct, accessTokenProvider),
                 ct,
-                acquireSlot: limiter is not null ? () => limiter.WaitAsync(ct) : null,
+                acquireSlot: limiter is not null ? () => AcquireEpicSlotAsync(limiter, ct) : null,
                 releaseSlot: limiter is not null ? limiter.Release : null);
             soloPage0 = fetched.Page;
             page0BodyLen = fetched.BodyLength;
@@ -2007,9 +2069,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     {
                         var (bandParsed, bandBodyLen, bandStatus) = await _executor.WithCdnResilienceAsync(
                             work: () => FetchBandPageAsync(
-                                songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token),
+                                songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token, accessTokenProvider),
                             pageCts.Token,
-                            acquireSlot: limiter is not null ? () => limiter.WaitAsync(pageCts.Token) : null,
+                            acquireSlot: limiter is not null ? () => AcquireEpicSlotAsync(limiter, pageCts.Token) : null,
                             releaseSlot: limiter is not null ? limiter.Release : null);
                         Interlocked.Increment(ref requestCount);
                         Interlocked.Add(ref totalBytes, bandBodyLen);
@@ -2029,9 +2091,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     {
                     var (parsed, bodyLen, status) = await _executor.WithCdnResilienceAsync(
                         work: () => FetchPageAsync(
-                            songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token),
+                            songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token, accessTokenProvider),
                         pageCts.Token,
-                        acquireSlot: limiter is not null ? () => limiter.WaitAsync(pageCts.Token) : null,
+                        acquireSlot: limiter is not null ? () => AcquireEpicSlotAsync(limiter, pageCts.Token) : null,
                         releaseSlot: limiter is not null ? limiter.Release : null);
                     Interlocked.Increment(ref requestCount);
                     Interlocked.Add(ref totalBytes, bodyLen);
@@ -2212,17 +2274,22 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         string accessToken,
         string accountId,
         AdaptiveConcurrencyLimiter? limiter,
-        CancellationToken ct)
+        CancellationToken ct,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{bandType}" +
                   $"/alltime/{accountId}?page={page}&rank=0&appId=Fortnite&showLiveSessions=false";
 
         var label = $"{songId}/{bandType}/page({page})";
 
+        var authRetryCount = 0;
+        string sentAccessToken = accessToken;
+
         HttpRequestMessage CreateRequest()
         {
+            sentAccessToken = accessTokenProvider?.CurrentAccessToken ?? accessToken;
             var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", sentAccessToken);
             return req;
         }
 
@@ -2262,6 +2329,35 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 }
 
                 var statusCode = (int)res.StatusCode;
+
+                if (statusCode == 401)
+                {
+                    if (accessTokenProvider is null)
+                    {
+                        _log.LogWarning("Band leaderboard request failed for {Song}/{BandType} page {Page}: 401 unauthorized and no refresh provider is available.",
+                            songId, bandType, page);
+                        return (null, 0, FetchStatus.Unauthorized);
+                    }
+
+                    if (authRetryCount > 0)
+                    {
+                        throw new ScrapeAuthenticationException(
+                            $"Band leaderboard request for {songId}/{bandType} page {page} still returned 401 after token refresh.");
+                    }
+
+                    authRetryCount++;
+                    _progress.ReportRetry();
+
+                    var refreshed = await accessTokenProvider.RefreshAfterUnauthorizedAsync(sentAccessToken, label, ct);
+                    if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, sentAccessToken, StringComparison.Ordinal))
+                    {
+                        throw new ScrapeAuthenticationException(
+                            $"Unable to refresh access token after 401 for {songId}/{bandType} page {page}.");
+                    }
+
+                    fetchAttempt--;
+                    continue;
+                }
 
                 if (statusCode == 403 || statusCode == 500)
                 {

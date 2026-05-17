@@ -250,6 +250,7 @@ export default function Page({
   const [quickLinksMaxHeight, setQuickLinksMaxHeight] = useState<number | null>(null);
 
   const hasQuickLinks = !!quickLinks && quickLinks.items.length > 0;
+  const showQuickLinksRail = hasQuickLinks && quickLinks?.showDesktopRail !== false;
   const quickLinksTitle = quickLinks?.title;
   const quickLinksOpenHandler = quickLinks?.onOpen;
 
@@ -267,7 +268,7 @@ export default function Page({
     const target = isWideDesktop
       ? (quickLinksRailPortal ?? scrollContainerRef.current ?? scrollRef.current)
       : (scrollContainerRef.current ?? scrollRef.current);
-    if (!hasQuickLinks || !isWideDesktop || !target) {
+    if (!showQuickLinksRail || !isWideDesktop || !target) {
       setQuickLinksMaxHeight(null);
       return;
     }
@@ -288,7 +289,7 @@ export default function Page({
       resizeObserver?.disconnect();
       window.removeEventListener('resize', updateQuickLinksMaxHeight);
     };
-  }, [hasQuickLinks, isWideDesktop, quickLinksRailPortal, scrollContainerRef, scrollRef]);
+  }, [isWideDesktop, quickLinksRailPortal, scrollContainerRef, scrollRef, showQuickLinksRail]);
 
   // 'fixed' mode: shrink the shell scroll container so content never scrolls behind the FAB
   useEffect(() => {
@@ -316,7 +317,7 @@ export default function Page({
       {fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}
     </div>
   );
-  const quickLinksRail = hasQuickLinks && isWideDesktop && quickLinks && quickLinksRailPortal
+  const quickLinksRail = showQuickLinksRail && isWideDesktop && quickLinks && quickLinksRailPortal
     ? createPortal(
       <PageQuickLinksRail quickLinks={{ ...quickLinks, maxHeight: quickLinksMaxHeight }} />,
       quickLinksRailPortal,

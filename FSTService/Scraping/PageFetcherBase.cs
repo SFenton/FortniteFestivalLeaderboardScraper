@@ -22,6 +22,7 @@ public abstract class PageFetcherBase<TEntry>
     protected readonly SharedDopPool Pool;
     protected readonly ScrapeProgressTracker Progress;
     protected readonly ILogger Log;
+    protected readonly ScrapeAccessTokenProvider? AccessTokenProvider;
 
     // ── Live counters (thread-safe) ──────────────────────────
 
@@ -41,12 +42,14 @@ public abstract class PageFetcherBase<TEntry>
         ResilientHttpExecutor executor,
         SharedDopPool pool,
         ScrapeProgressTracker progress,
-        ILogger log)
+        ILogger log,
+        ScrapeAccessTokenProvider? accessTokenProvider = null)
     {
         Executor = executor;
         Pool = pool;
         Progress = progress;
         Log = log;
+        AccessTokenProvider = accessTokenProvider;
     }
 
     // ── Abstract: subclass-specific behaviour ────────────────
@@ -115,10 +118,14 @@ public abstract class PageFetcherBase<TEntry>
         var url = BuildUrl(songId, type, page, accountId);
         var label = $"{songId}/{type}/page({page})";
 
+        var authRetryCount = 0;
+        string sentAccessToken = accessToken;
+
         HttpRequestMessage CreateRequest()
         {
+            sentAccessToken = AccessTokenProvider?.CurrentAccessToken ?? accessToken;
             var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", sentAccessToken);
             return req;
         }
 
@@ -165,6 +172,36 @@ public abstract class PageFetcherBase<TEntry>
                 }
 
                 var statusCode = (int)res.StatusCode;
+
+                if (statusCode == 401)
+                {
+                    if (AccessTokenProvider is null)
+                    {
+                        Log.LogWarning("Leaderboard request failed for {Song}/{Type} page {Page}: 401 unauthorized and no refresh provider is available.",
+                            songId, type, page);
+                        return (null, 0, GlobalLeaderboardScraper.FetchStatus.Unauthorized);
+                    }
+
+                    if (authRetryCount > 0)
+                    {
+                        throw new ScrapeAuthenticationException(
+                            $"Leaderboard request for {songId}/{type} page {page} still returned 401 after token refresh.");
+                    }
+
+                    authRetryCount++;
+                    Interlocked.Increment(ref TotalRetries);
+                    Progress.ReportRetry();
+
+                    var refreshed = await AccessTokenProvider.RefreshAfterUnauthorizedAsync(sentAccessToken, label, ct);
+                    if (string.IsNullOrWhiteSpace(refreshed) || string.Equals(refreshed, sentAccessToken, StringComparison.Ordinal))
+                    {
+                        throw new ScrapeAuthenticationException(
+                            $"Unable to refresh access token after 401 for {songId}/{type} page {page}.");
+                    }
+
+                    fetchAttempt--;
+                    continue;
+                }
 
                 if (statusCode == 403 || statusCode == 500)
                 {

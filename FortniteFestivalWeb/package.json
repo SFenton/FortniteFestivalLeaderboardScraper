@@ -14,6 +14,7 @@
     "lint": "eslint src/",
     "lint:css": "stylelint 'src/**/*.module.css'",
     "manual:screenshots": "node scripts/generate-manual-screenshots.cjs",
+    "icons:generate": "node scripts/generate-pwa-icons.mjs",
     "licenses:generate": "node ../tools/generate-license-manifest.mjs",
     "licenses:check": "node ../tools/generate-license-manifest.mjs --check",
     "check:encoding": "node ../tools/check-encoding.mjs"

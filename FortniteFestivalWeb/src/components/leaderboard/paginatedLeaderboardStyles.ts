@@ -46,6 +46,7 @@ const fixedFooterBase: CSSProperties = {
   boxSizing: BoxSizing.borderBox,
   zIndex: ZIndex.fixedFooter,
   pointerEvents: PointerEvents.auto,
+  touchAction: CssValue.none,
 };
 
 /** Wide-desktop total width: 2×sidebar + content. */

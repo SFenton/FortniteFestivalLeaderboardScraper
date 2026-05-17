@@ -48,6 +48,7 @@ export function clearSongDetailCache() {
 
 export type LeaderboardCache = {
   entries: LeaderboardEntry[];
+  showLeaderboardEntryTotals?: boolean;
   totalEntries: number;
   localEntries: number;
   page: number;

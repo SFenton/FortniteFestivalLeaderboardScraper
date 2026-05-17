@@ -86,6 +86,7 @@ export default memo(function InstrumentCard({
   const viewAllButtonRef = useRef<HTMLDivElement | null>(null);
   const [viewAllNeedsCompact, setViewAllNeedsCompact] = useState(false);
   const effectiveScoreWidth = isCompactCard ? undefined : scoreWidth;
+  const showInlineAccuracyAfterScore = isCompactCard && !isTwoCol;
 
   const topAccountIds = useMemo(
     () => new Set(prefetchedEntries.map(entry => normalizeAccountId(entry.accountId))),
@@ -243,6 +244,7 @@ export default memo(function InstrumentCard({
                 showDifficulty={showSeason}
                 showSeason={showSeason}
                 showAccuracy={showAccuracy}
+                showInlineAccuracyAfterScore={showInlineAccuracyAfterScore}
                 scoreWidth={effectiveScoreWidth}
                 rankWidth={rankWidth}
               />
@@ -281,6 +283,7 @@ export default memo(function InstrumentCard({
                 showDifficulty={showSeason}
                 showSeason={showSeason}
                 showAccuracy={showAccuracy}
+                showInlineAccuracyAfterScore={showInlineAccuracyAfterScore}
                 scoreWidth={effectiveScoreWidth}
                 rankWidth={rankWidth}
               />

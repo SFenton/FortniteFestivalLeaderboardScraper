@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom';
 import { IoChevronForward } from 'react-icons/io5';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
-  Colors, Font, Weight, Gap, InstrumentSize, Layout, Radius, WordBreak,
-  frostedCard, flexRow, flexColumn,
+  Colors, Font, Weight, Gap, InstrumentSize, WordBreak,
+  flexRow, flexColumn,
 } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
+import MarqueeText from '../../../components/common/MarqueeText';
 import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 
 /** Reusable section heading for the player page (title + optional description).
@@ -70,7 +71,7 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
       <div style={s.sectionWrapper}>
         <div style={s.sectionHeaderRow}>
           <div style={s.sectionTitleCol}>
-            <h2 style={s.sectionTitle}>{title}</h2>
+            <MarqueeText text={title} as="h2" style={s.sectionTitle} />
             {description && <p style={s.sectionDesc}>{description}</p>}
           </div>
           <Link
@@ -82,7 +83,7 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
             {...actionLinkPress.linkPressHandlers}
           >
             <span>{actionLabel}</span>
-            <IoChevronForward aria-hidden="true" size={16} style={s.sectionActionIcon} />
+            <IoChevronForward aria-hidden="true" size={20} style={s.sectionActionIcon} />
           </Link>
         </div>
       </div>
@@ -113,7 +114,6 @@ function useStyles(compact?: boolean) {
     } as CSSProperties,
     sectionHeaderRow: {
       ...flexRow,
-      alignItems: 'flex-start',
       justifyContent: 'space-between',
       gap: Gap.md,
       minWidth: 0,
@@ -151,19 +151,18 @@ function useStyles(compact?: boolean) {
       wordWrap: WordBreak.breakWord,
     } as CSSProperties,
     sectionActionLink: {
-      ...frostedCard,
       ...flexRow,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: Gap.xs,
+      gap: Gap.md,
       flexShrink: 0,
-      minHeight: Layout.pillButtonHeight,
-      padding: `0 ${Gap.md}px`,
-      borderRadius: Radius.full,
+      minHeight: InstrumentSize.sm,
+      padding: 0,
       color: Colors.textPrimary,
-      fontSize: Font.sm,
-      fontWeight: Weight.semibold,
+      fontSize: Font.lg,
+      fontWeight: Weight.bold,
       textDecoration: 'none',
+      whiteSpace: 'nowrap',
     } as CSSProperties,
     sectionActionLinkPressed: {
       backgroundColor: 'rgba(255, 255, 255, 0.06)',

@@ -73,7 +73,8 @@ public class SongProcessingMachine
         int batchSize = 500,
         bool reportProgress = true,
         int maxConcurrentSongs = 0,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        EpicTrafficKind trafficKind = EpicTrafficKind.Background)
     {
         if (songIds.Count == 0 || users.Count == 0)
             return new MachineResult();
@@ -120,7 +121,7 @@ public class SongProcessingMachine
         {
             var result = await ProcessSongAsync(
                 songId, instruments, users, seasonPrefixMap,
-                accessToken, callerAccountId, pool, isHighPriority, batchSize, iterCt);
+                    accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, iterCt);
 
             Interlocked.Add(ref totalUpdated, result.EntriesUpdated);
             Interlocked.Add(ref totalSessions, result.SessionsInserted);
@@ -174,9 +175,10 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
+        EpicTrafficKind trafficKind,
         CancellationToken ct)
         => await ProcessSongAsync(songId, instruments, users, seasonPrefixMap,
-            accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
+            accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, ct);
 
     /// <summary>
     /// Process one song across all instruments for all users.
@@ -192,6 +194,7 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
+        EpicTrafficKind trafficKind,
         CancellationToken ct)
     {
         int entriesUpdated = 0;
@@ -208,7 +211,7 @@ public class SongProcessingMachine
         {
             var result = await ProcessSongInstrumentAsync(
                 songId, instrument, users, seasonPrefixMap,
-                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct,
+                accessToken, callerAccountId, pool, isHighPriority, batchSize, trafficKind, ct,
                 missingSeasonsForSong);
 
             Interlocked.Add(ref entriesUpdated, result.EntriesUpdated);
@@ -244,6 +247,7 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
+        EpicTrafficKind trafficKind,
         CancellationToken ct,
         ConcurrentDictionary<int, bool>? missingSeasonsForSong = null)
     {
@@ -254,7 +258,7 @@ public class SongProcessingMachine
         // ─── Alltime lookups (async task) ─────────────────────
         var alltimeTask = RunAlltimeLookups(
             songId, instrument, users, accessToken, callerAccountId,
-            pool, isHighPriority, batchSize, ct);
+            pool, isHighPriority, batchSize, trafficKind, ct);
 
         // ─── Seasonal session lookups (async task) ────────────
         // Skip seasons that predate the instrument's launch:
@@ -264,7 +268,7 @@ public class SongProcessingMachine
 
         var seasonalTask = RunSeasonalLookups(
             songId, instrument, users, seasonPrefixMap, accessToken, callerAccountId,
-            pool, isHighPriority, batchSize, ct, songFirstSeason, missingSeasonsForSong);
+            pool, isHighPriority, batchSize, trafficKind, ct, songFirstSeason, missingSeasonsForSong);
 
         // Both phases use the SharedDopPool for backpressure — total API
         // concurrency remains bounded regardless of in-flight overlap.
@@ -307,6 +311,7 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
+        EpicTrafficKind trafficKind,
         CancellationToken ct)
     {
         int entriesUpdated = 0;
@@ -339,6 +344,7 @@ public class SongProcessingMachine
                 var lookupResult = await _lookupRunner.TryRunAsync(
                     pool,
                     isHighPriority,
+                    trafficKind,
                     ct,
                     work,
                     ex => _log.LogDebug(ex, "Alltime batch failed for {Song}/{Instrument}.", songId, instrument));
@@ -385,6 +391,7 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
+        EpicTrafficKind trafficKind,
         CancellationToken ct,
         int songFirstSeason = 1,
         ConcurrentDictionary<int, bool>? missingSeasonsForSong = null)
@@ -457,6 +464,7 @@ public class SongProcessingMachine
                 var lookupResult = await _lookupRunner.TryRunAsync(
                     pool,
                     isHighPriority,
+                    trafficKind,
                     ct,
                     work,
                     ex => _log.LogDebug(ex, "Seasonal batch failed for {Song}/{Instrument}/{Season}.",

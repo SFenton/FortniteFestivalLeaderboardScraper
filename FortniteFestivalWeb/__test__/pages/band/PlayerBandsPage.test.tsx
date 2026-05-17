@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Route, Routes, useLocation } from 'react-router-dom';
+import { GridTemplate } from '@festival/theme';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 
@@ -46,6 +47,23 @@ function makeBand(bandId: string, teamKey: string, bandType: 'Band_Duets' | 'Ban
   };
 }
 
+function makeBandListPayload(group: string, page: number) {
+  return {
+    accountId: 'p1',
+    group,
+    totalCount: 26,
+    entries: page === 1 ? [makeBand('band-1', 'p1:p2', 'Band_Duets', 4)] : [makeBand('band-2', 'p1:p3', 'Band_Duets', 1)],
+  };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="current-location">{`${location.pathname}${location.search}`}</div>;
@@ -81,6 +99,7 @@ describe('PlayerBandsPage', () => {
     expect(screen.getByText('Beta')).toBeTruthy();
     expect(screen.getByText('4')).toBeTruthy();
     expect(screen.getByText('appearances')).toBeTruthy();
+    expect(screen.getByTestId('player-bands-card-grid').style.gridTemplateColumns).toBe(GridTemplate.autoFitDetailCards);
     expect(screen.getByLabelText('View band Alpha + Beta')).toHaveAttribute(
       'href',
       '/bands/band-1?accountId=p1&bandType=Band_Duets&teamKey=p1%3Ap2&names=Alpha%20%2B%20Beta',
@@ -99,7 +118,23 @@ describe('PlayerBandsPage', () => {
     await advancePastSpinner();
 
     expect(screen.getAllByRole('link', { name: /View band/ })).toHaveLength(25);
-    expect(screen.getByText('1 / 2')).toBeTruthy();
+    const fixedPagination = screen.getByTestId('leaderboard-fixed-pagination');
+    expect(screen.getByTestId('leaderboard-page-info')).toHaveTextContent('1 / 2');
+    expect(screen.getByTestId('player-bands-card-grid')).not.toContainElement(fixedPagination);
+  });
+
+  it('does not render fixed pagination for a single page of bands', async () => {
+    mockApi.getPlayerBandsList.mockResolvedValue({
+      accountId: 'p1',
+      group: 'all',
+      totalCount: 1,
+      entries: [makeBand('band-1', 'p1:p2', 'Band_Duets', 4)],
+    });
+
+    renderPlayerBandsPage();
+    await advancePastSpinner();
+
+    expect(screen.queryByTestId('leaderboard-fixed-pagination')).toBeNull();
   });
 
   it('applies the desktop filter modal by updating group and resetting to page one', async () => {
@@ -120,6 +155,35 @@ describe('PlayerBandsPage', () => {
     fireEvent.click(screen.getByLabelText('Next'));
 
     expect(screen.getByTestId('current-location')).toHaveTextContent('/bands/player/p1?group=all&page=2&name=Alpha');
+  });
+
+  it('keeps fixed pagination visible while the next page is loading', async () => {
+    const pageTwo = createDeferred<ReturnType<typeof makeBandListPayload>>();
+    mockApi.getPlayerBandsList.mockImplementation((_accountId: string, group: string, page: number) => {
+      if (page === 2) return pageTwo.promise;
+      return Promise.resolve(makeBandListPayload(group, page));
+    });
+
+    renderPlayerBandsPage();
+    await advancePastSpinner();
+
+    expect(screen.getByTestId('leaderboard-page-info')).toHaveTextContent('1 / 2');
+
+    fireEvent.click(screen.getByLabelText('Next'));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.getByTestId('current-location')).toHaveTextContent('/bands/player/p1?group=all&page=2&name=Alpha');
+    expect(screen.getByTestId('leaderboard-fixed-pagination')).toBeTruthy();
+    expect(screen.getByTestId('leaderboard-page-info')).toHaveTextContent('2 / 2');
+    expect(screen.getByText('Beta')).toBeTruthy();
+
+    await act(async () => {
+      pageTwo.resolve(makeBandListPayload('all', 2));
+      await pageTwo.promise;
+    });
+
+    expect(await screen.findByText('Gamma')).toBeTruthy();
+    expect(screen.getByTestId('leaderboard-page-info')).toHaveTextContent('2 / 2');
   });
 
   it('shows an empty state for empty band groups', async () => {

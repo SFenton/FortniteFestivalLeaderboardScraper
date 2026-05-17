@@ -247,6 +247,7 @@ builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
 // Accessor that lets endpoints reach the active RoundRobinProxyHandler without a full DI
 // refactor. Null when proxy rotation is disabled (e.g. tests, single-proxy configs).
 builder.Services.AddSingleton<ProxyHandlerAccessor>();
+builder.Services.AddSingleton<EpicTrafficCoordinator>();
 
 builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
 
@@ -261,7 +262,8 @@ builder.Services.AddSingleton<GlobalLeaderboardScraper>(sp =>
     var progress = sp.GetRequiredService<FSTService.Scraping.ScrapeProgressTracker>();
     var log = sp.GetRequiredService<ILogger<GlobalLeaderboardScraper>>();
     var festival = sp.GetService<FortniteFestival.Core.Services.FestivalService>();
-    return new GlobalLeaderboardScraper(http, progress, log, festivalService: festival);
+    var trafficCoordinator = sp.GetRequiredService<EpicTrafficCoordinator>();
+    return new GlobalLeaderboardScraper(http, progress, log, festivalService: festival, trafficCoordinator: trafficCoordinator);
 });
 
 builder.Services.AddHttpClient<AccountNameResolver>()
@@ -307,6 +309,7 @@ builder.Services.AddSingleton(sp => (FSTService.Scraping.PathDataStore)sp.GetReq
 
 builder.Services.AddSingleton<FSTService.Api.DbStatsService>();
 builder.Services.AddSingleton<FSTService.Exports.PlayerDataExportService>();
+builder.Services.AddSingleton<FSTService.Scraping.WorkerStatusPublisher>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabasePressureMonitor, FSTService.Persistence.Maintenance.DatabasePressureMonitor>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DatabaseMaintenanceDryRunReporter>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetentionMaintenanceService, FSTService.Persistence.Maintenance.DatabaseRetentionMaintenanceService>();
@@ -338,7 +341,8 @@ builder.Services.AddSingleton<SharedDopPool>(sp =>
     int dop = opts.DegreeOfParallelism;
     int initialDop = Math.Clamp(opts.InitialDop, 4, dop);
     return new SharedDopPool(initialDop, minDop: Math.Min(initialDop, dop), maxDop: dop,
-        opts.LowPriorityPercent, log, opts.MaxRequestsPerSecond);
+        opts.LowPriorityPercent, log, opts.MaxRequestsPerSecond,
+        trafficCoordinator: sp.GetRequiredService<EpicTrafficCoordinator>());
 });
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
@@ -560,6 +564,7 @@ else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
 }
 else
 {
+    builder.Services.AddHostedService<WorkerStatusHeartbeatService>();
     builder.Services.AddHostedService<ScraperWorker>();
     builder.Services.AddHostedService<RegistrationBackfillWorker>();
     builder.Services.AddHostedService<BandRankHistoryWorker>();

@@ -92,6 +92,49 @@ public class TokenManager
     }
 
     /// <summary>
+    /// Force-refresh the current access token after a request proved it invalid.
+    /// If another caller already refreshed away from <paramref name="rejectedAccessToken"/>,
+    /// returns that newer token without performing another refresh.
+    /// </summary>
+    public virtual async Task<string?> ForceRefreshAccessTokenAsync(string? rejectedAccessToken = null, CancellationToken ct = default)
+    {
+        await _lock.WaitAsync(ct);
+        try
+        {
+            if (!string.IsNullOrEmpty(rejectedAccessToken) &&
+                _currentToken is not null &&
+                !string.Equals(_currentToken.AccessToken, rejectedAccessToken, StringComparison.Ordinal) &&
+                _currentToken.ExpiresAt > DateTimeOffset.UtcNow.AddMinutes(5))
+            {
+                return _currentToken.AccessToken;
+            }
+
+            if (_currentToken is not null && !string.IsNullOrEmpty(_currentToken.RefreshToken))
+            {
+                var refreshed = await TryRefreshAsync(_currentToken.RefreshToken, ct);
+                if (refreshed is not null) return refreshed;
+            }
+
+            var stored = await _store.LoadAsync(ct);
+            if (stored is not null && !string.IsNullOrEmpty(stored.RefreshToken))
+            {
+                _log.LogInformation("Loaded stored credentials for account {AccountId}. Attempting forced refresh...",
+                    stored.AccountId);
+                var refreshed = await TryRefreshAsync(stored.RefreshToken, ct);
+                if (refreshed is not null) return refreshed;
+            }
+
+            _log.LogWarning("Forced access-token refresh failed. Re-authentication may be required.");
+            _currentToken = null;
+            return null;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
     /// Start the device code flow and return the authorization details
     /// so the caller can direct the user to the verification URL.
     /// Call <see cref="CompletePollAsync"/> afterward to poll until login completes.
