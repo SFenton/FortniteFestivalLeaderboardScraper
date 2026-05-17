@@ -86,27 +86,24 @@
   animation: shopBreathe 3s ease-in-out infinite;
 }
 
-/* ── Purple breathe (SelectProfilePill circle on mobile) ── */
+/* ── Purple breathe (SelectProfilePill mobile pill) ── */
 
 @keyframes profile-breathe {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+  0%, 100% { background-color: var(--profile-pulse-base, rgba(18,24,38,0.96)); }
+  50% { background-color: var(--profile-pulse-target, var(--color-accent-purple)); }
+}
+
+.profilePillBreathe {
+  --profile-pulse-base: rgba(18,24,38,0.96);
+  --profile-pulse-target: var(--color-accent-purple);
+
+  position: relative;
+  isolation: isolate;
+  animation: profile-breathe 3s ease-in-out infinite;
 }
 
 .profileCircleBreathe {
-  position: relative;
-  background-color: transparent;
-  isolation: isolate;
-}
-
-.profileCircleBreathe::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: var(--color-accent-purple);
-  animation: profile-breathe 3s ease-in-out infinite;
-  z-index: -1;
+  composes: profilePillBreathe;
 }
 
 /* ── Blue border pulse (DrillDownDemo / TopScoresDemo / ViewAllDemo) ── */

@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Purple branded "Select Player Profile" pill with scale/opacity animation.
- * On mobile, renders as a pulsing circle with IoPersonAdd icon.
+ * On mobile, renders as a dark opaque pill with IoPersonAdd icon.
  * On desktop, renders as a full pill with text.
  */
 import { useMemo, type CSSProperties, type ReactNode } from 'react';
@@ -10,10 +10,10 @@ import { useTranslation } from 'react-i18next';
 import { ActionPill, ACTION_PILL_TRANSITION } from '../common/ActionPill';
 import PressableButton from '../common/PressableButton';
 import {
-  Colors, IconSize, Layout, Radius,
-  Position, Align, Cursor, Isolation, PointerEvents, CssProp,
-  transition, transitions, scale, flexCenter,
-  purpleGlass,
+  Colors, Gap, IconSize, Layout, Radius, Font, Weight,
+  Position, Align, Cursor, Isolation, PointerEvents, CssProp, BoxSizing,
+  transition, transitions, scale, flexCenter, padding, truncate,
+  opaqueGlass, purpleGlass,
   TRANSITION_MS, PILL_SCALE_HIDDEN,
 } from '@festival/theme';
 import anim from '../../styles/animations.module.css';
@@ -38,14 +38,16 @@ export function SelectProfilePill({ visible, onClick, isMobile, label, ariaLabel
   if (isMobile) {
     return (
       <PressableButton
-        style={s.circle}
-        className={visible ? anim.profileCircleBreathe : undefined}
+        style={s.mobilePill}
+        className={visible ? anim.profilePillBreathe : undefined}
         onPress={onClick}
         aria-label={buttonAriaLabel}
+        title={buttonLabel}
         data-testid="select-profile-pill"
         tabIndex={visible ? 0 : -1}
       >
         {circleIcon ?? pillIcon}
+        <span style={s.mobileLabel}>{buttonLabel}</span>
       </PressableButton>
     );
   }
@@ -77,18 +79,24 @@ function useStyles(visible: boolean) {
       transform: visible ? scale(1) : scale(PILL_SCALE_HIDDEN),
       pointerEvents: visible ? PointerEvents.auto : PointerEvents.none,
     } as CSSProperties,
-    circle: {
-      width: Layout.pillButtonHeight,
+    mobilePill: {
+      ...opaqueGlass,
+      minWidth: Layout.pillButtonHeight,
       height: Layout.pillButtonHeight,
       borderRadius: Radius.full,
       ...flexCenter,
+      justifyContent: Align.start,
+      gap: Gap.md,
+      padding: padding(0, Gap.xl, 0, Gap.lg),
+      boxSizing: BoxSizing.borderBox,
+      maxWidth: `calc(100vw - ${Gap.xl * 2}px)`,
       color: Colors.textPrimary,
+      fontSize: Font.sm,
+      fontWeight: Weight.semibold,
       cursor: Cursor.pointer,
       flexShrink: 0,
       alignSelf: Align.center,
-      border: 'none',
       position: Position.relative,
-      backgroundColor: visible ? Colors.transparent : Colors.accentPurple,
       isolation: visible ? Isolation.isolate : undefined,
       transition: transitions(
         transition(CssProp.opacity, TRANSITION_MS),
@@ -97,6 +105,11 @@ function useStyles(visible: boolean) {
       opacity: visible ? 1 : 0,
       transform: visible ? scale(1) : scale(PILL_SCALE_HIDDEN),
       pointerEvents: visible ? PointerEvents.auto : PointerEvents.none,
+    } as CSSProperties,
+    mobileLabel: {
+      ...truncate,
+      minWidth: 0,
+      lineHeight: 1,
     } as CSSProperties,
   }), [visible]);
 }
