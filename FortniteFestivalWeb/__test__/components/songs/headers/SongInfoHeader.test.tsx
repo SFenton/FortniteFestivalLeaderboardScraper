@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver, stubMatchMedia } from '../../../helpers/browserStubs';
-import { IconSize, Layout } from '@festival/theme';
+import { Colors, IconSize, Layout } from '@festival/theme';
 
 vi.mock('../../../../src/api/client', () => ({
   api: {
@@ -33,6 +33,25 @@ beforeAll(() => {
   stubResizeObserver({ width: 1024, height: 800 });
   stubElementDimensions(800);
   stubIntersectionObserver();
+  const originalCreateRange = document.createRange.bind(document);
+  document.createRange = () => {
+    const range = originalCreateRange();
+    Object.assign(range, {
+      getBoundingClientRect: () => ({
+        top: 0,
+        left: 0,
+        bottom: 16,
+        right: 120,
+        width: 120,
+        height: 16,
+        x: 0,
+        y: 0,
+        toJSON() { return this; },
+      }),
+      getClientRects: () => [] as unknown as DOMRectList,
+    });
+    return range;
+  };
   if (!HTMLElement.prototype.animate) {
     HTMLElement.prototype.animate = vi.fn().mockReturnValue({ cancel: vi.fn(), pause: vi.fn(), play: vi.fn(), finish: vi.fn(), onfinish: null, finished: Promise.resolve() }) as any;
   }
@@ -253,5 +272,42 @@ describe('SongInfoHeader', () => {
 
     const icon = button.querySelector(`[data-size="${IconSize.action}"]`);
     expect(icon).not.toBeNull();
+  });
+
+  it('renders Item Shop on mobile with compact path circle metrics', () => {
+    stubMatchMedia(true);
+
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} shopUrl="https://example.com/shop/s1" />
+      </TestProviders>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    const linkStyle = link.getAttribute('style') ?? '';
+    expect(linkStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain('border-radius: 999px');
+
+    const icon = link.querySelector(`[data-size="${IconSize.sm}"]`);
+    expect(icon).not.toBeNull();
+  });
+
+  it('renders pulsing Item Shop on mobile with neutral opaque glass backing', () => {
+    stubMatchMedia(true);
+
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} shopUrl="https://example.com/shop/s1" shopPulse />
+      </TestProviders>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    const linkStyle = link.getAttribute('style') ?? '';
+    expect(linkStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain('border-radius: 999px');
+    expect(link.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(link.style.border).toBe('1px solid rgba(255, 255, 255, 0.08)');
   });
 });

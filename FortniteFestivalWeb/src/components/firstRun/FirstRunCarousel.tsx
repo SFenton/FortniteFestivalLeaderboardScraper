@@ -3,12 +3,15 @@ import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo, typ
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IoClose, IoChevronBack, IoChevronForward } from 'react-icons/io5';
-import { TRANSITION_MS, FAST_FADE_MS, SWIPE_THRESHOLD, STAGGER_INTERVAL, Size, Colors, Gap, Radius, Font, Weight, Layout, MetadataSize, modalOverlay, modalCard, flexColumn, flexCenter, padding, transition, transitions } from '@festival/theme';
+import { TRANSITION_MS, FAST_FADE_MS, STAGGER_INTERVAL, Size, Colors, Gap, Radius, Font, Weight, Layout, MetadataSize, modalOverlay, modalCard, flexColumn, flexCenter, padding, transition, transitions } from '@festival/theme';
 import type { FirstRunSlideDef } from '../../firstRun/types';
 import { SlideHeightContext } from '../../firstRun/SlideHeightContext';
 import FadeIn from '../page/FadeIn';
+import PressableButton from '../common/PressableButton';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
+import { useSwipeNavigation } from '../../hooks/ui/useSwipeNavigation';
 
 type FirstRunCarouselProps = {
   slides: FirstRunSlideDef[];
@@ -26,7 +29,6 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [slideKey, setSlideKey] = useState(0);
   const [fading, setFading] = useState(false);
-  const touchStartRef = useRef<number | null>(null);
 
   // Animate in on mount
   /* v8 ignore start -- requestAnimationFrame not available in jsdom */
@@ -81,24 +83,12 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   const goForward = useCallback(() => {
     navigateTo(currentIndex + 1);
   }, [navigateTo, currentIndex]);
+  const dismissPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleDismiss, disabled: animOut });
+  const prevPressHandlers = usePressAction<HTMLButtonElement>({ onPress: goBack, disabled: animOut || fading || currentIndex === 0 });
+  const nextPressHandlers = usePressAction<HTMLButtonElement>({ onPress: goForward, disabled: animOut || fading || currentIndex >= slides.length - 1 });
+  const overlayPressHandlers = usePressAction<HTMLDivElement>({ onPress: handleDismiss, disabled: animOut });
 
-  // Swipe handlers
-  /* v8 ignore start -- touch events not available in jsdom */
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartRef.current = e.touches[0]?.clientX ?? null;
-  }, []);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (touchStartRef.current === null) return;
-    const endX = e.changedTouches[0]?.clientX;
-    if (endX === undefined) return;
-    const delta = endX - touchStartRef.current;
-    touchStartRef.current = null;
-    if (Math.abs(delta) < SWIPE_THRESHOLD) return;
-    if (delta < 0) goForward();
-    else goBack();
-  }, [goForward, goBack]);
-  /* v8 ignore stop */
+  const { handleTouchStart, handleTouchEnd } = useSwipeNavigation({ onBack: goBack, onForward: goForward });
 
   // Measure available content height and expose via React context for demo components.
   // Also kept as a CSS var for any CSS-only consumers.
@@ -145,7 +135,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   const cardBase = isMobile ? { ...S.card, ...S.cardMobile } : S.card;
   /* v8 ignore start -- animation style branches depend on requestAnimationFrame timing */
   const overlayOpacity = animOut ? 0 : (animIn ? 1 : 0);
-  const overlayPointerEvents = entranceDone && !animOut ? 'auto' as const : 'none' as const;
+  const overlayPointerEvents = !animOut ? 'auto' as const : 'none' as const;
   const cardStyle = animOut
     ? { opacity: 0, transform: 'scale(0.95) translateY(10px)', transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease` }
     : entranceDone
@@ -156,12 +146,14 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   return createPortal(
     <div
       style={{ ...S.overlay, opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: overlayPointerEvents }}
-      onClick={handleDismiss}
+      {...overlayPressHandlers}
       data-glow-scope=""
       data-testid="fre-overlay"
     >
       <div
         style={{ ...cardBase, ...cardStyle }}
+        onPointerDown={e => e.stopPropagation()}
+        onPointerUp={e => e.stopPropagation()}
         onClick={e => e.stopPropagation()}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
@@ -169,7 +161,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
       >
         {/* Close button — own flex row so content never overlaps */}
         <div style={S.closeRow}>
-          <button style={S.closeBtn} onClick={handleDismiss} aria-label={t('common.close')} data-testid="fre-close">
+          <button style={S.closeBtn} {...dismissPressHandlers} aria-label={t('common.close')} data-testid="fre-close">
             <IoClose size={Size.iconFab} />
           </button>
         </div>
@@ -213,7 +205,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
         <div style={S.paginationRow}>
           <button
             style={isFirst ? S.arrowBtnDisabled : S.arrowBtn}
-            onClick={goBack}
+            {...prevPressHandlers}
             disabled={isFirst}
             aria-label={t('aria.backOneEntry')}
             data-testid="fre-prev"
@@ -223,10 +215,10 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
 
           <div style={S.dotsWrap} data-testid="fre-dots">
             {slides.map((_, i) => (
-              <button
+              <PressableButton
                 key={i}
                 style={i === currentIndex ? S.dotActive : S.dot}
-                onClick={() => { if (i !== currentIndex) navigateTo(i); }}
+                onPress={() => { if (i !== currentIndex) navigateTo(i); }}
                 aria-label={`Slide ${i + 1}`}
               />
             ))}
@@ -234,7 +226,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
 
           <button
             style={isLast ? S.arrowBtnDisabled : S.arrowBtn}
-            onClick={goForward}
+            {...nextPressHandlers}
             disabled={isLast}
             aria-label={t('aria.forwardOneEntry')}
             data-testid="fre-next"

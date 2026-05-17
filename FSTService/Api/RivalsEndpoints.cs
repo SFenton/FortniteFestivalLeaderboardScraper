@@ -35,6 +35,11 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, rivalsCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
             var status = metaDb.GetRivalsStatus(accountId);
             var combos = metaDb.GetRivalCombos(accountId);
 
@@ -82,6 +87,11 @@ public static partial class ApiEndpoints
             {
                 var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
                 if (result is not null) return result;
+            }
+
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, rivalsCache);
+                if (frozenMiss is not null) return frozenMiss;
             }
 
             var status = metaDb.GetRivalsStatus(accountId);
@@ -134,9 +144,11 @@ public static partial class ApiEndpoints
             var instrumentSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var c in combosToQuery)
             {
-                if (c.Contains('+'))
+                if (ComboIds.IsProDrumsFamilyScope(c))
+                    foreach (var i in ComboIds.ProDrumsFamilyInstruments) instrumentSet.Add(i);
+                else if (c.Contains('+'))
                     foreach (var i in c.Split('+')) instrumentSet.Add(i);
-                else if (c.Length <= 2 && int.TryParse(c, System.Globalization.NumberStyles.HexNumber, null, out _))
+                else if (c.Length <= 3 && int.TryParse(c, System.Globalization.NumberStyles.HexNumber, null, out _))
                     foreach (var i in ComboIds.ToInstruments(c)) instrumentSet.Add(i);
                 else
                     instrumentSet.Add(c);
@@ -212,6 +224,11 @@ public static partial class ApiEndpoints
             {
                 var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
                 if (result is not null) return result;
+            }
+
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, rivalsCache);
+                if (frozenMiss is not null) return frozenMiss;
             }
 
             var combos = metaDb.GetRivalCombos(accountId);
@@ -367,6 +384,11 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, rivalsCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
             var above = metaDb.GetUserRivals(accountId, combo, "above");
             var below = metaDb.GetUserRivals(accountId, combo, "below");
 
@@ -427,10 +449,30 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
-            var allSamples = new List<RivalSongSampleRow>();
-            foreach (var inst in instruments)
             {
-                allSamples.AddRange(metaDb.GetRivalSongSamples(accountId, rivalId, inst));
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, rivalsCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
+            var allSamples = new List<RivalSongSampleRow>();
+            if (resolvedCombo.Value.IsProDrumsFamilyScope)
+            {
+                allSamples.AddRange(rivalsCalculator.ComputeDirectProDrumsFamilySongSamples(accountId, rivalId));
+            }
+            else
+            {
+                var missingSampleInstruments = new List<string>();
+                foreach (var inst in instruments)
+                {
+                    var storedSamples = metaDb.GetRivalSongSamples(accountId, rivalId, inst);
+                    if (storedSamples.Count == 0)
+                        missingSampleInstruments.Add(inst);
+                    else
+                        allSamples.AddRange(storedSamples);
+                }
+
+                if (missingSampleInstruments.Count > 0)
+                    allSamples.AddRange(rivalsCalculator.ComputeDirectSongSamples(accountId, rivalId, missingSampleInstruments));
             }
 
             if (allSamples.Count == 0)
@@ -457,7 +499,9 @@ public static partial class ApiEndpoints
             var rivalName = metaDb.GetDisplayName(rivalId);
 
             // Compute song gaps on-the-fly
-            var gaps = rivalsCalculator.ComputeSongGaps(accountId, rivalId, instruments);
+            var gaps = resolvedCombo.Value.IsProDrumsFamilyScope
+                ? rivalsCalculator.ComputeProDrumsFamilySongGaps(accountId, rivalId)
+                : rivalsCalculator.ComputeSongGaps(accountId, rivalId, instruments);
 
             var payload = new
             {
@@ -476,6 +520,8 @@ public static partial class ApiEndpoints
                         title = song?.track?.tt,
                         artist = song?.track?.an,
                         s.Instrument,
+                        s.UserInstrument,
+                        s.RivalInstrument,
                         s.UserRank,
                         s.RivalRank,
                         s.RankDelta,
@@ -545,6 +591,11 @@ public static partial class ApiEndpoints
             {
                 var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
                 if (result is not null) return result;
+            }
+
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, rivalsCache);
+                if (frozenMiss is not null) return frozenMiss;
             }
 
             var samples = metaDb.GetRivalSongSamples(accountId, rivalId, instrument);
@@ -642,8 +693,19 @@ public static partial class ApiEndpoints
         if (normalizedCombo is null)
             return null;
 
-        return new ResolvedRivalCombo(normalizedCombo, ComboIds.ToInstruments(normalizedCombo).ToArray());
+        if (ComboIds.IsProDrumsFamilyScope(normalizedCombo))
+        {
+            return new ResolvedRivalCombo(
+                normalizedCombo,
+                ComboIds.ProDrumsFamilyInstruments.ToArray(),
+                IsProDrumsFamilyScope: true);
+        }
+
+        return new ResolvedRivalCombo(normalizedCombo, ComboIds.ToInstruments(normalizedCombo).ToArray(), false);
     }
 
-    internal readonly record struct ResolvedRivalCombo(string CanonicalCombo, string[] Instruments);
+    internal readonly record struct ResolvedRivalCombo(
+        string CanonicalCombo,
+        string[] Instruments,
+        bool IsProDrumsFamilyScope);
 }

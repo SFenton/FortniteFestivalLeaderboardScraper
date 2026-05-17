@@ -45,18 +45,39 @@ public static partial class ApiEndpoints
                 && normalizedSelectedTeamKey is null
                 && normalizedComboId is null;
 
-            if (canUseGenericCache)
+            IResult? serveGenericCachedPreview()
             {
                 var cacheKey = LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, effectiveTop);
                 var cachedResult = CacheHelper.ServeIfCached(httpContext, lbCache.Get(cacheKey));
                 if (cachedResult is not null) return cachedResult;
 
                 var precomputed = precomputer.TryGet(cacheKey);
-                if (precomputed is not null)
+                if (precomputed is null) return null;
+
+                lbCache.Set(cacheKey, precomputed.Value.Json);
+                return CacheHelper.ServeIfCached(httpContext, precomputed);
+            }
+
+            if (canUseGenericCache)
+            {
+                var cachedResult = serveGenericCachedPreview();
+                if (cachedResult is not null) return cachedResult;
+
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+            else
+            {
+                if (lbCache.IsFrozen && normalizedComboId is null)
                 {
-                    lbCache.Set(cacheKey, precomputed.Value.Json);
-                    var precomputedResult = CacheHelper.ServeIfCached(httpContext, precomputed);
-                    if (precomputedResult is not null) return precomputedResult;
+                    var cachedResult = serveGenericCachedPreview();
+                    if (cachedResult is not null) return cachedResult;
+                }
+
+                if (lbCache.IsFrozen)
+                {
+                    var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
+                    if (frozenMiss is not null) return frozenMiss;
                 }
             }
 
@@ -87,7 +108,8 @@ public static partial class ApiEndpoints
             string? accountId,
             string? teamKey,
             string? combo,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -100,6 +122,9 @@ public static partial class ApiEndpoints
 
             var effectiveTop = Math.Clamp(top ?? 25, 1, 100);
             var effectiveOffset = Math.Max(0, offset ?? 0);
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, effectiveTop, effectiveOffset, comboValidation.ComboId);
             var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
             var selectedPlayerEntry = selectedAccountId is null
@@ -139,7 +164,8 @@ public static partial class ApiEndpoints
             double? leeway,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
-            IPathDataStore pathStore) =>
+            IPathDataStore pathStore,
+            [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -158,6 +184,9 @@ public static partial class ApiEndpoints
                 }
                 instrumentFilter = new HashSet<string>(requestedInstruments, StringComparer.OrdinalIgnoreCase);
             }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var profilesByAccount = persistence.GetCurrentStatePlayerProfiles(selectedAccountIds, songId, instrumentFilter);
             var scoreRows = selectedAccountIds
@@ -309,11 +338,16 @@ public static partial class ApiEndpoints
             double? leeway,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
-            IPathDataStore pathStore) =>
+            IPathDataStore pathStore,
+            [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             int? maxScore = null;
             if (leeway.HasValue)
             {
@@ -392,6 +426,11 @@ public static partial class ApiEndpoints
                     var result = CacheHelper.ServeIfCached(httpContext, precomputed);
                     if (result is not null) return result;
                 }
+            }
+
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
+                if (frozenMiss is not null) return frozenMiss;
             }
 
             // ── Build response ───────────────────────────────────

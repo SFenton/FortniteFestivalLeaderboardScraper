@@ -286,19 +286,12 @@ describe('StarsToggles', () => {
 
 // ---- FilterModal.tsx ----
 import FilterModal from '../../../src/pages/songs/modals/FilterModal';
+import { defaultSongFilters } from '../../../src/utils/songSettings';
 
 describe('FilterModal', () => {
   const draft = {
+    ...defaultSongFilters(),
     instrumentFilter: null as any,
-    missingScores: {} as Record<string, boolean>,
-    missingFCs: {} as Record<string, boolean>,
-    hasScores: {} as Record<string, boolean>,
-    hasFCs: {} as Record<string, boolean>,
-    overThreshold: {} as Record<string, boolean>,
-    seasonFilter: {} as Record<number, boolean>,
-    starsFilter: {} as Record<number, boolean>,
-    percentileFilter: {} as Record<number, boolean>,
-    difficultyFilter: {} as Record<number, boolean>,
   };
   const defaults = { visible: true, draft, savedDraft: draft, availableSeasons: [] as number[], onChange: vi.fn(), onCancel: vi.fn(), onReset: vi.fn(), onApply: vi.fn() };
 

@@ -2,7 +2,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoBagHandle } from 'react-icons/io5';
-import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, CssValue, Position, Isolation, padding } from '@festival/theme';
+import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, Position, Isolation, opaqueGlass, padding } from '@festival/theme';
 import anim from '../../../../styles/animations.module.css';
 
 /**
@@ -39,6 +39,7 @@ function useStyles() {
   return useMemo(() => ({
     wrap: { display: Display.flex, justifyContent: Justify.center, padding: Gap.sm } as CSSProperties,
     shopButtonPulse: {
+      ...opaqueGlass,
       display: Display.inlineFlex,
       alignItems: Align.center,
       justifyContent: Justify.center,
@@ -50,10 +51,10 @@ function useStyles() {
       flexShrink: 0,
       height: Layout.shopDesktopHeight,
       position: Position.relative,
-      backgroundColor: CssValue.transparent,
       isolation: Isolation.isolate,
     } as CSSProperties,
     shopCirclePulse: {
+      ...opaqueGlass,
       width: Layout.shopCircleSize,
       height: Layout.shopCircleSize,
       borderRadius: Radius.full,
@@ -63,7 +64,6 @@ function useStyles() {
       color: Colors.textPrimary,
       flexShrink: 0,
       position: Position.relative,
-      backgroundColor: CssValue.transparent,
       isolation: Isolation.isolate,
     } as CSSProperties,
     iconMargin: { marginRight: Gap.md } as CSSProperties,

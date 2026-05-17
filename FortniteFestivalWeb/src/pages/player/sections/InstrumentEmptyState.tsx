@@ -52,7 +52,7 @@ export default function InstrumentEmptyState({
   return (
     <div data-testid={testId ?? (instrument ? `inst-empty-${instrument}` : undefined)} style={containerStyle}>
       <span style={emptyStateStyles.title}>{resolvedTitle}</span>
-      <span style={emptyStateStyles.subtitle}>{resolvedSubtitle}</span>
+      {resolvedSubtitle ? <span style={emptyStateStyles.subtitle}>{resolvedSubtitle}</span> : null}
     </div>
   );
 }

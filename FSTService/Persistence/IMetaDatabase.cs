@@ -13,6 +13,10 @@ public interface IMetaDatabase : IDisposable
     long StartScrapeRun();
     void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false);
     ScrapeRunInfo? GetLastCompletedScrapeRun();
+    ScrapeRunInfo? GetPublishedScrapeRun();
+    void PublishScrapeRun(long scrapeId, bool promoteCachedResponses = true);
+    void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
+    PublicReadFreezeState GetPublicReadFreezeState();
     bool ShouldShowLeaderboardEntryTotals();
     void RecordScrapePhaseTiming(ScrapePhaseTimingRecord timing);
 
@@ -61,6 +65,7 @@ public interface IMetaDatabase : IDisposable
 
     // ── Registered users ─────────────────────────────────────────────
     HashSet<string> GetRegisteredAccountIds();
+    bool IsAccountRegistered(string accountId);
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);
     void TouchWebRegistrationActivity(string accountId);
@@ -94,6 +99,7 @@ public interface IMetaDatabase : IDisposable
     void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound);
     void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound);
     HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId);
+    BackfillSongProgressInfo? GetBackfillSongProgress(string accountId, int checkedPairs, int totalPairs);
 
     // ── History reconstruction ───────────────────────────────────────
     void EnqueueHistoryRecon(string accountId, int totalSongsToProcess);
@@ -172,6 +178,12 @@ public interface IMetaDatabase : IDisposable
     void SnapshotCompositeRankHistory(int retentionDays = 365, bool cleanupRetention = true);
     int CleanupCompositeRankHistoryRetention(int retentionDays = 365, int batchSize = 5000, int maxBatches = 1, int commandTimeoutSeconds = 0, CancellationToken ct = default);
 
+    // ── Solo family rankings ────────────────────────────────────────
+    void ReplaceSoloFamilyRankings(IReadOnlyList<SoloFamilyRankingDto> rankings);
+    (List<SoloFamilyRankingDto> Entries, int TotalCount) GetSoloFamilyRankings(string scopeId, string rankBy = "adjusted", int page = 1, int pageSize = 50);
+    SoloFamilyRankingDto? GetSoloFamilyRanking(string scopeId, string accountId);
+    Dictionary<string, SoloFamilyRankingDto> GetSoloFamilyRankingsForAccount(string accountId);
+
     // ── Composite ranking deltas ─────────────────────────────────────
     void TruncateCompositeRankingDeltas();
     void WriteCompositeRankingDeltas(IReadOnlyList<(string AccountId, double LeewayBucket,
@@ -191,6 +203,11 @@ public interface IMetaDatabase : IDisposable
     BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
     void SnapshotBandRankHistory(string bandType, int retentionDays = 365);
     BandRankHistorySnapshotResult SnapshotBandRankHistoryChunked(string bandType, BandRankHistorySnapshotOptions options, long? jobId = null, CancellationToken ct = default);
+    BandRankHistoryWideNarrowParitySummary GetBandRankHistoryWideNarrowParity(string bandType, DateOnly snapshotDate, string? rankingScope = null, string? comboId = null, int sampleLimit = 10, bool ensureSchema = true);
+    BandRankHistoryV2ParitySummary GetBandRankHistoryV2Parity(string bandType, DateOnly snapshotDate, string? rankingScope = null, string? comboId = null, int sampleLimit = 10, bool ensureSchema = true);
+    BandRankHistoryV2LatestParitySummary GetBandRankHistoryV2LatestParity(string bandType, DateOnly snapshotDate, string? rankingScope = null, string? comboId = null, int sampleLimit = 10, bool ensureSchema = true);
+    BandRankHistoryV2ReadPreview GetBandRankHistoryV2ReadPreview(string bandType, string teamKey, string? comboId = null, int days = 30, bool ensureSchema = true);
+    BandRankHistoryV2BackfillResult BackfillBandRankHistoryV2FromLegacy(string bandType, BandRankHistoryV2BackfillOptions options, CancellationToken ct = default);
     int CleanupBandRankHistoryRetention(string bandType, int retentionDays = 365, int commandTimeoutSeconds = 0, CancellationToken ct = default, int batchSize = 5000, int maxBatches = 1);
     BandRankHistoryJobInfo EnqueueBandRankHistoryJob(long scrapeId, string bandType, DateOnly snapshotDate, string mode, bool coalesceSameDay = true);
     BandRankHistoryJobInfo? GetNextBandRankHistoryJob(int maxAttempts = int.MaxValue, TimeSpan? retryDelay = null);
@@ -207,9 +224,9 @@ public interface IMetaDatabase : IDisposable
     List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30);
     List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null);
     (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5);
-    (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0, string? comboId = null);
-    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId, string? comboId = null);
-    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey, string? comboId = null);
+    (List<SongBandLeaderboardEntryDto> Entries, int TotalEntries) GetSongBandLeaderboard(string songId, string bandType, int limit = 25, int offset = 0, string? comboId = null, bool requireCurrentProjection = false);
+    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId, string? comboId = null, bool requireCurrentProjection = false);
+    SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey, string? comboId = null, bool requireCurrentProjection = false);
     IReadOnlyList<string> GetBandLeaderboardSongIds();
     List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);
 
@@ -268,7 +285,7 @@ public interface IMetaDatabase : IDisposable
     /// <summary>Mark a deep-scrape job as complete or failed.</summary>
     void CompleteDeepScrapeJob(long scrapeId, string songId, string instrument, string status);
 
-    /// <summary>Delete all staging data and deep-scrape jobs for scrape IDs older than the given one.</summary>
+    /// <summary>Delete all staging data, deep-scrape jobs, and abandoned incomplete scrape logs older than the given one.</summary>
     int CleanupAbandonedStaging(long currentScrapeId);
 
     /// <summary>Delete staged entries for one leaderboard combo.</summary>

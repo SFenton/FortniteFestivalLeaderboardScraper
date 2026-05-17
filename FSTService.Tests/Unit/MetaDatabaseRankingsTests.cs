@@ -364,6 +364,15 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(expectedBestForP1.TotalScoreRank, bestForP1.TotalScoreRank);
         Assert.Null(Db.GetBandTeamRankingForAccount("Band_Duets", "missing", rankBy: "totalscore"));
 
+        var bestComboForP1 = Db.GetBandTeamRankingForAccount("Band_Duets", "p1", comboId, rankBy: "totalscore");
+        var expectedComboBestForP1 = Db.GetBandTeamRankings("Band_Duets", comboId, rankBy: "totalscore")
+            .Entries
+            .First(entry => entry.TeamMembers.Contains("p1"));
+        Assert.NotNull(bestComboForP1);
+        Assert.Equal(expectedComboBestForP1.TeamKey, bestComboForP1.TeamKey);
+        Assert.Equal(expectedComboBestForP1.TotalScoreRank, bestComboForP1.TotalScoreRank);
+        Assert.Null(Db.GetBandTeamRankingForAccount("Band_Duets", "p3", comboId, rankBy: "totalscore"));
+
         var combos = Db.GetBandRankingCombos("Band_Duets");
         Assert.Contains(combos, entry => entry.ComboId == comboId && entry.TeamCount == 2);
         Assert.Contains(combos, entry => entry.ComboId == BandComboIds.FromInstruments(["Solo_Guitar", "Solo_Guitar"]) && entry.TeamCount == 1);
@@ -491,6 +500,46 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void BandRankHistoryV2Schema_EnsuresTablesAndCurrentMetadataColumnsIdempotently()
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        _ = Db.GetBandRankHistoryV2Parity("Band_Duets", today);
+        _ = Db.GetBandRankHistoryV2Parity("Band_Duets", today);
+
+        Assert.True(TableExists("band_team_ranking_generation"));
+        Assert.True(TableExists("band_team_rank_history_snapshot_v2"));
+        Assert.True(TableExists("band_team_rank_history_points_v2"));
+        Assert.True(TableExists("band_team_rank_history_latest_v2"));
+        Assert.True(ColumnExists("band_rank_history_jobs", "source_generation"));
+        Assert.True(ColumnExists("band_rank_history_job_chunks", "chunk_ordinal"));
+        Assert.True(ColumnExists("band_rank_history_job_chunks", "team_key_start"));
+        Assert.True(ColumnExists("band_rank_history_job_chunks", "team_key_end"));
+        Assert.True(ColumnExists("band_rank_history_job_chunks", "estimated_rows"));
+        Assert.True(ColumnExists("band_rank_history_job_chunks", "source_generation"));
+        Assert.True(ColumnExists("band_team_rankings_current_band_duets", "ranking_generation"));
+        Assert.True(ColumnExists("band_team_rankings_current_band_duets", "row_fingerprint"));
+    }
+
+    [Fact]
+    public void RebuildBandTeamRankings_PopulatesGenerationAndRowFingerprints()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+
+        var metadata = GetCurrentBandRankingMetadata("Band_Duets");
+
+        Assert.True(metadata.RowCount > 0);
+        Assert.Equal(metadata.RowCount, metadata.RowsWithGeneration);
+        Assert.Equal(metadata.RowCount, metadata.RowsWithFingerprint);
+        Assert.Equal(1, metadata.DistinctGenerationCount);
+        Assert.True(metadata.GenerationId > 0);
+        Assert.Equal("published", GetBandRankingGenerationStatus(metadata.GenerationId));
+        Assert.Equal(metadata.RowCount, GetBandRankingGenerationRowCount(metadata.GenerationId));
+    }
+
+    [Fact]
     public void SnapshotBandRankHistory_SameDayRerun_DoesNotDuplicateRows()
     {
         SeedBandRankingsSource();
@@ -533,6 +582,481 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         Assert.True(CountBandHistoryRows("band_team_rank_history", "Band_Duets") > baselineRows);
         Assert.True(CountBandHistoryRows("band_team_rank_history", "Band_Duets", today) > 0);
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_LegacyModeDoesNotWriteV2Rows()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        Assert.True(CountBandHistoryRows("band_team_rank_history_points", "Band_Duets") > 0);
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets"));
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_latest_v2", "Band_Duets"));
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_snapshot_v2", "Band_Duets"));
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_DualModeWritesV2ParityAndApiStillUsesLegacyHistory()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var result = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var legacyRows = CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", today);
+        var v2Rows = CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", today);
+        var latestRows = CountBandHistoryRows("band_team_rank_history_latest_v2", "Band_Duets", today);
+        var parity = Db.GetBandRankHistoryV2Parity("Band_Duets", today);
+
+        Assert.True(result.RowsInserted > 0);
+        Assert.True(legacyRows > 0);
+        Assert.Equal(legacyRows, v2Rows);
+        Assert.Equal(legacyRows, latestRows);
+        Assert.Equal(legacyRows, parity.LegacyRows);
+        Assert.Equal(legacyRows, parity.V2Rows);
+        Assert.Equal(legacyRows, parity.MatchingRows);
+        Assert.Equal(0, parity.MissingFromV2);
+        Assert.Equal(0, parity.MissingFromLegacy);
+        Assert.Equal(0, parity.ValueMismatches);
+        Assert.True(parity.CompleteSnapshots > 0);
+        Assert.Equal(0, parity.IncompleteSnapshots);
+        Assert.Equal(parity.LegacyStatsRows, parity.V2SnapshotSourceRows);
+        Assert.Equal(latestRows, CountV2LatestRowsWithGenerationAndFingerprint("Band_Duets", today));
+
+        var latestParity = Db.GetBandRankHistoryV2LatestParity("Band_Duets", today);
+        Assert.Equal(legacyRows, latestParity.V2PointRows);
+        Assert.Equal(legacyRows, latestParity.LatestRowsForSnapshot);
+        Assert.Equal(legacyRows, latestParity.MatchingLatestRows);
+        Assert.Equal(0, latestParity.MissingFromLatest);
+        Assert.Equal(0, latestParity.LatestMismatches);
+        Assert.Equal(0, latestParity.ExtraLatestRowsForSnapshot);
+
+        DeleteV2BandHistory("Band_Duets");
+        Assert.NotEmpty(Db.GetBandRankHistory("Band_Duets", "p1:p2"));
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_DualModeSameDayRerunDoesNotDuplicateV2Points()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var initialV2Rows = CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", today);
+
+        var rerun = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        Assert.Equal(0, rerun.RowsInserted);
+        Assert.Equal(initialV2Rows, CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", today));
+        Assert.Equal(CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", today), CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", today));
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_V2OnlyModeWritesOnlyV2History()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var result = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.V2Only,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var v2Rows = CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", today);
+
+        Assert.True(result.RowsInserted > 0);
+        Assert.True(v2Rows > 0);
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history", "Band_Duets", today));
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", today));
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_latest", "Band_Duets", today));
+        Assert.Equal(0, CountBandHistoryRows("band_team_ranking_stats_history", "Band_Duets", today));
+        Assert.Equal(v2Rows, CountBandHistoryRows("band_team_rank_history_latest_v2", "Band_Duets", today));
+        Assert.True(CountBandHistoryRows("band_team_rank_history_snapshot_v2", "Band_Duets", today) > 0);
+
+        using var v2Db = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly);
+        Assert.NotEmpty(v2Db.GetBandRankHistory("Band_Duets", "p1:p2"));
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_V2OnlyModeUsesV2LatestForSameDayRerun()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.V2Only,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var initialV2Rows = CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", today);
+
+        var rerun = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.V2Only,
+        });
+
+        Assert.Equal(0, rerun.RowsInserted);
+        Assert.Equal(initialV2Rows, CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", today));
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history", "Band_Duets", today));
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", today));
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_latest", "Band_Duets", today));
+    }
+
+    [Fact]
+    public void GetBandRankHistoryV2Parity_ReportsValueMismatchSamples()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        ChangeOneV2BandHistoryRank("Band_Duets", today);
+
+        var parity = Db.GetBandRankHistoryV2Parity("Band_Duets", today, sampleLimit: 1);
+        var sample = Assert.Single(parity.Samples);
+
+        Assert.Equal(0, parity.MissingFromV2);
+        Assert.Equal(0, parity.MissingFromLegacy);
+        Assert.Equal(1, parity.ValueMismatches);
+        Assert.Equal("value_mismatch", sample.MismatchKind);
+        Assert.Contains("adjusted_skill_rank", sample.MismatchedColumns);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryV2LatestParity_ReportsStaleLatestRow()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        StaleOneV2LatestRow("Band_Duets", today);
+
+        var parity = Db.GetBandRankHistoryV2LatestParity("Band_Duets", today, sampleLimit: 1);
+        var sample = Assert.Single(parity.Samples);
+
+        Assert.Equal(1, parity.LatestMismatches);
+        Assert.Equal("latest_mismatch", sample.MismatchKind);
+        Assert.Contains("snapshot_date", sample.MismatchedColumns);
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistory_DualModeDoesNotRegressV2LatestRows()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var future = today.AddDays(1);
+        SetV2LatestSnapshotDate("Band_Duets", "p1:p2", future);
+        UpdateBandEntryScore("song_1", "Band_Duets", "p1:p2", 1600);
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var latestDates = GetV2LatestSnapshotDates("Band_Duets", "p1:p2");
+        Assert.NotEmpty(latestDates);
+        Assert.All(latestDates, date => Assert.Equal(future, date));
+    }
+
+    [Fact]
+    public void BackfillBandRankHistoryV2FromLegacy_CopiesOldLegacySnapshotAndDoesNotRegressLatest()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var legacyOnlyDate = today.AddDays(-1);
+        CloneBandHistorySnapshot("Band_Duets", today, legacyOnlyDate);
+        var legacyRows = CountBandHistoryRows("band_team_rank_history_points", "Band_Duets", legacyOnlyDate);
+
+        var dryRun = Db.BackfillBandRankHistoryV2FromLegacy("Band_Duets", new BandRankHistoryV2BackfillOptions
+        {
+            StartDate = legacyOnlyDate,
+            EndDate = legacyOnlyDate,
+        });
+
+        Assert.True(legacyRows > 0);
+        Assert.True(dryRun.SlicesTotal > 0);
+        Assert.Equal(legacyRows, dryRun.MissingV2Rows);
+        Assert.Equal(0, CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", legacyOnlyDate));
+
+        var firstRun = Db.BackfillBandRankHistoryV2FromLegacy("Band_Duets", new BandRankHistoryV2BackfillOptions
+        {
+            StartDate = legacyOnlyDate,
+            EndDate = legacyOnlyDate,
+            Execute = true,
+        });
+        var parity = Db.GetBandRankHistoryV2Parity("Band_Duets", legacyOnlyDate);
+        var latestDates = GetV2LatestSnapshotDates("Band_Duets", "p1:p2");
+
+        Assert.Equal(legacyRows, firstRun.PointRowsInserted);
+        Assert.Equal(legacyRows, CountBandHistoryRows("band_team_rank_history_points_v2", "Band_Duets", legacyOnlyDate));
+        Assert.Equal(legacyRows, parity.LegacyRows);
+        Assert.Equal(legacyRows, parity.V2Rows);
+        Assert.Equal(legacyRows, parity.MatchingRows);
+        Assert.Equal(0, parity.MissingFromV2);
+        Assert.Equal(0, parity.MissingFromLegacy);
+        Assert.Equal(0, parity.ValueMismatches);
+        Assert.All(latestDates, date => Assert.Equal(today, date));
+
+        var secondRun = Db.BackfillBandRankHistoryV2FromLegacy("Band_Duets", new BandRankHistoryV2BackfillOptions
+        {
+            StartDate = legacyOnlyDate,
+            EndDate = legacyOnlyDate,
+            Execute = true,
+        });
+
+        Assert.Equal(0, secondRun.SlicesTotal);
+        Assert.Equal(0, secondRun.PointRowsInserted);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryV2ReadPreview_ReportsCurrentFallbackTruncation()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var legacyOnlyDate = today.AddDays(-1);
+        CloneBandHistorySnapshot("Band_Duets", today, legacyOnlyDate);
+
+        using var fallbackDb = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowWithLegacyFallback);
+        var fallbackHistory = fallbackDb.GetBandRankHistory("Band_Duets", "p1:p2");
+        var preview = Db.GetBandRankHistoryV2ReadPreview("Band_Duets", "p1:p2", days: 30);
+
+        Assert.DoesNotContain(legacyOnlyDate.ToString("yyyy-MM-dd"), fallbackHistory.Select(static row => row.SnapshotDate));
+        Assert.True(preview.CurrentV2FallbackWouldHideLegacyDates);
+        Assert.Contains(legacyOnlyDate.ToString("yyyy-MM-dd"), preview.LegacyDatesHiddenByCurrentV2Fallback);
+        Assert.Contains(legacyOnlyDate.ToString("yyyy-MM-dd"), preview.MergedDates);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryWideNarrowParity_CleanSnapshotHasNoMismatches()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var wideRows = CountBandHistoryRows("band_team_rank_history", "Band_Duets", today);
+        var parity = Db.GetBandRankHistoryWideNarrowParity("Band_Duets", today);
+
+        Assert.True(wideRows > 0);
+        Assert.Equal(wideRows, parity.WideRows);
+        Assert.Equal(wideRows, parity.NarrowRows);
+        Assert.Equal(wideRows, parity.MatchingRows);
+        Assert.Equal(0, parity.MissingFromNarrow);
+        Assert.Equal(0, parity.MissingFromWide);
+        Assert.Equal(0, parity.ValueMismatches);
+        Assert.Empty(parity.Samples);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryWideNarrowParity_ReportsMissingNarrowRows()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        DeleteOneBandHistoryRow("band_team_rank_history_points", "Band_Duets", today);
+
+        var parity = Db.GetBandRankHistoryWideNarrowParity("Band_Duets", today);
+        var sample = Assert.Single(parity.Samples);
+
+        Assert.Equal(1, parity.MissingFromNarrow);
+        Assert.Equal(0, parity.MissingFromWide);
+        Assert.Equal(0, parity.ValueMismatches);
+        Assert.Equal("missing_from_narrow", sample.MismatchKind);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryWideNarrowParity_ReportsMissingWideRows()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        DeleteOneBandHistoryRow("band_team_rank_history", "Band_Duets", today);
+
+        var parity = Db.GetBandRankHistoryWideNarrowParity("Band_Duets", today);
+        var sample = Assert.Single(parity.Samples);
+
+        Assert.Equal(0, parity.MissingFromNarrow);
+        Assert.Equal(1, parity.MissingFromWide);
+        Assert.Equal(0, parity.ValueMismatches);
+        Assert.Equal("missing_from_wide", sample.MismatchKind);
+    }
+
+    [Fact]
+    public void GetBandRankHistoryWideNarrowParity_ReportsValueMismatchSamples()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        ChangeOneNarrowBandHistoryRank("Band_Duets", today);
+
+        var parity = Db.GetBandRankHistoryWideNarrowParity("Band_Duets", today, sampleLimit: 1);
+        var sample = Assert.Single(parity.Samples);
+
+        Assert.Equal(0, parity.MissingFromNarrow);
+        Assert.Equal(0, parity.MissingFromWide);
+        Assert.Equal(1, parity.ValueMismatches);
+        Assert.Equal("value_mismatch", sample.MismatchKind);
+        Assert.Contains("adjusted_skill_rank", sample.MismatchedColumns);
+    }
+
+    [Fact]
+    public void GetBandRankHistory_V2NarrowOnlyReadsV2WhenLegacyRowsAreGone()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            WriteMode = BandRankHistoryWriteMode.Dual,
+        });
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var legacyHistory = Db.GetBandRankHistory("Band_Duets", "p1:p2");
+        Assert.NotEmpty(legacyHistory);
+        DeleteLegacyBandHistory("Band_Duets");
+
+        using var v2Db = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly);
+        var v2History = v2Db.GetBandRankHistory("Band_Duets", "p1:p2");
+        var status = v2Db.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Equal(legacyHistory.Select(static row => row.SnapshotDate), v2History.Select(static row => row.SnapshotDate));
+        Assert.Equal(legacyHistory.Select(static row => row.AdjustedSkillRank), v2History.Select(static row => row.AdjustedSkillRank));
+        Assert.Equal("current", status.HistoryStatus);
+        Assert.Equal(today.ToString("yyyy-MM-dd"), status.HistoryComputedThrough);
+    }
+
+    [Fact]
+    public void GetBandRankHistory_V2NarrowOnlyDoesNotFallbackToLegacy()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        using var v2Db = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowOnly);
+        var history = v2Db.GetBandRankHistory("Band_Duets", "p1:p2");
+        var status = v2Db.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Empty(history);
+        Assert.Equal("stale", status.HistoryStatus);
+        Assert.Null(status.HistoryComputedThrough);
+    }
+
+    [Fact]
+    public void GetBandRankHistory_V2NarrowWithLegacyFallbackUsesLegacyWhenV2Missing()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        using var fallbackDb = CreateMetaDatabase(BandRankHistoryApiReadSource.V2NarrowWithLegacyFallback);
+        var history = fallbackDb.GetBandRankHistory("Band_Duets", "p1:p2");
+        var status = fallbackDb.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.NotEmpty(history);
+        Assert.Equal("current", status.HistoryStatus);
+        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow).ToString("yyyy-MM-dd"), status.HistoryComputedThrough);
+    }
+
+    [Fact]
+    public void GetBandRankHistory_WideReadSourceDoesNotUseNarrowOnlyRows()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            UseWideHistoryCompatibilityWrite = false,
+            UseNarrowHistory = true,
+        });
+
+        using var wideDb = CreateMetaDatabase(BandRankHistoryApiReadSource.Wide);
+        using var narrowDb = CreateMetaDatabase(BandRankHistoryApiReadSource.Narrow);
+
+        Assert.Empty(wideDb.GetBandRankHistory("Band_Duets", "p1:p2"));
+        Assert.NotEmpty(narrowDb.GetBandRankHistory("Band_Duets", "p1:p2"));
+    }
+
+    [Fact]
+    public void GetBandRankHistory_NarrowWithWideFallbackReportsFreshNarrowThroughWhenWideIsStale()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions());
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var staleWideDate = today.AddDays(-1);
+        CloneBandHistorySnapshot("Band_Duets", today, staleWideDate);
+        DeleteBandHistorySnapshotRows("band_team_rank_history", "Band_Duets", today);
+        DeleteBandHistorySnapshotRows("band_team_ranking_stats_history", "Band_Duets", today);
+
+        using var fallbackDb = CreateMetaDatabase(BandRankHistoryApiReadSource.NarrowWithWideFallback);
+        var history = fallbackDb.GetBandRankHistory("Band_Duets", "p1:p2");
+        var status = fallbackDb.GetBandRankHistoryStatus("Band_Duets");
+
+        Assert.Contains(today.ToString("yyyy-MM-dd"), history.Select(static row => row.SnapshotDate));
+        Assert.Equal("current", status.HistoryStatus);
+        Assert.Equal(today.ToString("yyyy-MM-dd"), status.HistoryComputedThrough);
     }
 
     [Fact]
@@ -711,6 +1235,68 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void SnapshotBandRankHistoryChunked_RangeSplitsLargeJobChunksAndRecordsGeneration()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var metadata = GetCurrentBandRankingMetadata("Band_Duets");
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var job = Db.EnqueueBandRankHistoryJob(203, "Band_Duets", today, "Background", coalesceSameDay: true);
+
+        var result = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            ChunkSize = 1,
+            CleanupRetention = false,
+        }, job.JobId);
+        Db.CompleteBandRankHistoryJob(job.JobId, result);
+
+        var chunks = GetBandHistoryChunkRanges(job.JobId);
+        var coverage = GetBandHistoryChunkCoverage(job.JobId, "Band_Duets");
+
+        Assert.True(chunks.Count > 1);
+        Assert.Equal(chunks.Count, result.ChunksTotal);
+        Assert.Equal(chunks.Count, result.ChunksCompleted);
+        Assert.Equal(metadata.RowCount, chunks.Sum(static chunk => chunk.EstimatedRows));
+        Assert.Equal(metadata.RowCount, result.RowsScanned);
+        Assert.Equal(metadata.RowCount, coverage.CoveredRows);
+        Assert.Equal(0, coverage.RowsWithWrongMatchCount);
+        Assert.All(chunks, static chunk => Assert.Equal("complete", chunk.Status));
+        Assert.All(chunks.Where(static chunk => chunk.EstimatedRows > 0), chunk =>
+        {
+            Assert.NotNull(chunk.TeamKeyStart);
+            Assert.NotNull(chunk.TeamKeyEnd);
+            Assert.True(chunk.SourceGeneration > 0);
+            Assert.Equal(metadata.GenerationId, chunk.SourceGeneration);
+        });
+    }
+
+    [Fact]
+    public void SnapshotBandRankHistoryChunked_PreservesExistingLegacyJobChunks()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var job = Db.EnqueueBandRankHistoryJob(204, "Band_Duets", today, "Background", coalesceSameDay: true);
+        InsertLegacyStyleBandHistoryChunks(job.JobId, "Band_Duets");
+
+        var result = Db.SnapshotBandRankHistoryChunked("Band_Duets", new BandRankHistorySnapshotOptions
+        {
+            ChunkSize = 1,
+            CleanupRetention = false,
+        }, job.JobId);
+        Db.CompleteBandRankHistoryJob(job.JobId, result);
+
+        var chunks = GetBandHistoryChunkRanges(job.JobId);
+
+        Assert.True(chunks.Count > 1);
+        Assert.Equal(chunks.Count, result.ChunksTotal);
+        Assert.All(chunks, static chunk => Assert.Equal(0, chunk.ChunkOrdinal));
+        Assert.All(chunks, static chunk => Assert.Null(chunk.TeamKeyStart));
+        Assert.All(chunks, static chunk => Assert.Null(chunk.TeamKeyEnd));
+        Assert.All(chunks, static chunk => Assert.Equal("complete", chunk.Status));
+    }
+
+    [Fact]
     public void GetBandRankHistory_ReturnsSnapshotsForTeam()
     {
         SeedBandRankingsSource();
@@ -730,7 +1316,6 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(current.TotalChartedSongs, snapshot.TotalChartedSongs);
         Assert.Equal(current.TotalRankedTeams, snapshot.TotalRankedTeams);
     }
-
     [Fact]
     public void GetBandSongPerformances_ReturnsAnyComboSongPercentiles()
     {
@@ -852,6 +1437,51 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(6, metrics.ComboRows);
         Assert.Equal(5, CountBandSongRankingRows("Band_Duets", "overall"));
         Assert.Equal(6, CountBandSongRankingRows("Band_Duets", "combo"));
+        Assert.Equal(0, CountLegacyBandSongRankingRows("Band_Duets", "overall"));
+        Assert.Equal(0, CountLegacyBandSongRankingRows("Band_Duets", "combo"));
+    }
+
+    [Fact]
+    public void GetBandSongPerformances_FallsBackToLegacyProjectionWhenCurrentScopeMissing()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandSongTeamRankings("Band_Duets");
+        CopyCurrentBandSongRankingRowsToLegacy("Band_Duets");
+        ClearCurrentBandSongRankingRows("Band_Duets");
+        DeleteBandEntries("Band_Duets");
+
+        var performances = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
+
+        Assert.Equal(["song_0", "song_1"], performances.Select(p => p.SongId).ToArray());
+        Assert.Equal(5, CountLegacyBandSongRankingRows("Band_Duets", "overall"));
+        Assert.Equal(0, CountBandSongRankingRows("Band_Duets", "overall"));
+    }
+
+    [Fact]
+    public void RebuildBandSongTeamRankings_DoesNotLeakOldCurrentTables()
+    {
+        SeedBandRankingsSource();
+
+        Db.RebuildBandSongTeamRankings("Band_Duets");
+        Db.RebuildBandSongTeamRankings("Band_Duets");
+        Db.RebuildBandSongTeamRankings("Band_Duets");
+
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT tablename
+            FROM pg_tables
+            WHERE schemaname = 'public'
+              AND tablename LIKE 'band_song_team_rankings_current_band_duets_old_%'
+            ORDER BY tablename;";
+        var orphans = new List<string>();
+        using (var reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+                orphans.Add(reader.GetString(0));
+        }
+
+        Assert.Empty(orphans);
     }
 
     [Fact]
@@ -955,6 +1585,24 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(1100, entries[0].Score);
         Assert.NotNull(selectedTeamEntry);
         Assert.Equal(900, selectedTeamEntry.Score);
+    }
+
+    [Fact]
+    public void GetSongBandLeaderboard_ProjectionRequiredDoesNotFallBackToBandEntries()
+    {
+        SeedBandRankingsSource();
+
+        var (legacyEntries, legacyTotalEntries) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10);
+        var (entries, totalEntries) = Db.GetSongBandLeaderboard("song_0", "Band_Duets", limit: 10, requireCurrentProjection: true);
+        var selectedPlayerEntry = Db.GetSongBandLeaderboardEntryForAccount("song_0", "Band_Duets", "p1", requireCurrentProjection: true);
+        var selectedTeamEntry = Db.GetSongBandLeaderboardEntryForTeam("song_0", "Band_Duets", "p1:p2", requireCurrentProjection: true);
+
+        Assert.NotEmpty(legacyEntries);
+        Assert.True(legacyTotalEntries > 0);
+        Assert.Empty(entries);
+        Assert.Equal(0, totalEntries);
+        Assert.Null(selectedPlayerEntry);
+        Assert.Null(selectedTeamEntry);
     }
 
     [Fact]
@@ -1125,6 +1773,21 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshScopes_SkipUnchangedCommitsAfterFilterReaderIsDisposed()
+    {
+        SeedBandRankingsSource();
+        var scope = new BandCurrentProjectionScopeKey("song_0", "Band_Duets", "overall", string.Empty);
+
+        var result = await CreateBandCurrentProjectionBuilder()
+            .RefreshScopesAsync([scope], new BandCurrentProjectionRebuildOptions { SkipUnchangedScopes = true });
+
+        var generation = Assert.Single(result.Scopes.Select(static refreshedScope => refreshedScope.Generation).Distinct());
+        Assert.True(result.PublishResult.Published);
+        Assert.Equal(generation, GetCurrentBandProjectionPublishedGeneration(scope));
+        Assert.True(CountCurrentBandProjectionRows(scope, generation) > 0);
+    }
+
+    [Fact]
     public async Task RebuildAll_WithBandTypeFilterPrunesOnlyThatBandType()
     {
         SeedBandRankingsSource();
@@ -1173,6 +1836,267 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
             cmd.Parameters.AddWithValue("snapshotDate", snapshotDate.Value);
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
+
+    private bool TableExists(string tableName)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT to_regclass(@tableName) IS NOT NULL";
+        cmd.Parameters.AddWithValue("tableName", $"public.{tableName}");
+        return Convert.ToBoolean(cmd.ExecuteScalar() ?? false);
+    }
+
+    private bool ColumnExists(string tableName, string columnName)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = @tableName
+                  AND column_name = @columnName);";
+        cmd.Parameters.AddWithValue("tableName", tableName);
+        cmd.Parameters.AddWithValue("columnName", columnName);
+        return Convert.ToBoolean(cmd.ExecuteScalar() ?? false);
+    }
+
+    private BandRankingMetadataCounts GetCurrentBandRankingMetadata(string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT COUNT(*)::int,
+                   COUNT(*) FILTER (WHERE ranking_generation > 0)::int,
+                   COUNT(*) FILTER (WHERE row_fingerprint <> '')::int,
+                   COUNT(DISTINCT ranking_generation)::int,
+                   MAX(ranking_generation)
+            FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentRankingTable(bandType))}
+            WHERE band_type = @bandType;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        using var reader = cmd.ExecuteReader();
+        reader.Read();
+        return new BandRankingMetadataCounts(
+            reader.GetInt32(0),
+            reader.GetInt32(1),
+            reader.GetInt32(2),
+            reader.GetInt32(3),
+            reader.GetInt64(4));
+    }
+
+    private string GetBandRankingGenerationStatus(long generationId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT status FROM band_team_ranking_generation WHERE generation_id = @generationId";
+        cmd.Parameters.AddWithValue("generationId", generationId);
+        return (string)cmd.ExecuteScalar()!;
+    }
+
+    private long GetBandRankingGenerationRowCount(long generationId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT row_count FROM band_team_ranking_generation WHERE generation_id = @generationId";
+        cmd.Parameters.AddWithValue("generationId", generationId);
+        return Convert.ToInt64(cmd.ExecuteScalar());
+    }
+
+    private int CountV2LatestRowsWithGenerationAndFingerprint(string bandType, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT COUNT(*)
+            FROM band_team_rank_history_latest_v2
+            WHERE band_type = @bandType
+              AND snapshot_date = @snapshotDate
+              AND generation_id > 0
+              AND row_fingerprint <> '';";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private void DeleteV2BandHistory(string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            DELETE FROM band_team_rank_history_latest_v2 WHERE band_type = @bandType;
+            DELETE FROM band_team_rank_history_points_v2 WHERE band_type = @bandType;
+            DELETE FROM band_team_rank_history_snapshot_v2 WHERE band_type = @bandType;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void DeleteLegacyBandHistory(string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            DELETE FROM band_team_rank_history_latest WHERE band_type = @bandType;
+            DELETE FROM band_team_rank_history_points WHERE band_type = @bandType;
+            DELETE FROM band_team_rank_history WHERE band_type = @bandType;
+            DELETE FROM band_team_ranking_stats_history WHERE band_type = @bandType;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void DeleteOneBandHistoryRow(string tableName, string bandType, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH selected AS (
+                SELECT ctid
+                FROM {BandRankingStorageNames.QuoteIdentifier(tableName)}
+                WHERE band_type = @bandType
+                  AND snapshot_date = @snapshotDate
+                ORDER BY ranking_scope, combo_id, team_key
+                LIMIT 1
+            )
+            DELETE FROM {BandRankingStorageNames.QuoteIdentifier(tableName)} target
+            USING selected
+            WHERE target.ctid = selected.ctid;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void DeleteBandHistorySnapshotRows(string tableName, string bandType, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            DELETE FROM {BandRankingStorageNames.QuoteIdentifier(tableName)}
+            WHERE band_type = @bandType
+              AND snapshot_date = @snapshotDate;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void ChangeOneNarrowBandHistoryRank(string bandType, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH selected AS (
+                SELECT ctid
+                FROM band_team_rank_history_points
+                WHERE band_type = @bandType
+                  AND snapshot_date = @snapshotDate
+                ORDER BY ranking_scope, combo_id, team_key
+                LIMIT 1
+            )
+            UPDATE band_team_rank_history_points target
+            SET adjusted_skill_rank = adjusted_skill_rank + 1000
+            FROM selected
+            WHERE target.ctid = selected.ctid;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void ChangeOneV2BandHistoryRank(string bandType, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH selected AS (
+                SELECT ctid
+                FROM band_team_rank_history_points_v2
+                WHERE band_type = @bandType
+                  AND snapshot_date = @snapshotDate
+                ORDER BY ranking_scope, combo_id, team_key
+                LIMIT 1
+            )
+            UPDATE band_team_rank_history_points_v2 target
+            SET adjusted_skill_rank = adjusted_skill_rank + 1000
+            FROM selected
+            WHERE target.ctid = selected.ctid;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void StaleOneV2LatestRow(string bandType, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH selected AS (
+                SELECT ctid
+                FROM band_team_rank_history_latest_v2
+                WHERE band_type = @bandType
+                  AND snapshot_date = @snapshotDate
+                ORDER BY ranking_scope, combo_id, team_key
+                LIMIT 1
+            )
+            UPDATE band_team_rank_history_latest_v2 target
+            SET snapshot_date = @staleDate
+            FROM selected
+            WHERE target.ctid = selected.ctid;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.Parameters.AddWithValue("staleDate", snapshotDate.AddDays(-1));
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SetV2LatestSnapshotDate(string bandType, string teamKey, DateOnly snapshotDate)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE band_team_rank_history_latest_v2
+            SET snapshot_date = @snapshotDate
+            WHERE band_type = @bandType
+              AND team_key = @teamKey;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.Parameters.AddWithValue("snapshotDate", snapshotDate);
+        cmd.ExecuteNonQuery();
+    }
+
+    private IReadOnlyList<DateOnly> GetV2LatestSnapshotDates(string bandType, string teamKey)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT snapshot_date
+            FROM band_team_rank_history_latest_v2
+            WHERE band_type = @bandType
+              AND team_key = @teamKey
+            ORDER BY ranking_scope, combo_id;
+            """;
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        using var reader = cmd.ExecuteReader();
+        var dates = new List<DateOnly>();
+        while (reader.Read())
+            dates.Add(reader.GetFieldValue<DateOnly>(0));
+        return dates;
+    }
+
+    private MetaDatabase CreateMetaDatabase(BandRankHistoryApiReadSource apiReadSource) => new(
+        _fixture.DataSource,
+        Substitute.For<Microsoft.Extensions.Logging.ILogger<MetaDatabase>>(),
+        new BandRankHistoryOptions { ApiReadSource = apiReadSource });
+
+    private sealed record BandRankingMetadataCounts(
+        int RowCount,
+        int RowsWithGeneration,
+        int RowsWithFingerprint,
+        int DistinctGenerationCount,
+        long GenerationId);
 
     private int CountCompositeRankHistoryRows(string accountId)
     {
@@ -1273,6 +2197,20 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     {
         using var conn = _fixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            SELECT COUNT(*)
+            FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))}
+            WHERE band_type = @bandType
+              AND ranking_scope = @rankingScope;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.Parameters.AddWithValue("rankingScope", rankingScope);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private int CountLegacyBandSongRankingRows(string bandType, string rankingScope)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT COUNT(*)
             FROM band_song_team_rankings
@@ -1281,6 +2219,46 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("rankingScope", rankingScope);
         return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private void CopyCurrentBandSongRankingRowsToLegacy(string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            INSERT INTO band_song_team_rankings (
+                band_type, ranking_scope, scope_combo_id, team_key, song_id,
+                entry_combo_id, rank, total_entries, percentile, score, accuracy,
+                is_full_combo, stars, season, end_time, computed_at)
+            SELECT
+                band_type, ranking_scope, scope_combo_id, team_key, song_id,
+                entry_combo_id, rank, total_entries, percentile, score, accuracy,
+                is_full_combo, stars, season, end_time, computed_at
+            FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))}
+            WHERE band_type = @bandType
+            ON CONFLICT (band_type, ranking_scope, scope_combo_id, team_key, song_id) DO UPDATE SET
+                entry_combo_id = EXCLUDED.entry_combo_id,
+                rank = EXCLUDED.rank,
+                total_entries = EXCLUDED.total_entries,
+                percentile = EXCLUDED.percentile,
+                score = EXCLUDED.score,
+                accuracy = EXCLUDED.accuracy,
+                is_full_combo = EXCLUDED.is_full_combo,
+                stars = EXCLUDED.stars,
+                season = EXCLUDED.season,
+                end_time = EXCLUDED.end_time,
+                computed_at = EXCLUDED.computed_at;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void ClearCurrentBandSongRankingRows(string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"DELETE FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))} WHERE band_type = @bandType";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.ExecuteNonQuery();
     }
 
     private void DeleteBandEntries(string bandType)
@@ -1306,7 +2284,13 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     {
         using var conn = _fixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
+            DELETE FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))}
+            WHERE band_type = @bandType
+              AND ranking_scope = @rankingScope
+              AND scope_combo_id = @scopeComboId
+              AND team_key = @teamKey;
+
             DELETE FROM band_song_team_rankings
             WHERE band_type = @bandType
               AND ranking_scope = @rankingScope
@@ -1572,6 +2556,79 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         return new BandHistoryChunkStatusCounts(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3));
     }
 
+    private List<BandHistoryChunkRange> GetBandHistoryChunkRanges(long jobId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT ranking_scope, combo_id, chunk_ordinal, team_key_start, team_key_end,
+                   estimated_rows, source_generation, status
+            FROM band_rank_history_job_chunks
+            WHERE job_id = @jobId
+            ORDER BY ranking_scope, combo_id, chunk_ordinal;
+            """;
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        var chunks = new List<BandHistoryChunkRange>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            chunks.Add(new BandHistoryChunkRange(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetInt32(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetInt64(5),
+                reader.GetInt64(6),
+                reader.GetString(7)));
+        }
+
+        return chunks;
+    }
+
+    private BandHistoryChunkCoverage GetBandHistoryChunkCoverage(long jobId, string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH matched AS (
+                SELECT src.ranking_scope, src.combo_id, src.team_key, COUNT(chunk.job_id)::int AS chunk_matches
+                FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentRankingTable(bandType))} src
+                LEFT JOIN band_rank_history_job_chunks chunk
+                  ON chunk.job_id = @jobId
+                 AND chunk.ranking_scope = src.ranking_scope
+                 AND chunk.combo_id = src.combo_id
+                 AND (chunk.team_key_start IS NULL OR src.team_key >= chunk.team_key_start)
+                 AND (chunk.team_key_end IS NULL OR src.team_key <= chunk.team_key_end)
+                WHERE src.band_type = @bandType
+                GROUP BY src.ranking_scope, src.combo_id, src.team_key
+            )
+            SELECT COUNT(*) FILTER (WHERE chunk_matches = 1)::int,
+                   COUNT(*) FILTER (WHERE chunk_matches <> 1)::int
+            FROM matched;
+            """;
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        using var reader = cmd.ExecuteReader();
+        reader.Read();
+        return new BandHistoryChunkCoverage(reader.GetInt32(0), reader.GetInt32(1));
+    }
+
+    private void InsertLegacyStyleBandHistoryChunks(long jobId, string bandType)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            INSERT INTO band_rank_history_job_chunks (job_id, band_type, ranking_scope, combo_id, status, updated_at)
+            SELECT @jobId, band_type, ranking_scope, combo_id, 'queued', now()
+            FROM {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentStatsTable(bandType))}
+            WHERE band_type = @bandType;
+            """;
+        cmd.Parameters.AddWithValue("jobId", jobId);
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        cmd.ExecuteNonQuery();
+    }
+
     private void FailOneBandHistoryChunk(long jobId)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -1613,6 +2670,18 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     private sealed record BandHistoryJobStatusDetails(string Status, int Attempts, string? LastError, DateTime? FailedAt);
 
     private sealed record BandHistoryChunkStatusCounts(int Complete, int Failed, int Queued, int Running);
+
+    private sealed record BandHistoryChunkRange(
+        string RankingScope,
+        string ComboId,
+        int ChunkOrdinal,
+        string? TeamKeyStart,
+        string? TeamKeyEnd,
+        long EstimatedRows,
+        long SourceGeneration,
+        string Status);
+
+    private sealed record BandHistoryChunkCoverage(int CoveredRows, int RowsWithWrongMatchCount);
 
     private void SeedBandSearchProjection(string bandType, string teamKey, string[] memberAccountIds, string memberInstrumentsJson)
     {

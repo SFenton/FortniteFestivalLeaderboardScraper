@@ -1,7 +1,7 @@
 # Band Rank History vNext
 
 **Date:** May 10, 2026
-**Status:** Phase 6A proposal
+**Status:** Phase 6C read-source gate implemented
 
 ## Problem
 
@@ -271,6 +271,15 @@ Create v2 tables and shadow-write from the current `SnapshotBandRankHistoryChunk
 
 This phase proves the schema and read model without changing user-visible behavior.
 
+Implemented Phase 6B scope:
+
+- `BandRankHistory:WriteMode` supports `Legacy` and `Dual`; default is `Legacy`.
+- Aggregate current ranking rows now carry `ranking_generation` and `row_fingerprint`.
+- Rebuilds create and publish `band_team_ranking_generation` rows.
+- Dual mode shadow-writes `band_team_rank_history_snapshot_v2`, `band_team_rank_history_points_v2`, and `band_team_rank_history_latest_v2` from the existing chunk path.
+- Public API history reads remain on legacy narrow/wide sources.
+- `BandRankHistoryHarness --write-mode Dual` can process explicit jobs with v2 shadow writes when separately approved.
+
 ### Phase 6C: Narrow/v2 Read Source Gate
 
 Wire `BandRankHistoryOptions.ApiReadSource` into `GetBandRankHistory(...)` and add v2 options:
@@ -281,6 +290,15 @@ Wire `BandRankHistoryOptions.ApiReadSource` into `GetBandRankHistory(...)` and a
 - `V2NarrowOnly`
 
 Switch only after parity checks pass. Keep rollback as a config change.
+
+Implemented Phase 6C scope:
+
+- `BandRankHistory:ApiReadSource` is now wired into `GetBandRankHistory(...)` and `GetBandRankHistoryStatus(...)`.
+- Existing values remain supported: `Wide`, `Narrow`, and `NarrowWithWideFallback`.
+- Added `V2NarrowWithLegacyFallback` and `V2NarrowOnly`.
+- Default appsettings/compose behavior remains `NarrowWithWideFallback`.
+- V2 history reads use `band_team_rank_history_points_v2`; v2 freshness uses `band_team_rank_history_snapshot_v2`.
+- Production v2 switching remains gated on a future live dual-mode shadow write plus parity run.
 
 ### Phase 6D: Weighted Scheduler and Whale Splitting
 
@@ -299,6 +317,15 @@ Suggested controls:
 - `BandRankHistory:PauseOnApiLatencyMs`
 - `BandRankHistory:PauseOnAutovacuumTablePatterns`
 
+Implemented Phase 6D scope:
+
+- Existing `band_rank_history_job_chunks` now supports `chunk_ordinal`, optional `team_key_start`/`team_key_end`, `estimated_rows`, and `source_generation`.
+- New jobs range-split scopes by ordered `team_key` using `BandRankHistory:ChunkSize` when `BandRankHistory:RangeChunkingEnabled` is true.
+- Existing jobs that already have old `(ranking_scope, combo_id)` chunks keep those chunks and process with `chunk_ordinal = 0`.
+- Chunk execution applies optional team-key bounds and progress/retry updates identify chunks by `(job_id, ranking_scope, combo_id, chunk_ordinal)`.
+- Pending chunks are ordered by estimated row weight so bounded chunks finish with more truthful progress.
+- Parallel small-chunk scheduling remains conservative; `MaxParallelChunks` still defaults to `1` until live DB pressure measurements justify widening.
+
 ### Phase 6E: Generation-Publish Capture
 
 Move history capture from post-hoc current-table sweep to generation-aware capture:
@@ -313,6 +340,32 @@ Move history capture from post-hoc current-table sweep to generation-aware captu
 This keeps current ranking publish and history catch-up decoupled, but gives history a durable source generation.
 
 Later, selected small scopes can be captured inline during publish if measured safe. Whale scopes should remain queued so API visibility is not blocked by history writes.
+
+Implemented Phase 6E scope:
+
+- New band rank-history jobs record the current aggregate `source_generation` when available.
+- Range-split chunks record the source generation observed on current ranking rows.
+- V2 snapshot writes prefer chunk/job source-generation metadata before falling back to the source rows' stamped `ranking_generation`.
+- Public API read defaults and legacy wide/narrow writes are unchanged.
+
+### Phase 6F: Same-Pass Narrow Parity Proof
+
+Before replacing wide history reads or disabling wide writes, prove parity on the same `snapshot_date` written by a scrape/history pass.
+
+Implemented Phase 6F scope:
+
+- `MetaDatabase.GetBandRankHistoryWideNarrowParity(...)` compares legacy wide history to legacy narrow points for a band type, snapshot date, optional ranking scope, and optional combo id.
+- The parity report counts wide rows, narrow rows, key matches, rows missing from narrow, rows missing from wide, and API-visible value mismatches.
+- Compared values include ranks, ratings, scores, songs played, coverage, full combos, total charted songs, raw ratings, snapshot timestamp, and total ranked teams via stats history.
+- `BandRankHistoryHarness --parity` emits read-only console/JSON parity output and separately labels existing legacy-narrow-vs-v2 parity when v2 rows exist.
+- This proof does not flip `ApiReadSource` and does not disable wide compatibility writes.
+
+Live scrape 770 validation on `2026-05-10`:
+
+- The initial broad whole-band query shape timed out on Duets; the parity helper now uses direct snapshot-date-indexed probes and skips mismatch sample scans when the summary counts are clean.
+- The optimized harness pass ran with the database session forced read-only and wrote `harness-output/band-rank-history-770-parity-optimized-20260510.json`.
+- Legacy wide and legacy narrow matched exactly: Duets `4,202,110 / 4,202,110`, Trios `7,382,330 / 7,382,330`, Quad `8,268,872 / 8,268,872`, with zero missing rows and zero value mismatches for all three band types.
+- Live v2 parity was not proven in that run because the live v2 points table was absent.
 
 ## Read Path vNext
 
@@ -339,10 +392,12 @@ Recommended flags:
 
 | Option | Purpose |
 |---|---|
-| `BandRankHistory:WriteMode` | `Legacy`, `Dual`, `V2Only`. |
-| `BandRankHistory:ApiReadSource` | Existing option, wired into reads. |
+| `BandRankHistory:WriteMode` | Implemented values: `Legacy`, `Dual`. `V2Only` remains a later-phase option after read-source and latest-state gates exist. |
+| `BandRankHistory:ApiReadSource` | Implemented values: `Wide`, `Narrow`, `NarrowWithWideFallback`, `V2NarrowWithLegacyFallback`, `V2NarrowOnly`. |
 | `BandRankHistory:UseV2LatestState` | Compare against v2 latest state. |
 | `BandRankHistory:UseWideHistoryCompatibilityWrite` | Turn off after parity. |
+| `BandRankHistory:ChunkSize` | Implemented target rows per key-range subchunk. |
+| `BandRankHistory:RangeChunkingEnabled` | Implemented gate for key-range chunk splitting. |
 | `BandRankHistory:MaxActiveChunkRows` | Weighted scheduler cap. |
 | `BandRankHistory:WhaleChunkSize` | Target rows per key-range subchunk. |
 | `BandRankHistory:GenerationCaptureMode` | `PostSwap`, `QueuedGeneration`, `InlineSmallScopes`. |

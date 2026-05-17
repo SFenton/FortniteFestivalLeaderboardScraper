@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import PathsModal from '../../../../../src/pages/songinfo/components/path/PathsModal';
 
@@ -75,6 +75,19 @@ vi.mock('@festival/theme', async (importOriginal) => {
 /** Track Image constructor calls for PathImage loading */
 let mockImageInstances: Array<{ src: string; onload?: (() => void) | null; onerror?: (() => void) | null }>;
 let OrigImage: typeof Image;
+
+beforeAll(() => {
+  if (typeof Range !== 'undefined') {
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 0, right: 120, bottom: 16, left: 0, width: 120, height: 16, x: 0, y: 0, toJSON() { return this; } }),
+    });
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [] as unknown as DOMRectList,
+    });
+  }
+});
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -191,6 +204,37 @@ describe('PathsModal', () => {
       const overlay = dialog.previousElementSibling!;
       fireEvent.click(overlay);
       expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('closes from touch pointerup on the overlay without double firing on click', () => {
+      const onClose = vi.fn();
+      render(
+        <PathsModal visible={true} songId="song-1" onClose={onClose} />,
+      );
+
+      const dialog = document.body.querySelector('[role="dialog"]')!;
+      const overlay = dialog.previousElementSibling!;
+      fireEvent.pointerDown(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 32, clientY: 72 });
+      fireEvent.pointerUp(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 32, clientY: 72 });
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(overlay);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes from touch pointerup on the close button without double firing on click', () => {
+      const onClose = vi.fn();
+      render(<PathsModal visible={true} songId="song-1" onClose={onClose} />);
+      const closeButton = screen.getByLabelText('Close');
+
+      fireEvent.pointerDown(closeButton, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 360, clientY: 92 });
+      fireEvent.pointerUp(closeButton, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 360, clientY: 92 });
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(closeButton);
+      expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it('calls onClose when Escape key is pressed', () => {
@@ -380,8 +424,8 @@ describe('PathsModal', () => {
 
       expect(screen.getByText('Some Instruments Unavailable')).toBeDefined();
       expect(screen.getByText('Karaoke, Pro Drums, and Pro Drums + Cymbals are not available for path visualization yet.')).toBeDefined();
-      expect(screen.getByText('OK')).toBeDefined();
-      expect(screen.getByText('Permanently Dismiss')).toBeDefined();
+      expect(screen.getByRole('button', { name: 'OK' })).toBeDefined();
+      expect(screen.getByRole('button', { name: "Don't show again" })).toBeDefined();
     });
 
     it('does not close the modal on Escape while the warning is open', () => {
@@ -396,7 +440,7 @@ describe('PathsModal', () => {
       const onClose = vi.fn();
       const { rerender } = render(<PathsModal visible={true} songId="song-1" onClose={onClose} />);
 
-      fireEvent.click(screen.getByText('OK'));
+      fireEvent.click(screen.getByRole('button', { name: 'OK' }));
       await act(async () => { vi.advanceTimersByTime(310); });
       expect(screen.queryByText('Some Instruments Unavailable')).toBeNull();
 
@@ -409,7 +453,7 @@ describe('PathsModal', () => {
     it('persists the permanent dismiss choice', () => {
       render(<PathsModal visible={true} songId="song-1" onClose={vi.fn()} />);
 
-      fireEvent.click(screen.getByText('Permanently Dismiss'));
+      fireEvent.click(screen.getByRole('button', { name: "Don't show again" }));
       expect(mockUpdateSettings).toHaveBeenCalledWith({ pathUnavailableWarningDismissed: true });
     });
   });

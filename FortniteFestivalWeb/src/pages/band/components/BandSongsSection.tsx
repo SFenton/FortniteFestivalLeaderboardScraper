@@ -11,6 +11,7 @@ import { useFestival } from '../../../contexts/FestivalContext';
 import { Routes } from '../../../routes';
 import PlayerSongRow from '../../player/components/PlayerSongRow';
 import { topSongsStyles } from '../../player/components/TopSongsSection';
+import InstrumentEmptySection from '../../player/sections/InstrumentEmptyState';
 import PlayerSectionHeading from '../../player/sections/PlayerSectionHeading';
 
 export type BandSongsSectionProps = {
@@ -19,6 +20,7 @@ export type BandSongsSectionProps = {
   displayName: string;
   comboId?: string;
   limit?: number;
+  sectionRef?: (element: HTMLElement | null) => void;
   style?: CSSProperties;
   onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void;
 };
@@ -43,6 +45,7 @@ export default function BandSongsSection({
   displayName,
   comboId,
   limit = 5,
+  sectionRef,
   style,
   onAnimationEnd,
 }: BandSongsSectionProps) {
@@ -75,9 +78,19 @@ export default function BandSongsSection({
     );
   };
 
-  const renderList = (songs: BandSongPerformance[] | undefined, emptyText: string, isLast = false) => {
+  const renderList = (songs: BandSongPerformance[] | undefined, emptyText: string, emptySubtitle: string, emptyTestId: string, isLast = false) => {
     if (isLoading) return <div style={styles.placeholderCard}>{t('common.loading')}</div>;
-    if (!songs || songs.length === 0) return <div style={styles.placeholderCard}>{emptyText}</div>;
+    if (!songs || songs.length === 0) {
+      return (
+        <InstrumentEmptySection
+          t={t}
+          titleText={emptyText}
+          subtitleText={emptySubtitle}
+          testId={emptyTestId}
+          noMargin={isLast}
+        />
+      );
+    }
     return (
       <div style={isLast ? topSongsStyles.songListLast : topSongsStyles.songList}>
         {songs.map(renderSongRow)}
@@ -86,13 +99,13 @@ export default function BandSongsSection({
   };
 
   return (
-    <section data-testid="band-section-songs" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.songs')}>
+    <section ref={sectionRef} data-testid="band-section-songs" style={{ ...styles.section, ...style }} onAnimationEnd={onAnimationEnd} aria-label={t('band.songs')}>
       <PlayerSectionHeading
         title={t('band.bestSongs')}
         description={t('band.bestSongsDesc', { name: displayName })}
       />
       <div data-testid="band-best-songs">
-        {renderList(data?.best, t('band.noBestSongs'))}
+        {renderList(data?.best, t('band.noBestSongs'), t('band.bestSongsDesc', { name: displayName }), 'band-best-songs-empty')}
       </div>
 
       <PlayerSectionHeading
@@ -101,7 +114,7 @@ export default function BandSongsSection({
         compact
       />
       <div data-testid="band-worst-songs">
-        {renderList(data?.worst, t('band.noWorstSongs'), true)}
+        {renderList(data?.worst, t('band.noWorstSongs'), t('band.worstSongsDesc', { name: displayName }), 'band-worst-songs-empty', true)}
       </div>
     </section>
   );

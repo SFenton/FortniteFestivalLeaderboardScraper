@@ -4,8 +4,10 @@ import { IoChevronForward } from 'react-icons/io5';
 import type { PlayerBandEntry, PlayerBandMember } from '@festival/core/api/serverTypes';
 import { Colors, CssProp, FAST_FADE_MS, Font, Gap, Radius, Weight, flexColumn, flexRow, frostedCard, transition } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
+import CardPressable from '../../../components/common/CardPressable';
 import { Routes } from '../../../routes';
 import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 import { getInstrumentRowWidth, splitInstrumentRows } from '../../songs/layoutMode';
 
 const MEMBER_ROW_HEIGHT = 32;
@@ -140,6 +142,7 @@ type PlayerBandCardProps = {
   renderMemberMetadata?: (member: PlayerBandMember) => ReactNode;
   scoreFooter?: ReactNode;
   scoreFooterAriaLabel?: string;
+  onPress?: () => void;
   onAnimationEnd?: AnimationEventHandler<HTMLElement>;
 };
 
@@ -155,9 +158,11 @@ export default function PlayerBandCard({
   renderMemberMetadata,
   scoreFooter,
   scoreFooterAriaLabel,
+  onPress,
   onAnimationEnd,
 }: PlayerBandCardProps) {
   const route = getPlayerBandRoute(entry, sourceAccountId);
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: route ?? '', disabled: !route });
   const appearanceCount = entry.appearanceCount ?? 0;
   const contentRef = useRef<HTMLDivElement>(null);
   const contentWidth = useContainerWidth(contentRef);
@@ -207,6 +212,22 @@ export default function PlayerBandCard({
     </div>
   ) : content;
 
+  if (onPress) {
+    return (
+      <CardPressable
+        testId={testId}
+        ariaLabel={ariaLabel ?? `View band ${entry.teamKey}`}
+        style={{ ...bandCardStyles.entryCard, ...(hasFooter ? bandCardStyles.entryCardMetaLink : bandCardStyles.entryCardLink), ...style }}
+        pressedStyle={bandCardStyles.entryCardPressed}
+        onAnimationEnd={onAnimationEnd}
+        onPress={onPress}
+      >
+        {body}
+        {chevron}
+      </CardPressable>
+    );
+  }
+
   if (!route) {
     return (
       <div data-testid={testId} style={{ ...bandCardStyles.entryCard, ...style }} onAnimationEnd={onAnimationEnd}>
@@ -216,7 +237,15 @@ export default function PlayerBandCard({
   }
 
   return (
-    <Link data-testid={testId} to={route} aria-label={ariaLabel ?? `View band ${entry.teamKey}`} style={{ ...bandCardStyles.entryCard, ...(hasFooter ? bandCardStyles.entryCardMetaLink : bandCardStyles.entryCardLink), ...style }} onAnimationEnd={onAnimationEnd}>
+    <Link
+      data-testid={testId}
+      to={route}
+      aria-label={ariaLabel ?? `View band ${entry.teamKey}`}
+      style={{ ...bandCardStyles.entryCard, ...(hasFooter ? bandCardStyles.entryCardMetaLink : bandCardStyles.entryCardLink), ...style, ...(linkPress.isPressed ? bandCardStyles.entryCardPressed : undefined) }}
+      onAnimationEnd={onAnimationEnd}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      {...linkPress.linkPressHandlers}
+    >
       {body}
       {chevron}
     </Link>
@@ -270,6 +299,10 @@ const bandCardStyles = {
     borderRadius: Radius.md,
     height: '100%',
     overflow: 'hidden',
+    transition: transition(CssProp.transform, FAST_FADE_MS),
+  } as CSSProperties,
+  entryCardPressed: {
+    transform: 'scale(0.99)',
   } as CSSProperties,
   entryCardBody: {
     ...flexRow,
@@ -511,7 +544,7 @@ const bandCardStyles = {
   scoreFooter: {
     ...flexRow,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     alignSelf: 'center',
     flexWrap: 'wrap',
     gap: Gap.md,

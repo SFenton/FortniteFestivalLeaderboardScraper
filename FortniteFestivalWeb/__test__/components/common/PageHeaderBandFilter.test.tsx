@@ -15,6 +15,18 @@ describe('PageHeader band filter action', () => {
     expect(heading.parentElement).toHaveStyle({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
   });
 
+  it('renders subtitles through the marquee text wrapper', () => {
+    render(
+      <BandFilterActionProvider value={{ visible: false, label: 'Filter Band Type', selectedInstruments: [], onPress: vi.fn() }}>
+        <PageHeader title="SFentonX + Phankie.ToT" subtitle="Duos with a very long appearance summary" />
+      </BandFilterActionProvider>,
+    );
+
+    const subtitle = screen.getByText('Duos with a very long appearance summary');
+    expect(subtitle.tagName).toBe('P');
+    expect(subtitle.parentElement).toHaveStyle({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  });
+
   it('preserves custom title nodes', () => {
     render(
       <BandFilterActionProvider value={{ visible: false, label: 'Filter Band Type', selectedInstruments: [], onPress: vi.fn() }}>

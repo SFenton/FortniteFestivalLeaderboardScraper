@@ -16,6 +16,7 @@ import {
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, serverInstrumentLabel as instrumentLabel, type ServerScoreHistoryEntry as ScoreHistoryEntry, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { ACCURACY_SCALE } from '@festival/core';
 import GraphCard from '../../../../components/common/GraphCard';
+import { PressableChartPath } from '../../../../components/common/PressableChartPath';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import { Colors, Font, Gap, Size, Layout, Radius, CHART_ANIM_DURATION, frostedCard, padding, border, transition, QUERY_SHOW_SEASON, QUERY_SHOW_ACCURACY } from '@festival/theme';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
@@ -218,11 +219,6 @@ export default memo(function ScoreHistoryChart({
           radius={Radius.barCorner}
           isAnimationActive={animating}
           animationDuration={CHART_ANIM_DURATION}
-          onClick={(_data: Record<string, unknown>, index: number) => {
-            const point = visibleData[index];
-            if (!point) return;
-            setSelectedPoint(prev => prev === point ? null : point);
-          }}
           shape={(props: Record<string, unknown>) => {
             const point = props as { x: number; y: number; width: number; height: number; payload: ChartPoint };
             const acc = point.payload.colorAccuracy ?? point.payload.accuracy;
@@ -247,13 +243,15 @@ export default memo(function ScoreHistoryChart({
             const { x, y, width: w, height: h } = point;
             const path = `M${x + rad},${y + h} Q${x},${y + h} ${x},${y + h - rad} L${x},${y + rad} Q${x},${y} ${x + rad},${y} L${x + w - rad},${y} Q${x + w},${y} ${x + w},${y + rad} L${x + w},${y + h - rad} Q${x + w},${y + h} ${x + w - rad},${y + h} Z`;
             return (
-              <path
+              <PressableChartPath
+                ariaLabel={`${t('chart.accuracy')}: ${point.payload.dateLabel}`}
                 d={path}
                 style={{ transition: transition('stroke', 150) }}
                 fill={fill}
                 fillOpacity={fillOp}
                 stroke={isSelected ? Colors.accentPurple : 'transparent'}
                 strokeWidth={Size.barSelectionStroke}
+                onPress={() => setSelectedPoint(prev => prev?.date === point.payload.date && prev?.score === point.payload.score ? null : point.payload)}
               />
             );
           }}

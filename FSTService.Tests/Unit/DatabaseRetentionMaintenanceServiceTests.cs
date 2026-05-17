@@ -93,6 +93,8 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
         Assert.Equal(0, CountRows("improvement_detection_runs", "run_id = 9101"));
         Assert.Equal(0, CountRows("scrape_log", "id = 80"));
         Assert.Equal(1, CountRows("scrape_log", "id = 81"));
+        Assert.Equal(0, CountRows("scrape_log", "id = 82"));
+        Assert.Equal(1, CountRows("scrape_log", "id = 83"));
     }
 
     [Fact]
@@ -201,7 +203,9 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
             INSERT INTO scrape_log (id, started_at, completed_at)
             VALUES
                 (80, TIMESTAMPTZ '2024-01-01T00:00:00Z', TIMESTAMPTZ '2024-01-01T01:00:00Z'),
-                (81, TIMESTAMPTZ '2024-01-02T00:00:00Z', TIMESTAMPTZ '2024-01-02T01:00:00Z');
+                (81, TIMESTAMPTZ '2024-01-02T00:00:00Z', TIMESTAMPTZ '2024-01-02T01:00:00Z'),
+                (82, TIMESTAMPTZ '2024-01-03T00:00:00Z', NULL),
+                (83, TIMESTAMPTZ '2024-01-04T00:00:00Z', NULL);
 
             INSERT INTO rank_history_snapshot_stats (instrument, snapshot_date, snapshot_taken_at, total_charted_songs, ranked_account_count)
             VALUES
@@ -219,6 +223,7 @@ public sealed class DatabaseRetentionMaintenanceServiceTests : IDisposable
             """);
 
         InsertSnapshotRow(81, "song-pinned", "Solo_Guitar", "account-pinned", 1000);
+        InsertSnapshotRow(83, "song-incomplete-pinned", "Solo_Guitar", "account-incomplete-pinned", 1000);
     }
 
     private void InsertSnapshotRow(long snapshotId, string songId, string instrument, string accountId, int score)

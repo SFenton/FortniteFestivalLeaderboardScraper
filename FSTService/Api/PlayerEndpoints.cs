@@ -42,6 +42,11 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, playerCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
             // ── Build response ───────────────────────────────────
             // Optional instrument filter: ?instruments=Solo_Guitar,Solo_Bass
             HashSet<string>? instrumentFilter = null;
@@ -215,16 +220,11 @@ public static partial class ApiEndpoints
             string accountId,
             IMetaDatabase metaDb,
             FestivalService festivalService,
-            CyclicalSongMachine cyclicalMachine,
             UserSyncProgressTracker syncTracker,
-            NotificationService notifications,
-            TokenManager tokenManager,
-            GlobalLeaderboardPersistence persistence,
-            RivalsOrchestrator rivalsOrchestrator,
-            ScrapeTimePrecomputer precomputer,
-            ScrapeProgressTracker scrapeProgress,
             ILoggerFactory loggerFactory) =>
         {
+            var log = loggerFactory.CreateLogger("FSTService.Api.PlayerTrack");
+
             if (string.IsNullOrWhiteSpace(accountId))
                 return Results.BadRequest(new { error = "accountId is required." });
 
@@ -244,88 +244,12 @@ public static partial class ApiEndpoints
             bool syncDeferred = false;
             if (existingStatus is null || existingStatus.Status is "error" or "deferred")
             {
-                // Register live progress *before* Task.Run so the sync-status
-                // endpoint sees an active entry and bypasses the stale precomputed
-                // cache.  The estimate may be rough (Songs might not be initialized
-                // yet); Task.Run will call BeginBackfill again with the exact count.
                 var estimatedPairs = Math.Max(festivalService.Songs.Count, 200)
                     * GlobalLeaderboardScraper.AllInstruments.Count;
 
-                if (scrapeProgress.Phase != ScrapeProgressTracker.ScrapePhase.Idle)
-                {
-                    syncDeferred = true;
-                    metaDb.DeferBackfill(accountId, estimatedPairs, "server_update_in_progress");
-                    syncTracker.BeginQueued(accountId, estimatedPairs);
-                }
-                else
-                {
-                    backfillKicked = true;
-                    syncTracker.BeginBackfill(accountId, estimatedPairs);
-
-                    // Fire-and-forget: attach to cyclical machine for backfill + history recon
-                    _ = Task.Run(async () =>
-                    {
-                        var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");
-                        try
-                        {
-                            if (festivalService.Songs.Count == 0)
-                                await festivalService.InitializeAsync();
-
-                            var chartedSongIds = festivalService.Songs
-                                .Where(s => s.track?.su is not null)
-                                .Select(s => s.track.su!)
-                                .ToList();
-
-                            // Enqueue inside Task.Run so Songs is guaranteed initialized and
-                            // the denominator matches the deduplicated pair count exactly.
-                            var totalPairs = chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
-                            metaDb.EnqueueBackfill(accountId, totalPairs);
-                            metaDb.StartBackfill(accountId);
-
-                            var alreadyChecked = metaDb.GetCheckedBackfillPairs(accountId);
-
-                            var user = new UserWorkItem
-                            {
-                                AccountId = accountId,
-                                Purposes = WorkPurpose.Backfill,
-                                AllTimeNeeded = true,
-                                SeasonsNeeded = [],
-                                AlreadyChecked = alreadyChecked,
-                            };
-
-                            syncTracker.BeginBackfill(accountId, totalPairs);
-
-                            await cyclicalMachine.AttachAsync(
-                                [user], chartedSongIds, seasonWindows: [],
-                                SongMachineSource.PlayerTrackCover, isHighPriority: false, ct: CancellationToken.None);
-
-                            // Per-user completion actions
-                            metaDb.CompleteBackfill(accountId, rankingsPending: true);
-                            rivalsOrchestrator.ComputeForUser(accountId);
-                            _ = notifications.NotifyBackfillCompleteAsync(accountId);
-
-                            var reconStatus = metaDb.GetHistoryReconStatus(accountId);
-                            if (reconStatus?.Status != "complete")
-                                metaDb.EnqueueHistoryRecon(accountId, chartedSongIds.Count);
-
-                            precomputer.PrecomputeUser(accountId);
-                            syncTracker.Complete(accountId);
-                            log.LogInformation("Track-triggered backfill for {AccountId} completed via cyclical machine.", accountId);
-                        }
-                        catch (Exception ex)
-                        {
-                            log.LogWarning(ex, "Track-triggered backfill for {AccountId} failed.", accountId);
-                            syncTracker.Error(accountId, ex.Message);
-                            try
-                            {
-                                var hrStatus = metaDb.GetHistoryReconStatus(accountId);
-                                if (hrStatus is not null && hrStatus.Status is "pending" or "in_progress")
-                                    metaDb.FailHistoryRecon(accountId, ex.Message);
-                            }
-                            catch { /* best-effort */ }
-                        }
-                    });
-                }
+                syncDeferred = true;
+                metaDb.DeferBackfill(accountId, estimatedPairs, "worker_backfill_queue");
+                log.LogInformation("Queued worker-owned low-priority backfill for tracked account {AccountId}.", accountId);
             }
 
             var status = metaDb.GetBackfillStatus(accountId);
@@ -365,7 +289,7 @@ public static partial class ApiEndpoints
             var backfill = metaDb.GetBackfillStatus(accountId);
             var historyRecon = metaDb.GetHistoryReconStatus(accountId);
             var rivals = metaDb.GetRivalsStatus(accountId);
-            var isRegistered = metaDb.GetRegisteredAccountIds().Contains(accountId);
+            var isRegistered = metaDb.IsAccountRegistered(accountId);
 
             // Overlay in-memory progress over DB values when available (always fresher)
             int? liveBfChecked = null;
@@ -412,6 +336,10 @@ public static partial class ApiEndpoints
                 }
             }
 
+            var backfillDisplay = backfill is null
+                ? null
+                : metaDb.GetBackfillSongProgress(accountId, liveBfChecked ?? backfill.SongsChecked, backfill.TotalSongsToCheck);
+
             return Results.Ok(new
             {
                 accountId,
@@ -422,6 +350,8 @@ public static partial class ApiEndpoints
                     status = backfill.Status,
                     songsChecked = liveBfChecked ?? backfill.SongsChecked,
                     totalSongsToCheck = backfill.TotalSongsToCheck,
+                    displaySongsChecked = backfillDisplay?.SongsChecked,
+                    displayTotalSongs = backfillDisplay?.TotalSongs,
                     entriesFound = liveBfEntries ?? backfill.EntriesFound,
                     startedAt = backfill.StartedAt,
                     completedAt = backfill.CompletedAt,
@@ -488,6 +418,11 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, playerCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
             // Return tiered stats if available, else compute on-demand for unregistered players
             var tierRows = metaDb.GetPlayerStatsTiers(accountId);
             if (tierRows.Count == 0)
@@ -514,6 +449,8 @@ public static partial class ApiEndpoints
                     totalScore = composite.CompositeRankTotalScore,
                     maxScore = composite.CompositeRankMaxScore,
                 };
+
+                var familyRanks = BuildSoloFamilyRankPayload(metaDb.GetSoloFamilyRankingsForAccount(accountId));
 
                 // Build per-instrument rank tiers from rank_history_deltas
                 var instrumentKeys = persistence.GetInstrumentKeys();
@@ -566,6 +503,7 @@ public static partial class ApiEndpoints
                     accountId,
                     totalSongs,
                     compositeRanks,
+                    familyRanks,
                     instrumentRanks = instrumentRanks.Count > 0 ? instrumentRanks : null,
                     bands,
                     notifications = improvementNotifications.GetPlayerNotifications(accountId, 20),
@@ -643,6 +581,11 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, playerCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
             var payload = persistence.GetPlayerBandsList(accountId, normalizedGroup, normalizedPage, normalizedPageSize);
             var jsonOpts = httpContext.RequestServices
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
@@ -680,6 +623,11 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, playerCache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
             var payload = persistence.GetPlayerBandsByType(accountId, bandType, comboValidation.ComboId);
             var jsonOpts = httpContext.RequestServices
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
@@ -700,7 +648,8 @@ public static partial class ApiEndpoints
             string? songId,
             string? instrument,
             IMetaDatabase metaDb,
-            ScrapeTimePrecomputer precomputer) =>
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=60";
             // Check if the account is a registered user
@@ -721,6 +670,9 @@ public static partial class ApiEndpoints
                     if (result is not null) return result;
                 }
             }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, playerCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var history = metaDb.GetScoreHistory(accountId, limit ?? 1000, songId, instrument);
             return Results.Ok(new
@@ -770,10 +722,48 @@ public static partial class ApiEndpoints
 
     private static IResult? ServePlayerStatsIfCached(HttpContext httpContext, (byte[] Json, string ETag)? entry)
     {
-        if (entry is null || !CachedPlayerStatsHasBandIds(entry.Value.Json))
+        if (entry is null || !CachedPlayerStatsHasCurrentShape(entry.Value.Json))
             return null;
 
         return CacheHelper.ServeIfCached(httpContext, entry);
+    }
+
+    private static object? BuildSoloFamilyRankPayload(IReadOnlyDictionary<string, SoloFamilyRankingDto> rankings)
+    {
+        if (rankings.Count == 0)
+            return null;
+
+        return rankings.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (object)new
+            {
+                scopeId = kvp.Value.ScopeId,
+                adjusted = kvp.Value.AdjustedSkillRank,
+                weighted = kvp.Value.WeightedRank,
+                fcRate = kvp.Value.FcRateRank,
+                totalScore = kvp.Value.TotalScoreRank,
+                maxScore = kvp.Value.MaxScorePercentRank,
+                songsPlayed = kvp.Value.SongsPlayed,
+                totalChartedSongs = kvp.Value.TotalChartedSongs,
+                coverage = kvp.Value.Coverage,
+                fullComboCount = kvp.Value.FullComboCount,
+                totalRankedAccounts = kvp.Value.TotalRankedAccounts,
+            },
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool CachedPlayerStatsHasCurrentShape(byte[] json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("familyRanks", out _)
+                && CachedPlayerStatsHasBandIds(doc.RootElement);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static bool CachedPlayerStatsHasBandIds(byte[] json)
@@ -781,26 +771,31 @@ public static partial class ApiEndpoints
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("bands", out var bands) || bands.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-                return true;
-
-            foreach (var groupName in new[] { "all", "duos", "trios", "quads" })
-            {
-                if (!bands.TryGetProperty(groupName, out var group) || !group.TryGetProperty("entries", out var entries) || entries.ValueKind != JsonValueKind.Array)
-                    continue;
-
-                foreach (var entry in entries.EnumerateArray())
-                {
-                    if (!entry.TryGetProperty("bandId", out var bandId) || bandId.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(bandId.GetString()))
-                        return false;
-                }
-            }
-
-            return true;
+            return CachedPlayerStatsHasBandIds(doc.RootElement);
         }
         catch (JsonException)
         {
             return false;
         }
+    }
+
+    private static bool CachedPlayerStatsHasBandIds(JsonElement root)
+    {
+        if (!root.TryGetProperty("bands", out var bands) || bands.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return true;
+
+        foreach (var groupName in new[] { "all", "duos", "trios", "quads" })
+        {
+            if (!bands.TryGetProperty(groupName, out var group) || !group.TryGetProperty("entries", out var entries) || entries.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var entry in entries.EnumerateArray())
+            {
+                if (!entry.TryGetProperty("bandId", out var bandId) || bandId.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(bandId.GetString()))
+                    return false;
+            }
+        }
+
+        return true;
     }
 }

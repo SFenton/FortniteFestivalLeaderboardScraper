@@ -3,6 +3,7 @@ import { useRef, useCallback, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccountSearch } from '../../../hooks/data/useAccountSearch';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
+import PressableButton from '../../common/PressableButton';
 import type { AccountSearchResult } from '@festival/core/api/serverTypes';
 import {
   Colors, Font, Gap, Radius, Layout, ZIndex,
@@ -39,14 +40,14 @@ export default function HeaderSearch() {
       {s.isOpen && (
         <div style={st.dropdown}>
           {s.results.map((r, i) => (
-            <button
+            <PressableButton
               key={r.accountId}
               style={i === s.activeIndex ? st.resultActive : st.result}
-              onClick={() => s.selectResult(r)}
+              onPress={() => s.selectResult(r)}
               onMouseEnter={() => s.setActiveIndex(i)}
             >
               {r.displayName}
-            </button>
+            </PressableButton>
           ))}
         </div>
       )}

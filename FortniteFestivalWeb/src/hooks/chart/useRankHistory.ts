@@ -149,12 +149,13 @@ export function useRankHistoryAll(
   accountId: string | undefined,
   metric: RankingMetric,
   days = 30,
+  enabled = true,
 ) {
   const queries = useQueries({
     queries: instruments.map((inst) => ({
       queryKey: queryKeys.rankHistory(inst, accountId ?? '', days),
       queryFn: () => api.getRankHistory(inst, accountId!, days),
-      enabled: !!accountId,
+      enabled: enabled && !!accountId,
       staleTime: STALE_TIME,
     })),
   });
@@ -187,8 +188,8 @@ export function useRankHistoryAll(
             };
           })
         : [];
-      result[inst] = { chartData, loading: q?.isLoading ?? true };
+      result[inst] = { chartData, loading: enabled ? (q?.isLoading ?? true) : false };
     });
     return result;
-  }, [queries, instruments, metric]);
+  }, [queries, instruments, metric, enabled]);
 }

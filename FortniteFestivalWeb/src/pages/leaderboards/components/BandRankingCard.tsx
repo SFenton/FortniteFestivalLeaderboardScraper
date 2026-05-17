@@ -6,6 +6,7 @@ import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, 
 import { staggerDelay } from '@festival/ui-utils';
 import { Border, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Overflow, Cursor, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, border, frostedCard, flexColumn, flexRow, transition } from '@festival/theme';
 import { Routes } from '../../../routes';
+import CardPressable from '../../../components/common/CardPressable';
 import { bandTypeLabel } from '../../../utils/bandTypes';
 import { parseApiError } from '../../../utils/apiError';
 import BandRankingPlayerCard from './BandRankingPlayerCard';
@@ -141,9 +142,10 @@ export default memo(function BandRankingCard({
           />
         )}
         {!error && hasRows && (
-          <div
+          <CardPressable
             style={{ ...styles.viewAllButton, ...buttonStaggerStyle }}
-            onClick={() => navigate(Routes.bandRankings(bandType, metric))}
+            pressedStyle={styles.pressablePressed}
+            onPress={() => navigate(Routes.bandRankings(bandType, metric))}
             onAnimationEnd={(event) => {
               const element = event.currentTarget;
               element.style.opacity = '';
@@ -151,7 +153,7 @@ export default memo(function BandRankingCard({
             }}
           >
             {viewAllLabel}
-          </div>
+          </CardPressable>
         )}
       </div>
     </div>
@@ -209,6 +211,9 @@ function useStyles() {
     selectedCard: {
       backgroundColor: Colors.purpleHighlight,
       border: border(Border.thin, Colors.purpleHighlightBorder),
+    } as CSSProperties,
+    pressablePressed: {
+      backgroundColor: 'rgba(255, 255, 255, 0.06)',
     } as CSSProperties,
   }), []);
 }

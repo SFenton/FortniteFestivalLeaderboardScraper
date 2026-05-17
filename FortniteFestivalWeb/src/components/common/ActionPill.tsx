@@ -5,6 +5,7 @@
  */
 import type { CSSProperties } from 'react';
 import { Colors, Gap, Radius, Font, Weight, Layout, frostedCard, flexCenter, transitions, transition, TRANSITION_MS } from '@festival/theme';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 
 export const ACTION_PILL_TRANSITION = transitions(
   transition('background-color', TRANSITION_MS),
@@ -64,12 +65,13 @@ export interface ActionPillProps {
 
 export function ActionPill({ icon, label, onClick, active, dot, className, style, tabIndex }: ActionPillProps) {
   const merged = active ? { ...pillStyle, ...pillActiveOverrides, ...style } : { ...pillStyle, ...style };
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: onClick });
 
   return (
     <button
       className={className}
       style={merged}
-      onClick={onClick}
+      {...pressHandlers}
       title={label}
       aria-label={label}
       tabIndex={tabIndex}

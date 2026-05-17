@@ -4,6 +4,7 @@ import type { RivalSongComparison, ServerInstrumentKey } from '@festival/core/ap
 import { Colors, Font, Weight, Gap, Radius, Layout, Border, Display, Align, Justify, Position, Cursor, Overflow, TextAlign, TextTransform, FontVariant, ObjectFit, frostedCard, flexColumn, flexRow, truncate, padding, border, transition } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
+import CardPressable from '../../../components/common/CardPressable';
 import s from '../../../styles/rivals.module.css';
 
 interface RivalSongRowProps {
@@ -41,22 +42,31 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, sig, pla
   const rankDeltaText = formatRankDelta(delta);
   const userWins = delta > 0;
   const rivalWins = delta < 0;
+  const userInstrument = (song.userInstrument ?? song.instrument) as ServerInstrumentKey;
+  const rivalInstrument = (song.rivalInstrument ?? song.instrument) as ServerInstrumentKey;
+  const isMixedInstrument = userInstrument !== rivalInstrument;
   const scoreDiff = (song.userScore ?? 0) - (song.rivalScore ?? 0);
   const scoreDiffText = `${scoreDiff >= 0 ? '+' : '\u2212'}${Math.abs(scoreDiff).toLocaleString()}`;
   const scoreDiffStyle = scoreDiff > 0 ? st.deltaPositive : scoreDiff < 0 ? st.deltaNegative : st.deltaNeutral;
+  const instrumentGlyph = isMixedInstrument ? (
+    <div style={st.instrumentPair}>
+      <InstrumentIcon instrument={userInstrument} sig={sig} size={28} />
+      <InstrumentIcon instrument={rivalInstrument} sig={sig} size={28} />
+    </div>
+  ) : (
+    <InstrumentIcon instrument={userInstrument} sig={sig} size={36} />
+  );
   /* v8 ignore stop */
 
   /* v8 ignore start -- JSX render trees */
   if (standalone) {
     const tintClass = userWins ? s.rivalSongWinning : rivalWins ? s.rivalSongLosing : '';
     return (
-      <div
+      <CardPressable
         className={`${s.rivalSongStandalone} ${tintClass}`}
         style={{ ...st.rowStandalone, ...style }}
-        onClick={onClick}
-        role="button"
-        tabIndex={0}
-        onKeyDown={e => { if (e.key === 'Enter') onClick(); }}
+        pressedStyle={st.pressedStandalone}
+        onPress={onClick}
         onAnimationEnd={onAnimationEnd}
       >
         <div style={st.topRow}>
@@ -69,7 +79,7 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, sig, pla
             <div style={st.songTitle}>{song.title ?? song.songId}</div>
             <div style={st.songArtist}>{song.artist ?? ''}{year ? ` \u00b7 ${year}` : ''}</div>
           </div>
-          <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} sig={sig} size={36} />
+          {instrumentGlyph}
         </div>
         <div className={s.rivalSongCompareRow} style={st.compareRow}>
           <div style={{ ...st.entry, ...(userWins ? st.entryWin : {}) }}>
@@ -97,19 +107,17 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, sig, pla
             <span style={st.entryScore}>{song.rivalScore != null ? song.rivalScore.toLocaleString() : ''}</span>
           </div>
         </div>
-      </div>
+      </CardPressable>
     );
   }
 
   // Inline row inside a card (no second row)
   return (
-    <div
+    <CardPressable
       className={s.rivalSongRow}
       style={{ ...st.row, ...style }}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={e => { if (e.key === 'Enter') onClick(); }}
+      pressedStyle={st.pressedInline}
+      onPress={onClick}
       onAnimationEnd={onAnimationEnd}
     >
       {albumArt ? (
@@ -140,8 +148,8 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, sig, pla
           {rankDeltaText}
         </span>
       </div>
-      <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} sig={sig} size={36} />
-    </div>
+      {instrumentGlyph}
+    </CardPressable>
   );
   /* v8 ignore stop */
 });
@@ -184,6 +192,12 @@ function useRivalSongRowStyles() {
         overflow: Overflow.hidden,
         containerType: 'inline-size',
       } as CSSProperties,
+      pressedStandalone: {
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+      } as CSSProperties,
+      pressedInline: {
+        backgroundColor: 'rgba(255, 255, 255, 0.04)',
+      } as CSSProperties,
       topRow: {
         ...flexRow,
         gap: Gap.xl,
@@ -213,6 +227,12 @@ function useRivalSongRowStyles() {
         color: Colors.textSubtle,
         textTransform: TextTransform.uppercase,
         letterSpacing: Font.letterSpacingWide,
+      } as CSSProperties,
+      instrumentPair: {
+        display: Display.flex,
+        alignItems: Align.center,
+        gap: Gap.xs,
+        flexShrink: 0,
       } as CSSProperties,
       entry: {
         ...flexColumn,

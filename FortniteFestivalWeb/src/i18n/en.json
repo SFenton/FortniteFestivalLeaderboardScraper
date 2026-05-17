@@ -8,12 +8,14 @@
     "searchAction": "Search",
     "clearSearch": "Clear Search",
     "notifications": "Notifications",
+    "quickLinks": "Quick Links",
     "dismiss": "Dismiss",
     "loading": "Loading…",
     "error": "Something went wrong",
     "notFound": "Not found",
     "unknownUser": "Unknown User",
     "unknownArtist": "Unknown Artist",
+    "unknownBand": "Unknown Band",
     "yes": "Yes",
     "no": "No",
     "ok": "OK",
@@ -22,6 +24,7 @@
     "selectProfile": "Select Profile",
     "selectPlayerProfile": "Select Player Profile",
     "selectBandProfile": "Select Band Profile",
+    "selectBand": "Select Band",
     "selectAsProfile": "Select {{name}} as Player Profile",
     "findPlayer": "Find Player",
     "deselect": "Deselect",
@@ -32,6 +35,7 @@
     "enterUsername": "Enter a username to search for.",
     "noMatchingUsername": "No matching username found.",
     "selectPlayer": "Select Player",
+    "selectPlayerName": "Select {{name}}",
     "sortSongs": "Sort Songs",
     "filterSongs": "Filter Songs",
     "filterBandType": "Filter Band Type",
@@ -39,8 +43,11 @@
     "filterSuggestions": "Filter Suggestions",
     "sortPlayerScores": "Sort Player Scores",
     "viewAll": "View All",
+    "gridView": "Grid View",
+    "listView": "List View",
     "viewPaths": "View Paths",
     "viewInItemShop": "View in Item Shop",
+    "itemShop": "Item Shop",
     "viewProfile": "View Profile",
     "viewNameProfile": "View {{name}}'s Profile",
     "actions": "Actions",
@@ -366,6 +373,11 @@
     "noEntries": "No {{instrument}} entries",
     "noBandScores": "No band scores recorded yet.",
     "noBandScoresSubtitle": "When {{type}} scores are submitted for this song, they will show up here on the next leaderboard update.",
+    "quickLinks": "Quick Links",
+    "quickLinksIntensity": "Intensity",
+    "quickLinksIntensityLandmark": "Song Intensity",
+    "quickLinksInstrumentLandmark": "{{instrument}} Leaderboard",
+    "quickLinksBandLandmark": "{{band}} Band Leaderboard",
     "bandScoreFooter": "Rank {{rank}}, season {{season}}, score {{score}}, {{stars}} stars, {{accuracy}}"
   },
   "songBandLeaderboard": {
@@ -411,7 +423,12 @@
     "syncStep_rivals": "Computing rivals",
     "syncStep_postscrape": "Refreshing scores",
     "syncStepOf": "Step {{step}} of {{totalSteps}}",
-    "syncNewScores": "{{count}} new scores found",
+    "syncSongsChecked": "{{checked}} / {{total}} songs checked",
+    "syncHistoryProcessed": "{{processed}} / {{total}} songs processed",
+    "syncRivalGroupsChecked": "{{checked}} / {{total}} rival groups checked",
+    "syncItemsProcessed": "{{completed}} / {{total}} items processed",
+    "syncNewScores": "{{count}} score updates found",
+    "syncScoreEntriesFound": "{{count}} score entries found",
     "syncSeasons": "{{count}} seasons queried",
     "syncEntriesFound": "{{count}} entries found",
     "syncRivalsFound": "{{count}} rivals found",
@@ -485,13 +502,16 @@
     "title": "Band",
     "subtitle": "{{type}} • {{count}} appearances",
     "summary": "Band Summary",
+    "summaryShort": "Summary",
     "type": "Type",
     "appearances": "Appearances",
     "members": "Members",
     "ranking": "Band Statistics",
     "statistics": "Band Statistics",
+    "statisticsShort": "Statistics",
     "noRanking": "No ranking calculated yet.",
     "rankHistory": "Band Rank History",
+    "rankHistoryShort": "Rank History",
     "rankHistoryHint": "Any-combo ranking progression over the past {{days}} days.",
     "noRankHistory": "No band rank history yet.",
     "rankHistoryCatchingUp": "History is catching up. Current rankings are already fresh.",
@@ -499,6 +519,8 @@
     "rankHistoryFailed": "Rank history is temporarily unavailable.",
     "rankHistoryDisabled": "Rank history is disabled while current rankings remain available.",
     "songs": "Band Songs",
+    "songsShort": "Songs",
+    "quickLinks": "Quick Links",
     "bestSongs": "Five Best Songs",
     "bestSongsDesc": "{{name}}'s highest-ranked band songs, sorted by percentile.",
     "worstSongs": "Five Worst Songs",
@@ -657,6 +679,13 @@
     "quickLinks": "Quick Links",
     "appSettings": "App Settings",
     "appSettingsHint": "General Festival Score Tracker app settings.",
+    "diagnosticsTitle": "Diagnostics",
+    "diagnosticsHint": "Debug-only tools for investigating mobile tap and navigation issues.",
+    "tapDiagnostics": "Tap Diagnostics",
+    "tapDiagnosticsDesc": "Capture recent taps, hit targets, routes, and shell state in a local diagnostic buffer on this device.",
+    "tapTelemetry": "Upload Tap Telemetry",
+    "tapTelemetryDesc": "Send sanitized tap diagnostic batches to the development service logs while diagnostics are enabled.",
+    "tapTelemetryRequiresDiagnostics": "Enable Tap Diagnostics first, then upload sanitized batches to the development service logs.",
     "licensesNavTitle": "Licenses",
     "licensesNavDescription": "Open source package license details.",
     "licenses": {
@@ -805,7 +834,492 @@
     "rivals": "Rivals",
     "shop": "Item Shop",
     "compete": "Compete",
-    "leaderboards": "Leaderboards"
+    "leaderboards": "Leaderboards",
+    "manual": "App Manual"
+  },
+  "appManual": {
+    "title": "App Manual",
+    "quickLinks": "Manual Sections",
+    "previousScreenshot": "Previous screenshot",
+    "nextScreenshot": "Next screenshot",
+    "screenshotAlt": "{{topic}} screenshot for {{viewport}}",
+    "screenshotCaption": "{{topic}} reference view for {{viewport}}.",
+    "screenshotPending": "Reference image pending",
+    "viewports": {
+      "mobile": "Mobile",
+      "compact": "Compact Web",
+      "wide": "Wide Web"
+    },
+    "sections": {
+      "navigation": {
+        "title": "Navigation Basics",
+        "copy": {
+          "intro": "Navigation changes depending on screen size and selected profile. The sidebar, mobile header, bottom navigation, and floating action button all point to the same app areas, but each layout keeps common actions close to your thumb or cursor.",
+          "context": "Songs, Leaderboards, Item Shop, App Manual, and App Settings are available from primary navigation. Suggestions and Statistics appear once a player or band profile is active, while Rivals appears only for a selected solo player."
+        },
+        "carousels": {
+          "overview": "Navigation overview"
+        },
+        "subsections": {
+          "sidebar": {
+            "title": "Sidebar And Desktop Rail",
+            "copy": {
+              "body": "On wider screens, the pinned sidebar keeps the main app areas visible while the right-side rail can hold page quick links. The App Manual link sits below the profile area and above Settings so help stays close to account context without crowding the main feature links."
+            },
+            "carousels": {
+              "sidebar": "Sidebar placement"
+            }
+          },
+          "mobileActions": {
+            "title": "Mobile Header And Floating Actions",
+            "copy": {
+              "body": "On phones, the top header focuses on the current page title and the bottom navigation keeps high-frequency destinations reachable. The floating action button changes by page, opening search, filters, page quick links, or profile actions when those controls are relevant."
+            },
+            "carousels": {
+              "mobileActions": "Mobile actions"
+            }
+          },
+          "quickLinks": {
+            "title": "Quick Links",
+            "copy": {
+              "body": "Pages with long scrolling content expose quick links so you can jump directly to the part you need. In this manual, parent sections and nested subsections both appear in Quick Links, with subsections indented under their parent topic."
+            },
+            "carousels": {
+              "quickLinks": "Quick link hierarchy"
+            }
+          }
+        }
+      },
+      "songs": {
+        "title": "Songs Page",
+        "copy": {
+          "intro": "The Songs page is the main browsing surface for tracks, score progress, metadata, and profile-specific opportunities. It works well as a full catalog when no profile is selected and becomes a personal or band progress list after you choose a profile.",
+          "context": "Search, sorting, filtering, shop visibility, instrument settings, and selected-profile data all shape what the list shows. The result supports quick browsing, cleanup sessions, and targeted improvement runs without forcing you into a separate view."
+        },
+        "carousels": {
+          "overview": "Songs overview"
+        },
+        "subsections": {
+          "rows": {
+            "title": "Rows And Visible Metadata",
+            "copy": {
+              "body": "Song rows can show title, artist, season, intensity, difficulty, stars, score, percentile, accuracy, full-combo state, and shop state depending on your settings. Instrument icons and row ordering help you scan which parts matter before opening details."
+            },
+            "carousels": {
+              "rows": "Song row metadata"
+            }
+          },
+          "profileSorts": {
+            "title": "Selected-Profile Data And Extra Sorts",
+            "copy": {
+              "body": "When a player or band profile is selected, Songs can sort and filter by profile-aware fields such as scores, accuracy, stars, percentile, full-combo gaps, max-score distance, last played, missing scores, and band score state. These options make the same catalog behave like a tailored practice list."
+            },
+            "carousels": {
+              "profileSorts": "Profile-aware sorting"
+            }
+          },
+          "searchSortFilter": {
+            "title": "Search, Sort, And Filter",
+            "copy": {
+              "body": "Search narrows the visible song list by title and artist. Sort controls change the order, while filters narrow by instruments, seasons, stars, percentile ranges, difficulty, shop state, missing scores, missing full combos, leeway, and selected-band conditions."
+            },
+            "carousels": {
+              "searchSortFilter": "Search sort filter controls"
+            }
+          }
+        }
+      },
+      "profiles": {
+        "title": "Selecting Profiles",
+        "copy": {
+          "intro": "Profiles decide which scores, suggestions, statistics, and navigation options the app can show. You can browse without a profile, but selecting one gives Songs and detail pages the context needed to highlight personal progress or band progress.",
+          "context": "Player and band profiles intentionally affect the app differently. Switching between those profile types resets song filters so the next profile starts from a clean browsing state."
+        },
+        "carousels": {
+          "overview": "Profile selection overview"
+        },
+        "subsections": {
+          "player": {
+            "title": "Player Profile Selection",
+            "copy": {
+              "body": "Use Search or the profile action to select a solo player. A selected player unlocks personal song data, Player Details, solo Statistics, Suggestions, mobile Compete, and Rivals."
+            },
+            "carousels": {
+              "player": "Player profile selection"
+            }
+          },
+          "band": {
+            "title": "Band Profile Selection",
+            "copy": {
+              "body": "Band profiles represent a selected team and band type. Once selected, Songs and Suggestions can focus on band performances, Band Details can show members and rank history, and Statistics points to the band page instead of solo player details."
+            },
+            "carousels": {
+              "band": "Band profile selection"
+            }
+          },
+          "context": {
+            "title": "Profile Context Across Pages",
+            "copy": {
+              "body": "The selected profile follows you through Songs, Suggestions, Statistics, Leaderboards, and detail pages. Links preserve that context so score rows, filters, and comparison views stay focused on the profile you chose."
+            },
+            "carousels": {
+              "context": "Profile context"
+            }
+          }
+        }
+      },
+      "playerDetails": {
+        "title": "Player Details",
+        "copy": {
+          "intro": "Player Details gathers a selected player's progress into one long-form view. It is built for scanning summary cards first, then drilling into instrument sections, songs, bands, rank movement, and history when you need more context.",
+          "context": "Most cards are navigational. Clicking a stat or song can move you into Songs, song details, Leaderboards, or history while preserving the selected player context."
+        },
+        "carousels": {
+          "overview": "Player details overview"
+        },
+        "subsections": {
+          "summary": {
+            "title": "Summary And Statistic Cards",
+            "copy": {
+              "body": "Summary cards highlight songs played, full combos, gold stars, average accuracy, best rank, and global statistic ranks when available. They provide the fastest read on a player's overall shape before you inspect individual instruments."
+            },
+            "carousels": {
+              "summary": "Player summary cards"
+            }
+          },
+          "instruments": {
+            "title": "Instrument Sections And Graphs",
+            "copy": {
+              "body": "Instrument sections break progress down by visible instruments. They can include ranked metrics, score history, rank history, percentile tables, and useful song links so you can understand both current strength and recent movement."
+            },
+            "carousels": {
+              "instruments": "Instrument sections"
+            }
+          },
+          "navigation": {
+            "title": "Top Songs, Bands, And Drilldowns",
+            "copy": {
+              "body": "Top and bottom song groups, player bands, and card actions help you move from a high-level profile into the exact songs, teams, or rankings behind the numbers."
+            },
+            "carousels": {
+              "navigation": "Player drilldowns"
+            }
+          }
+        }
+      },
+      "bandDetails": {
+        "title": "Band Details",
+        "copy": {
+          "intro": "Band Details focuses on a selected team's shared performance. It shows who is in the band, what type of band it is, how the team ranks, and which songs best explain the band's current position.",
+          "context": "Band pages keep member context visible so you can move between team performance and individual player details without losing track of the selected profile."
+        },
+        "carousels": {
+          "overview": "Band details overview"
+        },
+        "subsections": {
+          "members": {
+            "title": "Members And Band Summary",
+            "copy": {
+              "body": "The top of a band page identifies the band type, members, and selected-band context. Member rows link back to individual player details so you can inspect each player's contribution separately."
+            },
+            "carousels": {
+              "members": "Band members"
+            }
+          },
+          "rankHistory": {
+            "title": "Band Statistics And Rank History",
+            "copy": {
+              "body": "Band statistics summarize the team's rank and rating while the rank-history graph shows how that position has changed over time. This is the fastest way to tell whether a band is climbing, holding, or slipping."
+            },
+            "carousels": {
+              "rankHistory": "Band rank history"
+            }
+          },
+          "songs": {
+            "title": "Band Songs And Combo Context",
+            "copy": {
+              "body": "Best and worst band songs show where the team has the strongest and weakest rankings. Band instrument filtering can focus the view on specific member-to-instrument assignments when a combo is selected."
+            },
+            "carousels": {
+              "songs": "Band songs"
+            }
+          }
+        }
+      },
+      "songDetail": {
+        "title": "Song Detail And Detail Cards",
+        "copy": {
+          "intro": "Song Detail turns one track into a focused workspace. It gathers metadata, scores, history, leaderboard previews, top performances, and path access so you can inspect the song without losing the selected profile context.",
+          "context": "Detail cards are designed for comparison. They show what the song is, how hard each part is, where the selected profile stands, and where to go next."
+        },
+        "carousels": {
+          "overview": "Song detail overview"
+        },
+        "subsections": {
+          "cards": {
+            "title": "Song Header And Metadata Cards",
+            "copy": {
+              "body": "The song header and cards group title, artist, album art, intensity, instrument difficulty, shop state, and selected-profile score information. The layout changes with screen size but keeps the song identity and main actions near the top."
+            },
+            "carousels": {
+              "cards": "Song detail cards"
+            }
+          },
+          "leaderboards": {
+            "title": "Leaderboard Previews And Score History",
+            "copy": {
+              "body": "Leaderboard previews show top entries and selected-profile placement when available. Score history charts and lists help you see previous attempts, score changes, accuracy, stars, full-combo state, and dates for the selected song and instrument."
+            },
+            "carousels": {
+              "leaderboards": "Leaderboard previews"
+            }
+          },
+          "pathsHistory": {
+            "title": "Paths And Player History",
+            "copy": {
+              "body": "View Paths opens CHOpt path information as an image or text table according to App Settings. Player History gives a longer chronological view of score attempts and lets you sort the history data for easier comparison."
+            },
+            "carousels": {
+              "pathsHistory": "Paths and history"
+            }
+          }
+        }
+      },
+      "syncHistory": {
+        "title": "Sync Card And Post-Sync Data",
+        "copy": {
+          "intro": "When a player profile needs more history, the sync card explains what the app is waiting on and gives you a visible progress point inside Player Details. The card is about what you can see next, not about technical internals.",
+          "context": "After sync completes, profile-aware views can show richer history, graphs, recommendations, rank movement, and per-song context."
+        },
+        "carousels": {
+          "overview": "Sync and history overview"
+        },
+        "subsections": {
+          "card": {
+            "title": "Sync Card",
+            "copy": {
+              "body": "The sync card appears when a selected player is tracked or has pending profile data. It keeps progress visible from Player Details so you know whether to wait, browse other pages, or come back later."
+            },
+            "carousels": {
+              "card": "Sync card"
+            }
+          },
+          "after": {
+            "title": "After Sync Completes",
+            "copy": {
+              "body": "Once profile data is ready, the app can fill in more complete score history, personal bests, full-combo state, rank movement, and Suggestions context. The same pages become more useful without changing how you navigate them."
+            },
+            "carousels": {
+              "after": "Post-sync detail"
+            }
+          },
+          "graphs": {
+            "title": "Graphs, History, And Recommendations",
+            "copy": {
+              "body": "Graphs and history views make progress visible over time, while Suggestions can use the completed profile context to surface missed songs, stale songs, percentile pushes, and other improvement groups."
+            },
+            "carousels": {
+              "graphs": "Graphs and recommendations"
+            }
+          }
+        }
+      },
+      "suggestions": {
+        "title": "Suggestions",
+        "copy": {
+          "intro": "Suggestions turns profile context into focused song groups. Instead of browsing the whole catalog, you can start from categories that point toward discovery, cleanup, improvement runs, and profile-specific gaps.",
+          "context": "Suggestion filters are separate from normal Songs filters, so you can explore recommended groups without disturbing your saved Songs page setup."
+        },
+        "carousels": {
+          "overview": "Suggestions overview"
+        },
+        "subsections": {
+          "solo": {
+            "title": "Solo Suggestions",
+            "copy": {
+              "body": "With a selected player, Suggestions can surface unplayed songs, stale songs, near-max-score songs, percentile pushes, artist groups, and rival-based ideas. Category cards act as launch points back into Songs."
+            },
+            "carousels": {
+              "solo": "Solo suggestions"
+            }
+          },
+          "band": {
+            "title": "Band Suggestions",
+            "copy": {
+              "body": "With a selected band profile, Suggestions focuses on the band's songs and available band context. This makes it easier to find team cleanup targets without mixing solo progress into the list."
+            },
+            "carousels": {
+              "band": "Band suggestions"
+            }
+          },
+          "filters": {
+            "title": "Suggestion Filters And Category Cards",
+            "copy": {
+              "body": "Suggestion filters narrow by instrument, category, and profile context. Category cards summarize why a group matters and take you directly to a filtered song list."
+            },
+            "carousels": {
+              "filters": "Suggestion filters"
+            }
+          }
+        }
+      },
+      "compete": {
+        "title": "Compete",
+        "copy": {
+          "intro": "Compete is a mobile-only hub for selected solo players. It groups competitive entry points into a smaller surface so phones can jump into Leaderboards and Rivals without requiring the wider desktop layout.",
+          "context": "The Compete tab appears in bottom navigation when a solo player profile is selected. Links from the hub preserve that player context so ranking and rival views stay personal."
+        },
+        "carousels": {
+          "overview": "Compete overview"
+        },
+        "subsections": {
+          "mobileHub": {
+            "title": "Mobile Compete Hub",
+            "copy": {
+              "body": "The Compete hub is designed for phone navigation. It gives selected solo players a compact place to start competitive browsing without scrolling through desktop-oriented navigation."
+            },
+            "carousels": {
+              "mobileHub": "Mobile compete hub"
+            }
+          },
+          "leaderboards": {
+            "title": "Leaderboards Entry Points",
+            "copy": {
+              "body": "Leaderboards links from Compete can take you into ranking overviews and full ranking lists while keeping the selected player available for your-rank context."
+            },
+            "carousels": {
+              "leaderboards": "Compete leaderboards"
+            }
+          },
+          "rivals": {
+            "title": "Rivals Entry Points",
+            "copy": {
+              "body": "Rivals links from Compete lead into solo-player rival views, including song rivals and leaderboard neighbors. These views are only meaningful when a solo player profile is active."
+            },
+            "carousels": {
+              "rivals": "Compete rivals"
+            }
+          }
+        }
+      },
+      "leaderboardsRivals": {
+        "title": "Leaderboards And Rivals",
+        "copy": {
+          "intro": "Leaderboards compare ranked accounts and bands across instruments, band types, combos, and ranking metrics. Rivals starts from a selected solo player and narrows the comparison to nearby competitors or shared songs.",
+          "context": "Use Leaderboards when you want broad ranking context. Use Rivals when you want a more personal comparison around one selected solo player."
+        },
+        "carousels": {
+          "overview": "Leaderboards and Rivals overview"
+        },
+        "subsections": {
+          "fullRankings": {
+            "title": "Overview And Full Rankings",
+            "copy": {
+              "body": "The Leaderboards overview groups solo instruments, band rankings, combo rankings, and rank-history context. Full ranking pages add paging, selected-player placement, metric controls, and instrument or scope switching."
+            },
+            "carousels": {
+              "fullRankings": "Full rankings"
+            }
+          },
+          "metrics": {
+            "title": "Ranking Metrics And Scopes",
+            "copy": {
+              "body": "Metric controls switch between total score, adjusted rank, weighted rank, full-combo rate, and max-score percentage when enabled. Scope controls decide whether you are looking at a solo instrument, band type, combo, or family ranking."
+            },
+            "carousels": {
+              "metrics": "Ranking metrics"
+            }
+          },
+          "rivalsSolo": {
+            "title": "Solo-Player Rivals",
+            "copy": {
+              "body": "Rivals is available only for selected solo player profiles. It can show song rivals, common-song comparisons, combo or instrument rival groups, leaderboard neighbors, rival detail pages, and rivalry drilldowns."
+            },
+            "carousels": {
+              "rivalsSolo": "Solo rivals"
+            }
+          }
+        }
+      },
+      "shop": {
+        "title": "Item Shop",
+        "copy": {
+          "intro": "The Item Shop page collects songs currently available in the shop and highlights limited-time browsing states. It is useful when you want to inspect shop songs directly or use shop state as a signal while browsing Songs.",
+          "context": "Shop visibility can also appear on song rows and song details when enabled in App Settings."
+        },
+        "carousels": {
+          "overview": "Item Shop overview"
+        },
+        "subsections": {
+          "gridList": {
+            "title": "Grid And List Views",
+            "copy": {
+              "body": "Grid and list views support different browsing densities. Grid view emphasizes album art and visual scanning, while list view is better when you want a tighter table-like pass through shop songs."
+            },
+            "carousels": {
+              "gridList": "Shop grid and list"
+            }
+          },
+          "badges": {
+            "title": "Shop Badges On Songs And Details",
+            "copy": {
+              "body": "Shop badges can appear on Songs rows and song detail headers, helping you spot tracks that are currently available while staying in your normal browsing flow."
+            },
+            "carousels": {
+              "badges": "Shop badges"
+            }
+          },
+          "settings": {
+            "title": "Leaving-Tomorrow And Visibility Settings",
+            "copy": {
+              "body": "App Settings can hide Item Shop UI or change how shop highlights appear. Leaving-tomorrow states help you notice songs that may need attention soon."
+            },
+            "carousels": {
+              "settings": "Shop settings"
+            }
+          }
+        }
+      },
+      "settings": {
+        "title": "App Settings",
+        "copy": {
+          "intro": "App Settings control how the app looks and how much information appears while browsing. They are especially useful for reducing noise when you only care about certain instruments, metadata fields, path views, or mobile controls.",
+          "context": "The examples below focus on app preferences and browsing behavior. Operational status rows are intentionally not part of this manual."
+        },
+        "carousels": {
+          "overview": "App Settings overview"
+        },
+        "subsections": {
+          "instruments": {
+            "title": "Instrument Visibility And Metadata",
+            "copy": {
+              "body": "Show Instruments decides which instruments appear across Songs, Player Details, Suggestions, and Leaderboards. Show Instrument Metadata and Song Row Visual Order control which extra values appear when Songs is focused on a single instrument."
+            },
+            "carousels": {
+              "instruments": "Instrument settings"
+            }
+          },
+          "paths": {
+            "title": "Paths, Leeway, And Ranking Examples",
+            "copy": {
+              "body": "Common examples include changing the CHOpt path default view, reordering text path columns, adjusting max-score leeway, and enabling experimental leaderboard ranks when you want more ranking mechanisms visible."
+            },
+            "carousels": {
+              "paths": "Path and ranking settings"
+            }
+          },
+          "preferences": {
+            "title": "Mobile Header, Shop, Export, And Reset",
+            "copy": {
+              "body": "Other examples include showing or hiding mobile header buttons, changing shop highlighting, replaying first-run guides, exporting selected profile data, and resetting saved app preferences."
+            },
+            "carousels": {
+              "preferences": "App preference settings"
+            }
+          }
+        }
+      }
+    }
   },
   "shop": {
     "viewGrid": "Grid",
@@ -1339,6 +1853,7 @@
     "noRivalsSubtitlePlural": "Play more songs on your selected instruments to generate a roster of Rivals.",
     "noRivalsCombo": "No rivals found for this instrument combination.",
     "combo": "Combined",
+    "proDrumsFamily": "Pro Drums Family",
     "instrumentRivals": "{{player}}'s {{instrument}} Rivals",
     "commonRivals": "{{player}}'s Common Rivals",
     "commonRivalsShort": "Common Rivals",
@@ -1346,6 +1861,7 @@
     "quickLinks": "Quick Links",
     "seeAll": "See All",
     "viewRivals": "View Rivals",
+    "findRival": "Find Rival",
     "tabSong": "Song Rivals",
     "tabLeaderboard": "Leaderboard Rivals",
     "leaderboardSubtitle": "All-Time Total Score Rankings",

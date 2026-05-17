@@ -1,11 +1,21 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { AccountRankingDto, AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import RankingCard from '../../../../src/pages/leaderboards/components/RankingCard';
 import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { TestProviders } from '../../../helpers/TestProviders';
 import { Colors, Gap } from '@festival/theme';
 import { stubMatchMedia, stubResizeObserver } from '../../../helpers/browserStubs';
+
+const mockNavigate = vi.hoisted(() => vi.fn());
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
 
 const instrument: ServerInstrumentKey = 'Solo_Guitar';
 const metric: RankingMetric = 'totalscore';
@@ -82,6 +92,7 @@ function expectBefore(first: Element, second: Element) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  mockNavigate.mockReset();
 });
 
 describe('RankingCard', () => {
@@ -92,6 +103,37 @@ describe('RankingCard', () => {
     });
 
     expect(screen.getByText('View all rankings (10,030)')).toBeTruthy();
+  });
+
+  it('activates view-all from touch pointerup without double navigating on click', () => {
+    renderCard({
+      entries: [makeEntry(1), makeEntry(2)],
+      totalAccounts: 10030,
+    });
+    const viewAll = screen.getByRole('button', { name: 'View all rankings (10,030)' });
+
+    fireEvent.pointerDown(viewAll, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+    fireEvent.pointerUp(viewAll, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith('/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore');
+
+    fireEvent.click(viewAll);
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not activate view-all when touch movement becomes a scroll', () => {
+    renderCard({
+      entries: [makeEntry(1), makeEntry(2)],
+      totalAccounts: 10030,
+    });
+    const viewAll = screen.getByRole('button', { name: 'View all rankings (10,030)' });
+
+    fireEvent.pointerDown(viewAll, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+    fireEvent.pointerMove(viewAll, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 28 });
+    fireEvent.pointerUp(viewAll, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 28 });
+
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('falls back to the plain label when totalAccounts is zero', () => {

@@ -136,6 +136,22 @@ describe('FloatingActionButton', () => {
     expect(screen.getByText('Sort')).toBeTruthy();
   });
 
+  it('opens the popup menu from touch pointerup without the following click closing it', () => {
+    const actionGroups: ActionItem[][] = [[
+      { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+    ]];
+    renderFAB({ actionGroups });
+
+    const fab = screen.getByRole('button', { name: /actions/i });
+    fireEvent.pointerDown(fab, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 330, clientY: 770 });
+    fireEvent.pointerUp(fab, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 330, clientY: 770 });
+
+    expect(screen.getByText('Sort')).toBeTruthy();
+
+    fireEvent.click(fab);
+    expect(screen.getByTestId('fab-menu').style.pointerEvents).toBe('auto');
+  });
+
   it('closes the popup menu when clicked again', () => {
     const actionGroups: ActionItem[][] = [[
       { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
@@ -147,7 +163,8 @@ describe('FloatingActionButton', () => {
     expect(screen.getByText('Sort')).toBeTruthy();
 
     fireEvent.click(fab);
-    // Menu is closing (popupVisible=false), but still mounted until animation ends
+    // Menu is closing (popupVisible=false), but still mounted until animation ends.
+    expect(screen.getByTestId('fab-menu').style.pointerEvents).toBe('none');
   });
 
   it('renders action groups with labels and icons', () => {
@@ -270,6 +287,28 @@ describe('FloatingActionButton', () => {
     expect(within(link).getByText('Item Shop')).toBeTruthy();
     expect(link).toHaveStyle({ minWidth: `${Layout.fabSize}px`, height: `${Layout.fabSize}px` });
     expect(link.style.backgroundColor).toBe('rgb(45, 130, 230)');
+    expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
+  });
+
+  it('uses glass backing for pulsing external side actions', () => {
+    renderFAB({
+      mode: 'players',
+      sideActions: [{
+        label: 'Item Shop',
+        icon: <span>S</span>,
+        href: 'https://example.com/shop/s1',
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        tone: 'pulse',
+        className: 'shop-pulse',
+        onPress: vi.fn(),
+      }],
+    });
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    expect(link).toHaveClass('shop-pulse');
+    expect(link.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(link.style.border).toBe('1px solid rgba(255, 255, 255, 0.08)');
     expect(screen.queryByRole('button', { name: 'Actions' })).toBeNull();
   });
 

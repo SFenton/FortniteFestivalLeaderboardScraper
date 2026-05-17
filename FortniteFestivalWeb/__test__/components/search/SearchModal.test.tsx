@@ -3,6 +3,7 @@ import { render, screen, fireEvent, act, waitFor, within } from '@testing-librar
 import { useEffect } from 'react';
 import SearchModal from '../../../src/components/search/SearchModal';
 import { TestProviders } from '../../helpers/TestProviders';
+import { LEGACY_TRACKED_PLAYER_STORAGE_KEY, SELECTED_PROFILE_STORAGE_KEY } from '../../../src/state/selectedProfile';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -155,12 +156,36 @@ function createDeferred<T>() {
 }
 
 function findAnimatedAncestor(text: string): HTMLElement | null {
-  let el = screen.getByText(text) as HTMLElement | null;
+  return findAnimatedAncestorFrom(screen.getByText(text) as HTMLElement | null);
+}
+
+function findSectionAnimatedAncestor(target: 'songs' | 'players' | 'bands', text: string): HTMLElement | null {
+  return findAnimatedAncestorFrom(within(screen.getByTestId(`search-section-${target}`)).getByText(text) as HTMLElement | null);
+}
+
+function findAnimatedAncestorFrom(element: HTMLElement | null): HTMLElement | null {
+  let el = element;
   while (el && el !== document.body) {
     if (el.style.animation.includes('fadeInUp')) return el;
     el = el.parentElement;
   }
   return null;
+}
+
+function getSectionHeading(target: 'songs' | 'players' | 'bands'): HTMLElement {
+  const heading = screen.getByTestId(`search-section-${target}`).querySelector('h3');
+  expect(heading).not.toBeNull();
+  return heading as HTMLElement;
+}
+
+function expectFadeInDelay(element: HTMLElement | null, delayMs: number) {
+  expect(element?.style.animation).toContain('fadeInUp');
+  expect(element?.style.animation).toContain(`${delayMs}ms`);
+}
+
+function expectRushedFadeIn(element: HTMLElement | null) {
+  expect(element?.style.animation).toContain('fadeInUp');
+  expect(element?.style.animation).toMatch(/ease-out forwards$/);
 }
 
 function expectResultListEdgePadding(result: HTMLElement | null) {
@@ -173,6 +198,8 @@ function expectResultListEdgePadding(result: HTMLElement | null) {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.clearAllMocks();
+  localStorage.removeItem(SELECTED_PROFILE_STORAGE_KEY);
+  localStorage.removeItem(LEGACY_TRACKED_PLAYER_STORAGE_KEY);
   mockNavigate.mockClear();
   setViewportQueries();
   mockApi.getSongs.mockResolvedValue({
@@ -231,6 +258,33 @@ describe('SearchModal', () => {
     expect(screen.queryByRole('button', { name: 'Songs' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Players' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Bands' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('hides target filters and uses custom player selection for player-only scope', async () => {
+    const onPlayerSelect = vi.fn();
+    const { props } = renderModal({
+      availableTargets: ['players'],
+      onPlayerSelect,
+    });
+
+    expect(screen.getByPlaceholderText('Search players…')).toBeDefined();
+    expect(screen.queryByRole('group', { name: 'Search targets' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Songs' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Players' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Bands' })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText('Search players…'), { target: { value: 'pla' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+
+    const playerResult = await screen.findByTestId('search-player-result');
+    fireEvent.click(playerResult);
+
+    expect(mockApi.searchAccounts).toHaveBeenCalledWith('pla', 10);
+    expect(mockApi.searchBands).not.toHaveBeenCalled();
+    expect(props.onClose).toHaveBeenCalled();
+    expect(onPlayerSelect).toHaveBeenCalledWith({ accountId: 'p1', displayName: 'PlayerOne' });
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('toggles target filters on and off', () => {
@@ -458,6 +512,81 @@ describe('SearchModal', () => {
     expect(await screen.findByText('3')).toBeDefined();
   });
 
+  it('staggers global result section headings before their content', async () => {
+    renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'but' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('search-section-songs')).toBeDefined();
+      expect(screen.getByTestId('search-section-players')).toBeDefined();
+      expect(screen.getByTestId('search-section-bands')).toBeDefined();
+    });
+
+    expectFadeInDelay(getSectionHeading('songs'), 125);
+    expectFadeInDelay(findSectionAnimatedAncestor('songs', 'Butter Barn Hoedown'), 250);
+    expectFadeInDelay(getSectionHeading('players'), 375);
+    expectFadeInDelay(findSectionAnimatedAncestor('players', 'PlayerOne'), 500);
+    expectFadeInDelay(getSectionHeading('bands'), 625);
+    expectFadeInDelay(findSectionAnimatedAncestor('bands', 'PlayerTwo'), 750);
+  });
+
+  it('keeps later global section headings staggered after the visible item cap', async () => {
+    mockApi.getSongs.mockResolvedValueOnce({
+      count: 8,
+      currentSeason: 5,
+      songs: Array.from({ length: 8 }, (_, index) => ({
+        songId: `but-song-${index}`,
+        title: `But Song ${index + 1}`,
+        artist: 'Epic Games',
+      })),
+    });
+
+    renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'but' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('search-section-songs')).toBeDefined();
+      expect(screen.getByTestId('search-section-players')).toBeDefined();
+      expect(screen.getByTestId('search-section-bands')).toBeDefined();
+    });
+
+    expectFadeInDelay(getSectionHeading('players'), 1250);
+    expectFadeInDelay(getSectionHeading('bands'), 1500);
+  });
+
+  it('rushes pending stagger animations when global results scroll', async () => {
+    renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'but' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+
+    const bandsHeading = await waitFor(() => getSectionHeading('bands'));
+    expectFadeInDelay(bandsHeading, 625);
+
+    fireEvent.scroll(screen.getByTestId('search-results-panel'));
+
+    expectRushedFadeIn(bandsHeading);
+  });
+
+  it('rushes pending stagger animations when filtered results scroll', async () => {
+    renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'but' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
+
+    const playerResult = await waitFor(() => findAnimatedAncestor('PlayerOne'));
+    expectFadeInDelay(playerResult, 125);
+
+    fireEvent.scroll(screen.getByTestId('search-results-panel'));
+
+    expectRushedFadeIn(playerResult);
+  });
+
   it('omits empty global result sections after all target searches settle', async () => {
     mockApi.searchAccounts.mockResolvedValueOnce({ results: [] });
 
@@ -670,5 +799,56 @@ describe('SearchModal', () => {
 
     expect(props.onClose).toHaveBeenCalled();
     expect(mockNavigate).toHaveBeenCalledWith('/player/p1');
+  });
+
+  it('navigates selected player results to statistics', async () => {
+    localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({ type: 'player', accountId: 'p1', displayName: 'PlayerOne' }));
+    localStorage.setItem(LEGACY_TRACKED_PLAYER_STORAGE_KEY, JSON.stringify({ accountId: 'p1', displayName: 'PlayerOne' }));
+    const { props } = renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'pla' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
+    fireEvent.click(await screen.findByTestId('search-player-result'));
+
+    expect(props.onClose).toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/statistics');
+  });
+
+  it('navigates non-selected band results to the clean band route', async () => {
+    const { props } = renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'pla' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+    fireEvent.click(screen.getByRole('button', { name: 'Bands' }));
+    await waitFor(() => expect(screen.getByText('PlayerTwo')).toBeDefined());
+    fireEvent.click(screen.getByText('PlayerTwo'));
+
+    expect(props.onClose).toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/bands/band-1?bandType=Band_Duets&teamKey=p1%2Cp2&names=PlayerOne%2C%20PlayerTwo');
+  });
+
+  it('navigates selected band results to statistics', async () => {
+    localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1,p2',
+      displayName: 'PlayerOne + PlayerTwo',
+      members: [
+        { accountId: 'p1', displayName: 'PlayerOne' },
+        { accountId: 'p2', displayName: 'PlayerTwo' },
+      ],
+    }));
+    const { props } = renderModal();
+    fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: 'pla' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+    fireEvent.click(screen.getByRole('button', { name: 'Bands' }));
+    await waitFor(() => expect(screen.getByText('PlayerTwo')).toBeDefined());
+    fireEvent.click(screen.getByText('PlayerTwo'));
+
+    expect(props.onClose).toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/statistics');
   });
 });

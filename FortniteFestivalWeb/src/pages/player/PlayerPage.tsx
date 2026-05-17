@@ -14,7 +14,7 @@ import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerS
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { LoadPhase } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
-import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS, CONTENT_OUT_MS } from '@festival/theme';
+import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS, CONTENT_OUT_MS, PointerEvents } from '@festival/theme';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
@@ -137,7 +137,9 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     enabled: !!accountId,
   });
   const statsData = statsQuery.data ?? null;
+  const statsSettled = statsQuery.isSuccess || statsQuery.isError;
   const hasRankTiers = !!statsData?.instrumentRanks?.length;
+  const shouldFetchRankingFallback = !!accountId && statsSettled && !hasRankTiers;
 
   // Fetch per-instrument rankings (only when stats don't already provide rank tiers)
   const instrumentRankingQueries = useQueries({
@@ -146,14 +148,10 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
           queryKey: queryKeys.playerRanking(inst, accountId),
           queryFn: () => api.getPlayerRanking(inst, accountId),
           staleTime: 5 * 60_000,
-          enabled: !hasRankTiers,
+          enabled: shouldFetchRankingFallback,
         }))
       : [],
   });
-
-  // Prefetch rank-history so charts warm in background, but do not block initial player content.
-  const allHistory = useRankHistoryAll(visibleKeys, accountId, 'totalscore');
-  const historyAllCached = !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
 
   // Skip stagger if we've rendered this account before.
   const hasRendered = isTrackedPlayer
@@ -173,8 +171,12 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   /* v8 ignore stop */
   const skipAnim = skipAnimRef.current;
   const statsReady = !statsQuery.isLoading;
-  const rankingsReady = hasRankTiers || instrumentRankingQueries.every(q => !q.isLoading);
+  const rankingsReady = hasRankTiers || !shouldFetchRankingFallback || instrumentRankingQueries.every(q => !q.isLoading);
   const dataReady = !loading && !error && !!data && statsReady && rankingsReady;
+
+  // Prefetch rank-history after critical profile/stats data is ready so it cannot compete with first render.
+  const allHistory = useRankHistoryAll(visibleKeys, accountId, 'totalscore', 30, dataReady);
+  const historyAllCached = !accountId || visibleKeys.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
   const allCached = !!data && statsQuery.data != null
     && (hasRankTiers || instrumentRankingQueries.every(q => q.data != null))
     && historyAllCached;
@@ -242,6 +244,7 @@ function useStyles() {
       zIndex: ZIndex.dropdown,
       ...flexCenter,
       animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
+      pointerEvents: PointerEvents.none,
     } as CSSProperties,
     contentOut: {
       animation: `fadeOut ${CONTENT_OUT_MS}ms ease-out forwards`,

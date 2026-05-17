@@ -1,11 +1,9 @@
 /* eslint-disable react/forbid-dom-props -- song detail cards use inline theme styles */
 import { useMemo, type CSSProperties } from 'react';
-import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { IoChevronForward } from 'react-icons/io5';
 import type { PlayerBandType, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
 import type { SongBandData } from '../../../api/pageCache';
-import { Align, Border, Colors, Cursor, Display, Font, Gap, Justify, Layout, Opacity, Radius, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, TRANSITION_MS, Weight, border, flexColumn, flexRow, frostedCard, padding } from '@festival/theme';
+import { Align, Border, Colors, Display, Font, Gap, Justify, Layout, Opacity, Radius, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, TRANSITION_MS, Weight, border, flexColumn, flexRow, frostedCard, padding } from '@festival/theme';
 import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/PlayerBandCard';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
 import SongBandScoreFooter, { SongBandMemberMetadata, formatSongBandAccuracy, getSongBandMemberScoreWidth, getSongBandScoreWidth, hasSongBandMemberAccuracy, hasSongBandMemberStars } from '../../../components/bands/SongBandScoreFooter';
@@ -13,6 +11,8 @@ import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
 import { songBandToPlayerBandEntry, songBandTypeLabel } from '../../../utils/songBandLeaderboards';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
+import ViewFullLeaderboardCta from './ViewFullLeaderboardCta';
 
 type SongBandLeaderboardPreviewProps = {
   songId: string;
@@ -53,6 +53,8 @@ export default function SongBandLeaderboardPreview({
         total: data.totalEntries!.toLocaleString(),
       })
     : t('leaderboard.viewFullShort');
+  const viewAllRoute = Routes.songBandLeaderboard(songId, bandType);
+  const viewAllPress = useNavLinkPress<HTMLAnchorElement>({ to: viewAllRoute });
 
   const anim = (delayMs: number): CSSProperties => skipAnimation ? {} : ({
     opacity: Opacity.none,
@@ -138,14 +140,15 @@ export default function SongBandLeaderboardPreview({
               />
             );
           })()}
-          <Link
-            to={Routes.songBandLeaderboard(songId, bandType)}
-            style={{ ...styles.viewAllCard, ...anim(baseDelay + STAGGER_ENTRY_OFFSET + (data.entries.length + (showSelectedRow ? 1 : 0)) * STAGGER_ROW_MS) }}
+          <ViewFullLeaderboardCta
+            to={viewAllRoute}
+            style={anim(baseDelay + STAGGER_ENTRY_OFFSET + (data.entries.length + (showSelectedRow ? 1 : 0)) * STAGGER_ROW_MS)}
             onAnimationEnd={clearAnim}
+            data-pressed={viewAllPress.isPressed ? 'true' : undefined}
+            {...viewAllPress.linkPressHandlers}
           >
-            <span>{viewAllLabel}</span>
-            <IoChevronForward aria-hidden="true" size={18} style={styles.entryChevron} />
-          </Link>
+            {viewAllLabel}
+          </ViewFullLeaderboardCta>
         </div>
       )}
     </section>
@@ -193,28 +196,9 @@ function useStyles() {
       justifyContent: Justify.center,
       textAlign: 'center',
     } as CSSProperties,
-    viewAllCard: {
-      ...frostedCard,
-      ...flexRow,
-      alignItems: Align.center,
-      justifyContent: Justify.center,
-      gap: Gap.sm,
-      minHeight: Layout.entryRowHeight,
-      padding: padding(Gap.sm, Gap.md),
-      borderRadius: Radius.md,
-      color: Colors.textPrimary,
-      fontSize: Font.md,
-      fontWeight: Weight.semibold,
-      textDecoration: 'none',
-      cursor: Cursor.pointer,
-    } as CSSProperties,
     selectedCard: {
       backgroundColor: Colors.purpleHighlight,
       border: border(Border.thin, Colors.purpleHighlightBorder),
-    } as CSSProperties,
-    entryChevron: {
-      flexShrink: 0,
-      color: Colors.textSubtle,
     } as CSSProperties,
   }), []);
 }

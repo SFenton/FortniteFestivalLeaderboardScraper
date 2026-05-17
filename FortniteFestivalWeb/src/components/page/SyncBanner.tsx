@@ -48,6 +48,10 @@ function getUnifiedProgress(phase: SyncPhase, bf: number, hr: number, rv: number
   }
 }
 
+function formatCount(value: number): string {
+  return value.toLocaleString();
+}
+
 const SyncBanner = memo(function SyncBanner({
   phase, backfillProgress, historyProgress, rivalsProgress,
   itemsCompleted, totalItems, entriesFound, currentSongName,
@@ -63,7 +67,8 @@ const SyncBanner = memo(function SyncBanner({
     ? (totalItems > 0 ? itemsCompleted / totalItems : 0)
     : getUnifiedProgress(phase, backfillProgress, historyProgress, rivalsProgress);
   const pct = Math.round(unified * 100);
-  const isIndeterminate = isQueued || (itemsCompleted === 0 && totalItems === 0) || isThrottled || !!probeStatusKey;
+  const showQueuedRail = isQueued && !isThrottled && !probeStatusKey;
+  const isIndeterminate = !showQueuedRail && ((itemsCompleted === 0 && totalItems === 0) || isThrottled || !!probeStatusKey);
 
   // Probe status takes priority over throttle for display text
   const statusWarning = probeStatusKey
@@ -92,10 +97,19 @@ const SyncBanner = memo(function SyncBanner({
 
       {/* Unified progress bar */}
       <div style={s.syncProgressBar}>
-        <div style={{
-          ...s.syncProgressInner,
-          ...(isThrottled ? s.syncProgressThrottled : isIndeterminate ? s.syncProgressIndeterminate : { width: `${pct}%` }),
-        }} />
+        {showQueuedRail ? (
+          <div style={s.syncProgressQueuedRail} data-testid="sync-progress-queued-rail">
+            <div style={s.syncProgressQueuedHighlight} data-testid="sync-progress-queued-highlight" />
+          </div>
+        ) : (
+          <div
+            data-testid="sync-progress-inner"
+            style={{
+              ...s.syncProgressInner,
+              ...(isThrottled ? s.syncProgressThrottled : isIndeterminate ? s.syncProgressIndeterminate : { width: `${pct}%` }),
+            }}
+          />
+        )}
       </div>
 
       {/* Throttle / probe warning */}
@@ -107,11 +121,17 @@ const SyncBanner = memo(function SyncBanner({
 
       {/* Counts row */}
       <div style={s.syncCounts}>
-        {!isQueued && totalItems > 0 && (
-          <span>{itemsCompleted.toLocaleString()} / {totalItems.toLocaleString()}</span>
+        {phase === 'backfill' && totalItems > 0 && (
+          <span>{t('player.syncSongsChecked', { checked: formatCount(itemsCompleted), total: formatCount(totalItems) })}</span>
         )}
-        {phase === 'backfill' && entriesFound > 0 && (
-          <span>{t('player.syncNewScores', { count: entriesFound })}</span>
+        {phase === 'history' && totalItems > 0 && (
+          <span>{t('player.syncHistoryProcessed', { processed: formatCount(itemsCompleted), total: formatCount(totalItems) })}</span>
+        )}
+        {phase === 'rivals' && totalItems > 0 && (
+          <span>{t('player.syncRivalGroupsChecked', { checked: formatCount(itemsCompleted), total: formatCount(totalItems) })}</span>
+        )}
+        {phase === 'postscrape' && totalItems > 0 && (
+          <span>{t('player.syncItemsProcessed', { completed: formatCount(itemsCompleted), total: formatCount(totalItems) })}</span>
         )}
         {phase === 'history' && (
           <>
@@ -123,7 +143,7 @@ const SyncBanner = memo(function SyncBanner({
           <span>{t('player.syncRivalsFound', { count: rivalsFound })}</span>
         )}
         {phase === 'postscrape' && entriesFound > 0 && (
-          <span>{t('player.syncNewScores', { count: entriesFound })}</span>
+          <span>{t('player.syncScoreEntriesFound', { count: entriesFound })}</span>
         )}
       </div>
 
@@ -184,6 +204,21 @@ function useSyncBannerStyles() {
       background: Colors.accentBlue,
       borderRadius: Radius.progressBar,
       transition: transition(CssProp.width, TRANSITION_MS),
+    } as CSSProperties,
+    syncProgressQueuedRail: {
+      position: 'relative' as const,
+      width: '100%',
+      height: '100%',
+      overflow: Overflow.hidden,
+      borderRadius: Radius.progressBar,
+    } as CSSProperties,
+    syncProgressQueuedHighlight: {
+      width: '30%',
+      height: '100%',
+      background: Colors.accentBlue,
+      borderRadius: Radius.progressBar,
+      opacity: 0.35,
+      animation: 'indeterminate-bar 1.5s ease-in-out infinite',
     } as CSSProperties,
     syncProgressIndeterminate: {
       width: '30%',

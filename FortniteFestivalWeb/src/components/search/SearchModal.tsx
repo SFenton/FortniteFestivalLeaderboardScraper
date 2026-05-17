@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { LoadPhase } from '@festival/core';
-import { DEFAULT_INSTRUMENT, type AccountSearchResult, type BandSearchResult, type PlayerBandEntry, type ServerInstrumentKey, type ServerSong } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, type AccountSearchResult, type BandSearchResult, type PlayerBandEntry, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { staggerDelay } from '@festival/ui-utils';
 import SearchBar, { type SearchBarRef } from '../common/SearchBar';
 import ArcSpinner, { SpinnerSize } from '../common/ArcSpinner';
@@ -11,10 +11,12 @@ import ModalShell from '../modals/components/ModalShell';
 import PlayerBandCard from '../../pages/player/components/PlayerBandCard';
 import { SongRow } from '../../pages/songs/components/SongRow';
 import { useUnifiedSearch } from '../../hooks/data/useUnifiedSearch';
+import { useSelectedProfile } from '../../hooks/data/useSelectedProfile';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useScrollFade } from '../../hooks/ui/useScrollFade';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 import { Routes } from '../../routes';
 import { SEARCH_TARGETS, type SearchTarget } from '../../types/search';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
@@ -44,6 +46,7 @@ interface SearchModalProps {
   onClose: () => void;
   availableTargets?: readonly SearchTarget[];
   placeholderKey?: string;
+  onPlayerSelect?: (player: AccountSearchResult) => void;
 }
 
 type SearchViewKey = SearchTarget | 'global';
@@ -69,9 +72,10 @@ function getSearchPlaceholderKey(targets: readonly SearchTarget[]): string {
   return SEARCH_PLACEHOLDER_KEYS[targets.join('|')] ?? 'search.placeholder';
 }
 
-export default function SearchModal({ visible, onClose, availableTargets, placeholderKey }: SearchModalProps) {
+export default function SearchModal({ visible, onClose, availableTargets, placeholderKey, onPlayerSelect }: SearchModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { profile: selectedProfile } = useSelectedProfile();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
   const inputRef = useRef<SearchBarRef>(null);
@@ -83,11 +87,13 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
   const keyboardInsetRef = useRef(0);
   const visibleTargets = useMemo(() => resolveSearchTargets(availableTargets), [availableTargets]);
   const resolvedPlaceholderKey = placeholderKey ?? getSearchPlaceholderKey(visibleTargets);
+  const showTargetTabs = visibleTargets.length > 1;
   const [query, setQuery] = useState('');
   const [activeTarget, setActiveTarget] = useState<SearchTarget | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const st = useStyles(isMobile, keyboardInset);
+  const effectiveActiveTarget = showTargetTabs ? activeTarget : visibleTargets[0] ?? null;
   const search = useUnifiedSearch(query, { enabledTargets: visibleTargets });
 
   const captureKeyboardBaseline = useCallback(() => {
@@ -227,22 +233,34 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
     navigate(path);
   }, [navigate, onClose]);
 
-  const handleSongSelect = useCallback((song: ServerSong) => {
-    closeAndNavigate(Routes.songDetail(song.songId));
-  }, [closeAndNavigate]);
-
   const handlePlayerSelect = useCallback((player: AccountSearchResult) => {
-    closeAndNavigate(Routes.player(player.accountId));
-  }, [closeAndNavigate]);
+    if (onPlayerSelect) {
+      onClose();
+      onPlayerSelect(player);
+      return;
+    }
+
+    closeAndNavigate(selectedProfile?.type === 'player' && selectedProfile.accountId === player.accountId
+      ? Routes.statistics
+      : Routes.player(player.accountId));
+  }, [closeAndNavigate, onClose, onPlayerSelect, selectedProfile]);
 
   const handleBandSelect = useCallback((band: BandSearchResult) => {
+    if (selectedProfile?.type === 'band'
+      && selectedProfile.bandId === band.bandId
+      && selectedProfile.bandType === band.bandType
+      && selectedProfile.teamKey === band.teamKey) {
+      closeAndNavigate(Routes.statistics);
+      return;
+    }
+
     const names = band.members.map(member => member.displayName ?? member.accountId).filter(Boolean).join(', ');
     closeAndNavigate(Routes.band(band.bandId, {
       bandType: band.bandType,
       teamKey: band.teamKey,
       names,
     }));
-  }, [closeAndNavigate]);
+  }, [closeAndNavigate, selectedProfile]);
 
   const toggleTargetFilter = useCallback((target: SearchTarget) => {
     setActiveTarget(current => current === target ? null : target);
@@ -253,17 +271,14 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
       {visibleTargets.map(target => {
         const selected = activeTarget === target;
         return (
-          <button
+          <SearchTargetTabButton
             key={target}
-            type="button"
-            aria-pressed={selected}
-            aria-controls="search-results"
-            data-testid={`search-target-filter-${target}`}
+            target={target}
+            label={t(SEARCH_TARGET_LABEL_KEYS[target])}
+            selected={selected}
             style={selected ? st.tabSelected : st.tab}
-            onClick={() => toggleTargetFilter(target)}
-          >
-            {t(SEARCH_TARGET_LABEL_KEYS[target])}
-          </button>
+            onToggle={toggleTargetFilter}
+          />
         );
       })}
     </div>
@@ -295,10 +310,10 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
           enterKeyHint="search"
           style={st.searchBar}
         />
-        {!isMobile && tabs}
+        {!isMobile && showTargetTabs && tabs}
         <div ref={resultsRef} id="search-results" role="region" aria-label={t('search.results')} data-testid="search-results-panel" style={st.results} aria-live="polite">
           <SearchResultsPanel
-            activeTarget={activeTarget}
+            activeTarget={effectiveActiveTarget}
             visibleTargets={visibleTargets}
             query={query}
             search={search}
@@ -306,14 +321,43 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
             resultsRef={resultsRef}
             isMobile={isMobile}
             t={t}
-            onSongSelect={handleSongSelect}
+            onSongNavigateStart={onClose}
             onPlayerSelect={handlePlayerSelect}
             onBandSelect={handleBandSelect}
           />
         </div>
-        {isMobile && tabs}
+        {isMobile && showTargetTabs && tabs}
       </div>
     </ModalShell>
+  );
+}
+
+function SearchTargetTabButton({
+  target,
+  label,
+  selected,
+  style,
+  onToggle,
+}: {
+  target: SearchTarget;
+  label: string;
+  selected: boolean;
+  style: CSSProperties;
+  onToggle: (target: SearchTarget) => void;
+}) {
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onToggle(target) });
+
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      aria-controls="search-results"
+      data-testid={`search-target-filter-${target}`}
+      style={style}
+      {...pressHandlers}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -326,7 +370,7 @@ interface RenderResultsArgs {
   resultsRef: React.RefObject<HTMLDivElement | null>;
   isMobile: boolean;
   t: ReturnType<typeof useTranslation>['t'];
-  onSongSelect: (song: ServerSong) => void;
+  onSongNavigateStart: () => void;
   onPlayerSelect: (player: AccountSearchResult) => void;
   onBandSelect: (band: BandSearchResult) => void;
 }
@@ -451,9 +495,9 @@ function getTargetContentSignature(target: SearchTarget, debouncedQuery: string,
   return `${target}:${debouncedQuery}:${search.bandResults.map(band => `${band.bandId}:${band.teamKey}`).join('|')}`;
 }
 
-function getStaggerStyle(index: number, enabled: boolean): CSSProperties | undefined {
+function getStaggerStyle(index: number, enabled: boolean, maxItems = SEARCH_STAGGER_VISIBLE_ITEMS): CSSProperties | undefined {
   if (!enabled) return undefined;
-  const delay = staggerDelay(index, STAGGER_INTERVAL, SEARCH_STAGGER_VISIBLE_ITEMS);
+  const delay = staggerDelay(index, STAGGER_INTERVAL, maxItems);
   return delay == null ? undefined : { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` };
 }
 
@@ -474,17 +518,19 @@ function renderResults(args: RenderResultsArgs & { shouldStagger: boolean }) {
     }
 
     return renderedTargets.map((target, sectionIndex) => {
+      const headingIndex = staggerIndex;
+      const contentStartIndex = headingIndex + 1;
       const sectionId = `search-section-${target}`;
       const headingId = `${sectionId}-heading`;
       const section = (
         <section key={target} id={sectionId} data-testid={sectionId} style={sectionIndex === 0 ? st.section : st.sectionSpaced} aria-labelledby={headingId}>
-          <h3 id={headingId} style={st.sectionHeading}>{t(SEARCH_TARGET_LABEL_KEYS[target])}</h3>
+          <h3 id={headingId} style={{ ...st.sectionHeading, ...getStaggerStyle(headingIndex, args.shouldStagger, Number.POSITIVE_INFINITY) }}>{t(SEARCH_TARGET_LABEL_KEYS[target])}</h3>
           <div style={st.sectionList}>
-            {renderTargetResults({ ...args, activeTarget: target, startIndex: staggerIndex, compactEmpty: true })}
+            {renderTargetResults({ ...args, activeTarget: target, startIndex: contentStartIndex, compactEmpty: true })}
           </div>
         </section>
       );
-      staggerIndex += getTargetStaggerSlotCount(target, args.search);
+      staggerIndex += 1 + getTargetStaggerSlotCount(target, args.search);
       return section;
     });
   }
@@ -503,7 +549,7 @@ function getTargetResultCount(target: SearchTarget, search: ReturnType<typeof us
   return search.bandResults.length;
 }
 
-function renderTargetResults({ activeTarget, search, styles: st, isMobile, t, onSongSelect, onPlayerSelect, onBandSelect, shouldStagger, startIndex, compactEmpty }: RenderResultsArgs & { activeTarget: SearchTarget; shouldStagger: boolean; startIndex: number; compactEmpty: boolean }) {
+function renderTargetResults({ activeTarget, search, styles: st, isMobile, t, onSongNavigateStart, onPlayerSelect, onBandSelect, shouldStagger, startIndex, compactEmpty }: RenderResultsArgs & { activeTarget: SearchTarget; shouldStagger: boolean; startIndex: number; compactEmpty: boolean }) {
   const hasError = search.errors[activeTarget];
   const emptyStyle = compactEmpty ? st.sectionHint : st.hintCenter;
 
@@ -517,10 +563,6 @@ function renderTargetResults({ activeTarget, search, styles: st, isMobile, t, on
       <div
         key={song.songId}
         style={{ ...st.songRowWrap, ...getStaggerStyle(startIndex + index, shouldStagger) }}
-        onClickCapture={(event) => {
-          event.preventDefault();
-          onSongSelect(song);
-        }}
       >
         <SongRow
           song={song}
@@ -531,6 +573,7 @@ function renderTargetResults({ activeTarget, search, styles: st, isMobile, t, on
           metadataOrder={EMPTY_METADATA_ORDER}
           sortMode="title"
           isMobile={isMobile}
+          onBeforeInternalNavigate={onSongNavigateStart}
         />
       </div>
     ));
@@ -539,9 +582,13 @@ function renderTargetResults({ activeTarget, search, styles: st, isMobile, t, on
   if (activeTarget === 'players') {
     if (search.playerResults.length === 0) return <div style={{ ...emptyStyle, ...getStaggerStyle(startIndex, shouldStagger) }}>{t('search.noResults.players')}</div>;
     return search.playerResults.map((player, index) => (
-      <button key={player.accountId} type="button" data-testid="search-player-result" style={{ ...st.resultBtn, ...getStaggerStyle(startIndex + index, shouldStagger) }} onClick={() => onPlayerSelect(player)}>
-        <span style={st.resultTitle}>{player.displayName}</span>
-      </button>
+      <SearchPlayerResultButton
+        key={player.accountId}
+        player={player}
+        style={{ ...st.resultBtn, ...getStaggerStyle(startIndex + index, shouldStagger) }}
+        titleStyle={st.resultTitle}
+        onSelect={onPlayerSelect}
+      />
     ));
   }
 
@@ -553,19 +600,36 @@ function renderTargetResults({ activeTarget, search, styles: st, isMobile, t, on
       <div
         key={band.bandId}
         style={{ ...st.bandCardWrap, ...getStaggerStyle(startIndex + index, shouldStagger) }}
-        onClickCapture={(event) => {
-          event.preventDefault();
-          onBandSelect(band);
-        }}
       >
         <PlayerBandCard
           entry={cardEntry}
           ariaLabel={members || t('search.unknownBand')}
           appearanceLabel={t('bandList.appearanceLabel', { count: band.appearanceCount })}
+          onPress={() => onBandSelect(band)}
         />
       </div>
     );
   });
+}
+
+function SearchPlayerResultButton({
+  player,
+  style,
+  titleStyle,
+  onSelect,
+}: {
+  player: AccountSearchResult;
+  style: CSSProperties;
+  titleStyle: CSSProperties;
+  onSelect: (player: AccountSearchResult) => void;
+}) {
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onSelect(player) });
+
+  return (
+    <button key={player.accountId} type="button" data-testid="search-player-result" style={style} {...pressHandlers}>
+      <span style={titleStyle}>{player.displayName}</span>
+    </button>
+  );
 }
 
 function getTargetStaggerSlotCount(target: SearchTarget, search: ReturnType<typeof useUnifiedSearch>): number {

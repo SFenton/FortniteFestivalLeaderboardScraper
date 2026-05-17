@@ -4,8 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { IoAlertCircleOutline, IoWarning } from 'react-icons/io5';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors, InstrumentSize, Cursor, flexCenter } from '@festival/theme';
+import { Colors, InstrumentSize, GeneralSize, Cursor, flexCenter } from '@festival/theme';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
+import { usePressAction } from '../../../hooks/ui/usePressAction';
 import anim from '../../../styles/animations.module.css';
 
 const INSTRUMENT_I18N_KEY: Record<string, string> = {
@@ -44,7 +45,12 @@ export default function InvalidScoreIcon({
 
   const s = useStyles(isOverThreshold);
 
-  const handleClick = useCallback((e: React.MouseEvent) => {
+  const handlePress = useCallback(() => {
+    setShowAlert(true);
+  }, []);
+  const pressHandlers = usePressAction<HTMLSpanElement>({ onPress: handlePress, stopPropagation: true });
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLSpanElement>) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
     e.stopPropagation();
     setShowAlert(true);
@@ -128,8 +134,8 @@ export default function InvalidScoreIcon({
         aria-label={t('songs.invalidScoreAriaLabel')}
         className={anim.choptIconPulse}
         style={s.container}
-        onClick={handleClick}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(e as unknown as React.MouseEvent); } }}
+        {...pressHandlers}
+        onKeyDown={handleKeyDown}
       >
         {isOverThreshold
           ? <IoWarning size={InstrumentSize.chip} />
@@ -157,7 +163,11 @@ function useStyles(isWarning: boolean) {
       ...flexCenter,
       cursor: Cursor.pointer,
       flexShrink: 0,
+      width: GeneralSize.thumb,
+      height: GeneralSize.thumb,
+      margin: -((GeneralSize.thumb - InstrumentSize.chip) / 2),
       padding: 0,
+      lineHeight: 0,
     } as CSSProperties,
   }), [isWarning]);
 }

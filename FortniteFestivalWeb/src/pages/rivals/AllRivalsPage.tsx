@@ -14,7 +14,7 @@ import { LoadPhase } from '@festival/core';
 import { serverInstrumentLabel, type RivalsListResponse, type RivalSummary, type ServerInstrumentKey, type LeaderboardRivalsListResponse, type LeaderboardRivalSummary } from '@festival/core/api/serverTypes';
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
-import { deriveComboFromSettings } from './helpers/comboUtils';
+import { deriveRivalScopeFromSettings, isProDrumsRivalScope, PRO_DRUMS_RIVAL_SCOPE } from './helpers/comboUtils';
 import { Layout, Font, Weight, Colors, Gap } from '@festival/theme';
 import Page from '../Page';
 import EmptyState from '../../components/common/EmptyState';
@@ -50,15 +50,16 @@ export default function AllRivalsPage() {
   const accountId = player?.accountId;
 
   const activeInstruments = visibleInstruments(settings);
-  const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
+  const combo = useMemo(() => deriveRivalScopeFromSettings(settings), [settings]);
 
   // Determine mode from category
   const isCommon = category === 'common';
   const isExactCombo = isRankingScopeComboId(category);
-  const isCombo = category === 'combo' || isExactCombo;
+  const isProDrumsFamily = isProDrumsRivalScope(category);
+  const isCombo = category === 'combo' || isExactCombo || isProDrumsFamily;
   const isInstrument = VALID_INSTRUMENTS.has(category);
   const instrument = isInstrument ? (category as ServerInstrumentKey) : null;
-  const resolvedCombo = isExactCombo ? category : combo;
+  const resolvedCombo = isProDrumsFamily ? PRO_DRUMS_RIVAL_SCOPE : isExactCombo ? category : combo;
   const rivalsScopeKey = isCommon
     ? activeInstruments.join(',')
     : isCombo
@@ -243,11 +244,16 @@ export default function AllRivalsPage() {
   const allRivals = [...rivals.above, ...rivals.below];
 
   // Title: "{icon} {friendly name} Rivals" — no icon for common
+  const comboTitleLabel = isProDrumsRivalScope(resolvedCombo)
+    ? t('rivals.proDrumsFamily')
+    : isExactCombo
+      ? comboScopeLabel(category)
+      : t('rivals.combo');
   const titleText = isCommon
     ? t('rivals.commonRivalsShort', 'Common Rivals')
     : isInstrument
       ? t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(instrument!) })
-      : t('rivals.instrumentRivalsShort', { instrument: isExactCombo ? comboScopeLabel(category) : t('rivals.combo') });
+      : t('rivals.instrumentRivalsShort', { instrument: comboTitleLabel });
   const showMobilePageHeader = !isMobile || settings.showButtonsInHeaderMobile;
 
   return (

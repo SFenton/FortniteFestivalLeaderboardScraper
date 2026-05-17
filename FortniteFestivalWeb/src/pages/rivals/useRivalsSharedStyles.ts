@@ -96,6 +96,9 @@ export function useRivalsSharedStyles() {
       cursor: Cursor.pointer,
       transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
     } as CSSProperties,
+    pressablePressed: {
+      backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    } as CSSProperties,
     viewProfileButton: {
       ...purpleGlass,
       display: Display.inlineFlex,

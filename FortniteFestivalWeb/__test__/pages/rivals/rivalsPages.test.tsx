@@ -7,10 +7,12 @@
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, act, fireEvent, screen, within } from '@testing-library/react';
-import { Route, Routes } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Route, Routes, useLocation } from 'react-router-dom';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
+import { useSettings, type AppSettings } from '../../../src/contexts/SettingsContext';
 import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse, LeaderboardRivalsListResponse } from '@festival/core/api/serverTypes';
 
 /* ── API mock ── */
@@ -49,6 +51,7 @@ const mockApi = vi.hoisted(() => ({
   getSyncStatus: vi.fn().mockResolvedValue({ ready: true }),
   getVersions: vi.fn().mockResolvedValue({ songs: '1' }),
   getShopSnapshot: vi.fn().mockResolvedValue({ songIds: [] }),
+  searchAccounts: vi.fn().mockResolvedValue({ results: [{ accountId: 'searched-rival', displayName: 'SearchRival' }] }),
 }));
 
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
@@ -111,6 +114,7 @@ beforeEach(() => {
   mockApi.getSyncStatus.mockResolvedValue({ ready: true });
   mockApi.getVersions.mockResolvedValue({ songs: '1' });
   mockApi.getShopSnapshot.mockResolvedValue({ songIds: [] });
+  mockApi.searchAccounts.mockResolvedValue({ results: [{ accountId: 'searched-rival', displayName: 'SearchRival' }] });
 });
 
 afterEach(() => {
@@ -159,6 +163,37 @@ function RivalsPageQuickLinksHarness() {
       Open Rivals Quick Links
     </button>
   );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  const state = location.state as { comboScope?: string } | null;
+  return <div data-testid="route-probe" data-combo-scope={state?.comboScope ?? ''}>{location.pathname}{location.search}</div>;
+}
+
+function SettingsUpdater({ settings }: { settings?: Partial<AppSettings> }) {
+  const { updateSettings } = useSettings();
+
+  useEffect(() => {
+    if (settings) updateSettings(settings);
+  }, [settings, updateSettings]);
+
+  return null;
+}
+
+function visibleInstrumentSettings(visible: Partial<Record<keyof Pick<AppSettings, 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass' | 'showPeripheralVocals' | 'showPeripheralCymbals' | 'showPeripheralDrums'>, boolean>>): Partial<AppSettings> {
+  return {
+    showLead: false,
+    showBass: false,
+    showDrums: false,
+    showVocals: false,
+    showProLead: false,
+    showProBass: false,
+    showPeripheralVocals: false,
+    showPeripheralCymbals: false,
+    showPeripheralDrums: false,
+    ...visible,
+  };
 }
 
 function setViewportQueries({ mobile = false, wide = false }: { mobile?: boolean; wide?: boolean } = {}) {
@@ -234,6 +269,21 @@ describe('RivalsPage', () => {
     expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralVocals');
     expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralCymbals');
     expect(mockApi.getRivalsList).not.toHaveBeenCalledWith('test-1', 'c0');
+  });
+
+  it('requests the pro-drums family scope when cymbals and pro drums are selected', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify(visibleInstrumentSettings({
+      showPeripheralCymbals: true,
+      showPeripheralDrums: true,
+    })));
+
+    renderPage('/rivals', <RivalsPage />, '/rivals');
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralCymbals');
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'Solo_PeripheralDrums');
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith('test-1', 'pro_drums');
   });
 
   it('renders a single-instrument empty-state subtitle when no song rivals exist', async () => {
@@ -320,6 +370,37 @@ describe('RivalsPage', () => {
 
     expect(mockApi.getRivalsList).toHaveBeenCalledWith(accountId, 'Solo_Drums');
   });
+
+  it('opens Find Rival search and navigates selected players to rival detail', async () => {
+    render(
+      <TestProviders route="/rivals" accountId="test-find-rival">
+        <Routes>
+          <Route path="/rivals" element={<RivalsPage />} />
+          <Route path="/rivals/:rivalId" element={<LocationProbe />} />
+          <Route path="/rivals/:rivalId/rivalry" element={<LocationProbe />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: 'Find Rival' })); });
+
+    expect(screen.getByRole('dialog', { name: 'Search' })).toBeDefined();
+    expect(screen.getByPlaceholderText('Search players…')).toBeDefined();
+    expect(screen.queryByRole('group', { name: 'Search targets' })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText('Search players…'), { target: { value: 'sea' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+    await act(async () => { await Promise.resolve(); });
+
+    fireEvent.click(await screen.findByTestId('search-player-result'));
+
+    const routeProbe = await screen.findByTestId('route-probe');
+    expect(routeProbe).toHaveTextContent('/rivals/searched-rival?name=SearchRival');
+    expect(routeProbe).toHaveAttribute('data-combo-scope', 'settings');
+  });
 });
 
 describe('RivalsPage quick links', () => {
@@ -377,7 +458,6 @@ describe('RivalsPage quick links', () => {
     const items = within(list).getAllByRole('button');
 
     expect(screen.getByTestId('rivals-quick-link-common')).toBeTruthy();
-    expect(screen.queryByTestId('rivals-quick-link-combo')).toBeNull();
     expect(screen.getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();
     expect(items[0]).toHaveTextContent('Common Rivals');
     expect(items[1]).toHaveTextContent('Lead Rivals');
@@ -385,7 +465,8 @@ describe('RivalsPage quick links', () => {
     const guitarIcon = screen.getByTestId('rivals-quick-link-solo-guitar').querySelector('img');
     expect(guitarIcon?.getAttribute('src')).toContain('guitar.png');
     expect(guitarIcon?.getAttribute('width')).toBe('20');
-    expect(guitarIcon).toHaveStyle({ transform: 'scale(1.15)', transformOrigin: 'center' });
+    expect(guitarIcon?.style.transform).toBe('');
+    expect(guitarIcon?.style.transformOrigin).toBe('');
   });
 
   it('registers mobile quick links without rendering header action space', async () => {
@@ -403,7 +484,7 @@ describe('RivalsPage quick links', () => {
 
     const list = await screen.findByTestId('rivals-quick-links-modal-list');
     expect(within(list).getByTestId('rivals-quick-link-common')).toBeTruthy();
-    expect(within(list).queryByTestId('rivals-quick-link-combo')).toBeNull();
+    expect(within(list).getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();
   });
 
   it('does not render mobile header action space when legacy overrides disable leaderboards', async () => {
@@ -468,7 +549,6 @@ describe('RivalsPage quick links', () => {
 
     expect(nav).toBeTruthy();
     expect(within(nav).getByTestId('rivals-quick-link-common')).toBeTruthy();
-    expect(within(nav).queryByTestId('rivals-quick-link-combo')).toBeNull();
     expect(within(nav).getByTestId('rivals-quick-link-solo-guitar')).toBeTruthy();
 
     const guitarLink = within(nav).getByTestId('rivals-quick-link-solo-guitar');
@@ -476,7 +556,8 @@ describe('RivalsPage quick links', () => {
     const guitarIconSlot = guitarLink.querySelector('span[aria-hidden="true"]');
     expect(guitarIcon?.getAttribute('src')).toContain('guitar.png');
     expect(guitarIcon?.getAttribute('width')).toBe('20');
-    expect(guitarIcon).toHaveStyle({ transform: 'scale(1.15)', transformOrigin: 'center' });
+    expect(guitarIcon?.style.transform).toBe('');
+    expect(guitarIcon?.style.transformOrigin).toBe('');
     expect(guitarIconSlot).toHaveStyle({ width: '20px' });
 
     expect(pageRoot).toContainElement(scrollArea);
@@ -517,6 +598,77 @@ describe('RivalDetailPage', () => {
     // Header shows "vs. TestRival" or just the rival name from API
     expect(container.innerHTML).toContain('TestRival');
   });
+
+  it('refetches settings-scoped Find Rival detail when visible instruments change', async () => {
+    const accountId = 'test-detail-settings-scope';
+    const rivalId = 'rival-settings-scope';
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId, displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify(visibleInstrumentSettings({ showLead: true })));
+
+    const route = {
+      pathname: `/rivals/${rivalId}`,
+      search: '?name=SettingsRival',
+      state: { comboScope: 'settings', rivalName: 'SettingsRival' },
+    };
+    const renderTree = (settings?: Partial<AppSettings>) => (
+      <TestProviders route={route} accountId={accountId}>
+        <SettingsUpdater settings={settings} />
+        <Routes>
+          <Route path="/rivals/:rivalId" element={<RivalDetailPage />} />
+        </Routes>
+      </TestProviders>
+    );
+
+    const view = render(renderTree());
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Guitar', rivalId);
+
+    mockApi.getRivalDetail.mockClear();
+    view.rerender(renderTree(visibleInstrumentSettings({ showDrums: true })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Drums', rivalId);
+
+    mockApi.getRivalDetail.mockClear();
+    view.rerender(renderTree(visibleInstrumentSettings({ showLead: true, showDrums: true, showPeripheralCymbals: true, showPeripheralDrums: true })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, '05', rivalId);
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'pro_drums', rivalId);
+  });
+
+  it('keeps fixed combo rival detail pinned when visible instruments change', async () => {
+    const accountId = 'test-detail-fixed-combo';
+    const rivalId = 'rival-fixed-combo';
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId, displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify(visibleInstrumentSettings({ showLead: true })));
+
+    const route = {
+      pathname: `/rivals/${rivalId}`,
+      search: '?name=FixedRival',
+      state: { combo: 'Solo_Guitar', rivalName: 'FixedRival' },
+    };
+    const renderTree = (settings?: Partial<AppSettings>) => (
+      <TestProviders route={route} accountId={accountId}>
+        <SettingsUpdater settings={settings} />
+        <Routes>
+          <Route path="/rivals/:rivalId" element={<RivalDetailPage />} />
+        </Routes>
+      </TestProviders>
+    );
+
+    const view = render(renderTree());
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Guitar', rivalId);
+
+    mockApi.getRivalDetail.mockClear();
+    view.rerender(renderTree(visibleInstrumentSettings({ showDrums: true })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalDetail).not.toHaveBeenCalledWith(accountId, 'Solo_Drums', rivalId);
+  });
 });
 
 /* ── RivalryPage ── */
@@ -540,6 +692,45 @@ describe('RivalryPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(container.querySelector('div')).toBeTruthy();
+  });
+
+  it('refetches settings-scoped Find Rival categories when visible instruments change', async () => {
+    const accountId = 'test-rivalry-settings-scope';
+    const rivalId = 'rivalry-settings-scope';
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId, displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify(visibleInstrumentSettings({ showLead: true })));
+
+    const route = {
+      pathname: `/rivals/${rivalId}/rivalry`,
+      search: '?mode=closest_battles&name=SettingsRival',
+      state: { comboScope: 'settings', rivalName: 'SettingsRival' },
+    };
+    const renderTree = (settings?: Partial<AppSettings>) => (
+      <TestProviders route={route} accountId={accountId}>
+        <SettingsUpdater settings={settings} />
+        <Routes>
+          <Route path="/rivals/:rivalId/rivalry" element={<RivalryPage />} />
+        </Routes>
+      </TestProviders>
+    );
+
+    const view = render(renderTree());
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Guitar', rivalId);
+
+    mockApi.getRivalDetail.mockClear();
+    view.rerender(renderTree(visibleInstrumentSettings({ showDrums: true })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Drums', rivalId);
+
+    mockApi.getRivalDetail.mockClear();
+    view.rerender(renderTree(visibleInstrumentSettings({ showDrums: true, showVocals: true, showPeripheralCymbals: true, showPeripheralDrums: true })));
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, '0c', rivalId);
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'pro_drums', rivalId);
   });
 });
 
@@ -573,6 +764,21 @@ describe('AllRivalsPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(container.innerHTML.length).toBeGreaterThan(0);
+  });
+
+  it('fetches the pro-drums family scope for combo category when selected', async () => {
+    const accountId = 'test-all-rivals-pro-drums-family';
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId, displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify(visibleInstrumentSettings({
+      showPeripheralCymbals: true,
+      showPeripheralDrums: true,
+    })));
+
+    renderPage('/rivals/all?category=combo', <AllRivalsPage />, '/rivals/all', accountId);
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalsList).toHaveBeenCalledWith(accountId, 'pro_drums');
   });
 
   it('calls getRivalsList for instrument category', async () => {

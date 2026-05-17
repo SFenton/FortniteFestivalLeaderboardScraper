@@ -9,6 +9,7 @@ import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui
 import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
 import { ToggleRow } from '../../components/common/ToggleRow';
 import { RadioRow } from '../../components/common/RadioRow';
+import PressableButton from '../../components/common/PressableButton';
 import SectionHeader from '../../components/common/SectionHeader';
 import MarqueeText from '../../components/common/MarqueeText';
 import { ReorderList } from '../../components/sort/ReorderList';
@@ -36,14 +37,14 @@ import { competeSlides } from '../compete/firstRun';
 import { rivalsSlides } from '../rivals/firstRun';
 import { shopSlides } from '../shop/firstRun';
 import { api } from '../../api/client';
+import { getTapDiagnosticsPreference, isTapDiagnosticsUiAvailable, setTapDiagnosticsPreference } from '../../diagnostics/tapDiagnostics';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
-import { IoChevronForward, IoCompass } from 'react-icons/io5';
-import type { SearchTarget } from '../../types/search';
+import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoServer, IoSettings, IoSparkles, IoTrash } from 'react-icons/io5';
 import { Routes as AppRoutes } from '../../routes';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
@@ -51,11 +52,48 @@ import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVe
 const SERVICE_INFO_POLL_MS = 5_000;
 const SERVICE_INFO_INLINE_KEY_MIN_WIDTH = 300;
 const SETTINGS_ACTION_BUTTON_WIDTH = 168;
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
+
+const SERVICE_PHASE_ORDER = [
+  'Initializing',
+  'Scraping',
+  'PostScrapeEnrichment',
+  'CalculatingFirstSeen',
+  'ResolvingNames',
+  'RefreshingRegisteredUsers',
+  'SongMachine',
+  'BackfillingScores',
+  'ReconstructingHistory',
+  'BandScraping',
+  'ComputingRankings',
+  'ComputingRivals',
+  'Precomputing',
+  'Finalizing',
+  'Cleanup',
+] as const;
+
+const SERVICE_PHASE_WEIGHTS: Record<(typeof SERVICE_PHASE_ORDER)[number], number> = {
+  Initializing: 2,
+  Scraping: 45,
+  PostScrapeEnrichment: 8,
+  CalculatingFirstSeen: 5,
+  ResolvingNames: 5,
+  RefreshingRegisteredUsers: 5,
+  SongMachine: 4,
+  BackfillingScores: 3,
+  ReconstructingHistory: 3,
+  BandScraping: 5,
+  ComputingRankings: 7,
+  ComputingRivals: 4,
+  Precomputing: 2,
+  Finalizing: 1,
+  Cleanup: 1,
+};
 
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;
 
- type SettingsQuickLinkId = 'app-settings' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'export' | 'reset';
+ type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'export' | 'reset';
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
@@ -128,12 +166,6 @@ const METADATA_TOGGLES: { key: MetadataKey; i18nKey: string }[] = [
   { key: 'metadataShowGameDifficulty', i18nKey: 'metadata.difficulty' },
   { key: 'metadataShowStars', i18nKey: 'metadata.stars' },
   { key: 'metadataShowLastPlayed', i18nKey: 'metadata.lastPlayed' },
-];
-
-const DEFAULT_SEARCH_TARGETS: { value: SearchTarget; i18nKey: string }[] = [
-  { value: 'songs', i18nKey: 'search.tabs.songs' },
-  { value: 'players', i18nKey: 'search.tabs.players' },
-  { value: 'bands', i18nKey: 'search.tabs.bands' },
 ];
 
 const LEEWAY_SLIDER_ID = 'fst-leeway-slider';
@@ -218,6 +250,64 @@ function formatLocalDateTime(value: string | null | undefined, fallback: string)
   const parsed = new Date(value);
   if (Number.isNaN(parsed.valueOf())) return fallback;
   return parsed.toLocaleString();
+}
+
+function formatPercentValue(value: number | null | undefined): string | null {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null;
+  return `${Math.max(0, Math.min(100, value)).toFixed(1)}%`;
+}
+
+function formatDurationShort(totalSeconds: number): string {
+  const clamped = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(clamped / 3600);
+  const minutes = Math.floor((clamped % 3600) / 60);
+  const seconds = clamped % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function computeOverallPipelineProgress(serviceInfo: ServiceInfoResponse): number | null {
+  if (serviceInfo.currentUpdate.status !== 'updating') return null;
+  const phase = serviceInfo.currentUpdate.phase;
+  if (!phase) return null;
+
+  const phaseIndex = SERVICE_PHASE_ORDER.indexOf(phase as (typeof SERVICE_PHASE_ORDER)[number]);
+  const phaseProgress = serviceInfo.currentUpdate.progressPercent ?? 0;
+
+  if (phaseIndex < 0) {
+    return typeof serviceInfo.currentUpdate.progressPercent === 'number'
+      ? Math.max(0, Math.min(100, serviceInfo.currentUpdate.progressPercent))
+      : null;
+  }
+
+  const completedWeight = SERVICE_PHASE_ORDER
+    .slice(0, phaseIndex)
+    .reduce((sum, name) => sum + SERVICE_PHASE_WEIGHTS[name], 0);
+  const currentPhase = SERVICE_PHASE_ORDER[phaseIndex];
+  if (!currentPhase) return null;
+  const phaseWeight = SERVICE_PHASE_WEIGHTS[currentPhase];
+  const clampedPhase = Math.max(0, Math.min(100, phaseProgress));
+  return Math.max(0, Math.min(100, completedWeight + phaseWeight * (clampedPhase / 100)));
+}
+
+function formatPhaseLabel(phase: string): string {
+  return phase
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .trim();
+}
+
+function computeServiceStepPositionText(t: TFunction, serviceInfo: ServiceInfoResponse): string | null {
+  if (serviceInfo.currentUpdate.status !== 'updating') return null;
+  const phase = serviceInfo.currentUpdate.phase;
+  if (!phase) return null;
+
+  const phaseIndex = SERVICE_PHASE_ORDER.indexOf(phase as (typeof SERVICE_PHASE_ORDER)[number]);
+  const stepPrefix = phaseIndex >= 0
+    ? t('settings.serviceInfo.stepOfTotal', { current: phaseIndex + 1, total: SERVICE_PHASE_ORDER.length })
+    : t('settings.serviceInfo.stepOfTotalUnknown', { total: SERVICE_PHASE_ORDER.length });
+  return `${stepPrefix}: ${formatPhaseLabel(phase)}`;
 }
 
 function describeServiceSubStatus(t: TFunction, serviceInfo: ServiceInfoResponse): string {
@@ -425,6 +515,9 @@ export default function SettingsPage() {
   const [selectedProfileSyncLoadFailed, setSelectedProfileSyncLoadFailed] = useState(false);
   const [isExportingData, setIsExportingData] = useState(false);
   const [exportDataFailed, setExportDataFailed] = useState(false);
+  const diagnosticsSettingsVisible = isTapDiagnosticsUiAvailable();
+  const [tapDiagnosticsEnabled, setTapDiagnosticsEnabled] = useState(() => getTapDiagnosticsPreference('diagnostics'));
+  const [tapTelemetryEnabled, setTapTelemetryEnabled] = useState(() => getTapDiagnosticsPreference('telemetry'));
   // Skip stagger on revisit
   const skipAnimRef = useRef(_hasRendered);
   _hasRendered = true;
@@ -522,14 +615,18 @@ export default function SettingsPage() {
   const selectedProfileFallback = selectedProfileSyncLoadFailed ? t('common.failedToLoad') : (trackedPlayerSyncStatus || selectedBandSyncStatus) ? t('settings.serviceInfo.unavailable') : t('common.loading');
 
   const lastLeaderboardUpdateStart = formatLocalDateTime(
-    serviceInfo?.currentUpdate.status === 'updating'
-      ? serviceInfo.currentUpdate.startedAt
-      : serviceInfo?.lastCompletedUpdate?.startedAt,
+    serviceInfo?.lastCompletedUpdate?.startedAt,
     serviceInfoFallback,
   );
   const lastLeaderboardUpdateComplete = formatLocalDateTime(
     serviceInfo?.lastCompletedUpdate?.completedAt,
     serviceInfoFallback,
+  );
+  const currentLeaderboardUpdateStart = formatLocalDateTime(
+    serviceInfo?.currentUpdate.status === 'updating'
+      ? serviceInfo.currentUpdate.startedAt
+      : null,
+    serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
   );
   const leaderboardUpdateStatus = serviceInfo
     ? serviceInfo.currentUpdate.status === 'updating'
@@ -571,14 +668,41 @@ export default function SettingsPage() {
         : !selectedProfileSyncComplete
           ? t('settings.exportDataSyncIncomplete', { profile: selectedProfileName })
           : t('settings.exportDataDescription', { player: selectedProfileName });
+  const phaseProgressText = serviceInfo
+    ? serviceInfo.currentUpdate.status === 'updating'
+      ? (formatPercentValue(serviceInfo.currentUpdate.progressPercent) ?? t('settings.serviceInfo.progressEstimating'))
+      : t('settings.serviceInfo.notApplicable')
+    : serviceInfoFallback;
+  const overallProgressText = serviceInfo
+    ? serviceInfo.currentUpdate.status === 'updating'
+      ? (formatPercentValue(computeOverallPipelineProgress(serviceInfo)) ?? t('settings.serviceInfo.progressEstimating'))
+      : t('settings.serviceInfo.notApplicable')
+    : serviceInfoFallback;
+  const updateEtaText = serviceInfo
+    ? serviceInfo.currentUpdate.status === 'updating'
+      ? (typeof serviceInfo.currentUpdate.estimatedRemainingSeconds === 'number'
+        ? formatDurationShort(serviceInfo.currentUpdate.estimatedRemainingSeconds)
+        : t('settings.serviceInfo.progressEstimating'))
+      : t('settings.serviceInfo.notApplicable')
+    : serviceInfoFallback;
+  const updateStepPositionText = serviceInfo
+    ? serviceInfo.currentUpdate.status === 'updating'
+      ? (computeServiceStepPositionText(t, serviceInfo) ?? t('settings.serviceInfo.progressEstimating'))
+      : t('settings.serviceInfo.notApplicable')
+    : serviceInfoFallback;
 
   const serviceInfoRows = useMemo<ServiceInfoRowItem[]>(() => {
     const isUpdating = serviceInfo?.currentUpdate.status === 'updating';
     const rows: ServiceInfoRowItem[] = [
       { id: 'last-update-start', label: t('settings.serviceInfo.lastUpdateStart'), value: lastLeaderboardUpdateStart },
       { id: 'last-update-complete', label: t('settings.serviceInfo.lastUpdateComplete'), value: lastLeaderboardUpdateComplete },
+      { id: 'current-update-start', label: t('settings.serviceInfo.currentUpdateStart'), value: currentLeaderboardUpdateStart },
       { id: 'update-status', label: t('settings.serviceInfo.updateStatus'), value: leaderboardUpdateStatus, showSpinner: isUpdating },
       { id: 'update-sub-status', label: t('settings.serviceInfo.updateSubStatus'), value: leaderboardUpdateSubStatus, showSpinner: isUpdating },
+      { id: 'update-step-position', label: t('settings.serviceInfo.updateStepPosition'), value: updateStepPositionText },
+      { id: 'update-phase-progress', label: t('settings.serviceInfo.updatePhaseProgress'), value: phaseProgressText },
+      { id: 'update-overall-progress', label: t('settings.serviceInfo.updateOverallProgress'), value: overallProgressText },
+      { id: 'update-eta', label: t('settings.serviceInfo.updateEta'), value: updateEtaText },
       { id: 'next-scheduled-update', label: t('settings.serviceInfo.nextScheduledUpdate'), value: nextLeaderboardScheduledUpdate },
     ];
 
@@ -591,16 +715,21 @@ export default function SettingsPage() {
 
     return rows;
   }, [
+    currentLeaderboardUpdateStart,
     lastLeaderboardUpdateComplete,
     lastLeaderboardUpdateStart,
     leaderboardUpdateStatus,
     leaderboardUpdateSubStatus,
+    overallProgressText,
+    phaseProgressText,
     nextLeaderboardScheduledUpdate,
     serviceInfo,
     t,
     trackedPlayer,
     selectedProfileFallback,
     trackedPlayerRivalsStatus,
+    updateEtaText,
+    updateStepPositionText,
   ]);
 
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
@@ -636,6 +765,23 @@ export default function SettingsPage() {
       setIsExportingData(false);
     }
   }, [isExportingData, selectedProfile, selectedProfileSyncComplete]);
+
+  const handleToggleTapDiagnostics = useCallback(() => {
+    const nextEnabled = !tapDiagnosticsEnabled;
+    setTapDiagnosticsPreference('diagnostics', nextEnabled);
+    setTapDiagnosticsEnabled(nextEnabled);
+    if (!nextEnabled) {
+      setTapDiagnosticsPreference('telemetry', false);
+      setTapTelemetryEnabled(false);
+    }
+  }, [tapDiagnosticsEnabled]);
+
+  const handleToggleTapTelemetry = useCallback(() => {
+    if (!tapDiagnosticsEnabled) return;
+    const nextEnabled = !tapTelemetryEnabled;
+    setTapDiagnosticsPreference('telemetry', nextEnabled);
+    setTapTelemetryEnabled(nextEnabled);
+  }, [tapDiagnosticsEnabled, tapTelemetryEnabled]);
 
   /* v8 ignore start — presentation-only metadata display mapping */
   const hiddenMetadataKeys = useMemo(() => {
@@ -681,18 +827,26 @@ export default function SettingsPage() {
   );
 
   const settingsQuickLinksTitle = t('settings.quickLinks');
-  const quickLinkItems = useMemo<SettingsQuickLink[]>(() => ([
-    { id: 'app-settings', label: t('settings.appSettings'), landmarkLabel: t('settings.appSettings') },
-    { id: 'item-shop', label: t('settings.itemShop', 'Item Shop'), landmarkLabel: t('settings.itemShop', 'Item Shop') },
-    { id: 'show-instruments', label: t('settings.showInstruments'), landmarkLabel: t('settings.showInstruments') },
-    { id: 'show-metadata', label: t('settings.showMetadata'), landmarkLabel: t('settings.showMetadata') },
-    { id: 'version', label: t('settings.versionTitle'), landmarkLabel: t('settings.versionTitle') },
-    { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title') },
-    { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle') },
-    { id: 'licenses', label: t('settings.licensesNavTitle'), landmarkLabel: t('settings.licensesNavTitle') },
-    { id: 'export', label: t('settings.exportDataSection'), landmarkLabel: t('settings.exportDataSection') },
-    { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection') },
-  ]), [settingsQuickLinksTitle, t]);
+  const quickLinkItems = useMemo<SettingsQuickLink[]>(() => {
+    const items: SettingsQuickLink[] = [
+      { id: 'app-settings', label: t('settings.appSettings'), landmarkLabel: t('settings.appSettings'), icon: <IoSettings size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+    ];
+    if (diagnosticsSettingsVisible) {
+      items.push({ id: 'diagnostics', label: t('settings.diagnosticsTitle'), landmarkLabel: t('settings.diagnosticsTitle'), icon: <IoInformationCircle size={QUICK_LINK_GLYPH_ICON_SIZE} /> });
+    }
+    items.push(
+      { id: 'item-shop', label: t('settings.itemShop', 'Item Shop'), landmarkLabel: t('settings.itemShop', 'Item Shop'), icon: <IoBagHandle size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'show-instruments', label: t('settings.showInstruments'), landmarkLabel: t('settings.showInstruments'), icon: <IoMusicalNotes size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'show-metadata', label: t('settings.showMetadata'), landmarkLabel: t('settings.showMetadata'), icon: <IoList size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'version', label: t('settings.versionTitle'), landmarkLabel: t('settings.versionTitle'), icon: <IoInformationCircle size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title'), icon: <IoServer size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle'), icon: <IoSparkles size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'licenses', label: t('settings.licensesNavTitle'), landmarkLabel: t('settings.licensesNavTitle'), icon: <IoDocumentText size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'export', label: t('settings.exportDataSection'), landmarkLabel: t('settings.exportDataSection'), icon: <IoDownload size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection'), icon: <IoTrash size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+    );
+    return items;
+  }, [diagnosticsSettingsVisible, settingsQuickLinksTitle, t]);
 
   const {
     activeItemId,
@@ -840,20 +994,6 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div style={st.standaloneRow}>
-                  <div style={st.standaloneLabel}>{t('settings.defaultSearchTarget')}</div>
-                  <div style={st.standaloneDesc}>
-                    {t('settings.defaultSearchTargetDesc')}
-                  </div>
-                  {DEFAULT_SEARCH_TARGETS.map(target => (
-                    <RadioRow
-                      key={target.value}
-                      label={t(target.i18nKey)}
-                      selected={settings.defaultSearchTarget === target.value}
-                      onSelect={() => updateSettings({ defaultSearchTarget: target.value })}
-                    />
-                  ))}
-                </div>
-                <div style={st.standaloneRow}>
                   <div style={st.standaloneLabel}>{t('settings.pathColumnOrder')}</div>
                   <div style={st.standaloneDesc}>
                     {t('settings.pathColumnOrderDesc')}
@@ -891,6 +1031,13 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <ToggleRow
+                  label={t('settings.experimentalRanks')}
+                  description={t('settings.experimentalRanksDesc')}
+                  checked={settings.enableExperimentalRanks}
+                  onToggle={() => updateSettings({ enableExperimentalRanks: !settings.enableExperimentalRanks })}
+                  large={isMobile}
+                />
+                <ToggleRow
                   label={t('settings.lightTrails', 'Light Trails')}
                   description={t('settings.lightTrailsDesc', 'Show a soft glow that follows your cursor across cards. Only visible with a mouse — disabling may improve performance.')}
                   checked={!settings.disableLightTrails}
@@ -907,6 +1054,31 @@ export default function SettingsPage() {
               </Card>
             </div>
           </FadeInDiv>
+
+          {diagnosticsSettingsVisible && (
+            <FadeInDiv delay={stagger(staggerIndex++)}>
+              <div ref={(element) => registerSectionRef('diagnostics', element)}>
+                <SectionHeader title={t('settings.diagnosticsTitle')} description={t('settings.diagnosticsHint')} />
+                <Card>
+                  <ToggleRow
+                    label={t('settings.tapDiagnostics')}
+                    description={t('settings.tapDiagnosticsDesc')}
+                    checked={tapDiagnosticsEnabled}
+                    onToggle={handleToggleTapDiagnostics}
+                    large={isMobile}
+                  />
+                  <ToggleRow
+                    label={t('settings.tapTelemetry')}
+                    description={tapDiagnosticsEnabled ? t('settings.tapTelemetryDesc') : t('settings.tapTelemetryRequiresDiagnostics')}
+                    checked={tapTelemetryEnabled && tapDiagnosticsEnabled}
+                    onToggle={handleToggleTapTelemetry}
+                    disabled={!tapDiagnosticsEnabled}
+                    large={isMobile}
+                  />
+                </Card>
+              </div>
+            </FadeInDiv>
+          )}
 
           {/* ── Item Shop ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
@@ -1010,60 +1182,60 @@ export default function SettingsPage() {
             <div ref={(element) => registerSectionRef('first-run', element)}>
               <SectionHeader title={t('firstRun.settings.showFirstRunTitle')} description={t('firstRun.settings.showFirstRunHint')} />
               <Card>
-                <button style={modalCss.toggleRowSmallerGap} onClick={songsReplay.open}>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={songsReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.songs')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
-                <button style={modalCss.toggleRowSmallerGap} onClick={songInfoReplay.open}>
+                </PressableButton>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={songInfoReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.songInfo', 'Song Info')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
-                <button style={modalCss.toggleRowSmallerGap} onClick={statsReplay.open}>
+                </PressableButton>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={statsReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.statistics')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
-                <button style={modalCss.toggleRowSmallerGap} onClick={suggestionsReplay.open}>
+                </PressableButton>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={suggestionsReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.suggestions')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
-                <button style={modalCss.toggleRowSmallerGap} onClick={playerHistoryReplay.open}>
+                </PressableButton>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={playerHistoryReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('history.title')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
-                <button style={modalCss.toggleRowSmallerGap} onClick={leaderboardsReplay.open}>
+                </PressableButton>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={leaderboardsReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.leaderboards')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
-                <button style={modalCss.toggleRowSmallerGap} onClick={competeReplay.open}>
+                </PressableButton>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={competeReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.compete')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
-                <button style={modalCss.toggleRowSmallerGap} onClick={rivalsReplay.open}>
+                </PressableButton>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={rivalsReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('rivals.title')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
-                <button style={modalCss.toggleRowSmallerGap} onClick={shopReplay.open}>
+                </PressableButton>
+                <PressableButton style={modalCss.toggleRowSmallerGap} onPress={shopReplay.open}>
                   <div style={modalCss.toggleContent}>
                     <div style={modalCss.toggleLabel}>{t('nav.shop')}</div>
                   </div>
                   <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
-                </button>
+                </PressableButton>
               </Card>
             </div>
           </FadeInDiv>
@@ -1100,13 +1272,13 @@ export default function SettingsPage() {
                     </div>
                   )}
                 </div>
-                <button
+                <PressableButton
                   style={!canExportData ? st.exportButtonDisabled : st.exportButton}
-                  onClick={handleExportData}
+                  onPress={handleExportData}
                   disabled={!canExportData}
                 >
                   {isExportingData ? t('settings.exportDataPreparing') : t('settings.exportDataButton')}
-                </button>
+                </PressableButton>
               </div>
             </div>
           </FadeInDiv>
@@ -1118,12 +1290,12 @@ export default function SettingsPage() {
                 <div>
                   <SectionHeader title={t('settings.resetSection')} description={t('settings.resetDescription')} flush />
                 </div>
-                <button
+                <PressableButton
                   style={st.resetButton}
-                  onClick={() => setShowResetConfirm(true)}
+                  onPress={() => setShowResetConfirm(true)}
                 >
                   {t('settings.resetAll')}
-                </button>
+                </PressableButton>
               </div>
             </div>
           </FadeInDiv>
@@ -1308,6 +1480,11 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     serviceInfoSpinner: {
       flexShrink: 0,
     } as CSSProperties,
+    resetRow: {
+      ...flexBetween,
+      gap: Gap.xl,
+      ...(isMobile ? { ...flexColumn, alignItems: Align.stretch } : {}),
+    } as CSSProperties,
     navigationRow: {
       ...flexBetween,
       gap: Gap.xl,
@@ -1322,11 +1499,6 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     navigationChevron: {
       flexShrink: 0,
       color: Colors.textMuted,
-    } as CSSProperties,
-    resetRow: {
-      ...flexBetween,
-      gap: Gap.xl,
-      ...(isMobile ? { ...flexColumn, alignItems: Align.stretch } : {}),
     } as CSSProperties,
     resetButton: {
       ...btnDanger,

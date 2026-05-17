@@ -60,6 +60,7 @@ const mockApi = vi.hoisted(() => {
     getVersion: fn().mockResolvedValue({ version: '1.0.0' }),
     getLeaderboard: fn().mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 'song-1', instruments: [] }),
+    getPlayerRanking: fn().mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', adjustedSkillRank: 1, weightedRank: 1, fcRateRank: 1, totalScoreRank: 1, maxScorePercentRank: 1, totalRankedAccounts: 1 }),
     getRankHistory: fn().mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', count: 0, history: [], deltas: [] }),
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
@@ -71,6 +72,16 @@ const mockApi = vi.hoisted(() => {
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
 
 beforeAll(() => {
+  if (typeof Range !== 'undefined') {
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: vi.fn(() => ({ top: 0, right: 0, bottom: 0, left: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) })),
+    });
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: vi.fn(() => []),
+    });
+  }
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
   stubElementDimensions(800);
@@ -88,6 +99,7 @@ beforeEach(() => {
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' });
   mockApi.getLeaderboard.mockResolvedValue({ songId: 'song-1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] });
   mockApi.getAllLeaderboards.mockResolvedValue({ songId: 'song-1', instruments: [] });
+  mockApi.getPlayerRanking.mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', adjustedSkillRank: 1, weightedRank: 1, fcRateRank: 1, totalScoreRank: 1, maxScorePercentRank: 1, totalRankedAccounts: 1 });
   mockApi.getRankHistory.mockResolvedValue({ accountId: 'test-player-1', instrument: 'Solo_Guitar', count: 0, history: [], deltas: [] });
   mockApi.getPlayerHistory.mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
@@ -294,6 +306,43 @@ describe('PlayerPage', () => {
     await waitFor(() => {
       expect(screen.getByText('TestPlayer')).toBeDefined();
     });
+  });
+
+  it('does not fetch fallback rankings or rank history while stats are still loading', async () => {
+    mockApi.getPlayerStats.mockReturnValue(new Promise(() => {}));
+
+    renderPlayerPage('/player/test-player-1');
+
+    await waitFor(() => {
+      expect(mockApi.getPlayer).toHaveBeenCalledWith('test-player-1');
+      expect(mockApi.getPlayerStats).toHaveBeenCalled();
+    });
+
+    expect(mockApi.getPlayerRanking).not.toHaveBeenCalled();
+    expect(mockApi.getRankHistory).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch fallback rankings when stats include rank tiers', async () => {
+    mockApi.getPlayerStats.mockResolvedValue({
+      accountId: 'test-player-1',
+      totalSongs: 3,
+      instruments: [],
+      instrumentRanks: [{
+        ins: '01',
+        totalRanked: 1,
+        base: { adjusted: 1, weighted: 1, fcRate: 1, totalScore: 1, maxScore: 1 },
+        tiers: [],
+      }],
+    });
+
+    renderPlayerPage('/player/test-player-1');
+
+    await waitFor(() => {
+      expect(screen.getByText('TestPlayer')).toBeDefined();
+      expect(mockApi.getPlayerStats).toHaveBeenCalled();
+    });
+
+    expect(mockApi.getPlayerRanking).not.toHaveBeenCalled();
   });
 });
 

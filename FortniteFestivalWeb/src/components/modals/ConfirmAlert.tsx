@@ -10,6 +10,8 @@ import {
   TRANSITION_MS, MODAL_SCALE_ENTER,
 } from '@festival/theme';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
+import MarqueeText from '../common/MarqueeText';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 
 export default function ConfirmAlert({
   title,
@@ -35,6 +37,8 @@ export default function ConfirmAlert({
   const [animIn, setAnimIn] = useState(false);
   const [animOut, setAnimOut] = useState(false);
   const s = useStyles(animIn, animOut);
+  const noText = noLabel ?? t('common.no');
+  const yesText = yesLabel ?? t('common.yes');
 
   /* v8 ignore start — animation setup */
   useLayoutEffect(() => {
@@ -63,6 +67,9 @@ export default function ConfirmAlert({
     }
   }, [animOut, onYes, onExitComplete]);
   /* v8 ignore stop */
+  const noPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleNo, disabled: animOut });
+  const yesPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleYes, disabled: animOut });
+  const overlayPressHandlers = usePressAction<HTMLDivElement>({ onPress: handleNo, disabled: animOut });
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleNo(); };
@@ -72,13 +79,17 @@ export default function ConfirmAlert({
 
   return createPortal(
     /* v8 ignore start — animation ternaries */
-    <div style={s.overlay} onClick={e => { e.stopPropagation(); handleNo(); }} data-glow-scope="">
-      <div style={s.card} onClick={e => e.stopPropagation()}>
+    <div style={s.overlay} {...overlayPressHandlers} data-glow-scope="">
+      <div style={s.card} onPointerDown={e => e.stopPropagation()} onPointerUp={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
         <div style={s.title}>{title}</div>
         <div style={s.message}>{message}</div>
         <div style={s.buttons}>
-          <button style={s.btnNo} onClick={handleNo}>{noLabel ?? t('common.no')}</button>
-          <button style={s.btnYes} onClick={handleYes}>{yesLabel ?? t('common.yes')}</button>
+          <button style={s.btnNo} {...noPressHandlers}>
+            <MarqueeText text={noText} as="span" style={s.buttonLabel} />
+          </button>
+          <button style={s.btnYes} {...yesPressHandlers}>
+            <MarqueeText text={yesText} as="span" style={s.buttonLabel} />
+          </button>
         </div>
       </div>
     </div>,
@@ -91,7 +102,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
   return useMemo(() => {
     const viewportGutter = Gap.section * 2;
     const maxViewportWidth = `calc(100vw - ${viewportGutter}px)`;
-    const modalPointerEvents = animIn && !animOut ? 'auto' as const : 'none' as const;
+    const modalPointerEvents = !animOut ? 'auto' as const : 'none' as const;
 
     return ({
     overlay: {
@@ -135,6 +146,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
     } as CSSProperties,
     buttons: {
       ...flexRow,
+      alignItems: 'stretch',
       gap: Gap.md,
       flexWrap: 'wrap' as const,
       opacity: Opacity.none,
@@ -159,6 +171,10 @@ function useStyles(animIn: boolean, animOut: boolean) {
       lineHeight: LineHeight.tight,
       whiteSpace: 'normal' as const,
       overflowWrap: 'anywhere' as const,
+    } as CSSProperties,
+    buttonLabel: {
+      width: CssValue.full,
+      minWidth: 0,
     } as CSSProperties,
   });
   }, [animIn, animOut]);

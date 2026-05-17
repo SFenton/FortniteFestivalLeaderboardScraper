@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { PlayerBandEntry } from '@festival/core/api/serverTypes';
 import PlayerBandCard, {
   estimatePlayerBandCardHeight,
@@ -83,6 +83,37 @@ function renderCard(entry: PlayerBandEntry) {
       <PlayerBandCard entry={entry} sourceAccountId="p1" testId="band-card" />
     </MemoryRouter>,
   );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}{location.search}</div>;
+}
+
+function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperties(event, {
+    pointerId: { value: props.pointerId ?? 1 },
+    pointerType: { value: props.pointerType ?? 'touch' },
+    isPrimary: { value: props.isPrimary ?? true },
+    button: { value: props.button ?? 0 },
+    ctrlKey: { value: props.ctrlKey ?? false },
+    metaKey: { value: props.metaKey ?? false },
+    shiftKey: { value: props.shiftKey ?? false },
+    altKey: { value: props.altKey ?? false },
+    clientX: { value: props.clientX ?? 0 },
+    clientY: { value: props.clientY ?? 0 },
+    timeStamp: { value: props.timeStamp ?? 0 },
+  });
+  fireEvent(target, event);
+  return event;
+}
+
+function dispatchClick(target: Element, timeStamp = 0, init: MouseEventInit = {}) {
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true, ...init });
+  Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+  fireEvent(target, event);
+  return event;
 }
 
 function getInstrumentRowCounts(): number[] {
@@ -212,7 +243,7 @@ describe('PlayerBandCard adaptive instrument layout', () => {
     );
 
     expect(screen.getByLabelText('Season 4 score 1,234,567 99 percent')).toBeInTheDocument();
-    expect(screen.getByLabelText('Season 4 score 1,234,567 99 percent')).toHaveStyle({ paddingLeft: '8px', paddingRight: '8px' });
+    expect(screen.getByLabelText('Season 4 score 1,234,567 99 percent')).toHaveStyle({ justifyContent: 'flex-end', paddingLeft: '8px', paddingRight: '8px' });
     expect(screen.getByText('Season 4 - 1,234,567 - 99%')).toBeInTheDocument();
     expect(screen.getByTestId('band-rank-rail')).toHaveTextContent('#7');
     const rankedContent = screen.getByTestId('band-ranked-card-content');
@@ -229,6 +260,39 @@ describe('PlayerBandCard adaptive instrument layout', () => {
     expect(screen.getByTestId('band-card-member-content')).not.toContainElement(screen.getByTestId('band-rank-rail'));
     expect(screen.getByTestId('band-card-member-content')).not.toContainElement(scoreFooter);
     expect(screen.queryByText('appearances')).toBeNull();
+  });
+
+  it('commits touch navigation on pointerup and suppresses the synthetic click', () => {
+    render(
+      <MemoryRouter initialEntries={['/songs/song-a']}>
+        <PlayerBandCard entry={makeMixedEntry()} sourceAccountId="p1" testId="band-card" />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    const card = screen.getByTestId('band-card');
+    dispatchPointer(card, 'pointerdown', { clientX: 20, clientY: 20, timeStamp: 10 });
+    expect(card).toHaveAttribute('data-pressed', 'true');
+    dispatchPointer(card, 'pointerup', { clientX: 20, clientY: 20, timeStamp: 20 });
+    dispatchClick(card, 80);
+
+    expect(screen.getByTestId('location-probe')).toHaveTextContent('/bands/band-1');
+  });
+
+  it('leaves modified pointer gestures to native link behavior', () => {
+    render(
+      <MemoryRouter initialEntries={['/songs/song-a']}>
+        <PlayerBandCard entry={makeMixedEntry()} sourceAccountId="p1" testId="band-card" />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    const card = screen.getByTestId('band-card');
+    dispatchPointer(card, 'pointerdown', { clientX: 20, clientY: 20, timeStamp: 10, ctrlKey: true });
+    dispatchPointer(card, 'pointerup', { clientX: 20, clientY: 20, timeStamp: 20, ctrlKey: true });
+
+    expect(card).not.toHaveAttribute('data-pressed');
+    expect(screen.getByTestId('location-probe')).toHaveTextContent('/songs/song-a');
   });
 
   it('does not reserve the metadata spacer for non-duo ranked footer cards', () => {

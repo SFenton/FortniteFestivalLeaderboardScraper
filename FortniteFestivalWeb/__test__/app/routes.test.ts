@@ -18,6 +18,10 @@ describe('Routes', () => {
     expect(Routes.settings).toBe('/settings');
   });
 
+  it('has manual route', () => {
+    expect(Routes.manual).toBe('/manual');
+  });
+
   it('generates song detail path', () => {
     expect(Routes.songDetail('abc-123')).toBe('/songs/abc-123');
   });

@@ -6,6 +6,7 @@ import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overfl
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import { FrostedCard } from '../../components/common/FrostedCard';
+import PressableButton from '../../components/common/PressableButton';
 import ModalShell from '../../components/modals/components/ModalShell';
 import { modalStyles } from '../../components/modals/modalStyles';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
@@ -53,11 +54,10 @@ export default function LicensesPage() {
       <div style={styles.contentColumn}>
         <FrostedCard style={styles.card}>
           {licenseManifest.map(entry => (
-            <button
+            <PressableButton
               key={entry.id}
-              type="button"
               style={styles.packageRow}
-              onClick={() => setSelectedEntry(entry)}
+              onPress={() => setSelectedEntry(entry)}
               aria-label={`${entry.name} ${entry.version} ${entry.licenseType}`}
             >
               <span style={styles.packageTextGroup}>
@@ -66,7 +66,7 @@ export default function LicensesPage() {
               </span>
               <span style={styles.licenseBadge}>{entry.licenseType}</span>
               <IoChevronForward size={Size.iconSm} aria-hidden="true" style={styles.chevron} />
-            </button>
+            </PressableButton>
           ))}
         </FrostedCard>
       </div>

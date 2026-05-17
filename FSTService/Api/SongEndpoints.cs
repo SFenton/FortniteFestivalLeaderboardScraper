@@ -17,7 +17,7 @@ public static partial class ApiEndpoints
 
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, GlobalLeaderboardPersistence persistence, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer) =>
+        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, GlobalLeaderboardPersistence persistence, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer, ILoggerFactory loggerFactory, [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
@@ -35,12 +35,81 @@ public static partial class ApiEndpoints
             var jsonOpts = httpContext.RequestServices
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
                 .Value.SerializerOptions;
-            var jsonBytes = SongsCacheService.BuildSongsJson(service, pathStore, metaDb, persistence, precomputer, jsonOpts);
-            var etag = songsCache.Set(jsonBytes);
+
+            byte[] jsonBytes;
+            string etag;
+            try
+            {
+                jsonBytes = SongsCacheService.BuildSongsJson(service, pathStore, metaDb, persistence, precomputer, jsonOpts);
+                etag = songsCache.Set(jsonBytes);
+            }
+            catch (Exception ex)
+            {
+                var stale = songsCache.GetStale();
+                if (stale is not null)
+                {
+                    loggerFactory.CreateLogger("FSTService.Api.SongEndpoints")
+                        .LogWarning(ex, "Failed to rebuild /api/songs; serving last cached songs response.");
+                    httpContext.Response.ContentType = "application/json; charset=utf-8";
+                    return CacheHelper.ServeIfCached(httpContext, stale)!;
+                }
+
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+                if (frozenMiss is not null) return frozenMiss;
+
+                throw;
+            }
 
             httpContext.Response.Headers.ETag = etag;
             httpContext.Response.ContentType = "application/json; charset=utf-8";
             return Results.Bytes(jsonBytes, "application/json");
+        })
+        .WithTags("Songs")
+        .RequireRateLimiting("public");
+
+        app.MapGet("/api/songs/member-score-filter", (
+            HttpContext httpContext,
+            string? has,
+            string? missing,
+            string? instruments,
+            double? leeway,
+            GlobalLeaderboardPersistence persistence,
+            [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService publicationCache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            var hasAccountIds = ParseCsvParameter(has, maxItems: 8);
+            var missingAccountIds = ParseCsvParameter(missing, maxItems: 8);
+            if (hasAccountIds.Count == 0 && missingAccountIds.Count == 0)
+                return Results.BadRequest(new { error = "At least one has or missing account ID is required." });
+
+            var requestedInstruments = ParseCsvParameter(instruments, maxItems: 16);
+            if (requestedInstruments.Count == 0)
+                return Results.BadRequest(new { error = "instruments is required." });
+
+            foreach (var instrument in requestedInstruments)
+            {
+                if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                    return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+            }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
+            var songIds = persistence.GetCurrentStateSongIdsForMemberScoreFilter(
+                hasAccountIds,
+                missingAccountIds,
+                requestedInstruments,
+                leeway);
+
+            return Results.Ok(new
+            {
+                count = songIds.Count,
+                songIds,
+                hasAccountIds,
+                missingAccountIds,
+                instruments = requestedInstruments,
+            });
         })
         .WithTags("Songs")
         .RequireRateLimiting("public");

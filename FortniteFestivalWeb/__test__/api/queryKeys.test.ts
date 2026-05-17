@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { queryKeys } from '../../src/api/queryKeys';
 
 describe('queryKeys', () => {
+  it('features() returns ["features"]', () => {
+    expect(queryKeys.features()).toEqual(['features']);
+  });
+
   it('songs() returns ["songs"]', () => {
     expect(queryKeys.songs()).toEqual(['songs']);
   });
@@ -28,6 +32,13 @@ describe('queryKeys', () => {
   it('allLeaderboards() returns key with songId and top', () => {
     expect(queryKeys.allLeaderboards('song-1', 5)).toEqual(['allLeaderboards', 'song-1', { top: 5, leeway: undefined }]);
     expect(queryKeys.allLeaderboards('song-1', 5, 10)).toEqual(['allLeaderboards', 'song-1', { top: 5, leeway: 10 }]);
+  });
+
+  it('memberScoreFilter() returns key with member conditions and instruments', () => {
+    expect(queryKeys.memberScoreFilter(['acct-1'], ['acct-2'], ['Solo_Guitar', 'Solo_Bass'], 1.5)).toEqual([
+      'memberScoreFilter',
+      { hasAccountIds: ['acct-1'], missingAccountIds: ['acct-2'], instruments: ['Solo_Guitar', 'Solo_Bass'], leeway: 1.5 },
+    ]);
   });
 
   it('songBandLeaderboard() returns key with selected band and combo params', () => {

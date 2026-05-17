@@ -14,6 +14,7 @@ import { Gap, flexColumn } from '@festival/theme';
 import { serverInstrumentLabel, type ServerInstrumentKey, type RankingMetric } from '@festival/core/api/serverTypes';
 import type { LeaderboardRivalsListResponse, LeaderboardRivalSummary } from '@festival/core/api/serverTypes';
 import RivalRow from './components/RivalRow';
+import CardPressable from '../../components/common/CardPressable';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
@@ -31,7 +32,6 @@ type InstrumentLeaderboardRivals = {
 };
 
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
-const QUICK_LINK_INSTRUMENT_ICON_SCALE = 1.15;
 
 export type LeaderboardRivalQuickLink = PageQuickLinkItem & {
   id: ServerInstrumentKey;
@@ -134,10 +134,6 @@ export default function LeaderboardRivalsTab({
         <InstrumentIcon
           instrument={entry.instrument}
           size={QUICK_LINK_GLYPH_ICON_SIZE}
-          style={{
-            transform: `scale(${QUICK_LINK_INSTRUMENT_ICON_SCALE})`,
-            transformOrigin: 'center',
-          }}
         />
       ),
     }];
@@ -218,14 +214,12 @@ export default function LeaderboardRivalsTab({
 
         return (
           <div key={entry.instrument} ref={(element) => registerSectionRef(entry.instrument, element)} style={shared.section}>
-            <div
+            <CardPressable
               className={fx.sectionHeaderClickable}
               style={{ ...shared.sectionHeaderClickable, ...nextStagger() }}
+              pressedStyle={shared.pressablePressed}
               onAnimationEnd={clearAnim}
-              onClick={navigateToAllRivals}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => { if (e.key === 'Enter') navigateToAllRivals(); }}
+              onPress={navigateToAllRivals}
             >
               <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
               <div style={shared.cardHeaderText}>
@@ -235,7 +229,7 @@ export default function LeaderboardRivalsTab({
               </div>
               <span style={shared.seeAll}>{t('rivals.seeAll', 'See All')}</span>
               <IoChevronForward size={20} style={shared.chevron} />
-            </div>
+            </CardPressable>
             <div style={shared.rivalList}>
               {allPreview.map((rival: LeaderboardRivalSummary) => (
                 <RivalRow
@@ -247,9 +241,9 @@ export default function LeaderboardRivalsTab({
                   onAnimationEnd={clearAnim}
                 />
               ))}
-              <div style={{ ...shared.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToAllRivals}>
+              <CardPressable style={{ ...shared.viewAllButton, ...nextStagger() }} pressedStyle={shared.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToAllRivals}>
                 {t('rivals.viewAllRivals')}
-              </div>
+              </CardPressable>
             </div>
           </div>
         );

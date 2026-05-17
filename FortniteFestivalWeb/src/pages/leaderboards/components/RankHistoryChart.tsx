@@ -16,6 +16,7 @@ import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festi
 import { serverInstrumentLabel as instrumentLabel } from '@festival/core/api/serverTypes';
 import { formatLeaderboardPercentile, formatRatingValue, rankColor } from '@festival/core';
 import GraphCard from '../../../components/common/GraphCard';
+import { PressableChartPath } from '../../../components/common/PressableChartPath';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
@@ -258,11 +259,6 @@ export default memo(function RankHistoryChart({
           radius={Radius.barCorner}
           isAnimationActive={animating}
           animationDuration={CHART_ANIM_DURATION}
-          onClick={(_data: Record<string, unknown>, index: number) => {
-            const point = visibleData[index];
-            if (!point) return;
-            setSelectedPoint(prev => prev?.date === point.date ? null : point);
-          }}
           shape={(props: Record<string, unknown>) => {
             const bar = props as { x: number; y: number; width: number; height: number; payload: RankHistoryChartPoint };
             const isSelected = selectedPoint != null && bar.payload.date === selectedPoint.date;
@@ -270,13 +266,15 @@ export default memo(function RankHistoryChart({
             const { x, y, width: w, height: h } = bar;
             const path = `M${x + rad},${y + h} Q${x},${y + h} ${x},${y + h - rad} L${x},${y + rad} Q${x},${y} ${x + rad},${y} L${x + w - rad},${y} Q${x + w},${y} ${x + w},${y + rad} L${x + w},${y + h - rad} Q${x + w},${y + h} ${x + w - rad},${y + h} Z`;
             return (
-              <path
+              <PressableChartPath
+                ariaLabel={`${metricLabel}: ${bar.payload.dateLabel}`}
                 d={path}
                 style={{ transition: transition('stroke', 150) }}
                 fill={rankColor(bar.payload.rank, totalAccounts)}
                 fillOpacity={0.8}
                 stroke={isSelected ? Colors.accentPurple : 'transparent'}
                 strokeWidth={Size.barSelectionStroke}
+                onPress={() => setSelectedPoint(prev => prev?.date === bar.payload.date ? null : bar.payload)}
               />
             );
           }}

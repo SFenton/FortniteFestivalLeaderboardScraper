@@ -92,12 +92,18 @@ export type SongFilters = {
   overThreshold: Record<string, boolean>;
   selectedBandHasScore: boolean;
   selectedBandMissingScore: boolean;
+  individualBandMemberScoreFilters: Record<string, IndividualBandMemberScoreFilter>;
   seasonFilter: Record<number, boolean>;
   percentileFilter: Record<number, boolean>;
   starsFilter: Record<number, boolean>;
   difficultyFilter: Record<number, boolean>;
   shopInShop: boolean;
   shopLeavingTomorrow: boolean;
+};
+
+export type IndividualBandMemberScoreFilter = {
+  hasScore?: boolean;
+  missingScore?: boolean;
 };
 
 export const defaultSongFilters = (): SongFilters => ({
@@ -108,6 +114,7 @@ export const defaultSongFilters = (): SongFilters => ({
   overThreshold: {},
   selectedBandHasScore: false,
   selectedBandMissingScore: false,
+  individualBandMemberScoreFilters: {},
   seasonFilter: {},
   percentileFilter: {},
   starsFilter: {},
@@ -147,7 +154,7 @@ export const isVisibleInstrumentFilter = (instrument: InstrumentKey | null | und
 
 export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean, visibleInstruments?: readonly InstrumentKey[] | null, selectedBandMode = false): boolean => {
   if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) return true;
-  if (selectedBandMode) return f.selectedBandHasScore || f.selectedBandMissingScore;
+  if (selectedBandMode) return f.selectedBandHasScore || f.selectedBandMissingScore || hasIndividualBandMemberScoreFilters(f);
   const scoped = sanitizeSongFiltersForInstruments(f, visibleInstruments);
   const hasPerInstrument =
     Object.values(scoped.missingScores).some(v => v === true) ||
@@ -166,6 +173,9 @@ export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null
     Object.values(f.difficultyFilter).some(v => v === false)
   );
 };
+
+export const hasIndividualBandMemberScoreFilters = (f: SongFilters): boolean =>
+  Object.values(f.individualBandMemberScoreFilters ?? {}).some(filter => !!filter?.hasScore || !!filter?.missingScore);
 
 /* ── Persistence ── */
 

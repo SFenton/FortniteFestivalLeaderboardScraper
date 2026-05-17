@@ -93,10 +93,12 @@ public sealed class ScrapeTimePrecomputer
     public IReadOnlyDictionary<(string SongId, string Instrument), PopulationTierData>? GetPopulationTiers()
         => _populationTiers;
 
-    /// <summary>Clears all precomputed data. Called at scrape start.</summary>
+    /// <summary>
+    /// Clears process-local precompute state. Called at scrape start.
+    /// Published PostgreSQL responses must stay available as stale cache while public reads are frozen.
+    /// </summary>
     public void InvalidateAll()
     {
-        _metaDb.ClearCachedResponses();
         _populationTiers = null;
         _singleUserSharedInputs = null;
     }
@@ -114,9 +116,10 @@ public sealed class ScrapeTimePrecomputer
     public Task PrecomputeAllAsync(CancellationToken ct)
         => PrecomputeAllAsync(_metaDb.ShouldShowLeaderboardEntryTotals(), ct);
 
-    public async Task PrecomputeAllAsync(bool showLeaderboardEntryTotals, CancellationToken ct)
+    public async Task PrecomputeAllAsync(bool showLeaderboardEntryTotals, CancellationToken ct, bool publishImmediately = true)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        _metaDb.BulkSetCachedResponsesStaging([]);
         var allMaxScores = _pathStore.GetAllMaxScores();
         var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
         var registeredIds = _metaDb.GetRegisteredAccountIds();
@@ -187,11 +190,15 @@ public sealed class ScrapeTimePrecomputer
         // ── Flush from staging file to PostgreSQL staging table, then atomic swap ──
         _log.LogInformation("All phases complete. {Count:N0} records staged to disk.", staging.RecordCount);
         staging.FlushToPostgres(_metaDb, useStaging: true);
-        _metaDb.SwapCachedResponsesFromStaging();
+        if (publishImmediately)
+            _metaDb.SwapCachedResponsesFromStaging();
         _staging = null;
 
         sw.Stop();
-        _log.LogInformation("Scrape-time precomputation complete: {PlayerCount} players in {Elapsed}s.",
+        _log.LogInformation(
+            publishImmediately
+                ? "Scrape-time precomputation complete: {PlayerCount} players in {Elapsed}s."
+                : "Scrape-time precomputation staged for publication: {PlayerCount} players in {Elapsed}s.",
             registeredIds.Count, sw.Elapsed.TotalSeconds);
     }
 
@@ -449,6 +456,8 @@ public sealed class ScrapeTimePrecomputer
         List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var scores = _persistence.GetCurrentStatePlayerProfile(accountId);
+        if (scores.Count == 0)
+            scores = _persistence.GetPlayerProfile(accountId);
         if (scores.Count == 0) return;
 
         displayNames ??= _metaDb.GetDisplayNames(new[] { accountId });
@@ -903,6 +912,8 @@ public sealed class ScrapeTimePrecomputer
             maxScore = composite.CompositeRankMaxScore,
         };
 
+        var familyRanks = BuildSoloFamilyRankPayload(_metaDb.GetSoloFamilyRankingsForAccount(accountId));
+
         // Expose canonical per-instrument ranks; alternate leeway tiers are retired.
         var instrumentRanks = BuildInstrumentRankTiers(accountId);
         var bands = _persistence.GetPlayerBands(accountId);
@@ -912,6 +923,7 @@ public sealed class ScrapeTimePrecomputer
             accountId,
             totalSongs,
             compositeRanks,
+            familyRanks,
             instrumentRanks,
             bands,
             instruments = tierRows.Select(r => new
@@ -923,6 +935,59 @@ public sealed class ScrapeTimePrecomputer
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
         Store($"playerstats:{accountId}", jsonBytes, storeOverride);
     }
+
+    private static object? BuildSoloFamilyRankPayload(IReadOnlyDictionary<string, SoloFamilyRankingDto> rankings)
+    {
+        if (rankings.Count == 0)
+            return null;
+
+        return rankings.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (object)new
+            {
+                scopeId = kvp.Value.ScopeId,
+                adjusted = kvp.Value.AdjustedSkillRank,
+                weighted = kvp.Value.WeightedRank,
+                fcRate = kvp.Value.FcRateRank,
+                totalScore = kvp.Value.TotalScoreRank,
+                maxScore = kvp.Value.MaxScorePercentRank,
+                songsPlayed = kvp.Value.SongsPlayed,
+                totalChartedSongs = kvp.Value.TotalChartedSongs,
+                coverage = kvp.Value.Coverage,
+                fullComboCount = kvp.Value.FullComboCount,
+                totalRankedAccounts = kvp.Value.TotalRankedAccounts,
+            },
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static object MapSoloFamilyRanking(SoloFamilyRankingDto ranking, IReadOnlyDictionary<string, string> names) => new
+    {
+        ranking.AccountId,
+        displayName = names.GetValueOrDefault(ranking.AccountId),
+        ranking.SongsPlayed,
+        ranking.TotalChartedSongs,
+        ranking.Coverage,
+        ranking.RawSkillRating,
+        ranking.AdjustedSkillRating,
+        ranking.AdjustedSkillRank,
+        ranking.WeightedRating,
+        ranking.WeightedRank,
+        ranking.FcRate,
+        ranking.FcRateRank,
+        ranking.TotalScore,
+        ranking.TotalScoreRank,
+        ranking.MaxScorePercent,
+        ranking.MaxScorePercentRank,
+        avgAccuracy = 0,
+        ranking.FullComboCount,
+        avgStars = 0,
+        bestRank = 0,
+        avgRank = 0,
+        ranking.RawMaxScorePercent,
+        ranking.RawWeightedRating,
+        ranking.ComputedAt,
+        ranking.TotalRankedAccounts,
+    };
 
     /// <summary>
     /// Build canonical per-instrument rank data.
@@ -977,17 +1042,22 @@ public sealed class ScrapeTimePrecomputer
         var backfill = _metaDb.GetBackfillStatus(accountId);
         var historyRecon = _metaDb.GetHistoryReconStatus(accountId);
         var rivals = _metaDb.GetRivalsStatus(accountId);
+        var backfillDisplay = backfill is null
+            ? null
+            : _metaDb.GetBackfillSongProgress(accountId, backfill.SongsChecked, backfill.TotalSongsToCheck);
 
         var payload = new
         {
             accountId,
-            isTracked = true,
+            isTracked = _metaDb.IsAccountRegistered(accountId),
             pendingRankUpdate = backfill?.RankingsPending ?? false,
             backfill = backfill is null ? null : new
             {
                 status = backfill.Status,
                 songsChecked = backfill.SongsChecked,
                 totalSongsToCheck = backfill.TotalSongsToCheck,
+                displaySongsChecked = backfillDisplay?.SongsChecked,
+                displayTotalSongs = backfillDisplay?.TotalSongs,
                 entriesFound = backfill.EntriesFound,
                 startedAt = backfill.StartedAt,
                 completedAt = backfill.CompletedAt,
@@ -1219,7 +1289,7 @@ public sealed class ScrapeTimePrecomputer
     // Phase 5: Rankings Pages (page 1 for each instrument × metric)
     // ═══════════════════════════════════════════════════════════════
 
-    private static readonly string[] RankingMetrics = ["adjusted", "weighted", "totalscore", "fcrate", "maxscorepercent"];
+    private static readonly string[] RankingMetrics = ["adjusted", "weighted", "totalscore", "fcrate", "maxscore"];
 
     private void PrecomputeRankingsPages(IReadOnlyList<string> instrumentKeys)
     {
@@ -1312,6 +1382,54 @@ public sealed class ScrapeTimePrecomputer
             break; // Composite rankings are metric-agnostic — one page covers all
         }
 
+        // Fixed solo family page 1 for each metric
+        foreach (var scope in SoloFamilyRankingScopes.All)
+        {
+            foreach (var metric in RankingMetrics)
+            {
+                var (entries, total) = _metaDb.GetSoloFamilyRankings(scope.ScopeId, metric, 1, 50);
+                var names = _metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
+                var payload = new
+                {
+                    scopeId = scope.ScopeId,
+                    rankBy = metric,
+                    page = 1,
+                    pageSize = 50,
+                    totalAccounts = total,
+                    entries = entries.Select(e => MapSoloFamilyRanking(e, names)).ToList(),
+                };
+                var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+                Store($"rankings:family:{scope.ScopeId}:{metric}:1:50", jsonBytes);
+            }
+        }
+
+        // Generic band ranking page 1 for each band type and metric. Selected
+        // player/team variants can degrade to this snapshot while public reads
+        // are frozen.
+        foreach (var bandType in BandInstrumentMapping.AllBandTypes)
+        {
+            foreach (var metric in RankingMetrics)
+            {
+                var (entries, totalTeams) = _metaDb.GetBandTeamRankings(bandType, comboId: null, metric, page: 1, pageSize: 50);
+                var entryList = entries.ToList();
+                var names = _metaDb.GetDisplayNames(entryList.SelectMany(entry => entry.TeamMembers));
+                var payload = new
+                {
+                    bandType,
+                    comboId = (string?)null,
+                    rankBy = metric,
+                    page = 1,
+                    pageSize = 50,
+                    totalTeams,
+                    entries = entryList.Select(entry => MapBandRanking(entry, names)).ToList(),
+                    selectedPlayerEntry = (object?)null,
+                    selectedBandEntry = (object?)null,
+                };
+                var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+                Store($"rankings:bands:{bandType}:{metric}:1:50", jsonBytes);
+            }
+        }
+
         // Overview (top N per instrument for each metric)
         foreach (var metric in RankingMetrics)
         {
@@ -1363,6 +1481,52 @@ public sealed class ScrapeTimePrecomputer
             Store($"rankings:overview:{metric}:10", overviewBytes);
         }
     }
+
+    private static object MapBandRanking(BandTeamRankingDto ranking, IReadOnlyDictionary<string, string> names) => new
+    {
+        ranking.BandId,
+        comboId = ranking.ComboId,
+        ranking.TeamKey,
+        teamMembers = ranking.TeamMembers.Select(accountId => new
+        {
+            accountId,
+            displayName = names.GetValueOrDefault(accountId),
+        }).ToList(),
+        members = ranking.Members.Select(member => new
+        {
+            member.AccountId,
+            displayName = names.GetValueOrDefault(member.AccountId),
+            member.Instruments,
+        }).ToList(),
+        configurations = ranking.Configurations.Select(configuration => new
+        {
+            configuration.RawInstrumentCombo,
+            configuration.ComboId,
+            configuration.Instruments,
+            configuration.AssignmentKey,
+            configuration.AppearanceCount,
+            configuration.MemberInstruments,
+        }).ToList(),
+        ranking.SongsPlayed,
+        ranking.TotalChartedSongs,
+        ranking.Coverage,
+        ranking.RawSkillRating,
+        ranking.AdjustedSkillRating,
+        ranking.AdjustedSkillRank,
+        ranking.WeightedRating,
+        ranking.WeightedRank,
+        ranking.FcRate,
+        ranking.FcRateRank,
+        ranking.TotalScore,
+        ranking.TotalScoreRank,
+        ranking.AvgAccuracy,
+        ranking.FullComboCount,
+        ranking.AvgStars,
+        ranking.BestRank,
+        ranking.AvgRank,
+        ranking.RawWeightedRating,
+        ranking.ComputedAt,
+    };
 
     // ═══════════════════════════════════════════════════════════════
     // Phase 6: Neighborhoods (registered users × instruments)

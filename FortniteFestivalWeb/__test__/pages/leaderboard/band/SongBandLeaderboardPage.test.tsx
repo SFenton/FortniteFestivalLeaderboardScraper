@@ -283,6 +283,7 @@ describe('SongBandLeaderboardPage', () => {
   });
 
   it('requests and renders the selected band entry when it is outside the visible page', async () => {
+    mockUseIsMobileChrome.mockReturnValue(true);
     localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
       type: 'band',
       bandId: 'selected-band',
@@ -324,8 +325,14 @@ describe('SongBandLeaderboardPage', () => {
     expect(within(list).queryByText('Selected')).toBeNull();
     const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
     expect(footer).toHaveStyle({ position: 'fixed' });
+    expect(footer.style.bottom).toContain('84px');
+    const pagination = await screen.findByTestId('leaderboard-fixed-pagination');
+    expect(pagination.style.bottom).toContain('136px');
     expect(within(footer).getByText('Selected + Partner')).toBeTruthy();
     expect(within(footer).getByText('#13')).toBeTruthy();
+    const footerLink = within(footer).getByText('Selected + Partner').closest('a');
+    expect(footerLink).toBeTruthy();
+    expect(footerLink).not.toHaveClass('fab-player-footer');
     const score = within(footer).getByText('777,777');
     const stars = within(footer).getByTestId('leaderboard-stars-after-score');
     const accuracy = within(footer).getByText('91.2%');

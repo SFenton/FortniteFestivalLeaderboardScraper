@@ -737,6 +737,68 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RunPublicationCleanupAsync_WithLowSoloCoverage_SkipsSoloCurrentProjectionRefresh()
+    {
+        await _soloCurrentProjectionBuilder.EnsureSchemaAsync();
+        InsertSnapshotState("song_low_coverage", "Solo_Guitar", 55);
+        InsertSnapshotEntry(55, "song_low_coverage", "Solo_Guitar", "acct_low_cov", 101_000);
+        InsertProjectionScope("song_low_coverage", "Solo_Guitar", sourceSnapshotId: 54);
+
+        var requests = new[]
+        {
+            new GlobalLeaderboardScraper.SongScrapeRequest
+            {
+                SongId = "song_low_coverage",
+                Instruments = new[] { "Solo_Guitar" },
+            },
+            new GlobalLeaderboardScraper.SongScrapeRequest
+            {
+                SongId = "song_missing_coverage",
+                Instruments = new[] { "Solo_Bass" },
+            },
+        };
+
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.IncrementSoloLeaderboardsWithData();
+        var ctx = CreateContext(scrapeId: 55, aggregates: aggregates, scrapeRequests: requests);
+
+        await _sut.RunPublicationCleanupAsync(ctx, ScrapePhase.SoloScrape | ScrapePhase.SoloFinalize, CancellationToken.None);
+
+        Assert.Equal(54, GetProjectionScopeSourceSnapshot("song_low_coverage", "Solo_Guitar"));
+        Assert.Null(GetProjectedScore("song_low_coverage", "Solo_Guitar", "acct_low_cov"));
+        Assert.Contains(_log.Entries, entry =>
+            entry.Level == LogLevel.Warning &&
+            entry.Message.Contains("Cleanup solo current projection refresh skipped because solo scrape coverage was below threshold", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunPublicationCleanupAsync_WithSufficientSoloCoverage_RefreshesSoloCurrentProjection()
+    {
+        await _soloCurrentProjectionBuilder.EnsureSchemaAsync();
+        InsertSnapshotState("song_high_coverage", "Solo_Guitar", 66);
+        InsertSnapshotEntry(66, "song_high_coverage", "Solo_Guitar", "acct_high_cov", 121_000);
+        InsertProjectionScope("song_high_coverage", "Solo_Guitar", sourceSnapshotId: 65);
+
+        var requests = new[]
+        {
+            new GlobalLeaderboardScraper.SongScrapeRequest
+            {
+                SongId = "song_high_coverage",
+                Instruments = new[] { "Solo_Guitar" },
+            },
+        };
+
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.IncrementSoloLeaderboardsWithData();
+        var ctx = CreateContext(scrapeId: 66, aggregates: aggregates, scrapeRequests: requests);
+
+        await _sut.RunPublicationCleanupAsync(ctx, ScrapePhase.SoloScrape | ScrapePhase.SoloFinalize, CancellationToken.None);
+
+        Assert.Equal(66, GetProjectionScopeSourceSnapshot("song_high_coverage", "Solo_Guitar"));
+        Assert.Equal(121_000, GetProjectedScore("song_high_coverage", "Solo_Guitar", "acct_high_cov"));
+    }
+
+    [Fact]
     public async Task RunPublicationCleanupAsync_WithSoloPrecompute_BuildsPlayerProfileAfterProjectionRefresh()
     {
         const string accountId = "acct-cache-fresh";

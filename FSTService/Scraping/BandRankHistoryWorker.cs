@@ -41,7 +41,7 @@ public sealed class BandRankHistoryWorker : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (_scraperOptions.Value.ApiOnly)
+            if (_scraperOptions.Value.ApiOnly || _scraperOptions.Value.DisableScraperWorker)
             {
                 await DelaySafely(IdleDelay, stoppingToken);
                 continue;
@@ -136,8 +136,11 @@ public sealed class BandRankHistoryWorker : BackgroundService
     private static BandRankHistorySnapshotOptions CreateSnapshotOptions(BandRankHistoryOptions opts) => new()
     {
         UseLatestState = opts.UseLatestState,
+        WriteMode = opts.WriteMode,
         UseNarrowHistory = opts.UseNarrowHistory,
         UseWideHistoryCompatibilityWrite = opts.UseWideHistoryCompatibilityWrite,
+        RangeChunkingEnabled = opts.RangeChunkingEnabled,
+        ChunkSize = opts.ChunkSize,
         SynchronousCommitOff = opts.SynchronousCommitOff,
         CommandTimeoutSeconds = opts.CommandTimeoutSeconds,
         RetentionDays = opts.RetentionDays,

@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IoClose } from 'react-icons/io5';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { usePressAction } from '../../../hooks/ui/usePressAction';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../hooks/ui/useVisualViewport';
 import { modalStyles as css } from '../modalStyles';
 
@@ -59,6 +60,8 @@ export default function ModalShell({
   const panelRef = useRef<HTMLDivElement>(null);
   const mobilePanelTopRef = useRef<number | null>(null);
   const rendered = visible || mounted;
+  const overlayPressHandlers = usePressAction<HTMLDivElement>({ onPress: onClose, disabled: !visible });
+  const closeButtonPressHandlers = usePressAction<HTMLButtonElement>({ onPress: onClose, disabled: !visible });
 
   useEffect(() => {
     if (visible) {
@@ -113,7 +116,7 @@ export default function ModalShell({
   const mobileTransition = `transform ${transMs} ease`;
   const desktopTransition = `opacity ${transMs} ease, transform ${transMs} ease`;
   const useDesktopPanel = desktopPlacement === 'rightDrawer' || !isMobile;
-  const modalPointerEvents = visible && animIn ? 'auto' as const : 'none' as const;
+  const modalPointerEvents = visible ? 'auto' as const : 'none' as const;
   const computedMobileTop = vvOffsetTop + vvHeight * 0.2;
   if (!useDesktopPanel && visible && mobilePanelTopRef.current === null) {
     mobilePanelTopRef.current = computedMobileTop;
@@ -130,7 +133,7 @@ export default function ModalShell({
     <>
       <div
         style={{ ...css.overlay, transition: overlayTransition, opacity: animIn ? 1 : 0, pointerEvents: modalPointerEvents }}
-        onClick={onClose}
+        {...overlayPressHandlers}
         data-glow-scope=""
       />
       <div
@@ -146,7 +149,7 @@ export default function ModalShell({
       >
         <div style={css.headerWrap}>
           <h2 style={css.headerTitle}>{title}</h2>
-          <button style={css.closeBtn} onClick={onClose} aria-label={t('common.close')}><IoClose size={18} /></button>
+          <button style={css.closeBtn} {...closeButtonPressHandlers} aria-label={t('common.close')}><IoClose size={18} /></button>
         </div>
         {children}
       </div>

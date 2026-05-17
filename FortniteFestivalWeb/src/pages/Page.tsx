@@ -334,7 +334,7 @@ export default function Page({
         <div style={loadPhase === LoadPhase.ContentIn
           ? pageCss.spinnerHidden
           : loadPhase === LoadPhase.SpinnerOut
-            ? { ...pageCss.spinnerOverlay, animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
+            ? { ...pageCss.spinnerOverlay, animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`, pointerEvents: PointerEvents.none }
             : pageCss.spinnerOverlay}
         >
           <ArcSpinner />

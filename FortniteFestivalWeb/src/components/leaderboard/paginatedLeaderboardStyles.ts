@@ -80,6 +80,10 @@ export const plbStyles = {
     border: border(Border.thin, Colors.purpleHighlightBorder),
   } as CSSProperties,
 
+  rowPressed: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  } as CSSProperties,
+
   emptyRow: {
     ...flexColumn,
     alignItems: Align.center,

@@ -27,6 +27,11 @@ public sealed class DatabaseMaintenanceOptions
     public int MetadataCleanupBatchSize { get; set; } = DefaultCleanupBatchSize;
     public int MetadataCleanupMaxBatches { get; set; } = DefaultCleanupMaxBatches;
     public int CompletedScrapeLogRowsToKeep { get; set; } = 100;
+    public bool DeferredServiceLevelRetentionEnabled { get; set; } = true;
+    public int DeferredServiceLevelRetentionInitialDelaySeconds { get; set; } = 60;
+    public int DeferredServiceLevelRetentionPollSeconds { get; set; } = 60;
+    public int DeferredServiceLevelRetentionMaxAttempts { get; set; } = 30;
+    public int DeferredServiceLevelRetentionMaxRuntimeMinutes { get; set; } = 90;
     public int LongRunningMaintenanceSeconds { get; set; } = 30;
     public long WatchedTableDeadTupleThreshold { get; set; } = 10_000_000;
     public string[] WatchedTables { get; set; } =

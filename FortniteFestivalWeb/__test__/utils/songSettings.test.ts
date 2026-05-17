@@ -107,6 +107,7 @@ describe('songSettings', () => {
       const f = defaultSongFilters();
       expect(Object.keys(f.missingScores)).toHaveLength(0);
       expect(Object.keys(f.seasonFilter)).toHaveLength(0);
+      expect(Object.keys(f.individualBandMemberScoreFilters)).toHaveLength(0);
     });
   });
 
@@ -138,6 +139,12 @@ describe('songSettings', () => {
     it('keeps visible per-instrument values active when visible instruments are supplied', () => {
       const f = { ...defaultSongFilters(), missingFCs: { Solo_Guitar: true, Solo_PeripheralVocals: true } };
       expect(isFilterActive(f, null, false, ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'])).toBe(true);
+    });
+
+    it('detects individual band member filters only in selected band mode', () => {
+      const f = { ...defaultSongFilters(), individualBandMemberScoreFilters: { 'acct-1': { hasScore: true } } };
+      expect(isFilterActive(f, null, false, undefined, false)).toBe(false);
+      expect(isFilterActive(f, null, false, undefined, true)).toBe(true);
     });
 
     it('sanitizes hidden per-instrument filter values', () => {

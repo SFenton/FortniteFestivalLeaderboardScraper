@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { SongBandData } from '../../../../src/api/pageCache';
 import SongBandLeaderboardPreview from '../../../../src/pages/songinfo/components/SongBandLeaderboardPreview';
 
@@ -17,6 +17,33 @@ vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
 vi.mock('../../../../src/components/display/InstrumentIcons', () => ({
   InstrumentIcon: ({ instrument }: { instrument: string }) => <span data-testid={`instrument-icon-${instrument}`}>{instrument}</span>,
 }));
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}{location.search}</div>;
+}
+
+function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperties(event, {
+    pointerId: { value: props.pointerId ?? 1 },
+    pointerType: { value: props.pointerType ?? 'touch' },
+    isPrimary: { value: props.isPrimary ?? true },
+    button: { value: props.button ?? 0 },
+    clientX: { value: props.clientX ?? 0 },
+    clientY: { value: props.clientY ?? 0 },
+    timeStamp: { value: props.timeStamp ?? 0 },
+  });
+  fireEvent(target, event);
+  return event;
+}
+
+function dispatchClick(target: Element, timeStamp = 0) {
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+  fireEvent(target, event);
+  return event;
+}
 
 const data: SongBandData = {
   loading: false,
@@ -136,6 +163,8 @@ describe('SongBandLeaderboardPreview', () => {
 
     const viewAll = screen.getByRole('link', { name: /View full leaderboard/ });
     expect(viewAll).toHaveAttribute('href', '/songs/song-a/bands/Band_Duets');
+    expect(viewAll.querySelector('svg')).toBeNull();
+    expect(viewAll).toHaveStyle({ minHeight: '48px', textAlign: 'center', whiteSpace: 'nowrap', wordBreak: 'normal' });
   });
 
   it('shows view-all counts when leaderboard totals are enabled', () => {
@@ -153,6 +182,29 @@ describe('SongBandLeaderboardPreview', () => {
     );
 
     expect(screen.getByRole('link', { name: 'View full leaderboard (5 tracked / 42 total)' })).toBeInTheDocument();
+  });
+
+  it('commits the view-all glass link on touch pointerup', () => {
+    render(
+      <MemoryRouter initialEntries={['/songs/song-a']}>
+        <SongBandLeaderboardPreview
+          songId="song-a"
+          bandType="Band_Duets"
+          data={data}
+          baseDelay={0}
+          skipAnimation
+        />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    const viewAll = screen.getByRole('link', { name: /View full leaderboard/ });
+    dispatchPointer(viewAll, 'pointerdown', { clientX: 20, clientY: 20, timeStamp: 10 });
+    expect(viewAll).toHaveAttribute('data-pressed', 'true');
+    dispatchPointer(viewAll, 'pointerup', { clientX: 20, clientY: 20, timeStamp: 20 });
+    dispatchClick(viewAll, 80);
+
+    expect(screen.getByTestId('location-probe')).toHaveTextContent('/songs/song-a/bands/Band_Duets');
   });
 
   it('hides view-all counts when leaderboard totals are not enabled', () => {

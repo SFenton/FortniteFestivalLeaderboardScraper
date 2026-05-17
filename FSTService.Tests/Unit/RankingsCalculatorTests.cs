@@ -454,8 +454,8 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         var current = progress.GetProgressResponse().Current;
         Assert.NotNull(current);
-        Assert.Equal(24, current.WorkItems?.Total);
-        Assert.Equal(24, current.WorkItems?.Completed);
+        Assert.Equal(25, current.WorkItems?.Total);
+        Assert.Equal(25, current.WorkItems?.Completed);
 
         var branches = Assert.IsAssignableFrom<List<BranchProgress>>(current.Branches);
         Assert.Contains(branches, branch =>
@@ -468,6 +468,38 @@ public sealed class RankingsCalculatorTests : IDisposable
             && branch.Status == "complete"
             && branch.Completed == 3
             && branch.Total == 3);
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_SoloFamilyRankings_CountMissingPadSlotsInFcRateDenominator()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
+        var drumsDb = _persistence.GetOrCreateInstrumentDb("Solo_Drums");
+        var vocalsDb = _persistence.GetOrCreateInstrumentDb("Solo_Vocals");
+
+        guitarDb.UpsertEntries("song_0", [MakeEntry("complete", 1000, rank: 1, fc: true), MakeEntry("partial", 950, rank: 2, fc: true)]);
+        bassDb.UpsertEntries("song_0", [MakeEntry("complete", 1000, rank: 1, fc: true)]);
+        drumsDb.UpsertEntries("song_0", [MakeEntry("complete", 1000, rank: 1, fc: true)]);
+        vocalsDb.UpsertEntries("song_0", [MakeEntry("complete", 1000, rank: 1, fc: true)]);
+
+        await _sut.ComputeAllAsync(CreateFestivalServiceWithSongs(1), CancellationToken.None);
+
+        var complete = _metaFixture.Db.GetSoloFamilyRanking(SoloFamilyRankingScopes.Pad, "complete");
+        var partial = _metaFixture.Db.GetSoloFamilyRanking(SoloFamilyRankingScopes.Pad, "partial");
+
+        Assert.NotNull(complete);
+        Assert.NotNull(partial);
+        Assert.Equal(4, complete.TotalChartedSongs);
+        Assert.Equal(4, partial.TotalChartedSongs);
+        Assert.Equal(4, complete.SongsPlayed);
+        Assert.Equal(1, partial.SongsPlayed);
+        Assert.Equal(4, complete.FullComboCount);
+        Assert.Equal(1, partial.FullComboCount);
+        Assert.Equal(1.0, complete.FcRate, precision: 6);
+        Assert.Equal(0.25, partial.FcRate, precision: 6);
+        Assert.Equal(1, complete.FcRateRank);
+        Assert.True(partial.FcRateRank > complete.FcRateRank);
     }
 
     [Fact]
@@ -1012,6 +1044,7 @@ public sealed class RankingsCalculatorTests : IDisposable
                 call.ArgAt<double>(3),
                 call.ArgAt<double>(4)));
         proxy.GetAllRankingSummariesFull().Returns(_ => inner.GetAllRankingSummariesFull());
+        proxy.GetAllRankingSummariesDetailed().Returns(_ => inner.GetAllRankingSummariesDetailed());
         proxy.GetAllRankingSummaries().Returns(_ => inner.GetAllRankingSummaries());
         proxy.GetAllRankingDeltas().Returns(_ => inner.GetAllRankingDeltas());
         proxy.SnapshotRankHistory(Arg.Any<int>(), Arg.Any<bool>())
@@ -1031,6 +1064,8 @@ public sealed class RankingsCalculatorTests : IDisposable
                 call.Arg<Dictionary<(string AccountId, string SongId), int>>()));
         proxy.When(x => x.ReplaceCompositeRankings(Arg.Any<IReadOnlyList<CompositeRankingDto>>()))
             .Do(call => inner.ReplaceCompositeRankings(call.Arg<IReadOnlyList<CompositeRankingDto>>()));
+        proxy.When(x => x.ReplaceSoloFamilyRankings(Arg.Any<IReadOnlyList<SoloFamilyRankingDto>>()))
+            .Do(call => inner.ReplaceSoloFamilyRankings(call.Arg<IReadOnlyList<SoloFamilyRankingDto>>()));
         proxy.When(x => x.TruncateCompositeRankingDeltas())
             .Do(_ => inner.TruncateCompositeRankingDeltas());
         proxy.When(x => x.WriteCompositeRankingDeltas(Arg.Any<IReadOnlyList<(string AccountId, double LeewayBucket,

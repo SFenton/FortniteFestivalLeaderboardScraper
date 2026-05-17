@@ -21,6 +21,7 @@ public sealed class BackfillOrchestrator
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
+    private readonly UserSyncProgressTracker _syncTracker;
     private readonly IOptions<ScraperOptions> _options;
     private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly SharedDopPool _pool;
@@ -37,6 +38,7 @@ public sealed class BackfillOrchestrator
         GlobalLeaderboardPersistence persistence,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
+        UserSyncProgressTracker syncTracker,
         IOptions<ScraperOptions> options,
         CyclicalSongMachine cyclicalMachine,
         SharedDopPool pool,
@@ -52,6 +54,7 @@ public sealed class BackfillOrchestrator
         _persistence = persistence;
         _tokenManager = tokenManager;
         _progress = progress;
+        _syncTracker = syncTracker;
         _options = options;
         _cyclicalMachine = cyclicalMachine;
         _pool = pool;
@@ -59,6 +62,174 @@ public sealed class BackfillOrchestrator
         _precomputer = precomputer;
         _leaderboardAllCache = leaderboardAllCache;
         _log = log;
+    }
+
+    /// <summary>
+    /// Claims API-queued registration backfills and attaches them to the worker-owned
+    /// cyclical song machine at low priority, sharing the active DOP/RPS/CDN limiter.
+    /// </summary>
+    public async Task<int> RunQueuedRegistrationBackfillBatchAsync(
+        FestivalService service,
+        int maxAccounts,
+        CancellationToken ct)
+    {
+        var deferredBackfills = _persistence.Meta.GetDeferredBackfills();
+        if (deferredBackfills.Count == 0)
+            return 0;
+
+        var selectedBackfills = deferredBackfills
+            .OrderBy(static backfill => backfill.AccountId, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(1, maxAccounts))
+            .ToList();
+
+        if (selectedBackfills.Count == 0)
+            return 0;
+
+        if (service.Songs.Count == 0)
+            await service.InitializeAsync();
+
+        var chartedSongIds = service.Songs
+            .Select(static song => song.track?.su)
+            .Where(static songId => !string.IsNullOrWhiteSpace(songId))
+            .Select(static songId => songId!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (chartedSongIds.Count == 0)
+        {
+            _log.LogWarning("Queued registration backfill skipped because no charted songs are loaded.");
+            return 0;
+        }
+
+        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
+        IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows = [];
+        if (accessToken is not null)
+        {
+            try
+            {
+                seasonWindows = await _historyReconstructor.DiscoverSeasonWindowsAsync(
+                    accessToken, _tokenManager.AccountId!, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Season window discovery failed during queued registration backfill. Using stored season windows.");
+            }
+        }
+        else
+        {
+            _log.LogWarning("No access token available for queued registration backfill season discovery. Using stored season windows.");
+        }
+
+        if (seasonWindows.Count == 0)
+            seasonWindows = _persistence.Meta.GetSeasonWindows();
+
+        var allSeasons = seasonWindows.Select(static window => window.SeasonNumber).ToHashSet();
+        var canRunCompleteHistoryRecon = allSeasons.Count > 0;
+        var accountIds = selectedBackfills
+            .Select(static backfill => backfill.AccountId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        RegisterKnownBandsForAccounts(accountIds);
+
+        var users = new List<UserWorkItem>(accountIds.Length);
+        var totalsByAccount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var backfill in selectedBackfills)
+        {
+            var totalPairs = backfill.TotalSongsToCheck > 0
+                ? backfill.TotalSongsToCheck
+                : chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
+
+            totalsByAccount[backfill.AccountId] = totalPairs;
+            _persistence.Meta.StartBackfill(backfill.AccountId);
+            _syncTracker.BeginBackfill(backfill.AccountId, totalPairs);
+
+            users.Add(new UserWorkItem
+            {
+                AccountId = backfill.AccountId,
+                Purposes = canRunCompleteHistoryRecon
+                    ? WorkPurpose.Backfill | WorkPurpose.HistoryRecon
+                    : WorkPurpose.Backfill,
+                AllTimeNeeded = true,
+                SeasonsNeeded = canRunCompleteHistoryRecon ? new HashSet<int>(allSeasons) : [],
+                AlreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(backfill.AccountId),
+            });
+        }
+
+        _log.LogInformation(
+            "Queued registration backfill attaching {Users} user(s), {Songs} songs, priority=low.",
+            users.Count, chartedSongIds.Count);
+
+        try
+        {
+            _resultProcessor.SetStagingAccounts(accountIds);
+
+            var result = await _cyclicalMachine.AttachAsync(
+                users,
+                chartedSongIds,
+                seasonWindows,
+                SongMachineSource.Backfill,
+                isHighPriority: false,
+                ct: ct);
+
+            _log.LogInformation(
+                "Queued registration backfill completed: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",
+                result.EntriesUpdated, result.SessionsInserted, result.ApiCalls, result.UsersProcessed);
+
+            foreach (var user in users)
+            {
+                try
+                {
+                    _resultProcessor.FlushStagedData(user.AccountId);
+                    _persistence.Meta.CompleteBackfill(user.AccountId, rankingsPending: true);
+                    _rivalsOrchestrator.ComputeForUser(user.AccountId);
+                    _precomputer.PrecomputeUser(user.AccountId);
+                    _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
+
+                    if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+                    {
+                        var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
+                        if (reconStatus is null)
+                            _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
+
+                        _persistence.Meta.CompleteHistoryRecon(user.AccountId);
+                        _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
+                    }
+                    else
+                    {
+                        EnsureHistoryReconPending(user.AccountId, chartedSongIds.Count);
+                    }
+
+                    _syncTracker.Complete(user.AccountId);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(ex, "Post-backfill actions failed for queued registration account {AccountId}.", user.AccountId);
+                }
+            }
+
+            if (result.EntriesUpdated > 0)
+                _leaderboardAllCache.InvalidateAll();
+
+            return users.Count;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Queued registration backfill batch failed. Returning accounts to the deferred queue.");
+            foreach (var user in users)
+            {
+                var totalPairs = totalsByAccount.TryGetValue(user.AccountId, out var total) ? total : chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
+                _persistence.Meta.DeferBackfill(user.AccountId, totalPairs, "worker_backfill_retry");
+                _syncTracker.BeginQueued(user.AccountId, totalPairs);
+            }
+
+            return 0;
+        }
+        finally
+        {
+            _resultProcessor.ClearStagingAccounts();
+        }
     }
 
     /// <summary>

@@ -1,16 +1,20 @@
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { DEMO_SWAP_INTERVAL_MS, FADE_DURATION } from '@festival/theme';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 
 const mockApi = vi.hoisted(() => ({
   getComboRankings: vi.fn(),
   getPlayerComboRanking: vi.fn(),
+  getSoloFamilyRankings: vi.fn(),
+  getPlayerSoloFamilyRanking: vi.fn(),
   getRankings: vi.fn(),
   getPlayerRanking: vi.fn(),
   getBandRanking: vi.fn(),
+  getSelectedMemberRankings: vi.fn(),
 }));
 
 vi.mock('../../../src/api/client', () => ({ api: mockApi }));
@@ -99,6 +103,22 @@ function makeBandRankingEntry(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeSelectedMemberRankings(entries: ReturnType<typeof makeAccountRankingEntry>[], rankBy = 'totalscore') {
+  return {
+    rankBy,
+    instruments: [{
+      instrument: 'Solo_Guitar',
+      rankBy,
+      totalAccounts: 100,
+      entries: entries.map(entry => ({
+        ...entry,
+        instrument: 'Solo_Guitar',
+        totalRankedAccounts: 100,
+      })),
+    }],
+  };
+}
+
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
@@ -147,9 +167,23 @@ beforeEach(() => {
     fullComboCount: 12,
     computedAt: '2026-01-01T00:00:00Z',
   });
+  mockApi.getSoloFamilyRankings.mockResolvedValue({
+    scopeId: 'pad',
+    rankBy: 'totalscore',
+    page: 1,
+    pageSize: 25,
+    totalAccounts: 0,
+    entries: [],
+  });
+  mockApi.getPlayerSoloFamilyRanking.mockResolvedValue(null);
   mockApi.getRankings.mockResolvedValue({ entries: [], totalAccounts: 0, instrument: 'Solo_Guitar', rankBy: 'totalscore', page: 1, pageSize: 25 });
   mockApi.getPlayerRanking.mockResolvedValue(null);
   mockApi.getBandRanking.mockResolvedValue(null);
+  mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([]));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 const { default: FullRankingsPage } = await import('../../../src/pages/leaderboards/FullRankingsPage');
@@ -188,6 +222,75 @@ describe('FullRankingsPage', () => {
     expect(instrumentButton.querySelector('img[alt="Solo_Bass"]')).not.toBeNull();
   });
 
+  it('renders the selected instrument icon in the mobile page header for instrument rankings', async () => {
+    stubMatchMedia(true);
+    mockApi.getRankings.mockResolvedValue({ entries: [], totalAccounts: 12, instrument: 'Solo_Bass', rankBy: 'totalscore', page: 1, pageSize: 25 });
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Bass&rankBy=totalscore" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Bass', 'totalscore', 1, 25);
+    });
+
+    const headerPortal = screen.getByTestId('test-header-portal');
+    expect(headerPortal.querySelector('img[alt="Solo_Bass"]')).not.toBeNull();
+    expect(within(headerPortal).getByText('Bass Leaderboards')).toBeTruthy();
+  });
+
+  it('keeps combo rankings text-only in the mobile page header', async () => {
+    stubMatchMedia(true);
+
+    render(
+      <TestProviders route="/leaderboards/all?combo=05&rankBy=totalscore" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getComboRankings).toHaveBeenCalledWith('05', 'totalscore', 1, 25);
+    });
+
+    const headerPortal = screen.getByTestId('test-header-portal');
+    expect(headerPortal.querySelector('img[alt]')).toBeNull();
+    expect(within(headerPortal).getByText('Lead + Drums Leaderboards')).toBeTruthy();
+  });
+
+  it('keeps family rankings text-only in the mobile page header', async () => {
+    stubMatchMedia(true);
+    mockApi.getSoloFamilyRankings.mockResolvedValue({
+      scopeId: 'pad',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 9,
+      entries: [],
+    });
+
+    render(
+      <TestProviders route="/leaderboards/all?family=pad&instrument=Solo_Bass&rankBy=totalscore" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getSoloFamilyRankings).toHaveBeenCalledWith('pad', 'totalscore', 1, 25);
+    });
+
+    const headerPortal = screen.getByTestId('test-header-portal');
+    expect(headerPortal.querySelector('img[alt]')).toBeNull();
+    expect(within(headerPortal).getByText('Pad Leaderboards')).toBeTruthy();
+  });
+
   it('coerces selected-band Max Score deep links to Total Score', async () => {
     selectBandProfile();
     localStorage.setItem('fst:leaderboardSettings', JSON.stringify({ rankBy: 'maxscore' }));
@@ -204,7 +307,8 @@ describe('FullRankingsPage', () => {
     await waitFor(() => {
       expect(mockApi.getRankings.mock.calls.some(call => call[0] === 'Solo_Guitar' && call[1] === 'totalscore')).toBe(true);
       expect(mockApi.getRankings.mock.calls.some(call => call[1] === 'maxscore')).toBe(false);
-      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'band-a:band-b', undefined, 'totalscore');
+      expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
+      expect(mockApi.getBandRanking).not.toHaveBeenCalled();
       expect(JSON.parse(localStorage.getItem('fst:leaderboardSettings') || '{}').rankBy).toBe('totalscore');
     });
   });
@@ -386,7 +490,7 @@ describe('FullRankingsPage', () => {
     expect(await screen.findByText('65')).toHaveStyle({ color: '#FFD700' });
   });
 
-  it('renders selected band ranking in the fixed footer', async () => {
+  it('renders selected band member ranking in the fixed footer for solo instruments', async () => {
     selectBandProfile();
     mockApi.getRankings.mockResolvedValue({
       instrument: 'Solo_Guitar',
@@ -396,7 +500,10 @@ describe('FullRankingsPage', () => {
       totalAccounts: 100,
       entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
     });
-    mockApi.getBandRanking.mockResolvedValue(makeBandRankingEntry());
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([
+      makeAccountRankingEntry(12, { accountId: 'band-a', displayName: 'Alpha', totalScore: 765432, totalScoreRank: 12 }),
+      makeAccountRankingEntry(34, { accountId: 'band-b', displayName: 'Beta', totalScore: 654321, totalScoreRank: 34 }),
+    ]));
 
     render(
       <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore">
@@ -406,13 +513,15 @@ describe('FullRankingsPage', () => {
       </TestProviders>,
     );
 
-    expect(await screen.findByText('Alpha + Beta')).toBeTruthy();
-    expect(await screen.findByText('#42')).toBeTruthy();
-    expect(await screen.findByText('654,321')).toBeTruthy();
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'band-a:band-b', undefined, 'totalscore');
+    expect(await screen.findByText('Alpha')).toBeTruthy();
+    expect(await screen.findByText('#12')).toBeTruthy();
+    expect(await screen.findByText('765,432')).toBeTruthy();
+    expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
+    expect(mockApi.getBandRanking).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain('Alpha + Beta');
   });
 
-  it('links the selected band footer to the band route', async () => {
+  it('links the selected band solo footer to the active member route', async () => {
     selectBandProfile();
     mockApi.getRankings.mockResolvedValue({
       instrument: 'Solo_Guitar',
@@ -422,7 +531,9 @@ describe('FullRankingsPage', () => {
       totalAccounts: 100,
       entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
     });
-    mockApi.getBandRanking.mockResolvedValue(makeBandRankingEntry());
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([
+      makeAccountRankingEntry(12, { accountId: 'band-a', displayName: 'Alpha', totalScore: 765432, totalScoreRank: 12 }),
+    ]));
 
     render(
       <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore">
@@ -432,14 +543,12 @@ describe('FullRankingsPage', () => {
       </TestProviders>,
     );
 
-    const footerName = await screen.findByText('Alpha + Beta');
+    const footerName = await screen.findByText('Alpha');
     const link = footerName.closest('a');
-    expect(link?.getAttribute('href')).toContain('/bands/band-selected-1');
-    expect(link?.getAttribute('href')).toContain('bandType=Band_Duets');
-    expect(link?.getAttribute('href')).toContain('teamKey=band-a%3Aband-b');
+    expect(link?.getAttribute('href')).toContain('/player/band-a');
   });
 
-  it('uses the active metric when loading selected band ranking', async () => {
+  it('uses the active metric when loading selected band member rankings', async () => {
     selectBandProfile();
     mockApi.getRankings.mockResolvedValue({
       instrument: 'Solo_Guitar',
@@ -449,7 +558,9 @@ describe('FullRankingsPage', () => {
       totalAccounts: 100,
       entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
     });
-    mockApi.getBandRanking.mockResolvedValue(makeBandRankingEntry());
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([
+      makeAccountRankingEntry(12, { accountId: 'band-a', displayName: 'Alpha', adjustedSkillRating: 0.0409, adjustedSkillRank: 12 }),
+    ], 'adjusted'));
 
     render(
       <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted">
@@ -460,8 +571,74 @@ describe('FullRankingsPage', () => {
     );
 
     await waitFor(() => {
-      expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'band-a:band-b', undefined, 'adjusted');
+      expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'adjusted');
     });
+    expect(mockApi.getBandRanking).not.toHaveBeenCalled();
+  });
+
+  it('fades and rotates selected band members inside the solo footer', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    selectBandProfile();
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 100,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
+    });
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([
+      makeAccountRankingEntry(12, { accountId: 'band-a', displayName: 'Alpha', totalScore: 765432, totalScoreRank: 12 }),
+      makeAccountRankingEntry(34, { accountId: 'band-b', displayName: 'Beta', totalScore: 654321, totalScoreRank: 34 }),
+    ]));
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText('Alpha')).toBeTruthy();
+    const content = screen.getByTestId('selected-band-member-footer-content');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(DEMO_SWAP_INTERVAL_MS); });
+    expect(content).toHaveStyle({ opacity: '0' });
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(FADE_DURATION); });
+    expect(await screen.findByText('Beta')).toBeTruthy();
+    expect(screen.getByTestId('selected-band-member-footer-content')).toHaveStyle({ opacity: '1' });
+  });
+
+  it('skips unranked selected band members and keeps one ranked member static', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    selectBandProfile();
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 100,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
+    });
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([
+      makeAccountRankingEntry(12, { accountId: 'band-a', displayName: 'Alpha', totalScore: 765432, totalScoreRank: 12 }),
+    ]));
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText('Alpha')).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(DEMO_SWAP_INTERVAL_MS + FADE_DURATION); });
+    expect(screen.getByText('Alpha')).toBeTruthy();
+    expect(screen.queryByText('Beta')).toBeNull();
+    expect(screen.getByTestId('selected-band-member-footer-content')).toHaveStyle({ opacity: '1' });
   });
 
   it('passes combo route scope to selected band ranking', async () => {
@@ -481,7 +658,7 @@ describe('FullRankingsPage', () => {
     });
   });
 
-  it('renders the selected band footer for the active selected-band combo filter', async () => {
+  it('ignores the selected-band combo filter for solo member footer content', async () => {
     selectBandProfile();
     mockApi.getRankings.mockResolvedValue({
       instrument: 'Solo_Guitar',
@@ -491,7 +668,9 @@ describe('FullRankingsPage', () => {
       totalAccounts: 100,
       entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
     });
-    mockApi.getBandRanking.mockResolvedValue(makeBandRankingEntry());
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([
+      makeAccountRankingEntry(12, { accountId: 'band-a', displayName: 'Alpha', totalScore: 765432, totalScoreRank: 12 }),
+    ]));
 
     render(
       <TestProviders
@@ -514,8 +693,9 @@ describe('FullRankingsPage', () => {
     );
 
     expect(await screen.findByText('Top Player')).toBeTruthy();
-    expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'band-a:band-b', 'Solo_Guitar+Solo_Bass', 'totalscore');
-    expect(document.body.textContent).toContain('Alpha + Beta');
+    expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
+    expect(mockApi.getBandRanking).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Alpha');
   });
 
   it('does not query selected band ranking for a selected solo player', async () => {
@@ -533,7 +713,7 @@ describe('FullRankingsPage', () => {
     expect(mockApi.getBandRanking).not.toHaveBeenCalled();
   });
 
-  it('does not render a selected band footer when the band ranking is missing', async () => {
+  it('renders a stable empty state when no selected band members are ranked for the solo instrument', async () => {
     selectBandProfile();
     mockApi.getRankings.mockResolvedValue({
       instrument: 'Solo_Guitar',
@@ -543,7 +723,7 @@ describe('FullRankingsPage', () => {
       totalAccounts: 100,
       entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
     });
-    mockApi.getBandRanking.mockResolvedValue(null);
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([]));
 
     render(
       <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore">
@@ -554,7 +734,8 @@ describe('FullRankingsPage', () => {
     );
 
     await screen.findByText('Top Player');
-    await waitFor(() => expect(mockApi.getBandRanking).toHaveBeenCalled());
+    expect(await screen.findByText('No ranked band members for this instrument')).toBeTruthy();
+    expect(mockApi.getBandRanking).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain('Alpha + Beta');
   });
 });

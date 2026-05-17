@@ -292,6 +292,7 @@ public sealed class UserSyncProgressTracker
     public object BuildPayloadForAccount(string accountId, UserSyncProgress p)
     {
         var isComplete = p.Phase == SyncProgressPhase.Complete;
+        var displayProgress = BuildDisplayProgress(p);
         int? estimatedRankMinutes = null;
         if (isComplete)
         {
@@ -310,6 +311,8 @@ public sealed class UserSyncProgressTracker
             phase = p.Phase.ToString().ToLowerInvariant(),
             itemsCompleted = Volatile.Read(ref p.ItemsCompleted),
             totalItems = p.TotalItems,
+            displayItemsCompleted = displayProgress?.ItemsCompleted,
+            displayTotalItems = displayProgress?.TotalItems,
             entriesFound = Volatile.Read(ref p.EntriesFound),
             currentSongName = p.CurrentSongName,
             seasonsQueried = Volatile.Read(ref p.SeasonsQueried),
@@ -323,6 +326,29 @@ public sealed class UserSyncProgressTracker
             pendingRankUpdate = isComplete ? true : (bool?)null,
             estimatedRankUpdateMinutes = estimatedRankMinutes,
         };
+    }
+
+    private static (int ItemsCompleted, int TotalItems)? BuildDisplayProgress(UserSyncProgress p)
+    {
+        if (p.Phase != SyncProgressPhase.Backfill) return null;
+
+        var instrumentCount = Math.Max(1, GlobalLeaderboardScraper.AllInstruments.Count);
+        var totalSongs = EstimateBackfillSongCount(p.TotalItems, instrumentCount, roundUp: true);
+        if (totalSongs <= 0) return null;
+
+        var completedSongs = p.CheckedBackfillPairs.Keys
+            .Select(static pair => pair.SongId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+        var estimatedSongs = EstimateBackfillSongCount(Volatile.Read(ref p.ItemsCompleted), instrumentCount, roundUp: false);
+        var displaySongs = Math.Min(totalSongs, Math.Max(completedSongs, estimatedSongs));
+        return (displaySongs, totalSongs);
+    }
+
+    private static int EstimateBackfillSongCount(int pairCount, int instrumentCount, bool roundUp)
+    {
+        if (pairCount <= 0 || instrumentCount <= 0) return 0;
+        return roundUp ? (pairCount + instrumentCount - 1) / instrumentCount : pairCount / instrumentCount;
     }
 
     private void ScheduleCleanup(string accountId)

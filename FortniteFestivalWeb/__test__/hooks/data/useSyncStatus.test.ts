@@ -46,7 +46,7 @@ describe('useSyncStatus', () => {
     vi.useFakeTimers();
     mockGetStatus.mockReset();
     mockTrackPlayer.mockReset();
-    mockTrackPlayer.mockResolvedValue(undefined as any);
+    mockTrackPlayer.mockResolvedValue({} as any);
     mockSend.mockReset();
     mockSubscribe.mockClear();
     mockSubscribeOpen.mockClear();
@@ -182,11 +182,85 @@ describe('useSyncStatus', () => {
   });
 
   it('tracks player and checks status on mount', async () => {
-    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    mockGetStatus.mockResolvedValue({ accountId: 'acc1', isTracked: false, backfill: null, historyRecon: null } as any);
     renderHook(() => useSyncStatus('acc1'), { wrapper });
     await flush();
     expect(mockTrackPlayer).toHaveBeenCalledWith('acc1');
     expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+  });
+
+  it('shows queued after untracked preflight before trackPlayer resolves', async () => {
+    let resolveTrack: ((value: unknown) => void) | undefined;
+    mockGetStatus.mockResolvedValue({ accountId: 'acc1', isTracked: false, backfill: null, historyRecon: null, rivals: null, postScrape: null } as any);
+    mockTrackPlayer.mockImplementation(() => new Promise(resolve => { resolveTrack = resolve; }) as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+    expect(mockTrackPlayer).toHaveBeenCalledWith('acc1');
+    expect(result.current.isSyncing).toBe(true);
+    expect(result.current.phase).toBe('queued');
+
+    await act(async () => {
+      resolveTrack?.({ syncDeferred: true });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(result.current.phase).toBe('queued');
+  });
+
+  it('does not flash queued for a tracked complete player while trackPlayer is pending', async () => {
+    let resolveTrack: ((value: unknown) => void) | undefined;
+    mockGetStatus.mockResolvedValue({
+      accountId: 'acc1',
+      isTracked: true,
+      pendingRankUpdate: false,
+      backfill: { status: 'complete', songsChecked: 100, totalSongsToCheck: 100, entriesFound: 10, startedAt: null, completedAt: null },
+      historyRecon: null,
+      rivals: null,
+      postScrape: null,
+    } as any);
+    mockTrackPlayer.mockImplementation(() => new Promise(resolve => { resolveTrack = resolve; }) as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    expect(mockTrackPlayer).toHaveBeenCalledWith('acc1');
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('complete');
+
+    await act(async () => {
+      resolveTrack?.({});
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('complete');
+  });
+
+  it('rolls back optimistic queued when trackPlayer does not start sync', async () => {
+    mockGetStatus.mockResolvedValue({ accountId: 'acc1', isTracked: false, backfill: null, historyRecon: null, rivals: null, postScrape: null } as any);
+    mockTrackPlayer.mockResolvedValue({ syncDeferred: false, backfillKicked: false } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('idle');
+  });
+
+  it('rolls back optimistic queued when trackPlayer fails', async () => {
+    mockGetStatus.mockResolvedValue({ accountId: 'acc1', isTracked: false, backfill: null, historyRecon: null, rivals: null, postScrape: null } as any);
+    mockTrackPlayer.mockRejectedValue(new Error('Track failed'));
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    expect(result.current.isSyncing).toBe(false);
+    expect(result.current.phase).toBe('idle');
   });
 
   it('detects backfill in progress', async () => {
@@ -198,6 +272,30 @@ describe('useSyncStatus', () => {
     expect(result.current.isSyncing).toBe(true);
     expect(result.current.phase).toBe('backfill');
     expect(result.current.backfillProgress).toBe(0.5);
+  });
+
+  it('prefers song-level display counts for HTTP backfill progress', async () => {
+    mockGetStatus.mockResolvedValue({
+      backfill: {
+        status: 'in_progress',
+        songsChecked: 108,
+        totalSongsToCheck: 5904,
+        displaySongsChecked: 12,
+        displayTotalSongs: 656,
+        entriesFound: 10,
+        startedAt: null,
+        completedAt: null,
+      },
+      historyRecon: null,
+    } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    expect(result.current.phase).toBe('backfill');
+    expect(result.current.itemsCompleted).toBe(12);
+    expect(result.current.totalItems).toBe(656);
+    expect(result.current.backfillProgress).toBeCloseTo(12 / 656);
   });
 
   it('detects history recon in progress', async () => {
@@ -381,6 +479,31 @@ describe('useSyncStatus', () => {
     expect(result.current.progress).toBeCloseTo(0.3);
   });
 
+  it('prefers display counts from WebSocket backfill progress', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    await act(async () => {
+      const msg = {
+        type: 'sync_progress',
+        accountId: 'acc1',
+        phase: 'backfill',
+        itemsCompleted: 108,
+        totalItems: 5904,
+        displayItemsCompleted: 12,
+        displayTotalItems: 656,
+        entriesFound: 10,
+      } as any;
+      wsHandlers.forEach(h => h(msg));
+    });
+
+    expect(result.current.phase).toBe('backfill');
+    expect(result.current.itemsCompleted).toBe(12);
+    expect(result.current.totalItems).toBe(656);
+    expect(result.current.backfillProgress).toBeCloseTo(12 / 656);
+  });
+
   it('maps deferred HTTP backfill status to queued state', async () => {
     mockGetStatus.mockResolvedValue({
       pendingRankUpdate: false,
@@ -396,6 +519,40 @@ describe('useSyncStatus', () => {
     expect(result.current.isSyncing).toBe(true);
     expect(result.current.phase).toBe('queued');
     expect(result.current.progress).toBe(0);
+  });
+
+  it('reconciles a queued WS replay through HTTP polling', async () => {
+    mockGetStatus
+      .mockResolvedValueOnce({ backfill: null, historyRecon: null, rivals: null, postScrape: null } as any)
+      .mockResolvedValueOnce({
+        backfill: { status: 'in_progress', songsChecked: 40, totalSongsToCheck: 100, entriesFound: 6, startedAt: null, completedAt: null },
+        historyRecon: null,
+        rivals: null,
+        postScrape: null,
+      } as any);
+
+    const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+
+    await act(async () => {
+      const msg = {
+        type: 'sync_progress',
+        accountId: 'acc1',
+        phase: 'queued',
+        itemsCompleted: 0,
+        totalItems: 100,
+        entriesFound: 0,
+      } as any;
+      wsHandlers.forEach(h => h(msg));
+    });
+
+    expect(result.current.phase).toBe('queued');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
+
+    expect(mockGetStatus).toHaveBeenCalledTimes(2);
+    expect(result.current.phase).toBe('backfill');
+    expect(result.current.itemsCompleted).toBe(40);
   });
 
   it('maps postscrape HTTP status to syncing state', async () => {
@@ -435,20 +592,20 @@ describe('useSyncStatus', () => {
 
   it('shows queued state when trackPlayer defers sync behind an active update', async () => {
     mockTrackPlayer.mockResolvedValue({ syncDeferred: true } as any);
-    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    mockGetStatus.mockResolvedValue({ accountId: 'acc1', isTracked: false, backfill: null, historyRecon: null } as any);
 
     const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
     await flush();
 
     expect(result.current.isSyncing).toBe(true);
     expect(result.current.phase).toBe('queued');
-    expect(mockGetStatus).not.toHaveBeenCalled();
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
   });
 
   it('defers first checkStatus when backfillKicked to preserve optimistic banner', async () => {
     mockTrackPlayer.mockResolvedValue({ backfillKicked: true } as any);
     // getSyncStatus returns idle (simulating stale cache)
-    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    mockGetStatus.mockResolvedValue({ accountId: 'acc1', isTracked: false, backfill: null, historyRecon: null } as any);
 
     const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
     await flush();
@@ -457,13 +614,13 @@ describe('useSyncStatus', () => {
     expect(result.current.isSyncing).toBe(true);
     expect(result.current.phase).toBe('backfill');
 
-    // getSyncStatus should NOT have been called yet (deferred by SYNC_POLL_ACTIVE_MS)
-    expect(mockGetStatus).not.toHaveBeenCalled();
+    // Only the fast preflight should have run so far; the post-track poll is deferred.
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
 
     // Advance past the deferred poll interval (3s)
     await act(async () => { await vi.advanceTimersByTimeAsync(3100); });
 
     // Now the first poll should have fired
-    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+    expect(mockGetStatus).toHaveBeenCalledTimes(2);
   });
 });

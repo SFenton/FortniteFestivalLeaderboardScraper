@@ -20,6 +20,7 @@ import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContex
 import { useBandPageSelect } from '../../contexts/FabSearchContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useBandRankHistory } from '../../hooks/chart/useBandRankHistory';
+import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useIsMobile, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
@@ -582,13 +583,22 @@ function BandSummarySection({ band, sectionRef, style, onAnimationEnd }: { band:
 function BandMemberCard({ member, activeFilterInstrumentByAccountId, fallbackName }: { member: PlayerBandMember; activeFilterInstrumentByAccountId?: MemberInstrumentFilter | null; fallbackName: string }) {
   const styles = useStyles();
   const displayName = formatMemberName(member, fallbackName);
+  const route = Routes.player(member.accountId);
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: route });
   const assignedInstrument = activeFilterInstrumentByAccountId?.get(member.accountId);
   const instruments = activeFilterInstrumentByAccountId
     ? (assignedInstrument ? [assignedInstrument] : [])
     : Array.from(new Set(member.instruments));
 
   return (
-    <Link data-testid="band-member-card" to={Routes.player(member.accountId)} aria-label={`View ${displayName}`} style={styles.memberCard}>
+    <Link
+      data-testid="band-member-card"
+      to={route}
+      aria-label={`View ${displayName}`}
+      style={{ ...styles.memberCard, ...(linkPress.isPressed ? styles.memberCardPressed : undefined) }}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      {...linkPress.linkPressHandlers}
+    >
       <span style={styles.memberContent}>
         <span style={styles.memberName}>{displayName}</span>
         {instruments.length > 0 && (
@@ -787,6 +797,9 @@ function useStyles() {
       textDecoration: 'none',
       height: '100%',
       boxSizing: 'border-box',
+    } as CSSProperties,
+    memberCardPressed: {
+      backgroundColor: 'rgba(255, 255, 255, 0.06)',
     } as CSSProperties,
     memberContent: {
       ...flexColumn,

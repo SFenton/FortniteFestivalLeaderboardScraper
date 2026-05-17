@@ -646,6 +646,7 @@ export default function SongsPage() {
       sortActive,
       filterActive: filtersActive,
     });
+    return () => fabSearch.registerActions(null);
   }, [fabSearch, filtersActive, sortActive]);
   /* v8 ignore stop */
   const hasFilterableProfile = isSelectedBand || !!playerData;

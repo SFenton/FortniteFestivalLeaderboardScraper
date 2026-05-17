@@ -38,6 +38,20 @@ describe('ChangelogModal', () => {
     expect(onDismiss).toHaveBeenCalled();
   });
 
+  it('dismisses from touch pointerup on the overlay without double firing on click', () => {
+    const onDismiss = vi.fn();
+    const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
+    const overlay = container.firstElementChild!;
+
+    fireEvent.pointerDown(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 24, clientY: 52 });
+    fireEvent.pointerUp(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 24, clientY: 52 });
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(overlay);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
   it('calls onDismiss when Escape is pressed', () => {
     const onDismiss = vi.fn();
     render(<ChangelogModal onDismiss={onDismiss} />);
@@ -51,6 +65,20 @@ describe('ChangelogModal', () => {
     const closeBtn = screen.getByLabelText('Close');
     fireEvent.click(closeBtn);
     expect(onDismiss).toHaveBeenCalled();
+  });
+
+  it('dismisses from touch pointerup without double firing on click', () => {
+    const onDismiss = vi.fn();
+    render(<ChangelogModal onDismiss={onDismiss} />);
+    const closeBtn = screen.getByLabelText('Close');
+
+    fireEvent.pointerDown(closeBtn, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 360, clientY: 120 });
+    fireEvent.pointerUp(closeBtn, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 360, clientY: 120 });
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(closeBtn);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
   it('renders second changelog entry', () => {
@@ -73,7 +101,19 @@ describe('ChangelogModal', () => {
     const overlay = container.firstElementChild as HTMLElement;
     const card = overlay.firstElementChild as HTMLElement;
     fireEvent.click(card);
-    // onDismiss should NOT be called from the card click itself
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('stops propagation on card touch pointerup', () => {
+    const onDismiss = vi.fn();
+    const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
+    const overlay = container.firstElementChild as HTMLElement;
+    const card = overlay.firstElementChild as HTMLElement;
+
+    fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 180, clientY: 320 });
+    fireEvent.pointerUp(card, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 180, clientY: 320 });
+
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it('handles scroll event on content', () => {

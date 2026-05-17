@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useMemo, type ReactNode } from 'react';
+import { useCallback, useMemo, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { IoChevronBack } from 'react-icons/io5';
@@ -9,6 +9,7 @@ import {
   padding, flexRow,
   TRANSITION_MS,
 } from '@festival/theme';
+import { usePressAction } from '../../../hooks/ui/usePressAction';
 
 export default function BackLink({ fallback, animate = true, rightAction }: { fallback: string; animate?: boolean; rightAction?: ReactNode }) {
   const location = useLocation();
@@ -19,14 +20,14 @@ export default function BackLink({ fallback, animate = true, rightAction }: { fa
 
   // Always use history.back() so the destination sees a POP navigation
   // and can restore from cache. The <Link> href is a fallback.
-  const handleClick = (e: React.MouseEvent) => {
-    e.preventDefault();
+  const handleBackPress = useCallback(() => {
     navigate(-1);
-  };
+  }, [navigate]);
+  const backPressHandlers = usePressAction<HTMLAnchorElement>({ onPress: handleBackPress });
 
   return (
     <div className="sa-top" style={s.wrapper}>
-      <Link to={backTo} onClick={handleClick} style={s.backLink}>
+      <Link to={backTo} {...backPressHandlers} style={s.backLink}>
         <span style={s.iconSlot}><IoChevronBack size={IconSize.back} /></span>
         {t('common.back')}
       </Link>

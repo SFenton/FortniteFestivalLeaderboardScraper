@@ -2,6 +2,28 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import Paginator from '../../../src/components/common/Paginator';
 
+function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperties(event, {
+    pointerId: { value: props.pointerId ?? 1 },
+    pointerType: { value: props.pointerType ?? 'touch' },
+    isPrimary: { value: props.isPrimary ?? true },
+    button: { value: props.button ?? 0 },
+    clientX: { value: props.clientX ?? 0 },
+    clientY: { value: props.clientY ?? 0 },
+    timeStamp: { value: props.timeStamp ?? 0 },
+  });
+  fireEvent(target, event);
+  return event;
+}
+
+function dispatchClick(target: Element, timeStamp = 0) {
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+  fireEvent(target, event);
+  return event;
+}
+
 describe('Paginator', () => {
   it('renders prev and next buttons', () => {
     render(<Paginator onPrev={() => {}} onNext={() => {}} />);
@@ -32,6 +54,18 @@ describe('Paginator', () => {
     const onNext = vi.fn();
     render(<Paginator onPrev={() => {}} onNext={onNext} />);
     fireEvent.click(screen.getByLabelText('Next'));
+    expect(onNext).toHaveBeenCalledOnce();
+  });
+
+  it('commits touch navigation on pointerup and suppresses synthetic click', () => {
+    const onNext = vi.fn();
+    render(<Paginator onPrev={() => {}} onNext={onNext} />);
+    const next = screen.getByLabelText('Next');
+
+    dispatchPointer(next, 'pointerdown', { clientX: 12, clientY: 12, timeStamp: 10 });
+    dispatchPointer(next, 'pointerup', { clientX: 12, clientY: 12, timeStamp: 20 });
+    dispatchClick(next, 80);
+
     expect(onNext).toHaveBeenCalledOnce();
   });
 

@@ -9,11 +9,12 @@ import { useTranslation } from 'react-i18next';
 import { IoFlash, IoBagHandle } from 'react-icons/io5';
 import {
   Align, AlbumArtSize, Colors, CssProp, CssValue, Cursor, Display, Font, Gap,
-  IconSize, Isolation, InstrumentSize, Justify, Layout, ObjectFit, Position, Radius,
-  TRANSITION_MS, EASE_SMOOTH, Weight, flexCenter, flexRow, padding, purpleGlass, transition,
+  IconSize, Isolation, Justify, Layout, ObjectFit, Position, Radius,
+  TRANSITION_MS, EASE_SMOOTH, Weight, flexCenter, flexRow, opaqueGlass, padding, purpleGlass, transition,
 } from '@festival/theme';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useShopState } from '../../../hooks/data/useShopState';
+import PressableButton from '../../../components/common/PressableButton';
 import type { ServerSong as Song } from '@festival/core/api/serverTypes';
 import anim from '../../../styles/animations.module.css';
 
@@ -58,10 +59,10 @@ export default function SongDetailHeader({
         </p>
       </div>
       {!isMobile && (
-        <button onClick={onOpenPaths} style={s.viewPathsButton}>
+        <PressableButton onPress={onOpenPaths} style={s.viewPathsButton}>
           <IoFlash size={IconSize.action} style={{ marginRight: Gap.md }} />
           {t('common.viewPaths')}
-        </button>
+        </PressableButton>
       )}
       {!isMobile && showShop && (
         /* v8 ignore start — external link */
@@ -105,7 +106,6 @@ function useStyles(collapsed: boolean, noTransition?: boolean) {
     const shopButton = { ...buttonBase, backgroundColor: Colors.accentBlue };
     const pulseBase = {
       position: Position.relative,
-      backgroundColor: Colors.transparent,
       isolation: Isolation.isolate,
     };
     return {
@@ -117,10 +117,10 @@ function useStyles(collapsed: boolean, noTransition?: boolean) {
       songArtist: { fontSize: collapsed ? Font.md : Font.lg, color: Colors.textSubtle, marginBottom: collapsed ? 0 : Gap.md, transition: trans },
       viewPathsButton: { ...purpleGlass, ...buttonBase },
       shopButton,
-      shopButtonPulse: { ...shopButton, ...pulseBase },
+      shopButtonPulse: { ...opaqueGlass, ...buttonBase, ...pulseBase },
       shopCircle: {
-        width: InstrumentSize.lg,
-        height: InstrumentSize.lg,
+        width: Layout.pillButtonHeight,
+        height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
         backgroundColor: Colors.accentBlue,
         ...flexCenter,
@@ -130,14 +130,15 @@ function useStyles(collapsed: boolean, noTransition?: boolean) {
         alignSelf: Align.center,
       },
       shopCirclePulse: {
-        width: InstrumentSize.lg,
-        height: InstrumentSize.lg,
+        width: Layout.pillButtonHeight,
+        height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
         ...flexCenter,
         color: Colors.textPrimary,
         textDecoration: CssValue.none,
         flexShrink: 0,
         alignSelf: Align.center,
+        ...opaqueGlass,
         ...pulseBase,
       },
     };

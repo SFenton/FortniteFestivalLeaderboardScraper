@@ -43,3 +43,19 @@ if (typeof window.matchMedia !== 'function') {
     }),
   });
 }
+
+// jsdom implements document ranges but not range geometry; MarqueeText uses it
+// to decide whether text should scroll.
+if (typeof Range !== 'undefined' && typeof Range.prototype.getBoundingClientRect !== 'function') {
+  Range.prototype.getBoundingClientRect = () => ({
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    toJSON: () => ({}),
+  });
+}

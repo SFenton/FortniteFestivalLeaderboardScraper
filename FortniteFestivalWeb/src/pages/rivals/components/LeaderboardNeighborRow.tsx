@@ -7,6 +7,7 @@ import {
   Border, frostedCard, padding, truncate, transition, border,
 } from '@festival/theme';
 import { Routes } from '../../../routes';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 
 const FAST_FADE_MS = 150;
 
@@ -35,12 +36,16 @@ export const LeaderboardNeighborRow = memo(function LeaderboardNeighborRow({
   onAnimationEnd,
 }: LeaderboardNeighborRowProps) {
   const s = useStyles(isPlayer, rankWidth);
+  const route = Routes.player(accountId);
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: route });
 
   return (
     <Link
-      to={Routes.player(accountId)}
-      style={{ ...s.row, ...style }}
+      to={route}
+      style={{ ...s.row, ...style, ...(linkPress.isPressed ? s.rowPressed : undefined) }}
       onAnimationEnd={onAnimationEnd}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      {...linkPress.linkPressHandlers}
     >
       <span style={s.colRank}>#{rank.toLocaleString()}</span>
       <span style={s.colName}>{displayName}</span>
@@ -70,6 +75,9 @@ function useStyles(isPlayer?: boolean, rankWidth?: number) {
       row: isPlayer
         ? { ...base, backgroundColor: Colors.purpleHighlight, border: border(Border.thin, Colors.purpleHighlightBorder) }
         : base,
+      rowPressed: {
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+      } as CSSProperties,
       colRank: {
         width: rankWidth ?? Layout.rankColumnWidth,
         flexShrink: 0,

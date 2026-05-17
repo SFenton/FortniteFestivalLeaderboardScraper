@@ -20,7 +20,7 @@ import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateTo
 import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
 import PlayerScoreSortModal from './modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerScoreSortModal';
-import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Radius, Layout, Font, Border, Overflow, Position, CssValue, flexRow, flexColumn, flexCenter, frostedCard, padding, border, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
+import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Radius, Layout, Font, Border, Overflow, Position, CssValue, PointerEvents, flexRow, flexColumn, flexCenter, frostedCard, padding, border, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
 import { buildStaggerStyle, clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { ActionPill } from '../../../components/common/ActionPill';
@@ -113,6 +113,7 @@ export default function PlayerHistoryPage() {
   /* v8 ignore start — FAB registration callback */
   useEffect(() => {
     fabSearch.registerPlayerHistoryActions({ openSort: () => openSortRef.current() });
+    return () => fabSearch.registerPlayerHistoryActions(null);
   }, [fabSearch]);
   /* v8 ignore stop */
 
@@ -321,6 +322,7 @@ const histStyles = {
   } as CSSProperties,
   spinnerFadeOut: {
     animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
+    pointerEvents: PointerEvents.none,
   } as CSSProperties,
   list: {
     ...flexColumn,

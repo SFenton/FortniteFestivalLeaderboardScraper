@@ -8,6 +8,7 @@ import { useSongLookups } from '../../hooks/data/useSongLookups';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
+import PressableButton from '../../components/common/PressableButton';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
@@ -15,7 +16,6 @@ import { IoPerson } from 'react-icons/io5';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
 import { STAGGER_INTERVAL, Gap, Layout, IconSize } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
-import { deriveComboFromSettings, getEnabledInstruments } from './helpers/comboUtils';
 import { categorizeRivalSongs } from './helpers/rivalCategories';
 import RivalSongRow from './components/RivalSongRow';
 import { Routes } from '../../routes';
@@ -23,6 +23,8 @@ import { Routes } from '../../routes';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import Page from '../Page';
 import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
+import { resolveRivalCombo, resolveRivalCombos, type RivalRouteState } from './helpers/rivalRouteState';
+import { fetchCombinedRivalDetail } from './helpers/rivalDetailFetch';
 
 const MODE_TITLE_KEYS: Record<string, string> = {
   closest_battles: 'rivals.detail.closestBattles',
@@ -52,11 +54,10 @@ export default function RivalryPage() {
   const accountId = player?.accountId;
 
   /* v8 ignore start -- state derivation with null-coalescing */
-  const navState = location.state as Record<string, unknown> | null;
-  const comboFromState = navState?.combo as string | undefined;
-  const derivedCombo = useMemo(() => deriveComboFromSettings(settings), [settings]);
-  const fallbackInstrument = useMemo(() => getEnabledInstruments(settings)[0], [settings]);
-  const combo = comboFromState ?? derivedCombo ?? fallbackInstrument;
+  const navState = location.state as RivalRouteState | null;
+  const combos = useMemo(() => resolveRivalCombos(navState, settings), [navState, settings]);
+  const combo = combos[0] ?? resolveRivalCombo(navState, settings);
+  const comboKey = combos.join(',');
 
   // Leaderboard rival source: forwarded from RivalDetailPage
   const source = (navState?.source as 'song' | 'leaderboard') ?? 'song';
@@ -67,7 +68,7 @@ export default function RivalryPage() {
   /* v8 ignore start -- cache-based state initialization */
   const cacheKey = source === 'leaderboard'
     ? `lb:${accountId}:${rivalId}:${lbInstrument}:${lbRankBy}:${mode}`
-    : `${accountId}:${rivalId}:${combo}`;
+    : `${accountId}:${rivalId}:${comboKey}`;
   const hasCachedData = cacheKey === _cachedRivalryKey && _cachedRivalrySongs.length > 0;
 
   const [allSongs, setAllSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedRivalrySongs : []);
@@ -86,7 +87,7 @@ export default function RivalryPage() {
 
     const fetchPromise = source === 'leaderboard' && lbInstrument
       ? api.getLeaderboardRivalDetail(lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0], accountId, rivalId, lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3])
-      : api.getRivalDetail(accountId, combo, rivalId);
+      : fetchCombinedRivalDetail(accountId, rivalId, combos);
 
     fetchPromise.then(res => {
       if (cancelled) return;
@@ -103,7 +104,7 @@ export default function RivalryPage() {
     });
 
     return () => { cancelled = true; };
-  }, [accountId, rivalId, combo, source, lbInstrument, lbRankBy]);
+  }, [accountId, rivalId, comboKey, source, lbInstrument, lbRankBy]);
   /* v8 ignore stop */
 
   /* v8 ignore start -- category/score computation */
@@ -139,12 +140,12 @@ export default function RivalryPage() {
       loadPhase={phase}
       containerStyle={styles.container}
       before={<PageHeader title={title} actions={!isMobile && phase === LoadPhase.ContentIn ? (
-        <button style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onClick={() => navigate(Routes.player(rivalId!))}>
+        <PressableButton style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onPress={() => navigate(Routes.player(rivalId!))}>
           <IoPerson size={IconSize.action} />
           {(rivalName || searchParams.get('name'))
             ? t('common.viewNameProfile', { name: rivalName ?? searchParams.get('name') })
             : t('common.viewProfile')}
-        </button>
+        </PressableButton>
       ) : undefined} />}
     >
       {phase === LoadPhase.ContentIn && (

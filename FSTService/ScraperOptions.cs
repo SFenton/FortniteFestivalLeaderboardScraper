@@ -99,10 +99,19 @@ public sealed class ScraperOptions
     /// </summary>
     public bool ApiOnly { get; set; }
     /// <summary>
-    /// When true, do not register the scrape loop worker, but still allow other
-    /// non-API background services such as band rank-history maintenance to run.
+    /// When true, run as the API frontend: register HTTP/API services and
+    /// lightweight catalog/path refresh, but do not register scrape or mutation
+    /// background workers such as band rank-history maintenance.
     /// </summary>
     public bool DisableScraperWorker { get; set; }
+
+    /// <summary>
+    /// When true, run only the background workers required for API-queued
+    /// registration sync/backfill without scheduled scraping or band-history work.
+    /// Set via <c>--registration-sync-worker</c> CLI argument or
+    /// <c>Scraper__RegistrationSyncWorkerOnly=true</c> env var.
+    /// </summary>
+    public bool RegistrationSyncWorkerOnly { get; set; }
 
     /// <summary>
     /// When true, only run the device-code auth setup and exit.
@@ -346,6 +355,18 @@ public sealed class ScraperOptions
     public int LowPriorityPercent { get; set; } = 30;
 
     /// <summary>
+    /// Maximum number of deferred registration backfills the worker claims in one
+    /// low-priority song-machine attachment. Keeps registration bursts from
+    /// becoming a large user fan-out during an active scrape.
+    /// </summary>
+    public int RegistrationBackfillBatchSize { get; set; } = 4;
+
+    /// <summary>
+    /// How often the worker checks for API-queued registration backfills.
+    /// </summary>
+    public TimeSpan RegistrationBackfillPollInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Initial DOP when the pool is created or reset between passes.
     /// The AIMD limiter starts at this value and ramps up toward
     /// <see cref="DegreeOfParallelism"/> via slow-start (multiplicative ×1.333
@@ -450,6 +471,15 @@ public sealed class ScraperOptions
     /// Default true — band scraping runs alongside post-scrape enrichment.
     /// </summary>
     public bool EnableBandScraping { get; set; } = true;
+
+    /// <summary>
+    /// Maximum seconds to wait for background band scraping to finish after solo
+    /// fetch and persistence complete. A value of 0 keeps legacy behavior (wait
+    /// indefinitely). Values greater than 0 favor solo-first progression by
+    /// cancelling the in-flight band scrape after the timeout and continuing
+    /// with downstream solo phases.
+    /// </summary>
+    public int BandAwaitTimeoutAfterSoloSeconds { get; set; }
 
     /// <summary>
     /// Maximum number of songs processed concurrently by post-scrape band context

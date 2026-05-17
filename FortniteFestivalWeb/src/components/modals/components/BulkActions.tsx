@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import PressableButton from '../../common/PressableButton';
 import { modalStyles } from '../modalStyles';
 
 export interface BulkActionsProps {
@@ -10,8 +11,8 @@ export function BulkActions({ onSelectAll, onClearAll }: BulkActionsProps) {
   const { t } = useTranslation();
   return (
     <div style={modalStyles.bulkWrap}>
-      <button style={modalStyles.bulkSelectBtn} onClick={onSelectAll}>{t('common.selectAll')}</button>
-      <button style={modalStyles.bulkClearBtn} onClick={onClearAll}>{t('common.clearAll')}</button>
+      <PressableButton style={modalStyles.bulkSelectBtn} onPress={onSelectAll}>{t('common.selectAll')}</PressableButton>
+      <PressableButton style={modalStyles.bulkClearBtn} onPress={onClearAll}>{t('common.clearAll')}</PressableButton>
     </div>
   );
 }

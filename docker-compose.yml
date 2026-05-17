@@ -7,7 +7,7 @@ services:
     container_name: fst-postgres
     restart: unless-stopped
     volumes:
-      - pg-data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_DIR:-./pg-data}:/var/lib/postgresql/data
     environment:
       - POSTGRES_DB=fstservice
       - POSTGRES_USER=fst
@@ -29,8 +29,10 @@ services:
       postgres:
         condition: service_healthy
     volumes: &fstservice_volumes
-      - ./fst-data:/app/data
-    command: ["--api-only"]
+      - ${FST_DATA_DIR:-./fst-data}:/app/data
+    # API frontend only: serves requests plus lightweight song/path refresh.
+    # Scrape, ranking, and band-history mutation workers belong to fstworker.
+    command: ["--no-scraper-worker"]
     # Bind to localhost only — not exposed to the network.
     # For external access, use a reverse proxy (see design doc).
     ports:
@@ -52,6 +54,11 @@ services:
       - Scraper__RankHistorySnapshotMaxDegreeOfParallelism=${RANK_HISTORY_SNAPSHOT_MAX_DOP:-1}
       - Scraper__WebRegistrationRetentionDays=${WEB_REGISTRATION_RETENTION_DAYS:-7}
       - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Background}
+      - BandRankHistory__WriteMode=${BAND_RANK_HISTORY_WRITE_MODE:-V2Only}
+      - BandRankHistory__ApiReadSource=${BAND_RANK_HISTORY_API_READ_SOURCE:-V2NarrowOnly}
+      - BandRankHistory__UseWideHistoryCompatibilityWrite=${BAND_RANK_HISTORY_USE_WIDE_HISTORY_COMPATIBILITY_WRITE:-false}
+      - BandRankHistory__ChunkSize=${BAND_RANK_HISTORY_CHUNK_SIZE:-250000}
+      - BandRankHistory__RangeChunkingEnabled=${BAND_RANK_HISTORY_RANGE_CHUNKING_ENABLED:-true}
       - BandRankHistory__CommandTimeoutSeconds=${BAND_RANK_HISTORY_COMMAND_TIMEOUT_SECONDS:-0}
       - BandRankHistory__MaxRetryAttempts=${BAND_RANK_HISTORY_MAX_RETRY_ATTEMPTS:-3}
       - BandRankHistory__RetryDelaySeconds=${BAND_RANK_HISTORY_RETRY_DELAY_SECONDS:-900}
@@ -61,6 +68,7 @@ services:
       - Features__Rivals=${FEATURE_RIVALS:-false}
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
       - Features__FirstRun=${FEATURE_FIRST_RUN:-false}
+      - Features__AppManual=${FEATURE_APP_MANUAL:-false}
       - ImprovementNotifications__Enabled=${IMPROVEMENT_NOTIFICATIONS_ENABLED:-true}
       - ImprovementNotifications__Scope=${IMPROVEMENT_NOTIFICATIONS_SCOPE:-registered}
       # Override scraper settings via environment variables if needed:
@@ -71,9 +79,18 @@ services:
       # ── Proxy rotation (round-robin across multiple HTTP proxies) ──
       # - Scraper__ProxyUrls__0=http://gluetun-1:8888
       # - Scraper__ProxyUrls__1=http://gluetun-2:8888
+      # - Scraper__ProxyUrls__2=http://gluetun-3:8888
+      # - Scraper__ProxyUrls__3=http://gluetun-4:8888
       # ── VPN city cycling (Gluetun control API for IP rotation on CDN blocks) ──
       # - Scraper__ControlUrls__0=http://gluetun-1:8000
       # - Scraper__ControlUrls__1=http://gluetun-2:8000
+      # - Scraper__ControlUrls__2=http://gluetun-3:8000
+      # - Scraper__ControlUrls__3=http://gluetun-4:8000
+      # ── Container names for Docker-based VPN recycling ──
+      # - Scraper__ContainerNames__0=gluetun-1
+      # - Scraper__ContainerNames__1=gluetun-2
+      # - Scraper__ContainerNames__2=gluetun-3
+      # - Scraper__ContainerNames__3=gluetun-4
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
       interval: 30s
@@ -118,6 +135,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-volumes:
-  pg-data:

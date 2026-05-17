@@ -1,9 +1,10 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { memo, useMemo, useRef, type CSSProperties } from 'react';
+import { memo, useMemo, useRef, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
+import CardPressable from '../../../components/common/CardPressable';
 import { COMPACT_PERCENTILE_ROW_HEIGHT, RankingEntry } from './RankingEntry';
 import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, AccountRankingDto, RankingMetric } from '@festival/core/api/serverTypes';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
@@ -12,6 +13,7 @@ import { parseApiError } from '../../../utils/apiError';
 import { getRankForMetric, formatRating, getRatingForMetric, getBayesianRatingForMetric, computeRankWidth, computePillMinWidth, getSongsLabel, formatBayesianRatingDisplay, formatRankingValueDisplay, getRatingPillTier, usesPercentileValueDisplay } from '../helpers/rankingHelpers';
 import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 import { rankColor } from '@festival/core';
 import { staggerDelay } from '@festival/ui-utils';
 import {
@@ -168,10 +170,11 @@ export default memo(function RankingCard({
             ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` }
             : undefined;
           return (
-            <Link
+            <PressableRankingLink
               key={entry.accountId}
               to={`/player/${entry.accountId}`}
               style={{ ...rowStyle, ...twoRowStyle, ...staggerStyle }}
+              pressedStyle={st.pressablePressed}
               onAnimationEnd={(ev) => {
                 const el = ev.currentTarget;
                 el.style.opacity = '';
@@ -196,7 +199,7 @@ export default memo(function RankingCard({
                 rankWidth={rankWidth}
                 reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
               />
-            </Link>
+            </PressableRankingLink>
           );
         })}
         {spotlightFooterRows.map((ranking, index) => {
@@ -212,10 +215,11 @@ export default memo(function RankingCard({
             ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${footerDelay}ms forwards` }
             : undefined;
           return (
-            <Link
+            <PressableRankingLink
               key={ranking.accountId}
               to={`/player/${ranking.accountId}`}
               style={{ ...st.playerEntryRow, ...twoRowStyle, ...footerStaggerStyle }}
+              pressedStyle={st.pressablePressed}
               onAnimationEnd={(ev) => {
                 const el = ev.currentTarget;
                 el.style.opacity = '';
@@ -240,13 +244,14 @@ export default memo(function RankingCard({
                 rankWidth={rankWidth}
                 reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
               />
-            </Link>
+            </PressableRankingLink>
           );
         })}
         {!error && entries.length > 0 && (
-          <div
+          <CardPressable
             style={{ ...st.viewAllButton, ...buttonStaggerStyle }}
-            onClick={() => navigate(Routes.fullRankings(instrument, metric))}
+            pressedStyle={st.pressablePressed}
+            onPress={() => navigate(Routes.fullRankings(instrument, metric))}
             onAnimationEnd={(ev) => {
               const el = ev.currentTarget;
               el.style.opacity = '';
@@ -254,12 +259,40 @@ export default memo(function RankingCard({
             }}
           >
             {viewAllLabel}
-          </div>
+          </CardPressable>
         )}
       </div>
     </div>
   );
 });
+
+function PressableRankingLink({
+  to,
+  style,
+  pressedStyle,
+  onAnimationEnd,
+  children,
+}: {
+  to: string;
+  style: CSSProperties;
+  pressedStyle: CSSProperties;
+  onAnimationEnd?: AnimationEventHandler<HTMLAnchorElement>;
+  children: ReactNode;
+}) {
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to });
+
+  return (
+    <Link
+      to={to}
+      style={{ ...style, ...(linkPress.isPressed ? pressedStyle : undefined) }}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      onAnimationEnd={onAnimationEnd}
+      {...linkPress.linkPressHandlers}
+    >
+      {children}
+    </Link>
+  );
+}
 
 function useRankingCardStyles() {
   return useMemo(() => {
@@ -315,6 +348,9 @@ function useRankingCardStyles() {
         fontWeight: Weight.semibold,
         cursor: Cursor.pointer,
         transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+      } as CSSProperties,
+      pressablePressed: {
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
       } as CSSProperties,
     };
   }, []);

@@ -6,11 +6,12 @@
  * arrow-cycling mode (unless overridden via the explicit `compact` prop).
  * Used in FilterModal, SuggestionsFilterModal, PathsModal, and ScoreHistoryChart.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Size, Layout, Gap } from '@festival/theme';
 import { SERVER_INSTRUMENT_LABELS, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type { InstrumentKey } from '@festival/core/instruments';
 import { InstrumentIcon } from '../display/InstrumentIcons';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 import { filterStyles } from '../../pages/songs/modals/filterStyles';
 
 /** Any instrument key type accepted by the selector. */
@@ -71,7 +72,7 @@ export interface InstrumentSelectorProps<K extends AnyInstrumentKey = ServerInst
   styles?: InstrumentSelectorStyleOverrides;
   /** Lead instrument signature ("Guitar" or "Keyboard") for icon variant. */
   sig?: string;
-  children?: React.ReactNode;
+  children?: ReactNode;
 }
 
 export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrumentKey>({
@@ -173,23 +174,18 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
       <div ref={rowRef} className={rowClass} style={rowStyle}>
         {isCompact ? (
           <>
-            <button onClick={() => cycle(-1)} className={arrowClass || undefined} style={arrowStyle} aria-label={compactLabels?.previous}>
+            <CompactArrowButton direction={-1} onCycle={cycle} className={arrowClass || undefined} style={arrowStyle} ariaLabel={compactLabels?.previous}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
-            <button
+            </CompactArrowButton>
+            <CompactPreviewButton
               className={btnActiveClass || undefined}
               style={compactButtonStyle}
               disabled={compactPreviewDisabled}
-              data-conflict={compactPreviewMuted ? 'true' : undefined}
-              onClick={() => {
-                if (effectiveSelected) {
-                  onSelect(required ? effectiveSelected : null);
-                  return;
-                }
-                if (compactPreviewKey) {
-                  onSelect(compactPreviewKey);
-                }
-              }}
+              conflict={compactPreviewMuted}
+              selected={effectiveSelected}
+              required={required}
+              previewKey={compactPreviewKey}
+              onSelect={onSelect}
             >
               {useStyOverride ? (
                 compactPreviewKey ? <InstrumentIcon instrument={compactPreviewKey} sig={sig} size={Size.iconInstrument} /> : null
@@ -201,10 +197,10 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
                   </div>
                 </>
               )}
-            </button>
-            <button onClick={() => cycle(1)} className={arrowClass || undefined} style={arrowStyle} aria-label={compactLabels?.next}>
+            </CompactPreviewButton>
+            <CompactArrowButton direction={1} onCycle={cycle} className={arrowClass || undefined} style={arrowStyle} ariaLabel={compactLabels?.next}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
+            </CompactArrowButton>
           </>
         ) : (
           availableItems.map(inst => {
@@ -215,13 +211,16 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
               ? (isSelected ? btnActiveStyle : btnStyle)
               : ((isSelected ? btnActiveClass : btnClass) ? undefined : filterStyles.instrumentBtn);
             return (
-              <button
+              <InstrumentSelectorButton
                 key={inst.key}
+                instKey={inst.key}
+                isSelected={isSelected}
+                required={required}
+                onSelect={onSelect}
                 className={(isSelected ? btnActiveClass : btnClass) || undefined}
                 style={mergeInstrumentButtonStyle(baseButtonStyle, isDisabled ? instrumentDisabledStyle : isMuted ? instrumentMutedStyle : undefined)}
                 disabled={isDisabled}
-                data-conflict={isMuted ? 'true' : undefined}
-                onClick={() => onSelect(isSelected && !required ? null : inst.key)}
+                conflict={isMuted}
                 title={inst.label ?? (SERVER_INSTRUMENT_LABELS as Record<string, string>)[inst.key] ?? inst.key}
               >
                 {useStyOverride ? (
@@ -234,7 +233,7 @@ export function InstrumentSelector<K extends AnyInstrumentKey = ServerInstrument
                     </div>
                   </>
                 )}
-              </button>
+              </InstrumentSelectorButton>
             );
           })
         )}
@@ -262,6 +261,104 @@ const instrumentDisabledStyle: CSSProperties = {
   filter: 'grayscale(1)',
   opacity: 0.28,
 };
+
+function CompactArrowButton({
+  ariaLabel,
+  children,
+  className,
+  direction,
+  onCycle,
+  style,
+}: {
+  ariaLabel?: string;
+  children: ReactNode;
+  className?: string;
+  direction: 1 | -1;
+  onCycle: (direction: 1 | -1) => void;
+  style?: CSSProperties;
+}) {
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onCycle(direction) });
+
+  return (
+    <button type="button" className={className} style={style} aria-label={ariaLabel} {...pressHandlers}>
+      {children}
+    </button>
+  );
+}
+
+function CompactPreviewButton<K extends AnyInstrumentKey>({
+  children,
+  className,
+  conflict,
+  disabled,
+  onSelect,
+  previewKey,
+  required,
+  selected,
+  style,
+}: {
+  children: ReactNode;
+  className?: string;
+  conflict?: boolean;
+  disabled?: boolean;
+  onSelect: (key: K | null) => void;
+  previewKey: K | undefined;
+  required?: boolean;
+  selected: K | null;
+  style?: CSSProperties;
+}) {
+  const handlePress = useCallback(() => {
+    if (selected) {
+      onSelect(required ? selected : null);
+      return;
+    }
+    if (previewKey) {
+      onSelect(previewKey);
+    }
+  }, [onSelect, previewKey, required, selected]);
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: handlePress, disabled });
+
+  return (
+    <button type="button" className={className} style={style} disabled={disabled} data-conflict={conflict ? 'true' : undefined} {...pressHandlers}>
+      {children}
+    </button>
+  );
+}
+
+function InstrumentSelectorButton<K extends AnyInstrumentKey>({
+  children,
+  className,
+  conflict,
+  disabled,
+  instKey,
+  isSelected,
+  onSelect,
+  required,
+  style,
+  title,
+}: {
+  children: ReactNode;
+  className?: string;
+  conflict?: boolean;
+  disabled?: boolean;
+  instKey: K;
+  isSelected: boolean;
+  onSelect: (key: K | null) => void;
+  required?: boolean;
+  style?: CSSProperties;
+  title?: string;
+}) {
+  const handlePress = useCallback(() => {
+    onSelect(isSelected && !required ? null : instKey);
+  }, [instKey, isSelected, onSelect, required]);
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: handlePress, disabled });
+
+  return (
+    <button type="button" className={className} style={style} disabled={disabled} data-conflict={conflict ? 'true' : undefined} title={title} {...pressHandlers}>
+      {children}
+    </button>
+  );
+}
 
 function mergeInstrumentButtonStyle(base: CSSProperties | undefined, state: CSSProperties | undefined) {
   if (!state) return base;

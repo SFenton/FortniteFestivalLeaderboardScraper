@@ -13,6 +13,28 @@ const instruments: InstrumentSelectorItem[] = [
   { key: 'Solo_Drums' as ServerInstrumentKey },
 ];
 
+function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperties(event, {
+    pointerId: { value: props.pointerId ?? 1 },
+    pointerType: { value: props.pointerType ?? 'touch' },
+    isPrimary: { value: props.isPrimary ?? true },
+    button: { value: props.button ?? 0 },
+    clientX: { value: props.clientX ?? 0 },
+    clientY: { value: props.clientY ?? 0 },
+    timeStamp: { value: props.timeStamp ?? 0 },
+  });
+  fireEvent(target, event);
+  return event;
+}
+
+function dispatchClick(target: Element, timeStamp = 0) {
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+  fireEvent(target, event);
+  return event;
+}
+
 describe('InstrumentSelector', () => {
   it('renders a button for each instrument', () => {
     const { container } = render(
@@ -38,6 +60,43 @@ describe('InstrumentSelector', () => {
     const buttons = container.querySelectorAll('button');
     fireEvent.click(buttons[0]!);
     expect(onSelect).toHaveBeenCalledWith('Solo_Guitar');
+  });
+
+  it('selects instruments on touch pointerup and suppresses the synthetic click', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: null,
+        onSelect,
+      }),
+    );
+    const guitarButton = container.querySelectorAll('button')[0]!;
+
+    dispatchPointer(guitarButton, 'pointerdown', { clientX: 12, clientY: 12, timeStamp: 10 });
+    dispatchPointer(guitarButton, 'pointerup', { clientX: 12, clientY: 12, timeStamp: 20 });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith('Solo_Guitar');
+
+    dispatchClick(guitarButton, 40);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels touch selection when movement exceeds the threshold', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: null,
+        onSelect,
+      }),
+    );
+    const guitarButton = container.querySelectorAll('button')[0]!;
+
+    dispatchPointer(guitarButton, 'pointerdown', { clientX: 12, clientY: 12, timeStamp: 10 });
+    dispatchPointer(guitarButton, 'pointerup', { clientX: 12, clientY: 32, timeStamp: 20 });
+
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('calls onSelect with null when clicking the already-selected instrument', () => {
@@ -219,6 +278,27 @@ describe('InstrumentSelector', () => {
     expect(onSelect).toHaveBeenCalledWith('Solo_Bass');
   });
 
+  it('cycles compact arrows on touch pointerup and suppresses the synthetic click', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: 'Solo_Guitar',
+        onSelect,
+        compact: true,
+      }),
+    );
+    const nextButton = container.querySelectorAll('button')[2]!;
+
+    dispatchPointer(nextButton, 'pointerdown', { clientX: 12, clientY: 12, timeStamp: 10 });
+    dispatchPointer(nextButton, 'pointerup', { clientX: 12, clientY: 12, timeStamp: 20 });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith('Solo_Bass');
+
+    dispatchClick(nextButton, 40);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
   it('cycles to previous instrument in compact mode', () => {
     const onSelect = vi.fn();
     const { container } = render(
@@ -283,6 +363,30 @@ describe('InstrumentSelector', () => {
     expect(onSelect).not.toHaveBeenCalled();
 
     fireEvent.click(buttons[1]!);
+    expect(onSelect).toHaveBeenCalledWith('Solo_Bass');
+  });
+
+  it('commits compact deferred preview on touch pointerup', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: null,
+        onSelect,
+        compact: true,
+        deferSelection: true,
+      }),
+    );
+    const buttons = container.querySelectorAll('button');
+    const nextButton = buttons[2]!;
+    const centerButton = buttons[1]!;
+
+    dispatchPointer(nextButton, 'pointerdown', { clientX: 12, clientY: 12, timeStamp: 10 });
+    dispatchPointer(nextButton, 'pointerup', { clientX: 12, clientY: 12, timeStamp: 20 });
+    expect(onSelect).not.toHaveBeenCalled();
+
+    dispatchPointer(centerButton, 'pointerdown', { clientX: 12, clientY: 12, timeStamp: 30 });
+    dispatchPointer(centerButton, 'pointerup', { clientX: 12, clientY: 12, timeStamp: 40 });
     expect(onSelect).toHaveBeenCalledWith('Solo_Bass');
   });
 

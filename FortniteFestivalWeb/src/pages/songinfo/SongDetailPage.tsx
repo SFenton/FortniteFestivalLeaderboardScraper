@@ -2,6 +2,7 @@
 import { useEffect, useLayoutEffect, useState, useRef, useMemo, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
+import { IoPeople, IoStatsChart, IoTimerOutline } from 'react-icons/io5';
 import { useFestival } from '../../contexts/FestivalContext';
 import { useSelectedProfile, type SelectedProfile } from '../../hooks/data/useSelectedProfile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
@@ -9,40 +10,58 @@ import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { api } from '../../api/client';
 import {
   INSTRUMENT_KEYS,
+  serverInstrumentLabel,
+  serverSongSupportsInstrument,
   type PlayerBandType,
   type SelectedMemberSongScore,
   type ServerInstrumentKey as InstrumentKey,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
-import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, CssValue, flexCenter, flexColumn, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, CssValue, PointerEvents, flexCenter, flexColumn, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import Page, { PageBackground } from '../Page';
+import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import SongInfoHeader from '../../components/songs/headers/SongInfoHeader';
 import ScoreHistoryChart from './components/chart/ScoreHistoryChart';
 import { useSettings, visibleInstruments, visiblePathInstruments } from '../../contexts/SettingsContext';
-import { useIsMobile } from '../../hooks/ui/useIsMobile';
+import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useShopState } from '../../hooks/data/useShopState';
 import { LoadPhase } from '@festival/core';
-import { serverSongSupportsInstrument } from '@festival/core/api/serverTypes';
 import PathsModal from './components/path/PathsModal';
 import EmptyState from '../../components/common/EmptyState';
 import CollapsePresence from '../../components/common/CollapsePresence';
 import { parseApiError } from '../../utils/apiError';
+import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import InstrumentCard from './components/InstrumentCard';
 import SongBandLeaderboardPreview from './components/SongBandLeaderboardPreview';
 import IntensityCard from './components/IntensityCard';
 import { songInfoSlides } from './firstRun';
-import { SONG_BAND_TYPES } from '../../utils/songBandLeaderboards';
+import { SONG_BAND_TYPES, songBandTypeLabel } from '../../utils/songBandLeaderboards';
 
 import { songDetailCache } from '../../api/pageCache';
 import type { InstrumentData, SongBandData } from '../../api/pageCache';
 export { clearSongDetailCache } from '../../api/pageCache';
+
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
+const SONG_DETAIL_INTENSITY_QUICK_LINK_ID = 'intensity';
+const SONG_DETAIL_SCORE_HISTORY_QUICK_LINK_ID = 'score-history';
+
+type SongDetailQuickLink = PageQuickLinkItem;
+
+function songDetailInstrumentQuickLinkId(instrument: InstrumentKey): string {
+  return `instrument-${instrument}`;
+}
+
+function songDetailBandQuickLinkId(bandType: PlayerBandType): string {
+  return `band-${bandType}`;
+}
 
 function createSongBandData(loading: boolean): Record<PlayerBandType, SongBandData> {
   const data = {} as Record<PlayerBandType, SongBandData>;
@@ -133,6 +152,7 @@ export default function SongDetailPage() {
 
   // First-run carousel
   const isMobile = useIsMobile();
+  const isMobileChrome = useIsMobileChrome();
   const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobile), [isMobile]);
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
@@ -188,8 +208,9 @@ export default function SongDetailPage() {
   /* v8 ignore start — FAB registration callback */
   // Register openPaths for the FAB
   useEffect(() => {
-    fabSearch.registerSongDetailActions({ openPaths });
-  }, [fabSearch, openPaths]);
+    fabSearch.registerSongDetailActions(canViewPaths ? { openPaths } : null);
+    return () => fabSearch.registerSongDetailActions(null);
+  }, [canViewPaths, fabSearch, openPaths]);
   /* v8 ignore stop */
 
   useEffect(() => {
@@ -539,15 +560,104 @@ export default function SongDetailPage() {
     />
   ), [bandData, selectedAccountId, showLeaderboardEntryTotals, skipAnim, songId]);
 
+  const quickLinkItems = useMemo<SongDetailQuickLink[]>(() => {
+    if (phase !== LoadPhase.ContentIn || allErrored) return [];
+
+    const intensityLabel = t('songDetail.quickLinksIntensity', 'Intensity');
+    const items: SongDetailQuickLink[] = [{
+      id: SONG_DETAIL_INTENSITY_QUICK_LINK_ID,
+      label: intensityLabel,
+      landmarkLabel: t('songDetail.quickLinksIntensityLandmark', 'Song Intensity'),
+      icon: <IoStatsChart size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+    }];
+
+    if (showScoreHistoryChart) {
+      const scoreHistoryLabel = t('songDetail.scoreHistory');
+      items.push({
+        id: SONG_DETAIL_SCORE_HISTORY_QUICK_LINK_ID,
+        label: scoreHistoryLabel,
+        landmarkLabel: scoreHistoryLabel,
+        icon: <IoTimerOutline size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      });
+    }
+
+    if (promotedSongBandType) {
+      const bandLabel = songBandTypeLabel(promotedSongBandType, t);
+      items.push({
+        id: songDetailBandQuickLinkId(promotedSongBandType),
+        label: bandLabel,
+        landmarkLabel: t('songDetail.quickLinksBandLandmark', { band: bandLabel, defaultValue: `${bandLabel} Band Leaderboard` }),
+        icon: <IoPeople size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      });
+    }
+
+    for (const instrument of activeInstruments) {
+      const instrumentLabel = serverInstrumentLabel(instrument);
+      items.push({
+        id: songDetailInstrumentQuickLinkId(instrument),
+        label: instrumentLabel,
+        landmarkLabel: t('songDetail.quickLinksInstrumentLandmark', { instrument: instrumentLabel, defaultValue: `${instrumentLabel} Leaderboard` }),
+        icon: <InstrumentIcon instrument={instrument} sig={song?.sig} size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      });
+    }
+
+    for (const bandType of trailingSongBandTypes) {
+      const bandLabel = songBandTypeLabel(bandType, t);
+      items.push({
+        id: songDetailBandQuickLinkId(bandType),
+        label: bandLabel,
+        landmarkLabel: t('songDetail.quickLinksBandLandmark', { band: bandLabel, defaultValue: `${bandLabel} Band Leaderboard` }),
+        icon: <IoPeople size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      });
+    }
+
+    return items;
+  }, [activeInstruments, allErrored, phase, promotedSongBandType, showScoreHistoryChart, song?.sig, t, trailingSongBandTypes]);
+
+  const quickLinksTitle = t('songDetail.quickLinks', 'Quick Links');
+  const {
+    activeItemId,
+    quickLinksOpen,
+    openQuickLinks,
+    closeQuickLinks,
+    handleQuickLinkSelect,
+    registerSectionRef,
+  } = usePageQuickLinks<SongDetailQuickLink>({
+    items: quickLinkItems,
+    scrollContainerRef,
+    isDesktopRailEnabled: false,
+  });
+
+  const handleModalQuickLinkSelect = useCallback((item: SongDetailQuickLink) => {
+    closeQuickLinks();
+    handleQuickLinkSelect(item);
+  }, [closeQuickLinks, handleQuickLinkSelect]);
+
+  const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
+    if (!isMobile || quickLinkItems.length < 2) return undefined;
+
+    return {
+      title: quickLinksTitle,
+      items: quickLinkItems,
+      activeItemId,
+      visible: quickLinksOpen,
+      onOpen: openQuickLinks,
+      onClose: closeQuickLinks,
+      onSelect: (item) => handleModalQuickLinkSelect(item as SongDetailQuickLink),
+      testIdPrefix: 'song-detail',
+    };
+  }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, isMobile, openQuickLinks, quickLinkItems, quickLinksOpen, quickLinksTitle]);
+
   if (!songId) {
     return <div style={styles.center}>{t('songDetail.songNotFound')}</div>;
   }
 
   return (
     <Page
-      scrollDeps={[phase, activeInstruments.length, SONG_BAND_TYPES.length]}
+      scrollDeps={[phase, activeInstruments.length, SONG_BAND_TYPES.length, quickLinkItems.length]}
       variant="withBgClip"
       fabSpacer={phase === LoadPhase.ContentIn && allErrored ? 'none' : 'end'}
+      quickLinks={pageQuickLinks}
       headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
       firstRun={{ key: 'songinfo', label: t('nav.songInfo', 'Song Info'), slides: songInfoSlidesMemo, gateContext: firstRunGateCtx }}
       background={<PageBackground src={song?.albumArt} />}
@@ -558,8 +668,8 @@ export default function SongDetailPage() {
             songId={songId!}
             collapsed={!!(hasFab || headerCollapsed)}
             animate={!hasFab}
-            onOpenPaths={canViewPaths ? openPaths : undefined}
-            shopUrl={showShop ? shopUrl : undefined}
+            onOpenPaths={!isMobileChrome && canViewPaths ? openPaths : undefined}
+            shopUrl={!isMobileChrome && showShop ? shopUrl : undefined}
             shopPulse={showShop && song ? isShopHighlighted(song.songId) : false}
             shopLeavingTomorrow={showShop && song ? isLeavingTomorrow(song.songId) : false}
             hideBackground
@@ -587,15 +697,17 @@ export default function SongDetailPage() {
       })()}
       {phase === LoadPhase.ContentIn && !allErrored && (
         <div style={styles.container}>
-          <IntensityCard
-            song={song}
-            sig={song?.sig}
-            style={{ ...stagger(100), marginBottom: Gap.section }}
-            onAnimationEnd={clearAnim}
-          />
+          <div ref={(element) => registerSectionRef(SONG_DETAIL_INTENSITY_QUICK_LINK_ID, element)}>
+            <IntensityCard
+              song={song}
+              sig={song?.sig}
+              style={{ ...stagger(100), marginBottom: Gap.section }}
+              onAnimationEnd={clearAnim}
+            />
+          </div>
           <CollapsePresence visible={showScoreHistoryChart} testId="song-detail-score-history-collapse">
             {showScoreHistoryChart ? (
-              <div style={{ ...stagger(150), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
+              <div ref={(element) => registerSectionRef(SONG_DETAIL_SCORE_HISTORY_QUICK_LINK_ID, element)} style={{ ...stagger(150), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
                 <ScoreHistoryChart
                   songId={songId}
                   accountId={player.accountId}
@@ -611,7 +723,7 @@ export default function SongDetailPage() {
             ) : null}
           </CollapsePresence>
           {promotedSongBandType && (
-            <div data-testid="song-detail-promoted-band-sections" style={styles.promotedBandSections}>
+            <div ref={(element) => registerSectionRef(songDetailBandQuickLinkId(promotedSongBandType), element)} data-testid="song-detail-promoted-band-sections" style={styles.promotedBandSections}>
               {renderSongBandPreview(promotedSongBandType, 300)}
             </div>
           )}
@@ -619,7 +731,7 @@ export default function SongDetailPage() {
             {activeInstruments.map((inst, idx) => {
               const baseDelay = getInstrumentBaseDelay(idx);
               return (
-                  <div key={inst} id={`instrument-card-${inst}`}>
+                  <div key={inst} id={`instrument-card-${inst}`} ref={(element) => registerSectionRef(songDetailInstrumentQuickLinkId(inst), element)}>
                     <InstrumentCard
                       songId={songId}
                       instrument={inst}
@@ -645,7 +757,11 @@ export default function SongDetailPage() {
           </div>
           {trailingSongBandTypes.length > 0 && (
             <div style={styles.bandSections}>
-              {trailingSongBandTypes.map((bandType, idx) => renderSongBandPreview(bandType, getTrailingBandBaseDelay(idx)))}
+              {trailingSongBandTypes.map((bandType, idx) => (
+                <div key={bandType} ref={(element) => registerSectionRef(songDetailBandQuickLinkId(bandType), element)}>
+                  {renderSongBandPreview(bandType, getTrailingBandBaseDelay(idx))}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -694,6 +810,7 @@ function useSongDetailStyles() {
     } as CSSProperties,
     spinnerFadeOut: {
       animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
+      pointerEvents: PointerEvents.none,
     } as CSSProperties,
   }), []);
 }

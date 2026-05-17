@@ -6,7 +6,12 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
-import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../../../helpers/browserStubs';
+import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver, stubMatchMedia } from '../../../helpers/browserStubs';
+import { Colors, Layout } from '@festival/theme';
+
+const shopStateMock = vi.hoisted(() => ({
+  useShopState: vi.fn(),
+}));
 
 vi.mock('../../../../src/api/client', () => ({
   api: {
@@ -34,6 +39,10 @@ vi.mock('react-icons/io5', () => {
   };
 });
 
+vi.mock('../../../../src/hooks/data/useShopState', () => ({
+  useShopState: shopStateMock.useShopState,
+}));
+
 beforeAll(() => {
   stubScrollTo();
   stubResizeObserver({ width: 1024, height: 800 });
@@ -50,6 +59,12 @@ beforeAll(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  stubMatchMedia(false);
+  shopStateMock.useShopState.mockReturnValue({
+    isShopVisible: false,
+    isShopHighlighted: () => false,
+    getShopUrl: () => undefined,
+  });
 });
 
 import SongDetailHeader from '../../../../src/pages/songinfo/components/SongDetailHeader';
@@ -93,5 +108,45 @@ describe('SongDetailHeader', () => {
       </TestProviders>,
     );
     expect(screen.getByText('s1')).toBeTruthy();
+  });
+
+  it('renders mobile Item Shop with compact path circle metrics', () => {
+    stubMatchMedia(true);
+    shopStateMock.useShopState.mockReturnValue({
+      isShopVisible: true,
+      isShopHighlighted: () => false,
+      getShopUrl: () => 'https://example.com/shop/s1',
+    });
+
+    render(
+      <TestProviders>
+        <SongDetailHeader song={baseSong} songId="s1" collapsed onOpenPaths={vi.fn()} />
+      </TestProviders>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    const linkStyle = link.getAttribute('style') ?? '';
+    expect(linkStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain('border-radius: 999px');
+  });
+
+  it('renders pulsing mobile Item Shop with neutral opaque glass backing', () => {
+    stubMatchMedia(true);
+    shopStateMock.useShopState.mockReturnValue({
+      isShopVisible: true,
+      isShopHighlighted: () => true,
+      getShopUrl: () => 'https://example.com/shop/s1',
+    });
+
+    render(
+      <TestProviders>
+        <SongDetailHeader song={baseSong} songId="s1" collapsed onOpenPaths={vi.fn()} />
+      </TestProviders>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    expect(link.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
+    expect(link.style.border).toBe('1px solid rgba(255, 255, 255, 0.08)');
   });
 });

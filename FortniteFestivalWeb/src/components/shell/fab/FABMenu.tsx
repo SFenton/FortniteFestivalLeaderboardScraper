@@ -6,6 +6,7 @@
 import { Fragment, memo, useMemo, type CSSProperties } from 'react';
 import { Colors, Font, Gap, Radius, Layout, Shadow, ZIndex, Position, Cursor, TextAlign, WhiteSpace, PointerEvents, Overflow, IconSize, CssValue, TransformOrigin, flexRow, flexCenter, padding, scale, EASE_OVERSHOOT, FAB_OPEN_MS, TRANSITION_MS } from '@festival/theme';
 import type { ActionItem } from './FloatingActionButton';
+import { usePressAction } from '../../../hooks/ui/usePressAction';
 
 interface FABMenuProps {
   groups: ActionItem[][];
@@ -24,12 +25,7 @@ const FABMenu = memo(function FABMenu({ groups, visible, onAction }: FABMenuProp
       {groups.map((group, gi) => (
         <Fragment key={gi}>
           {gi > 0 && <div style={s.divider} data-testid="fab-menu-divider" />}
-          {group.map((action) => (
-            <button key={action.label} style={s.item} onClick={() => onAction(action)}>
-              <span style={s.itemIcon}>{action.icon}</span>
-              {action.label}
-            </button>
-          ))}
+          {group.map((action) => <FABMenuItem key={action.label} action={action} styles={s} onAction={onAction} />)}
         </Fragment>
       ))}
     </div>
@@ -38,6 +34,16 @@ const FABMenu = memo(function FABMenu({ groups, visible, onAction }: FABMenuProp
 
 export default FABMenu;
 
+function FABMenuItem({ action, styles, onAction }: { action: ActionItem; styles: ReturnType<typeof useFABMenuStyles>; onAction: (action: ActionItem) => void }) {
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onAction(action) });
+  return (
+    <button style={styles.item} {...pressHandlers}>
+      <span style={styles.itemIcon}>{action.icon}</span>
+      {action.label}
+    </button>
+  );
+}
+
 function useFABMenuStyles(visible: boolean) {
   return useMemo(() => ({
     menu: {
@@ -45,7 +51,7 @@ function useFABMenuStyles(visible: boolean) {
       bottom: Layout.fabMenuBottom,
       right: Gap.none,
       zIndex: ZIndex.confirmOverlay,
-      pointerEvents: PointerEvents.auto,
+      pointerEvents: visible ? PointerEvents.auto : PointerEvents.none,
       backgroundColor: Colors.backgroundCard,
       borderRadius: Radius.sm,
       overflow: Overflow.hidden,

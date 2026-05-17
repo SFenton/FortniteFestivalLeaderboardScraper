@@ -16,6 +16,29 @@ describe('ActionPill', () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it('activates from touch pointerup and suppresses the follow-up click', () => {
+    const onClick = vi.fn();
+    render(<ActionPill icon={<span>I</span>} label="Sort" onClick={onClick} />);
+    const button = screen.getByRole('button');
+
+    fireEvent.pointerDown(button, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(button, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 10, clientY: 10 });
+    fireEvent.click(button);
+
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels touch activation when the pointer moves too far', () => {
+    const onClick = vi.fn();
+    render(<ActionPill icon={<span>I</span>} label="Sort" onClick={onClick} />);
+    const button = screen.getByRole('button');
+
+    fireEvent.pointerDown(button, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(button, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 30, clientY: 10 });
+
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
   it('applies active class when active', () => {
     const { container } = render(<ActionPill icon={<span>I</span>} label="Sort" onClick={vi.fn()} active />);
     const btn = container.querySelector('button');

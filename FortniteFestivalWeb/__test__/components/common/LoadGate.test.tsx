@@ -24,6 +24,7 @@ describe('LoadGate (page)', () => {
     const spinnerDiv = container.firstElementChild as HTMLElement;
     expect(spinnerDiv).toBeTruthy();
     expect(spinnerDiv?.getAttribute('style')).toContain('fadeOut');
+    expect(spinnerDiv.style.pointerEvents).toBe('none');
     expect(screen.queryByTestId('content')).toBeNull();
   });
 

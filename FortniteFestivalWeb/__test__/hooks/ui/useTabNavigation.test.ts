@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { useTabNavigation, inferTab, TAB_ROOTS } from '../../../src/hooks/ui/useTabNavigation';
+import { createTapDiagnostics } from '../../../src/diagnostics/tapDiagnostics';
 import { TabKey } from '@festival/core';
 
 function wrapper(route = '/songs') {
@@ -18,8 +19,8 @@ describe('inferTab', () => {
   it('returns compete for /rivals', () => expect(inferTab('/rivals')).toBe(TabKey.Compete));
   it('returns compete for /rivals/detail', () => expect(inferTab('/rivals/abc')).toBe(TabKey.Compete));
   it('returns statistics', () => expect(inferTab('/statistics')).toBe(TabKey.Statistics));
-  it('returns statistics for band lookup route', () => expect(inferTab('/bands?bandType=Band_Duets&teamKey=p1%3Ap2')).toBe(TabKey.Statistics));
-  it('returns statistics for band detail route', () => expect(inferTab('/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2')).toBe(TabKey.Statistics));
+  it('returns null for band lookup route', () => expect(inferTab('/bands?bandType=Band_Duets&teamKey=p1%3Ap2')).toBeNull());
+  it('returns null for band detail route', () => expect(inferTab('/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2')).toBeNull());
   it('returns null for player bands route', () => expect(inferTab('/bands/player/p1')).toBeNull());
   it('returns settings', () => expect(inferTab('/settings')).toBe(TabKey.Settings));
   it('returns null for /player', () => expect(inferTab('/player/abc')).toBeNull());
@@ -46,15 +47,53 @@ describe('useTabNavigation', () => {
     expect(result.current.activeTab).toBe(TabKey.Settings);
   });
 
-  it('defaults to Songs for unknown route', () => {
+  it('does not select a tab for unknown routes', () => {
     const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/player/abc') });
-    expect(result.current.activeTab).toBe(TabKey.Songs);
+    expect(result.current.activeTab).toBeNull();
   });
 
   it('handleTabClick switches tab', () => {
     const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
     act(() => { result.current.handleTabClick(TabKey.Settings); });
     expect(result.current.activeTab).toBe(TabKey.Settings);
+  });
+
+  it('marks bottom navigation start and route-change timing', async () => {
+    const diagnostics = createTapDiagnostics(() => ({ route: window.location.pathname }), { force: true });
+    expect(diagnostics).toBeTruthy();
+
+    try {
+      function useTestHook() {
+        const tab = useTabNavigation();
+        const location = useLocation();
+        return { tab, location };
+      }
+
+      const { result } = renderHook(() => useTestHook(), { wrapper: wrapper('/songs') });
+      act(() => { result.current.tab.handleTabClick(TabKey.Settings); });
+
+      expect(diagnostics!.api.getRecords()).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'action',
+          label: 'nav:start',
+          phase: 'start',
+          details: expect.objectContaining({ source: 'bottom-nav', tab: TabKey.Settings, from: '/songs', to: '/settings' }),
+        }),
+      ]));
+
+      await waitFor(() => {
+        expect(diagnostics!.api.getRecords()).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'action',
+            label: 'nav:location-change',
+            phase: 'success',
+            details: expect.objectContaining({ source: 'bottom-nav', tab: TabKey.Settings, target: '/settings', to: '/settings' }),
+          }),
+        ]));
+      });
+    } finally {
+      diagnostics?.dispose();
+    }
   });
 
   it('handleTabClick on active tab resets to root', () => {
@@ -159,6 +198,46 @@ describe('useTabNavigation', () => {
     expect(result.current.tab.tabRoutes[TabKey.Songs]).toBe('/songs/abc/details');
   });
 
+  it('keeps player detail routes out of the songs stack', () => {
+    function useTestHook() {
+      const tab = useTabNavigation();
+      const nav = useNavigate();
+      const location = useLocation();
+      return { tab, nav, location };
+    }
+    const { result } = renderHook(() => useTestHook(), { wrapper: wrapper('/songs/song-1') });
+
+    act(() => { result.current.nav('/player/p2'); });
+
+    expect(result.current.tab.activeTab).toBeNull();
+    expect(result.current.tab.tabRoutes[TabKey.Songs]).toBe('/songs/song-1');
+
+    act(() => { result.current.tab.handleTabClick(TabKey.Songs); });
+
+    expect(result.current.tab.activeTab).toBe(TabKey.Songs);
+    expect(result.current.location.pathname).toBe('/songs/song-1');
+  });
+
+  it('keeps band detail routes out of the songs stack', () => {
+    function useTestHook() {
+      const tab = useTabNavigation();
+      const nav = useNavigate();
+      const location = useLocation();
+      return { tab, nav, location };
+    }
+    const { result } = renderHook(() => useTestHook(), { wrapper: wrapper('/songs/song-1') });
+
+    act(() => { result.current.nav('/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2'); });
+
+    expect(result.current.tab.activeTab).toBeNull();
+    expect(result.current.tab.tabRoutes[TabKey.Songs]).toBe('/songs/song-1');
+
+    act(() => { result.current.tab.handleTabClick(TabKey.Songs); });
+
+    expect(result.current.tab.activeTab).toBe(TabKey.Songs);
+    expect(result.current.location.pathname).toBe('/songs/song-1');
+  });
+
   it('PUSH to a different tab updates activeTab', () => {
     function useTestHook() {
       const tab = useTabNavigation();
@@ -213,6 +292,14 @@ describe('useTabNavigation', () => {
     // Should fall back to /leaderboards (the rootOverride), not /compete (TAB_ROOTS)
     expect(result.current.tabRoutes[TabKey.Compete]).toBe('/leaderboards');
     expect(result.current.activeTab).toBe(TabKey.Compete);
+  });
+
+  it('resets unowned saved routes to the tab root', () => {
+    sessionStorage.setItem('fst:tabRoutes', JSON.stringify({ [TabKey.Songs]: '/player/p2' }));
+    const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/settings') });
+    act(() => { result.current.handleTabClick(TabKey.Songs); });
+    expect(result.current.tabRoutes[TabKey.Songs]).toBe('/songs');
+    expect(result.current.activeTab).toBe(TabKey.Songs);
   });
 
   it('re-tap with rootOverride navigates to override root', () => {

@@ -1,13 +1,14 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type ButtonHTMLAttributes, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IoClose, IoMenu, IoSearch } from 'react-icons/io5';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { useSearchQuery } from '../../../contexts/SearchQueryContext';
-import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, Isolation, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
+import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, Isolation, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, opaqueGlass, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
 import { safeAreaBottomOffset } from '../../../utils/safeAreaStyles';
 import { useIOSKeyboardPanGuard } from '../../../hooks/ui/useIOSKeyboardPanGuard';
+import { usePressAction } from '../../../hooks/ui/usePressAction';
 import { SONGS_FAB_KEYBOARD_INSET_VAR, SONGS_FAB_KEYBOARD_OCCLUDED_BOTTOM_VAR } from '../../../constants/keyboardLayoutVars';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
 import FABMenu from './FABMenu';
@@ -41,6 +42,10 @@ export interface ActionItem {
   iconAccessory?: React.ReactNode;
   onPress: () => void;
 }
+
+type FabPressButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> & {
+  onPress: () => void;
+};
 
 interface Props {
   mode: 'players' | 'songs';
@@ -140,6 +145,7 @@ export default function FloatingActionButton({
     actionsOpen ? closeActions() : openActions();
   }, [actionsOpen, closeActions, directAction, onPress, openActions]);
   /* v8 ignore stop */
+  const mainFabPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleFabPress });
 
   const searchQuery = useSearchQuery();
 
@@ -326,6 +332,7 @@ export default function FloatingActionButton({
       }, DOCK_SEARCH_EXPAND_MS);
     }, DOCK_ACTION_FADE_MS);
   }, [captureKeyboardBaseline, clearDockTransitionTimeouts, focusSearchWithoutScroll, scheduleDockTransition, useSongsDock]);
+  const expandSearchPressHandlers = usePressAction<HTMLButtonElement>({ onPress: expandSearch });
 
   const compactSearch = useCallback(() => {
     clearDockTransitionTimeouts();
@@ -592,14 +599,14 @@ export default function FloatingActionButton({
       );
     }
     return (
-      <button
+      <FabPressButton
         key={action.label}
         type="button"
         {...commonProps}
-        onClick={action.onPress}
+        onPress={action.onPress}
       >
         {content}
-      </button>
+      </FabPressButton>
     );
   }, [getSideActionButtonStyle, s.sideActionLabel]);
 
@@ -686,7 +693,7 @@ export default function FloatingActionButton({
                     <button
                       type="button"
                       style={collapsedSearchButtonStyle}
-                      onClick={expandSearch}
+                      {...expandSearchPressHandlers}
                       aria-label={searchButtonLabel}
                       title={searchButtonLabel}
                       data-testid="fab-search-toggle"
@@ -700,16 +707,16 @@ export default function FloatingActionButton({
                 </div>
                 {(dockActions ?? []).map((action, index) => (
                   <div key={action.label} style={getDockActionSlotStyle(index)}>
-                    <button
+                    <FabPressButton
                       type="button"
                       style={getDockActionButtonStyle(action)}
                       aria-label={action.label}
                       title={action.label}
-                      onClick={action.onPress}
+                      onPress={action.onPress}
                     >
                       {action.icon}
                       {action.iconAccessory}
-                    </button>
+                    </FabPressButton>
                   </div>
                 ))}
                 {hasDockMainFab && <div style={dockAnchorSpacerStyle} aria-hidden="true" />}
@@ -719,7 +726,7 @@ export default function FloatingActionButton({
                   <button
                     type="button"
                     style={mainFabStyle}
-                    onClick={handleFabPress}
+                    {...mainFabPressHandlers}
                     aria-label={ariaLabel ?? t('common.actions')}
                     title={ariaLabel ?? t('common.actions')}
                   >
@@ -780,7 +787,7 @@ export default function FloatingActionButton({
           <button
             style={mainFabStyle}
             /* v8 ignore start -- action toggle */
-            onClick={handleFabPress}
+            {...mainFabPressHandlers}
             /* v8 ignore stop */
             aria-label={ariaLabel ?? t('common.actions')}
             title={ariaLabel ?? t('common.actions')}
@@ -797,6 +804,15 @@ export default function FloatingActionButton({
         )}
       </div>
     </div>
+  );
+}
+
+function FabPressButton({ onPress, children, ...props }: FabPressButtonProps) {
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress });
+  return (
+    <button {...props} {...pressHandlers}>
+      {children}
+    </button>
   );
 }
 
@@ -1306,15 +1322,13 @@ function useFABStyles() {
       pointerEvents: PointerEvents.auto,
     } as CSSProperties,
     fabSideActionCirclePulse: {
+      ...opaqueGlass,
       minWidth: Layout.fabSize,
       maxWidth: SIDE_ACTION_LABEL_MAX_WIDTH,
       height: Layout.fabSize,
       borderRadius: Radius.full,
-      backgroundColor: Colors.transparent,
       color: Colors.textPrimary,
       textDecoration: CssValue.none,
-      border: CssValue.none,
-      boxShadow: Shadow.tooltip,
       position: Position.relative,
       isolation: Isolation.isolate,
       gap: DOCK_LABEL_ICON_GAP,

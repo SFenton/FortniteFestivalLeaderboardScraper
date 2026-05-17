@@ -8,6 +8,7 @@ import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { IoPersonAdd } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
 import { ActionPill, ACTION_PILL_TRANSITION } from '../common/ActionPill';
+import PressableButton from '../common/PressableButton';
 import {
   Colors, IconSize, Layout, Radius,
   Position, Align, Cursor, Isolation, PointerEvents, CssProp,
@@ -36,17 +37,16 @@ export function SelectProfilePill({ visible, onClick, isMobile, label, ariaLabel
 
   if (isMobile) {
     return (
-      <button
-        type="button"
+      <PressableButton
         style={s.circle}
         className={visible ? anim.profileCircleBreathe : undefined}
-        onClick={onClick}
+        onPress={onClick}
         aria-label={buttonAriaLabel}
         data-testid="select-profile-pill"
         tabIndex={visible ? 0 : -1}
       >
         {circleIcon ?? pillIcon}
-      </button>
+      </PressableButton>
     );
   }
 

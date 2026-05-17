@@ -17,7 +17,7 @@ services:
     container_name: fst-postgres
     restart: unless-stopped
     volumes:
-      - pg-data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_DIR:-./pg-data}:/var/lib/postgresql/data
     environment:
       - POSTGRES_DB=fstservice
       - POSTGRES_USER=fst
@@ -84,7 +84,7 @@ services:
       postgres:
         condition: service_healthy
     volumes: &fstservice_volumes
-      - ./fst-data:/app/data
+      - ${FST_DATA_DIR:-./fst-data}:/app/data
       # Docker socket for container recycling — allows FSTService to recreate
       # gluetun containers on CDN blocks instead of using the gluetun control API.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -92,8 +92,10 @@ services:
     # Set DOCKER_GID to your host's docker group ID (run: getent group docker | cut -d: -f3).
     group_add: &fstservice_group_add
       - "${DOCKER_GID:-999}"
-    command: ["--api-only"]
-    # API-only service — the web frontend is served by the festivalweb container.
+    command: ["--no-scraper-worker"]
+    # API frontend only: serves requests plus lightweight song/path refresh.
+    # Scrape, ranking, and band-history mutation workers belong to fstworker.
+    # The web frontend is served by the festivalweb container.
     ports:
       - "127.0.0.1:8081:8080"
     environment: &fstservice_environment
@@ -132,10 +134,16 @@ services:
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
       - Features__FirstRun=${FEATURE_FIRST_RUN:-false}
       - Features__PlayerBands=${FEATURE_PLAYER_BANDS:-false}
+      - Features__AppManual=${FEATURE_APP_MANUAL:-false}
       - ImprovementNotifications__Enabled=${IMPROVEMENT_NOTIFICATIONS_ENABLED:-true}
       - ImprovementNotifications__Scope=${IMPROVEMENT_NOTIFICATIONS_SCOPE:-registered}
       # Queue band history as resumable background work instead of blocking ranking publish.
       - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Background}
+      - BandRankHistory__WriteMode=${BAND_RANK_HISTORY_WRITE_MODE:-V2Only}
+      - BandRankHistory__ApiReadSource=${BAND_RANK_HISTORY_API_READ_SOURCE:-V2NarrowOnly}
+      - BandRankHistory__UseWideHistoryCompatibilityWrite=${BAND_RANK_HISTORY_USE_WIDE_HISTORY_COMPATIBILITY_WRITE:-false}
+      - BandRankHistory__ChunkSize=${BAND_RANK_HISTORY_CHUNK_SIZE:-250000}
+      - BandRankHistory__RangeChunkingEnabled=${BAND_RANK_HISTORY_RANGE_CHUNKING_ENABLED:-true}
       - BandRankHistory__CommandTimeoutSeconds=${BAND_RANK_HISTORY_COMMAND_TIMEOUT_SECONDS:-0}
       - BandRankHistory__MaxRetryAttempts=${BAND_RANK_HISTORY_MAX_RETRY_ATTEMPTS:-3}
       - BandRankHistory__RetryDelaySeconds=${BAND_RANK_HISTORY_RETRY_DELAY_SECONDS:-900}
@@ -170,7 +178,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-
   fstworker:
     image: *fstservice_image
     container_name: fstworker
@@ -189,7 +196,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-
   festivalweb:
     image: ghcr.io/sfenton/fstfestivalweb:latest
     container_name: festivalweb
@@ -329,6 +335,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-
-volumes:
-  pg-data:

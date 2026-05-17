@@ -94,6 +94,7 @@ public interface IInstrumentDatabase : IDisposable
     int GetRankedAccountCount();
     List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries();
     List<(string AccountId, double AdjustedSkillRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> GetAllRankingSummariesFull();
+    List<AccountRankingSummary> GetAllRankingSummariesDetailed();
 
     // ── Leeway-aware ranking queries ─────────────────────────────────
     (List<AccountRankingDto> Entries, int TotalCount) GetRankingsAtLeeway(double leewayBucket, string rankBy = "adjusted", int page = 1, int pageSize = 50);

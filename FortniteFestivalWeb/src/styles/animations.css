@@ -29,3 +29,9 @@
   from { opacity: 1; transform: translateY(0); }
   to { opacity: 0; transform: translateY(12px); }
 }
+
+@keyframes indeterminate-bar {
+  0% { transform: translateX(-110%); }
+  50% { transform: translateX(140%); }
+  100% { transform: translateX(360%); }
+}

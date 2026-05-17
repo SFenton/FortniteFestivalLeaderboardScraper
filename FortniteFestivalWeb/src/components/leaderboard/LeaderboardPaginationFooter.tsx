@@ -21,12 +21,14 @@ type FixedLeaderboardPaginationProps = {
   onGoToPage: (page: number) => void;
   isMobile: boolean;
   hasFab: boolean;
+  reserveFabSpace?: boolean;
   hasPlayerFooter?: boolean;
   rowHeight?: number;
 };
 
 type FixedLeaderboardPlayerFooterProps = {
   hasFab: boolean;
+  reserveFabSpace?: boolean;
   rowHeight?: number;
   children: (props: { className: string; style: CSSProperties }) => ReactNode;
 };
@@ -76,6 +78,7 @@ export function FixedLeaderboardPagination({
   onGoToPage,
   isMobile,
   hasFab,
+  reserveFabSpace = hasFab,
   hasPlayerFooter = false,
   rowHeight = Layout.entryRowHeight,
 }: FixedLeaderboardPaginationProps) {
@@ -85,7 +88,7 @@ export function FixedLeaderboardPagination({
   return createPortal(
     <div data-testid="leaderboard-fixed-pagination" style={{ ...getFixedPaginationStyle(hasFab, hasPlayerFooter, rowHeight), ...wideOverride }}>
       <Paginator
-        className={hasFab ? 'fab-player-footer' : ''}
+        className={reserveFabSpace ? 'fab-player-footer' : ''}
         style={isMobile ? s.paginationMobile : s.pagination}
         onSkipPrev={() => onGoToPage(1)}
         onPrev={() => onGoToPage(page - 1)}
@@ -105,6 +108,7 @@ export function FixedLeaderboardPagination({
 
 export function FixedLeaderboardPlayerFooter({
   hasFab,
+  reserveFabSpace = hasFab,
   rowHeight = Layout.entryRowHeight,
   children,
 }: FixedLeaderboardPlayerFooterProps) {
@@ -117,7 +121,7 @@ export function FixedLeaderboardPlayerFooter({
   return createPortal(
     <div data-testid="leaderboard-fixed-player-footer" style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight), ...wideOverride }}>
       {children({
-        className: hasFab ? 'fab-player-footer' : '',
+        className: reserveFabSpace ? 'fab-player-footer' : '',
         style: { ...s.playerFooterRow, ...rowHeightStyle },
       })}
     </div>,

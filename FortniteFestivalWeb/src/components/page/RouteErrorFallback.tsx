@@ -8,6 +8,7 @@ import {
   Colors, Font, Weight, Gap, Layout, Radius, Border, Cursor, CssValue, Display,
   flexColumn, flexCenter, padding, border,
 } from '@festival/theme';
+import PressableButton from '../common/PressableButton';
 
 export default function RouteErrorFallback() {
   const { t } = useTranslation();
@@ -18,9 +19,9 @@ export default function RouteErrorFallback() {
       <p style={s.message}>{t('error.routeLoadFailed')}</p>
       <div style={s.actions}>
         <a href="#/songs" style={s.linkBtn}>{t('error.goToSongs')}</a>
-        <button onClick={() => window.location.reload()} style={s.reloadBtn}>
+        <PressableButton onPress={() => window.location.reload()} style={s.reloadBtn}>
           {t('common.reload')}
-        </button>
+        </PressableButton>
       </div>
     </div>
   );

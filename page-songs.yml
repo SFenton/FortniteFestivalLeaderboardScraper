@@ -1,0 +1,277 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - button "Open navigation" [ref=e5] [cursor=pointer]:
+          - img [ref=e6]
+        - generic [ref=e8]: Songs
+        - generic [ref=e9]:
+          - button "View SFentonX's Profile" [ref=e10] [cursor=pointer]:
+            - img [ref=e11]
+          - button "Search" [ref=e13] [cursor=pointer]:
+            - img [ref=e14]
+          - button "Notifications" [ref=e18] [cursor=pointer]:
+            - generic:
+              - generic:
+                - img
+              - generic: 9+
+      - generic [ref=e26]:
+        - generic "#" [ref=e28]:
+          - generic [ref=e31]: "#"
+        - link "(Don't Fear) The Reaper Blue Öyster Cult · 1976 · 5:22 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e33] [cursor=pointer]:
+          - /url: "#/songs/75d14ea0-99b6-41a6-8c68-bca89bddded7"
+          - generic [ref=e36]:
+            - paragraph [ref=e38]: (Don't Fear) The Reaper
+            - paragraph [ref=e40]: Blue Öyster Cult · 1976 · 5:22
+          - generic [ref=e42]:
+            - generic [ref=e43]:
+              - img "Solo_Guitar" [ref=e45]
+              - img "Solo_Bass" [ref=e47]
+              - img "Solo_Drums" [ref=e49]
+              - img "Solo_Vocals" [ref=e51]
+              - img "Solo_PeripheralGuitar" [ref=e53]
+            - generic [ref=e54]:
+              - img "Solo_PeripheralBass" [ref=e56]
+              - img "Solo_PeripheralVocals" [ref=e58]
+              - img "Solo_PeripheralCymbals" [ref=e60]
+              - img "Solo_PeripheralDrums" [ref=e62]
+        - link "2055 Sleepy Hallow · 2021 · 2:08 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e64] [cursor=pointer]:
+          - /url: "#/songs/f5da66af-5d54-4282-ae5a-ae47dafbd0e4"
+          - generic [ref=e67]:
+            - paragraph [ref=e69]: "2055"
+            - paragraph [ref=e71]: Sleepy Hallow · 2021 · 2:08
+          - generic [ref=e73]:
+            - generic [ref=e74]:
+              - img "Solo_Guitar" [ref=e76]
+              - img "Solo_Bass" [ref=e78]
+              - img "Solo_Drums" [ref=e80]
+              - img "Solo_Vocals" [ref=e82]
+              - img "Solo_PeripheralGuitar" [ref=e84]
+            - generic [ref=e85]:
+              - img "Solo_PeripheralBass" [ref=e87]
+              - img "Solo_PeripheralVocals" [ref=e89]
+              - img "Solo_PeripheralCymbals" [ref=e91]
+              - img "Solo_PeripheralDrums" [ref=e93]
+        - link "24K Magic Bruno Mars · 2016 · 3:50 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e95] [cursor=pointer]:
+          - /url: "#/songs/55fb0157-83f7-4442-a8f1-52eb6d0376ea"
+          - generic [ref=e98]:
+            - paragraph [ref=e100]: 24K Magic
+            - paragraph [ref=e102]: Bruno Mars · 2016 · 3:50
+          - generic [ref=e104]:
+            - generic [ref=e105]:
+              - img "Solo_Guitar" [ref=e107]
+              - img "Solo_Bass" [ref=e109]
+              - img "Solo_Drums" [ref=e111]
+              - img "Solo_Vocals" [ref=e113]
+              - img "Solo_PeripheralGuitar" [ref=e115]
+            - generic [ref=e116]:
+              - img "Solo_PeripheralBass" [ref=e118]
+              - img "Solo_PeripheralVocals" [ref=e120]
+              - img "Solo_PeripheralCymbals" [ref=e122]
+              - img "Solo_PeripheralDrums" [ref=e124]
+        - link "4 Raws EsDeeKid · 2025 · 2:32 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e126] [cursor=pointer]:
+          - /url: "#/songs/10195325-d20a-4c9e-bb1f-d2c8e3f51dda"
+          - generic [ref=e129]:
+            - paragraph [ref=e131]: 4 Raws
+            - paragraph [ref=e133]: EsDeeKid · 2025 · 2:32
+          - generic [ref=e135]:
+            - generic [ref=e136]:
+              - img "Solo_Guitar" [ref=e138]
+              - img "Solo_Bass" [ref=e140]
+              - img "Solo_Drums" [ref=e142]
+              - img "Solo_Vocals" [ref=e144]
+              - img "Solo_PeripheralGuitar" [ref=e146]
+            - generic [ref=e147]:
+              - img "Solo_PeripheralBass" [ref=e149]
+              - img "Solo_PeripheralVocals" [ref=e151]
+              - img "Solo_PeripheralCymbals" [ref=e153]
+              - img "Solo_PeripheralDrums" [ref=e155]
+        - link "8-Bit Beat Epic Games · 2019 · 2:08 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e157] [cursor=pointer]:
+          - /url: "#/songs/28f71a2f-ad55-48f8-aab1-6f4d920fcd22"
+          - generic [ref=e160]:
+            - paragraph [ref=e162]: 8-Bit Beat
+            - paragraph [ref=e164]: Epic Games · 2019 · 2:08
+          - generic [ref=e166]:
+            - generic [ref=e167]:
+              - img "Solo_Guitar" [ref=e169]
+              - img "Solo_Bass" [ref=e171]
+              - img "Solo_Drums" [ref=e173]
+              - img "Solo_Vocals" [ref=e175]
+              - img "Solo_PeripheralGuitar" [ref=e177]
+            - generic [ref=e178]:
+              - img "Solo_PeripheralBass" [ref=e180]
+              - img "Solo_PeripheralVocals" [ref=e182]
+              - img "Solo_PeripheralCymbals" [ref=e184]
+              - img "Solo_PeripheralDrums" [ref=e186]
+        - link "8ths deadmau5 · 2025 · 6:07 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e188] [cursor=pointer]:
+          - /url: "#/songs/3869c3cc-ddd4-4597-a96a-658b4b7f9385"
+          - generic [ref=e191]:
+            - paragraph [ref=e193]: 8ths
+            - paragraph [ref=e195]: deadmau5 · 2025 · 6:07
+          - generic [ref=e197]:
+            - generic [ref=e198]:
+              - img "Solo_Guitar" [ref=e200]
+              - img "Solo_Bass" [ref=e202]
+              - img "Solo_Drums" [ref=e204]
+              - img "Solo_Vocals" [ref=e206]
+              - img "Solo_PeripheralGuitar" [ref=e208]
+            - generic [ref=e209]:
+              - img "Solo_PeripheralBass" [ref=e211]
+              - img "Solo_PeripheralVocals" [ref=e213]
+              - img "Solo_PeripheralCymbals" [ref=e215]
+              - img "Solo_PeripheralDrums" [ref=e217]
+        - generic "A" [ref=e219]:
+          - generic [ref=e222]: A
+        - link "A Bar Song Shaboozey · 2024 · 2:54 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e224] [cursor=pointer]:
+          - /url: "#/songs/7e035e38-43a2-4d7a-b841-956f6cb9183f"
+          - generic [ref=e227]:
+            - paragraph [ref=e229]: A Bar Song
+            - paragraph [ref=e231]: Shaboozey · 2024 · 2:54
+          - generic [ref=e233]:
+            - generic [ref=e234]:
+              - img "Solo_Guitar" [ref=e236]
+              - img "Solo_Bass" [ref=e238]
+              - img "Solo_Drums" [ref=e240]
+              - img "Solo_Vocals" [ref=e242]
+              - img "Solo_PeripheralGuitar" [ref=e244]
+            - generic [ref=e245]:
+              - img "Solo_PeripheralBass" [ref=e247]
+              - img "Solo_PeripheralVocals" [ref=e249]
+              - img "Solo_PeripheralCymbals" [ref=e251]
+              - img "Solo_PeripheralDrums" [ref=e253]
+        - link "A Thousand Miles Vanessa Carlton · 2002 · 4:01 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e255] [cursor=pointer]:
+          - /url: "#/songs/408c7744-8164-43e3-9861-83930ee90359"
+          - generic [ref=e258]:
+            - paragraph [ref=e260]: A Thousand Miles
+            - paragraph [ref=e262]: Vanessa Carlton · 2002 · 4:01
+          - generic [ref=e264]:
+            - generic [ref=e265]:
+              - img "Solo_Guitar" [ref=e267]
+              - img "Solo_Bass" [ref=e269]
+              - img "Solo_Drums" [ref=e271]
+              - img "Solo_Vocals" [ref=e273]
+              - img "Solo_PeripheralGuitar" [ref=e275]
+            - generic [ref=e276]:
+              - img "Solo_PeripheralBass" [ref=e278]
+              - img "Solo_PeripheralVocals" [ref=e280]
+              - img "Solo_PeripheralCymbals" [ref=e282]
+              - img "Solo_PeripheralDrums" [ref=e284]
+        - link "AAAHH MEN! Doja Cat · 2025 · 3:15 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e286] [cursor=pointer]:
+          - /url: "#/songs/9135c732-2919-4248-b214-28b777894439"
+          - generic [ref=e289]:
+            - paragraph [ref=e291]: AAAHH MEN!
+            - paragraph [ref=e293]: Doja Cat · 2025 · 3:15
+          - generic [ref=e295]:
+            - generic [ref=e296]:
+              - img "Solo_Guitar" [ref=e298]
+              - img "Solo_Bass" [ref=e300]
+              - img "Solo_Drums" [ref=e302]
+              - img "Solo_Vocals" [ref=e304]
+              - img "Solo_PeripheralGuitar" [ref=e306]
+            - generic [ref=e307]:
+              - img "Solo_PeripheralBass" [ref=e309]
+              - img "Solo_PeripheralVocals" [ref=e311]
+              - img "Solo_PeripheralCymbals" [ref=e313]
+              - img "Solo_PeripheralDrums" [ref=e315]
+        - link "ABC Jackson 5 · 1970 · 3:08 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e317] [cursor=pointer]:
+          - /url: "#/songs/720608a1-cc82-437d-80a9-242479bb2e79"
+          - generic [ref=e320]:
+            - paragraph [ref=e322]: ABC
+            - paragraph [ref=e324]: Jackson 5 · 1970 · 3:08
+          - generic [ref=e326]:
+            - generic [ref=e327]:
+              - img "Solo_Guitar" [ref=e329]
+              - img "Solo_Bass" [ref=e331]
+              - img "Solo_Drums" [ref=e333]
+              - img "Solo_Vocals" [ref=e335]
+              - img "Solo_PeripheralGuitar" [ref=e337]
+            - generic [ref=e338]:
+              - img "Solo_PeripheralBass" [ref=e340]
+              - img "Solo_PeripheralVocals" [ref=e342]
+              - img "Solo_PeripheralCymbals" [ref=e344]
+              - img "Solo_PeripheralDrums" [ref=e346]
+        - link "abcdefu GAYLE · 2021 · 2:51 Solo_Guitar Solo_Bass Solo_Drums Solo_Vocals Solo_PeripheralGuitar Solo_PeripheralBass Solo_PeripheralVocals Solo_PeripheralCymbals Solo_PeripheralDrums" [ref=e348] [cursor=pointer]:
+          - /url: "#/songs/c56335d8-d61d-4e31-a6f0-9252db7faa10"
+          - generic [ref=e351]:
+            - paragraph [ref=e353]: abcdefu
+            - paragraph [ref=e355]: GAYLE · 2021 · 2:51
+          - generic [ref=e357]:
+            - generic [ref=e358]:
+              - img "Solo_Guitar" [ref=e360]
+              - img "Solo_Bass" [ref=e362]
+              - img "Solo_Drums" [ref=e364]
+              - img "Solo_Vocals" [ref=e366]
+              - img "Solo_PeripheralGuitar" [ref=e368]
+            - generic [ref=e369]:
+              - img "Solo_PeripheralBass" [ref=e371]
+              - img "Solo_PeripheralVocals" [ref=e373]
+              - img "Solo_PeripheralCymbals" [ref=e375]
+              - img "Solo_PeripheralDrums" [ref=e377]
+      - navigation [ref=e378]:
+        - button "Songs" [ref=e379] [cursor=pointer]:
+          - img [ref=e381]
+          - text: Songs
+        - button "Suggestions" [ref=e383] [cursor=pointer]:
+          - img [ref=e385]
+          - text: Suggestions
+        - button "Compete" [ref=e387] [cursor=pointer]:
+          - img [ref=e389]
+          - text: Compete
+        - button "Statistics" [ref=e391] [cursor=pointer]:
+          - img [ref=e393]
+          - text: Statistics
+        - button "Settings" [ref=e395] [cursor=pointer]:
+          - img [ref=e397]
+          - text: Settings
+      - generic:
+        - generic:
+          - generic:
+            - generic:
+              - generic:
+                - button "Search" [ref=e401] [cursor=pointer]:
+                  - generic:
+                    - img
+                    - generic: Search
+                - button "Sort Songs" [ref=e403] [cursor=pointer]:
+                  - img [ref=e404]
+                - button "Filter Songs" [ref=e407] [cursor=pointer]:
+                  - img [ref=e408]
+              - button "Actions" [ref=e411] [cursor=pointer]:
+                - img [ref=e412]
+    - generic [ref=e414]:
+      - img [ref=e416]
+      - button "Open Tanstack query devtools" [ref=e464] [cursor=pointer]:
+        - img [ref=e465]
+  - generic [ref=e514]:
+    - button "Close" [ref=e516] [cursor=pointer]:
+      - img [ref=e517]
+    - generic [ref=e521]:
+      - generic [ref=e525]:
+        - paragraph [ref=e527]: Orbital Overload
+        - paragraph [ref=e529]: Epic Games · 2021
+      - generic [ref=e533]:
+        - paragraph [ref=e535]: When I Let the Music Play
+        - paragraph [ref=e537]: Epic Games · 2025
+      - generic [ref=e541]:
+        - paragraph [ref=e543]: Paradise Pulse
+        - paragraph [ref=e545]: Epic Games · 2024
+      - generic [ref=e549]:
+        - paragraph [ref=e570]: Dreamer
+        - paragraph [ref=e553]: Epic Games · 2016
+    - generic [ref=e554]:
+      - heading "Song List" [level=2] [ref=e555]
+      - paragraph [ref=e556]: Browse and search the entire Festival library. Tap a song to see leaderboards and more details.
+    - generic [ref=e557]:
+      - button "Back one entry" [disabled]:
+        - img
+      - generic [ref=e558]:
+        - button "Slide 1" [ref=e559] [cursor=pointer]
+        - button "Slide 2" [ref=e560] [cursor=pointer]
+        - button "Slide 3" [ref=e561] [cursor=pointer]
+        - button "Slide 4" [ref=e562] [cursor=pointer]
+        - button "Slide 5" [ref=e563] [cursor=pointer]
+        - button "Slide 6" [ref=e564] [cursor=pointer]
+        - button "Slide 7" [ref=e565] [cursor=pointer]
+        - button "Slide 8" [ref=e566] [cursor=pointer]
+      - button "Forward one entry" [ref=e567] [cursor=pointer]:
+        - img [ref=e568]

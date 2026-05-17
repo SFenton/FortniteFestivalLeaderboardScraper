@@ -11,6 +11,7 @@ import {
   flexRow, flexColumn, flexCenter, absoluteFill,
   transition, scale, FAST_FADE_MS,
 } from '@festival/theme';
+import PressableButton from './PressableButton';
 
 export interface DirectionSelectorProps {
   ascending: boolean;
@@ -35,14 +36,14 @@ export const DirectionSelector = memo(function DirectionSelector({
         <div style={s.hint}>{desc}</div>
       </div>
       <div style={s.icons}>
-        <button style={s.iconBtn} onClick={() => onChange(true)} aria-label={t('sort.ascending')}>
+        <PressableButton style={s.iconBtn} onPress={() => onChange(true)} aria-label={t('sort.ascending')}>
           <div style={s.ascCircle} />
           <IoArrowUp size={IconSize.default} style={s.ascIcon} />
-        </button>
-        <button style={s.iconBtn} onClick={() => onChange(false)} aria-label={t('sort.descending')}>
+        </PressableButton>
+        <PressableButton style={s.iconBtn} onPress={() => onChange(false)} aria-label={t('sort.descending')}>
           <div style={s.descCircle} />
           <IoArrowDown size={IconSize.default} style={s.descIcon} />
-        </button>
+        </PressableButton>
       </div>
     </div>
   );

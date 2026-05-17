@@ -70,6 +70,66 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
         db.ComputeAccountRankings(songs.Length);
     }
 
+    private static void SeedCurrentProjection(IInstrumentDatabase db,
+        params (string SongId, (string AccountId, int Score, int Rank)[] Entries)[] songs)
+    {
+        var pgDb = (InstrumentDatabase)db;
+        var builder = new SoloCurrentProjectionBuilder(pgDb.DataSource, NullLogger<SoloCurrentProjectionBuilder>.Instance);
+        builder.EnsureSchemaAsync().GetAwaiter().GetResult();
+
+        using var conn = pgDb.DataSource.OpenConnection();
+        foreach (var (songId, entries) in songs)
+        {
+            using (var scopeCmd = conn.CreateCommand())
+            {
+                scopeCmd.CommandText = """
+                    INSERT INTO solo_current_projection_scope
+                    (song_id, instrument, projection_generation, row_count, source_snapshot_id, status, error_message, last_rebuilt_at, updated_at)
+                    VALUES (@songId, @instrument, 1, @rowCount, NULL, 'ready', NULL, @now, @now)
+                    ON CONFLICT (song_id, instrument) DO UPDATE SET
+                        projection_generation = EXCLUDED.projection_generation,
+                        row_count = EXCLUDED.row_count,
+                        source_snapshot_id = EXCLUDED.source_snapshot_id,
+                        status = EXCLUDED.status,
+                        error_message = EXCLUDED.error_message,
+                        last_rebuilt_at = EXCLUDED.last_rebuilt_at,
+                        updated_at = EXCLUDED.updated_at
+                    """;
+                scopeCmd.Parameters.AddWithValue("songId", songId);
+                scopeCmd.Parameters.AddWithValue("instrument", db.Instrument);
+                scopeCmd.Parameters.AddWithValue("rowCount", entries.Length);
+                scopeCmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+                scopeCmd.ExecuteNonQuery();
+            }
+
+            foreach (var (accountId, score, rank) in entries)
+            {
+                using var entryCmd = conn.CreateCommand();
+                entryCmd.CommandText = """
+                    INSERT INTO current_leaderboard_entries
+                    (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank,
+                     api_rank, source, difficulty, end_time, first_seen_at, last_updated_at, projection_generation, computed_at)
+                    VALUES
+                    (@songId, @instrument, @accountId, @score, 95, false, 5, 3, 99.0, @rank,
+                     @rank, 'projection-test', 3, '2025-01-15T12:00:00Z', @now, @now, 1, @now)
+                    ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+                        score = EXCLUDED.score,
+                        rank = EXCLUDED.rank,
+                        api_rank = EXCLUDED.api_rank,
+                        source = EXCLUDED.source,
+                        last_updated_at = EXCLUDED.last_updated_at
+                    """;
+                entryCmd.Parameters.AddWithValue("songId", songId);
+                entryCmd.Parameters.AddWithValue("instrument", db.Instrument);
+                entryCmd.Parameters.AddWithValue("accountId", accountId);
+                entryCmd.Parameters.AddWithValue("score", score);
+                entryCmd.Parameters.AddWithValue("rank", rank);
+                entryCmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+                entryCmd.ExecuteNonQuery();
+            }
+        }
+    }
+
     [Fact]
     public void ComputeForUser_ReturnsEmptyWhenUserHasNoScores()
     {
@@ -93,6 +153,28 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
         Assert.NotEmpty(result.Rivals);
         Assert.NotEmpty(result.Samples);
         Assert.Empty(_metaFixture.Db.GetLeaderboardRivals("user", "Solo_Guitar", "totalscore"));
+    }
+
+    [Fact]
+    public void ComputeInstrument_UsesCurrentStateScoresForNeighborSamples()
+    {
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        SeedScoresAndRankings(db,
+            ("song1", [("user", 1000), ("neighbor", 1100)]),
+            ("song2", [("user", 2000), ("neighbor", 2100)]));
+        SeedCurrentProjection(db,
+            ("song1", [("neighbor", 9100, 1), ("user", 1000, 2)]),
+            ("song2", [("neighbor", 9200, 1), ("user", 2000, 2)]));
+
+        var result = _sut.ComputeInstrument("user", "Solo_Guitar", "totalscore");
+        var samples = result.Samples.Where(s => s.RivalAccountId == "neighbor").ToList();
+
+        Assert.True(result.UserFound);
+        Assert.NotEmpty(samples);
+        Assert.Contains(samples, sample => sample.SongId == "song1" && sample.RivalScore == 9100);
+        Assert.Contains(samples, sample => sample.SongId == "song2" && sample.RivalScore == 9200);
+        Assert.DoesNotContain(samples, sample => sample.RivalScore is 1100 or 2100);
     }
 
     [Fact]

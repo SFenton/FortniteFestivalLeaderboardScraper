@@ -17,7 +17,8 @@ public static partial class ApiEndpoints
             string? rankBy,
             double? leeway,
             GlobalLeaderboardPersistence persistence,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -34,6 +35,9 @@ public static partial class ApiEndpoints
                 if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                     return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
             }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var metric = rankBy ?? "adjusted";
             var bucket = InstrumentDatabase.QuantizeBucket(leeway);
@@ -67,6 +71,117 @@ public static partial class ApiEndpoints
         .WithTags("Rankings")
         .RequireRateLimiting("public");
 
+        // ─── Fixed solo family rankings (paginated) ───────────
+
+        app.MapGet("/api/rankings/family/{scopeId}", (
+            HttpContext httpContext,
+            string scopeId,
+            string? rankBy,
+            int? page,
+            int? pageSize,
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
+
+            if (!SoloFamilyRankingScopes.IsValid(scopeId))
+                return Results.NotFound(new { error = $"Unknown family ranking scope: {scopeId}" });
+
+            var normalizedScopeId = SoloFamilyRankingScopes.Normalize(scopeId);
+            var effectivePage = page ?? 1;
+            var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
+            var metric = rankBy ?? "adjusted";
+
+            if (effectivePage > 0 && effectivePageSize <= 50 && effectivePage <= 50 / effectivePageSize)
+            {
+                var result = CacheHelper.ServeFirstPageSubsetIfCached(
+                    httpContext,
+                    precomputer.TryGet($"rankings:family:{normalizedScopeId}:{metric}:1:50"),
+                    effectivePage,
+                    effectivePageSize);
+                if (result is not null) return result;
+            }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
+            var (entries, total) = metaDb.GetSoloFamilyRankings(normalizedScopeId, metric, effectivePage, effectivePageSize);
+            var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId))
+                .ToDictionary(kvp => kvp.Key, kvp => (string?)kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+            return Results.Ok(new
+            {
+                scopeId = normalizedScopeId,
+                rankBy = metric,
+                page = effectivePage,
+                pageSize = effectivePageSize,
+                totalAccounts = total,
+                entries = entries.Select(e => MapSoloFamilyRanking(e, names)).ToList(),
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
+        // ─── Single account fixed solo family ranking ──────────
+
+        app.MapGet("/api/rankings/family/{scopeId}/{accountId}", (
+            HttpContext httpContext,
+            string scopeId,
+            string accountId,
+            string? rankBy,
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            if (!SoloFamilyRankingScopes.IsValid(scopeId))
+                return Results.NotFound(new { error = $"Unknown family ranking scope: {scopeId}" });
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
+            var normalizedScopeId = SoloFamilyRankingScopes.Normalize(scopeId);
+            var ranking = metaDb.GetSoloFamilyRanking(normalizedScopeId, accountId);
+            if (ranking is null)
+                return Results.NotFound(new { error = "Account not found in rankings for this family scope." });
+
+            var names = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [accountId] = metaDb.GetDisplayName(accountId),
+            };
+
+            return Results.Ok(new
+            {
+                scopeId = normalizedScopeId,
+                rankBy = rankBy ?? "adjusted",
+                totalRankedAccounts = ranking.TotalRankedAccounts,
+                ranking = MapSoloFamilyRanking(ranking, names),
+                AccountId = ranking.AccountId,
+                displayName = names.GetValueOrDefault(accountId),
+                ranking.SongsPlayed,
+                ranking.TotalChartedSongs,
+                ranking.Coverage,
+                ranking.RawSkillRating,
+                ranking.AdjustedSkillRating,
+                ranking.AdjustedSkillRank,
+                ranking.WeightedRating,
+                ranking.WeightedRank,
+                ranking.FcRate,
+                ranking.FcRateRank,
+                ranking.TotalScore,
+                ranking.TotalScoreRank,
+                ranking.MaxScorePercent,
+                ranking.MaxScorePercentRank,
+                ranking.FullComboCount,
+                ranking.RawMaxScorePercent,
+                ranking.RawWeightedRating,
+                ranking.ComputedAt,
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
         // ─── Per-instrument rankings (paginated) ───────────────
 
         app.MapGet("/api/rankings/{instrument}", (
@@ -78,7 +193,8 @@ public static partial class ApiEndpoints
             double? leeway,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
-            ScrapeTimePrecomputer precomputer) =>
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
@@ -90,14 +206,19 @@ public static partial class ApiEndpoints
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
-            // ── Check precomputed store for page 1 with default size (base leeway only) ──
-            if (effectivePage == 1 && effectivePageSize == 50 && leeway is null)
+            // ── Check precomputed store for page 1 (base leeway only) ──
+            if (effectivePage > 0 && effectivePageSize <= 50 && effectivePage <= 50 / effectivePageSize && leeway is null)
             {
-                {
-                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"rankings:{instrument}:{metric}:1:50"));
-                    if (result is not null) return result;
-                }
+                var result = CacheHelper.ServeFirstPageSubsetIfCached(
+                    httpContext,
+                    precomputer.TryGet($"rankings:{instrument}:{metric}:1:50"),
+                    effectivePage,
+                    effectivePageSize);
+                if (result is not null) return result;
             }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var (entries, total) = db.GetRankingsAtLeeway(bucket, metric, effectivePage, effectivePageSize);
@@ -156,11 +277,16 @@ public static partial class ApiEndpoints
             string? rankBy,
             double? leeway,
             GlobalLeaderboardPersistence persistence,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var metric = rankBy ?? "adjusted";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var bucket = InstrumentDatabase.QuantizeBucket(leeway);
@@ -234,6 +360,35 @@ public static partial class ApiEndpoints
             totalRankedAccounts,
         };
 
+        static object MapSoloFamilyRanking(SoloFamilyRankingDto ranking, IReadOnlyDictionary<string, string?> names) => new
+        {
+            ranking.AccountId,
+            displayName = names.GetValueOrDefault(ranking.AccountId),
+            ranking.SongsPlayed,
+            ranking.TotalChartedSongs,
+            ranking.Coverage,
+            ranking.RawSkillRating,
+            ranking.AdjustedSkillRating,
+            ranking.AdjustedSkillRank,
+            ranking.WeightedRating,
+            ranking.WeightedRank,
+            ranking.FcRate,
+            ranking.FcRateRank,
+            ranking.TotalScore,
+            ranking.TotalScoreRank,
+            ranking.MaxScorePercent,
+            ranking.MaxScorePercentRank,
+            avgAccuracy = 0,
+            ranking.FullComboCount,
+            avgStars = 0,
+            bestRank = 0,
+            avgRank = 0,
+            ranking.RawMaxScorePercent,
+            ranking.RawWeightedRating,
+            ranking.ComputedAt,
+            ranking.TotalRankedAccounts,
+        };
+
         // ─── Rank history for a player on an instrument ────────
 
         app.MapGet("/api/rankings/{instrument}/{accountId}/history", (
@@ -242,11 +397,16 @@ public static partial class ApiEndpoints
             string accountId,
             int? days,
             double? leeway,
-            GlobalLeaderboardPersistence persistence) =>
+            GlobalLeaderboardPersistence persistence,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             if (leeway is not null)
             {
@@ -267,22 +427,28 @@ public static partial class ApiEndpoints
             int? page,
             int? pageSize,
             IMetaDatabase metaDb,
-            ScrapeTimePrecomputer precomputer) =>
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
             var effectivePage = page ?? 1;
             var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
 
-            // ── Check precomputed store for page 1 default size ──
-            if (effectivePage == 1 && effectivePageSize == 50)
+            // ── Check precomputed store for page 1 ──
+            if (effectivePage > 0 && effectivePageSize <= 50 && effectivePage <= 50 / effectivePageSize)
             {
                 // Composite rankings are metric-agnostic; use adjusted as canonical key
-                {
-                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet("rankings:composite:adjusted:1:50"));
-                    if (result is not null) return result;
-                }
+                var result = CacheHelper.ServeFirstPageSubsetIfCached(
+                    httpContext,
+                    precomputer.TryGet("rankings:composite:adjusted:1:50"),
+                    effectivePage,
+                    effectivePageSize);
+                if (result is not null) return result;
             }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var (entries, total) = metaDb.GetCompositeRankings(effectivePage, effectivePageSize);
 
@@ -327,9 +493,13 @@ public static partial class ApiEndpoints
         app.MapGet("/api/rankings/composite/{accountId}", (
             HttpContext httpContext,
             string accountId,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var ranking = metaDb.GetCompositeRanking(accountId);
             if (ranking is null)
                 return Results.NotFound(new { error = "Account not found in composite rankings." });
@@ -369,7 +539,8 @@ public static partial class ApiEndpoints
             string? rankBy,
             int? page,
             int? pageSize,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
@@ -377,6 +548,9 @@ public static partial class ApiEndpoints
                 return Results.BadRequest(new { error = "At least two instruments required. Use 'combo' (hex ID) or 'instruments' (e.g. Solo_Guitar+Solo_Bass)." });
             if (!ComboIds.IsWithinGroupCombo(comboId))
                 return Results.NotFound(new { error = "Cross-group combos are not supported. Only within-group combos (OG Band or Pro Strings) are available." });
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var metric = rankBy ?? "adjusted";
             var (entries, totalAccounts) = metaDb.GetComboLeaderboard(
@@ -420,7 +594,8 @@ public static partial class ApiEndpoints
             string? combo,
             string? instruments,
             string? rankBy,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
@@ -428,6 +603,9 @@ public static partial class ApiEndpoints
                 return Results.BadRequest(new { error = "At least two instruments required. Use 'combo' (hex ID) or 'instruments' (e.g. Solo_Guitar+Solo_Bass)." });
             if (!ComboIds.IsWithinGroupCombo(comboId))
                 return Results.NotFound(new { error = "Cross-group combos are not supported. Only within-group combos (OG Band or Pro Strings) are available." });
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var metric = rankBy ?? "adjusted";
             var entry = metaDb.GetComboRank(comboId, accountId, metric);
@@ -462,12 +640,16 @@ public static partial class ApiEndpoints
         app.MapGet("/api/rankings/bands/{bandType}/combos", (
             HttpContext httpContext,
             string bandType,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
             if (!BandComboIds.IsValidBandType(bandType))
                 return Results.NotFound(new { error = $"Unknown band type: {bandType}" });
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var combos = metaDb.GetBandRankingCombos(bandType)
                 .Select(combo => new
@@ -494,7 +676,9 @@ public static partial class ApiEndpoints
             int? pageSize,
             string? accountId,
             string? teamKey,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
@@ -508,6 +692,20 @@ public static partial class ApiEndpoints
             var effectivePage = page ?? 1;
             var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
             var metric = rankBy ?? "adjusted";
+            var hasSelectedContext = !string.IsNullOrWhiteSpace(accountId) || !string.IsNullOrWhiteSpace(teamKey);
+            if (effectivePage > 0 && effectivePageSize <= 50 && effectivePage <= 50 / effectivePageSize && comboValidation.ComboId is null && (!hasSelectedContext || publicationCache.IsFrozen))
+            {
+                var result = CacheHelper.ServeFirstPageSubsetIfCached(
+                    httpContext,
+                    precomputer.TryGet($"rankings:bands:{bandType}:{metric}:1:50"),
+                    effectivePage,
+                    effectivePageSize);
+                if (result is not null) return result;
+            }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var (entries, totalTeams) = metaDb.GetBandTeamRankings(bandType, comboValidation.ComboId, metric, effectivePage, effectivePageSize);
             var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
             var selectedEntry = selectedAccountId is null
@@ -549,7 +747,8 @@ public static partial class ApiEndpoints
             string? rankBy,
             int? page,
             int? pageSize,
-            GlobalLeaderboardPersistence persistence) =>
+            GlobalLeaderboardPersistence persistence,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=60, stale-while-revalidate=300";
 
@@ -578,6 +777,9 @@ public static partial class ApiEndpoints
 
             var effectivePage = Math.Max(1, page ?? 1);
             var effectivePageSize = Math.Clamp(pageSize ?? 25, 1, 100);
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var response = persistence.SearchBands(
                 q,
                 explicitAccountIds,
@@ -597,9 +799,13 @@ public static partial class ApiEndpoints
             string bandId,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
-            ImprovementNotificationService improvementNotifications) =>
+            ImprovementNotificationService improvementNotifications,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var band = persistence.GetBandById(bandId);
             if (band is null)
@@ -635,7 +841,8 @@ public static partial class ApiEndpoints
             string teamKey,
             string? combo,
             int? days,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -647,6 +854,9 @@ public static partial class ApiEndpoints
                 return Results.BadRequest(new { error = comboValidation.Error });
 
             var effectiveDays = Math.Clamp(days ?? 30, 1, 3650);
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var history = metaDb.GetBandRankHistory(bandType, teamKey, comboValidation.ComboId, effectiveDays);
             var freshness = metaDb.GetBandRankHistoryStatus(bandType, comboValidation.ComboId);
 
@@ -675,7 +885,8 @@ public static partial class ApiEndpoints
             string teamKey,
             string? combo,
             int? limit,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -687,6 +898,9 @@ public static partial class ApiEndpoints
                 return Results.BadRequest(new { error = comboValidation.Error });
 
             var effectiveLimit = Math.Clamp(limit ?? 5, 1, 20);
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var (best, worst) = metaDb.GetBandSongPerformanceExtremes(bandType, teamKey, comboValidation.ComboId, effectiveLimit);
 
             return Results.Ok(new
@@ -709,7 +923,8 @@ public static partial class ApiEndpoints
             string bandType,
             string teamKey,
             string? combo,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -719,6 +934,9 @@ public static partial class ApiEndpoints
             var comboValidation = BandComboIds.TryNormalizeForBandType(bandType, combo);
             if (comboValidation.Error is not null)
                 return Results.BadRequest(new { error = comboValidation.Error });
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var entries = metaDb.GetBandSongPerformances(bandType, teamKey, comboValidation.ComboId);
 
@@ -743,7 +961,8 @@ public static partial class ApiEndpoints
             string? combo,
             string? rankBy,
             IMetaDatabase metaDb,
-            GlobalLeaderboardPersistence persistence) =>
+            GlobalLeaderboardPersistence persistence,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
@@ -755,6 +974,9 @@ public static partial class ApiEndpoints
                 return Results.BadRequest(new { error = comboValidation.Error });
 
             var metric = rankBy ?? "adjusted";
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var ranking = metaDb.GetBandTeamRanking(bandType, teamKey, comboValidation.ComboId);
             if (ranking is null)
                 return Results.NotFound(new { error = "Team not found in this band ranking." });
@@ -841,6 +1063,11 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, cache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var (above, self, below) = db.GetAccountRankingNeighborhood(accountId, effectiveRadius);
 
@@ -917,6 +1144,11 @@ public static partial class ApiEndpoints
                 if (result is not null) return result;
             }
 
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, cache);
+                if (frozenMiss is not null) return frozenMiss;
+            }
+
             var (above, self, below) = metaDb.GetCompositeRankingNeighborhood(accountId, effectiveRadius);
 
             if (self is null)
@@ -966,7 +1198,8 @@ public static partial class ApiEndpoints
             int? pageSize,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
-            ScrapeTimePrecomputer precomputer) =>
+            ScrapeTimePrecomputer precomputer,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var metric = rankBy ?? "adjusted";
@@ -978,6 +1211,9 @@ public static partial class ApiEndpoints
                 var cached = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"rankings:overview:{metric}:10"));
                 if (cached is not null) return cached;
             }
+
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
+            if (frozenMiss is not null) return frozenMiss;
 
             var instrumentKeys = persistence.GetInstrumentKeys();
 

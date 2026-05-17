@@ -16,6 +16,7 @@ import SongInfo from '../../../components/songs/metadata/SongInfo';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import SeasonPill from '../../../components/songs/metadata/SeasonPill';
 import { useIsNarrow } from '../../../hooks/ui/useIsMobile';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 import {
   Colors, Font, Weight, Gap, Radius, Layout, Border, InstrumentSize, FontVariant,
   Display, Align, Justify, ObjectFit, Overflow, CssValue, CssProp,
@@ -147,13 +148,19 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData, bandType
     : instrument
     ? `/songs/${song.songId}?instrument=${CORE_TO_SERVER_INSTRUMENT[instrument]}`
     : `/songs/${song.songId}`;
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: songUrl });
   const starSrc = isGold ? `${BASE}star_gold.png` : `${BASE}star_white.png`;
   const hasMetadata = layout !== 'hidden';
   const iconOnly = (layout === 'singleInstrument' && !showStars) || layout === 'season';
   const twoRow = isNarrow && hasMetadata && !iconOnly;
 
   return (
-    <Link to={songUrl} style={{ ...st.row, ...(twoRow ? { ...flexColumn, alignItems: Align.stretch } : undefined) }}>
+    <Link
+      to={songUrl}
+      style={{ ...st.row, ...(twoRow ? { ...flexColumn, alignItems: Align.stretch } : undefined), ...(linkPress.isPressed ? st.rowPressed : undefined) }}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      {...linkPress.linkPressHandlers}
+    >
       <div style={twoRow ? st.rowMainLine : { display: Display.contents }}>
         <SongInfo albumArt={albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={0} />
         {!twoRow && <RightContent song={song} layout={layout} leaderboardData={leaderboardData} starCount={showStars ? displayStars : 0} starSrc={starSrc} />}
@@ -318,6 +325,9 @@ function useRowStyles() {
       transition: transition(CssProp.backgroundColor, 120),
       overflow: Overflow.hidden,
       '--frosted-card': '1',
+    } as CSSProperties,
+    rowPressed: {
+      backgroundColor: 'rgba(255, 255, 255, 0.06)',
     } as CSSProperties,
     rowMainLine: {
       ...flexRow,

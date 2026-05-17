@@ -23,6 +23,10 @@ const defaultServiceInfo = {
     startedAt: null,
     phase: null,
     subOperation: null,
+    progressPercent: null,
+    elapsedSeconds: null,
+    estimatedRemainingSeconds: null,
+    branches: null,
   },
   nextScheduledUpdateAt: '2026-04-20T16:30:00Z',
 };
@@ -221,6 +225,28 @@ describe('SettingsPage', () => {
     const licensesLink = screen.getByRole('link', { name: 'Licenses' });
     expect(licensesLink).toHaveAttribute('href', '/settings/licenses');
     expect(screen.getByText('Open source package license details.')).toBeDefined();
+  });
+
+  it('renders debug diagnostics toggles and persists them for mobile PWA sessions', () => {
+    renderSettings();
+
+    expect(screen.getByText('Diagnostics')).toBeDefined();
+    const diagnosticsToggle = screen.getByRole('button', { name: /Tap Diagnostics/i });
+    const telemetryToggle = screen.getByRole('button', { name: /Upload Tap Telemetry/i });
+
+    expect(telemetryToggle).toBeDisabled();
+
+    fireEvent.click(diagnosticsToggle);
+    expect(localStorage.getItem('fst.tapDiagnostics')).toBe('1');
+
+    const enabledTelemetryToggle = screen.getByRole('button', { name: /Upload Tap Telemetry/i });
+    expect(enabledTelemetryToggle).not.toBeDisabled();
+    fireEvent.click(enabledTelemetryToggle);
+    expect(localStorage.getItem('fst.tapTelemetry')).toBe('1');
+
+    fireEvent.click(screen.getByRole('button', { name: /Tap Diagnostics/i }));
+    expect(localStorage.getItem('fst.tapDiagnostics')).toBeNull();
+    expect(localStorage.getItem('fst.tapTelemetry')).toBeNull();
   });
 
   it('registers quick links with the shared page controller', async () => {
@@ -598,6 +624,7 @@ describe('SettingsPage', () => {
     renderSettings();
     expect(screen.getByText('Service Info')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).getByText('Most recent leaderboard update start')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText('Current leaderboard update start')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Leaderboard update status')).toBeDefined();
   });
 
@@ -642,8 +669,13 @@ describe('SettingsPage', () => {
     });
 
     expect(within(screen.getByTestId('settings-service-info-row-last-update-complete')).getByText(new Date(defaultServiceInfo.lastCompletedUpdate.completedAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText('N/A')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-status')).getByText('Idle')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-update-sub-status')).getByText('Waiting for the next scheduled update')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-step-position')).getByText('N/A')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-phase-progress')).getByText('N/A')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-overall-progress')).getByText('N/A')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-eta')).getByText('N/A')).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).getByText(new Date(defaultServiceInfo.nextScheduledUpdateAt).toLocaleString())).toBeDefined();
   });
 
@@ -653,8 +685,12 @@ describe('SettingsPage', () => {
       currentUpdate: {
         status: 'updating',
         startedAt: '2026-04-20T12:45:00Z',
-        phase: 'ScoreExtraction',
+        phase: 'Scraping',
         subOperation: null,
+        progressPercent: 25,
+        elapsedSeconds: 180,
+        estimatedRemainingSeconds: 90,
+        branches: null,
       },
     };
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
@@ -681,7 +717,15 @@ describe('SettingsPage', () => {
 
     // Non-status/step rows must never show a spinner.
     expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).getByText(new Date(defaultServiceInfo.lastCompletedUpdate.startedAt).toLocaleString())).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-last-update-start')).queryByText(new Date(updatingServiceInfo.currentUpdate.startedAt).toLocaleString())).toBeNull();
+    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText(new Date(updatingServiceInfo.currentUpdate.startedAt).toLocaleString())).toBeDefined();
     expect(within(screen.getByTestId('settings-service-info-row-next-scheduled-update')).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(screen.getByTestId('settings-service-info-row-update-step-position')).getByText('Step 2 of 15: Scraping')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-phase-progress')).getByText('25.0%')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-overall-progress')).getByText('13.3%')).toBeDefined();
+    expect(within(screen.getByTestId('settings-service-info-row-update-eta')).getByText('1m 30s')).toBeDefined();
   });
 
   it('does not render spinners on Status/Step rows when update is idle', async () => {
@@ -753,6 +797,17 @@ describe('SettingsPage', () => {
     expect(stored.filterInvalidScores).toBe(true);
   });
 
+  it('renders and toggles experimental leaderboard ranks for all users', () => {
+    renderSettings();
+    const toggle = screen.getByText('Enable Experimental Leaderboard Ranks').closest('button')!;
+    expect(screen.getByText('Enable this to see more ranking mechanisms in the Leaderboards page.')).toBeDefined();
+
+    fireEvent.click(toggle);
+
+    const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
+    expect(stored.enableExperimentalRanks).toBe(true);
+  });
+
   it('toggles Show Buttons In Header (Mobile)', () => {
     renderSettings();
     const toggle = screen.getByText('Show Buttons In Header (Mobile)').closest('button')!;
@@ -760,21 +815,6 @@ describe('SettingsPage', () => {
 
     const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
     expect(stored.showButtonsInHeaderMobile).toBe(false);
-  });
-
-  it('defaults Search to Songs and persists a changed default search target', async () => {
-    renderSettings();
-    const row = screen.getByText('Default Search Target').closest('div')!.parentElement!;
-
-    await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
-      expect(stored.defaultSearchTarget).toBe('songs');
-    });
-
-    fireEvent.click(within(row).getByText('Bands').closest('button')!);
-
-    const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
-    expect(stored.defaultSearchTarget).toBe('bands');
   });
 
   it('does not render a mobile quick links header trigger when the header setting is off', () => {

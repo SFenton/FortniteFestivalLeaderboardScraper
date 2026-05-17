@@ -105,6 +105,48 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<bool>());
     }
 
+    [Fact]
+    public async Task RunQueuedRegistrationBackfillBatch_DeferredBackfill_AttachesLowPriorityAndCompletes()
+    {
+        _metaDb.DeferBackfill("acctDeferred", 9, "worker_backfill_queue");
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
+
+        var windows = new List<SeasonWindowInfo>
+        {
+            new() { WindowId = "s1", SeasonNumber = 1, EventId = "evt1" }
+        };
+        _historyReconstructor.DiscoverSeasonWindowsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<SeasonWindowInfo>>(windows));
+
+        var orchestrator = CreateBackfillOrchestrator();
+        var claimed = await orchestrator.RunQueuedRegistrationBackfillBatchAsync(
+            _festivalService,
+            maxAccounts: 4,
+            CancellationToken.None);
+
+        Assert.Equal(1, claimed);
+        var status = _metaDb.GetBackfillStatus("acctDeferred");
+        Assert.NotNull(status);
+        Assert.Equal("complete", status!.Status);
+        Assert.True(status.RankingsPending);
+
+        await _cyclicalMachine.Received(1).AttachAsync(
+            Arg.Is<IReadOnlyList<UserWorkItem>>(u => u.Count == 1
+                && u[0].AccountId == "acctDeferred"
+                && u[0].Purposes.HasFlag(WorkPurpose.Backfill)
+                && u[0].Purposes.HasFlag(WorkPurpose.HistoryRecon)),
+            Arg.Is<IReadOnlyList<string>>(songs => songs.Count == 1 && songs[0] == "test-song-1"),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            Arg.Is<SongMachineSource>(source => source == SongMachineSource.Backfill),
+            Arg.Is<bool>(isHighPriority => !isHighPriority),
+            Arg.Any<CancellationToken>(),
+            Arg.Is<bool>(preserveProgressPhaseOnIdle => !preserveProgressPhaseOnIdle));
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // RunHistoryReconPhaseAsync (DB-mutating)
     // ═══════════════════════════════════════════════════════════════

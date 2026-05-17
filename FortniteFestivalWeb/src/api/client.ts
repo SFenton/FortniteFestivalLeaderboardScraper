@@ -1,5 +1,7 @@
 import type {
   SongsResponse,
+  FeatureFlagsResponse,
+  MemberScoreFilterResponse,
   LeaderboardResponse,
   PlayerResponse,
   AccountSearchResponse,
@@ -28,6 +30,9 @@ import type {
   SelectedMemberRankingsResponse,
   CompositePageResponse,
   CompositeRankingDto,
+  SoloFamilyScopeId,
+  SoloFamilyPageResponse,
+  SoloFamilyRankingDto,
   ComboPageResponse,
   ComboRankingEntry,
   BandDetailResponse,
@@ -230,6 +235,9 @@ async function getWithETag<T>(path: string, options?: ApiRequestOptions): Promis
 }
 
 export const api = {
+  getFeatures: (options?: ApiRequestOptions): Promise<FeatureFlagsResponse> =>
+    get<FeatureFlagsResponse>('/api/features', options),
+
   getSongs: async (): Promise<SongsResponse> => {
     const cached = loadSongsCache();
     const headers: Record<string, string> = {};
@@ -254,6 +262,15 @@ export const api = {
     const data = await getWithETag<ShopResponse>('/api/shop');
     expandAlbumArt(data.songs);
     return data;
+  },
+
+  getMemberScoreFilter: (params: { hasAccountIds?: string[]; missingAccountIds?: string[]; instruments: InstrumentKey[]; leeway?: number }) => {
+    const query = new URLSearchParams();
+    if (params.hasAccountIds?.length) query.set('has', params.hasAccountIds.join(','));
+    if (params.missingAccountIds?.length) query.set('missing', params.missingAccountIds.join(','));
+    if (params.instruments.length) query.set('instruments', params.instruments.join(','));
+    if (params.leeway != null) query.set('leeway', String(params.leeway));
+    return get<MemberScoreFilterResponse>(`/api/songs/member-score-filter?${query.toString()}`);
   },
 
   getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
@@ -449,6 +466,16 @@ export const api = {
   getPlayerCompositeRanking: (accountId: string) =>
     get<CompositeRankingDto>(
       `/api/rankings/composite/${encodeURIComponent(accountId)}`,
+    ),
+
+  getSoloFamilyRankings: (scopeId: SoloFamilyScopeId, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10) =>
+    get<SoloFamilyPageResponse>(
+      `/api/rankings/family/${encodeURIComponent(scopeId)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}`,
+    ),
+
+  getPlayerSoloFamilyRanking: (accountId: string, scopeId: SoloFamilyScopeId, rankBy: RankingMetric = 'totalscore') =>
+    get<SoloFamilyRankingDto>(
+      `/api/rankings/family/${encodeURIComponent(scopeId)}/${encodeURIComponent(accountId)}?rankBy=${encodeURIComponent(rankBy)}`,
     ),
 
   getComboRankings: (comboId: string, rankBy: RankingMetric = 'adjusted', page = 1, pageSize = 10) =>

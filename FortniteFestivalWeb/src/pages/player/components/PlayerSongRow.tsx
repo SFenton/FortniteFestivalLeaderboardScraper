@@ -1,10 +1,11 @@
-import { memo, useMemo, type CSSProperties } from 'react';
+import { memo, useMemo, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { formatPercentileBucket } from '@festival/core';
 import { Gap, Radius, Layout, TextAlign, CssValue, FAST_FADE_MS, transition, padding, frostedCard, flexRow, flexColumn, Display, Align, Justify } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import SongInfo from '../../../components/songs/metadata/SongInfo';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useIsNarrow } from '../../../hooks/ui/useIsMobile';
+import { usePressAction } from '../../../hooks/ui/usePressAction';
 
 export interface PlayerSongRowProps {
   songId: string;
@@ -14,7 +15,7 @@ export interface PlayerSongRowProps {
   artist: string;
   year?: number;
   percentile?: number;
-  onClick: (e: React.MouseEvent) => void;
+  onClick: (e: ReactMouseEvent<HTMLAnchorElement> | ReactPointerEvent<HTMLAnchorElement>) => void;
 }
 
 const PlayerSongRow = memo(function PlayerSongRow({
@@ -30,8 +31,9 @@ const PlayerSongRow = memo(function PlayerSongRow({
   const isNarrow = useIsNarrow();
   const twoRow = isNarrow && percentile != null;
   const s = useStyles(twoRow);
+  const pressHandlers = usePressAction<HTMLAnchorElement>({ onPress: (event) => onClick(event) });
   return (
-    <a key={songId} href={href} onClick={onClick} style={s.songListRow}>
+    <a key={songId} href={href} style={s.songListRow} {...pressHandlers}>
       <div style={twoRow ? s.rowMainLine : { display: Display.contents }}>
         <SongInfo albumArt={albumArt} title={title} artist={artist} year={year} minWidth={twoRow ? 0 : undefined} />
         {!twoRow && percentile != null && (

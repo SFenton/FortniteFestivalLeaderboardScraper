@@ -35,6 +35,12 @@ describe('FirstRunCarousel', () => {
     expect(screen.getByLabelText('Close')).toBeDefined();
   });
 
+  it('keeps the overlay hit-testable during the entrance animation', () => {
+    render(<FirstRunCarousel slides={makeSlides(1)} onDismiss={vi.fn()} />);
+    const overlay = document.body.lastElementChild as HTMLElement;
+    expect(overlay.style.pointerEvents).toBe('auto');
+  });
+
   it('renders pagination dots matching slide count', () => {
     const slides = makeSlides(3);
     render(<FirstRunCarousel slides={slides} onDismiss={vi.fn()} />);
@@ -65,6 +71,20 @@ describe('FirstRunCarousel', () => {
     render(<FirstRunCarousel slides={makeSlides(1)} onDismiss={onDismiss} />);
     fireEvent.click(screen.getByLabelText('Close'));
     expect(onDismiss).toHaveBeenCalled();
+  });
+
+  it('dismisses from touch pointerup without double firing on click', () => {
+    const onDismiss = vi.fn();
+    render(<FirstRunCarousel slides={makeSlides(1)} onDismiss={onDismiss} />);
+    const closeBtn = screen.getByLabelText('Close');
+
+    fireEvent.pointerDown(closeBtn, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 360, clientY: 110 });
+    fireEvent.pointerUp(closeBtn, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 360, clientY: 110 });
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(closeBtn);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
   it('navigates forward when forward button clicked', async () => {
@@ -101,6 +121,31 @@ describe('FirstRunCarousel', () => {
     const overlay = document.body.lastElementChild!;
     fireEvent.click(overlay);
     expect(onDismiss).toHaveBeenCalled();
+  });
+
+  it('dismisses from touch pointerup on the overlay without double firing on click', () => {
+    const onDismiss = vi.fn();
+    render(<FirstRunCarousel slides={makeSlides(1)} onDismiss={onDismiss} />);
+    const overlay = document.body.lastElementChild!;
+
+    fireEvent.pointerDown(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 28, clientY: 54 });
+    fireEvent.pointerUp(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 28, clientY: 54 });
+
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(overlay);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not dismiss from touch pointerup inside the carousel card', () => {
+    const onDismiss = vi.fn();
+    render(<FirstRunCarousel slides={makeSlides(1)} onDismiss={onDismiss} />);
+    const card = screen.getByTestId('fre-card');
+
+    fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 180, clientY: 320 });
+    fireEvent.pointerUp(card, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 180, clientY: 320 });
+
+    expect(onDismiss).not.toHaveBeenCalled();
   });
 
   it('calls onExitComplete after exit animation', () => {

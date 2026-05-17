@@ -39,7 +39,7 @@ import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
 import PageHeaderActionsTransition from '../../../../components/common/PageHeaderActionsTransition';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
-import { buildOverallSummaryItems } from '../../../player/sections/OverallSummarySection';
+import { buildFamilyGlobalStatisticsItems, buildOverallSummaryItems } from '../../../player/sections/OverallSummarySection';
 import { buildInstrumentStatsItems } from '../../../player/sections/InstrumentStatsSection';
 import { getLeaderboardPageForRank } from '../../../leaderboards/helpers/rankingHelpers';
 import { buildTopSongsItems } from '../../../player/components/TopSongsSection';
@@ -47,7 +47,7 @@ import { buildPlayerBandsItems, EMPTY_PLAYER_BANDS } from '../../../player/compo
 import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
 import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
-import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRankingDto, PlayerStatsResponse } from '@festival/core/api/serverTypes';
+import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry, AccountRankingDto, PlayerStatsResponse, SoloFamilyScopeId } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import type { PageQuickLinksConfig } from '../../../../components/page/PageQuickLinks';
 import { createPreserveShellScrollState } from '../../../../utils/quietNavigation';
@@ -86,6 +86,11 @@ const SELECT_PROFILE_ACTION_SLOT_STYLE: CSSProperties = {
     transition('max-width', TRANSITION_MS),
     transition('opacity', TRANSITION_MS),
   ),
+};
+
+const INLINE_MOBILE_PAGE_HEADER_STYLE: CSSProperties = {
+  paddingLeft: 0,
+  paddingRight: 0,
 };
 
 function primeSelectProfileExit(accountId: string) {
@@ -379,6 +384,15 @@ export default function PlayerContent({
     /* v8 ignore stop */
   }, [withProfileSwitch, navigate]);
 
+  /* v8 ignore start — navigation helper */
+  const navigateToFamilyLeaderboard = useCallback((scopeId: SoloFamilyScopeId, metric: RankingMetric, rank?: number) => {
+    withProfileSwitch(() => {
+      const page = getLeaderboardPageForRank(rank ?? 0);
+      navigate(Routes.familyRankings(scopeId, metric, page));
+    });
+    /* v8 ignore stop */
+  }, [withProfileSwitch, navigate]);
+
   const isWideDesktop = useIsWideDesktop();
 
   // Build a completely flat list of small items — each becomes a direct child
@@ -430,8 +444,11 @@ export default function PlayerContent({
   }
 
   // --- Overall summary stat boxes ---
-  const overallSummaryItems = buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, statsData?.compositeRanks, true, navigateToLeaderboard);
+  const overallSummaryItems = buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle);
   items.push(...overallSummaryItems);
+
+  const familyGlobalStatisticsItems = buildFamilyGlobalStatisticsItems(t, visibleKeys, cardStyle, statsData?.familyRanks, true, navigateToFamilyLeaderboard);
+  items.push(...familyGlobalStatisticsItems);
 
   // --- Instrument Statistics heading ---
   items.push({
@@ -638,29 +655,29 @@ export default function PlayerContent({
       />
     )
     : null;
-  const playerHeaderActions = (quickLinksAction || selectBtnMounted) ? (
+  const headerSelectBtnMounted = !hasFab && selectBtnMounted;
+  const playerHeaderActions = (quickLinksAction || headerSelectBtnMounted) ? (
     <div
       data-testid="player-header-actions"
       style={{
         ...PLAYER_HEADER_ACTIONS_STYLE,
-        gap: quickLinksAction && selectBtnVisible ? Gap.md : Gap.none,
+        gap: quickLinksAction && headerSelectBtnMounted && selectBtnVisible ? Gap.md : Gap.none,
       }}
     >
-      {selectBtnMounted ? (
+      {headerSelectBtnMounted ? (
         <div
           data-testid="player-select-profile-slot"
           aria-hidden={!selectBtnVisible}
           style={{
             ...SELECT_PROFILE_ACTION_SLOT_STYLE,
             maxWidth: selectBtnVisible
-              ? (hasFab ? Layout.pillButtonHeight : SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH)
+              ? SELECT_PROFILE_ACTION_SLOT_DESKTOP_MAX_WIDTH
               : 0,
             opacity: selectBtnVisible ? 1 : 0,
           }}
         >
           <SelectProfilePill
             visible={selectBtnVisible}
-            isMobile={hasFab}
             onClick={() => {
               /* v8 ignore start */
               if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
@@ -685,6 +702,23 @@ export default function PlayerContent({
       {playerHeaderActions}
     </PageHeaderActionsTransition>
   ) : undefined;
+  const isStatisticsRoot = location.pathname === Routes.statistics;
+  const useInlineMobileHeader = hasFab && !isStatisticsRoot && selectBtnVisible;
+  const mobileHeaderTitle = hasFab && (isStatisticsRoot || useInlineMobileHeader) ? undefined : data.displayName;
+  const inlineMobileHeader = useInlineMobileHeader ? (
+    <PageHeader
+      title={data.displayName}
+      subtitle={untrackedHistorySubtitle}
+      style={INLINE_MOBILE_PAGE_HEADER_STYLE}
+    />
+  ) : null;
+  const mobilePageHeader = !useInlineMobileHeader && (mobileHeaderTitle || untrackedHistorySubtitle || mobilePlayerHeaderActions) ? (
+    <PageHeader
+      title={mobileHeaderTitle}
+      subtitle={untrackedHistorySubtitle}
+      actions={mobilePlayerHeaderActions}
+    />
+  ) : undefined;
 
   return (
     <Page
@@ -692,13 +726,7 @@ export default function PlayerContent({
       scrollDeps={fadeDeps}
       scrollStyle={pps.scrollArea}
       quickLinks={quickLinks.length > 0 ? pageQuickLinks : undefined}
-      before={hasFab ? (
-        <PageHeader
-          title={data.displayName}
-          subtitle={untrackedHistorySubtitle}
-          actions={mobilePlayerHeaderActions}
-        />
-      ) : (
+      before={hasFab ? mobilePageHeader : (
         <PageHeader
           title={data.displayName}
           subtitle={untrackedHistorySubtitle}
@@ -720,6 +748,7 @@ export default function PlayerContent({
       </>}
     >
         <div style={{ ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}) }}>
+        {inlineMobileHeader}
             <div data-testid="player-grid-list" ref={gridListRef} style={{ ...pps.gridList, ...(hasFab ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
               const visibleCount = visibleStaggerItemCount;

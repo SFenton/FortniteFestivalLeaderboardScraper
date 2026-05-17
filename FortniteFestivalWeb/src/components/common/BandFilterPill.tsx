@@ -21,6 +21,7 @@ import {
 } from '@festival/theme';
 import { InstrumentIcon } from '../display/InstrumentIcons';
 import { bandTypeLabel } from '../../utils/bandTypes';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 
 export interface BandFilterPillProps {
   label: string;
@@ -49,15 +50,16 @@ export default function BandFilterPill({ label, selectedInstruments, bandType, o
   const active = selectedInstruments.length > 0;
   const s = useStyles(active);
   const appliedBandTypeLabel = active && bandType ? bandTypeLabel(bandType, t) : null;
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: onClick });
 
   return (
     <button
       type="button"
       style={s.button}
-      onClick={onClick}
       title={label}
       aria-label={label}
       data-testid="band-filter-pill"
+      {...pressHandlers}
     >
       {active ? (
         <>

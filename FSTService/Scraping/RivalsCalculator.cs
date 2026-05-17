@@ -113,6 +113,7 @@ public sealed class RivalsCalculator
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
         var validInstruments = new List<string>();
+        var songCountsByInstrument = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var instrument in instrumentKeys)
         {
@@ -121,11 +122,14 @@ public sealed class RivalsCalculator
 
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             var scores = db.GetCurrentStatePlayerScores(userId);
+            songCountsByInstrument[instrument] = scores.Count;
             if (scores.Count >= MinUserSongsPerInstrument)
                 validInstruments.Add(instrument);
         }
 
-        return GenerateCombos(validInstruments).Count;
+        var combos = GenerateCombos(validInstruments);
+        AddProDrumsFamilyScopeIfEligible(combos, songCountsByInstrument);
+        return combos.Count;
     }
 
     /// <summary>
@@ -136,6 +140,7 @@ public sealed class RivalsCalculator
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
         var perInstrument = new Dictionary<string, InstrumentRivalsData>(StringComparer.OrdinalIgnoreCase);
+        var songCountsByInstrument = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var allCandidates = new Dictionary<string, Dictionary<string, RivalCandidate>>(StringComparer.OrdinalIgnoreCase);
         int progressCount = 0;
 
@@ -148,6 +153,7 @@ public sealed class RivalsCalculator
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             var userScores = db.GetCurrentStatePlayerScores(userId);
             var scan = ScanInstrumentCandidates(db, userId, userScores);
+            songCountsByInstrument[instrument] = scan.UserSongCount;
             if (scan.UserSongCount < MinUserSongsPerInstrument)
             {
                 _log.LogDebug("Rivals [{User}] {Instrument}: skipped — only {Count} songs (min {Min}).",
@@ -175,7 +181,10 @@ public sealed class RivalsCalculator
             onProgress?.Invoke(progressCount);
         }
 
-        if (perInstrument.Count == 0)
+        var hasProDrumsFamilyScope = ComboIds.ProDrumsFamilyInstruments
+            .Sum(instrument => songCountsByInstrument.GetValueOrDefault(instrument)) >= MinUserSongsPerInstrument;
+
+        if (perInstrument.Count == 0 && !hasProDrumsFamilyScope)
             return RivalsResult.Empty;
 
         var now = DateTime.UtcNow.ToString("o");
@@ -198,12 +207,15 @@ public sealed class RivalsCalculator
 
         // Step 5: Combination rival computation
         var combos = GenerateCombos(validInstruments);
+        AddProDrumsFamilyScopeIfEligible(combos, songCountsByInstrument);
         foreach (var instruments in combos)
         {
             if (instruments.Count < 2) continue; // singles already handled
 
-            var comboId = ComboIds.FromInstruments(instruments);
-            var combinedCandidates = IntersectCandidates(instruments, allCandidates);
+            var comboId = ComboIds.ToRivalScopeId(instruments);
+            var combinedCandidates = ComboIds.IsProDrumsFamilyScope(comboId)
+                ? ScanProDrumsFamilyCandidates(userId)
+                : IntersectCandidates(instruments, allCandidates);
             SelectRivals(userId, comboId, combinedCandidates.Values, MinSharedSongsPerInstrumentInCombo,
                 RivalsPerDirection, now, rivalRows);
             progressCount++;
@@ -254,6 +266,8 @@ public sealed class RivalsCalculator
                         UserId = userId,
                         RivalAccountId = rivalId,
                         Instrument = instrument,
+                        UserInstrument = instrument,
+                        RivalInstrument = instrument,
                         SongId = songId,
                         UserRank = userRank,
                         RivalRank = rivalRank,
@@ -277,6 +291,129 @@ public sealed class RivalsCalculator
             Samples = sampleRows,
             CombosComputed = comboCount,
         };
+    }
+
+    public IReadOnlyList<RivalSongSampleRow> ComputeDirectSongSamples(
+        string userId,
+        string rivalId,
+        IReadOnlyList<string> instruments)
+    {
+        var sampleRows = new List<RivalSongSampleRow>();
+
+        foreach (var instrument in instruments)
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            var userScores = db.GetCurrentStatePlayerScores(userId);
+            if (userScores.Count == 0)
+                continue;
+
+            var userScoreMap = userScores.ToDictionary(score => score.SongId, StringComparer.OrdinalIgnoreCase);
+            var rivalScores = db.GetCurrentStatePlayerScoresForSongs(rivalId, userScoreMap.Keys.ToArray());
+
+            foreach (var rivalScore in rivalScores)
+            {
+                if (!userScoreMap.TryGetValue(rivalScore.SongId, out var userScore))
+                    continue;
+
+                var userRank = userScore.Rank > 0 ? userScore.Rank : userScore.ApiRank;
+                var rivalRank = rivalScore.Rank > 0 ? rivalScore.Rank : rivalScore.ApiRank;
+                if (userRank <= 0 || rivalRank <= 0)
+                    continue;
+
+                sampleRows.Add(new RivalSongSampleRow
+                {
+                    UserId = userId,
+                    RivalAccountId = rivalId,
+                    Instrument = instrument,
+                    UserInstrument = instrument,
+                    RivalInstrument = instrument,
+                    SongId = rivalScore.SongId,
+                    UserRank = userRank,
+                    RivalRank = rivalRank,
+                    RankDelta = rivalRank - userRank,
+                    UserScore = userScore.Score,
+                    RivalScore = rivalScore.Score,
+                });
+            }
+        }
+
+        return sampleRows;
+    }
+
+    public IReadOnlyList<RivalSongSampleRow> ComputeDirectProDrumsFamilySongSamples(
+        string userId,
+        string rivalId)
+    {
+        var userScoresBySong = LoadFamilyScoresBySong(userId);
+        var rivalScoresBySong = LoadFamilyScoresBySong(rivalId);
+        var sampleRows = new List<RivalSongSampleRow>();
+
+        foreach (var songId in userScoresBySong.Keys.Intersect(rivalScoresBySong.Keys, StringComparer.OrdinalIgnoreCase))
+        {
+            RivalSongSampleRow? best = null;
+            var bestAbsDelta = int.MaxValue;
+
+            foreach (var userScore in userScoresBySong[songId])
+            {
+                var userRank = ResolveEffectiveRank(userScore);
+                if (userRank <= 0)
+                    continue;
+
+                foreach (var rivalScore in rivalScoresBySong[songId])
+                {
+                    var rivalRank = ResolveEffectiveRank(rivalScore);
+                    if (rivalRank <= 0)
+                        continue;
+
+                    var rankDelta = rivalRank - userRank;
+                    var absDelta = Math.Abs(rankDelta);
+                    if (best is not null && absDelta >= bestAbsDelta)
+                        continue;
+
+                    bestAbsDelta = absDelta;
+                    best = new RivalSongSampleRow
+                    {
+                        UserId = userId,
+                        RivalAccountId = rivalId,
+                        Instrument = userScore.Instrument,
+                        UserInstrument = userScore.Instrument,
+                        RivalInstrument = rivalScore.Instrument,
+                        SongId = songId,
+                        UserRank = userRank,
+                        RivalRank = rivalRank,
+                        RankDelta = rankDelta,
+                        UserScore = userScore.Score,
+                        RivalScore = rivalScore.Score,
+                    };
+                }
+            }
+
+            if (best is not null)
+                sampleRows.Add(best);
+        }
+
+        return sampleRows;
+    }
+
+    private Dictionary<string, List<PlayerScoreDto>> LoadFamilyScoresBySong(string accountId)
+    {
+        var bySong = new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var instrument in ComboIds.ProDrumsFamilyInstruments)
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            foreach (var score in db.GetCurrentStatePlayerScores(accountId))
+            {
+                if (!bySong.TryGetValue(score.SongId, out var entries))
+                {
+                    entries = new List<PlayerScoreDto>();
+                    bySong[score.SongId] = entries;
+                }
+
+                entries.Add(score);
+            }
+        }
+
+        return bySong;
     }
 
     private static InstrumentScanResult ScanInstrumentCandidates(
@@ -352,6 +489,72 @@ public sealed class RivalsCalculator
             SongsScanned = songsScanned,
             Candidates = candidates,
         };
+    }
+
+    internal Dictionary<string, RivalCandidate> ScanProDrumsFamilyCandidates(string userId)
+    {
+        var userScoresByInstrument = ComboIds.ProDrumsFamilyInstruments
+            .Select(instrument => new
+            {
+                Instrument = instrument,
+                Scores = _persistence.GetOrCreateInstrumentDb(instrument).GetCurrentStatePlayerScores(userId),
+            })
+            .ToList();
+
+        if (userScoresByInstrument.Sum(entry => entry.Scores.Count) < MinUserSongsPerInstrument)
+            return new Dictionary<string, RivalCandidate>(StringComparer.OrdinalIgnoreCase);
+
+        var songCountsByInstrument = ComboIds.ProDrumsFamilyInstruments.ToDictionary(
+            instrument => instrument,
+            instrument => _persistence.GetOrCreateInstrumentDb(instrument).GetCurrentStateAllSongCounts(),
+            StringComparer.OrdinalIgnoreCase);
+
+        var candidates = new Dictionary<string, FamilyCandidateAccumulator>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var source in userScoresByInstrument)
+        {
+            foreach (var userScore in source.Scores)
+            {
+                var effectiveRank = ResolveEffectiveRank(userScore);
+                if (effectiveRank <= 0)
+                    continue;
+
+                foreach (var targetInstrument in ComboIds.ProDrumsFamilyInstruments)
+                {
+                    var songCounts = songCountsByInstrument[targetInstrument];
+                    if (!songCounts.TryGetValue(userScore.SongId, out var entryCount) || entryCount <= 1)
+                        continue;
+
+                    var targetDb = _persistence.GetOrCreateInstrumentDb(targetInstrument);
+                    var centerRank = targetInstrument.Equals(source.Instrument, StringComparison.OrdinalIgnoreCase)
+                        ? effectiveRank
+                        : targetDb.GetCurrentStateRankForScore(userScore.SongId, userScore.Score);
+                    if (centerRank <= 0)
+                        continue;
+
+                    var neighbors = targetDb.GetCurrentStateNeighborhood(userScore.SongId, centerRank, NeighborhoodRadius, userId);
+                    var logWeight = Math.Log2(entryCount);
+
+                    foreach (var (neighborId, neighborRank, _) in neighbors)
+                    {
+                        if (!candidates.TryGetValue(neighborId, out var candidate))
+                        {
+                            candidate = new FamilyCandidateAccumulator(neighborId);
+                            candidates[neighborId] = candidate;
+                        }
+
+                        var rankDelta = neighborRank - centerRank;
+                        var absDelta = Math.Abs(rankDelta);
+                        candidate.AddSongMatch(userScore.SongId, rankDelta, logWeight / (1.0 + absDelta));
+                    }
+                }
+            }
+        }
+
+        return candidates.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.ToRivalCandidate(),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     internal static RivalFallbackSelection SelectRivalsWithFallback(
@@ -552,11 +755,31 @@ public sealed class RivalsCalculator
                 continue;
             }
 
+            if (ComboIds.IsProDrumsFamilyInstrumentSet(combo))
+            {
+                combos.Add(combo);
+                continue;
+            }
+
             var comboId = ComboIds.FromInstruments(combo);
             if (ComboIds.IsWithinGroupCombo(comboId))
                 combos.Add(combo);
         }
         return combos;
+    }
+
+    private static void AddProDrumsFamilyScopeIfEligible(
+        List<List<string>> combos,
+        IReadOnlyDictionary<string, int> songCountsByInstrument)
+    {
+        var familySongCount = ComboIds.ProDrumsFamilyInstruments.Sum(instrument => songCountsByInstrument.GetValueOrDefault(instrument));
+        if (familySongCount < MinUserSongsPerInstrument)
+            return;
+
+        if (combos.Any(combo => ComboIds.IsProDrumsFamilyInstrumentSet(combo)))
+            return;
+
+        combos.Add(ComboIds.ProDrumsFamilyInstruments.ToList());
     }
 
     /// <summary>
@@ -635,6 +858,53 @@ public sealed class RivalsCalculator
     /// and songs the user has that the rival doesn't ("your exclusive songs").
     /// Computed on-the-fly from local instrument DBs — no storage or API calls.
     /// </summary>
+    public SongGapsResult ComputeProDrumsFamilySongGaps(
+        string userId,
+        string rivalId,
+        int cap = MaxSongGapsPerDirection)
+    {
+        var cacheKey = $"{userId}:{rivalId}:{ComboIds.ProDrumsFamilyScope}";
+
+        if (_songGapsCache.TryGetValue(cacheKey, out var cached) &&
+            DateTime.UtcNow - cached.CachedAt < SongGapsCacheTtl)
+        {
+            return new SongGapsResult
+            {
+                SongsToCompete = cached.Result.SongsToCompete.Take(cap).ToList(),
+                YourExclusives = cached.Result.YourExclusives.Take(cap).ToList(),
+            };
+        }
+
+        var userScoresBySong = LoadFamilyScoresBySong(userId);
+        var rivalScoresBySong = LoadFamilyScoresBySong(rivalId);
+
+        var songsToCompete = rivalScoresBySong.Keys
+            .Where(songId => !userScoresBySong.ContainsKey(songId))
+            .Select(songId => ToBestGapEntry(songId, rivalScoresBySong[songId]))
+            .OrderBy(e => e.Rank <= 0 ? int.MaxValue : e.Rank)
+            .ToList();
+
+        var yourExclusives = userScoresBySong.Keys
+            .Where(songId => !rivalScoresBySong.ContainsKey(songId))
+            .Select(songId => ToBestGapEntry(songId, userScoresBySong[songId]))
+            .OrderBy(e => e.Rank <= 0 ? int.MaxValue : e.Rank)
+            .ToList();
+
+        var fullResult = new SongGapsResult
+        {
+            SongsToCompete = songsToCompete,
+            YourExclusives = yourExclusives,
+        };
+
+        _songGapsCache[cacheKey] = (fullResult, DateTime.UtcNow);
+
+        return new SongGapsResult
+        {
+            SongsToCompete = fullResult.SongsToCompete.Take(cap).ToList(),
+            YourExclusives = fullResult.YourExclusives.Take(cap).ToList(),
+        };
+    }
+
     public SongGapsResult ComputeSongGaps(
         string userId,
         string rivalId,
@@ -732,6 +1002,24 @@ public sealed class RivalsCalculator
         };
     }
 
+    private static SongGapEntry ToBestGapEntry(string songId, IReadOnlyList<PlayerScoreDto> scores)
+    {
+        var best = scores
+            .OrderBy(s => ResolveEffectiveRank(s) <= 0 ? int.MaxValue : ResolveEffectiveRank(s))
+            .ThenByDescending(s => s.Score)
+            .First();
+
+        return new SongGapEntry
+        {
+            SongId = songId,
+            Instrument = best.Instrument,
+            Score = best.Score,
+            Rank = ResolveEffectiveRank(best),
+        };
+    }
+
+    private static int ResolveEffectiveRank(PlayerScoreDto score) => score.Rank > 0 ? score.Rank : score.ApiRank;
+
     // ─── Internal types ──────────────────────────────────────────
 
     internal sealed class RivalCandidate
@@ -750,6 +1038,44 @@ public sealed class RivalsCalculator
         public double AvgSignedDelta =>
             OverrideAvgSignedDelta ?? (Appearances > 0 ? (double)SignedDeltaSum / Appearances : 0);
     }
+
+    private sealed class FamilyCandidateAccumulator
+    {
+        private readonly Dictionary<string, FamilySongMatch> _matchesBySong = new(StringComparer.OrdinalIgnoreCase);
+
+        public FamilyCandidateAccumulator(string accountId)
+        {
+            AccountId = accountId;
+        }
+
+        public string AccountId { get; }
+
+        public void AddSongMatch(string songId, int rankDelta, double weight)
+        {
+            if (_matchesBySong.TryGetValue(songId, out var existing) && existing.Weight >= weight)
+                return;
+
+            _matchesBySong[songId] = new FamilySongMatch(rankDelta, weight);
+        }
+
+        public RivalCandidate ToRivalCandidate()
+        {
+            var candidate = new RivalCandidate { AccountId = AccountId };
+            foreach (var (songId, match) in _matchesBySong)
+            {
+                candidate.Appearances++;
+                candidate.WeightedScore += match.Weight;
+                candidate.SignedDeltaSum += match.RankDelta;
+                if (match.RankDelta < 0) candidate.AheadCount++;
+                else if (match.RankDelta > 0) candidate.BehindCount++;
+                candidate.SongIds.Add(songId);
+            }
+
+            return candidate;
+        }
+    }
+
+    private readonly record struct FamilySongMatch(int RankDelta, double Weight);
 
     internal sealed class InstrumentRivalsData
     {

@@ -14,9 +14,9 @@ export function getProfileClickDestination(
 ): ProfileClickDestination {
   if (player) return AppRoutes.statistics;
   if (selectedProfile?.type === 'band') {
-    const { bandId, bandType, teamKey, displayName } = selectedProfile;
+    const { bandId, bandType, teamKey } = selectedProfile;
     if (bandId && bandType && teamKey) {
-      return AppRoutes.band(bandId, { bandType, teamKey, names: displayName });
+      return AppRoutes.statistics;
     }
     return 'sidebar';
   }

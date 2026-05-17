@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import {
-  Colors, Font, Gap, Weight, Radius, Layout, ZIndex, Border, Opacity, LineHeight,
+  Colors, Font, Gap, Weight, Radius, Layout, GeneralSize, ZIndex, Border, Opacity, LineHeight,
   Display, Align, Justify, Position, TextAlign, Cursor, Overflow, BoxSizing, CssValue,
   flexColumn, flexCenter, modalOverlay, modalCard, btnPrimary, btnDanger,
   border, padding, transition, CssProp, TRANSITION_MS, QUICK_FADE_MS,
@@ -23,7 +23,7 @@ export const modalStyles = {
 
   /* ── Header ── */
   headerWrap: { display: Display.flex, alignItems: Align.center, justifyContent: Justify.between, padding: padding(Gap.xl, Font.lg, Gap.xl, Gap.section), flexShrink: 0 } as CSSProperties,
-  headerTitle: { fontSize: Font.xl, fontWeight: Weight.bold, margin: Gap.none } as CSSProperties,
+  headerTitle: { fontSize: Font.xl, fontWeight: Weight.bold, margin: Gap.none, minWidth: 0, overflowWrap: 'anywhere', lineHeight: LineHeight.snug } as CSSProperties,
   closeBtn: { width: Layout.modalCloseSize, height: Layout.modalCloseSize, borderRadius: CssValue.circle, background: Colors.surfaceElevated, border: border(Border.thin, Colors.borderPrimary), color: Colors.textSecondary, ...flexCenter, cursor: Cursor.pointer, flexShrink: 0 } as CSSProperties,
 
   /* ── Content scroll ── */
@@ -50,10 +50,10 @@ export const modalStyles = {
   radioDotSelected: { width: Layout.radioDotSize, height: Layout.radioDotSize, borderRadius: CssValue.circle, border: border(Border.thick, Colors.accentBlue), backgroundColor: Colors.accentBlue, boxShadow: `inset 0 0 0 ${Border.thick}px ${Colors.surfaceFrosted}`, flexShrink: 0, boxSizing: BoxSizing.borderBox, position: Position.relative, top: Border.thin } as CSSProperties,
   radioLabelGroup: { display: Display.flex, flexDirection: 'column' as const, gap: Gap.xs, alignItems: Align.start } as CSSProperties,
   radioRowHint: { fontSize: Font.sm, color: Colors.textTertiary, fontWeight: Weight.normal, lineHeight: 1.3 } as CSSProperties,
-  radioInfoBtn: { display: Display.flex, alignItems: Align.center, justifyContent: Justify.center, width: 28, height: 28, borderRadius: CssValue.circle, backgroundColor: Colors.surfaceMuted, color: Colors.textSecondary, border: CssValue.none, cursor: Cursor.pointer, flexShrink: 0, marginLeft: 'auto', padding: 0 } as CSSProperties,
+  radioInfoBtn: { display: Display.flex, alignItems: Align.center, justifyContent: Justify.center, width: GeneralSize.thumb, height: GeneralSize.thumb, borderRadius: CssValue.circle, backgroundColor: Colors.surfaceMuted, color: Colors.textSecondary, border: CssValue.none, cursor: Cursor.pointer, flexShrink: 0, marginLeft: 'auto', padding: 0 } as CSSProperties,
 
   /* ── ToggleRow ── */
-  toggleInfoBtn: { display: Display.flex, alignItems: Align.center, justifyContent: Justify.center, width: 28, height: 28, borderRadius: CssValue.circle, backgroundColor: Colors.surfaceMuted, color: Colors.textSecondary, border: CssValue.none, cursor: Cursor.pointer, flexShrink: 0, padding: 0 } as CSSProperties,
+  toggleInfoBtn: { display: Display.flex, alignItems: Align.center, justifyContent: Justify.center, width: GeneralSize.thumb, height: GeneralSize.thumb, borderRadius: CssValue.circle, backgroundColor: Colors.surfaceMuted, color: Colors.textSecondary, border: CssValue.none, cursor: Cursor.pointer, flexShrink: 0, padding: 0 } as CSSProperties,
   toggleRow: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: padding(Gap.md, 0), backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Gap.none, cursor: Cursor.pointer, textAlign: TextAlign.left, color: Colors.textPrimary, transition: modalTransition } as CSSProperties,
   toggleRowSmallerGap: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: padding(Gap.sm, 0), backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Gap.none, cursor: Cursor.pointer, textAlign: TextAlign.left, color: Colors.textPrimary, transition: modalTransition } as CSSProperties,
   toggleRowLarge: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: padding(Gap.lg, 0), backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Gap.none, cursor: Cursor.pointer, textAlign: TextAlign.left, color: Colors.textPrimary, transition: modalTransition } as CSSProperties,

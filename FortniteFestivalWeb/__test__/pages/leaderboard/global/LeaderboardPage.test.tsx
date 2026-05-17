@@ -597,6 +597,21 @@ describe('LeaderboardPage — coverage: player footer with tracked score', () =>
     expect(allScores.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('does not apply FAB spacing class to the mobile tracked-player footer', async () => {
+    stubViewportWidth(375);
+
+    renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
+
+    const footerName = await screen.findByText('TestPlayer');
+    const footerButton = footerName.closest('[role="button"]');
+
+    expect(footerButton).toBeTruthy();
+    expect(footerButton).not.toHaveClass('fab-player-footer');
+    expect(footerButton?.parentElement?.style.bottom).toContain('84px');
+    const pagination = await screen.findByTestId('leaderboard-fixed-pagination');
+    expect(pagination.style.bottom).toContain('136px');
+  });
+
   it('footer click navigates to statistics', async () => {
     renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
 
@@ -721,6 +736,30 @@ describe('LeaderboardPage — selected band footer', () => {
     expect(stars.compareDocumentPosition(accuracy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText('?')).toBeNull();
     expect(mockApi.getSongBandLeaderboard).toHaveBeenCalledWith('song-1', 'Band_Duets', 1, 0, undefined, 'band-a:band-b', undefined);
+  });
+
+  it('does not apply FAB spacing class to the mobile selected-band footer', async () => {
+    stubViewportWidth(375);
+    selectBandProfile();
+    mockApi.getSongBandLeaderboard.mockResolvedValue({
+      songId: 'song-1',
+      bandType: 'Band_Duets',
+      count: 0,
+      totalEntries: 1,
+      localEntries: 1,
+      entries: [],
+      selectedPlayerEntry: null,
+      selectedBandEntry: makeSelectedSongBandEntry(),
+    });
+
+    renderLeaderboard();
+
+    const footerName = await screen.findByText('Alpha + Beta');
+    const footerLink = footerName.closest('a');
+
+    expect(footerLink).toBeTruthy();
+    expect(footerLink).not.toHaveClass('fab-player-footer');
+    expect(footerLink?.parentElement?.style.bottom).toContain('84px');
   });
 
   it('links the selected band footer to the band route', async () => {

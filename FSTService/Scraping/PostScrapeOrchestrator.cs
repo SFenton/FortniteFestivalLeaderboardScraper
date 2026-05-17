@@ -381,7 +381,7 @@ public sealed class PostScrapeOrchestrator
     public async Task RunPublicationCleanupAsync(ScrapePassContext ctx, ScrapePhase resolvedPhases, CancellationToken ct)
     {
         var cleanupItems = 0;
-        var refreshSoloCurrentProjection = ShouldRefreshSoloCurrentProjectionDuringCleanup(resolvedPhases);
+        var refreshSoloCurrentProjection = ShouldRefreshSoloCurrentProjectionDuringCleanup(ctx, resolvedPhases);
         var precomputeApiResponses = ShouldPrecomputeDuringPublicationCleanup(resolvedPhases);
 
         if (refreshSoloCurrentProjection)
@@ -664,10 +664,28 @@ public sealed class PostScrapeOrchestrator
 
     private static int PositiveOrDefault(int value, int fallback) => value > 0 ? value : fallback;
 
-    private bool ShouldRefreshSoloCurrentProjectionDuringCleanup(ScrapePhase resolvedPhases) =>
-        _soloCurrentProjectionBuilder is not null &&
-        _options.Value.RefreshSoloProjectionDuringCleanup &&
-        resolvedPhases.HasFlag(ScrapePhase.SoloFinalize);
+    private bool ShouldRefreshSoloCurrentProjectionDuringCleanup(ScrapePassContext ctx, ScrapePhase resolvedPhases)
+    {
+        if (_soloCurrentProjectionBuilder is null ||
+            !_options.Value.RefreshSoloProjectionDuringCleanup ||
+            !resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
+        {
+            return false;
+        }
+
+        var minimumCoverage = _improvementNotificationOptions.Value.MinimumSoloLeaderboardCoverageRatio;
+        if (HasSufficientSoloScrapeCoverage(ctx, resolvedPhases, minimumCoverage, out var actualSoloLeaderboards, out var expectedSoloLeaderboards, out var coverage))
+            return true;
+
+        _log.LogWarning(
+            "Cleanup solo current projection refresh skipped because solo scrape coverage was below threshold: {Actual:N0}/{Expected:N0} leaderboards with data ({Coverage:P1}) below required {Required:P1}. Preserving previous current projection.",
+            actualSoloLeaderboards,
+            expectedSoloLeaderboards,
+            coverage,
+            minimumCoverage);
+
+        return false;
+    }
 
     private static bool ShouldPrecomputeDuringPublicationCleanup(ScrapePhase resolvedPhases) =>
         resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute);
@@ -677,7 +695,7 @@ public sealed class PostScrapeOrchestrator
         _progress.SetSubOperation("cleanup_api_precompute");
         try
         {
-            await _precomputer.PrecomputeAllAsync(showLeaderboardEntryTotals, ct);
+            await _precomputer.PrecomputeAllAsync(showLeaderboardEntryTotals, ct, publishImmediately: false);
         }
         finally
         {
@@ -897,20 +915,8 @@ public sealed class PostScrapeOrchestrator
         ScrapePhase resolvedPhases,
         ImprovementNotificationOptions options)
     {
-        if (!resolvedPhases.HasFlag(ScrapePhase.SoloScrape))
-            return true;
-
         var minimumCoverage = options.MinimumSoloLeaderboardCoverageRatio;
-        if (minimumCoverage <= 0)
-            return true;
-
-        var expectedSoloLeaderboards = BuildExpectedSnapshotPairs(ctx).Count;
-        if (expectedSoloLeaderboards == 0)
-            return true;
-
-        var actualSoloLeaderboards = ctx.Aggregates.SoloLeaderboardsWithData;
-        var coverage = actualSoloLeaderboards / (double)expectedSoloLeaderboards;
-        if (coverage >= minimumCoverage)
+        if (HasSufficientSoloScrapeCoverage(ctx, resolvedPhases, minimumCoverage, out var actualSoloLeaderboards, out var expectedSoloLeaderboards, out var coverage))
             return true;
 
         _log.LogWarning(
@@ -920,6 +926,33 @@ public sealed class PostScrapeOrchestrator
             coverage,
             minimumCoverage);
         return false;
+    }
+
+    private static bool HasSufficientSoloScrapeCoverage(
+        ScrapePassContext ctx,
+        ScrapePhase resolvedPhases,
+        double minimumCoverage,
+        out int actualSoloLeaderboards,
+        out int expectedSoloLeaderboards,
+        out double coverage)
+    {
+        actualSoloLeaderboards = 0;
+        expectedSoloLeaderboards = 0;
+        coverage = 1d;
+
+        if (!resolvedPhases.HasFlag(ScrapePhase.SoloScrape))
+            return true;
+
+        if (minimumCoverage <= 0)
+            return true;
+
+        expectedSoloLeaderboards = BuildExpectedSnapshotPairs(ctx).Count;
+        if (expectedSoloLeaderboards == 0)
+            return true;
+
+        actualSoloLeaderboards = ctx.Aggregates.SoloLeaderboardsWithData;
+        coverage = actualSoloLeaderboards / (double)expectedSoloLeaderboards;
+        return coverage >= minimumCoverage;
     }
 
     private async Task RunBandMaintenanceAsync(ScrapePassContext ctx, BandExtractionResult extractionResult, CancellationToken ct)
@@ -960,6 +993,8 @@ public sealed class PostScrapeOrchestrator
         IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
         CancellationToken ct)
     {
+        const int FallbackChunkSize = 128;
+
         if (scopes.Count == 0)
             return;
 
@@ -972,7 +1007,8 @@ public sealed class PostScrapeOrchestrator
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogWarning(ex, "Band current projection maintenance skipped after a batch-level failure.");
+            _log.LogWarning(ex, "Band current projection maintenance hit a batch-level failure. Retrying in chunks of {ChunkSize:N0} scope(s).", FallbackChunkSize);
+            await RefreshBandCurrentProjectionScopesInChunksAsync(scopes, FallbackChunkSize, ct);
             return;
         }
 
@@ -984,6 +1020,63 @@ public sealed class PostScrapeOrchestrator
             result.DeletedRows,
             result.InsertedRows,
             result.FailedScopes);
+    }
+
+    private async Task RefreshBandCurrentProjectionScopesInChunksAsync(
+        IReadOnlyCollection<BandCurrentProjectionScopeKey> scopes,
+        int chunkSize,
+        CancellationToken ct)
+    {
+        var scopeChunks = scopes
+            .GroupBy(static scope => scope.BandType, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(group => group
+                .OrderBy(static scope => scope.RankingScope, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static scope => scope.ScopeComboId, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static scope => scope.SongId, StringComparer.OrdinalIgnoreCase)
+                .Chunk(chunkSize))
+            .ToArray();
+
+        var successfulScopes = 0;
+        var failedScopes = 0;
+        long insertedRows = 0;
+        long deletedRows = 0;
+        long candidateRowsDeleted = 0;
+        var elapsedMs = 0d;
+
+        foreach (var chunk in scopeChunks)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var result = await _bandCurrentProjectionBuilder!.RefreshScopesAsync(chunk, ct: ct);
+                successfulScopes += result.SuccessfulScopes;
+                failedScopes += result.FailedScopes;
+                insertedRows += result.InsertedRows;
+                deletedRows += result.DeletedRows;
+                candidateRowsDeleted += result.CandidateRowsDeleted;
+                elapsedMs += result.TotalElapsedMs;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                failedScopes += chunk.Length;
+                _log.LogWarning(
+                    ex,
+                    "Band current projection fallback chunk failed for {BandType} ({ScopeCount:N0} scope(s)).",
+                    chunk[0].BandType,
+                    chunk.Length);
+            }
+        }
+
+        _log.LogInformation(
+            "Band current projection fallback maintenance complete in {ElapsedMs:N3} ms: {SuccessfulScopes:N0}/{ScopeCount:N0} scope(s), {DeletedRows:N0}->{InsertedRows:N0} rows, {CandidateRowsDeleted:N0} candidate row(s) deleted, {FailedScopes:N0} failed.",
+            elapsedMs,
+            successfulScopes,
+            scopes.Count,
+            deletedRows,
+            insertedRows,
+            candidateRowsDeleted,
+            failedScopes);
     }
 
     private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> MergeImpactedTeams(

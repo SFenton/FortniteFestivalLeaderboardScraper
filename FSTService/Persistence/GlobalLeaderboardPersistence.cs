@@ -1468,14 +1468,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
-    /// Delete all staging data and deep-scrape jobs for scrape IDs older than the given one.
+    /// Delete all staging data, deep-scrape jobs, and abandoned incomplete scrape logs for scrape IDs older than the given one.
     /// Call at scrape start and on startup.
     /// </summary>
     public int CleanupAbandonedStaging(long currentScrapeId)
     {
         var deleted = _metaDb.CleanupAbandonedStaging(currentScrapeId);
         if (deleted > 0)
-            _log.LogInformation("Cleaned up {Deleted} abandoned staging rows from incomplete scrape runs.", deleted);
+            _log.LogInformation("Cleaned up {Deleted} abandoned staging/log rows from incomplete scrape runs.", deleted);
         return deleted;
     }
 
@@ -1554,24 +1554,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
-    /// Get a player's scores across all instruments using finalized snapshot plus overlay current state.
+    /// Get a player's scores across all instruments from the finalized current leaderboard projection.
     /// </summary>
     public List<PlayerScoreDto> GetCurrentStatePlayerProfile(string accountId, string? songId = null, HashSet<string>? instruments = null)
     {
-        var dbs = instruments is null
-            ? _instrumentDbs.Values.ToArray()
-            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).Select(kv => kv.Value).ToArray();
-
-        var results = new List<PlayerScoreDto>[dbs.Length];
-        Parallel.For(0, dbs.Length, i =>
-        {
-            results[i] = dbs[i].GetCurrentStatePlayerScores(accountId, songId);
-        });
-
-        var allScores = new List<PlayerScoreDto>();
-        foreach (var result in results)
-            allScores.AddRange(result);
-        return allScores;
+        var profiles = GetCurrentStatePlayerProfiles([accountId], songId, instruments);
+        return profiles.TryGetValue(accountId, out var scores) ? scores : [];
     }
 
     /// <summary>
@@ -1636,6 +1624,129 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Get song IDs that satisfy all requested member solo-score presence conditions.
+    /// </summary>
+    public List<string> GetCurrentStateSongIdsForMemberScoreFilter(
+        IReadOnlyCollection<string> hasScoreAccountIds,
+        IReadOnlyCollection<string> missingScoreAccountIds,
+        IReadOnlyCollection<string> instruments,
+        double? leeway = null)
+    {
+        var normalizedHasAccountIds = hasScoreAccountIds
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var normalizedMissingAccountIds = missingScoreAccountIds
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var normalizedInstruments = instruments
+            .Where(IsValidInstrument)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (normalizedInstruments.Length == 0 || (normalizedHasAccountIds.Length == 0 && normalizedMissingAccountIds.Length == 0))
+            return [];
+
+        var allAccountIds = normalizedHasAccountIds
+            .Concat(normalizedMissingAccountIds)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        using var conn = _pgDataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH eligible_songs AS (
+                SELECT song_id
+                FROM songs
+                WHERE {BuildChartedInstrumentPredicate(normalizedInstruments)}
+            ), valid_scores AS (
+                SELECT DISTINCT cle.account_id, cle.song_id
+                FROM current_leaderboard_entries cle
+                LEFT JOIN song_stats ss
+                  ON ss.song_id = cle.song_id
+                 AND ss.instrument = cle.instrument
+                WHERE cle.account_id = ANY(@allAccountIds)
+                  AND cle.instrument = ANY(@instruments)
+                  AND (
+                        @leeway IS NULL
+                        OR ss.max_score IS NULL
+                        OR ss.max_score <= 0
+                        OR cle.score <= CAST(ss.max_score * (1.0 + @leeway / 100.0) AS INTEGER)
+                        OR EXISTS (
+                            SELECT 1
+                            FROM score_history sh
+                            WHERE sh.account_id = cle.account_id
+                              AND sh.song_id = cle.song_id
+                              AND sh.instrument = cle.instrument
+                              AND sh.new_score <= CAST(ss.max_score * (1.0 + @leeway / 100.0) AS INTEGER)
+                        )
+                  )
+            )
+            SELECT es.song_id
+            FROM eligible_songs es
+            WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM unnest(@hasAccountIds) AS required(account_id)
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM valid_scores vs
+                        WHERE vs.account_id = required.account_id
+                          AND vs.song_id = es.song_id
+                    )
+                )
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM unnest(@missingAccountIds) AS required(account_id)
+                    WHERE EXISTS (
+                        SELECT 1
+                        FROM valid_scores vs
+                        WHERE vs.account_id = required.account_id
+                          AND vs.song_id = es.song_id
+                    )
+                )
+            ORDER BY es.song_id
+            """;
+        cmd.CommandTimeout = 0;
+        cmd.Parameters.Add("allAccountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = allAccountIds;
+        cmd.Parameters.Add("hasAccountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = normalizedHasAccountIds;
+        cmd.Parameters.Add("missingAccountIds", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = normalizedMissingAccountIds;
+        cmd.Parameters.Add("instruments", NpgsqlDbType.Array | NpgsqlDbType.Text).Value = normalizedInstruments;
+        cmd.Parameters.Add("leeway", NpgsqlDbType.Double).Value = leeway.HasValue ? leeway.Value : DBNull.Value;
+
+        var songIds = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            songIds.Add(reader.GetString(0));
+        return songIds;
+    }
+
+    private static string BuildChartedInstrumentPredicate(IReadOnlyCollection<string> instruments)
+    {
+        var predicates = new List<string>();
+        foreach (var instrument in instruments)
+        {
+            var column = instrument switch
+            {
+                "Solo_Guitar" => "lead_diff",
+                "Solo_Bass" => "bass_diff",
+                "Solo_Drums" => "drums_diff",
+                "Solo_Vocals" => "vocals_diff",
+                "Solo_PeripheralGuitar" => "plastic_guitar_diff",
+                "Solo_PeripheralBass" => "plastic_bass_diff",
+                "Solo_PeripheralVocals" => "pro_vocals_diff",
+                "Solo_PeripheralCymbals" => "plastic_drums_diff",
+                "Solo_PeripheralDrums" => "plastic_drums_diff",
+                _ => null,
+            };
+            if (column is not null)
+                predicates.Add($"({column} IS NOT NULL AND {column} >= 0 AND {column} <> 99)");
+        }
+
+        return predicates.Count > 0 ? string.Join(" OR ", predicates.Distinct(StringComparer.Ordinal)) : "FALSE";
     }
 
     /// <summary>

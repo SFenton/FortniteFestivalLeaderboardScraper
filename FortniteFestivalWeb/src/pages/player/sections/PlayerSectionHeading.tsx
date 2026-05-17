@@ -7,6 +7,7 @@ import {
   frostedCard, flexRow, flexColumn,
 } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 
 /** Reusable section heading for the player page (title + optional description).
  *  When `instrument` is provided, renders as a compact row with an instrument icon. */
@@ -36,6 +37,7 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
   actionTestId?: string;
 }) {
   const s = useStyles(compact);
+  const actionLinkPress = useNavLinkPress<HTMLAnchorElement>({ to: actionTo ?? '', disabled: !actionTo });
 
   if (instruments?.length) {
     return (
@@ -71,7 +73,14 @@ const PlayerSectionHeading = memo(function PlayerSectionHeading({
             <h2 style={s.sectionTitle}>{title}</h2>
             {description && <p style={s.sectionDesc}>{description}</p>}
           </div>
-          <Link to={actionTo} data-testid={actionTestId} aria-label={actionLabel} style={s.sectionActionLink}>
+          <Link
+            to={actionTo}
+            data-testid={actionTestId}
+            aria-label={actionLabel}
+            style={{ ...s.sectionActionLink, ...(actionLinkPress.isPressed ? s.sectionActionLinkPressed : undefined) }}
+            data-pressed={actionLinkPress.isPressed ? 'true' : undefined}
+            {...actionLinkPress.linkPressHandlers}
+          >
             <span>{actionLabel}</span>
             <IoChevronForward aria-hidden="true" size={16} style={s.sectionActionIcon} />
           </Link>
@@ -155,6 +164,9 @@ function useStyles(compact?: boolean) {
       fontSize: Font.sm,
       fontWeight: Weight.semibold,
       textDecoration: 'none',
+    } as CSSProperties,
+    sectionActionLinkPressed: {
+      backgroundColor: 'rgba(255, 255, 255, 0.06)',
     } as CSSProperties,
     sectionActionIcon: {
       flexShrink: 0,

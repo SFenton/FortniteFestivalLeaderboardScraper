@@ -2,12 +2,14 @@
 import { useMemo, type CSSProperties } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople, IoTrophy } from 'react-icons/io5';
+import { IoCompass, IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import type { SelectedBandProfile, SelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { useSettings } from '../../../contexts/SettingsContext';
 import MarqueeText from '../../common/MarqueeText';
+import PressableButton from '../../common/PressableButton';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
+import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import { Routes } from '../../../routes';
 import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import {
@@ -27,9 +29,11 @@ interface PinnedSidebarProps {
 export default function PinnedSidebar({ player, selectedProfile, onDeselect, onSelectPlayer }: PinnedSidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const { appManual } = useFeatureFlags();
   const scrollRef = useScrollContainer();
   const s = useStyles();
   const selectedBand = selectedProfile?.type === 'band' ? selectedProfile : null;
+  const showSuggestions = !!player || !!selectedBand;
   const statisticsPath = getStatisticsNavigationPath(player, selectedProfile ?? null);
 
   const linkClass = (isActive: boolean) => isActive ? s.linkActive : s.link;
@@ -41,7 +45,7 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
           <span style={s.linkIcon}><IoMusicalNotes size={20} /></span>
           {t('nav.songs')}
         </NavLink>
-        {player && (
+        {showSuggestions && (
           <NavLink to="/suggestions" style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoSparkles size={20} /></span>
             {t('nav.suggestions')}
@@ -82,15 +86,21 @@ export default function PinnedSidebar({ player, selectedProfile, onDeselect, onS
               <span style={s.linkIcon}><IoPerson size={20} /></span>
               <MarqueeText as="p" text={player.displayName} style={s.playerName} />
             </Link>
-            <button style={s.deselectBtn} onClick={onDeselect}>
+            <PressableButton style={s.deselectBtn} onPress={onDeselect}>
               {t('common.deselect')}
-            </button>
+            </PressableButton>
           </div>
         ) : (
-          <button style={s.selectPlayerBtn} onClick={onSelectPlayer}>
+          <PressableButton style={s.selectPlayerBtn} onPress={onSelectPlayer}>
             <span style={s.linkIcon}><IoPerson size={20} /></span>
             {t('common.selectProfile')}
-          </button>
+          </PressableButton>
+        )}
+        {appManual && (
+          <NavLink to={Routes.manual} style={({ isActive }) => linkClass(isActive)}>
+            <span style={s.linkIcon}><IoCompass size={20} /></span>
+            {t('nav.manual')}
+          </NavLink>
         )}
         <NavLink to="/settings" style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoSettings size={20} /></span>
@@ -105,7 +115,7 @@ function SelectedBandPanel({ band, onDeselect, styles: s }: { band: SelectedBand
   const { t } = useTranslation();
   return (
     <div style={s.bandProfilePanel} data-testid="pinned-sidebar-band-profile">
-      <Link to={Routes.band(band.bandId, { names: band.displayName })} style={s.bandProfileLink}>
+      <Link to={Routes.statistics} style={s.bandProfileLink}>
         <span style={s.linkIcon}><IoPeople size={20} /></span>
         <MarqueeText as="p" text={band.displayName} style={s.bandProfileName} />
       </Link>
@@ -118,9 +128,9 @@ function SelectedBandPanel({ band, onDeselect, styles: s }: { band: SelectedBand
           </Link>
         ))}
       </div>
-      <button style={s.bandDeselectBtn} onClick={onDeselect}>
+      <PressableButton style={s.bandDeselectBtn} onPress={onDeselect}>
         {t('band.deselectProfile')}
-      </button>
+      </PressableButton>
     </div>
   );
 }

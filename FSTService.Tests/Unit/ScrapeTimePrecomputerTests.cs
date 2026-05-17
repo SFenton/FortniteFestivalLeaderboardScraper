@@ -120,6 +120,19 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         }).ToList());
     }
 
+    private void PublishBandCurrentProjection(string songId, string bandType, string rankingScope = "overall", string scopeComboId = "")
+    {
+        var builder = new BandCurrentProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandCurrentProjectionBuilder>>());
+
+        builder.RebuildScopeAsync(
+                new BandCurrentProjectionScopeKey(songId, bandType, rankingScope, scopeComboId),
+                new BandCurrentProjectionRebuildOptions())
+            .GetAwaiter()
+            .GetResult();
+    }
+
     private void InsertScoreHistory(string accountId, string songId, string instrument, int score)
     {
         _metaDb.InsertScoreChange(songId, instrument, accountId,
@@ -273,6 +286,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         SeedBandSong("band-song-1", "Band_Duets",
             (["band-p1", "band-p2"], "0:1", 1_200),
             (["band-p3", "band-p4"], "2:3", 1_100));
+        PublishBandCurrentProjection("band-song-1", "Band_Duets");
 
         await _sut.PrecomputeAllAsync(CancellationToken.None);
 
@@ -513,6 +527,23 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         _metaDb.ClearCachedResponses();
         var response = _sut.TryGet("nonexistent:key");
         Assert.Null(response);
+    }
+
+    [Fact]
+    public void InvalidateAll_PreservesPublishedPostgreSQLResponses()
+    {
+        const string cacheKey = "leaderboard:all:song-1:10:";
+        byte[] json = JsonSerializer.SerializeToUtf8Bytes(new { songId = "song-1" });
+        const string etag = "\"published\"";
+
+        _metaDb.BulkSetCachedResponses([(cacheKey, json, etag)]);
+
+        _sut.InvalidateAll();
+
+        var response = _sut.TryGet(cacheKey);
+        Assert.NotNull(response);
+        Assert.Equal(etag, response.Value.ETag);
+        Assert.Equal(json, response.Value.Json);
     }
 
     // ── Helpers ──────────────────────────────────────────────────

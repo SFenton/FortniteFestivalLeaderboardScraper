@@ -76,7 +76,7 @@ export default function PlayerBandsPage() {
   openFilterRef.current = openFilter;
   useEffect(() => {
     fabSearch.registerBandActions({ openFilter: () => openFilterRef.current() });
-    return () => fabSearch.registerBandActions({ openFilter: () => {} });
+    return () => fabSearch.registerBandActions(null);
   }, [fabSearch]);
 
   const bandsQuery = useQuery({

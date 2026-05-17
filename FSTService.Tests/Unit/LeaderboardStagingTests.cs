@@ -200,6 +200,19 @@ public class LeaderboardStagingTests : IDisposable
     }
 
     [Fact]
+    public void CleanupAbandonedStaging_DeletesIncompleteOldScrapeLogRows()
+    {
+        var oldScrapeId = _metaFixture.Db.StartScrapeRun();
+        var newScrapeId = _metaFixture.Db.StartScrapeRun();
+
+        var deleted = _metaFixture.Db.CleanupAbandonedStaging(newScrapeId);
+
+        Assert.True(deleted > 0);
+        Assert.Equal(0, CountScrapeLogRows(oldScrapeId));
+        Assert.Equal(1, CountScrapeLogRows(newScrapeId));
+    }
+
+    [Fact]
     public void CleanupAbandonedStaging_DeletesLegacyStagingRows()
     {
         var oldScrapeId = _metaFixture.Db.StartScrapeRun();
@@ -506,5 +519,14 @@ public class LeaderboardStagingTests : IDisposable
             cmd.Parameters.AddWithValue("stagedAt", DateTime.UtcNow);
             cmd.ExecuteNonQuery();
         }
+    }
+
+    private int CountScrapeLogRows(long scrapeId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM scrape_log WHERE id = @id";
+        cmd.Parameters.AddWithValue("id", (int)scrapeId);
+        return Convert.ToInt32(cmd.ExecuteScalar());
     }
 }

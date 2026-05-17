@@ -23,8 +23,57 @@ describe('StatBox', () => {
     expect(container.querySelector('svg')).toBeDefined();
 
     // Click should trigger the handler
-    fireEvent.click(container.firstElementChild!);
+    fireEvent.click(screen.getByRole('button', { name: /Songs/i }));
     expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it('activates from touch pointerup and suppresses the follow-up click', () => {
+    const onClick = vi.fn();
+    render(<StatBox label="Songs" value="10" onClick={onClick} />);
+    const card = screen.getByRole('button', { name: /Songs/i });
+
+    fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+    fireEvent.pointerUp(card, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(card);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels touch activation when the gesture turns into a scroll', () => {
+    const onClick = vi.fn();
+    render(<StatBox label="Songs" value="10" onClick={onClick} />);
+    const card = screen.getByRole('button', { name: /Songs/i });
+
+    fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+    expect(card.getAttribute('data-pressed')).toBe('true');
+    fireEvent.pointerMove(card, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 28 });
+    expect(card.getAttribute('data-pressed')).toBeNull();
+    fireEvent.pointerUp(card, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 28 });
+
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('supports keyboard activation for clickable stat cards', () => {
+    const onClick = vi.fn();
+    render(<StatBox label="Songs" value="10" onClick={onClick} />);
+    const card = screen.getByRole('button', { name: /Songs/i });
+
+    fireEvent.keyDown(card, { key: 'Enter' });
+    fireEvent.keyDown(card, { key: ' ' });
+
+    expect(onClick).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not make static stat cards focusable or pressable', () => {
+    const { container } = render(<StatBox label="Score" value="1000" />);
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(container.firstElementChild?.getAttribute('tabindex')).toBeNull();
+  });
+
+  it('uses a manipulation touch action for clickable stat cards', () => {
+    render(<StatBox label="Songs" value="10" onClick={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /Songs/i }).style.touchAction).toBe('manipulation');
   });
 
   it('does not render chevron when onClick is not provided', () => {

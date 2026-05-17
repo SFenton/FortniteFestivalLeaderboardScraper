@@ -8,6 +8,7 @@ import { useSongLookups } from '../../hooks/data/useSongLookups';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
+import PressableButton from '../../components/common/PressableButton';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
@@ -16,13 +17,15 @@ import type { RivalSongComparison } from '@festival/core/api/serverTypes';
 import { STAGGER_INTERVAL, Gap, Layout, flexColumn, IconSize } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import { categorizeRivalSongs } from './helpers/rivalCategories';
-import { deriveComboFromSettings, getEnabledInstruments } from './helpers/comboUtils';
 import RivalSongRow from './components/RivalSongRow';
+import CardPressable from '../../components/common/CardPressable';
 import { Routes } from '../../routes';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import fx from '../../styles/effects.module.css';
 import Page from '../Page';
 import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
+import { resolveRivalCombo, resolveRivalCombos, rivalComboStateForNavigation, type RivalRouteState } from './helpers/rivalRouteState';
+import { fetchCombinedRivalDetail } from './helpers/rivalDetailFetch';
 
 let _cachedDetailSongs: RivalSongComparison[] = [];
 let _cachedDetailRivalName: string | null = null;
@@ -41,14 +44,12 @@ export default function RivalDetailPage() {
 
   /* v8 ignore start -- state derivation with null-coalescing */
   // Get combo from navigation state (passed from RivalsPage) or derive from settings
-  const navState = location.state as Record<string, unknown> | null;
-  const comboFromState = navState?.combo as string | undefined;
+  const navState = location.state as RivalRouteState | null;
   const rivalNameFromState = navState?.rivalName as string | undefined;
   const rivalNameFromUrl = searchParams.get('name') ?? undefined;
-  const derivedCombo = useMemo(() => deriveComboFromSettings(settings), [settings]);
-  // Fallback: if no combo passed, try the first enabled instrument
-  const fallbackInstrument = useMemo(() => getEnabledInstruments(settings)[0], [settings]);
-  const combo = comboFromState ?? derivedCombo ?? fallbackInstrument;
+  const combos = useMemo(() => resolveRivalCombos(navState, settings), [navState, settings]);
+  const combo = combos[0] ?? resolveRivalCombo(navState, settings);
+  const comboKey = combos.join(',');
 
   // Leaderboard rival source: comes from navigation state set by LeaderboardRivalsTab
   const source = (navState?.source as 'song' | 'leaderboard') ?? 'song';
@@ -59,7 +60,7 @@ export default function RivalDetailPage() {
   /* v8 ignore start -- cache-based state initialization */
   const cacheKey = source === 'leaderboard'
     ? `lb:${accountId}:${rivalId}:${lbInstrument}:${lbRankBy}`
-    : `${accountId}:${rivalId}:${combo}`;
+    : `${accountId}:${rivalId}:${comboKey}`;
   const hasCachedData = cacheKey === _cachedDetailKey && _cachedDetailSongs.length > 0;
 
   const [songs_, setSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedDetailSongs : []);
@@ -77,7 +78,7 @@ export default function RivalDetailPage() {
 
     const fetchPromise = source === 'leaderboard' && lbInstrument
       ? api.getLeaderboardRivalDetail(lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0], accountId, rivalId, lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3])
-      : api.getRivalDetail(accountId, combo, rivalId);
+      : fetchCombinedRivalDetail(accountId, rivalId, combos);
 
     fetchPromise.then(res => {
       if (cancelled) return;
@@ -101,7 +102,7 @@ export default function RivalDetailPage() {
     });
 
     return () => { cancelled = true; };
-  }, [accountId, rivalId, combo, source, lbInstrument, lbRankBy]);
+  }, [accountId, rivalId, comboKey, source, lbInstrument, lbRankBy]);
   /* v8 ignore stop */
 
   const categories = useMemo(() => categorizeRivalSongs(songs_), [songs_]);
@@ -130,12 +131,12 @@ export default function RivalDetailPage() {
       loadPhase={phase}
       containerStyle={styles.container}
       before={<PageHeader title={`${playerName} vs. ${displayName}`} actions={!isMobile && phase === LoadPhase.ContentIn ? (
-        <button style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onClick={() => navigate(Routes.player(rivalId!))}>
+        <PressableButton style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onPress={() => navigate(Routes.player(rivalId!))}>
           <IoPerson size={IconSize.action} />
           {(rivalName || searchParams.get('name'))
             ? t('common.viewNameProfile', { name: rivalName ?? searchParams.get('name') })
             : t('common.viewProfile')}
-        </button>
+        </PressableButton>
       ) : undefined} />}
     >
       {phase === LoadPhase.ContentIn && (
@@ -150,17 +151,17 @@ export default function RivalDetailPage() {
                   const baseDelay = runningDelay;
                   runningDelay += (1 + preview.length) * staggerInterval;
                   const navigateToCategory = () =>
-                    navigate(Routes.rivalry(rivalId, cat.key, rivalName ?? undefined), { state: { combo, source, instrument: lbInstrument, rankBy: lbRankBy } });
+                    navigate(Routes.rivalry(rivalId, cat.key, rivalName ?? undefined), {
+                      state: { ...rivalComboStateForNavigation(navState, combo), source, instrument: lbInstrument, rankBy: lbRankBy },
+                    });
                   return (
                     <div key={cat.key} style={styles.section}>
-                      <div
+                      <CardPressable
                         className={fx.sectionHeaderClickable}
                         style={{ ...styles.sectionHeaderClickable, ...stagger(baseDelay) }}
+                        pressedStyle={styles.pressablePressed}
                         onAnimationEnd={clearAnim}
-                        onClick={navigateToCategory}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={e => { if (e.key === 'Enter') navigateToCategory(); }}
+                        onPress={navigateToCategory}
                       >
                         <div style={styles.cardHeaderText}>
                           <span style={styles.cardTitle}>
@@ -172,7 +173,7 @@ export default function RivalDetailPage() {
                         </div>
                         <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
                         <IoChevronForward size={20} style={styles.chevron} />
-                      </div>
+                      </CardPressable>
                       <div style={styles.songList}>
                         {preview.map((song, songIdx) => (
                           <RivalSongRow

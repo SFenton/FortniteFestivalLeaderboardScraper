@@ -10,8 +10,8 @@ import { useTranslation } from 'react-i18next';
 import { IoFlash, IoBagHandle } from 'react-icons/io5';
 import {
   Colors, Font, Gap, Radius, Layout, Weight, ObjectFit, Size, AlbumArtSize,
-  IconSize, InstrumentSize, Display, Align, Justify, CssValue, Cursor, Position, Isolation,
-  flexRow, flexCenter, purpleGlass,
+  IconSize, Display, Align, Justify, CssValue, Cursor, Position, Isolation,
+  flexRow, flexCenter, opaqueGlass, purpleGlass,
 } from '@festival/theme';
 import type { CSSProperties } from 'react';
 import { type ServerSong as Song, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
@@ -19,8 +19,10 @@ import { InstrumentIcon } from '../../display/InstrumentIcons';
 import BackgroundImage from '../../page/BackgroundImage';
 import PageHeader from '../../common/PageHeader';
 import MarqueeText from '../../common/MarqueeText';
+import PressableButton from '../../common/PressableButton';
 import { useMarqueeSync } from '../../../hooks/ui/useMarqueeSync';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { useCardPressAction } from '../../../hooks/ui/usePressAction';
 import { formatDuration } from '../../../utils/formatters';
 import anim from '../../../styles/animations.module.css';
 import cls from './SongInfoHeader.module.css';
@@ -83,6 +85,7 @@ export default function SongInfoHeader({
   const showShop = !!shopUrl;
   const showSubtitle2 = !!subtitle2;
   const { reporters, syncDistance } = useMarqueeSync(showSubtitle2 ? 3 : 2);
+  const titlePress = useCardPressAction<HTMLDivElement>({ onPress: () => onTitleClick?.(), disabled: !onTitleClick });
 
   return (
     <>
@@ -99,9 +102,9 @@ export default function SongInfoHeader({
         } as React.CSSProperties}
         title={
           <div
-            style={onTitleClick ? { ...s.headerLeft, cursor: Cursor.pointer } : s.headerLeft}
-            onClick={onTitleClick}
-            {...(onTitleClick ? { role: 'link', tabIndex: 0 } : undefined)}
+            style={onTitleClick ? { ...s.headerLeft, cursor: Cursor.pointer, touchAction: 'manipulation' } : s.headerLeft}
+            data-pressed={titlePress.isPressed ? 'true' : undefined}
+            {...(onTitleClick ? { role: 'link', tabIndex: 0, ...titlePress.pressHandlers } : undefined)}
           >
             {song?.albumArt ? (
               <img src={song.albumArt} alt="" className={s.artClassName} style={s.headerArt} />
@@ -126,15 +129,15 @@ export default function SongInfoHeader({
             )}
             {/* v8 ignore start — action buttons */}
             {!isMobile && onOpenPaths && (
-              <button onClick={onOpenPaths} style={s.viewPathsButton}>
+              <PressableButton onPress={onOpenPaths} style={s.viewPathsButton}>
                 <IoFlash size={IconSize.action} />
                 {t('common.viewPaths')}
-              </button>
+              </PressableButton>
             )}
             {isMobile && onOpenPaths && (
-              <button onClick={onOpenPaths} style={s.viewPathsCircle} aria-label={t('common.viewPaths')}>
+              <PressableButton onPress={onOpenPaths} style={s.viewPathsCircle} aria-label={t('common.viewPaths')}>
                 <IoFlash size={IconSize.action} />
-              </button>
+              </PressableButton>
             )}
             {!isMobile && showShop && (
               <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? (shopLeavingTomorrow ? anim.shopBreatheRed : anim.shopBreathe) : undefined}>
@@ -182,7 +185,6 @@ function useStyles(collapsed: boolean, animate?: boolean) {
     const shopButton: CSSProperties = { ...buttonBase, backgroundColor: Colors.accentBlue };
     const pulseBase: CSSProperties = {
       position: Position.relative,
-      backgroundColor: Colors.transparent,
       isolation: Isolation.isolate,
     };
     return {
@@ -210,10 +212,10 @@ function useStyles(collapsed: boolean, animate?: boolean) {
         alignSelf: Align.center,
       } as CSSProperties,
       shopButton,
-      shopButtonPulse: { ...shopButton, ...pulseBase } as CSSProperties,
+      shopButtonPulse: { ...opaqueGlass, ...buttonBase, ...pulseBase } as CSSProperties,
       shopCircle: {
-        width: InstrumentSize.lg,
-        height: InstrumentSize.lg,
+        width: Layout.pillButtonHeight,
+        height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
         backgroundColor: Colors.accentBlue,
         ...flexCenter,
@@ -223,14 +225,15 @@ function useStyles(collapsed: boolean, animate?: boolean) {
         alignSelf: Align.center,
       } as CSSProperties,
       shopCirclePulse: {
-        width: InstrumentSize.lg,
-        height: InstrumentSize.lg,
+        width: Layout.pillButtonHeight,
+        height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
         ...flexCenter,
         color: Colors.textPrimary,
         textDecoration: CssValue.none,
         flexShrink: 0,
         alignSelf: Align.center,
+        ...opaqueGlass,
         ...pulseBase,
       } as CSSProperties,
     };

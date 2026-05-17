@@ -44,10 +44,42 @@ describe('RivalRow', () => {
     expect(onClick).toHaveBeenCalledOnce();
   });
 
+  it('activates from touch pointerup without double firing on click', () => {
+    const onClick = vi.fn();
+    render(<RivalRow rival={makeRival()} direction="below" onClick={onClick} />);
+    const row = screen.getByRole('button');
+
+    fireEvent.pointerDown(row, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+    fireEvent.pointerUp(row, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(row);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not activate when a touch gesture scrolls', () => {
+    const onClick = vi.fn();
+    render(<RivalRow rival={makeRival()} direction="below" onClick={onClick} />);
+    const row = screen.getByRole('button');
+
+    fireEvent.pointerDown(row, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20 });
+    fireEvent.pointerMove(row, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 28 });
+    fireEvent.pointerUp(row, { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 28 });
+
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
   it('calls onClick on Enter key', () => {
     const onClick = vi.fn();
     render(<RivalRow rival={makeRival()} direction="above" onClick={onClick} />);
     fireEvent.keyDown(screen.getByRole('button'), { key: 'Enter' });
+    expect(onClick).toHaveBeenCalledOnce();
+  });
+
+  it('calls onClick on Space key', () => {
+    const onClick = vi.fn();
+    render(<RivalRow rival={makeRival()} direction="above" onClick={onClick} />);
+    fireEvent.keyDown(screen.getByRole('button'), { key: ' ' });
     expect(onClick).toHaveBeenCalledOnce();
   });
 

@@ -28,7 +28,7 @@ public sealed class GluetunContainerRecycler : IDisposable
     /// <summary>
     /// Recreates a gluetun container targeting a specific VPN server.
     /// Inspects the existing container's config, stops+removes it, then creates
-    /// and starts a new container with the same image, env, caps, devices, network,
+    /// and starts a new container with the same image, env, labels, caps, devices, network,
     /// and restart policy — but with <c>SERVER_CITIES</c> and <c>SERVER_NAMES</c>
     /// overridden to target the specified server.
     /// </summary>
@@ -50,36 +50,6 @@ public sealed class GluetunContainerRecycler : IDisposable
             {
                 _log.LogError("Container {Container} not found — cannot recycle", containerName);
                 return false;
-            }
-
-            var image = inspect.Config.Image;
-            var existingEnv = inspect.Config.Env ?? new List<string>();
-            var hostConfig = inspect.HostConfig;
-
-            // Build new env list: clone existing, override SERVER_CITIES + SERVER_NAMES
-            var newEnv = new List<string>(existingEnv.Count + 2);
-            foreach (var env in existingEnv)
-            {
-                if (env.StartsWith("SERVER_CITIES=") || env.StartsWith("SERVER_NAMES="))
-                    continue; // skip — we'll add our overrides
-                newEnv.Add(env);
-            }
-            newEnv.Add($"SERVER_CITIES={city}");
-            newEnv.Add($"SERVER_NAMES={serverName}");
-
-            // Determine the network to attach to (take the first one)
-            string? networkName = null;
-            EndpointSettings? networkEndpoint = null;
-            if (inspect.NetworkSettings?.Networks is { Count: > 0 } networks)
-            {
-                var first = networks.First();
-                networkName = first.Key;
-                // Preserve the network config but clear the dynamically-assigned fields
-                // so the Docker daemon assigns fresh values on the new container.
-                networkEndpoint = new EndpointSettings
-                {
-                    Aliases = first.Value.Aliases,
-                };
             }
 
             // Phase 2: Stop and remove the old container
@@ -106,31 +76,9 @@ public sealed class GluetunContainerRecycler : IDisposable
             }
 
             // Phase 3: Create and start the new container with same config + updated env
-            var createParams = new CreateContainerParameters
-            {
-                Image = image,
-                Name = containerName,
-                Env = newEnv,
-                // Preserve the healthcheck from the original container
-                Healthcheck = inspect.Config.Healthcheck,
-                HostConfig = new HostConfig
-                {
-                    CapAdd = hostConfig.CapAdd,
-                    Devices = hostConfig.Devices,
-                    RestartPolicy = hostConfig.RestartPolicy,
-                },
-                NetworkingConfig = networkName is not null
-                    ? new NetworkingConfig
-                    {
-                        EndpointsConfig = new Dictionary<string, EndpointSettings>
-                        {
-                            [networkName] = networkEndpoint!,
-                        },
-                    }
-                    : null,
-            };
+            var createParams = BuildCreateContainerParameters(inspect, containerName, city, serverName);
 
-            _log.LogDebug("Creating container {Container} (image: {Image})...", containerName, image);
+            _log.LogDebug("Creating container {Container} (image: {Image})...", containerName, createParams.Image);
             var createResponse = await _docker.Containers.CreateContainerAsync(createParams);
 
             _log.LogDebug("Starting container {Container} (id: {Id})...",
@@ -147,6 +95,90 @@ public sealed class GluetunContainerRecycler : IDisposable
             _log.LogError(ex, "Failed to recycle container {Container}: {Error}",
                 containerName, ex.Message);
             return false;
+        }
+    }
+
+    internal static CreateContainerParameters BuildCreateContainerParameters(
+        ContainerInspectResponse inspect,
+        string containerName,
+        string city,
+        string serverName)
+    {
+        var existingEnv = inspect.Config.Env ?? [];
+        var hostConfig = inspect.HostConfig;
+
+        var newEnv = new List<string>(existingEnv.Count + 2);
+        foreach (var env in existingEnv)
+        {
+            if (env.StartsWith("SERVER_CITIES=", StringComparison.Ordinal)
+                || env.StartsWith("SERVER_NAMES=", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            newEnv.Add(env);
+        }
+        newEnv.Add($"SERVER_CITIES={city}");
+        newEnv.Add($"SERVER_NAMES={serverName}");
+
+        string? networkName = null;
+        EndpointSettings? networkEndpoint = null;
+        if (inspect.NetworkSettings?.Networks is { Count: > 0 } networks)
+        {
+            var first = networks.First();
+            networkName = first.Key;
+            networkEndpoint = new EndpointSettings
+            {
+                Aliases = first.Value.Aliases,
+            };
+        }
+
+        var createParams = new CreateContainerParameters
+        {
+            Image = inspect.Config.Image,
+            Name = containerName,
+            Env = newEnv,
+            Labels = inspect.Config.Labels is null
+                ? null
+                : new Dictionary<string, string>(inspect.Config.Labels),
+            HostConfig = new HostConfig
+            {
+                CapAdd = hostConfig.CapAdd,
+                Devices = hostConfig.Devices,
+                RestartPolicy = hostConfig.RestartPolicy,
+            },
+            NetworkingConfig = networkName is not null
+                ? new NetworkingConfig
+                {
+                    EndpointsConfig = new Dictionary<string, EndpointSettings>
+                    {
+                        [networkName] = networkEndpoint!,
+                    },
+                }
+                : null,
+        };
+
+        TryCopyHealthcheck(inspect.Config, createParams);
+        return createParams;
+    }
+
+    private static void TryCopyHealthcheck(Config sourceConfig, CreateContainerParameters target)
+    {
+        try
+        {
+            var sourceProperty = sourceConfig.GetType().GetProperty("Healthcheck");
+            var targetProperty = target.GetType().GetProperty("Healthcheck");
+            if (sourceProperty is null || targetProperty is null)
+                return;
+
+            if (sourceProperty.PropertyType != targetProperty.PropertyType || !targetProperty.CanWrite)
+                return;
+
+            targetProperty.SetValue(target, sourceProperty.GetValue(sourceConfig));
+        }
+        catch (Exception ex) when (ex is TypeLoadException or MissingMethodException)
+        {
+            // Docker.DotNet model shape differs across consumers; healthcheck preservation is best-effort.
         }
     }
 

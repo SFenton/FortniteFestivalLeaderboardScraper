@@ -26,12 +26,12 @@ namespace FSTService.Scraping;
 /// </summary>
 public sealed class RankingsCalculator
 {
-    private const int CredibilityThreshold = 50;
+    internal const int CredibilityThreshold = 50;
     private const string RankHistorySnapshotsBranch = "rank_history_snapshots";
     private const string BandRankingsBranch = "band_rankings";
 
     /// <summary>The assumed population median percentile (0.5 = 50th percentile).</summary>
-    private const double PopulationMedian = 0.5;
+    internal const double PopulationMedian = 0.5;
 
     /// <summary>Base threshold multiplier for CHOpt max score filtering (+5.0% leeway).</summary>
     private const double BaseThresholdMultiplier = 1.05;
@@ -119,10 +119,14 @@ public sealed class RankingsCalculator
         var instruments = GlobalLeaderboardScraper.AllInstruments;
         var bandTypes = BandInstrumentMapping.AllBandTypes;
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
+        var totalChartedByInstrument = instruments.ToDictionary(
+            instrument => instrument,
+            instrument => CountChartedSongs(festivalService, instrument),
+            StringComparer.OrdinalIgnoreCase);
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
-        // Total steps: instruments(9) + composite(1) + combos(1) + snapshots(instruments+1) + bandTypes(3) = 24
-        _progress.BeginPhaseProgress(instruments.Count + 1 + instruments.Count + 1 + 1 + bandTypes.Count);
+        // Total steps: instruments(9) + composite(1) + family(1) + combos(1) + snapshots(instruments+1) + bandTypes(3) = 25
+        _progress.BeginPhaseProgress(instruments.Count + 1 + 1 + instruments.Count + 1 + 1 + bandTypes.Count);
         _progress.SetSubOperation("per_instrument_rankings");
 
         // Cap at 2 concurrent instruments to avoid OOM-killing PostgreSQL.
@@ -207,7 +211,7 @@ public sealed class RankingsCalculator
             // Phase 2: AccountRankings + Phase 2.5: Ranking deltas
             // Materialized pipeline: one join into a temp table, reused for
             // base rankings, band-entry discovery, and all bucket deltas.
-            var totalCharted = CountChartedSongs(festivalService, instrument);
+            var totalCharted = totalChartedByInstrument[instrument];
             if (totalCharted == 0)
             {
                 _log.LogWarning("No charted songs for {Instrument}, skipping rankings.", instrument);
@@ -265,8 +269,19 @@ public sealed class RankingsCalculator
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
 
             var full = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (accountId, adj, wgt, fc, ts, ms, songs, fcc) in db.GetAllRankingSummariesFull())
-                full[accountId] = new AccountMetrics(adj, wgt, fc, ts, ms, songs, fcc);
+            foreach (var summary in db.GetAllRankingSummariesDetailed())
+                full[summary.AccountId] = new AccountMetrics(
+                    summary.AdjustedSkillRating,
+                    summary.WeightedRating,
+                    summary.FcRate,
+                    summary.TotalScore,
+                    summary.MaxScorePercent,
+                    summary.SongsPlayed,
+                    summary.FullComboCount,
+                    summary.TotalChartedSongs,
+                    summary.RawSkillRating,
+                    summary.RawWeightedRating,
+                    summary.RawMaxScorePercent);
             rankingDataFull[instrument] = full;
 
             var ranks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -290,6 +305,15 @@ public sealed class RankingsCalculator
         LogPhase("composite_rankings", instrument: null, compositeSw.Elapsed);
 
         _log.LogInformation("Skipping composite and combo delta computation; canonical leaderboard path is active.");
+
+        // ── Phase 3.5: Fixed solo family rankings for Statistics global cards ──
+        _progress.SetSubOperation("solo_family_rankings");
+        var familySw = System.Diagnostics.Stopwatch.StartNew();
+        ComputeSoloFamilyRankings(rankingDataFull, totalChartedByInstrument);
+        familySw.Stop();
+        _progress.ReportPhaseItemComplete();
+        _log.LogInformation("Solo family rankings complete in {Elapsed}.", familySw.Elapsed);
+        LogPhase("solo_family_rankings", instrument: null, familySw.Elapsed);
 
         // ── Phase 4: All-combo rankings ──
         _progress.SetSubOperation("combo_rankings");
@@ -519,6 +543,21 @@ public sealed class RankingsCalculator
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
     }
 
+    internal void ComputeSoloFamilyRankings(
+        Dictionary<string, Dictionary<string, AccountMetrics>> rankingDataFull,
+        IReadOnlyDictionary<string, int> totalChartedByInstrument)
+    {
+        var rankings = SoloFamilyRankingBuilder.BuildRankings(
+            SoloFamilyRankingScopes.All,
+            rankingDataFull,
+            totalChartedByInstrument,
+            CredibilityThreshold,
+            PopulationMedian);
+
+        _metaDb.ReplaceSoloFamilyRankings(rankings);
+        _log.LogInformation("Computed solo family rankings for {RowCount:N0} account-scope rows.", rankings.Count);
+    }
+
     private async Task RunRankHistorySnapshotsAndBandRankingsOverlappedAsync(
         IReadOnlyList<string> instruments,
         IReadOnlyList<string> bandTypes,
@@ -723,8 +762,11 @@ public sealed class RankingsCalculator
                     var options = new BandRankHistorySnapshotOptions
                     {
                         UseLatestState = _bandRankHistoryOptions.UseLatestState,
+                        WriteMode = _bandRankHistoryOptions.WriteMode,
                         UseNarrowHistory = _bandRankHistoryOptions.UseNarrowHistory,
                         UseWideHistoryCompatibilityWrite = _bandRankHistoryOptions.UseWideHistoryCompatibilityWrite,
+                        RangeChunkingEnabled = _bandRankHistoryOptions.RangeChunkingEnabled,
+                        ChunkSize = _bandRankHistoryOptions.ChunkSize,
                         SynchronousCommitOff = _bandRankHistoryOptions.SynchronousCommitOff,
                         CommandTimeoutSeconds = _bandRankHistoryOptions.CommandTimeoutSeconds,
                         RetentionDays = _bandRankHistoryOptions.RetentionDays,
@@ -828,7 +870,32 @@ public sealed class RankingsCalculator
     /// <summary>Per-instrument metric values for a single account.</summary>
     internal readonly record struct AccountMetrics(
         double AdjustedRating, double WeightedRating, double FcRate,
-        long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount);
+        long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount,
+        int TotalChartedSongs, double RawSkillRating, double? RawWeightedRating, double? RawMaxScorePercent)
+    {
+        public AccountMetrics(
+            double adjustedRating,
+            double weightedRating,
+            double fcRate,
+            long totalScore,
+            double maxScorePercent,
+            int songsPlayed,
+            int fullComboCount)
+            : this(
+                adjustedRating,
+                weightedRating,
+                fcRate,
+                totalScore,
+                maxScorePercent,
+                songsPlayed,
+                fullComboCount,
+                songsPlayed,
+                adjustedRating,
+                weightedRating,
+                maxScorePercent)
+        {
+        }
+    }
 
     private static int BitCount(int value)
     {
@@ -1426,8 +1493,19 @@ public sealed class RankingsCalculator
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             var dict = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (accountId, adj, wgt, fc, ts, ms, songs, fcc) in db.GetAllRankingSummariesFull())
-                dict[accountId] = new AccountMetrics(adj, wgt, fc, ts, ms, songs, fcc);
+            foreach (var summary in db.GetAllRankingSummariesDetailed())
+                dict[summary.AccountId] = new AccountMetrics(
+                    summary.AdjustedSkillRating,
+                    summary.WeightedRating,
+                    summary.FcRate,
+                    summary.TotalScore,
+                    summary.MaxScorePercent,
+                    summary.SongsPlayed,
+                    summary.FullComboCount,
+                    summary.TotalChartedSongs,
+                    summary.RawSkillRating,
+                    summary.RawWeightedRating,
+                    summary.RawMaxScorePercent);
             result[instrument] = dict;
         }
         return result;

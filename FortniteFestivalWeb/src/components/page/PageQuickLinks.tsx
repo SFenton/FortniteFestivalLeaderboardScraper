@@ -7,6 +7,7 @@ import { modalStyles } from '../modals/modalStyles';
 import { FADE_DURATION, Gap } from '@festival/theme';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { getPageQuickLinkTestId, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 
 const QUICK_LINKS_MODAL_DESKTOP_STYLE = {
@@ -50,25 +51,38 @@ export type PageQuickLinksConfig<T extends PageQuickLinkItem = PageQuickLinkItem
 function PageQuickLinksButtons<T extends PageQuickLinkItem>({ items, activeItemId, onSelect, testIdPrefix = 'page' }: PageQuickLinksButtonsProps<T>) {
   return (
     <>
-      {items.map((item) => {
-        const isActive = item.id === activeItemId;
-        const hasIcon = item.icon != null;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            data-testid={`${testIdPrefix}-quick-link-${getPageQuickLinkTestId(item.id)}`}
-            aria-label={item.landmarkLabel}
-            aria-current={isActive ? 'location' : undefined}
-            style={isActive ? pps.quickLinkButtonActive : pps.quickLinkButton}
-            onClick={() => onSelect(item)}
-          >
-            {hasIcon ? <span style={pps.quickLinkIcon} aria-hidden="true">{item.icon}</span> : null}
-            <span style={pps.quickLinkLabel}>{item.label}</span>
-          </button>
-        );
-      })}
+      {items.map((item) => <PageQuickLinkButton key={item.id} item={item} activeItemId={activeItemId} onSelect={onSelect} testIdPrefix={testIdPrefix} />)}
     </>
+  );
+}
+
+function PageQuickLinkButton<T extends PageQuickLinkItem>({ item, activeItemId, onSelect, testIdPrefix }: { item: T; activeItemId: string | null; onSelect: (item: T) => void; testIdPrefix: string }) {
+  const isActive = item.id === activeItemId;
+  const hasIcon = item.icon != null;
+  const depth = Math.max(0, item.depth ?? 0);
+  const depthStyle = depth > 0
+    ? {
+      fontSize: 14,
+      fontWeight: 500,
+      height: 44,
+    } satisfies CSSProperties
+    : undefined;
+  const shouldReserveIconSlot = hasIcon || depth > 0;
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onSelect(item) });
+
+  return (
+    <button
+      type="button"
+      data-testid={`${testIdPrefix}-quick-link-${getPageQuickLinkTestId(item.id)}`}
+      data-depth={depth}
+      aria-label={item.landmarkLabel}
+      aria-current={isActive ? 'location' : undefined}
+      style={{ ...(isActive ? pps.quickLinkButtonActive : pps.quickLinkButton), ...depthStyle }}
+      {...pressHandlers}
+    >
+      {shouldReserveIconSlot ? <span style={hasIcon ? pps.quickLinkIcon : { ...pps.quickLinkIcon, visibility: 'hidden' }} aria-hidden="true">{item.icon}</span> : null}
+      <span style={pps.quickLinkLabel}>{item.label}</span>
+    </button>
   );
 }
 

@@ -179,6 +179,7 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
   openFilterRef.current = openFilter;
   useEffect(() => {
     registerSuggestionsActions({ openFilter: () => openFilterRef.current(), filterActive: filtersActive });
+    return () => registerSuggestionsActions(null);
   }, [filtersActive, registerSuggestionsActions]);
   
 

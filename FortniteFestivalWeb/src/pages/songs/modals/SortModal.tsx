@@ -2,6 +2,7 @@
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
 import { RadioRow } from '../../../components/common/RadioRow';
+import PressableButton from '../../../components/common/PressableButton';
 import { ReorderList } from '../../../components/sort/ReorderList';
 import { Accordion } from '../../../components/common/Accordion';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
@@ -162,22 +163,22 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
             </div>
           </div>
           <div style={directionStyles.icons}>
-            <button
+            <PressableButton
               style={directionStyles.iconBtn}
-              onClick={() => onChange({ ...draft, sortAscending: true })}
+              onPress={() => onChange({ ...draft, sortAscending: true })}
               aria-label={t('aria.ascending')}
             >
               <div style={{ ...directionStyles.iconCircle, ...(draft.sortAscending ? directionStyles.iconCircleActive : {}) }} />
               <IoArrowUp size={20} style={{ position: 'relative' as const, zIndex: 1, color: draft.sortAscending ? Colors.textPrimary : Colors.textMuted, transition: 'color 200ms ease' }} />
-            </button>
-            <button
+            </PressableButton>
+            <PressableButton
               style={directionStyles.iconBtn}
-              onClick={() => onChange({ ...draft, sortAscending: false })}
+              onPress={() => onChange({ ...draft, sortAscending: false })}
               aria-label={t('aria.descending')}
             >
               <div style={{ ...directionStyles.iconCircle, ...(!draft.sortAscending ? directionStyles.iconCircleActive : {}) }} />
               <IoArrowDown size={20} style={{ position: 'relative' as const, zIndex: 1, color: !draft.sortAscending ? Colors.textPrimary : Colors.textMuted, transition: 'color 200ms ease' }} />
-            </button>
+            </PressableButton>
           </div>
         </div>
       </ModalSection>

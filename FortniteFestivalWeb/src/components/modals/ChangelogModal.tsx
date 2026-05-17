@@ -13,6 +13,7 @@ import {
 import { APP_VERSION } from '../../hooks/data/useVersions';
 import { changelog, type ChangelogEntry } from '../../changelog';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 import { paddingWithSafeAreaBottom } from '../../utils/safeAreaStyles';
 
 export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismiss: () => void; onExitComplete?: () => void }) {
@@ -46,13 +47,15 @@ export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismis
 
   const updateMask = useScrollMask(scrollRef, [animIn], { selfScroll: true });
   const handleScroll = useCallback(() => updateMask(), [updateMask]);
+  const dismissPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleDismiss, disabled: animOut });
+  const overlayPressHandlers = usePressAction<HTMLDivElement>({ onPress: handleDismiss, disabled: animOut });
 
   return (
-    <div style={s.overlay} onClick={handleDismiss} data-glow-scope="">
-      <div style={s.card} onClick={e => e.stopPropagation()}>
+    <div style={s.overlay} {...overlayPressHandlers} data-glow-scope="">
+      <div style={s.card} onPointerDown={e => e.stopPropagation()} onPointerUp={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
         <div style={s.header}>
           <h2 style={s.title}>{t('changelog.title')} <span style={s.dot}>·</span> {APP_VERSION}</h2>
-          <button style={s.closeBtn} onClick={handleDismiss} aria-label={t('common.close')}>
+          <button style={s.closeBtn} {...dismissPressHandlers} aria-label={t('common.close')}>
             <IoClose size={18} />
           </button>
         </div>
@@ -75,7 +78,7 @@ export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismis
         </div>
 
         <div style={s.footer}>
-          <button style={s.dismissBtn} onClick={handleDismiss}>
+          <button style={s.dismissBtn} {...dismissPressHandlers}>
             {t('common.dismiss')}
           </button>
         </div>
@@ -86,7 +89,7 @@ export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismis
 
 function useStyles(animIn: boolean, animOut: boolean) {
   return useMemo(() => {
-    const modalPointerEvents = animIn && !animOut ? 'auto' as const : 'none' as const;
+    const modalPointerEvents = !animOut ? 'auto' as const : 'none' as const;
     return ({
     overlay: {
       ...modalOverlay,

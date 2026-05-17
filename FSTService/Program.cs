@@ -76,11 +76,19 @@ var apiOnlyRequested = args.Any(arg => arg.Equals("--api-only", StringComparison
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:ApiOnly");
 var scraperWorkerDisabled = args.Any(arg => arg.Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
     || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:DisableScraperWorker");
+var registrationSyncWorkerRequested = args.Any(arg => arg.Equals("--registration-sync-worker", StringComparison.OrdinalIgnoreCase))
+    || builder.Configuration.GetValue<bool>($"{ScraperOptions.Section}:RegistrationSyncWorkerOnly");
+var hostedWorkerMode = HostedWorkerModeResolver.Resolve(
+    apiOnlyRequested,
+    scraperWorkerDisabled,
+    registrationSyncWorkerRequested);
 
 builder.Services.Configure<ScraperOptions>(
     builder.Configuration.GetSection(ScraperOptions.Section));
 builder.Services.Configure<FeatureOptions>(
     builder.Configuration.GetSection(FeatureOptions.Section));
+builder.Services.Configure<ClientTelemetryOptions>(
+    builder.Configuration.GetSection(ClientTelemetryOptions.Section));
 builder.Services.Configure<ImprovementNotificationOptions>(
     builder.Configuration.GetSection(ImprovementNotificationOptions.Section));
 builder.Services.Configure<BandRankHistoryOptions>(
@@ -118,6 +126,10 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         else if (args[i].Equals("--no-scraper-worker", StringComparison.OrdinalIgnoreCase))
         {
             opts.DisableScraperWorker = true;
+        }
+        else if (args[i].Equals("--registration-sync-worker", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.RegistrationSyncWorkerOnly = true;
         }
         else if (args[i].Equals("--backfill-only", StringComparison.OrdinalIgnoreCase))
         {
@@ -284,7 +296,8 @@ builder.Services.AddSingleton(pgDataSource);
 
 builder.Services.AddSingleton<IMetaDatabase>(sp =>
     new FSTService.Persistence.MetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
-        sp.GetRequiredService<ILogger<FSTService.Persistence.MetaDatabase>>()));
+        sp.GetRequiredService<ILogger<FSTService.Persistence.MetaDatabase>>(),
+        sp.GetRequiredService<IOptions<BandRankHistoryOptions>>()));
 builder.Services.AddSingleton(sp => (FSTService.Persistence.MetaDatabase)sp.GetRequiredService<IMetaDatabase>());
 
 builder.Services.AddSingleton<IPathDataStore>(sp =>
@@ -297,6 +310,7 @@ builder.Services.AddSingleton<FSTService.Exports.PlayerDataExportService>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabasePressureMonitor, FSTService.Persistence.Maintenance.DatabasePressureMonitor>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DatabaseMaintenanceDryRunReporter>();
 builder.Services.AddSingleton<FSTService.Persistence.Maintenance.IDatabaseRetentionMaintenanceService, FSTService.Persistence.Maintenance.DatabaseRetentionMaintenanceService>();
+builder.Services.AddSingleton<FSTService.Persistence.Maintenance.DeferredRetentionMaintenanceRunner>();
 builder.Services.AddSingleton<FSTService.Persistence.ImprovementNotificationService>();
 
 // ─── Shared services ────────────────────────────────────────
@@ -331,19 +345,25 @@ builder.Services.AddSingleton<FSTService.Api.NotificationService>();
 builder.Services.AddSingleton<FSTService.Scraping.UserSyncProgressTracker>();
 builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
+builder.Services.AddSingleton<FSTService.Api.PublicReadGateService>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
-    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2)));
+    (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardAllCache",
-    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5)));
+    (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5),
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("NeighborhoodCache",
-    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2)));
+    (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2),
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("RivalsCache",
-    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5)));
+    (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5),
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
 builder.Services.AddSingleton<RivalsCalculator>();
 builder.Services.AddSingleton<RivalsOrchestrator>();
 builder.Services.AddSingleton<LeaderboardRivalsCalculator>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardRivalsCache",
-    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5)));
+    (sp, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5),
+        sp.GetRequiredService<FSTService.Api.PublicReadGateService>()));
 builder.Services.AddSingleton<ScrapeLifecycleNotifier>();
 builder.Services.AddSingleton<BackgroundWorkCoordinator>();
 builder.Services.AddSingleton<RankingsCalculator>();
@@ -525,14 +545,23 @@ builder.Services.AddSingleton<StartupInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<StartupInitializer>());
 builder.Services.AddHealthChecks()
     .AddCheck<StartupInitializer>("database", tags: ["ready"]);
-if (apiOnlyRequested)
+if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
 {
     builder.Services.AddHostedService<SongCatalogRefreshWorker>();
 }
+else if (hostedWorkerMode == HostedWorkerMode.FrontendOnly)
+{
+    builder.Services.AddHostedService<SongCatalogRefreshWorker>();
+}
+else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
+{
+    builder.Services.AddHostedService<SongCatalogRefreshWorker>();
+    builder.Services.AddHostedService<RegistrationBackfillWorker>();
+}
 else
 {
-    if (!scraperWorkerDisabled)
-        builder.Services.AddHostedService<ScraperWorker>();
+    builder.Services.AddHostedService<ScraperWorker>();
+    builder.Services.AddHostedService<RegistrationBackfillWorker>();
     builder.Services.AddHostedService<BandRankHistoryWorker>();
 }
 
@@ -540,13 +569,17 @@ else
 
 var app = builder.Build();
 
-if (apiOnlyRequested)
+if (hostedWorkerMode == HostedWorkerMode.ApiOnly)
 {
     app.Logger.LogInformation("API-only mode enabled; scraper hosted services were not registered. Song catalog refresh remains active.");
 }
-else if (scraperWorkerDisabled)
+else if (hostedWorkerMode == HostedWorkerMode.FrontendOnly)
 {
-    app.Logger.LogInformation("Scraper worker disabled; non-API background hosted services remain registered.");
+    app.Logger.LogInformation("API frontend mode enabled; scraper and mutation background hosted services were not registered. Song catalog refresh remains active.");
+}
+else if (hostedWorkerMode == HostedWorkerMode.RegistrationSyncWorker)
+{
+    app.Logger.LogInformation("Registration sync worker mode enabled; scheduled scrape and band rank-history workers were not registered. Song catalog refresh and registration sync remain active.");
 }
 
 // One-shot precompute: --precompute
@@ -597,6 +630,7 @@ shopService.SetJsonSerializerOptions(jsonOpts);
 notificationService.SetShopProvider(shopService);
 notificationService.SetFestivalService(festivalService);
 notificationService.SetSyncTracker(app.Services.GetRequiredService<UserSyncProgressTracker>());
+notificationService.SetMetaDatabase(app.Services.GetRequiredService<IMetaDatabase>());
 
 app.UseCors();
 app.UseWebSockets(new WebSocketOptions
@@ -610,6 +644,8 @@ app.UseForwardedHeaders(new ForwardedHeadersOptions
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<FSTService.Api.PublicApiResponseCacheMiddleware>();
+app.UseMiddleware<FSTService.Api.PublicReadGateMiddleware>();
 app.Use(async (context, next) =>
 {
     await next();

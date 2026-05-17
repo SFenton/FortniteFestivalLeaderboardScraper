@@ -189,11 +189,14 @@ public abstract class ScraperWorkerTestBase : IDisposable
             null);
 
         var resultProcessor = new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>());
+        var userSyncTracker = new UserSyncProgressTracker(
+            new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
+            Substitute.For<ILogger<UserSyncProgressTracker>>());
 
         var backfillOrchestrator = new BackfillOrchestrator(
             _backfillQueue, _historyReconstructor,
             rivalsOrchestrator, notifications, _persistence,
-            _tokenManager, _progress, options,
+            _tokenManager, _progress, userSyncTracker, options,
             _cyclicalMachine, _pool,
             resultProcessor, precomputer,
             new Api.ResponseCacheService(TimeSpan.FromMinutes(5)),
@@ -230,8 +233,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var neighborhoodCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(2));
         var rivalsCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(5));
         var leaderboardRivalsCache = new Api.ResponseCacheService(TimeSpan.FromMinutes(5));
+        var publicReadGate = new PublicReadGateService(_metaDb, NullLogger<PublicReadGateService>.Instance);
         var lifecycle = new ScrapeLifecycleNotifier(
             playerCache, leaderboardAllCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache,
+            _metaDb, publicReadGate,
             Substitute.For<ILogger<ScrapeLifecycleNotifier>>());
 
         return new ScraperWorker(
@@ -271,7 +276,11 @@ public abstract class ScraperWorkerTestBase : IDisposable
         return new BackfillOrchestrator(
             _backfillQueue, _historyReconstructor,
             rivalsOrchestrator, notifications, _persistence,
-            _tokenManager, _progress, options,
+            _tokenManager, _progress,
+            new UserSyncProgressTracker(
+                new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
+                Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            options,
             _cyclicalMachine, _pool,
             new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
             new ScrapeTimePrecomputer(_persistence, _persistence.Meta, new PathDataStore(SharedPostgresContainer.CreateDatabase()), _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions()),

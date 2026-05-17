@@ -159,6 +159,21 @@ export const MOCK_PLAYER_STATS_RESPONSE: PlayerStatsResponse = {
       }],
     },
   ],
+  familyRanks: {
+    pad: {
+      scopeId: 'pad',
+      adjusted: 4,
+      weighted: 5,
+      fcRate: 6,
+      totalScore: 7,
+      maxScore: 8,
+      songsPlayed: 25,
+      totalChartedSongs: 800,
+      coverage: 0.03125,
+      fullComboCount: 3,
+      totalRankedAccounts: 1200,
+    },
+  },
 };
 
 export const MOCK_SYNC_STATUS: SyncStatusResponse = {
@@ -182,6 +197,7 @@ export const MOCK_TRACK_PLAYER_RESPONSE: TrackPlayerResponse = {
   displayName: 'TestPlayer',
   trackingStarted: true,
   backfillStatus: 'queued',
+  backfillKicked: false,
 };
 
 export const MOCK_ACCOUNT_SEARCH_RESPONSE: AccountSearchResponse = {
@@ -198,6 +214,7 @@ export function createApiMock(overrides: Record<string, unknown> = {}) {
     getSongs: vi.fn().mockResolvedValue(MOCK_SONGS_RESPONSE),
     getLeaderboard: vi.fn().mockResolvedValue(MOCK_LEADERBOARD_RESPONSE),
     getAllLeaderboards: vi.fn().mockResolvedValue(MOCK_ALL_LEADERBOARDS_RESPONSE),
+    getMemberScoreFilter: vi.fn().mockResolvedValue({ count: 0, songIds: [] }),
     getSelectedMemberSongScores: vi.fn().mockResolvedValue({ songId: 'song-1', scores: [] }),
     getPlayer: vi.fn().mockResolvedValue(MOCK_PLAYER),
     getPlayerHistory: vi.fn().mockResolvedValue(MOCK_PLAYER_HISTORY_RESPONSE),

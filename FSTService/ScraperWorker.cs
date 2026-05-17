@@ -5,6 +5,7 @@ using FortniteFestival.Core.Persistence;
 using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
+using FSTService.Persistence.Maintenance;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 
@@ -43,6 +44,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly BackgroundWorkCoordinator _backgroundWork;
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly NotificationService _notifications;
+    private readonly DeferredRetentionMaintenanceRunner? _deferredRetentionMaintenance;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
@@ -76,7 +78,8 @@ public sealed class ScraperWorker : BackgroundService
         IOptions<ScraperOptions> options,
         IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
         IHostApplicationLifetime lifetime,
-        ILogger<ScraperWorker> log)
+        ILogger<ScraperWorker> log,
+        DeferredRetentionMaintenanceRunner? deferredRetentionMaintenance = null)
     {
         _tokenManager = tokenManager;
         _globalScraper = globalScraper;
@@ -98,6 +101,7 @@ public sealed class ScraperWorker : BackgroundService
         _backgroundWork = backgroundWork;
         _syncTracker = syncTracker;
         _notifications = notifications;
+        _deferredRetentionMaintenance = deferredRetentionMaintenance;
         _options = options;
         _jsonOpts = jsonOptions.Value.SerializerOptions;
         _lifetime = lifetime;
@@ -449,6 +453,8 @@ public sealed class ScraperWorker : BackgroundService
             };
 
             // ── Post-pass: enrichment, refresh, rankings, rivals, derived publication ──
+            _lifecycle.ScrapePublishing();
+
             var postProcessCompleted = false;
             try
             {
@@ -491,14 +497,6 @@ public sealed class ScraperWorker : BackgroundService
                 }
             }
 
-            PrimeSongsCache();
-
-            // Unfreeze all response caches and invalidate — API consumers now see fresh data atomically.
-            _lifecycle.ScrapeCompleted();
-
-            // Notify connected clients that score-backed views should refresh.
-            await _notifications.NotifyScoresChangedAsync(result?.ScrapeId);
-
             // ── Cleanup: storage/query-health work that must not delay fresh data publication ──
             if (postProcessCompleted)
             {
@@ -522,15 +520,44 @@ public sealed class ScraperWorker : BackgroundService
 
             _progress.EndPass();
 
+            var publishedScrapeId = result?.ScrapeId;
+            var publicStateReady = result is null;
+
             if (result is not null)
             {
-                _persistence.Meta.CompleteScrapeRun(
-                    result.ScrapeId,
-                    result.SongsScraped,
-                    result.TotalEntries,
-                    result.TotalRequests,
+                if (postProcessCompleted)
+                {
+                    _persistence.Meta.CompleteScrapeRun(
+                        result.ScrapeId,
+                        result.SongsScraped,
+                        result.TotalEntries,
+                        result.TotalRequests,
                         result.TotalBytes,
                         result.EpicReportedOver100Pages);
+                    _persistence.Meta.PublishScrapeRun(result.ScrapeId);
+                    publicStateReady = true;
+                }
+                else
+                {
+                    _log.LogWarning(
+                        "Scrape {ScrapeId} was not marked complete or published because post-process orchestration did not complete cleanly.",
+                        result.ScrapeId);
+                }
+            }
+
+            if (publicStateReady)
+            {
+                PrimeSongsCache();
+
+                // Unfreeze all response caches and invalidate — API consumers now see the published scrape atomically.
+                _lifecycle.ScrapeCompleted();
+
+                // Notify connected clients only after the server can serve the published scrape.
+                await _notifications.NotifyScoresChangedAsync(publishedScrapeId);
+
+                _deferredRetentionMaintenance?.ScheduleAfterPublication(
+                    $"scrape {publishedScrapeId?.ToString() ?? "api-only"} published",
+                    ct);
             }
         }
         finally

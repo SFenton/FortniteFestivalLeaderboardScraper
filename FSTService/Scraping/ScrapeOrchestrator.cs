@@ -72,6 +72,7 @@ public sealed class ScrapeOrchestrator
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun();
         _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
+        _persistence.CleanupAbandonedStaging(scrapeId);
 
         // Load registered account IDs for change detection
         var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
@@ -219,14 +220,16 @@ public sealed class ScrapeOrchestrator
         // as solo but are capped to LowPriorityPercent when solo is active.
         Task? bandTask = null;
         BandPageFetcher? bandFetcher = null;
+        CancellationTokenSource? bandTimeoutCts = null;
         if (bandInstruments.Count > 0 && bandSpool is not null)
         {
             var bandSongIds = scrapeRequests.Select(r => r.SongId).ToList();
+            bandTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(passCt);
             bandFetcher = new BandPageFetcher(
                 _globalScraper.Executor, _pool, bandSpool, _progress, _log);
             bandTask = bandFetcher.FetchAllAsync(
                 bandSongIds, bandInstruments, accessToken, callerAccountId,
-                opts.MaxPagesPerLeaderboard, passCt);
+                opts.MaxPagesPerLeaderboard, bandTimeoutCts.Token);
         }
 
         // Solo scrape task — only if SoloScrape phase is enabled
@@ -359,34 +362,68 @@ public sealed class ScrapeOrchestrator
         // ── Band: await completion and flush (runs in background during solo post-processing) ──
         if (bandTask is not null && bandSpool is not null)
         {
+            var shouldFlushBand = true;
             try
             {
                 _progress.SetSubOperation("awaiting_band");
-                await bandTask;
+                var bandAwaitTimeoutSeconds = Math.Max(0, opts.BandAwaitTimeoutAfterSoloSeconds);
+                if (bandAwaitTimeoutSeconds > 0)
+                {
+                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(bandAwaitTimeoutSeconds), passCt);
+                    var completed = await Task.WhenAny(
+                        bandTask,
+                        timeoutTask);
+
+                    if (ReferenceEquals(completed, timeoutTask))
+                    {
+                        await timeoutTask;
+                        if (!bandTask.IsCompleted)
+                        {
+                            shouldFlushBand = false;
+                            _progress.SetSubOperation("skipping_band_after_timeout");
+                            bandTimeoutCts?.Cancel();
+                            _log.LogWarning(
+                                "Band scrape did not complete within {TimeoutSeconds}s after solo completion; skipping band flush for this pass so solo-derived phases can continue.",
+                                bandAwaitTimeoutSeconds);
+                            await ObserveTimedOutBandTaskAsync(bandTask, passCt);
+                        }
+                    }
+                }
+
+                if (shouldFlushBand)
+                    await bandTask;
 
                 Interlocked.Add(ref totalRequests, (int)Interlocked.Read(ref bandFetcher!.TotalRequests));
                 Interlocked.Add(ref totalBytes, Interlocked.Read(ref bandFetcher.TotalBytes));
 
-                _progress.SetSubOperation("dropping_band_indexes");
-                _persistence.DropBandIndexes();
+                if (shouldFlushBand)
+                {
+                    _progress.SetSubOperation("dropping_band_indexes");
+                    _persistence.DropBandIndexes();
 
-                _progress.SetSubOperation("flushing_band");
-                bandSpool.Complete();
-                _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
-                    bandSpool.RecordCount, bandSpool.EntryCount);
-                await Task.Run(() => bandSpool.FlushAll(
-                    maxBatchPages: 64,
-                    onProgress: ReportBandSpoolFlushProgress));
+                    _progress.SetSubOperation("flushing_band");
+                    bandSpool.Complete();
+                    _log.LogInformation("Flushing band spool: {Records:N0} pages, {Entries:N0} entries...",
+                        bandSpool.RecordCount, bandSpool.EntryCount);
+                    await Task.Run(() => bandSpool.FlushAll(
+                        maxBatchPages: 64,
+                        onProgress: ReportBandSpoolFlushProgress));
 
-                _progress.SetSubOperation("creating_band_indexes");
-                _persistence.CreateBandIndexes();
+                    _progress.SetSubOperation("creating_band_indexes");
+                    _persistence.CreateBandIndexes();
 
-                _log.LogInformation("Band flush complete.");
+                    _log.LogInformation("Band flush complete.");
+                }
+            }
+            catch (OperationCanceledException) when (bandTimeoutCts?.IsCancellationRequested == true && !passCt.IsCancellationRequested)
+            {
+                _log.LogWarning("Band scrape cancelled after timeout; continuing with solo-first progression.");
             }
             finally
             {
                 await DisposeBandSpoolAsync(bandSpool);
                 bandSpool = null;
+                bandTimeoutCts?.Dispose();
             }
         }
 
@@ -414,6 +451,27 @@ public sealed class ScrapeOrchestrator
             ScrapeDuration = sw.Elapsed,
             EpicReportedOver100Pages = epicReportedOver100Pages,
         };
+    }
+
+    private async Task ObserveTimedOutBandTaskAsync(Task bandTask, CancellationToken passCt)
+    {
+        try
+        {
+            await bandTask.WaitAsync(TimeSpan.FromSeconds(10), passCt);
+            _log.LogInformation("Band scrape acknowledged timeout cancellation before spool disposal.");
+        }
+        catch (OperationCanceledException) when (!passCt.IsCancellationRequested)
+        {
+            _log.LogWarning("Band scrape cancelled after timeout; continuing with solo-first progression.");
+        }
+        catch (TimeoutException)
+        {
+            _log.LogWarning("Timed-out band scrape did not stop within 10s after cancellation; disposing band spool and continuing with solo-first progression.");
+        }
+        catch (Exception ex) when (!passCt.IsCancellationRequested)
+        {
+            _log.LogWarning(ex, "Band scrape stopped after timeout with an exception; continuing with solo-first progression.");
+        }
     }
 
     // ─── Scrape-specific utility methods ───────────────────────

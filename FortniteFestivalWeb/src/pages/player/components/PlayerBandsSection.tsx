@@ -7,6 +7,7 @@ import type { PlayerItem } from '../helpers/playerPageTypes';
 import PlayerSectionHeading from '../sections/PlayerSectionHeading';
 import { Routes } from '../../../routes';
 import PlayerBandCard, { estimatePlayerBandCardHeight } from './PlayerBandCard';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 
 type Translate = (key: string, opts?: Record<string, unknown>) => string;
 
@@ -113,6 +114,7 @@ function BandGroupHeader({
 }
 
 function BandViewAllCard({ label, to }: { label: string; to?: string }) {
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: to ?? '', disabled: !to });
   const body = (
     <>
       <span>{label}</span>
@@ -129,7 +131,12 @@ function BandViewAllCard({ label, to }: { label: string; to?: string }) {
   }
 
   return (
-    <Link to={to} style={bandStyles.viewAllCardLink}>
+    <Link
+      to={to}
+      style={{ ...bandStyles.viewAllCardLink, ...(linkPress.isPressed ? bandStyles.viewAllCardPressed : undefined) }}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      {...linkPress.linkPressHandlers}
+    >
       {body}
     </Link>
   );
@@ -222,5 +229,8 @@ const bandStyles = {
     height: '100%',
     textDecoration: 'none',
     cursor: 'pointer',
+  } as CSSProperties,
+  viewAllCardPressed: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
   } as CSSProperties,
 };

@@ -113,6 +113,35 @@ public sealed class RivalsCalculatorTests : IDisposable
         }
     }
 
+    private static void SeedProDrumsFamilyMixedEntries(
+        GlobalLeaderboardPersistence persistence,
+        string userId,
+        string rivalId,
+        int songCount = 10)
+    {
+        var cymbalsDb = persistence.GetOrCreateInstrumentDb("Solo_PeripheralCymbals");
+        var drumsDb = persistence.GetOrCreateInstrumentDb("Solo_PeripheralDrums");
+
+        for (int i = 0; i < songCount; i++)
+        {
+            var songId = $"family_song_{i}";
+            var userScore = 10_000 - i * 10;
+            var rivalScore = 10_050 - i * 10;
+            var fillerScore = 8_000 - i * 10;
+
+            if (i < songCount / 2)
+            {
+                SeedEntries(cymbalsDb, songId, (userId, userScore), ($"cymbals_filler_{i}", fillerScore));
+                SeedEntries(drumsDb, songId, (rivalId, rivalScore), ($"drums_filler_{i}", fillerScore));
+            }
+            else
+            {
+                SeedEntries(drumsDb, songId, (userId, userScore), ($"drums_filler_{i}", fillerScore));
+                SeedEntries(cymbalsDb, songId, (rivalId, rivalScore), ($"cymbals_filler_{i}", fillerScore));
+            }
+        }
+    }
+
     private void InsertSnapshotEntry(long snapshotId, string songId, string instrument, string accountId, int score, int rank)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
@@ -201,13 +230,14 @@ public sealed class RivalsCalculatorTests : IDisposable
     }
 
     [Fact]
-    public void GenerateCombos_excludes_multi_instrument_peripheral_combos()
+    public void GenerateCombos_includes_pro_drums_family_scope_but_excludes_other_peripheral_combos()
     {
         var instruments = new List<string> { "Solo_PeripheralVocals", "Solo_PeripheralCymbals", "Solo_PeripheralDrums" };
         var combos = RivalsCalculator.GenerateCombos(instruments);
 
-        Assert.Equal(3, combos.Count);
-        Assert.All(combos, combo => Assert.Single(combo));
+        Assert.Equal(4, combos.Count);
+        Assert.Contains(combos, combo => combo.Count == 2 && ComboIds.IsProDrumsFamilyInstrumentSet(combo));
+        Assert.DoesNotContain(combos, combo => combo.Count == 2 && combo.Contains("Solo_PeripheralVocals"));
     }
 
     [Fact]
@@ -236,6 +266,72 @@ public sealed class RivalsCalculatorTests : IDisposable
         var below = output.Single(r => r.Direction == "below");
         Assert.Equal("ahead1", above.RivalAccountId);
         Assert.Equal("behind1", below.RivalAccountId);
+    }
+
+    [Fact]
+    public void ComputeDirectSongSamples_returns_current_shared_song_comparisons()
+    {
+        using var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        SeedEntries(db, "shared_1", ("user", 10_000), ("rival", 11_000));
+        SeedEntries(db, "shared_2", ("user", 12_000), ("rival", 10_000));
+        SeedEntries(db, "user_only", ("user", 9_000));
+        SeedEntries(db, "rival_only", ("rival", 9_500));
+
+        var samples = CreateCalculator(persistence).ComputeDirectSongSamples("user", "rival", ["Solo_Guitar"]);
+
+        Assert.Equal(2, samples.Count);
+        var sharedOne = samples.Single(sample => sample.SongId == "shared_1");
+        Assert.Equal("Solo_Guitar", sharedOne.Instrument);
+        Assert.Equal(2, sharedOne.UserRank);
+        Assert.Equal(1, sharedOne.RivalRank);
+        Assert.Equal(-1, sharedOne.RankDelta);
+        Assert.Equal(10_000, sharedOne.UserScore);
+        Assert.Equal(11_000, sharedOne.RivalScore);
+
+        var sharedTwo = samples.Single(sample => sample.SongId == "shared_2");
+        Assert.Equal(1, sharedTwo.RankDelta);
+        Assert.DoesNotContain(samples, sample => sample.SongId == "user_only" || sample.SongId == "rival_only");
+    }
+
+    [Fact]
+    public void ComputeDirectProDrumsFamilySongSamples_returns_mixed_chart_shared_songs()
+    {
+        using var persistence = CreatePersistence();
+        SeedProDrumsFamilyMixedEntries(persistence, "family_user", "family_rival", songCount: 4);
+
+        var calc = CreateCalculator(persistence);
+        var familySamples = calc.ComputeDirectProDrumsFamilySongSamples("family_user", "family_rival");
+        var exactSamples = calc.ComputeDirectSongSamples("family_user", "family_rival", ComboIds.ProDrumsFamilyInstruments.ToArray());
+
+        Assert.Equal(4, familySamples.Count);
+        Assert.Empty(exactSamples);
+        Assert.Contains(familySamples, sample =>
+            sample.SongId == "family_song_0" &&
+            sample.UserInstrument == "Solo_PeripheralCymbals" &&
+            sample.RivalInstrument == "Solo_PeripheralDrums");
+        Assert.Contains(familySamples, sample =>
+            sample.SongId == "family_song_3" &&
+            sample.UserInstrument == "Solo_PeripheralDrums" &&
+            sample.RivalInstrument == "Solo_PeripheralCymbals");
+    }
+
+    [Fact]
+    public void ComputeRivals_writes_pro_drums_family_scope_for_aggregate_family_overlap()
+    {
+        using var persistence = CreatePersistence();
+        SeedProDrumsFamilyMixedEntries(persistence, "family_compute_user", "family_compute_rival");
+
+        var result = CreateCalculator(persistence).ComputeRivals("family_compute_user");
+
+        var familyRival = Assert.Single(result.Rivals, r =>
+            r.InstrumentCombo == ComboIds.ProDrumsFamilyScope &&
+            r.RivalAccountId == "family_compute_rival");
+        Assert.Equal(10, familyRival.SharedSongCount);
+        Assert.True(familyRival.AvgSignedDelta < 0);
+        Assert.Equal(1, result.CombosComputed);
+        Assert.DoesNotContain(result.Rivals, r => r.InstrumentCombo == "80" || r.InstrumentCombo == "100");
     }
 
     [Fact]

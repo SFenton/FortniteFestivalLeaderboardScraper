@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { useMemo, type CSSProperties } from 'react';
+import { useCallback, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { IoChevronBack } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
@@ -7,6 +7,7 @@ import HamburgerButton from '../HamburgerButton';
 import HeaderActions, { type HeaderActionProfileType, type HeaderNotificationVisualState } from '../HeaderActions';
 import BackLink from './BackLink';
 import MarqueeText from '../../common/MarqueeText';
+import { usePressAction } from '../../../hooks/ui/usePressAction';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
   Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
@@ -64,6 +65,10 @@ export default function MobileHeader({
 }: MobileHeaderProps) {
   const navigate = useNavigate();
   const s = useStyles();
+  const handleBackPress = useCallback(() => {
+    navigate(-1);
+  }, [navigate]);
+  const backPressHandlers = usePressAction<HTMLAnchorElement>({ onPress: handleBackPress });
   const leadingSlot = isSongsRoute && songInstrument
     ? <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={s.instrumentIcon} />
     : null;
@@ -87,9 +92,7 @@ export default function MobileHeader({
         {backFallback ? (
           <a
             href="#"
-            /* v8 ignore start */
-            onClick={(e) => { e.preventDefault(); navigate(-1); }}
-            /* v8 ignore stop */
+            {...backPressHandlers}
             style={s.titleBack}
           >
             <span style={s.iconSlot}><IoChevronBack size={IconSize.back} /></span>

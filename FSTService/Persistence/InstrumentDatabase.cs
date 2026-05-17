@@ -2192,6 +2192,34 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return list;
     }
 
+    public List<AccountRankingSummary> GetAllRankingSummariesDetailed()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT account_id, adjusted_skill_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, total_charted_songs, raw_skill_rating, raw_weighted_rating, raw_max_score_percent FROM account_rankings WHERE instrument = @instrument";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var list = new List<AccountRankingSummary>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new AccountRankingSummary(
+                r.GetString(0),
+                r.GetDouble(1),
+                r.GetDouble(2),
+                r.GetDouble(3),
+                r.GetInt64(4),
+                r.GetDouble(5),
+                r.GetInt32(6),
+                r.GetInt32(7),
+                r.GetInt32(8),
+                r.GetDouble(9),
+                r.IsDBNull(10) ? null : r.GetDouble(10),
+                r.IsDBNull(11) ? null : r.GetDouble(11)));
+        }
+
+        return list;
+    }
+
     public void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds) { /* No-op for PG — MVCC handles concurrency, no cache needed */ }
 
     public void Checkpoint() { }

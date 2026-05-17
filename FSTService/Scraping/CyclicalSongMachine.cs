@@ -182,6 +182,9 @@ public class CyclicalSongMachine
     /// </summary>
     public void Start(CancellationToken appLifetime)
     {
+        if (_lifetimeCts is not null && !_lifetimeCts.IsCancellationRequested)
+            return;
+
         _lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime);
     }
 

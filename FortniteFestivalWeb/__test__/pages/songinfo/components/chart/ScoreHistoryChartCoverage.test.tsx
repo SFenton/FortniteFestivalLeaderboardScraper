@@ -127,6 +127,21 @@ function renderChart(overrides: Partial<React.ComponentProps<typeof ScoreHistory
   );
 }
 
+function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperties(event, {
+    pointerId: { value: props.pointerId ?? 1 },
+    pointerType: { value: props.pointerType ?? 'touch' },
+    isPrimary: { value: props.isPrimary ?? true },
+    button: { value: props.button ?? 0 },
+    clientX: { value: props.clientX ?? 0 },
+    clientY: { value: props.clientY ?? 0 },
+    timeStamp: { value: props.timeStamp ?? 0 },
+  });
+  fireEvent(target, event);
+  return event;
+}
+
 const makeChartData = (count: number) => Array.from({ length: count }, (_, i) => ({
   date: `2024-${String((i % 12) + 1).padStart(2, '0')}-01`,
   dateLabel: `Entry ${i + 1}`,
@@ -264,6 +279,26 @@ describe('ScoreHistoryChart — coverage: bar shape rendering', () => {
     if (pathEl) {
       expect(pathEl.getAttribute('fill')).toBeTruthy();
     }
+  });
+
+  it('selects a chart bar on touch pointerup', () => {
+    const data = [
+      { date: '2024-01-01', dateLabel: 'Jan 1', timestamp: 0, score: 100000, accuracy: 95, isFullCombo: false, colorAccuracy: 95, season: 5, stars: 5 },
+    ];
+    mockChartData.useChartData.mockReturnValue({
+      songHistory: data,
+      chartData: data,
+      loading: false,
+      instrumentCounts: { Solo_Guitar: 1 },
+    });
+
+    const { container } = renderChart();
+    const pathEl = container.querySelector('path[role="button"]')!;
+
+    dispatchPointer(pathEl, 'pointerdown', { clientX: 20, clientY: 80, timeStamp: 10 });
+    dispatchPointer(pathEl, 'pointerup', { clientX: 20, clientY: 80, timeStamp: 20 });
+
+    expect(container.querySelector('path[role="button"]')?.getAttribute('stroke')).toBe('#7C3AED');
   });
 });
 

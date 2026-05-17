@@ -851,6 +851,83 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         });
     }
 
+    [Fact]
+    public void GetCurrentStatePlayerProfile_reads_projection_and_applies_filters()
+    {
+        using var glp = CreatePersistence();
+        SeedCurrentLeaderboardEntry("acct_a", "song_1", "Solo_Guitar", 123_456, rank: 7);
+        SeedCurrentLeaderboardEntry("acct_a", "song_1", "Solo_Bass", 234_567, rank: 11);
+        SeedCurrentLeaderboardEntry("acct_a", "song_2", "Solo_Guitar", 345_678, rank: 3);
+        SeedCurrentLeaderboardEntry("acct_b", "song_1", "Solo_Guitar", 456_789, rank: 2);
+
+        var allScores = glp.GetCurrentStatePlayerProfile("acct_a");
+        Assert.Equal(3, allScores.Count);
+
+        var guitarScores = glp.GetCurrentStatePlayerProfile(
+            "acct_a",
+            instruments: new HashSet<string>(["Solo_Guitar"], StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(2, guitarScores.Count);
+        Assert.All(guitarScores, score => Assert.Equal("Solo_Guitar", score.Instrument));
+
+        var songAndInstrumentScores = glp.GetCurrentStatePlayerProfile(
+            "acct_a",
+            "song_1",
+            new HashSet<string>(["Solo_Guitar"], StringComparer.OrdinalIgnoreCase));
+        var score = Assert.Single(songAndInstrumentScores);
+        Assert.Equal("song_1", score.SongId);
+        Assert.Equal("Solo_Guitar", score.Instrument);
+        Assert.Equal(123_456, score.Score);
+        Assert.Equal(7, score.Rank);
+        Assert.Equal(7, score.ApiRank);
+
+        Assert.Empty(glp.GetCurrentStatePlayerProfile("missing"));
+    }
+
+    [Fact]
+    public void GetCurrentStateSongIdsForMemberScoreFilter_applies_has_and_missing_conditions()
+    {
+        using var glp = CreatePersistence();
+        SeedSong("song_1", leadDiff: 3);
+        SeedSong("song_2", leadDiff: 3);
+        SeedSong("song_3", leadDiff: 3);
+        SeedSong("song_uncharted", leadDiff: 99);
+        SeedCurrentLeaderboardEntry("acct_has", "song_1", "Solo_Guitar", 123_456, rank: 7);
+        SeedCurrentLeaderboardEntry("acct_has", "song_2", "Solo_Guitar", 234_567, rank: 11);
+        SeedCurrentLeaderboardEntry("acct_missing", "song_2", "Solo_Guitar", 345_678, rank: 3);
+
+        var songIds = glp.GetCurrentStateSongIdsForMemberScoreFilter(
+            hasScoreAccountIds: ["acct_has"],
+            missingScoreAccountIds: ["acct_missing"],
+            instruments: ["Solo_Guitar"]);
+
+        Assert.Equal(["song_1"], songIds);
+    }
+
+    [Fact]
+    public void GetCurrentStateSongIdsForMemberScoreFilter_counts_valid_history_fallback_when_leeway_filters_current_score()
+    {
+        using var glp = CreatePersistence();
+        SeedSong("song_1", leadDiff: 3);
+        SeedSongStats("song_1", "Solo_Guitar", maxScore: 100_000);
+        SeedCurrentLeaderboardEntry("acct_has", "song_1", "Solo_Guitar", 150_000, rank: 7);
+
+        var withoutFallback = glp.GetCurrentStateSongIdsForMemberScoreFilter(
+            hasScoreAccountIds: ["acct_has"],
+            missingScoreAccountIds: [],
+            instruments: ["Solo_Guitar"],
+            leeway: 0);
+        Assert.Empty(withoutFallback);
+
+        SeedScoreHistory("acct_has", "song_1", "Solo_Guitar", 99_000);
+
+        var withFallback = glp.GetCurrentStateSongIdsForMemberScoreFilter(
+            hasScoreAccountIds: ["acct_has"],
+            missingScoreAccountIds: [],
+            instruments: ["Solo_Guitar"],
+            leeway: 0);
+        Assert.Equal(["song_1"], withFallback);
+    }
+
     private void SeedCurrentLeaderboardEntry(string accountId, string songId, string instrument, int score, int rank)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
@@ -875,6 +952,71 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("rank", rank);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SeedSong(string songId, int leadDiff = 0, int bassDiff = 0, int drumsDiff = 0, int vocalsDiff = 0)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO songs (
+                song_id, title, artist, lead_diff, bass_diff, drums_diff, vocals_diff,
+                pro_lead_diff, pro_bass_diff, plastic_guitar_diff, plastic_bass_diff,
+                plastic_drums_diff, pro_vocals_diff)
+            VALUES (
+                @songId, @title, 'Artist', @lead, @bass, @drums, @vocals,
+                @lead, @bass, @lead, @bass, @drums, @vocals)
+            ON CONFLICT (song_id) DO UPDATE SET
+                lead_diff = EXCLUDED.lead_diff,
+                bass_diff = EXCLUDED.bass_diff,
+                drums_diff = EXCLUDED.drums_diff,
+                vocals_diff = EXCLUDED.vocals_diff,
+                plastic_guitar_diff = EXCLUDED.plastic_guitar_diff,
+                plastic_bass_diff = EXCLUDED.plastic_bass_diff,
+                plastic_drums_diff = EXCLUDED.plastic_drums_diff,
+                pro_vocals_diff = EXCLUDED.pro_vocals_diff
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("title", songId);
+        cmd.Parameters.AddWithValue("lead", leadDiff);
+        cmd.Parameters.AddWithValue("bass", bassDiff);
+        cmd.Parameters.AddWithValue("drums", drumsDiff);
+        cmd.Parameters.AddWithValue("vocals", vocalsDiff);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SeedSongStats(string songId, string instrument, int maxScore)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO song_stats (song_id, instrument, entry_count, log_weight, max_score, computed_at)
+            VALUES (@songId, @instrument, 1, 1, @maxScore, @now)
+            ON CONFLICT (song_id, instrument) DO UPDATE SET max_score = EXCLUDED.max_score
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("maxScore", maxScore);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SeedScoreHistory(string accountId, string songId, string instrument, int score)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO score_history (
+                song_id, instrument, account_id, new_score, accuracy, is_full_combo,
+                stars, percentile, season, changed_at)
+            VALUES (@songId, @instrument, @accountId, @score, 987000, TRUE, 5, 0.12, 9, @now)
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }

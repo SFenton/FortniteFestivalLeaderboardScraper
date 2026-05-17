@@ -4,6 +4,7 @@ import {
   Colors, Font, Gap, Radius, Cursor, CssValue,
   flexColumn, padding,
 } from '@festival/theme';
+import PressableButton from '../common/PressableButton';
 
 interface Props {
   children: ReactNode;
@@ -41,9 +42,9 @@ export default class ErrorBoundary extends Component<Props, State> {
         <div style={styles.container}>
           <h1 style={styles.title}>{i18next.t('common.error')}</h1>
           <p style={styles.message}>{i18next.t('error.unexpectedCrash')}</p>
-          <button onClick={this.handleReload} style={styles.reloadBtn}>
+          <PressableButton onPress={this.handleReload} style={styles.reloadBtn}>
             {i18next.t('common.reload')}
-          </button>
+          </PressableButton>
         </div>
       );
     }

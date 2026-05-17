@@ -3,6 +3,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoPeople, IoPerson } from 'react-icons/io5';
 import { Colors, IconSize, Border, TRANSITION_MS, CssValue, CssProp, flexCenter, transition, transitions, border } from '@festival/theme';
+import PressableButton from '../../common/PressableButton';
 
 export type HeaderProfileType = 'none' | 'player' | 'band';
 
@@ -18,11 +19,11 @@ export default function HeaderProfileButton({ hasPlayer, profileType, onClick }:
   const s = useStyles(resolvedProfileType !== 'none');
   const Icon = resolvedProfileType === 'band' ? IoPeople : IoPerson;
   return (
-    <button style={s.button} onClick={onClick} aria-label={t('aria.profile')} data-profile-type={resolvedProfileType}>
+    <PressableButton style={s.button} onPress={onClick} aria-label={t('aria.profile')} data-profile-type={resolvedProfileType}>
       <span style={s.circle}>
         <Icon size={IconSize.xs} />
       </span>
-    </button>
+    </PressableButton>
   );
 }
 

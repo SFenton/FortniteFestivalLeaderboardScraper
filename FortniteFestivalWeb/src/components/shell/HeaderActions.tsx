@@ -3,13 +3,15 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { useTranslation } from 'react-i18next';
 import { IoNotifications, IoNotificationsOffOutline, IoPeople, IoPerson, IoPersonAdd, IoSearch } from 'react-icons/io5';
 import {
-  Align, BoxSizing, Colors, CssValue, Gap, IconSize, Position, Radius, Size, Weight, SpinnerSize,
+  Align, BoxSizing, Colors, CssValue, Gap, GeneralSize, IconSize, Position, Radius, Weight, SpinnerSize,
   flexCenter, flexRow,
 } from '@festival/theme';
 import { IS_IOS } from '@festival/ui-utils';
 import ArcSpinner from '../common/ArcSpinner';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 
 const HEADER_ACTION_TRANSITION_MS = 180;
+const HEADER_ACTION_TOUCH_TARGET = GeneralSize.thumb;
 export const HEADER_NOTIFICATION_SWAP_FADE_MS = 280;
 
 export type HeaderActionProfileType = 'none' | 'player' | 'band';
@@ -64,6 +66,9 @@ export default function HeaderActions({
   const spinnerOpacity = notificationVisualState === 'spinnerIn' || notificationVisualState === 'spinner' ? 1 : 0;
   const showNotificationBadge = (notificationVisualState === 'icon' || notificationVisualState === 'spinnerOut') && notificationVisual.notificationCount > 0;
   const notificationGlyphStyle = IS_IOS ? { ...s.notificationGlyph, ...s.notificationGlyphIos } : s.notificationGlyph;
+  const profilePressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onProfileAction?.(), disabled: !onProfileAction });
+  const searchPressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onOpenSearch?.(), disabled: !onOpenSearch });
+  const notificationPressHandlers = usePressAction<HTMLButtonElement>({ onPress: () => onOpenNotifications?.(), disabled: !notificationInteractive });
 
   return (
     <div style={{ ...s.actions, ...style }} data-testid={`${testIdPrefix}-actions`}>
@@ -72,7 +77,7 @@ export default function HeaderActions({
         <button
           type="button"
           style={s.profileButton}
-          onClick={onProfileAction}
+          {...profilePressHandlers}
           aria-label={profileLabel ?? t('aria.profile')}
           data-testid={`${testIdPrefix}-profile`}
           data-profile-type={profileType}
@@ -83,7 +88,7 @@ export default function HeaderActions({
       <button
         type="button"
         style={s.iconButton}
-        onClick={onOpenSearch}
+        {...searchPressHandlers}
         aria-label={t('common.searchAction')}
         data-testid={`${testIdPrefix}-search`}
       >
@@ -93,7 +98,8 @@ export default function HeaderActions({
         <button
           type="button"
           style={{ ...s.iconButton, ...(notificationInteractive ? undefined : s.iconButtonInert) }}
-          onClick={notificationInteractive ? onOpenNotifications : undefined}
+          {...notificationPressHandlers}
+          disabled={!notificationInteractive}
           aria-label={t('common.notifications')}
           aria-busy={notificationLoading ? 'true' : undefined}
           aria-disabled={notificationInteractive ? undefined : 'true'}
@@ -158,8 +164,8 @@ function useStyles() {
     iconButton: {
       ...flexCenter,
       position: Position.relative,
-      width: Size.iconLg,
-      height: Size.iconLg,
+      width: HEADER_ACTION_TOUCH_TARGET,
+      height: HEADER_ACTION_TOUCH_TARGET,
       background: 'none',
       border: 'none',
       cursor: 'pointer',
@@ -217,7 +223,7 @@ function useStyles() {
     notificationGlyphIos: {
     } as CSSProperties,
     actionPresenceVisible: {
-      width: Size.iconLg,
+      width: HEADER_ACTION_TOUCH_TARGET,
       minWidth: 0,
       opacity: 1,
       overflow: 'hidden',
@@ -238,13 +244,13 @@ function useStyles() {
     } as CSSProperties,
     actionPresenceInner: {
       display: 'inline-flex',
-      width: Size.iconLg,
-      minWidth: Size.iconLg,
+      width: HEADER_ACTION_TOUCH_TARGET,
+      minWidth: HEADER_ACTION_TOUCH_TARGET,
     } as CSSProperties,
     profileButton: {
       ...flexCenter,
-      width: Size.iconLg,
-      height: Size.iconLg,
+      width: HEADER_ACTION_TOUCH_TARGET,
+      height: HEADER_ACTION_TOUCH_TARGET,
       background: 'none',
       border: 'none',
       cursor: 'pointer',

@@ -25,6 +25,18 @@ function mockFetchError(status: number, statusText: string) {
 }
 
 describe('api/client', () => {
+  describe('getFeatures', () => {
+    it('fetches feature flags from /api/features', async () => {
+      const data = { compete: true, leaderboards: true, difficulty: false, playerBands: true, experimentalRanks: false, appManual: true };
+      mockFetchOk(data);
+
+      const result = await api.getFeatures();
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/features', { headers: {} });
+    });
+  });
+
   describe('getSongs', () => {
     it('fetches songs from /api/songs', async () => {
       const data = { songs: [{ songId: 's1', title: 'Test' }], count: 1, currentSeason: 5 };
@@ -78,6 +90,23 @@ describe('api/client', () => {
       mockFetchOk({ songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] });
       await api.getLeaderboard('s1', 'Solo_Guitar' as any, 100, 0, 1.5);
       expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/Solo_Guitar?top=100&offset=0&leeway=1.5', { headers: {} });
+    });
+  });
+
+  describe('getMemberScoreFilter', () => {
+    it('fetches member score filter song IDs with all params', async () => {
+      const data = { count: 1, songIds: ['s1'] };
+      mockFetchOk(data);
+
+      const result = await api.getMemberScoreFilter({
+        hasAccountIds: ['acct-1'],
+        missingAccountIds: ['acct-2'],
+        instruments: ['Solo_Guitar' as any, 'Solo_Bass' as any],
+        leeway: 1.5,
+      });
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/songs/member-score-filter?has=acct-1&missing=acct-2&instruments=Solo_Guitar%2CSolo_Bass&leeway=1.5', { headers: {} });
     });
   });
 

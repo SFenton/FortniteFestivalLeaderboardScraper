@@ -17,6 +17,15 @@ namespace FSTService;
 /// </summary>
 public static class ComboIds
 {
+    public const string ProDrumsFamilyScope = "pro_drums";
+    public const int ProDrumsFamilyMask = 0x180;
+
+    public static readonly IReadOnlyList<string> ProDrumsFamilyInstruments = new[]
+    {
+        "Solo_PeripheralCymbals",
+        "Solo_PeripheralDrums",
+    };
+
     /// <summary>
     /// Canonical instrument order — the index of each key is its bit position.
     /// Must match SERVER_INSTRUMENT_KEYS / COMBO_INSTRUMENTS in @festival/core.
@@ -203,13 +212,31 @@ public static class ComboIds
     /// </summary>
     public static string? NormalizeSupportedRivalComboParam(string? param)
     {
+        if (param?.Equals(ProDrumsFamilyScope, StringComparison.OrdinalIgnoreCase) == true)
+            return ProDrumsFamilyScope;
+
         var normalized = NormalizeAnyComboParam(param);
         if (normalized is null) return null;
 
         int mask = Convert.ToInt32(normalized, 16);
-        return BitCount(mask) == 1 || IsWithinGroupCombo(mask)
-            ? normalized
-            : null;
+        if (mask == ProDrumsFamilyMask)
+            return ProDrumsFamilyScope;
+
+        return BitCount(mask) == 1 || IsWithinGroupCombo(mask) ? normalized : null;
+    }
+
+    public static bool IsProDrumsFamilyScope(string? scope) =>
+        scope?.Equals(ProDrumsFamilyScope, StringComparison.OrdinalIgnoreCase) == true;
+
+    public static bool IsProDrumsFamilyInstrumentSet(IReadOnlyCollection<string> instruments) =>
+        instruments.Count == ProDrumsFamilyInstruments.Count &&
+        ProDrumsFamilyInstruments.All(expected => instruments.Any(actual => actual.Equals(expected, StringComparison.OrdinalIgnoreCase)));
+
+    public static string ToRivalScopeId(IReadOnlyCollection<string> instruments)
+    {
+        return IsProDrumsFamilyInstrumentSet(instruments)
+            ? ProDrumsFamilyScope
+            : FromInstruments(instruments);
     }
 
     private static int IndexOf(string instrument)

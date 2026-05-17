@@ -9,6 +9,7 @@ import {
   border, flexRow, frostedCard, padding, transition,
 } from '@festival/theme';
 import { type ServerSong as Song } from '@festival/core/api/serverTypes';
+import PressableButton from '../../../components/common/PressableButton';
 
 export interface SongHeaderProps {
   song: Song | undefined;
@@ -42,13 +43,13 @@ export default function SongHeader({ song,
         </p>
       </div>
       {!isMobile && (
-        <button
-          onClick={onOpenPaths}
+        <PressableButton
+          onPress={onOpenPaths}
           style={s.viewPathsButton}
         >
           <IoFlash size={IconSize.xs} style={{ marginRight: Gap.md }} />
           {t('common.viewPaths')}
-        </button>
+        </PressableButton>
       )}
     </div>
     /* v8 ignore stop */

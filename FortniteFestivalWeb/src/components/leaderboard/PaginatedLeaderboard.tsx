@@ -1,13 +1,14 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useRef, useState, useMemo, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { forwardRef, useEffect, useRef, useState, useMemo, type AnimationEventHandler, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import ArcSpinner from '../common/ArcSpinner';
 import { staggerDelay } from '@festival/ui-utils';
-import { Gap, Layout, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@festival/theme';
+import { Gap, Layout, PointerEvents, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@festival/theme';
 import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { LoadPhase } from '@festival/core';
+import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import { plbStyles as s, fixedFooterWide } from './paginatedLeaderboardStyles';
 import { FixedLeaderboardPagination, getFixedPlayerFooterStyle, useLeaderboardFooterScrollMargin } from './LeaderboardPaginationFooter';
 
@@ -53,6 +54,8 @@ export interface PaginatedLeaderboardProps<T> {
   isMobile: boolean;
   /** True when the FAB (mobile chrome / PWA) is present. */
   hasFab: boolean;
+  /** Whether fixed footer content should reserve horizontal space for the FAB. Defaults to hasFab. */
+  reserveFabSpace?: boolean;
   /** Pixel height for each row. Defaults to the standard leaderboard row height. */
   rowHeight?: number;
 
@@ -102,6 +105,7 @@ export function PaginatedLeaderboard<T>({
   cached: skipAllAnim = false,
   isMobile,
   hasFab,
+  reserveFabSpace = hasFab,
   rowHeight = Layout.entryRowHeight,
   error = false,
   emptyMessage,
@@ -217,7 +221,7 @@ export function PaginatedLeaderboard<T>({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             minHeight: 'calc(100vh - 350px)',
             ...(loadPhase === LoadPhase.SpinnerOut
-              ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
+              ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`, pointerEvents: PointerEvents.none }
               : {}),
           }}
         >
@@ -236,7 +240,7 @@ export function PaginatedLeaderboard<T>({
               ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` }
               : undefined;
             return (
-              <Link
+              <PaginatedLeaderboardRowLink
                 key={entryKey(entry)}
                 ref={isPlayer && playerRowRef ? playerRowRef : undefined}
                 to={entryLinkTo(entry, isPlayer)}
@@ -251,7 +255,7 @@ export function PaginatedLeaderboard<T>({
                 }}
               >
                 {renderRow(entry, i)}
-              </Link>
+              </PaginatedLeaderboardRowLink>
             );
           })}
           {entries.length === 0 && emptyMessage && (
@@ -282,6 +286,7 @@ export function PaginatedLeaderboard<T>({
           onGoToPage={onGoToPage}
           isMobile={isMobile}
           hasFab={hasFab}
+          reserveFabSpace={reserveFabSpace}
           hasPlayerFooter={hasPlayerFooter}
           rowHeight={rowHeight}
         />
@@ -297,7 +302,7 @@ export function PaginatedLeaderboard<T>({
           }}
         >
           {renderPlayerFooter({
-            className: hasFab ? 'fab-player-footer' : '',
+            className: reserveFabSpace ? 'fab-player-footer' : '',
             style: { ...s.playerFooterRow, ...rowHeightStyle },
           })}
         </div>,
@@ -307,3 +312,27 @@ export function PaginatedLeaderboard<T>({
     </>
   );
 }
+
+const PaginatedLeaderboardRowLink = forwardRef<HTMLAnchorElement, {
+  to: string;
+  state?: unknown;
+  style: CSSProperties;
+  onAnimationEnd?: AnimationEventHandler<HTMLAnchorElement>;
+  children: ReactNode;
+}>(function PaginatedLeaderboardRowLink({ to, state, style, onAnimationEnd, children }, ref) {
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to, state });
+
+  return (
+    <Link
+      ref={ref}
+      to={to}
+      state={state}
+      style={{ ...style, ...(linkPress.isPressed ? s.rowPressed : undefined) }}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      onAnimationEnd={onAnimationEnd}
+      {...linkPress.linkPressHandlers}
+    >
+      {children}
+    </Link>
+  );
+});

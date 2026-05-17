@@ -49,4 +49,42 @@ public class SongsCacheServiceTests
         Assert.Equal("new", System.Text.Encoding.UTF8.GetString(cached!.Value.Json));
         Assert.Equal(etag2, cached.Value.ETag);
     }
+
+    [Fact]
+    public void Get_ExpiredButFrozen_ReturnsStaleData()
+    {
+        var cache = new SongsCacheService(() => true, TimeSpan.Zero);
+        var data = System.Text.Encoding.UTF8.GetBytes("stale");
+        var etag = cache.Set(data);
+
+        var cached = cache.Get();
+
+        Assert.NotNull(cached);
+        Assert.Equal(data, cached!.Value.Json);
+        Assert.Equal(etag, cached.Value.ETag);
+    }
+
+    [Fact]
+    public void Get_ExpiredAndNotFrozen_ReturnsNull()
+    {
+        var cache = new SongsCacheService(() => false, TimeSpan.Zero);
+        cache.Set(System.Text.Encoding.UTF8.GetBytes("stale"));
+
+        Assert.Null(cache.Get());
+    }
+
+    [Fact]
+    public void GetStale_ExpiredAndNotFrozen_ReturnsCachedData()
+    {
+        var cache = new SongsCacheService(() => false, TimeSpan.Zero);
+        var data = System.Text.Encoding.UTF8.GetBytes("stale");
+        var etag = cache.Set(data);
+
+        Assert.Null(cache.Get());
+        var stale = cache.GetStale();
+
+        Assert.NotNull(stale);
+        Assert.Equal(data, stale!.Value.Json);
+        Assert.Equal(etag, stale.Value.ETag);
+    }
 }

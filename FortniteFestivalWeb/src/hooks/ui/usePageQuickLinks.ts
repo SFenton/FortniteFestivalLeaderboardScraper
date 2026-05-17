@@ -19,6 +19,7 @@ export interface PageQuickLinkItem {
   label: ReactNode;
   landmarkLabel: string;
   icon?: ReactNode;
+  depth?: number;
 }
 
 type UsePageQuickLinksOptions<T extends PageQuickLinkItem> = {

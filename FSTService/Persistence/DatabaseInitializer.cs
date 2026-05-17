@@ -16,12 +16,12 @@ public static class DatabaseInitializer
         cmd.CommandText = $"{Schema}{Environment.NewLine}{Environment.NewLine}{BandRankingStorageNames.GetCurrentSchemaSql()}{Environment.NewLine}{Environment.NewLine}{ImprovementNotificationSchema.Sql}";
         await cmd.ExecuteNonQueryAsync(ct);
 
-        // Reset SERIAL sequences to max(id)+1 — needed after COPY migration inserts explicit IDs
+        // Advance SERIAL sequences after COPY-style explicit ID inserts, but never rewind them after retention/deletion.
         await using var seqCmd = conn.CreateCommand();
         seqCmd.CommandText = """
-            SELECT setval(pg_get_serial_sequence('scrape_log', 'id'), COALESCE((SELECT MAX(id) FROM scrape_log), 0) + 1, false);
-            SELECT setval(pg_get_serial_sequence('score_history', 'id'), COALESCE((SELECT MAX(id) FROM score_history), 0) + 1, false);
-            SELECT setval(pg_get_serial_sequence('user_sessions', 'id'), COALESCE((SELECT MAX(id) FROM user_sessions), 0) + 1, false);
+            SELECT setval('scrape_log_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM scrape_log), 0) + 1, (SELECT last_value + CASE WHEN is_called THEN 1 ELSE 0 END FROM scrape_log_id_seq)), false);
+            SELECT setval('score_history_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM score_history), 0) + 1, (SELECT last_value + CASE WHEN is_called THEN 1 ELSE 0 END FROM score_history_id_seq)), false);
+            SELECT setval('user_sessions_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM user_sessions), 0) + 1, (SELECT last_value + CASE WHEN is_called THEN 1 ELSE 0 END FROM user_sessions_id_seq)), false);
             """;
         await seqCmd.ExecuteNonQueryAsync(ct);
     }
@@ -497,6 +497,33 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_scrapelog_completed
             ON scrape_log (id DESC) WHERE completed_at IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS scrape_publication_state (
+            id                  BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+            published_scrape_id INTEGER     REFERENCES scrape_log(id),
+            published_at        TIMESTAMPTZ,
+            public_reads_frozen BOOLEAN     NOT NULL DEFAULT FALSE,
+            public_reads_frozen_at TIMESTAMPTZ,
+            public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id),
+            public_reads_frozen_reason TEXT,
+            updated_at          TIMESTAMPTZ NOT NULL
+        );
+
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_at TIMESTAMPTZ;
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id);
+        ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_reason TEXT;
+
+        INSERT INTO scrape_publication_state (id, published_scrape_id, published_at, updated_at)
+        SELECT TRUE, latest.id, latest.completed_at, now()
+        FROM (
+            SELECT id, completed_at
+            FROM scrape_log
+            WHERE completed_at IS NOT NULL
+            ORDER BY id DESC
+            LIMIT 1
+        ) latest
+        WHERE NOT EXISTS (SELECT 1 FROM scrape_publication_state WHERE id = TRUE);
 
         -- =====================================================================
         -- SCORE HISTORY (from fst-meta.db)
@@ -1109,6 +1136,45 @@ public static class DatabaseInitializer
         -- endpoints that would use them use ix_cr_rank instead. Saves ~334 MB.
 
         -- =====================================================================
+        -- SOLO FAMILY RANKINGS (fixed global Statistics scopes)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS solo_family_rankings (
+            scope_id               TEXT        NOT NULL,
+            account_id             TEXT        NOT NULL,
+            songs_played           INTEGER     NOT NULL,
+            total_charted_songs    INTEGER     NOT NULL,
+            coverage               REAL        NOT NULL,
+            raw_skill_rating       REAL        NOT NULL,
+            adjusted_skill_rating  REAL        NOT NULL,
+            adjusted_skill_rank    INTEGER     NOT NULL,
+            weighted_rating        REAL        NOT NULL,
+            weighted_rank          INTEGER     NOT NULL,
+            fc_rate                REAL        NOT NULL,
+            fc_rate_rank           INTEGER     NOT NULL,
+            total_score            BIGINT      NOT NULL,
+            total_score_rank       INTEGER     NOT NULL,
+            max_score_percent      REAL        NOT NULL,
+            max_score_percent_rank INTEGER     NOT NULL,
+            full_combo_count       INTEGER     NOT NULL,
+            raw_max_score_percent  REAL,
+            raw_weighted_rating    REAL,
+            computed_at            TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (scope_id, account_id)
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_sfr_adjusted_rank
+            ON solo_family_rankings (scope_id, adjusted_skill_rank);
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_sfr_weighted_rank
+            ON solo_family_rankings (scope_id, weighted_rank);
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_sfr_fc_rate_rank
+            ON solo_family_rankings (scope_id, fc_rate_rank);
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_sfr_total_score_rank
+            ON solo_family_rankings (scope_id, total_score_rank);
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_sfr_max_score_rank
+            ON solo_family_rankings (scope_id, max_score_percent_rank);
+
+        -- =====================================================================
         -- LEADERBOARD RIVALS (from fst-meta.db)
         -- =====================================================================
 
@@ -1704,6 +1770,22 @@ public static class DatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_btc_band_team
             ON band_team_configurations (band_type, team_key);
+
+        CREATE TABLE IF NOT EXISTS band_identity (
+            band_id            TEXT        PRIMARY KEY,
+            band_type          TEXT        NOT NULL,
+            team_key           TEXT        NOT NULL,
+            member_account_ids TEXT[]      NOT NULL DEFAULT ARRAY[]::TEXT[],
+            appearance_count   INTEGER     NOT NULL DEFAULT 0,
+            first_seen_at      TIMESTAMPTZ,
+            last_seen_at       TIMESTAMPTZ,
+            updated_at         TIMESTAMPTZ NOT NULL,
+            source             TEXT        NOT NULL DEFAULT 'unknown',
+            UNIQUE (band_type, team_key)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_band_identity_type_appearance
+            ON band_identity (band_type, appearance_count DESC, team_key);
 
         -- Rich global band-search projection. Search reads these precomputed
         -- rows instead of triggering request-time per-account summary rebuilds.

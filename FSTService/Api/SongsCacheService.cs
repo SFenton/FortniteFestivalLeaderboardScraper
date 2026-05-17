@@ -14,10 +14,23 @@ namespace FSTService.Api;
 public sealed class SongsCacheService
 {
     private readonly object _lock = new();
+    private readonly Func<bool> _isFrozen;
+    private readonly TimeSpan _cacheTtl;
     private byte[]? _cachedJson;
     private string? _etag;
     private DateTime _cachedAt;
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(5);
+
+    public SongsCacheService(PublicReadGateService? publicReadGate = null)
+        : this(() => publicReadGate?.IsFrozen ?? false, DefaultCacheTtl)
+    {
+    }
+
+    public SongsCacheService(Func<bool> isFrozen, TimeSpan cacheTtl)
+    {
+        _isFrozen = isFrozen ?? throw new ArgumentNullException(nameof(isFrozen));
+        _cacheTtl = cacheTtl;
+    }
 
     /// <summary>
     /// Returns (json, etag) if cached and not expired; otherwise null.
@@ -26,9 +39,21 @@ public sealed class SongsCacheService
     {
         lock (_lock)
         {
-            if (_cachedJson is not null && DateTime.UtcNow - _cachedAt < CacheTtl)
+            if (_cachedJson is not null && (_isFrozen() || DateTime.UtcNow - _cachedAt < _cacheTtl))
                 return (_cachedJson, _etag!);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Returns the last cached response regardless of freshness.
+    /// Used as a last-good fallback when rebuilding the live songs payload fails.
+    /// </summary>
+    public (byte[] Json, string ETag)? GetStale()
+    {
+        lock (_lock)
+        {
+            return _cachedJson is null ? null : (_cachedJson, _etag!);
         }
     }
 

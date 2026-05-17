@@ -121,7 +121,7 @@ public sealed class LeaderboardRivalsCalculator
 
                 if (!neighborScoreCache.TryGetValue(neighborId, out var cachedScores))
                 {
-                    var neighborScoreList = db.GetPlayerScoresForSongs(neighborId, userScoreMap.Keys.ToList());
+                    var neighborScoreList = db.GetCurrentStatePlayerScoresForSongs(neighborId, userScoreMap.Keys.ToList());
                     cachedScores = neighborScoreList.ToDictionary(s => s.SongId, StringComparer.OrdinalIgnoreCase);
                     neighborScoreCache[neighborId] = cachedScores;
                 }

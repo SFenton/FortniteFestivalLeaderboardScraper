@@ -34,6 +34,7 @@ const mockApi = vi.hoisted(() => {
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'test-player-1', stats: [] }),
     getBandSongRows: fn().mockResolvedValue({ bandType: 'Band_Duets', teamKey: 'p1:p2', count: 0, entries: [] }),
+    getMemberScoreFilter: fn().mockResolvedValue({ count: 0, songIds: [] }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' }),
   };
@@ -72,6 +73,7 @@ function resetMocks() {
   mockApi.getPlayerHistory.mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] });
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'test-player-1', stats: [] });
   mockApi.getBandSongRows.mockResolvedValue({ bandType: 'Band_Duets', teamKey: 'p1:p2', count: 0, entries: [] });
+  mockApi.getMemberScoreFilter.mockResolvedValue({ count: 0, songIds: [] });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' });
 }
@@ -603,6 +605,59 @@ describe('SongsPage', () => {
     const { container } = renderSongsPage('/songs');
     await settleSongsPage();
 
+    expect(container.textContent).toContain('Alpha Song');
+    expect(container.textContent).toContain('Beta Song');
+    expect(container.textContent).toContain('Gamma Song');
+  });
+
+  it('filters selected band songs with individual band member score endpoint results', async () => {
+    selectTestTrioBandProfile();
+    mockSelectedTrioBandRows();
+    mockApi.getMemberScoreFilter.mockResolvedValue({ count: 1, songIds: ['s2'] });
+    setSongSettingsFilter({
+      individualBandMemberScoreFilters: {
+        sfentonx: { hasScore: true, missingScore: false },
+      },
+    });
+    const matchingFilter: AppliedBandComboFilter = {
+      bandId: 'band-trio-1',
+      bandType: 'Band_Trios',
+      teamKey: 'sfentonx:kahnyri:phankie',
+      comboId: 'Solo_Bass+Solo_Bass+Solo_Drums',
+      assignments: [
+        { accountId: 'sfentonx', instrument: 'Solo_Bass' },
+        { accountId: 'kahnyri', instrument: 'Solo_Drums' },
+        { accountId: 'phankie', instrument: 'Solo_Bass' },
+      ],
+    };
+
+    const { container } = renderSongsPage('/songs', undefined, matchingFilter);
+    await settleSongsPage();
+
+    expect(mockApi.getMemberScoreFilter).toHaveBeenCalledWith({
+      hasAccountIds: ['sfentonx'],
+      missingAccountIds: [],
+      instruments: ['Solo_Bass', 'Solo_Drums'],
+      leeway: undefined,
+    });
+    expect(container.textContent).not.toContain('Alpha Song');
+    expect(container.textContent).toContain('Beta Song');
+    expect(container.textContent).not.toContain('Gamma Song');
+  });
+
+  it('does not fetch individual band member score IDs without an active combo', async () => {
+    selectTestBandProfile();
+    mockSelectedBandRows();
+    setSongSettingsFilter({
+      individualBandMemberScoreFilters: {
+        p1: { hasScore: true, missingScore: false },
+      },
+    });
+
+    const { container } = renderSongsPage('/songs');
+    await settleSongsPage();
+
+    expect(mockApi.getMemberScoreFilter).not.toHaveBeenCalled();
     expect(container.textContent).toContain('Alpha Song');
     expect(container.textContent).toContain('Beta Song');
     expect(container.textContent).toContain('Gamma Song');

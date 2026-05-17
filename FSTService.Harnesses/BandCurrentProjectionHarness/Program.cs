@@ -1,7 +1,10 @@
 using System.Text.Json;
+using FSTService;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 if (args.Contains("--help", StringComparer.OrdinalIgnoreCase) || args.Contains("-h", StringComparer.OrdinalIgnoreCase))
@@ -23,6 +26,7 @@ bool execute = false;
 bool allowProd = false;
 bool skipSchema = false;
 bool clearExisting = false;
+bool warmSongBandCache = false;
 int timeoutSeconds = 0;
 int progressEvery = 100;
 
@@ -69,6 +73,9 @@ for (var i = 0; i < args.Length; i++)
         case "--clear-existing":
             clearExisting = true;
             break;
+        case "--warm-song-band-cache":
+            warmSongBandCache = true;
+            break;
         case "--timeout-seconds":
             timeoutSeconds = int.Parse(args[++i]);
             break;
@@ -99,6 +106,12 @@ if (clearExisting && !execute)
 
 if (clearExisting && publishGeneration.HasValue)
     return Fail("--clear-existing is not valid with --publish-generation");
+
+if (warmSongBandCache && string.IsNullOrWhiteSpace(songId))
+    return Fail("--warm-song-band-cache requires --song-id");
+
+if (warmSongBandCache && !execute)
+    return Fail("--warm-song-band-cache writes api_response_cache and requires --execute --allow-prod");
 
 if (!string.IsNullOrWhiteSpace(combo) && (string.IsNullOrWhiteSpace(songId) || string.IsNullOrWhiteSpace(bandType)))
     return Fail("--combo is only valid with --song-id and --band-type");
@@ -145,6 +158,8 @@ if (clearExisting)
     Console.WriteLine("Clear existing projection rows before full rebuild: true");
 if (publishGeneration.HasValue)
     Console.WriteLine($"Publish generation: {publishGeneration.Value:N0}");
+if (warmSongBandCache)
+    Console.WriteLine("Warm song-band cache: true");
 
 await using var dataSource = NpgsqlDataSource.Create(pg);
 using var loggerFactory = LoggerFactory.Create(builder =>
@@ -234,6 +249,18 @@ else
     Console.WriteLine("Add --song-id <id> --band-type <bandType> [--combo <combo>] for a scoped rebuild.");
 }
 
+SongBandPreviewCacheWarmResult? cacheWarmResult = null;
+if (warmSongBandCache)
+{
+    cacheWarmResult = WarmSongBandPreviewCache(
+        dataSource,
+        loggerFactory,
+        songId!,
+        LeaderboardCacheKeys.SongDetailPreviewTop);
+    Console.WriteLine();
+    Console.WriteLine($"Warmed {cacheWarmResult.CacheKey}: {cacheWarmResult.JsonBytes:N0} byte(s), total entries {cacheWarmResult.TotalEntries:N0} across {cacheWarmResult.BandCount:N0} band type(s).");
+}
+
 var after = builder.Inspect();
 PrintStats(execute ? "After" : "Current", after);
 
@@ -255,6 +282,7 @@ var payload = new
     after,
     scopeResult,
     publishResult,
+    cacheWarmResult,
     rebuildResult,
 };
 
@@ -275,7 +303,7 @@ static void PrintUsage()
           BandCurrentProjectionHarness --pg <connection-string> [--out <path>]
           BandCurrentProjectionHarness --pg-env <env-var-name> [--out <path>]
           BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod [--band-types <csv>] [--scope-mode all|overall|combo] [--timeout-seconds <seconds>] [--clear-existing] [--progress-every <count>] [--out <path>]
-          BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --song-id <song-id> --band-type <band-type> [--combo <combo>] [--timeout-seconds <seconds>] [--out <path>]
+          BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --song-id <song-id> --band-type <band-type> [--combo <combo>] [--timeout-seconds <seconds>] [--warm-song-band-cache] [--out <path>]
                     BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --publish-generation <generation> [--band-types <csv>] [--scope-mode all|overall|combo] [--out <path>]
                     BandCurrentProjectionHarness --pg <connection-string> --execute --allow-prod --publish-generation <generation> --song-id <song-id> --band-type <band-type> [--combo <combo>] [--out <path>]
 
@@ -288,8 +316,76 @@ static void PrintUsage()
           - Full rebuild uses the same scoped updater as normal incremental projection maintenance.
           - Publish mode advances matching existing ready scopes for one generation without rebuilding rows.
           - Run full rebuild before deploying API code that reads current_band_leaderboard_entries.
+          - --warm-song-band-cache rewrites the persisted song-bands-all:{song}:10 API cache row for the scoped song.
         """);
 }
+
+static SongBandPreviewCacheWarmResult WarmSongBandPreviewCache(
+    NpgsqlDataSource dataSource,
+    ILoggerFactory loggerFactory,
+    string songId,
+    int top)
+{
+    using var metaDb = new MetaDatabase(
+        dataSource,
+        loggerFactory.CreateLogger<MetaDatabase>(),
+        Options.Create(new BandRankHistoryOptions()));
+    var showLeaderboardEntryTotals = metaDb.ShouldShowLeaderboardEntryTotals();
+    var bandPayloads = new List<object>();
+    var totalEntriesAcrossBands = 0;
+
+    foreach (var bandType in BandInstrumentMapping.AllBandTypes)
+    {
+        var (entries, totalEntries) = metaDb.GetSongBandLeaderboard(songId, bandType, top, 0);
+        totalEntriesAcrossBands += totalEntries;
+        var names = metaDb.GetDisplayNames(entries.SelectMany(entry => entry.Members.Select(member => member.AccountId)));
+        bandPayloads.Add(new
+        {
+            bandType,
+            count = entries.Count,
+            totalEntries,
+            localEntries = totalEntries,
+            entries = entries.Select(entry => MapSongBandLeaderboardEntry(entry, names)).ToList(),
+            selectedPlayerEntry = (object?)null,
+            selectedBandEntry = (object?)null,
+        });
+    }
+
+    var payload = new { songId, showLeaderboardEntryTotals, bands = bandPayloads };
+    var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+    var cacheKey = LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, top);
+    metaDb.BulkSetCachedResponses([(cacheKey, jsonBytes, ResponseCacheService.ComputeETag(jsonBytes))]);
+    return new SongBandPreviewCacheWarmResult(cacheKey, jsonBytes.Length, bandPayloads.Count, totalEntriesAcrossBands);
+}
+
+static object MapSongBandLeaderboardEntry(SongBandLeaderboardEntryDto entry, IReadOnlyDictionary<string, string> names) => new
+{
+    entry.BandId,
+    entry.BandType,
+    entry.TeamKey,
+    entry.ComboId,
+    Members = entry.Members.Select(member => new
+    {
+        member.AccountId,
+        DisplayName = names.GetValueOrDefault(member.AccountId),
+        member.Instruments,
+        member.Score,
+        member.Accuracy,
+        member.IsFullCombo,
+        member.Stars,
+        member.Difficulty,
+        member.Season,
+    }).ToList(),
+    entry.Score,
+    entry.Rank,
+    entry.Accuracy,
+    entry.IsFullCombo,
+    entry.Stars,
+    entry.Difficulty,
+    entry.Season,
+    entry.Percentile,
+    entry.EndTime,
+};
 
 static async Task<IReadOnlyList<BandCurrentProjectionScopeKey>> LoadPublishScopesAsync(
     NpgsqlDataSource dataSource,
@@ -399,3 +495,9 @@ static void EmitJson(string? outPath, object payload)
     Console.WriteLine();
     Console.WriteLine($"Wrote {fullPath}");
 }
+
+public sealed record SongBandPreviewCacheWarmResult(
+    string CacheKey,
+    int JsonBytes,
+    int BandCount,
+    int TotalEntries);

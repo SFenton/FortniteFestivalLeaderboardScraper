@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { TabKey } from '@festival/core';
+import { markTapDiagnosticsAction } from '../../diagnostics/tapDiagnostics';
 export type { TabKey };
 
 export const TAB_ROOTS: Record<TabKey, string> = {
@@ -17,7 +18,7 @@ export const TAB_ROOTS: Record<TabKey, string> = {
 
 const STORAGE_KEY = 'fst:tabRoutes';
 
-/** Infer which tab owns a route. Detail pages under /songs belong to songs; /player belongs to the active tab. */
+/** Infer which tab owns a route. Profile detail routes are neutral unless represented by /statistics. */
 export function inferTab(pathname: string): TabKey | null {
   const path = pathname.split(/[?#]/, 1)[0] || '/';
   if (path === '/songs' || path.startsWith('/songs/')) return TabKey.Songs;
@@ -26,9 +27,8 @@ export function inferTab(pathname: string): TabKey | null {
   if (path === '/compete' || path.startsWith('/leaderboards')) return TabKey.Compete;
   if (path === '/rivals' || path.startsWith('/rivals/')) return TabKey.Compete;
   if (path === '/statistics') return TabKey.Statistics;
-  if (path === '/bands' || (path.startsWith('/bands/') && !path.startsWith('/bands/player/'))) return TabKey.Statistics;
   if (path === '/settings') return TabKey.Settings;
-  return null; // /player/:id — ambiguous, owned by the currently active tab
+  return null;
 }
 
 function loadTabRoutes(): Record<TabKey, string> {
@@ -52,11 +52,13 @@ export function useTabNavigation() {
   const location = useLocation();
   const navigate = useNavigate();
   const navType = useNavigationType();
+  const currentPath = `${location.pathname}${location.search}`;
 
-  const [activeTab, setActiveTab] = useState<TabKey>(
-    () => inferTab(location.pathname) ?? TabKey.Songs,
+  const [activeTab, setActiveTab] = useState<TabKey | null>(
+    () => inferTab(location.pathname),
   );
   const [tabRoutes, setTabRoutes] = useState<Record<TabKey, string>>(loadTabRoutes);
+  const pendingNavigationRef = useRef<{ tab: TabKey; from: string; to: string; replace: boolean } | null>(null);
 
   // Persist to sessionStorage on change
   useEffect(() => {
@@ -66,13 +68,39 @@ export function useTabNavigation() {
   // Keep tabRoutes in sync as user navigates
   const prevPathRef = useRef(location.pathname);
   useEffect(() => {
+    const pendingNavigation = pendingNavigationRef.current;
+    if (pendingNavigation && currentPath !== pendingNavigation.from) {
+      pendingNavigationRef.current = null;
+      markTapDiagnosticsAction('nav:location-change', 'success', {
+        source: 'bottom-nav',
+        tab: pendingNavigation.tab,
+        from: pendingNavigation.from,
+        to: currentPath,
+        target: pendingNavigation.to,
+        matched: currentPath === pendingNavigation.to || location.pathname === pendingNavigation.to,
+        replace: pendingNavigation.replace,
+      });
+    }
+
     if (location.pathname === prevPathRef.current) return;
     const previousPath = prevPathRef.current;
     prevPathRef.current = location.pathname;
 
+    const landedTab = inferTab(location.pathname);
+
+    if (!landedTab) {
+      if (activeTab) {
+        const previousOwner = inferTab(previousPath);
+        if (previousOwner === activeTab) {
+          setTabRoutes(prev => ({ ...prev, [activeTab]: previousPath }));
+        }
+      }
+      setActiveTab(null);
+      return;
+    }
+
     // On POP navigation, check if we landed on a route that belongs to a different tab
     if (navType === 'POP') {
-      const landedTab = inferTab(location.pathname);
       if (landedTab && landedTab !== activeTab) {
         setActiveTab(landedTab);
         setTabRoutes(prev => ({ ...prev, [landedTab]: location.pathname }));
@@ -81,46 +109,63 @@ export function useTabNavigation() {
     }
 
     // For PUSH/REPLACE that crosses to a different tab
-    const landedTab = inferTab(location.pathname);
     if (landedTab && landedTab !== activeTab && navType !== 'POP') {
       setActiveTab(landedTab);
-      setTabRoutes(prev => ({
-        ...prev,
-        [activeTab]: previousPath,
-        [landedTab]: location.pathname,
-      }));
+      setTabRoutes(prev => {
+        const next = { ...prev, [landedTab]: location.pathname };
+        if (activeTab && inferTab(previousPath) === activeTab) {
+          next[activeTab] = previousPath;
+        }
+        return next;
+      });
       return;
     }
 
     // Within the current tab, update the saved route
-    setTabRoutes(prev => ({ ...prev, [activeTab]: location.pathname }));
-  }, [location.pathname, navType, activeTab]);
+    if (activeTab) setTabRoutes(prev => ({ ...prev, [activeTab]: location.pathname }));
+  }, [currentPath, location.pathname, navType, activeTab]);
+
+  const markBottomNavStart = useCallback((tab: TabKey, target: string, replace: boolean) => {
+    pendingNavigationRef.current = { tab, from: currentPath, to: target, replace };
+    markTapDiagnosticsAction('nav:start', 'start', {
+      source: 'bottom-nav',
+      tab,
+      from: currentPath,
+      to: target,
+      replace,
+    });
+  }, [currentPath]);
 
   const handleTabClick = useCallback((tab: TabKey, rootOverride?: string) => {
     const root = rootOverride ?? TAB_ROOTS[tab];
     if (tab === activeTab) {
       // Re-tap: pop to tab root
       if (location.pathname !== root) {
+        markBottomNavStart(tab, root, true);
         navigate(root, { replace: true });
         setTabRoutes(prev => ({ ...prev, [tab]: root }));
       }
       return;
     }
     // Save current location to current tab (except Statistics — always reset to root)
-    setTabRoutes(prev => ({
-      ...prev,
-      [activeTab]: activeTab === TabKey.Statistics ? TAB_ROOTS.statistics : location.pathname,
-    }));
+    setTabRoutes(prev => {
+      if (!activeTab || inferTab(location.pathname) !== activeTab) return prev;
+      return {
+        ...prev,
+        [activeTab]: activeTab === TabKey.Statistics ? TAB_ROOTS.statistics : location.pathname,
+      };
+    });
     setActiveTab(tab);
     const saved = tab === TabKey.Statistics ? root : tabRoutes[tab];
     // If saved route is just the default root and caller provided an override, use the override
     const target = (rootOverride && saved === TAB_ROOTS[tab]) ? root : saved;
     // Guard: if the saved route belongs to a different tab (stale/corrupted), reset to tab root
     const owner = inferTab(target);
-    const safeTarget = (owner !== null && owner !== tab) ? root : target;
+    const safeTarget = owner === tab ? target : root;
+    markBottomNavStart(tab, safeTarget, true);
     navigate(safeTarget, { replace: true });
     if (safeTarget !== target) setTabRoutes(prev => ({ ...prev, [tab]: safeTarget }));
-  }, [activeTab, location.pathname, navigate, tabRoutes]);
+  }, [activeTab, location.pathname, markBottomNavStart, navigate, tabRoutes]);
 
   return useMemo(() => ({ activeTab, handleTabClick, tabRoutes }), [activeTab, handleTabClick, tabRoutes]);
 }

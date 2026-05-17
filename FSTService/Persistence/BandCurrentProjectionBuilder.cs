@@ -474,14 +474,16 @@ public sealed class BandCurrentProjectionBuilder
             """;
 
         var result = new List<BandCurrentProjectionScopeKey>();
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
+        await using (var reader = await cmd.ExecuteReaderAsync(ct))
         {
-            result.Add(new BandCurrentProjectionScopeKey(
-                reader.GetString(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.GetString(3)));
+            while (await reader.ReadAsync(ct))
+            {
+                result.Add(new BandCurrentProjectionScopeKey(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3)));
+            }
         }
 
         await tx.CommitAsync(ct);

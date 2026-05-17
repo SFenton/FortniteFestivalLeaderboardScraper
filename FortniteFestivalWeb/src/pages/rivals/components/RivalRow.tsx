@@ -2,6 +2,7 @@ import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RivalSummary } from '@festival/core/api/serverTypes';
 import { Colors, Font, FontVariant, Weight, Gap, Radius, Display, Align, Justify, Position, Cursor, Overflow, WhiteSpace, Border, frostedCard, flexRow, truncate, padding, border } from '@festival/theme';
+import CardPressable from '../../../components/common/CardPressable';
 import s from '../../../styles/rivals.module.css';
 
 /** Minimal shape shared by RivalSummary and LeaderboardRivalSummary. */
@@ -24,13 +25,11 @@ const RivalRow = memo(function RivalRow({ rival, direction, onClick, style, onAn
   const tintClass = direction === 'below' ? s.rivalRowWinning : s.rivalRowLosing;
 
   return (
-    <div
+    <CardPressable
       className={`${s.rivalRow} ${tintClass}`}
       style={{ ...st.row, ...style }}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={e => { if (e.key === 'Enter') onClick(); }}
+      pressedStyle={st.pressed}
+      onPress={onClick}
       onAnimationEnd={onAnimationEnd}
     >
       <div className={s.rivalRowContent} style={st.content}>
@@ -43,7 +42,7 @@ const RivalRow = memo(function RivalRow({ rival, direction, onClick, style, onAn
           <span style={st.pillBehind}>{rival.aheadCount} {t('rivals.songsBehind', 'songs behind')}</span>
         </div>
       </div>
-    </div>
+    </CardPressable>
   );
 });
 
@@ -72,6 +71,9 @@ function useRivalRowStyles() {
         cursor: Cursor.pointer,
         position: Position.relative,
         overflow: Overflow.hidden,
+      } as CSSProperties,
+      pressed: {
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
       } as CSSProperties,
       content: {
         flex: 1,

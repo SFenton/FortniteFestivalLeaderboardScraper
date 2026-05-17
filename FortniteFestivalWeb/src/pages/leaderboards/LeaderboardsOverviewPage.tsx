@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties }
 import { useTranslation } from 'react-i18next';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { IoOptions } from 'react-icons/io5';
+import { IoOptions, IoPeople, IoStatsChart } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
@@ -32,6 +32,7 @@ import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
+import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 
 import {
   Display, Overflow, Gap,
@@ -44,6 +45,7 @@ import { BAND_TYPES, bandTypeLabel } from '../../utils/bandTypes';
 
 /** Set to 1 to stagger the right column one slot (125 ms) after the left. */
 const COLUMN_STAGGER_OFFSET = 1;
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 
 type LeaderboardsQuickLink = PageQuickLinkItem;
 
@@ -119,8 +121,8 @@ export default function LeaderboardsOverviewPage() {
   }, [metric, rawMetric, selectedBand, setSearchParams]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: () => {} });
-    return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
+    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal });
+    return () => fabSearch.registerLeaderboardActions(null);
   }, [fabSearch, openMetricModal]);
 
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
@@ -303,15 +305,25 @@ export default function LeaderboardsOverviewPage() {
   const quickLinkItems = useMemo<LeaderboardsQuickLink[]>(() => {
     const rankHistoryLabel = t('rankings.quickLinks.rankHistory', 'Rank History Graph');
     return [
-      ...(player ? [{ id: 'rank-history', label: rankHistoryLabel, landmarkLabel: rankHistoryLabel }] : []),
-      ...(promotedBandType ? [{ id: bandQuickLinkId(promotedBandType), label: bandTypeLabel(promotedBandType, t), landmarkLabel: bandTypeLabel(promotedBandType, t) }] : []),
+      ...(player ? [{ id: 'rank-history', label: rankHistoryLabel, landmarkLabel: rankHistoryLabel, icon: <IoStatsChart size={QUICK_LINK_GLYPH_ICON_SIZE} /> }] : []),
+      ...(promotedBandType ? [{ id: bandQuickLinkId(promotedBandType), label: bandTypeLabel(promotedBandType, t), landmarkLabel: bandTypeLabel(promotedBandType, t), icon: <IoPeople size={QUICK_LINK_GLYPH_ICON_SIZE} /> }] : []),
       ...instruments.map(instrument => {
         const label = serverInstrumentLabel(instrument);
-        return { id: instrumentQuickLinkId(instrument), label, landmarkLabel: label };
+        return {
+          id: instrumentQuickLinkId(instrument),
+          label,
+          landmarkLabel: label,
+          icon: (
+            <InstrumentIcon
+              instrument={instrument}
+              size={QUICK_LINK_GLYPH_ICON_SIZE}
+            />
+          ),
+        };
       }),
       ...trailingBandTypes.map(bandType => {
         const label = bandTypeLabel(bandType, t);
-        return { id: bandQuickLinkId(bandType), label, landmarkLabel: label };
+        return { id: bandQuickLinkId(bandType), label, landmarkLabel: label, icon: <IoPeople size={QUICK_LINK_GLYPH_ICON_SIZE} /> };
       }),
     ];
   }, [instruments, player, promotedBandType, t, trailingBandTypes]);

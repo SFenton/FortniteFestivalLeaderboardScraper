@@ -111,6 +111,15 @@ public sealed class BackfillStatusInfo
 }
 
 /// <summary>
+/// User-facing song-level progress for a backfill whose stored counters are song/instrument pairs.
+/// </summary>
+public sealed class BackfillSongProgressInfo
+{
+    public int SongsChecked { get; init; }
+    public int TotalSongs { get; init; }
+}
+
+/// <summary>
 /// DTO for history reconstruction tracking status.
 /// </summary>
 public sealed class HistoryReconStatusInfo
@@ -504,6 +513,8 @@ public sealed class RivalSongSampleRow
     public string UserId { get; init; } = "";
     public string RivalAccountId { get; init; } = "";
     public string Instrument { get; init; } = "";
+    public string? UserInstrument { get; init; }
+    public string? RivalInstrument { get; init; }
     public string SongId { get; init; } = "";
     public int UserRank { get; init; }
     public int RivalRank { get; init; }
@@ -694,6 +705,52 @@ public sealed class CompositeRankingDto
     public double? CompositeRatingMaxScore { get; init; }
     public int? CompositeRankMaxScore { get; init; }
 
+    public string ComputedAt { get; init; } = "";
+    public int TotalRankedAccounts { get; init; }
+}
+
+/// <summary>
+/// Per-instrument ranking summary used by cross-instrument projections.
+/// </summary>
+public readonly record struct AccountRankingSummary(
+    string AccountId,
+    double AdjustedSkillRating,
+    double WeightedRating,
+    double FcRate,
+    long TotalScore,
+    double MaxScorePercent,
+    int SongsPlayed,
+    int FullComboCount,
+    int TotalChartedSongs,
+    double RawSkillRating,
+    double? RawWeightedRating,
+    double? RawMaxScorePercent);
+
+/// <summary>
+/// Fixed-scope solo family ranking for Statistics global rank cards.
+/// </summary>
+public sealed class SoloFamilyRankingDto
+{
+    public string ScopeId { get; init; } = "";
+    public string AccountId { get; init; } = "";
+    public string? DisplayName { get; init; }
+    public int SongsPlayed { get; init; }
+    public int TotalChartedSongs { get; init; }
+    public double Coverage { get; init; }
+    public double RawSkillRating { get; init; }
+    public double AdjustedSkillRating { get; init; }
+    public int AdjustedSkillRank { get; set; }
+    public double WeightedRating { get; init; }
+    public int WeightedRank { get; set; }
+    public double FcRate { get; init; }
+    public int FcRateRank { get; set; }
+    public long TotalScore { get; init; }
+    public int TotalScoreRank { get; set; }
+    public double MaxScorePercent { get; init; }
+    public int MaxScorePercentRank { get; set; }
+    public int FullComboCount { get; init; }
+    public double? RawMaxScorePercent { get; init; }
+    public double? RawWeightedRating { get; init; }
     public string ComputedAt { get; init; } = "";
     public int TotalRankedAccounts { get; init; }
 }

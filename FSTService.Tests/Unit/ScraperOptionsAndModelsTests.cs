@@ -23,6 +23,8 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal("data", opts.DataDirectory);
         Assert.Equal("data/device-auth.json", opts.DeviceAuthPath);
         Assert.False(opts.ApiOnly);
+        Assert.False(opts.DisableScraperWorker);
+        Assert.False(opts.RegistrationSyncWorkerOnly);
         Assert.False(opts.SetupOnly);
         Assert.False(opts.RunOnce);
         Assert.False(opts.ResolveOnly);
@@ -45,6 +47,8 @@ public class ScraperOptionsAndModelsTests
             QueryLead = false,
             QueryBass = false,
             ApiOnly = true,
+            DisableScraperWorker = true,
+            RegistrationSyncWorkerOnly = true,
             TestSongQuery = "Test Song",
         };
 
@@ -53,7 +57,24 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.QueryLead);
         Assert.False(opts.QueryBass);
         Assert.True(opts.ApiOnly);
+        Assert.True(opts.DisableScraperWorker);
+        Assert.True(opts.RegistrationSyncWorkerOnly);
         Assert.Equal("Test Song", opts.TestSongQuery);
+    }
+
+    [Fact]
+    public void BandRankHistoryOptions_DefaultsKeepV2ShadowWritesDisabled()
+    {
+        var opts = new BandRankHistoryOptions();
+
+        Assert.Equal(BandRankHistoryMode.Inline, opts.Mode);
+        Assert.Equal(BandRankHistoryWriteMode.Legacy, opts.WriteMode);
+        Assert.True(opts.UseLatestState);
+        Assert.True(opts.UseNarrowHistory);
+        Assert.True(opts.UseWideHistoryCompatibilityWrite);
+        Assert.Equal(BandRankHistoryApiReadSource.NarrowWithWideFallback, opts.ApiReadSource);
+        Assert.Equal(250_000, opts.ChunkSize);
+        Assert.True(opts.RangeChunkingEnabled);
     }
 
     // ─── FeatureOptions defaults ──────────────────────
@@ -64,8 +85,9 @@ public class ScraperOptionsAndModelsTests
         var opts = new FeatureOptions();
 
         Assert.False(opts.Leaderboards);
-        Assert.False(opts.Compete);
+        Assert.True(opts.Compete);
         Assert.False(opts.ExperimentalRanks);
+        Assert.False(opts.AppManual);
     }
 
     [Fact]
@@ -75,13 +97,10 @@ public class ScraperOptionsAndModelsTests
     }
 
     [Fact]
-    public void FeatureOptions_Compete_IsDerived_FromLeaderboards()
+    public void FeatureOptions_Compete_IsAlwaysEnabled()
     {
-        var opts = new FeatureOptions { Leaderboards = true };
+        var opts = new FeatureOptions();
         Assert.True(opts.Compete);
-
-        opts.Leaderboards = false;
-        Assert.False(opts.Compete);
     }
 
     [Fact]
@@ -91,7 +110,7 @@ public class ScraperOptionsAndModelsTests
 
         Assert.True(opts.ExperimentalRanks);
         Assert.False(opts.Leaderboards);
-        Assert.False(opts.Compete);
+        Assert.True(opts.Compete);
     }
 
     // ─── StoredCredentials ──────────────────────────────

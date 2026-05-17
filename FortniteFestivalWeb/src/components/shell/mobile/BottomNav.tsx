@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { useMemo, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
@@ -10,24 +10,32 @@ import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import { TabKey } from '@festival/core';
 import {
   Colors, Font, Weight, Gap, ZIndex, Layout,
-  Display, Align, Justify, Position, Cursor, CssValue, CssProp,
+  Display, Align, Justify, Position, Cursor, CssValue, CssProp, BoxSizing,
   flexColumn, flexCenter, transition, Border, padding, border,
   NAV_TRANSITION_MS,
 } from '@festival/theme';
 export type { TabKey };
 
+const TOUCH_NAV_MOVEMENT_THRESHOLD = 12;
+const POINTER_NAV_CLICK_SUPPRESSION_MS = 700;
+const BOTTOM_NAV_TAB_MIN_HEIGHT = Layout.fabSize;
+
 export default function BottomNav({ player, selectedProfile = null, activeTab, onTabClick }: {
   player: TrackedPlayer | null;
   selectedProfile?: SelectedProfile | null;
-  activeTab: TabKey;
+  activeTab: TabKey | null;
   onTabClick: (tab: TabKey, path?: string) => void;
 }) {
   const { t } = useTranslation();
   const s = useStyles();
+  const [pendingTab, setPendingTab] = useState<TabKey | null>(null);
+  const pendingTouchNavRef = useRef<{ pointerId: number; tab: TabKey; clientX: number; clientY: number } | null>(null);
+  const lastPointerNavRef = useRef<{ tab: TabKey; timeStamp: number } | null>(null);
   const statisticsPath = getStatisticsNavigationPath(player, selectedProfile);
+  const showSuggestions = !!player || selectedProfile?.type === 'band';
   const tabs: { key: TabKey; label: string; icon: React.ReactNode; path?: string }[] = [
     { key: TabKey.Songs, label: t('nav.songs'), icon: <IoMusicalNotes size={20} /> },
-    ...(player ? [{ key: TabKey.Suggestions, label: t('nav.suggestions'), icon: <IoSparkles size={20} /> }] : []),
+    ...(showSuggestions ? [{ key: TabKey.Suggestions, label: t('nav.suggestions'), icon: <IoSparkles size={20} /> }] : []),
     {
       key: TabKey.Compete,
       label: player ? t('nav.compete') : t('nav.leaderboards'),
@@ -37,16 +45,62 @@ export default function BottomNav({ player, selectedProfile = null, activeTab, o
     ...(statisticsPath ? [{ key: TabKey.Statistics, label: t('nav.statistics'), icon: <IoStatsChart size={20} />, path: statisticsPath }] : []),
     { key: TabKey.Settings, label: t('nav.settings'), icon: <IoSettings size={20} /> },
   ];
+  const visualActiveTab = pendingTab ?? activeTab;
+
+  useEffect(() => {
+    if (pendingTab && pendingTab === activeTab) setPendingTab(null);
+  }, [activeTab, pendingTab]);
+
+  const commitTabNavigation = useCallback((tab: TabKey, path?: string) => {
+    setPendingTab(tab);
+    onTabClick(tab, path);
+  }, [onTabClick]);
+
+  const handlePointerDown = useCallback((tab: TabKey, event: ReactPointerEvent<HTMLButtonElement>) => {
+    setPendingTab(tab);
+    if ((event.button ?? 0) !== 0 || event.pointerType === 'mouse') return;
+    pendingTouchNavRef.current = { pointerId: event.pointerId, tab, clientX: event.clientX, clientY: event.clientY };
+  }, []);
+
+  const handlePointerUp = useCallback((tab: TabKey, path: string | undefined, event: ReactPointerEvent<HTMLButtonElement>) => {
+    const pending = pendingTouchNavRef.current;
+    pendingTouchNavRef.current = null;
+    if (!pending || pending.pointerId !== event.pointerId || pending.tab !== tab) return;
+
+    const moved = Math.hypot(event.clientX - pending.clientX, event.clientY - pending.clientY);
+    if (moved > TOUCH_NAV_MOVEMENT_THRESHOLD) {
+      setPendingTab(null);
+      return;
+    }
+
+    event.preventDefault();
+    lastPointerNavRef.current = { tab, timeStamp: event.timeStamp };
+    commitTabNavigation(tab, path);
+  }, [commitTabNavigation]);
+
+  const handleClick = useCallback((tab: TabKey, path: string | undefined, event: ReactMouseEvent<HTMLButtonElement>) => {
+    const pointerNav = lastPointerNavRef.current;
+    if (pointerNav && pointerNav.tab === tab && event.timeStamp - pointerNav.timeStamp < POINTER_NAV_CLICK_SUPPRESSION_MS) {
+      event.preventDefault();
+      return;
+    }
+
+    commitTabNavigation(tab, path);
+  }, [commitTabNavigation]);
 
   return (
     <nav className={fx.navFrosted} style={s.nav}>
       {tabs.map((tab) => (
         <button
           key={tab.key}
-          onClick={() => onTabClick(tab.key, tab.path)}
+          onPointerDown={(event) => handlePointerDown(tab.key, event)}
+          onPointerUp={(event) => handlePointerUp(tab.key, tab.path, event)}
+          onPointerCancel={() => setPendingTab(null)}
+          onClick={(event) => handleClick(tab.key, tab.path, event)}
           data-testid={`bottom-nav-${tab.key}`}
           data-tab-key={tab.key}
-          style={activeTab === tab.key ? s.tabActive : s.tab}
+          data-pending={pendingTab === tab.key ? 'true' : undefined}
+          style={visualActiveTab === tab.key ? s.tabActive : s.tab}
         >
           <span style={s.tabIcon}>{tab.icon}</span>
           {tab.label}
@@ -74,6 +128,8 @@ function useStyles() {
       border: CssValue.none,
       cursor: Cursor.pointer,
       minWidth: Layout.bottomNavTabButtonMin,
+      minHeight: BOTTOM_NAV_TAB_MIN_HEIGHT,
+      boxSizing: BoxSizing.borderBox,
       transition: transition(CssProp.color, NAV_TRANSITION_MS),
     };
     return {

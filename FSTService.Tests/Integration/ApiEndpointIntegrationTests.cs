@@ -79,14 +79,114 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var response = await _client.GetAsync("/api/features");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        // Default config keeps the remaining optional features OFF.
-        Assert.False(json.GetProperty("compete").GetBoolean());
+        Assert.True(json.GetProperty("compete").GetBoolean());
         Assert.False(json.GetProperty("leaderboards").GetBoolean());
         Assert.False(json.GetProperty("difficulty").GetBoolean());
         Assert.False(json.GetProperty("playerBands").GetBoolean());
         Assert.False(json.GetProperty("experimentalRanks").GetBoolean());
+        Assert.False(json.GetProperty("appManual").GetBoolean());
         Assert.False(json.TryGetProperty("rivals", out _));
         Assert.False(json.TryGetProperty("firstRun", out _));
+    }
+
+    [Fact]
+    public async Task ApiFeatures_ReturnsAppManualWhenEnabled()
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<FeatureOptions>(options => options.AppManual = true);
+            });
+        });
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/api/features");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.True(json.GetProperty("appManual").GetBoolean());
+    }
+
+    // ─── Client telemetry ───────────────────────────────────────
+
+    [Fact]
+    public async Task ClientInteractionTelemetry_Disabled_ReturnsNotFound()
+    {
+        var response = await _client.PostAsJsonAsync("/api/debug/client-interactions", new
+        {
+            sessionId = "test-session",
+            events = new[] { new { kind = "event", eventType = "click", time = 1 } },
+        });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ClientInteractionTelemetry_Enabled_AcceptsBoundedBatch()
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<ClientTelemetryOptions>(options => options.Enabled = true);
+            });
+        });
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/debug/client-interactions", new
+        {
+            sessionId = "test-session",
+            route = "/songs",
+            viewport = new { width = 390, height = 844, devicePixelRatio = 3 },
+            events = new[]
+            {
+                new
+                {
+                    kind = "event",
+                    eventType = "click",
+                    time = 10,
+                    target = new { tag = "button", testId = "mobile-header-search" },
+                    hitTarget = new { tag = "button", testId = "mobile-header-search" },
+                    path = new[] { new { tag = "button", testId = "mobile-header-search" } },
+                    state = new { pathname = "/songs", isMobile = true },
+                },
+            },
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("accepted").GetBoolean());
+        Assert.Equal(1, json.GetProperty("eventCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task ClientInteractionTelemetry_Enabled_RejectsOversizedBatch()
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<ClientTelemetryOptions>(options =>
+                {
+                    options.Enabled = true;
+                    options.MaxEventsPerBatch = 1;
+                });
+            });
+        });
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/debug/client-interactions", new
+        {
+            sessionId = "test-session",
+            events = new[]
+            {
+                new { kind = "event", eventType = "pointerdown", time = 1 },
+                new { kind = "event", eventType = "click", time = 2 },
+            },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     // ─── Progress ───────────────────────────────────────────────
@@ -96,6 +196,27 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var response = await _client.GetAsync("/api/progress");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApiScoreBackedCacheMiss_ReturnsUnavailableWhilePublicationFrozen()
+    {
+        var publicationCache = _factory.Services.GetRequiredKeyedService<ResponseCacheService>("LeaderboardAllCache");
+        publicationCache.Freeze();
+
+        try
+        {
+            var response = await _client.GetAsync("/api/songs/member-score-filter?has=acct_1&instruments=Solo_Guitar");
+
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            Assert.True(response.Headers.TryGetValues("Retry-After", out var retryAfterValues));
+            Assert.Contains("30", retryAfterValues);
+        }
+        finally
+        {
+            publicationCache.Unfreeze();
+            publicationCache.InvalidateAll();
+        }
     }
 
     [Fact]
@@ -1534,7 +1655,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.GetProperty("trackingStarted").GetBoolean());
-        Assert.True(json.GetProperty("backfillKicked").GetBoolean());
+        Assert.False(json.GetProperty("backfillKicked").GetBoolean());
+        Assert.True(json.GetProperty("syncDeferred").GetBoolean());
+        Assert.Equal("deferred", json.GetProperty("backfillStatus").GetString());
         Assert.Equal("TrackPlayer", json.GetProperty("displayName").GetString());
     }
 
@@ -1578,6 +1701,19 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var response = await client.PostAsync($"/api/player/{accountId}/track", null);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var trackJson = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(trackJson.GetProperty("syncDeferred").GetBoolean());
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var orchestrator = scope.ServiceProvider.GetRequiredService<BackfillOrchestrator>();
+            var festivalService = scope.ServiceProvider.GetRequiredService<FestivalService>();
+            var claimed = await orchestrator.RunQueuedRegistrationBackfillBatchAsync(
+                festivalService,
+                maxAccounts: 4,
+                CancellationToken.None);
+            Assert.Equal(1, claimed);
+        }
 
         var cachedJson = await WaitForCachedPlayerPayloadAsync(
             factory.Services,
@@ -1996,6 +2132,68 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(0, selectedDuos.GetProperty("entries").GetArrayLength());
         if (selectedDuos.TryGetProperty("selectedPlayerEntry", out var selectedPlayerEntry))
             Assert.Equal(JsonValueKind.Null, selectedPlayerEntry.ValueKind);
+    }
+
+    [Fact]
+    public async Task ApiSongBandLeaderboardsAll_SelectedRequestUsesGenericPrecomputedCacheWhileFrozen()
+    {
+        const string songId = "songBandSelectedFrozenCache";
+        var publicationCache = _factory.Services.GetRequiredKeyedService<ResponseCacheService>("LeaderboardAllCache");
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+            var cachedEntry = new
+            {
+                bandId = "cached-band-id",
+                bandType = "Band_Duets",
+                teamKey = "cachedA:cachedB",
+                comboId = (string?)null,
+                members = Array.Empty<object>(),
+                score = 123_456,
+                rank = 1,
+                accuracy = 950_000,
+                isFullCombo = true,
+                stars = 5,
+                difficulty = 3,
+                season = 1,
+                percentile = 50.0,
+                endTime = (string?)null,
+            };
+            var payload = new
+            {
+                songId,
+                bands = new[]
+                {
+                    new { bandType = "Band_Duets", count = 1, totalEntries = 1, localEntries = 1, entries = new object[] { cachedEntry }, selectedPlayerEntry = (object?)null, selectedBandEntry = (object?)null },
+                    new { bandType = "Band_Trios", count = 0, totalEntries = 0, localEntries = 0, entries = Array.Empty<object>(), selectedPlayerEntry = (object?)null, selectedBandEntry = (object?)null },
+                    new { bandType = "Band_Quad", count = 0, totalEntries = 0, localEntries = 0, entries = Array.Empty<object>(), selectedPlayerEntry = (object?)null, selectedBandEntry = (object?)null },
+                },
+            };
+            var json = JsonSerializer.SerializeToUtf8Bytes(payload);
+            metaDb.BulkSetCachedResponses(new[]
+            {
+                (global::FSTService.LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, 10), json, ResponseCacheService.ComputeETag(json)),
+            });
+        }
+
+        publicationCache.Freeze();
+        try
+        {
+            var response = await _client.GetAsync($"/api/leaderboard/{songId}/bands/all?top=10&accountId=selectedAcct");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var duos = body.GetProperty("bands").EnumerateArray()
+                .Single(band => band.GetProperty("bandType").GetString() == "Band_Duets");
+            Assert.Equal("cachedA:cachedB", duos.GetProperty("entries")[0].GetProperty("teamKey").GetString());
+            Assert.Equal(JsonValueKind.Null, duos.GetProperty("selectedPlayerEntry").ValueKind);
+        }
+        finally
+        {
+            publicationCache.Unfreeze();
+            publicationCache.InvalidateAll();
+        }
     }
 
     // ═══ Player Stats Endpoint ══════════════════════════════════
@@ -3242,27 +3440,121 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Rivals_GetComboDetail_WithoutStoredSamples_LiveComputesSharedSongs()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var userId = "live_rival_user";
+        var rivalId = "live_rival_target";
+
+        db.UpsertEntries("live_shared_1", new[]
+        {
+            new LeaderboardEntry { AccountId = userId, Score = 10_000, Accuracy = 95 },
+            new LeaderboardEntry { AccountId = rivalId, Score = 11_000, Accuracy = 96 },
+        });
+        db.UpsertEntries("live_shared_2", new[]
+        {
+            new LeaderboardEntry { AccountId = userId, Score = 12_000, Accuracy = 97 },
+            new LeaderboardEntry { AccountId = rivalId, Score = 10_000, Accuracy = 94 },
+        });
+        db.UpsertEntries("live_user_only", new[]
+        {
+            new LeaderboardEntry { AccountId = userId, Score = 9_000, Accuracy = 92 },
+        });
+        db.UpsertEntries("live_rival_only", new[]
+        {
+            new LeaderboardEntry { AccountId = rivalId, Score = 9_500, Accuracy = 93 },
+        });
+        db.RecomputeAllRanks();
+
+        var response = await _client.GetAsync($"/api/player/{userId}/rivals/Solo_Guitar/{rivalId}?limit=0");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, json.GetProperty("totalSongs").GetInt32());
+        var songs = json.GetProperty("songs").EnumerateArray().ToList();
+        Assert.Contains(songs, song => song.GetProperty("songId").GetString() == "live_shared_1" && song.GetProperty("rankDelta").GetInt32() == -1);
+        Assert.Contains(songs, song => song.GetProperty("songId").GetString() == "live_shared_2" && song.GetProperty("rankDelta").GetInt32() == 1);
+        Assert.DoesNotContain(songs, song => song.GetProperty("songId").GetString() == "live_user_only" || song.GetProperty("songId").GetString() == "live_rival_only");
+        Assert.Contains(json.GetProperty("songsToCompete").EnumerateArray(), song => song.GetProperty("songId").GetString() == "live_rival_only");
+        Assert.Contains(json.GetProperty("yourExclusiveSongs").EnumerateArray(), song => song.GetProperty("songId").GetString() == "live_user_only");
+    }
+
+    [Fact]
+    public async Task Rivals_GetComboDetail_WithProDrumsFamilyScope_LiveComputesMixedCharts()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var cymbalsDb = persistence.GetOrCreateInstrumentDb("Solo_PeripheralCymbals");
+        var drumsDb = persistence.GetOrCreateInstrumentDb("Solo_PeripheralDrums");
+        var userId = "live_family_user";
+        var rivalId = "live_family_target";
+
+        cymbalsDb.UpsertEntries("live_family_1", new[]
+        {
+            new LeaderboardEntry { AccountId = userId, Score = 10_000, Accuracy = 95 },
+        });
+        drumsDb.UpsertEntries("live_family_1", new[]
+        {
+            new LeaderboardEntry { AccountId = rivalId, Score = 10_050, Accuracy = 96 },
+        });
+        drumsDb.UpsertEntries("live_family_2", new[]
+        {
+            new LeaderboardEntry { AccountId = userId, Score = 11_000, Accuracy = 97 },
+        });
+        cymbalsDb.UpsertEntries("live_family_2", new[]
+        {
+            new LeaderboardEntry { AccountId = rivalId, Score = 11_050, Accuracy = 98 },
+        });
+        cymbalsDb.RecomputeAllRanks();
+        drumsDb.RecomputeAllRanks();
+
+        var response = await _client.GetAsync($"/api/player/{userId}/rivals/pro_drums/{rivalId}?limit=0");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("pro_drums", json.GetProperty("combo").GetString());
+        Assert.Equal(2, json.GetProperty("totalSongs").GetInt32());
+        var songs = json.GetProperty("songs").EnumerateArray().ToList();
+        Assert.Contains(songs, song =>
+            song.GetProperty("songId").GetString() == "live_family_1" &&
+            song.GetProperty("userInstrument").GetString() == "Solo_PeripheralCymbals" &&
+            song.GetProperty("rivalInstrument").GetString() == "Solo_PeripheralDrums");
+        Assert.Contains(songs, song =>
+            song.GetProperty("songId").GetString() == "live_family_2" &&
+            song.GetProperty("userInstrument").GetString() == "Solo_PeripheralDrums" &&
+            song.GetProperty("rivalInstrument").GetString() == "Solo_PeripheralCymbals");
+
+        var aliasResponse = await _client.GetAsync($"/api/player/{userId}/rivals/180/{rivalId}?limit=0");
+        Assert.Equal(HttpStatusCode.OK, aliasResponse.StatusCode);
+        var aliasJson = await aliasResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("pro_drums", aliasJson.GetProperty("combo").GetString());
+
+        var exactResponse = await _client.GetAsync($"/api/player/{userId}/rivals/Solo_PeripheralCymbals/{rivalId}?limit=0");
+        Assert.Equal(HttpStatusCode.NotFound, exactResponse.StatusCode);
+    }
+
+    [Fact]
     public async Task Rivals_GetComboDetail_WithThreeDigitHexComboId_ReturnsSongs()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
         var rivals = new List<UserRivalRow>
         {
-            new() { UserId = "seeded_combo_hex", RivalAccountId = "rival_hex", InstrumentCombo = "1ff",
+            new() { UserId = "seeded_combo_hex", RivalAccountId = "rival_hex", InstrumentCombo = "100",
                      Direction = "above", RivalScore = 50.0, AvgSignedDelta = -4.0,
                      SharedSongCount = 120, AheadCount = 70, BehindCount = 50, ComputedAt = "2026-01-01T00:00:00Z" },
         };
         var samples = new List<RivalSongSampleRow>
         {
-            new() { UserId = "seeded_combo_hex", RivalAccountId = "rival_hex", Instrument = "Solo_Guitar",
+            new() { UserId = "seeded_combo_hex", RivalAccountId = "rival_hex", Instrument = "Solo_PeripheralDrums",
                      SongId = "song1", UserRank = 12, RivalRank = 9, RankDelta = -3, UserScore = 9500, RivalScore = 9700 },
         };
         metaDb.ReplaceRivalsData("seeded_combo_hex", rivals, samples);
 
-        var response = await _client.GetAsync("/api/player/seeded_combo_hex/rivals/1ff/rival_hex");
+        var response = await _client.GetAsync("/api/player/seeded_combo_hex/rivals/100/rival_hex");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("1ff", json.GetProperty("combo").GetString());
+        Assert.Equal("100", json.GetProperty("combo").GetString());
         Assert.Equal(1, json.GetProperty("totalSongs").GetInt32());
         Assert.Single(json.GetProperty("songs").EnumerateArray());
         Assert.Equal("song1", json.GetProperty("songs")[0].GetProperty("songId").GetString());
@@ -3407,6 +3699,53 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Rankings_PerInstrument_ServesPrecomputedSubsetWhileFrozen()
+    {
+        var publicationCache = _factory.Services.GetRequiredKeyedService<ResponseCacheService>("NeighborhoodCache");
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+            var payload = new
+            {
+                instrument = "Solo_Guitar",
+                rankBy = "cachetest",
+                page = 1,
+                pageSize = 50,
+                totalAccounts = 2,
+                leeway = (double?)null,
+                entries = new[]
+                {
+                    new { accountId = "cached_rank_p1", displayName = "Cached One" },
+                    new { accountId = "cached_rank_p2", displayName = "Cached Two" },
+                },
+            };
+            var json = JsonSerializer.SerializeToUtf8Bytes(payload);
+            metaDb.BulkSetCachedResponses(new[]
+            {
+                ("rankings:Solo_Guitar:cachetest:1:50", json, ResponseCacheService.ComputeETag(json)),
+            });
+        }
+
+        publicationCache.Freeze();
+        try
+        {
+            var response = await _client.GetAsync("/api/rankings/Solo_Guitar?rankBy=cachetest&page=2&pageSize=1");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(2, body.GetProperty("page").GetInt32());
+            Assert.Equal(1, body.GetProperty("pageSize").GetInt32());
+            Assert.Equal(1, body.GetProperty("entries").GetArrayLength());
+            Assert.Equal("cached_rank_p2", body.GetProperty("entries")[0].GetProperty("accountId").GetString());
+        }
+        finally
+        {
+            publicationCache.Unfreeze();
+            publicationCache.InvalidateAll();
+        }
+    }
+
+    [Fact]
     public async Task Rankings_PerInstrument_DifferentRankBy()
     {
         var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
@@ -3517,6 +3856,52 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var response = await _client.GetAsync("/api/rankings/composite/nobody");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rankings_Family_ServesPrecomputedSubsetWhileFrozen()
+    {
+        var publicationCache = _factory.Services.GetRequiredKeyedService<ResponseCacheService>("NeighborhoodCache");
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+            var payload = new
+            {
+                scopeId = "pad",
+                rankBy = "cachetestfamily",
+                page = 1,
+                pageSize = 50,
+                totalAccounts = 2,
+                entries = new[]
+                {
+                    new { accountId = "cached_family_p1", displayName = "Cached Family One" },
+                    new { accountId = "cached_family_p2", displayName = "Cached Family Two" },
+                },
+            };
+            var json = JsonSerializer.SerializeToUtf8Bytes(payload);
+            metaDb.BulkSetCachedResponses(new[]
+            {
+                ("rankings:family:pad:cachetestfamily:1:50", json, ResponseCacheService.ComputeETag(json)),
+            });
+        }
+
+        publicationCache.Freeze();
+        try
+        {
+            var response = await _client.GetAsync("/api/rankings/family/pad?rankBy=cachetestfamily&page=2&pageSize=1");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(2, body.GetProperty("page").GetInt32());
+            Assert.Equal(1, body.GetProperty("pageSize").GetInt32());
+            Assert.Equal(1, body.GetProperty("entries").GetArrayLength());
+            Assert.Equal("cached_family_p2", body.GetProperty("entries")[0].GetProperty("accountId").GetString());
+        }
+        finally
+        {
+            publicationCache.Unfreeze();
+            publicationCache.InvalidateAll();
+        }
     }
 
     [Fact]
@@ -4504,6 +4889,56 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(comboId, json.GetProperty("comboId").GetString());
         Assert.Equal(2, json.GetProperty("totalAccounts").GetInt32());
+    }
+
+    [Fact]
+    public async Task Rankings_Bands_ServesGenericPrecomputedSubsetWhileFrozen()
+    {
+        var publicationCache = _factory.Services.GetRequiredKeyedService<ResponseCacheService>("NeighborhoodCache");
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
+            var payload = new
+            {
+                bandType = "Band_Duets",
+                comboId = (string?)null,
+                rankBy = "cachetestband",
+                page = 1,
+                pageSize = 50,
+                totalTeams = 2,
+                entries = new[]
+                {
+                    new { bandId = "cached-band-1", teamKey = "cachedA:cachedB", teamMembers = Array.Empty<object>() },
+                    new { bandId = "cached-band-2", teamKey = "cachedC:cachedD", teamMembers = Array.Empty<object>() },
+                },
+                selectedPlayerEntry = (object?)null,
+                selectedBandEntry = (object?)null,
+            };
+            var json = JsonSerializer.SerializeToUtf8Bytes(payload);
+            metaDb.BulkSetCachedResponses(new[]
+            {
+                ("rankings:bands:Band_Duets:cachetestband:1:50", json, ResponseCacheService.ComputeETag(json)),
+            });
+        }
+
+        publicationCache.Freeze();
+        try
+        {
+            var response = await _client.GetAsync("/api/rankings/bands/Band_Duets?rankBy=cachetestband&page=2&pageSize=1&accountId=selectedAcct");
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(2, body.GetProperty("page").GetInt32());
+            Assert.Equal(1, body.GetProperty("pageSize").GetInt32());
+            Assert.Equal(1, body.GetProperty("entries").GetArrayLength());
+            Assert.Equal("cachedC:cachedD", body.GetProperty("entries")[0].GetProperty("teamKey").GetString());
+            Assert.Equal(JsonValueKind.Null, body.GetProperty("selectedPlayerEntry").ValueKind);
+        }
+        finally
+        {
+            publicationCache.Unfreeze();
+            publicationCache.InvalidateAll();
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 import { IoOptions } from 'react-icons/io5';
@@ -20,14 +20,19 @@ import type {
   ServerInstrumentKey as InstrumentKey,
   RankingMetric,
   RankingsPageResponse,
+  SoloFamilyPageResponse,
+  SoloFamilyRankingDto,
+  SoloFamilyRankingEntry,
+  SoloFamilyScopeId,
   ComboPageResponse,
   AccountRankingDto,
   ComboRankingEntry,
   AccountRankingEntry,
   BandRankingDto,
+  SelectedMemberRankingsResponse,
 } from '@festival/core/api/serverTypes';
 import { InstrumentHeaderSize, rankColor } from '@festival/core';
-import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, DEFAULT_INSTRUMENT, SOLO_FAMILY_SCOPE_IDS, soloFamilyScopeLabel } from '@festival/core/api/serverTypes';
 import { LEADERBOARD_PAGE_SIZE, getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth, computePillMinWidth, formatBayesianRatingDisplay, formatRankingValueDisplay, getRatingPillTier, usesPercentileValueDisplay } from './helpers/rankingHelpers';
 import { coerceBandRankingMetric, formatBandTeamName, getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel, getEnabledBandRankingMetrics } from './helpers/bandRankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
@@ -39,7 +44,7 @@ import { useFabSearch } from '../../contexts/FabSearchContext';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
-import { Size, Colors, Font, Weight, Layout } from '@festival/theme';
+import { Size, Colors, Font, Weight, Layout, Gap, FADE_DURATION, DEMO_SWAP_INTERVAL_MS } from '@festival/theme';
 import InstrumentPickerModal from './modals/InstrumentPickerModal';
 import RankByModal from './modals/RankByModal';
 import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScopes';
@@ -48,8 +53,16 @@ import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContex
 import { Routes } from '../../routes';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
 
-type FullRankingsData = RankingsPageResponse | ComboPageResponse;
-type FullPlayerRanking = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
+type FullRankingsData = RankingsPageResponse | ComboPageResponse | SoloFamilyPageResponse;
+type FullPlayerRanking = AccountRankingDto | SoloFamilyRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
+type FullRankingEntry = AccountRankingEntry | ComboRankingEntry | SoloFamilyRankingEntry;
+
+type SelectedBandMember = {
+  accountId: string;
+  displayName: string;
+};
+
+const EMPTY_RANKING_ENTRIES: FullRankingEntry[] = [];
 
 export default function FullRankingsPage() {
   const { t } = useTranslation();
@@ -61,7 +74,11 @@ export default function FullRankingsPage() {
 
   const rawComboId = searchParams.get('combo');
   const comboId = rawComboId && isRankingScopeComboId(rawComboId) ? rawComboId : null;
+  const rawFamilyScopeId = searchParams.get('family') as SoloFamilyScopeId | null;
+  const familyScopeId = rawFamilyScopeId && SOLO_FAMILY_SCOPE_IDS.includes(rawFamilyScopeId) ? rawFamilyScopeId : null;
   const isCombo = comboId != null;
+  const isFamily = !isCombo && familyScopeId != null;
+  const useSelectedBandSoloFooter = !!selectedBand && !isCombo && !isFamily;
   const instrument = (searchParams.get('instrument') ?? 'Solo_Guitar') as InstrumentKey;
   const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
   const metric = selectedBand ? coerceBandRankingMetric(rawMetric, true) : coerceRankingMetric(rawMetric, true);
@@ -99,10 +116,12 @@ export default function FullRankingsPage() {
     setSearchParams(
       isCombo
         ? { combo: comboId!, rankBy: nextMetric, page: '1' }
+        : isFamily
+          ? { family: familyScopeId!, rankBy: nextMetric, page: '1' }
         : { instrument, rankBy: nextMetric, page: '1' },
       { replace: true },
     );
-  }, [comboId, instrument, isCombo, metricModal, scrollContainerRef, selectedBand, setSearchParams]);
+  }, [comboId, familyScopeId, instrument, isCombo, isFamily, metricModal, scrollContainerRef, selectedBand, setSearchParams]);
 
   const applyInstrument = useCallback(() => {
     const nextInstrument = instrumentModal.draft;
@@ -113,11 +132,11 @@ export default function FullRankingsPage() {
   }, [instrumentModal, metric, scrollContainerRef, setSearchParams]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: isCombo ? () => {} : openInstrumentModal });
-    return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
-  }, [fabSearch, isCombo, openInstrumentModal, openMetricModal]);
+    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: isCombo || isFamily ? undefined : openInstrumentModal });
+    return () => fabSearch.registerLeaderboardActions(null);
+  }, [fabSearch, isCombo, isFamily, openInstrumentModal, openMetricModal]);
 
-  const cacheKey = isCombo ? `combo:${comboId}:${metric}` : `${instrument}:${metric}`;
+  const cacheKey = isCombo ? `combo:${comboId}:${metric}` : isFamily ? `family:${familyScopeId}:${metric}` : `${instrument}:${metric}`;
   const cached = rankingsCache.get(cacheKey);
   const [page, setPage] = useState(cached?.page ?? pageParam);
 
@@ -129,23 +148,32 @@ export default function FullRankingsPage() {
     setSearchParams(
       isCombo
         ? { combo: comboId!, rankBy: metric, page: '1' }
+        : isFamily
+          ? { family: familyScopeId!, rankBy: metric, page: '1' }
         : { instrument, rankBy: metric, page: '1' },
       { replace: true },
     );
-  }, [comboId, instrument, isCombo, metric, rawMetric, scrollContainerRef, selectedBand, setSearchParams]);
+  }, [comboId, familyScopeId, instrument, isCombo, isFamily, metric, rawMetric, scrollContainerRef, selectedBand, setSearchParams]);
 
   const { data, isFetching, error } = useQuery<FullRankingsData>({
     queryKey: isCombo
       ? queryKeys.comboRankings(comboId!, metric, page, LEADERBOARD_PAGE_SIZE)
+      : isFamily
+        ? queryKeys.soloFamilyRankings(familyScopeId!, metric, page, LEADERBOARD_PAGE_SIZE)
       : queryKeys.rankings(instrument, metric, page, LEADERBOARD_PAGE_SIZE),
     queryFn: () => isCombo
       ? api.getComboRankings(comboId!, metric, page, LEADERBOARD_PAGE_SIZE)
+      : isFamily
+        ? api.getSoloFamilyRankings(familyScopeId!, metric, page, LEADERBOARD_PAGE_SIZE)
       : api.getRankings(instrument, metric, page, LEADERBOARD_PAGE_SIZE),
     placeholderData: (previous, previousQuery) => {
       if (!previous || !previousQuery) return undefined;
       const [queryName, scopeValue, options] = previousQuery.queryKey as [string, string, { rankBy?: string }];
       if (isCombo) {
         return queryName === 'comboRankings' && scopeValue === comboId && options.rankBy === metric ? previous : undefined;
+      }
+      if (isFamily) {
+        return queryName === 'soloFamilyRankings' && scopeValue === familyScopeId && options.rankBy === metric ? previous : undefined;
       }
       return queryName === 'rankings' && scopeValue === instrument && options.rankBy === metric ? previous : undefined;
     },
@@ -155,10 +183,14 @@ export default function FullRankingsPage() {
     queryKey: player
       ? (isCombo
           ? queryKeys.playerComboRanking(player.accountId, comboId!, metric)
+          : isFamily
+            ? queryKeys.playerSoloFamilyRanking(player.accountId, familyScopeId!, metric)
           : queryKeys.playerRanking(instrument, player.accountId, metric))
       : ['disabled'],
     queryFn: () => isCombo
       ? api.getPlayerComboRanking(player!.accountId, comboId!, metric)
+      : isFamily
+        ? api.getPlayerSoloFamilyRanking(player!.accountId, familyScopeId!, metric)
       : api.getPlayerRanking(instrument, player!.accountId, metric),
     enabled: !!player,
   });
@@ -168,9 +200,57 @@ export default function FullRankingsPage() {
       ? queryKeys.bandRanking(selectedBand.bandType, selectedBand.teamKey, selectedBandComboId, bandMetric)
       : ['bandRanking', 'selectedBand', 'disabled'],
     queryFn: () => api.getBandRanking(selectedBand!.bandType, selectedBand!.teamKey, selectedBandComboId, bandMetric),
-    enabled: !!selectedBand,
+    enabled: !!selectedBand && !useSelectedBandSoloFooter,
     retry: false,
   });
+
+  const selectedBandMembers = useMemo<SelectedBandMember[]>(() => {
+    if (!selectedBand) return [];
+
+    const memberNames = new Map(selectedBand.members.map(member => [normalizeAccountId(member.accountId), member.displayName]));
+    const seen = new Set<string>();
+    return selectedBand.teamKey.split(':').flatMap(accountId => {
+      const normalizedAccountId = normalizeAccountId(accountId);
+      if (!normalizedAccountId || seen.has(normalizedAccountId)) return [];
+      seen.add(normalizedAccountId);
+      return [{
+        accountId,
+        displayName: memberNames.get(normalizedAccountId) || accountId.slice(0, 8),
+      }];
+    });
+  }, [selectedBand]);
+
+  const selectedBandMemberAccountIds = useMemo(() => selectedBandMembers.map(member => member.accountId), [selectedBandMembers]);
+
+  const { data: selectedMemberRankings } = useQuery<SelectedMemberRankingsResponse>({
+    queryKey: useSelectedBandSoloFooter && selectedBandMemberAccountIds.length > 0
+      ? queryKeys.selectedMemberRankings(selectedBandMemberAccountIds, [instrument], metric)
+      : ['selectedMemberRankings', 'fullRankingsFooter', 'disabled'],
+    queryFn: () => api.getSelectedMemberRankings(selectedBandMemberAccountIds, [instrument], metric),
+    enabled: useSelectedBandSoloFooter && selectedBandMemberAccountIds.length > 0,
+    retry: false,
+  });
+
+  const selectedBandSoloFooterRankings = useMemo(() => {
+    const instrumentPayload = selectedMemberRankings?.instruments.find(payload => payload.instrument === instrument);
+    const byAccountId = new Map<string, AccountRankingDto>();
+    for (const ranking of instrumentPayload?.entries ?? []) {
+      byAccountId.set(normalizeAccountId(ranking.accountId), {
+        ...ranking,
+        instrument: ranking.instrument || instrument,
+      });
+    }
+
+    return selectedBandMembers.flatMap(member => {
+      const ranking = byAccountId.get(normalizeAccountId(member.accountId));
+      if (!ranking) return [];
+      return [{
+        ...ranking,
+        accountId: ranking.accountId || member.accountId,
+        displayName: ranking.displayName || member.displayName,
+      }];
+    });
+  }, [instrument, selectedBandMembers, selectedMemberRankings?.instruments]);
 
   const selectedBandFooterName = useMemo(() => {
     if (!selectedBand) return undefined;
@@ -187,7 +267,7 @@ export default function FullRankingsPage() {
   }, [selectedBand, selectedBandFooterName]);
 
   const totalPages = data ? Math.ceil(data.totalAccounts / LEADERBOARD_PAGE_SIZE) : 0;
-  const entries = data?.entries ?? [];
+  const entries = data?.entries ?? EMPTY_RANKING_ENTRIES;
   const reserveTenDigitScoreWidth = metric === 'totalscore';
   const usePercentileMetric = usesPercentileValueDisplay(metric);
 
@@ -202,10 +282,12 @@ export default function FullRankingsPage() {
     setSearchParams(
       isCombo
         ? { combo: comboId!, rankBy: metric, page: String(nextPage) }
+        : isFamily
+          ? { family: familyScopeId!, rankBy: metric, page: String(nextPage) }
         : { instrument, rankBy: metric, page: String(nextPage) },
       { replace: true },
     );
-  }, [comboId, instrument, isCombo, metric, scrollContainerRef, setSearchParams, totalPages]);
+  }, [comboId, familyScopeId, instrument, isCombo, isFamily, metric, scrollContainerRef, setSearchParams, totalPages]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -226,7 +308,8 @@ export default function FullRankingsPage() {
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
 
   const hasPlayerFooter = !selectedBand && !!playerRanking;
-  const hasBandFooter = !!(selectedBand && selectedBandRanking && selectedBandFooterName && selectedBandFooterRoute);
+  const hasSelectedBandSoloFooter = useSelectedBandSoloFooter && selectedBandMembers.length > 0 && !!selectedMemberRankings;
+  const hasBandFooter = hasSelectedBandSoloFooter || !!(selectedBand && selectedBandRanking && selectedBandFooterName && selectedBandFooterRoute);
   const hasFooter = hasPlayerFooter || hasBandFooter;
 
   const rankWidth = useMemo(() => {
@@ -237,8 +320,13 @@ export default function FullRankingsPage() {
     if (!isMobile && selectedBandRanking) {
       allRanks.push(getBandRankForMetric(selectedBandRanking, bandMetric));
     }
+    if (!isMobile) {
+      for (const ranking of selectedBandSoloFooterRankings) {
+        allRanks.push(getDisplayRank(ranking, metric));
+      }
+    }
     return computeRankWidth(allRanks);
-  }, [bandMetric, entries, isMobile, metric, playerRanking, selectedBandRanking]);
+  }, [bandMetric, entries, isMobile, metric, playerRanking, selectedBandRanking, selectedBandSoloFooterRankings]);
 
   const playerRankWidth = useMemo(() => {
     if (!playerRanking) return undefined;
@@ -250,23 +338,34 @@ export default function FullRankingsPage() {
     return computeRankWidth([getBandRankForMetric(selectedBandRanking, bandMetric)]);
   }, [bandMetric, selectedBandRanking]);
 
+  const selectedBandMemberRankWidth = useMemo(() => {
+    if (selectedBandSoloFooterRankings.length === 0) return undefined;
+    return computeRankWidth(selectedBandSoloFooterRankings.map(ranking => getDisplayRank(ranking, metric)));
+  }, [metric, selectedBandSoloFooterRankings]);
+
   const percentileValueMinWidth = useMemo(() => {
     if (!usePercentileMetric) return undefined;
     const labels = entries.map((entry) => formatRankingValueDisplay(getDisplayRating(entry, metric), metric));
     if (playerRanking) labels.push(formatRankingValueDisplay(getDisplayRating(playerRanking, metric), metric));
     if (selectedBandRanking) labels.push(formatRankingValueDisplay(getBandRatingForMetric(selectedBandRanking, bandMetric), bandMetric));
+    for (const ranking of selectedBandSoloFooterRankings) {
+      labels.push(formatRankingValueDisplay(getDisplayRating(ranking, metric), metric));
+    }
     return computePillMinWidth(labels);
-  }, [bandMetric, entries, metric, playerRanking, selectedBandRanking, usePercentileMetric]);
+  }, [bandMetric, entries, metric, playerRanking, selectedBandRanking, selectedBandSoloFooterRankings, usePercentileMetric]);
 
   const bayesianRankMinWidth = useMemo(() => {
     if (!usePercentileMetric) return undefined;
     const labels = entries.map((entry) => formatBayesianRatingDisplay(getDisplayBayesianRating(entry, metric), metric));
     if (playerRanking) labels.push(formatBayesianRatingDisplay(getDisplayBayesianRating(playerRanking, metric), metric));
     if (selectedBandRanking) labels.push(formatBayesianRatingDisplay(getBandBayesianRatingForMetric(selectedBandRanking, bandMetric), bandMetric));
+    for (const ranking of selectedBandSoloFooterRankings) {
+      labels.push(formatBayesianRatingDisplay(getDisplayBayesianRating(ranking, metric), metric));
+    }
     return computePillMinWidth(labels);
-  }, [bandMetric, entries, metric, playerRanking, selectedBandRanking, usePercentileMetric]);
+  }, [bandMetric, entries, metric, playerRanking, selectedBandRanking, selectedBandSoloFooterRankings, usePercentileMetric]);
 
-  const pageLabel = isCombo ? comboScopeLabel(comboId!) : serverInstrumentLabel(instrument);
+  const pageLabel = isCombo ? comboScopeLabel(comboId!) : isFamily ? soloFamilyScopeLabel(familyScopeId!) : serverInstrumentLabel(instrument);
   const showMobilePageHeader = !isMobileChrome || settings.showButtonsInHeaderMobile;
 
   return (
@@ -277,15 +376,15 @@ export default function FullRankingsPage() {
       fabSpacer="none"
       before={isMobileChrome ? (
         <PageHeaderTransition visible={showMobilePageHeader}>
-          <PageHeader title={renderPageTitle(isCombo, pageLabel, t('rankings.title'), data?.totalAccounts, t)} />
+          <PageHeader title={renderPageTitle(isCombo || isFamily, pageLabel, t('rankings.title'), data?.totalAccounts, t, isFamily ? undefined : instrument)} />
         </PageHeaderTransition>
       ) : showMobilePageHeader ? (
         <PageHeader
-          title={renderPageTitle(isCombo, pageLabel, t('rankings.title'), data?.totalAccounts, t, instrument)}
+          title={renderPageTitle(isCombo || isFamily, pageLabel, t('rankings.title'), data?.totalAccounts, t, isFamily ? undefined : instrument)}
           actions={
             !isMobileChrome ? (
               <>
-                {!isCombo && (
+                {!isCombo && !isFamily && (
                   <ActionPill
                     icon={<InstrumentIcon instrument={instrument} size={Size.iconAction} />}
                     label={serverInstrumentLabel(instrument)}
@@ -305,7 +404,7 @@ export default function FullRankingsPage() {
         />
       ) : undefined}
       after={<>
-        {!isCombo && (
+        {!isCombo && !isFamily && (
           <InstrumentPickerModal
             visible={instrumentModal.visible}
             draft={instrumentModal.draft}
@@ -333,7 +432,7 @@ export default function FullRankingsPage() {
         return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
       })()}
 
-      <PaginatedLeaderboard<AccountRankingEntry | ComboRankingEntry>
+      <PaginatedLeaderboard<AccountRankingEntry | ComboRankingEntry | SoloFamilyRankingEntry>
         entries={entries}
         page={page}
         totalPages={totalPages}
@@ -370,7 +469,21 @@ export default function FullRankingsPage() {
         }}
         entryLinkTo={(entry) => `/player/${entry.accountId}`}
         hasPlayerFooter={hasFooter}
-        renderPlayerFooter={selectedBand && selectedBandRanking && selectedBandFooterRoute && selectedBandFooterName ? ({ className, style }) => (
+        renderPlayerFooter={hasSelectedBandSoloFooter ? ({ className, style }) => (
+          <SelectedBandMemberRotatingFooter
+            rankings={selectedBandSoloFooterRankings}
+            metric={metric}
+            totalAccounts={data?.totalAccounts ?? 0}
+            className={className}
+            style={style}
+            percentileValueMinWidth={percentileValueMinWidth}
+            bayesianRankMinWidth={bayesianRankMinWidth}
+            twoRowPercentileMetadata={useTwoRowPercentile}
+            rankWidth={isMobile ? selectedBandMemberRankWidth : rankWidth}
+            reserveTenDigitScoreWidth={reserveTenDigitScoreWidth && !(isMobile && hasFab)}
+            cycleKey={`${selectedBand?.teamKey ?? ''}:${instrument}:${metric}:${selectedBandSoloFooterRankings.map(ranking => normalizeAccountId(ranking.accountId)).join(':')}`}
+          />
+        ) : selectedBand && selectedBandRanking && selectedBandFooterRoute && selectedBandFooterName ? ({ className, style }) => (
           <Link to={selectedBandFooterRoute} className={className} style={style}>
             <RankingEntry
               rank={getBandRankForMetric(selectedBandRanking, bandMetric)}
@@ -423,6 +536,118 @@ export default function FullRankingsPage() {
       />
     </Page>
   );
+}
+
+function SelectedBandMemberRotatingFooter({
+  rankings,
+  metric,
+  totalAccounts,
+  className,
+  style,
+  percentileValueMinWidth,
+  bayesianRankMinWidth,
+  twoRowPercentileMetadata,
+  rankWidth,
+  reserveTenDigitScoreWidth,
+  cycleKey,
+}: {
+  rankings: AccountRankingDto[];
+  metric: RankingMetric;
+  totalAccounts: number;
+  className: string;
+  style: CSSProperties;
+  percentileValueMinWidth?: number;
+  bayesianRankMinWidth?: number;
+  twoRowPercentileMetadata?: boolean;
+  rankWidth?: number;
+  reserveTenDigitScoreWidth?: boolean;
+  cycleKey: string;
+}) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [fading, setFading] = useState(false);
+
+  useEffect(() => {
+    setActiveIndex(0);
+    setFading(false);
+  }, [cycleKey]);
+
+  useEffect(() => {
+    if (rankings.length <= 1) return;
+
+    let fadeTimer: ReturnType<typeof setTimeout> | undefined;
+    const reduceMotion = prefersReducedMotion();
+    const interval = setInterval(() => {
+      if (reduceMotion) {
+        setActiveIndex(index => (index + 1) % rankings.length);
+        return;
+      }
+
+      setFading(true);
+      fadeTimer = setTimeout(() => {
+        setActiveIndex(index => (index + 1) % rankings.length);
+        setFading(false);
+      }, FADE_DURATION);
+    }, DEMO_SWAP_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+      if (fadeTimer) clearTimeout(fadeTimer);
+    };
+  }, [cycleKey, rankings.length]);
+
+  if (rankings.length === 0) {
+    return (
+      <div className={className} style={{ ...style, ...selectedBandMemberFooterStyles.shell }} data-testid="selected-band-member-footer-empty">
+        <div style={selectedBandMemberFooterStyles.emptyContent}>No ranked band members for this instrument</div>
+      </div>
+    );
+  }
+
+  const activeRanking = rankings[Math.min(activeIndex, rankings.length - 1)]!;
+  const rating = getDisplayRating(activeRanking, metric);
+  const rank = getDisplayRank(activeRanking, metric);
+  const usePercentile = usesPercentileValueDisplay(metric);
+  const contentStyle = prefersReducedMotion()
+    ? selectedBandMemberFooterStyles.content
+    : { ...selectedBandMemberFooterStyles.content, opacity: fading ? 0 : 1 };
+
+  return (
+    <Link
+      to={`/player/${activeRanking.accountId}`}
+      className={className}
+      style={{ ...style, ...selectedBandMemberFooterStyles.shell }}
+      data-testid="selected-band-member-footer"
+    >
+      <div style={contentStyle} data-testid="selected-band-member-footer-content">
+        <RankingEntry
+          rank={rank}
+          displayName={activeRanking.displayName ?? activeRanking.accountId.slice(0, 8)}
+          ratingLabel={formatRating(rating, metric)}
+          songsLabel={getDisplaySongsLabel(activeRanking, metric)}
+          percentileValueDisplay={usePercentile ? formatRankingValueDisplay(rating, metric) : undefined}
+          percentileValueMinWidth={percentileValueMinWidth}
+          bayesianRankDisplay={usePercentile ? formatBayesianRatingDisplay(getDisplayBayesianRating(activeRanking, metric), metric) : undefined}
+          bayesianRankColor={usePercentile ? rankColor(rank, activeRanking.totalRankedAccounts || totalAccounts) : undefined}
+          bayesianRankMinWidth={bayesianRankMinWidth}
+          twoRowPercentileMetadata={twoRowPercentileMetadata}
+          ratingPillTier={getRatingPillTier(rating, metric)}
+          songsLabelPrimary={metric === 'fcrate'}
+          songsLabelGoldPrefix={metric === 'fcrate'}
+          isPlayer
+          rankWidth={rankWidth}
+          reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
+        />
+      </div>
+    </Link>
+  );
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
+function normalizeAccountId(accountId: string | null | undefined): string {
+  return accountId?.trim().toLowerCase() ?? '';
 }
 
 function renderPageTitle(
@@ -527,3 +752,28 @@ const comboTitleStyles = {
     fontSize: Font.sm,
   },
 } as const;
+
+const selectedBandMemberFooterStyles = {
+  shell: {
+    overflow: 'hidden',
+  },
+  content: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+    width: '100%',
+    minWidth: 0,
+    transition: `opacity ${FADE_DURATION}ms ease-in-out`,
+  },
+  emptyContent: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    minWidth: 0,
+    color: Colors.textSecondary,
+    fontSize: Font.sm,
+    fontWeight: Weight.semibold,
+    textAlign: 'center',
+  },
+} satisfies Record<string, CSSProperties>;

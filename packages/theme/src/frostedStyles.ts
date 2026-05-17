@@ -50,6 +50,13 @@ export const frostedCardLight = {
   border: `1px solid ${Colors.glassBorder}`,
 } as const;
 
+/** Opaque neutral glass surface for pill controls over busy backgrounds. */
+export const opaqueGlass = {
+  ...frostedCard,
+  backgroundColor: 'rgba(18,24,38,0.96)',
+  opacity: 1,
+} as const;
+
 /** Modal overlay — fixed fullscreen dark scrim with centered content. */
 export const modalOverlay = {
   position: 'fixed' as const,

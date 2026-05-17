@@ -16,6 +16,9 @@ public sealed class BandRankHistoryOptions
     /// </summary>
     public BandRankHistoryMode Mode { get; set; } = BandRankHistoryMode.Inline;
 
+    /// <summary>Controls whether history snapshots write legacy tables, vNext tables, or both.</summary>
+    public BandRankHistoryWriteMode WriteMode { get; set; } = BandRankHistoryWriteMode.Legacy;
+
     /// <summary>Use a latest-state table instead of scanning the full history table every pass.</summary>
     public bool UseLatestState { get; set; } = true;
 
@@ -30,6 +33,9 @@ public sealed class BandRankHistoryOptions
 
     /// <summary>Maximum number of chunk rows to process at once when chunking by row count is needed.</summary>
     public int ChunkSize { get; set; } = 250_000;
+
+    /// <summary>Enable splitting large rank-history scopes into team-key ranges.</summary>
+    public bool RangeChunkingEnabled { get; set; } = true;
 
     /// <summary>Maximum number of chunks a worker may process concurrently. Initial implementation keeps writes conservative.</summary>
     public int MaxParallelChunks { get; set; } = 1;
@@ -66,11 +72,20 @@ public enum BandRankHistoryMode
     Disabled,
 }
 
+public enum BandRankHistoryWriteMode
+{
+    Legacy,
+    Dual,
+    V2Only,
+}
+
 public enum BandRankHistoryApiReadSource
 {
     Wide,
     Narrow,
     NarrowWithWideFallback,
+    V2NarrowWithLegacyFallback,
+    V2NarrowOnly,
 }
 
 /// <summary>

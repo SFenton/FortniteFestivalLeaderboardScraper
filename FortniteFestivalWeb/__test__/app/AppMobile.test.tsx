@@ -10,6 +10,7 @@ import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersecti
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
   return {
+    getFeatures: fn().mockResolvedValue({ compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true }),
     getSongs: fn().mockResolvedValue({ songs: [
       { songId: 's1', title: 'Test Song', artist: 'Artist A', year: 2024, albumArt: 'https://example.com/a.jpg', difficulty: { guitar: 3 } },
     ], count: 1, currentSeason: 5 }),
@@ -243,6 +244,7 @@ const mockApi = vi.hoisted(() => {
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
 import App, { getEmptyBandFilterActionLabel, getFabQuickLinksActionLabel, mergePageQuickLinksIntoFabGroups, prependFabActionGroup, shouldShowBandFilterAction } from '../../src/App';
+import { queryClient } from '../../src/api/queryClient';
 import type { SelectedProfile } from '../../src/hooks/data/useSelectedProfile';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
@@ -344,6 +346,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  queryClient.clear();
   localStorage.clear();
   localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
 });
@@ -873,6 +876,7 @@ describe('App — mobile FAB branches', () => {
     expect(filterButton.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
     expect(within(filterButton).queryByAltText('Solo_Guitar')).toBeNull();
     expect(screen.queryByTestId('fab-side-actions')).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
     fireEvent.click(filterButton);
 
     const dialog = await screen.findByRole('dialog', { name: 'Filter Songs' });
@@ -944,7 +948,7 @@ describe('App — mobile FAB branches', () => {
     expect(screen.queryByTestId('fab-band-filter-instruments')).toBeNull();
   });
 
-  it('keeps the selected band type filter in the mobile Songs FAB menu', async () => {
+  it('does not show the selected band type menu from Songs when quick links are unavailable', async () => {
     setMobile();
     localStorage.setItem('fst:selectedProfile', JSON.stringify({
       type: 'band',
@@ -960,14 +964,53 @@ describe('App — mobile FAB branches', () => {
     render(<App />);
 
     await screen.findByText('Test Song', undefined, { timeout: 5000 });
-    fireEvent.click(screen.getByLabelText('Actions'));
-    const menu = await screen.findByTestId('fab-menu');
+    const dock = document.querySelector('.fab-search-dock') as HTMLElement;
 
-    expect(within(menu).queryByText('Select Profile')).toBeNull();
-    expect(within(menu).queryByText('TrackedP + BandMate')).toBeNull();
-    expect(within(menu).queryByText('Item Shop')).toBeNull();
-    expect(within(menu).getByRole('button', { name: 'Duos' })).toBeDefined();
-    expect(within(menu).queryByRole('button', { name: 'Filter Songs' })).toBeNull();
+    expect(dock).toBeTruthy();
+    expect(within(dock).getByRole('button', { name: 'Filter Songs' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+  });
+
+  it('opens Songs quick links directly from the mobile FAB even with a selected band', async () => {
+    setMobile();
+    mockApi.getSongs.mockResolvedValueOnce({
+      songs: [
+        { songId: 's-alpha', title: 'Alpha Song', artist: 'Artist A', year: 2024, albumArt: 'https://example.com/a.jpg', difficulty: { guitar: 3 } },
+        { songId: 's-beta', title: 'Beta Song', artist: 'Artist B', year: 2024, albumArt: 'https://example.com/b.jpg', difficulty: { guitar: 3 } },
+      ],
+      count: 2,
+      currentSeason: 5,
+    });
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    }));
+    render(<App />);
+
+    await screen.findByText('Alpha Song', undefined, { timeout: 5000 });
+    const dock = document.querySelector('.fab-search-dock') as HTMLElement;
+    const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
+
+    expect(dock).toBeTruthy();
+    expect(within(dock).getByRole('button', { name: 'Filter Songs' })).toBeDefined();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+
+    fireEvent.click(quickLinksButton);
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    const dialog = await screen.findByRole('dialog', { name: /Quick Links/ });
+    expect(within(dialog).getByRole('button', { name: 'A' })).toBeDefined();
+    expect(within(dialog).getByRole('button', { name: 'B' })).toBeDefined();
   });
 
   it('opens Leaderboards quick links from the main mobile FAB', async () => {
@@ -1174,6 +1217,36 @@ describe('App — mobile FAB branches', () => {
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('opens Manual quick links directly from the mobile FAB without the fallback Actions FAB', async () => {
+    setMobile();
+    window.location.hash = '#/manual';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('App Manual')).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    }, { timeout: 5000 });
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Manual Sections' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('redirects direct Manual visits to Songs when App Manual is disabled', async () => {
+    setMobile();
+    mockApi.getFeatures.mockResolvedValueOnce({ compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: false });
+    window.location.hash = '#/manual';
+    render(<App />);
+
+    await waitFor(() => expect(window.location.hash).toBe('#/songs'), { timeout: 5000 });
+
+    expect(screen.queryByRole('heading', { name: 'App Manual' })).toBeNull();
     window.location.hash = '';
   });
 
@@ -1544,9 +1617,12 @@ describe('App — mobile FAB branches', () => {
 
     const sideActions = screen.getByTestId('fab-side-actions');
     const toggleButton = within(sideActions).getByRole('button', { name: 'Leaderboard Rivals' });
+    const findRivalButton = within(sideActions).getByRole('button', { name: 'Find Rival' });
     expect(within(toggleButton).getByText('Leaderboard Rivals')).toBeDefined();
+    expect(within(findRivalButton).getByText('Find Rival')).toBeDefined();
     expect(screen.getAllByRole('button', { name: 'Quick Links' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: 'Leaderboard Rivals' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Find Rival' })).toHaveLength(1);
     expect(screen.queryByLabelText('Actions')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
@@ -1559,6 +1635,12 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       expect(window.location.hash).toBe('#/rivals?tab=leaderboard');
     });
+
+    fireEvent.click(findRivalButton);
+
+    expect(await screen.findByRole('dialog', { name: 'Search' })).toBeDefined();
+    expect(screen.queryByRole('group', { name: 'Search targets' })).toBeNull();
+    expect(screen.getByPlaceholderText('Search players…')).toBeDefined();
 
     window.location.hash = '';
   });
@@ -1679,14 +1761,22 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       const sideActions = screen.getByTestId('fab-side-actions');
       expect(within(within(sideActions).getByRole('button', { name: 'View Paths' })).getByText('View Paths')).toBeDefined();
-      expect(within(within(sideActions).getByRole('link', { name: 'Item Shop' })).getByText('Item Shop')).toBeDefined();
+      const shopAction = within(sideActions).getByRole('link', { name: 'Item Shop' });
+      expect(within(shopAction).getByText('Item Shop')).toBeDefined();
+      expect(shopAction.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
       expect(within(sideActions).getAllByTestId('fab-side-action').map(action => action.textContent?.trim())).toEqual(['Item Shop', 'View Paths']);
     });
 
     expect(screen.getAllByRole('button', { name: 'View Paths' })).toHaveLength(1);
     expect(screen.getAllByRole('link', { name: 'Item Shop' })).toHaveLength(1);
-    expect(screen.queryByLabelText('Actions')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
     expect(screen.queryByTestId('fab-menu')).toBeNull();
+    const quickLinksList = await screen.findByTestId('song-detail-quick-links-modal-list');
+    expect(within(quickLinksList).getByText('Intensity')).toBeDefined();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
     window.location.hash = '';
   });
 
@@ -1712,13 +1802,14 @@ describe('App — mobile FAB branches', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('link', { name: 'Item Shop' })).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
     });
     expect(screen.queryByRole('button', { name: 'View Paths' })).toBeNull();
     expect(screen.queryByLabelText('Actions')).toBeNull();
     window.location.hash = '';
   });
 
-  it('does not render an empty song detail FAB when shop and path actions are unavailable', async () => {
+  it('renders the song detail quick-links FAB when shop and path actions are unavailable', async () => {
     setMobile();
     localStorage.setItem('fst:appSettings', JSON.stringify({
       hideItemShop: true,
@@ -1737,9 +1828,14 @@ describe('App — mobile FAB branches', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Test Song')).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
     });
 
     expect(screen.queryByTestId('fab-side-actions')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    const quickLinksList = await screen.findByTestId('song-detail-quick-links-modal-list');
+    expect(within(quickLinksList).getByText('Intensity')).toBeDefined();
     expect(screen.queryByLabelText('Actions')).toBeNull();
     expect(screen.queryByRole('button', { name: 'View Paths' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Item Shop' })).toBeNull();

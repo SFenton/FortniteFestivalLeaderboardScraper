@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useParams, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -21,11 +21,13 @@ import { buildStaggerStyle, clearStaggerStyle } from '../../../hooks/ui/useStagg
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { PageMessage } from '../../PageMessage';
 import EmptyState from '../../../components/common/EmptyState';
+import CardPressable from '../../../components/common/CardPressable';
 import { parseApiError } from '../../../utils/apiError';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { useAppliedBandComboFilter } from '../../../contexts/BandFilterActionContext';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
@@ -65,7 +67,9 @@ export default function LeaderboardPage() {
   const showStars = useMediaQuery(QUERY_SHOW_STARS);
   const isMobile = !showAccuracy;
   const isNarrow = useIsMobile();
-  const hasFab = useIsMobileChrome();
+  const isMobileChrome = useIsMobileChrome();
+  const hasFab = isMobileChrome;
+  const reserveFabSpace = false;
   const showFooterScore = useMediaQuery('(min-width: 310px)');
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -464,7 +468,7 @@ export default function LeaderboardPage() {
                 playerRowRef={playerRowRef}
                 hasPlayerFooter={hasFooter}
                 renderPlayerFooter={({ className, style }) => selectedBand && selectedBandSongScore && selectedBandFooterRoute && selectedBandFooterName ? (
-                  <Link to={selectedBandFooterRoute} className={className} style={{ ...style, cursor: 'pointer' }}>
+                  <LeaderboardFooterLink to={selectedBandFooterRoute} className={className} style={{ ...style, cursor: 'pointer' }}>
                     <LeaderboardEntry
                       rank={selectedBandSongScore.rank}
                       displayName={selectedBandFooterName}
@@ -484,10 +488,14 @@ export default function LeaderboardPage() {
                       scoreWidth={selectedBandScoreWidth}
                       rankWidth={isMobile ? selectedBandRankWidth : rankWidth}
                     />
-                  </Link>
+                  </LeaderboardFooterLink>
                 ) : (
-                  <div onClick={() => navigate('/statistics')} role="button" tabIndex={0}>
-                    <div className={className} style={{ ...style, cursor: 'pointer' }}>
+                  <CardPressable
+                    className={className}
+                    style={{ ...style, cursor: 'pointer' }}
+                    pressedStyle={LEADERBOARD_FOOTER_PRESSED_STYLE}
+                    onPress={() => navigate('/statistics')}
+                  >
                       <LeaderboardEntry
                         rank={effectivePlayerScore!.rank}
                         displayName={playerData!.displayName}
@@ -506,13 +514,13 @@ export default function LeaderboardPage() {
                         scoreWidth={playerScoreWidth}
                         rankWidth={isMobile ? playerRankWidth : rankWidth}
                       />
-                    </div>
-                  </div>
+                  </CardPressable>
                 )}
                 loading={loading}
                 cached={animMode === 'cached'}
                 isMobile={isMobile}
                 hasFab={hasFab}
+                reserveFabSpace={reserveFabSpace}
                 error={!!error}
                 emptyMessage={t('leaderboard.noEntriesOnPage')}
                 staggerRushRef={staggerRushRef}
@@ -526,5 +534,25 @@ export default function LeaderboardPage() {
 
 function normalizeSoloDifficulty(difficulty: number | null | undefined): number | undefined {
   return difficulty != null && difficulty >= 0 && difficulty <= 3 ? difficulty : undefined;
+}
+
+const LEADERBOARD_FOOTER_PRESSED_STYLE: CSSProperties = {
+  backgroundColor: 'rgba(255, 255, 255, 0.06)',
+};
+
+function LeaderboardFooterLink({ to, className, style, children }: { to: string; className: string; style: CSSProperties; children: ReactNode }) {
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to });
+
+  return (
+    <Link
+      to={to}
+      className={className}
+      style={{ ...style, ...(linkPress.isPressed ? LEADERBOARD_FOOTER_PRESSED_STYLE : undefined) }}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      {...linkPress.linkPressHandlers}
+    >
+      {children}
+    </Link>
+  );
 }
 

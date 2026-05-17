@@ -124,6 +124,20 @@ public sealed class PrecomputeSubResourceTests : IDisposable
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
 
+        using (var entryCmd = conn.CreateCommand())
+        {
+            entryCmd.CommandText = """
+                INSERT INTO band_entries (song_id, band_type, team_key, instrument_combo, team_members, score, rank, source)
+                VALUES (@songId, @bandType, @teamKey, '', @teamMembers, 100000, 1, 'test')
+                ON CONFLICT DO NOTHING
+                """;
+            entryCmd.Parameters.AddWithValue("songId", songId);
+            entryCmd.Parameters.AddWithValue("bandType", bandType);
+            entryCmd.Parameters.AddWithValue("teamKey", teamKey);
+            entryCmd.Parameters.AddWithValue("teamMembers", members.Select(member => member.AccountId).ToArray());
+            entryCmd.ExecuteNonQuery();
+        }
+
         foreach (var member in members)
         {
             using var memberCmd = conn.CreateCommand();
@@ -152,6 +166,14 @@ public sealed class PrecomputeSubResourceTests : IDisposable
             lookupCmd.Parameters.AddWithValue("teamKey", teamKey);
             lookupCmd.ExecuteNonQuery();
         }
+    }
+
+    private Task RebuildBandSearchProjectionAsync()
+    {
+        var builder = new BandSearchProjectionBuilder(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandSearchProjectionBuilder>>());
+        return builder.RebuildAllAsync(CancellationToken.None);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -199,6 +221,7 @@ public sealed class PrecomputeSubResourceTests : IDisposable
 
         SeedBandRows("bands_song_a", "Band_Duets", "u1:u2", (0, "u1", 0), (1, "u2", 1));
         SeedBandRows("bands_song_b", "Band_Duets", "u1:u2", (0, "u1", 2), (1, "u2", 1));
+        await RebuildBandSearchProjectionAsync();
 
         var sut = new ScrapeTimePrecomputer(
             _persistence, _metaDb, _pathDataStore,
@@ -245,6 +268,7 @@ public sealed class PrecomputeSubResourceTests : IDisposable
         }));
 
         SeedBandRows("bands_song_disabled_a", "Band_Duets", "u1:u2", (0, "u1", 0), (1, "u2", 1));
+    await RebuildBandSearchProjectionAsync();
 
         var sut = new ScrapeTimePrecomputer(
             _persistence, _metaDb, _pathDataStore,

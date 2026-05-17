@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
+const featureFlagsMock = vi.hoisted(() => ({
+  value: { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true },
+}));
+
 vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true }),
+  useFeatureFlags: () => featureFlagsMock.value,
 }));
 
 const mockScrollRef = { current: null as HTMLDivElement | null };
@@ -13,6 +17,19 @@ vi.mock('../../../../src/contexts/ScrollContainerContext', () => ({
 
 import PinnedSidebar from '../../../../src/components/shell/desktop/PinnedSidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
+
+beforeAll(() => {
+  if (typeof Range !== 'undefined') {
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 0, right: 120, bottom: 16, left: 0, width: 120, height: 16, x: 0, y: 0, toJSON() { return this; } }),
+    });
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [] as unknown as DOMRectList,
+    });
+  }
+});
 
 function renderPinned(overrides: Partial<Parameters<typeof PinnedSidebar>[0]> = {}) {
   const defaults = {
@@ -36,8 +53,19 @@ const selectedBandProfile = {
   ],
 };
 
+function expectPinnedLinkActive(link: HTMLAnchorElement | null) {
+  expect(link?.style.backgroundColor).not.toBe('transparent');
+}
+
+function expectPinnedLinkInactive(link: HTMLAnchorElement | null) {
+  expect(link?.style.backgroundColor).toBe('transparent');
+}
+
 describe('PinnedSidebar', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    featureFlagsMock.value = { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true };
+    vi.clearAllMocks();
+  });
 
   it('always renders (no open/close state)', () => {
     const { container } = renderPinned();
@@ -63,28 +91,29 @@ describe('PinnedSidebar', () => {
     expect(screen.queryByText('Rivals')).toBeNull();
   });
 
-  it('renders Statistics link when a band is selected without a player', () => {
+  it('renders Suggestions and Statistics links when a band is selected without a player', () => {
     renderPinned({ player: null, selectedProfile: selectedBandProfile });
+    const suggestionsLink = screen.getByText('Suggestions').closest('a');
     const statisticsLink = screen.getByText('Statistics').closest('a');
 
-    expect(screen.queryByText('Suggestions')).toBeNull();
     expect(screen.queryByText('Rivals')).toBeNull();
+    expect(suggestionsLink?.getAttribute('href')).toBe('/suggestions');
     expect(statisticsLink?.getAttribute('href')).toBe('/statistics');
   });
 
   it('shows player displayName when player is set', () => {
     renderPinned({ player: { accountId: 'a1', displayName: 'TestPlayer' } });
-    expect(screen.getByText('TestPlayer')).toBeTruthy();
+    expect(screen.getAllByText('TestPlayer').length).toBeGreaterThan(0);
   });
 
   it('shows Select Player button when no player', () => {
     renderPinned({ player: null });
-    expect(screen.getByText('Select Profile')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^select/i })).toBeTruthy();
   });
 
   it('calls onSelectPlayer when Select Player is clicked', () => {
     const { props } = renderPinned({ player: null });
-    fireEvent.click(screen.getByText('Select Profile'));
+    fireEvent.click(screen.getByRole('button', { name: /^select/i }));
     expect(props.onSelectPlayer).toHaveBeenCalled();
   });
 
@@ -112,12 +141,12 @@ describe('PinnedSidebar', () => {
     });
 
     expect(screen.getByTestId('pinned-sidebar-band-profile')).toBeTruthy();
-    expect(screen.getByText('Player One + Player Two + Player Three')).toBeTruthy();
-    expect(screen.getByText('Player One')).toBeTruthy();
-    expect(screen.getByText('Player Two')).toBeTruthy();
-    expect(screen.getByText('Player Three')).toBeTruthy();
+  expect(screen.getAllByText('Player One + Player Two + Player Three').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Player One').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Player Two').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Player Three').length).toBeGreaterThan(0);
     expect(screen.getByText('Trios')).toBeTruthy();
-    expect(screen.queryByText('Select Profile')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^select/i })).toBeNull();
   });
 
   it('deselects a selected band from the pinned sidebar', () => {
@@ -142,6 +171,23 @@ describe('PinnedSidebar', () => {
     expect(screen.getByText('Settings')).toBeTruthy();
   });
 
+  it('renders Manual link between profile selection and Settings', () => {
+    const { container } = renderPinned({ player: null });
+    const text = container.textContent ?? '';
+
+    expect(screen.getByText('App Manual').closest('a')?.getAttribute('href')).toBe('/manual');
+    expect(text.indexOf('Select Profile')).toBeLessThan(text.indexOf('App Manual'));
+    expect(text.indexOf('App Manual')).toBeLessThan(text.indexOf('Settings'));
+  });
+
+  it('hides Manual link when the App Manual feature is disabled', () => {
+    featureFlagsMock.value = { ...featureFlagsMock.value, appManual: false };
+    renderPinned({ player: null });
+
+    expect(screen.queryByText('App Manual')).toBeNull();
+    expect(screen.getByText('Settings')).toBeTruthy();
+  });
+
   it('renders no overlay', () => {
     const { container } = renderPinned();
     expect(container.querySelector('.overlay')).toBeNull();
@@ -158,7 +204,7 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Songs');
-    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
+    expectPinnedLinkActive(link.closest('a'));
   });
 
   it('shows active styling on suggestions route', () => {
@@ -170,7 +216,7 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Suggestions');
-    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
+    expectPinnedLinkActive(link.closest('a'));
   });
 
   it('shows active styling on statistics route', () => {
@@ -182,10 +228,10 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Statistics');
-    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
+    expectPinnedLinkActive(link.closest('a'));
   });
 
-  it('shows Statistics as active on the selected band route', () => {
+  it('does not show Statistics as active on a clean band detail route', () => {
     render(
       <MemoryRouter initialEntries={['/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two']}>
         <SettingsProvider>
@@ -194,7 +240,24 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Statistics');
-    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
+    expectPinnedLinkInactive(link.closest('a'));
+  });
+
+  it('does not show Statistics as active on a clean player detail route', () => {
+    render(
+      <MemoryRouter initialEntries={['/player/p2']}>
+        <SettingsProvider>
+        <PinnedSidebar player={{ accountId: 'p1', displayName: 'P' } as any} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
+      </MemoryRouter>,
+    );
+    const link = screen.getByText('Statistics');
+    expectPinnedLinkInactive(link.closest('a'));
+  });
+
+  it('links the selected band profile to statistics', () => {
+    renderPinned({ selectedProfile: selectedBandProfile });
+    expect(screen.getByTestId('pinned-sidebar-band-profile').querySelector('a')?.getAttribute('href')).toBe('/statistics');
   });
 
   it('shows active styling on settings route', () => {
@@ -206,12 +269,12 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Settings');
-    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
+    expectPinnedLinkActive(link.closest('a'));
   });
 
   it('shows player name as link', () => {
     renderPinned({ player: { accountId: 'p1', displayName: 'TestP' } });
-    expect(screen.getByText('TestP').closest('a')).toBeTruthy();
+    expect(screen.getAllByText('TestP')[0]?.closest('a')).toBeTruthy();
   });
 });
 

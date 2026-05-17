@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using FortniteFestival.Core.Services;
+using FSTService.Persistence;
 using FSTService.Scraping;
 
 namespace FSTService.Api;
@@ -22,6 +23,7 @@ public sealed class NotificationService
     private IShopProvider? _shopProvider;
     private FestivalService? _festivalService;
     private UserSyncProgressTracker? _syncTracker;
+    private IMetaDatabase? _metaDb;
 
     public NotificationService(ILogger<NotificationService> log)
     {
@@ -44,6 +46,12 @@ public sealed class NotificationService
     /// Called during startup to break the circular dependency.
     /// </summary>
     public void SetSyncTracker(UserSyncProgressTracker tracker) => _syncTracker = tracker;
+
+    /// <summary>
+    /// Set the metadata store for DB-backed sync state on WebSocket subscribe.
+    /// Called during startup to break the circular dependency.
+    /// </summary>
+    public void SetMetaDatabase(IMetaDatabase metaDb) => _metaDb = metaDb;
 
     /// <summary>
     /// Register a WebSocket connection for the given account+device pair.
@@ -332,11 +340,10 @@ public sealed class NotificationService
 
                                 // Send current sync state immediately so late subscribers
                                 // don't miss fast backfills that complete before the WS connects.
-                                if (_syncTracker?.GetProgress(requestedAccountId) is { } currentProgress)
+                                if (BuildInitialSyncStatePayload(requestedAccountId) is { } payload)
                                 {
                                     try
                                     {
-                                        var payload = _syncTracker.BuildPayloadForAccount(requestedAccountId, currentProgress);
                                         var payloadJson = JsonSerializer.Serialize(payload);
                                         var payloadBytes = Encoding.UTF8.GetBytes(payloadJson);
                                         await ws.SendAsync(payloadBytes, WebSocketMessageType.Text, true, ct);
@@ -379,6 +386,99 @@ public sealed class NotificationService
         {
             RemoveConnection(currentKey, deviceId, ws);
         }
+    }
+
+    private object? BuildInitialSyncStatePayload(string accountId)
+    {
+        var liveProgress = _syncTracker?.GetProgress(accountId);
+        if (liveProgress is not null && liveProgress.Phase != SyncProgressPhase.Queued)
+        {
+            return _syncTracker!.BuildPayloadForAccount(accountId, liveProgress);
+        }
+
+        var durablePayload = BuildDurableSyncStatePayload(accountId);
+        if (durablePayload is not null)
+            return durablePayload;
+
+        return liveProgress is null ? null : _syncTracker!.BuildPayloadForAccount(accountId, liveProgress);
+    }
+
+    private object? BuildDurableSyncStatePayload(string accountId)
+    {
+        if (_metaDb is null) return null;
+
+        var backfill = _metaDb.GetBackfillStatus(accountId);
+        if (backfill is not null)
+        {
+            var backfillDisplay = _metaDb.GetBackfillSongProgress(accountId, backfill.SongsChecked, backfill.TotalSongsToCheck);
+            var backfillPayload = backfill.Status switch
+            {
+                "deferred" => BuildSyncProgressPayload(accountId, "queued", 0, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: 0, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending),
+                "pending" or "in_progress" => BuildSyncProgressPayload(accountId, "backfill", backfill.SongsChecked, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.SongsChecked, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending),
+                "error" => BuildSyncProgressPayload(accountId, "error", backfill.SongsChecked, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.SongsChecked, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending),
+                _ => null,
+            };
+            if (backfillPayload is not null)
+                return backfillPayload;
+        }
+
+        var history = _metaDb.GetHistoryReconStatus(accountId);
+        if (history?.Status is "pending" or "in_progress")
+            return BuildSyncProgressPayload(accountId, "history", history.SongsProcessed, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried);
+        if (history?.Status is "error")
+            return BuildSyncProgressPayload(accountId, "error", history.SongsProcessed, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried);
+
+        var rivals = _metaDb.GetRivalsStatus(accountId);
+        if (rivals?.Status is "pending" or "in_progress")
+            return BuildSyncProgressPayload(accountId, "rivals", rivals.CombosComputed, rivals.TotalCombosToCompute, 0, rivalsFound: rivals.RivalsFound);
+        if (rivals?.Status is "error")
+            return BuildSyncProgressPayload(accountId, "error", rivals.CombosComputed, rivals.TotalCombosToCompute, 0, rivalsFound: rivals.RivalsFound);
+
+        if (backfill?.Status is "complete")
+        {
+            var backfillDisplay = _metaDb.GetBackfillSongProgress(accountId, backfill.SongsChecked, backfill.TotalSongsToCheck);
+            return BuildSyncProgressPayload(accountId, "complete", backfill.TotalSongsToCheck, backfill.TotalSongsToCheck, backfill.EntriesFound, displayItemsCompleted: backfillDisplay?.TotalSongs, displayTotalItems: backfillDisplay?.TotalSongs, pendingRankUpdate: backfill.RankingsPending);
+        }
+        if (history?.Status is "complete")
+            return BuildSyncProgressPayload(accountId, "complete", history.TotalSongsToProcess, history.TotalSongsToProcess, history.HistoryEntriesFound, seasonsQueried: history.SeasonsQueried, pendingRankUpdate: backfill?.RankingsPending);
+
+        return null;
+    }
+
+    private static object BuildSyncProgressPayload(
+        string accountId,
+        string phase,
+        int itemsCompleted,
+        int totalItems,
+        int entriesFound,
+        int? displayItemsCompleted = null,
+        int? displayTotalItems = null,
+        int seasonsQueried = 0,
+        int rivalsFound = 0,
+        bool? pendingRankUpdate = null)
+    {
+        return new
+        {
+            type = "sync_progress",
+            accountId,
+            phase,
+            itemsCompleted,
+            totalItems,
+            displayItemsCompleted,
+            displayTotalItems,
+            entriesFound,
+            currentSongName = (string?)null,
+            seasonsQueried,
+            rivalsFound,
+            elapsedSeconds = 0,
+            isThrottled = false,
+            throttleStatusKey = (string?)null,
+            probeStatusKey = (string?)null,
+            nextRetrySeconds = (double?)null,
+            probeAttempt = (int?)null,
+            pendingRankUpdate,
+            estimatedRankUpdateMinutes = (int?)null,
+        };
     }
 
     private async Task<(string? MessageText, bool CloseRequested)> ReadTextMessageAsync(

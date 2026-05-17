@@ -72,43 +72,26 @@
 /* ── Shop breathe (SongDetailHeader + ShopButtonDemo) ── */
 
 @keyframes shopBreathe {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+  0%, 100% { background-color: var(--shop-pulse-base, rgba(18,24,38,0.96)); }
+  50% { background-color: var(--shop-pulse-target, var(--color-accent-blue)); }
 }
 
-.shopBreathe {
-  position: relative;
-  background-color: transparent;
-  isolation: isolate;
-}
-
-.shopBreathe::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: var(--color-accent-blue);
-  animation: shopBreathe 3s ease-in-out infinite;
-  z-index: -1;
-}
-
+.shopBreathe,
 .shopCircleBreathe {
-  position: relative;
-  background-color: transparent;
-  isolation: isolate;
-}
+  --shop-pulse-base: rgba(18,24,38,0.96);
+  --shop-pulse-target: var(--color-accent-blue);
 
-.shopCircleBreathe::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: var(--color-accent-blue);
+  position: relative;
+  isolation: isolate;
   animation: shopBreathe 3s ease-in-out infinite;
-  z-index: -1;
 }
 
 /* ── Purple breathe (SelectProfilePill circle on mobile) ── */
+
+@keyframes profile-breathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
 
 .profileCircleBreathe {
   position: relative;
@@ -122,7 +105,7 @@
   inset: 0;
   border-radius: inherit;
   background-color: var(--color-accent-purple);
-  animation: shopBreathe 3s ease-in-out infinite;
+  animation: profile-breathe 3s ease-in-out infinite;
   z-index: -1;
 }
 
@@ -175,40 +158,18 @@
 }
 
 @keyframes shopBreatheRed {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+  0%, 100% { background-color: var(--shop-pulse-base, rgba(18,24,38,0.96)); }
+  50% { background-color: var(--shop-pulse-target, var(--color-leaving-red, #ef4444)); }
 }
 
-.shopBreatheRed {
-  position: relative;
-  background-color: transparent;
-  isolation: isolate;
-}
-
-.shopBreatheRed::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: var(--color-leaving-red, #ef4444);
-  animation: shopBreatheRed 3s ease-in-out infinite;
-  z-index: -1;
-}
-
+.shopBreatheRed,
 .shopCircleBreatheRed {
-  position: relative;
-  background-color: transparent;
-  isolation: isolate;
-}
+  --shop-pulse-base: rgba(18,24,38,0.96);
+  --shop-pulse-target: var(--color-leaving-red, #ef4444);
 
-.shopCircleBreatheRed::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background-color: var(--color-leaving-red, #ef4444);
-  animation: shopPulseRed 2s ease-in-out infinite;
-  z-index: -1;
+  position: relative;
+  isolation: isolate;
+  animation: shopBreatheRed 3s ease-in-out infinite;
 }
 
 .leavingTomorrowPill {
@@ -221,10 +182,6 @@
   color: #fff;
   white-space: nowrap;
   pointer-events: none;
-}
-
-.leavingTomorrowPill::before {
-  animation: shopPulseRed 2s ease-in-out infinite;
 }
 
 /* Row leaving indicator: pill on desktop, circle on mobile */

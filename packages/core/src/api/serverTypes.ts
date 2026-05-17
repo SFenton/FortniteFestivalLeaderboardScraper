@@ -39,6 +39,21 @@ export const SERVER_INSTRUMENT_LABELS: Record<ServerInstrumentKey, string> = {
   Solo_PeripheralDrums: 'Pro Drums',
 };
 
+export type SoloFamilyScopeId = 'pad' | 'pro_strings' | 'pro_vocals' | 'pro_drums';
+
+export const SOLO_FAMILY_SCOPE_IDS: SoloFamilyScopeId[] = ['pad', 'pro_strings', 'pro_vocals', 'pro_drums'];
+
+export const SOLO_FAMILY_SCOPE_LABELS: Record<SoloFamilyScopeId, string> = {
+  pad: 'Pad',
+  pro_strings: 'Pro Strings',
+  pro_vocals: 'Pro Vocals',
+  pro_drums: 'Pro Drums',
+};
+
+export function soloFamilyScopeLabel(scopeId: SoloFamilyScopeId): string {
+  return SOLO_FAMILY_SCOPE_LABELS[scopeId] ?? scopeId;
+}
+
 /** Look up the display label for a server instrument key. */
 export function serverInstrumentLabel(key: ServerInstrumentKey): string {
   return SERVER_INSTRUMENT_LABELS[key] ?? key;
@@ -47,6 +62,15 @@ export function serverInstrumentLabel(key: ServerInstrumentKey): string {
 // Convenience aliases used by web layer
 export const INSTRUMENT_KEYS = SERVER_INSTRUMENT_KEYS;
 export const INSTRUMENT_LABELS = SERVER_INSTRUMENT_LABELS;
+
+export type FeatureFlagsResponse = {
+  compete: boolean;
+  leaderboards: boolean;
+  difficulty: boolean;
+  playerBands: boolean;
+  experimentalRanks: boolean;
+  appManual: boolean;
+};
 
 /** The preferred default instrument when none is specified. */
 export const DEFAULT_INSTRUMENT: ServerInstrumentKey = 'Solo_Guitar';
@@ -142,6 +166,14 @@ export type SongsResponse = {
   songs: ServerSong[];
 };
 
+export type MemberScoreFilterResponse = {
+  count: number;
+  songIds: string[];
+  hasAccountIds?: string[];
+  missingAccountIds?: string[];
+  instruments?: ServerInstrumentKey[];
+};
+
 // ─── WebSocket notification types ──────────────────────────────
 
 export type ShopChangedMessage = {
@@ -165,6 +197,8 @@ export type SyncProgressMessage = {
   phase: 'queued' | 'backfill' | 'history' | 'rivals' | 'postscrape' | 'complete' | 'error';
   itemsCompleted: number;
   totalItems: number;
+  displayItemsCompleted?: number | null;
+  displayTotalItems?: number | null;
   entriesFound: number;
   currentSongName?: string;
   seasonsQueried?: number;
@@ -440,6 +474,8 @@ export type SyncStatusResponse = {
     status: string;
     songsChecked: number;
     totalSongsToCheck: number;
+    displaySongsChecked?: number | null;
+    displayTotalSongs?: number | null;
     entriesFound: number;
     currentSongName?: string;
     startedAt: string | null;
@@ -500,6 +536,18 @@ export type ServiceInfoResponse = {
     startedAt: string | null;
     phase: string | null;
     subOperation: string | null;
+    progressPercent?: number | null;
+    elapsedSeconds?: number | null;
+    estimatedRemainingSeconds?: number | null;
+    branches?: Array<{
+      id: string;
+      status: string;
+      startedAtUtc?: string | null;
+      completedAtUtc?: string | null;
+      completed?: number | null;
+      total?: number | null;
+      message?: string | null;
+    }> | null;
   };
   nextScheduledUpdateAt: string | null;
 };
@@ -582,6 +630,7 @@ export type PlayerStatsResponse = {
   totalSongs: number;
   instruments: PlayerStatsInstrument[];
   compositeRanks?: CompositeRanks | null;
+  familyRanks?: SoloFamilyRanksByScope | null;
   instrumentRanks?: InstrumentRankEntry[] | null;
   bands?: PlayerBandsResponse | null;
 };
@@ -688,6 +737,17 @@ export type CompositeRanks = {
   totalScore?: number | null;
   maxScore?: number | null;
 };
+
+export type SoloFamilyRanks = CompositeRanks & {
+  scopeId: SoloFamilyScopeId;
+  songsPlayed?: number;
+  totalChartedSongs?: number;
+  coverage?: number;
+  fullComboCount?: number;
+  totalRankedAccounts?: number;
+};
+
+export type SoloFamilyRanksByScope = Partial<Record<SoloFamilyScopeId, SoloFamilyRanks>>;
 
 /** Per-instrument rank entry with base ranks and leeway-responsive tiers. */
 export type InstrumentRankEntry = {
@@ -1048,6 +1108,25 @@ export type AccountRankingDto = AccountRankingEntry & {
   totalRankedAccounts: number;
 };
 
+export type SoloFamilyRankingEntry = AccountRankingEntry & {
+  totalRankedAccounts?: number;
+};
+
+export type SoloFamilyPageResponse = {
+  scopeId: SoloFamilyScopeId;
+  rankBy: string;
+  page: number;
+  pageSize: number;
+  totalAccounts: number;
+  entries: SoloFamilyRankingEntry[];
+};
+
+export type SoloFamilyRankingDto = SoloFamilyRankingEntry & {
+  scopeId: SoloFamilyScopeId;
+  rankBy?: string;
+  totalRankedAccounts: number;
+};
+
 export type SelectedMemberRankingsInstrumentResponse = {
   instrument: string;
   rankBy: string;
@@ -1137,6 +1216,8 @@ export type RivalSongComparison = {
   title: string | null;
   artist: string | null;
   instrument: string;
+  userInstrument?: string | null;
+  rivalInstrument?: string | null;
   userRank: number;
   rivalRank: number;
   rankDelta: number;
@@ -1482,6 +1563,7 @@ type WireStatsResponse = {
   totalSongs: number;
   instruments: WireStatsInstrument[];
   compositeRanks?: CompositeRanks | null;
+  familyRanks?: SoloFamilyRanksByScope | null;
   instrumentRanks?: InstrumentRankEntry[] | null;
   bands?: PlayerBandsResponse | null;
 };
@@ -1568,6 +1650,7 @@ export function expandWireStatsResponse(wire: WireStatsResponse): PlayerStatsRes
     totalSongs: wire.totalSongs ?? 0,
     instruments: (wire.instruments ?? []).map(expandStatsInstrument),
     compositeRanks: wire.compositeRanks ?? null,
+    familyRanks: wire.familyRanks ?? null,
     instrumentRanks: wire.instrumentRanks ?? null,
     bands: wire.bands ?? null,
   };

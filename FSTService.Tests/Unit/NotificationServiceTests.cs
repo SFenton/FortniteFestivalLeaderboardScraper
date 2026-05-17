@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using FSTService.Api;
+using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -578,6 +579,52 @@ public sealed class NotificationServiceTests
 
         await ws.Received().SendAsync(
             Arg.Is<ArraySegment<byte>>(seg => SegmentContains(seg, "\"type\":\"sync_progress\"", "\"accountId\":\"real-acct\"")),
+            WebSocketMessageType.Text,
+            true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_SubscribeSync_UsesDurableBackfillStateWhenTrackerIsQueued()
+    {
+        var svc = CreateService();
+        var tracker = new UserSyncProgressTracker(svc, Substitute.For<ILogger<UserSyncProgressTracker>>());
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetBackfillStatus("real-acct").Returns(new BackfillStatusInfo
+        {
+            AccountId = "real-acct",
+            Status = "in_progress",
+            SongsChecked = 42,
+            TotalSongsToCheck = 100,
+            EntriesFound = 7,
+        });
+        svc.SetSyncTracker(tracker);
+        svc.SetMetaDatabase(metaDb);
+        tracker.BeginQueued("real-acct", 100);
+
+        var ws = Substitute.For<WebSocket>();
+        var subscribeJson = Encoding.UTF8.GetBytes("""{"action":"subscribe_sync","accountId":"real-acct"}""");
+
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 2 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                var buf = callInfo.ArgAt<ArraySegment<byte>>(0);
+                if (callCount == 1)
+                {
+                    Array.Copy(subscribeJson, 0, buf.Array!, buf.Offset, subscribeJson.Length);
+                    return new WebSocketReceiveResult(subscribeJson.Length, WebSocketMessageType.Text, true);
+                }
+
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+            });
+
+        await svc.HandleConnectionAsync("anon-123", "dev1", ws, CancellationToken.None);
+
+        await ws.Received().SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg => SegmentContains(seg, "\"type\":\"sync_progress\"", "\"phase\":\"backfill\"", "\"itemsCompleted\":42")),
             WebSocketMessageType.Text,
             true,
             Arg.Any<CancellationToken>());

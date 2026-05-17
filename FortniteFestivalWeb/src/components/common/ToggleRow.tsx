@@ -1,6 +1,8 @@
-import { memo } from 'react';
+import { memo, useCallback, type KeyboardEvent } from 'react';
 import { IoHelpCircleOutline } from 'react-icons/io5';
 import { modalStyles as ms } from '../modals/modalStyles';
+import { usePressAction } from '../../hooks/ui/usePressAction';
+import PressableButton from './PressableButton';
 
 export interface ToggleRowProps {
   label: React.ReactNode;
@@ -14,6 +16,17 @@ export interface ToggleRowProps {
 }
 
 export const ToggleRow = memo(function ToggleRow({ label, description, checked, onToggle, disabled, icon, large, onInfo }: ToggleRowProps) {
+  const handleInfoPress = useCallback(() => {
+    onInfo?.();
+  }, [onInfo]);
+  const infoPressHandlers = usePressAction<HTMLSpanElement>({ onPress: handleInfoPress, disabled: !onInfo, stopPropagation: true });
+  const handleInfoKeyDown = useCallback((e: KeyboardEvent<HTMLSpanElement>) => {
+    if (!onInfo || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onInfo();
+  }, [onInfo]);
+
   const rowStyle = {
     ...(large ? ms.toggleRowLarge : ms.toggleRow),
     ...(disabled ? ms.toggleRowDisabled : {}),
@@ -27,9 +40,9 @@ export const ToggleRow = memo(function ToggleRow({ label, description, checked, 
   };
 
   return (
-    <button
+    <PressableButton
       style={rowStyle}
-      onClick={disabled ? undefined : onToggle}
+      onPress={onToggle}
       disabled={disabled}
     >
       {icon && <div style={ms.toggleIcon}>{icon}</div>}
@@ -42,8 +55,8 @@ export const ToggleRow = memo(function ToggleRow({ label, description, checked, 
           role="button"
           tabIndex={0}
           style={ms.toggleInfoBtn}
-          onClick={e => { e.stopPropagation(); onInfo(); }}
-          onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); onInfo(); } }}
+          {...infoPressHandlers}
+          onKeyDown={handleInfoKeyDown}
         >
           <IoHelpCircleOutline size={18} />
         </span>
@@ -51,6 +64,6 @@ export const ToggleRow = memo(function ToggleRow({ label, description, checked, 
       <div style={trackStyle}>
         <div style={thumbStyle} />
       </div>
-    </button>
+    </PressableButton>
   );
 });

@@ -35,6 +35,10 @@ interface FilterSortOptions {
   visibleInstruments?: readonly InstrumentKey[] | null;
   /** Selected tracked band mode uses band song rows instead of solo instrument filters. */
   selectedBandMode?: boolean;
+  /** Selected-band member score filter result from the service. */
+  individualBandMemberSongIds?: ReadonlySet<string> | null;
+  /** Whether member song IDs should be intersected with the song list. */
+  individualBandMemberFiltersActive?: boolean;
 }
 
 const PCT_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -68,6 +72,8 @@ export function useFilteredSongs({
   shopVisible,
   visibleInstruments,
   selectedBandMode,
+  individualBandMemberSongIds,
+  individualBandMemberFiltersActive,
 }: FilterSortOptions): Song[] {
   return useMemo(() => {
     const hasPlayerData = allScoreMap.size > 0;
@@ -119,6 +125,10 @@ export function useFilteredSongs({
         const hasSelectedBandScore = (score?.score ?? 0) > 0;
         if (f.selectedBandHasScore && !hasSelectedBandScore) return false;
         if (f.selectedBandMissingScore && hasSelectedBandScore) return false;
+      }
+
+      if (selectedBandMode && individualBandMemberFiltersActive && !individualBandMemberSongIds?.has(s.songId)) {
+        return false;
       }
 
       if (!hasPlayerData) {
@@ -302,5 +312,5 @@ export function useFilteredSongs({
       }
       return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
     });
-  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, leavingTomorrowIds, isScoreValid, filterInvalidScoresEnabled, shopVisible, visibleInstruments, selectedBandMode]);
+  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, leavingTomorrowIds, isScoreValid, filterInvalidScoresEnabled, shopVisible, visibleInstruments, selectedBandMode, individualBandMemberSongIds, individualBandMemberFiltersActive]);
 }

@@ -11,12 +11,14 @@ public sealed class ResponseCacheService : IDisposable
 {
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
     private readonly TimeSpan _ttl;
+    private readonly PublicReadGateService? _publicReadGate;
     private readonly Timer _evictionTimer;
     private volatile bool _frozen;
 
-    public ResponseCacheService(TimeSpan ttl)
+    public ResponseCacheService(TimeSpan ttl, PublicReadGateService? publicReadGate = null)
     {
         _ttl = ttl;
+        _publicReadGate = publicReadGate;
         _evictionTimer = new Timer(_ => Cleanup(), null, ttl, ttl);
     }
 
@@ -25,7 +27,9 @@ public sealed class ResponseCacheService : IDisposable
     /// skips eviction — all cached entries are treated as fresh.
     /// Used during scrape passes to prevent partial data from leaking through.
     /// </summary>
-    public bool IsFrozen => _frozen;
+    public bool IsFrozen => _frozen || (_publicReadGate?.IsFrozen ?? false);
+
+    public bool RequiresCachedReads => _frozen || (_publicReadGate?.RequiresCachedReads ?? false);
 
     /// <summary>Freeze the cache — entries never expire until <see cref="Unfreeze"/> is called.</summary>
     public void Freeze() => _frozen = true;
@@ -39,7 +43,7 @@ public sealed class ResponseCacheService : IDisposable
     /// </summary>
     public (byte[] Json, string ETag)? Get(string key)
     {
-        if (_cache.TryGetValue(key, out var entry) && (_frozen || DateTime.UtcNow - entry.CachedAt < _ttl))
+        if (_cache.TryGetValue(key, out var entry) && (IsFrozen || DateTime.UtcNow - entry.CachedAt < _ttl))
             return (entry.Json, entry.ETag);
         return null;
     }

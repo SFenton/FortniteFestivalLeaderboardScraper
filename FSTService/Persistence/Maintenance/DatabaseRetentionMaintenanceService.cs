@@ -383,8 +383,7 @@ public sealed class DatabaseRetentionMaintenanceService : IDatabaseRetentionMain
     }
 
     private static string BuildScrapeLogRetentionPredicate(string alias) => $"""
-        {alias}.completed_at IS NOT NULL
-        AND COALESCE({alias}.completed_at, {alias}.started_at) < @cutoffTimestamp
+        COALESCE({alias}.completed_at, {alias}.started_at) < @cutoffTimestamp
         AND NOT EXISTS (
             SELECT 1
             FROM retained_completed retained

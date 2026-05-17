@@ -72,8 +72,8 @@ export default function BandRankingsPage() {
   }, [bandType, metricModal, scrollContainerRef, setSearchParams]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: () => {} });
-    return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
+    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal });
+    return () => fabSearch.registerLeaderboardActions(null);
   }, [fabSearch, openMetricModal]);
 
   const leaderboardQuery = useQuery({

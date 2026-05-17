@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { IoClose, IoChevronDown, IoImage, IoReaderOutline } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
@@ -27,6 +27,7 @@ import { paddingWithSafeAreaBottom } from '../../../../utils/safeAreaStyles';
 import anim from '../../../../styles/animations.module.css';
 import { ZoomableImage } from './ZoomableImage';
 import PathDataTable, { type PathDataResponse, PathDataHeader, type ColumnKey } from './PathDataTable';
+import { usePressAction } from '../../../../hooks/ui/usePressAction';
 
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
@@ -132,6 +133,8 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
   const setColumnOrder = useCallback((order: ColumnKey[]) => updateSettings({ pathColumnOrder: order }), [updateSettings]);
   const accordionTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const st = usePathsModalStyles();
+  const overlayPressHandlers = usePressAction<HTMLDivElement>({ onPress: onClose, disabled: !visible || showUnavailableAlert });
+  const closeButtonPressHandlers = usePressAction<HTMLButtonElement>({ onPress: onClose, disabled: !visible || showUnavailableAlert });
 
   const closeAllAccordions = useCallback(() => {
     setInstOpen(false);
@@ -174,6 +177,9 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
       setChoptOpen(true);
     }
   }, [instOpen, diffOpen, choptOpen, closeAllAccordions]);
+  const instTogglePressHandlers = usePressAction<HTMLButtonElement>({ onPress: toggleInst, disabled: showUnavailableAlert });
+  const diffTogglePressHandlers = usePressAction<HTMLButtonElement>({ onPress: toggleDiff, disabled: showUnavailableAlert });
+  const choptTogglePressHandlers = usePressAction<HTMLButtonElement>({ onPress: toggleChopt, disabled: showUnavailableAlert });
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -241,6 +247,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
     zIndex: 1000,
     opacity: animIn ? 1 : 0,
     transition: `opacity ${TRANSITION_MS}ms ease`,
+    pointerEvents: visible && !showUnavailableAlert ? 'auto' : 'none',
   };
 
   const panelBase: React.CSSProperties = {
@@ -280,7 +287,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
 
   return createPortal(
     <>
-      <div style={overlayStyle} onClick={onClose} />
+      <div style={overlayStyle} {...overlayPressHandlers} />
       <div
         ref={panelRef}
         role="dialog"
@@ -291,7 +298,7 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
       >
         <div style={modalStyles.headerWrap}>
           <h2 style={modalStyles.headerTitle}>{t('paths.title')}</h2>
-          <button style={modalStyles.closeBtn} onClick={onClose} aria-label={t('common.close')}><IoClose size={18} /></button>
+          <button style={modalStyles.closeBtn} {...closeButtonPressHandlers} aria-label={t('common.close')}><IoClose size={18} /></button>
         </div>
         {isMobile ? (
           <>
@@ -313,43 +320,43 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
               <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
                 <div style={{ ...st.diffGridMobile, paddingBottom: Gap.md }}>
                   {DIFFICULTIES.map(d => (
-                    <button
+                    <PathOptionButton
                       key={d}
                       style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
                       /* v8 ignore start — mobile accordion click */
-                      onClick={() => { if (d === difficulty) setDiffOpen(false); else setDifficulty(d); }}
+                      onPress={() => { if (d === difficulty) setDiffOpen(false); else setDifficulty(d); }}
                       /* v8 ignore stop */
                     >
                       {t(`paths.${d}`)}
-                    </button>
+                    </PathOptionButton>
                   ))}
                 </div>
               </div>
               <div style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}>
                 <div style={{ ...st.choptGrid, paddingBottom: Gap.md }}>
                   {CHOPT_DISPLAYS.map(d => (
-                    <button
+                    <PathOptionButton
                       key={d}
                       style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
                       /* v8 ignore start — mobile accordion click */
-                      onClick={() => { if (d === choptDisplay) setChoptOpen(false); else setChoptDisplay(d); }}
+                      onPress={() => { if (d === choptDisplay) setChoptOpen(false); else setChoptDisplay(d); }}
                       /* v8 ignore stop */
                     >
                       {t(`paths.chopt_${d}`)}
-                    </button>
+                    </PathOptionButton>
                   ))}
                 </div>
               </div>
               <div style={st.mobileRow}>
-                <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleInst}>
+                <button style={{ ...st.mobileSelector, flexShrink: 0 }} {...instTogglePressHandlers}>
                   <InstrumentIcon instrument={selected} sig={sig} size={28} />
                   <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
                 </button>
-                <button style={{ ...st.mobileSelector, flex: 1 }} onClick={toggleDiff}>
+                <button style={{ ...st.mobileSelector, flex: 1 }} {...diffTogglePressHandlers}>
                   <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
                   <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
                 </button>
-                <button style={{ ...st.mobileSelector, flexShrink: 0 }} onClick={toggleChopt}>
+                <button style={{ ...st.mobileSelector, flexShrink: 0 }} {...choptTogglePressHandlers}>
                   {choptDisplay === 'image' ? <IoImage size={20} /> : <IoReaderOutline size={20} />}
                   <IoChevronDown size={16} style={{ ...st.chevron, transform: choptOpen ? 'rotate(0)' : 'rotate(180deg)' }} />
                 </button>
@@ -359,16 +366,16 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
         ) : (
           <div style={st.controls}>
             <div style={st.desktopRow}>
-              <button style={st.desktopSelector} onClick={toggleInst}>
+              <button style={st.desktopSelector} {...instTogglePressHandlers}>
                 <InstrumentIcon instrument={selected} sig={sig} size={28} />
                 <span style={st.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
-              <button style={st.desktopSelector} onClick={toggleDiff}>
+              <button style={st.desktopSelector} {...diffTogglePressHandlers}>
                 <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
-              <button style={st.desktopSelector} onClick={toggleChopt}>
+              <button style={st.desktopSelector} {...choptTogglePressHandlers}>
                 {choptDisplay === 'image' ? <IoImage size={20} /> : <IoReaderOutline size={20} />}
                 <span style={st.mobileSelectorLabel}>{t(`paths.chopt_${choptDisplay}`)}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: choptOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
@@ -390,26 +397,26 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
             <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
               <div style={{ ...st.diffGridMobile, paddingTop: Gap.md }}>
                 {DIFFICULTIES.map(d => (
-                  <button
+                  <PathOptionButton
                     key={d}
                     style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
-                    onClick={() => { if (d === difficulty) setDiffOpen(false); else setDifficulty(d); }}
+                    onPress={() => { if (d === difficulty) setDiffOpen(false); else setDifficulty(d); }}
                   >
                     {t(`paths.${d}`)}
-                  </button>
+                  </PathOptionButton>
                 ))}
               </div>
             </div>
             <div style={{ ...st.accordion, maxHeight: choptOpen ? 120 : 0 }}>
               <div style={{ ...st.choptGrid, paddingTop: Gap.md }}>
                 {CHOPT_DISPLAYS.map(d => (
-                  <button
+                  <PathOptionButton
                     key={d}
                     style={choptDisplay === d ? st.diffBtnSmallActive : st.diffBtnSmall}
-                    onClick={() => { if (d === choptDisplay) setChoptOpen(false); else setChoptDisplay(d); }}
+                    onPress={() => { if (d === choptDisplay) setChoptOpen(false); else setChoptDisplay(d); }}
                   >
                     {t(`paths.chopt_${d}`)}
-                  </button>
+                  </PathOptionButton>
                 ))}
               </div>
             </div>
@@ -431,6 +438,16 @@ export default function PathsModal({ visible, songId, sig, onClose }: PathsModal
         )}
     </>,
     document.body,
+  );
+}
+
+function PathOptionButton({ style, onPress, children }: { style: CSSProperties; onPress: () => void; children: ReactNode }) {
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress });
+
+  return (
+    <button style={style} {...pressHandlers}>
+      {children}
+    </button>
   );
 }
 

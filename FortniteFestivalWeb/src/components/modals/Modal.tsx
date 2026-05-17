@@ -1,6 +1,7 @@
 import { useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
+import PressableButton from '../common/PressableButton';
 import ModalShell from './components/ModalShell';
 import { modalStyles } from './modalStyles';
 
@@ -37,20 +38,20 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
           <div style={modalStyles.resetWrap}>
             {resetLabel && <div style={modalStyles.resetTitle}>{resetLabel}</div>}
             {resetHint && <p style={modalStyles.resetDesc}>{resetHint}</p>}
-            <button style={modalStyles.resetBtn} onClick={onReset}>{t('common.reset')}</button>
+            <PressableButton style={modalStyles.resetBtn} onPress={onReset}>{t('common.reset')}</PressableButton>
           </div>
         )}
       </div>
 
       {/* Footer */}
       <div style={modalStyles.footerWrap}>
-        <button
+        <PressableButton
           style={applyDisabled ? { ...modalStyles.applyBtn, ...modalStyles.applyBtnDisabled } : modalStyles.applyBtn}
-          onClick={onApply}
+          onPress={onApply}
           disabled={applyDisabled}
         >
           {applyLabel ?? t('common.apply')}
-        </button>
+        </PressableButton>
       </div>
     </ModalShell>
   );

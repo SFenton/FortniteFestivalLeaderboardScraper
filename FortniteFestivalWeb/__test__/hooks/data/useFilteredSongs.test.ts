@@ -119,6 +119,36 @@ describe('useFilteredSongs', () => {
     expect(result.current.map(s => s.songId)).toEqual(['s2']);
   });
 
+  it('intersects selected band songs with individual band member song IDs', () => {
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: { ...defaultSongFilters(), individualBandMemberScoreFilters: { p1: { hasScore: true } } },
+      instrument: null,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+      selectedBandMode: true,
+      individualBandMemberFiltersActive: true,
+      individualBandMemberSongIds: new Set(['s2']),
+    }));
+
+    expect(result.current.map(s => s.songId)).toEqual(['s2']);
+  });
+
+  it('returns no selected band songs while individual band member song IDs are loading', () => {
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: { ...defaultSongFilters(), individualBandMemberScoreFilters: { p1: { missingScore: true } } },
+      instrument: null,
+      scoreMap: new Map(),
+      allScoreMap: new Map(),
+      selectedBandMode: true,
+      individualBandMemberFiltersActive: true,
+      individualBandMemberSongIds: null,
+    }));
+
+    expect(result.current).toEqual([]);
+  });
+
   it('sorts by title ascending', () => {
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,

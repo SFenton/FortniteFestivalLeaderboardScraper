@@ -88,6 +88,7 @@ export default function ShopPage() {
   /* v8 ignore start — FAB registration callback */
   useLayoutEffect(() => {
     fabSearch.registerShopActions({ toggleView: () => toggleViewRef.current() });
+    return () => fabSearch.registerShopActions(null);
   }, [fabSearch]);
   useLayoutEffect(() => {
     fabSearch.setShopViewMode(effectiveView);

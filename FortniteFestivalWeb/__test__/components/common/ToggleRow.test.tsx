@@ -2,6 +2,28 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ToggleRow } from '../../../src/components/common/ToggleRow';
 
+function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperties(event, {
+    pointerId: { value: props.pointerId ?? 1 },
+    pointerType: { value: props.pointerType ?? 'touch' },
+    isPrimary: { value: props.isPrimary ?? true },
+    button: { value: props.button ?? 0 },
+    clientX: { value: props.clientX ?? 0 },
+    clientY: { value: props.clientY ?? 0 },
+    timeStamp: { value: props.timeStamp ?? 0 },
+  });
+  fireEvent(target, event);
+  return event;
+}
+
+function dispatchClick(target: Element, timeStamp = 0) {
+  const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+  fireEvent(target, event);
+  return event;
+}
+
 describe('ToggleRow', () => {
   it('renders label and toggle', () => {
     render(<ToggleRow label="Test Label" checked={false} onToggle={() => {}} />);
@@ -52,5 +74,19 @@ describe('ToggleRow', () => {
     const button = container.querySelector('button')!;
     // First child should be the text container (flex:1), not an icon div
     expect(button.children.length).toBe(2); // text div + track div
+  });
+
+  it('uses pointerup for info without toggling the row', () => {
+    const onInfo = vi.fn();
+    const onToggle = vi.fn();
+    const { container } = render(<ToggleRow label="Label" checked={false} onToggle={onToggle} onInfo={onInfo} />);
+    const info = container.querySelector('span[role="button"]')!;
+
+    dispatchPointer(info, 'pointerdown', { clientX: 8, clientY: 8, timeStamp: 10 });
+    dispatchPointer(info, 'pointerup', { clientX: 8, clientY: 8, timeStamp: 20 });
+    dispatchClick(info, 80);
+
+    expect(onInfo).toHaveBeenCalledTimes(1);
+    expect(onToggle).not.toHaveBeenCalled();
   });
 });

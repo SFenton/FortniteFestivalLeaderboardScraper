@@ -48,6 +48,9 @@ public static partial class ApiEndpoints
             if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
+            var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, cache);
+            if (frozenMiss is not null) return frozenMiss;
+
             var live = leaderboardRivalsCalculator.ComputeInstrument(accountId, instrument, effectiveRankBy);
             var rivals = live.Rivals;
             var names = metaDb.GetDisplayNames(rivals.Select(r => r.RivalAccountId));
@@ -104,6 +107,11 @@ public static partial class ApiEndpoints
             {
                 var result = CacheHelper.ServeIfCached(httpContext, cache.Get(cacheKey));
                 if (result is not null) return result;
+            }
+
+            {
+                var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, cache);
+                if (frozenMiss is not null) return frozenMiss;
             }
 
             var live = leaderboardRivalsCalculator.ComputeInstrument(accountId, instrument, effectiveRankBy);

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import Modal from '../../../../components/modals/Modal';
 import { ModalSection } from '../../../../components/modals/components/ModalSection';
 import { RadioRow } from '../../../../components/common/RadioRow';
+import PressableButton from '../../../../components/common/PressableButton';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import { Colors, Font, Gap, Size } from '@festival/theme';
 import { IoArrowUp, IoArrowDown } from 'react-icons/io5';
@@ -73,22 +74,22 @@ export default function PlayerScoreSortModal({ visible, draft, savedDraft, onCha
               </div>
             </div>
             <div style={directionStyles.icons}>
-              <button
+              <PressableButton
                 style={directionStyles.iconBtn}
-                onClick={() => onChange({ ...draft, sortAscending: true })}
+                onPress={() => onChange({ ...draft, sortAscending: true })}
                 aria-label={t('aria.ascending')}
               >
                 <div style={{ ...directionStyles.iconCircle, ...(draft.sortAscending ? directionStyles.iconCircleActive : {}) }} />
                 <IoArrowUp size={Size.iconDefault} style={{ position: 'relative' as const, zIndex: 1, color: draft.sortAscending ? Colors.textPrimary : Colors.textMuted, transition: 'color 200ms ease' }} />
-              </button>
-              <button
+              </PressableButton>
+              <PressableButton
                 style={directionStyles.iconBtn}
-                onClick={() => onChange({ ...draft, sortAscending: false })}
+                onPress={() => onChange({ ...draft, sortAscending: false })}
                 aria-label={t('aria.descending')}
               >
                 <div style={{ ...directionStyles.iconCircle, ...(!draft.sortAscending ? directionStyles.iconCircleActive : {}) }} />
                 <IoArrowDown size={Size.iconDefault} style={{ position: 'relative' as const, zIndex: 1, color: !draft.sortAscending ? Colors.textPrimary : Colors.textMuted, transition: 'color 200ms ease' }} />
-              </button>
+              </PressableButton>
             </div>
           </div>
         </ModalSection>

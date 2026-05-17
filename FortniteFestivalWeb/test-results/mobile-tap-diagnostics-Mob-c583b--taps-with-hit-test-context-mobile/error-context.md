@@ -1,0 +1,225 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - link "Back" [ref=e5] [cursor=pointer]:
+        - /url: "#/songs"
+        - img [ref=e7]
+        - text: Back
+      - generic [ref=e9]:
+        - button "Select Profile" [ref=e10] [cursor=pointer]:
+          - img [ref=e11]
+        - button "Search" [ref=e13] [cursor=pointer]:
+          - img [ref=e14]
+    - generic [ref=e22]:
+      - generic [ref=e25]:
+        - heading "SFentonX" [level=1] [ref=e27]
+        - generic [ref=e29]:
+          - paragraph [ref=e30]: Score history is available after tracking this player and their scores are synced.
+          - paragraph [ref=e31]: Score history is available after tracking this player and their scores are synced.
+      - generic [ref=e32]:
+        - region "Global Statistics" [ref=e34]:
+          - button "0 Songs Played" [ref=e35] [cursor=pointer]:
+            - generic [ref=e36]:
+              - generic [ref=e37]: "0"
+              - generic [ref=e38]: Songs Played
+            - img [ref=e39]
+        - button "0 (0%) Full Combos" [ref=e42] [cursor=pointer]:
+          - generic [ref=e43]:
+            - generic [ref=e44]: 0 (0%)
+            - generic [ref=e45]: Full Combos
+          - img [ref=e46]
+        - generic [ref=e49]:
+          - generic [ref=e50]: "0"
+          - generic [ref=e51]: Gold Stars
+        - generic [ref=e53]:
+          - generic [ref=e54]: —
+          - generic [ref=e55]: Avg Accuracy
+        - generic [ref=e57]:
+          - generic [ref=e58]: —
+          - generic [ref=e59]: Best Song Rank
+        - generic [ref=e61]:
+          - heading "Instrument Statistics" [level=2] [ref=e62]
+          - paragraph [ref=e63]: A quick look at SFentonX's overall Festival statistics per instrument.
+        - region "Lead" [ref=e65]:
+          - generic [ref=e67]:
+            - img "Solo_Guitar" [ref=e68]
+            - generic [ref=e69]: Lead
+        - generic [ref=e71]:
+          - generic [ref=e72]: No scores yet
+          - generic [ref=e73]: Play some songs on Lead to see your stats appear here.
+        - region "Bass" [ref=e75]:
+          - generic [ref=e77]:
+            - img "Solo_Bass" [ref=e78]
+            - generic [ref=e79]: Bass
+        - generic [ref=e81]:
+          - generic [ref=e82]: No scores yet
+          - generic [ref=e83]: Play some songs on Bass to see your stats appear here.
+        - region "Drums" [ref=e85]:
+          - generic [ref=e87]:
+            - img "Solo_Drums" [ref=e88]
+            - generic [ref=e89]: Drums
+        - generic [ref=e91]:
+          - generic [ref=e92]: No scores yet
+          - generic [ref=e93]: Play some songs on Drums to see your stats appear here.
+        - region "Tap Vocals" [ref=e95]:
+          - generic [ref=e97]:
+            - img "Solo_Vocals" [ref=e98]
+            - generic [ref=e99]: Tap Vocals
+        - generic [ref=e101]:
+          - generic [ref=e102]: No scores yet
+          - generic [ref=e103]: Play some songs on Tap Vocals to see your stats appear here.
+        - region "Pro Lead" [ref=e105]:
+          - generic [ref=e107]:
+            - img "Solo_PeripheralGuitar" [ref=e108]
+            - generic [ref=e109]: Pro Lead
+        - generic [ref=e111]:
+          - generic [ref=e112]: No scores yet
+          - generic [ref=e113]: Play some songs on Pro Lead to see your stats appear here.
+        - region "Pro Bass" [ref=e115]:
+          - generic [ref=e117]:
+            - img "Solo_PeripheralBass" [ref=e118]
+            - generic [ref=e119]: Pro Bass
+        - generic [ref=e121]:
+          - generic [ref=e122]: No scores yet
+          - generic [ref=e123]: Play some songs on Pro Bass to see your stats appear here.
+        - region "Karaoke" [ref=e125]:
+          - generic [ref=e127]:
+            - img "Solo_PeripheralVocals" [ref=e128]
+            - generic [ref=e129]: Karaoke
+        - generic [ref=e131]:
+          - generic [ref=e132]: No scores yet
+          - generic [ref=e133]: Play some songs on Karaoke to see your stats appear here.
+        - region "Pro Drums + Cymbals" [ref=e135]:
+          - generic [ref=e137]:
+            - img "Solo_PeripheralCymbals" [ref=e138]
+            - generic [ref=e139]: Pro Drums + Cymbals
+        - generic [ref=e141]:
+          - generic [ref=e142]: No scores yet
+          - generic [ref=e143]: Play some songs on Pro Drums + Cymbals to see your stats appear here.
+        - region "Pro Drums" [ref=e145]:
+          - generic [ref=e147]:
+            - img "Solo_PeripheralDrums" [ref=e148]
+            - generic [ref=e149]: Pro Drums
+        - generic [ref=e151]:
+          - generic [ref=e152]: No scores yet
+          - generic [ref=e153]: Play some songs on Pro Drums to see your stats appear here.
+        - region "Top Songs Per Instrument" [ref=e155]:
+          - generic [ref=e156]:
+            - heading "Top Songs Per Instrument" [level=2] [ref=e157]
+            - paragraph [ref=e158]: SFentonX's highest and lowest-ranked competitive songs per instrument, sorted by percentile.
+        - generic [ref=e160]:
+          - img "Solo_Guitar" [ref=e161]
+          - generic [ref=e162]:
+            - generic [ref=e163]: Top Five Songs
+            - generic [ref=e164]: SFentonX's top ranked competitive songs on Lead, sorted by percentile.
+        - generic [ref=e166]:
+          - generic [ref=e167]: No scores yet
+          - generic [ref=e168]: Play some songs on Lead to see your stats appear here.
+        - generic [ref=e170]:
+          - img "Solo_Bass" [ref=e171]
+          - generic [ref=e172]:
+            - generic [ref=e173]: Top Five Songs
+            - generic [ref=e174]: SFentonX's top ranked competitive songs on Bass, sorted by percentile.
+        - generic [ref=e176]:
+          - generic [ref=e177]: No scores yet
+          - generic [ref=e178]: Play some songs on Bass to see your stats appear here.
+        - generic [ref=e180]:
+          - img "Solo_Drums" [ref=e181]
+          - generic [ref=e182]:
+            - generic [ref=e183]: Top Five Songs
+            - generic [ref=e184]: SFentonX's top ranked competitive songs on Drums, sorted by percentile.
+        - generic [ref=e186]:
+          - generic [ref=e187]: No scores yet
+          - generic [ref=e188]: Play some songs on Drums to see your stats appear here.
+        - generic [ref=e190]:
+          - img "Solo_Vocals" [ref=e191]
+          - generic [ref=e192]:
+            - generic [ref=e193]: Top Five Songs
+            - generic [ref=e194]: SFentonX's top ranked competitive songs on Tap Vocals, sorted by percentile.
+        - generic [ref=e196]:
+          - generic [ref=e197]: No scores yet
+          - generic [ref=e198]: Play some songs on Tap Vocals to see your stats appear here.
+        - generic [ref=e200]:
+          - img "Solo_PeripheralGuitar" [ref=e201]
+          - generic [ref=e202]:
+            - generic [ref=e203]: Top Five Songs
+            - generic [ref=e204]: SFentonX's top ranked competitive songs on Pro Lead, sorted by percentile.
+        - generic [ref=e206]:
+          - generic [ref=e207]: No scores yet
+          - generic [ref=e208]: Play some songs on Pro Lead to see your stats appear here.
+        - generic [ref=e210]:
+          - img "Solo_PeripheralBass" [ref=e211]
+          - generic [ref=e212]:
+            - generic [ref=e213]: Top Five Songs
+            - generic [ref=e214]: SFentonX's top ranked competitive songs on Pro Bass, sorted by percentile.
+        - generic [ref=e216]:
+          - generic [ref=e217]: No scores yet
+          - generic [ref=e218]: Play some songs on Pro Bass to see your stats appear here.
+        - generic [ref=e220]:
+          - img "Solo_PeripheralVocals" [ref=e221]
+          - generic [ref=e222]:
+            - generic [ref=e223]: Top Five Songs
+            - generic [ref=e224]: SFentonX's top ranked competitive songs on Karaoke, sorted by percentile.
+        - generic [ref=e226]:
+          - generic [ref=e227]: No scores yet
+          - generic [ref=e228]: Play some songs on Karaoke to see your stats appear here.
+        - generic [ref=e230]:
+          - img "Solo_PeripheralCymbals" [ref=e231]
+          - generic [ref=e232]:
+            - generic [ref=e233]: Top Five Songs
+            - generic [ref=e234]: SFentonX's top ranked competitive songs on Pro Drums + Cymbals, sorted by percentile.
+        - generic [ref=e236]:
+          - generic [ref=e237]: No scores yet
+          - generic [ref=e238]: Play some songs on Pro Drums + Cymbals to see your stats appear here.
+        - generic [ref=e240]:
+          - img "Solo_PeripheralDrums" [ref=e241]
+          - generic [ref=e242]:
+            - generic [ref=e243]: Top Five Songs
+            - generic [ref=e244]: SFentonX's top ranked competitive songs on Pro Drums, sorted by percentile.
+        - generic [ref=e246]:
+          - generic [ref=e247]: No scores yet
+          - generic [ref=e248]: Play some songs on Pro Drums to see your stats appear here.
+        - region "SFentonX's Bands" [ref=e250]:
+          - generic [ref=e252]:
+            - heading "SFentonX's Bands" [level=2] [ref=e254]
+            - link "View All" [ref=e255] [cursor=pointer]:
+              - /url: "#/bands/player/195e93ef108143b2975ee46662d4d0e1?group=all&page=1&name=SFentonX"
+              - generic [ref=e256]: View All
+              - img [ref=e257]
+        - generic [ref=e262]: Duos
+        - generic [ref=e264]:
+          - generic [ref=e265]: No bands yet
+          - generic [ref=e266]: Band lineups will appear here once this player posts band scores.
+        - generic [ref=e270]: Trios
+        - generic [ref=e272]:
+          - generic [ref=e273]: No bands yet
+          - generic [ref=e274]: Band lineups will appear here once this player posts band scores.
+        - generic [ref=e278]: Quads
+        - generic [ref=e280]:
+          - generic [ref=e281]: No bands yet
+          - generic [ref=e282]: Band lineups will appear here once this player posts band scores.
+    - navigation [ref=e284]:
+      - button "Songs" [ref=e285] [cursor=pointer]:
+        - img [ref=e287]
+        - text: Songs
+      - button "Leaderboards" [ref=e289] [cursor=pointer]:
+        - img [ref=e291]
+        - text: Leaderboards
+      - button "Settings" [ref=e293] [cursor=pointer]:
+        - img [ref=e295]
+        - text: Settings
+    - generic:
+      - generic:
+        - button "Select SFentonX" [ref=e298] [cursor=pointer]:
+          - img [ref=e299]
+          - generic [ref=e301]: Select SFentonX
+        - button "Quick Links" [ref=e302] [cursor=pointer]:
+          - img [ref=e303]
+  - generic [ref=e305]:
+    - img [ref=e307]
+    - button "Open Tanstack query devtools" [ref=e355] [cursor=pointer]:
+      - img [ref=e356]
+```

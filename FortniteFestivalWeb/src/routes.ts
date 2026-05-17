@@ -20,6 +20,8 @@ export const Routes = {
   leaderboards: '/leaderboards',
   fullRankings: (instrument: string, rankBy?: string, page?: number) =>
     `/leaderboards/all?instrument=${encodeURIComponent(instrument)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}${page != null ? `&page=${page}` : ''}`,
+  familyRankings: (scopeId: string, rankBy?: string, page?: number) =>
+    `/leaderboards/all?family=${encodeURIComponent(scopeId)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}${page != null ? `&page=${page}` : ''}`,
   fullComboRankings: (comboId: string, rankBy?: string, page?: number) =>
     `/leaderboards/all?combo=${encodeURIComponent(comboId)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}${page != null ? `&page=${page}` : ''}`,
   bandRankings: (bandType: string, rankBy?: string, page?: number) =>
@@ -40,6 +42,7 @@ export const Routes = {
     return `/bands${query ? `?${query}` : ''}`;
   },
   shop: '/shop',
+  manual: '/manual',
   settings: '/settings',
   settingsLicenses: '/settings/licenses',
 } as const;
@@ -66,6 +69,7 @@ export const RoutePatterns = {
   rivalDetail: /^\/rivals\/[^/]+$/,
   rivalry: /^\/rivals\/[^/]+\/rivalry/,
   leaderboards: /^\/leaderboards/,
+  manual: /^\/manual$/,
   playerBands: /^\/bands\/player\//,
   bands: /^\/bands/,
 } as const;

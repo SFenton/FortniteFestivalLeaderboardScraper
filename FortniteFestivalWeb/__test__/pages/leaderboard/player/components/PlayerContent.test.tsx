@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { SettingsProvider } from '../../../../../src/contexts/SettingsContext';
 import { FeatureFlagsProvider } from '../../../../../src/contexts/FeatureFlagsContext';
 import { FestivalProvider } from '../../../../../src/contexts/FestivalContext';
-import { FabSearchProvider } from '../../../../../src/contexts/FabSearchContext';
+import { FabSearchProvider, usePlayerPageSelect } from '../../../../../src/contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../../../src/contexts/PageQuickLinksContext';
 import { SearchQueryProvider, useSearchQuery } from '../../../../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../../../../src/contexts/PlayerDataContext';
@@ -15,7 +15,6 @@ import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef, useQui
 import { DEFAULT_QUICK_LINK_SCROLL_OFFSET } from '../../../../../src/hooks/ui/usePageQuickLinks';
 import PlayerContentBase from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
 import { SyncPhase } from '@festival/core';
-import { IconSize, Layout } from '@festival/theme';
 
 const PlayerContent = PlayerContentBase as unknown as (props: any) => React.JSX.Element;
 
@@ -56,7 +55,22 @@ const mockApi = vi.hoisted(() => {
 });
 vi.mock('../../../../../src/api/client', () => ({ api: mockApi }));
 
-beforeAll(() => { stubScrollTo(); stubResizeObserver(); stubElementDimensions(); });
+beforeAll(() => {
+  stubScrollTo();
+  stubResizeObserver();
+  stubElementDimensions();
+  if (typeof Range !== 'undefined') {
+    const rect = { top: 0, left: 0, bottom: 16, right: 120, width: 120, height: 16, x: 0, y: 0, toJSON() { return this; } };
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect,
+    });
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [] as unknown as DOMRectList,
+    });
+  }
+});
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
@@ -156,7 +170,7 @@ function ShellInjector({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <div ref={setPortalNode} />
+      <div ref={setPortalNode} data-testid="test-header-portal" />
       <div ref={(el) => {
         if (el && !sRef.current) {
                     Object.defineProperty(el, 'clientHeight', { value: 540, writable: true, configurable: true });
@@ -227,6 +241,19 @@ function FabQuickLinksSpy() {
       <span data-testid="fab-player-quick-links">{String(pageQuickLinks.hasPageQuickLinks)}</span>
       <button data-testid="fab-player-quick-links-open" onClick={() => pageQuickLinks.openPageQuickLinks()}>
         Open Quick Links
+      </button>
+    </>
+  );
+}
+
+function PlayerPageSelectSpy() {
+  const { playerPageSelect } = usePlayerPageSelect();
+
+  return (
+    <>
+      <span data-testid="fab-player-select-name">{playerPageSelect?.displayName ?? 'none'}</span>
+      <button type="button" data-testid="fab-player-select-open" onClick={() => playerPageSelect?.onSelect()}>
+        Open Player Select
       </button>
     </>
   );
@@ -507,6 +534,71 @@ describe('PlayerContent', () => {
     });
 
     expect(screen.getByTestId('player-grid-list').style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
+  });
+
+  it('renders visible family global statistics sections with active group icons and no Pro Vocals section', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: true,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: true,
+      showProBass: false,
+      showPeripheralVocals: true,
+      showPeripheralCymbals: false,
+      showPeripheralDrums: true,
+    }));
+
+    render(
+      <Providers accountId="p1">
+        <PlayerContent
+          data={playerData as any}
+          songs={songs as any}
+          isSyncing={false}
+          phase={SyncPhase.Idle}
+          backfillProgress={0}
+          historyProgress={0}
+          rivalsProgress={0}
+          itemsCompleted={0}
+          totalItems={0}
+          entriesFound={0}
+          currentSongName={null}
+          seasonsQueried={0}
+          rivalsFound={0}
+          isTrackedPlayer={true}
+          skipAnim
+          statsData={{
+            accountId: 'p1',
+            totalSongs: 1,
+            instruments: [],
+            familyRanks: {
+              pad: { scopeId: 'pad', adjusted: 1, totalScore: 2, fcRate: 3 },
+              pro_strings: { scopeId: 'pro_strings', adjusted: 4, totalScore: 5, fcRate: 6 },
+              pro_vocals: { scopeId: 'pro_vocals', adjusted: 7, totalScore: 8, fcRate: 9 },
+              pro_drums: { scopeId: 'pro_drums', adjusted: 10, totalScore: 11, fcRate: 12 },
+            },
+          } as any}
+          rankingQueryResults={[]}
+        />
+      </Providers>,
+    );
+
+    await waitFor(() => { expect(screen.getByRole('heading', { name: 'Pad Global Statistics' })).toBeDefined(); });
+
+    const padHeadingRow = screen.getByRole('heading', { name: 'Pad Global Statistics' }).parentElement as HTMLElement;
+    const proStringsHeadingRow = screen.getByRole('heading', { name: 'Pro Strings Global Statistics' }).parentElement as HTMLElement;
+    const proDrumsHeadingRow = screen.getByRole('heading', { name: 'Pro Drums Global Statistics' }).parentElement as HTMLElement;
+
+    expect(padHeadingRow.querySelector('img[alt="Solo_Guitar"]')).not.toBeNull();
+    expect(padHeadingRow.querySelector('img[alt="Solo_Bass"]')).toBeNull();
+    expect(proStringsHeadingRow.querySelector('img[alt="Solo_PeripheralGuitar"]')).not.toBeNull();
+    expect(proStringsHeadingRow.querySelector('img[alt="Solo_PeripheralBass"]')).toBeNull();
+    expect(proDrumsHeadingRow.querySelector('img[alt="Solo_PeripheralDrums"]')).not.toBeNull();
+    expect(proDrumsHeadingRow.querySelector('img[alt="Solo_PeripheralCymbals"]')).toBeNull();
+    expect(screen.getByText('The overall rankings for Lead, Bass, Drums, and Tap Vocals. Instrument icons to the left indicate selected instruments in app settings, but these statistics cards apply to all pad instruments combined.')).toBeDefined();
+    expect(screen.getByText('The overall rankings for Pro Lead and Pro Bass. Instrument icons to the left indicate selected instruments in app settings, but these statistics cards apply to all pro strings instruments combined.')).toBeDefined();
+    expect(screen.getByText('The overall rankings for Pro Drums and Pro Cymbals. Instrument icons to the left indicate selected instruments in app settings, but these statistics cards apply to all pro drums instruments combined.')).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Pro Vocals Global Statistics' })).toBeNull();
   });
 
   it('clears search query when navigating to songs via category card', async () => {
@@ -834,67 +926,59 @@ describe('PlayerContent', () => {
     });
   });
 
-  it('renders a labeled quick links trigger on mobile using the same pill style', async () => {
+  it('registers player quick links for the mobile FAB without rendering a header trigger', async () => {
     mockIsWideDesktop = false;
     mockHasFab = true;
 
     render(
       <Providers accountId="p1">
         <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim statsData={null} rankingQueryResults={[]} />
+        <FabQuickLinksSpy />
       </Providers>,
     );
 
-    await waitFor(() => { expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined(); });
+    await waitFor(() => { expect(screen.getByTestId('fab-player-quick-links').textContent).toBe('true'); });
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
     expect(screen.queryByRole('navigation', { name: 'Quick Links' })).toBeNull();
-    const trigger = screen.getByRole('button', { name: 'Quick Links' });
-    expect(trigger).toHaveTextContent('Quick Links');
-    expect(trigger).toHaveStyle({
-      backgroundColor: 'rgba(18, 24, 38, 0.78)',
-      color: 'rgb(255, 255, 255)',
-      fontSize: '12px',
-      fontWeight: '600',
-      height: '48px',
-      paddingLeft: '12px',
-      paddingRight: '12px',
-    });
+    fireEvent.click(screen.getByTestId('fab-player-quick-links-open'));
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
   });
 
-  it('renders Select Player Profile on mobile as a compact purple circle aligned to Quick Links', async () => {
+  it('registers Select player for the mobile FAB and keeps select out of the portaled header', async () => {
     mockIsWideDesktop = false;
     mockHasFab = true;
 
     render(
-      <Providers>
+      <Providers route="/player/p1">
+        <LocationProbe />
         <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+        <FabQuickLinksSpy />
+        <PlayerPageSelectSpy />
       </Providers>,
     );
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
-      expect(screen.getByRole('button', { name: 'Select Player Profile' })).toBeDefined();
+      expect(screen.getByTestId('fab-player-quick-links').textContent).toBe('true');
+      expect(screen.getByTestId('fab-player-select-name').textContent).toBe('TestPlayer');
     });
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select Player Profile' })).toBeNull();
+    expect(screen.queryByTestId('player-header-actions')).toBeNull();
+    expect(screen.queryByTestId('player-header-actions-transition')).toBeNull();
+    expect(screen.queryByTestId('player-select-profile-slot')).toBeNull();
+    expect(within(screen.getByTestId('scroll-area')).getByRole('heading', { name: 'TestPlayer' })).toBeDefined();
+    expect(within(screen.getByTestId('test-header-portal')).queryByRole('heading', { name: 'TestPlayer' })).toBeNull();
 
-    const selectButton = screen.getByRole('button', { name: 'Select Player Profile' });
-    const selectButtonStyle = selectButton.getAttribute('style') ?? '';
-    expect(selectButtonStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
-    expect(selectButtonStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
-    expect(selectButtonStyle).toContain('border-radius: 999px');
-    expect(selectButton.className).toContain('profileCircleBreathe');
+    fireEvent.click(screen.getByTestId('fab-player-select-open'));
 
-    const selectIcon = selectButton.querySelector('svg');
-    expect(selectIcon).not.toBeNull();
-    expect(selectIcon).toHaveAttribute('height', `${IconSize.action}`);
-    expect(selectIcon).toHaveAttribute('width', `${IconSize.action}`);
-
-    expect(screen.getByTestId('player-select-profile-slot')).toHaveStyle({
-      maxWidth: `${Layout.pillButtonHeight}px`,
-      opacity: '1',
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path').textContent).toBe('/statistics');
     });
-
-    const actionButtons = Array.from(screen.getByTestId('player-header-actions').querySelectorAll('button'));
-    expect(actionButtons).toHaveLength(2);
-    expect(actionButtons[0]).toHaveAccessibleName('Select Player Profile');
-    expect(actionButtons[1]).toHaveAccessibleName('Quick Links');
+    expect(screen.getByTestId('location-preserve-scroll').textContent).toBe('true');
+    expect(JSON.parse(localStorage.getItem('fst:trackedPlayer') ?? 'null')).toMatchObject({
+      accountId: 'p1',
+      displayName: 'TestPlayer',
+    });
   });
 
   it('hides the mobile player header actions when the setting is off', async () => {
@@ -905,6 +989,7 @@ describe('PlayerContent', () => {
     render(
       <Providers accountId="p1">
         <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim statsData={null} rankingQueryResults={[]} />
+        <PlayerPageSelectSpy />
       </Providers>,
     );
 
@@ -912,7 +997,8 @@ describe('PlayerContent', () => {
       expect(screen.getByTestId('player-section-top-songs')).toBeDefined();
     });
 
-    expect(screen.getByText('TestPlayer')).toBeDefined();
+  expect(screen.getByTestId('fab-player-select-name').textContent).toBe('TestPlayer');
+  expect(within(screen.getByTestId('scroll-area')).getByRole('heading', { name: 'TestPlayer' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Select Player Profile' })).toBeNull();
     expect(screen.queryByTestId('player-header-actions')).toBeNull();

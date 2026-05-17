@@ -1,15 +1,33 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
+const featureFlagsMock = vi.hoisted(() => ({
+  value: { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true },
+}));
+
 vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ rivals: true, compete: true, leaderboards: true, firstRun: true }),
+  useFeatureFlags: () => featureFlagsMock.value,
 }));
 
 import Sidebar from '../../../../src/components/shell/desktop/Sidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 
+beforeAll(() => {
+  if (typeof Range !== 'undefined') {
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ top: 0, right: 120, bottom: 16, left: 0, width: 120, height: 16, x: 0, y: 0, toJSON() { return this; } }),
+    });
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: () => [] as unknown as DOMRectList,
+    });
+  }
+});
+
 beforeEach(() => {
+  featureFlagsMock.value = { compete: true, leaderboards: true, difficulty: true, playerBands: true, experimentalRanks: true, appManual: true };
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0; });
   vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
 });
@@ -42,6 +60,16 @@ const selectedBandProfile = {
   ],
 };
 
+function expectSidebarLinkActive(link: HTMLAnchorElement | null) {
+  expect(link?.style.backgroundColor).toBe('rgb(124, 58, 237)');
+  expect(link?.style.borderLeft).toContain('3px solid');
+}
+
+function expectSidebarLinkInactive(link: HTMLAnchorElement | null) {
+  expect(link?.style.backgroundColor).toBe('transparent');
+  expect(link?.style.borderLeft).not.toContain('3px solid');
+}
+
 describe('Sidebar', () => {
   it('renders nothing when not open', () => {
     const { container } = renderSidebar({ open: false });
@@ -51,6 +79,17 @@ describe('Sidebar', () => {
   it('renders Songs nav link when open', () => {
     renderSidebar();
     expect(screen.getByText('Songs')).toBeTruthy();
+  });
+
+  it('allows overlay and drawer hit-testing immediately before the entrance frame runs', () => {
+    vi.mocked(window.requestAnimationFrame).mockImplementation(() => 1);
+    const { container } = renderSidebar();
+    const allDivs = Array.from(container.querySelectorAll('div'));
+    const overlay = allDivs.find(el => el.style.zIndex === '200' && el.style.position === 'fixed') as HTMLElement;
+    const drawer = allDivs.find(el => el.style.transform.includes('translateX')) as HTMLElement;
+
+    expect(overlay.style.pointerEvents).toBe('auto');
+    expect(drawer.style.pointerEvents).toBe('auto');
   });
 
   it('keeps sidebar header and footer inside iOS safe areas', () => {
@@ -77,28 +116,29 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Rivals')).toBeNull();
   });
 
-  it('renders Statistics link when a band is selected without a player', () => {
+  it('renders Suggestions and Statistics links when a band is selected without a player', () => {
     renderSidebar({ player: null, selectedProfile: selectedBandProfile });
+    const suggestionsLink = screen.getByText('Suggestions').closest('a');
     const statisticsLink = screen.getByText('Statistics').closest('a');
 
-    expect(screen.queryByText('Suggestions')).toBeNull();
     expect(screen.queryByText('Rivals')).toBeNull();
+    expect(suggestionsLink?.getAttribute('href')).toBe('/suggestions');
     expect(statisticsLink?.getAttribute('href')).toBe('/statistics');
   });
 
   it('shows player displayName when player is set', () => {
     renderSidebar({ player: { accountId: 'a1', displayName: 'TestPlayer' } });
-    expect(screen.getByText('TestPlayer')).toBeTruthy();
+    expect(screen.getAllByText('TestPlayer').length).toBeGreaterThan(0);
   });
 
   it('shows Select Player button when no player', () => {
     renderSidebar({ player: null });
-    expect(screen.getByText('Select Profile')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^select/i })).toBeTruthy();
   });
 
   it('calls onSelectPlayer when Select Player is clicked', () => {
     const { props } = renderSidebar({ player: null });
-    fireEvent.click(screen.getByText('Select Profile'));
+    fireEvent.click(screen.getByRole('button', { name: /^select/i }));
     expect(props.onSelectPlayer).toHaveBeenCalled();
   });
 
@@ -115,10 +155,10 @@ describe('Sidebar', () => {
     });
 
     expect(screen.getByTestId('sidebar-band-profile')).toBeTruthy();
-    expect(screen.getByText('Player One + Player Two')).toBeTruthy();
-    expect(screen.getByText('Player One')).toBeTruthy();
-    expect(screen.getByText('Player Two')).toBeTruthy();
-    expect(screen.queryByText('Select Profile')).toBeNull();
+    expect(screen.getAllByText('Player One + Player Two').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Player One').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Player Two').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /^select/i })).toBeNull();
   });
 
   it('deselects a selected band from the sidebar footer', () => {
@@ -149,6 +189,31 @@ describe('Sidebar', () => {
     expect(props.onClose).toHaveBeenCalled();
   });
 
+  it('dismisses from touch pointerup on the overlay without double firing on click', () => {
+    const { props, container } = renderSidebar();
+    const allDivs = container.querySelectorAll('div');
+    const overlay = Array.from(allDivs).find(el => el.style.zIndex === '200' && el.style.position === 'fixed') as HTMLElement;
+
+    fireEvent.pointerDown(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 340, clientY: 320 });
+    fireEvent.pointerUp(overlay, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 340, clientY: 320 });
+
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(overlay);
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('dismisses immediately from a touch pointerup on a nav link', () => {
+    const { props } = renderSidebar({ player: { accountId: 'a1', displayName: 'P' } });
+    const suggestionsLink = screen.getByText('Suggestions').closest('a')!;
+
+    fireEvent.pointerDown(suggestionsLink, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 54, clientY: 208 });
+    fireEvent.pointerUp(suggestionsLink, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 55, clientY: 209 });
+
+    expect(props.onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Festival Score Tracker')).toBeNull();
+  });
+
   it('calls onClose on outside mousedown', () => {
     const { props } = renderSidebar();
     fireEvent.mouseDown(document);
@@ -174,6 +239,23 @@ describe('Sidebar', () => {
     renderSidebar();
     expect(screen.getByText('Settings')).toBeTruthy();
   });
+
+  it('renders Manual link between profile selection and Settings', () => {
+    const { container } = renderSidebar({ player: null });
+    const text = container.textContent ?? '';
+
+    expect(screen.getByText('App Manual').closest('a')?.getAttribute('href')).toBe('/manual');
+    expect(text.indexOf('Select Profile')).toBeLessThan(text.indexOf('App Manual'));
+    expect(text.indexOf('App Manual')).toBeLessThan(text.indexOf('Settings'));
+  });
+
+  it('hides Manual link when the App Manual feature is disabled', () => {
+    featureFlagsMock.value = { ...featureFlagsMock.value, appManual: false };
+    renderSidebar({ player: null });
+
+    expect(screen.queryByText('App Manual')).toBeNull();
+    expect(screen.getByText('Settings')).toBeTruthy();
+  });
 });
 
 describe('Sidebar — route-specific active styling', () => {
@@ -181,6 +263,7 @@ describe('Sidebar — route-specific active styling', () => {
     const { props } = renderSidebar({ player: { accountId: 'p1', displayName: 'P' } });
     fireEvent.click(screen.getByText('Songs'));
     expect(props.onClose).toHaveBeenCalled();
+    expect(screen.queryByText('Festival Score Tracker')).toBeNull();
   });
 
   it('shows active styling on settings route', () => {
@@ -192,13 +275,12 @@ describe('Sidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const settingsLink = screen.getByText('Settings');
-    // Active link has border-left style with accent purple
-    expect(settingsLink.closest('a')?.style.borderLeft).toContain('solid');
+    expectSidebarLinkActive(settingsLink.closest('a'));
   });
 
   it('shows player name as link', () => {
     renderSidebar({ player: { accountId: 'p1', displayName: 'TestP' } });
-    expect(screen.getByText('TestP').closest('a')).toBeTruthy();
+    expect(screen.getAllByText('TestP')[0]?.closest('a')).toBeTruthy();
   });
 
   it('renders with active styling on suggestions route', () => {
@@ -210,7 +292,7 @@ describe('Sidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Suggestions');
-    expect(link.closest('a')?.style.borderLeft).toContain('solid');
+    expectSidebarLinkActive(link.closest('a'));
   });
 
   it('renders with active styling on statistics route', () => {
@@ -222,10 +304,10 @@ describe('Sidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Statistics');
-    expect(link.closest('a')?.style.borderLeft).toContain('solid');
+    expectSidebarLinkActive(link.closest('a'));
   });
 
-  it('renders Statistics as active on the selected band route', () => {
+  it('does not render Statistics as active on a clean band detail route', () => {
     render(
       <MemoryRouter initialEntries={['/bands/band-1?bandType=Band_Duets&teamKey=p1%3Ap2&names=Player%20One%20%2B%20Player%20Two']}>
         <SettingsProvider>
@@ -234,6 +316,23 @@ describe('Sidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Statistics');
-    expect(link.closest('a')?.style.borderLeft).toContain('solid');
+    expectSidebarLinkInactive(link.closest('a'));
+  });
+
+  it('does not render Statistics as active on a clean player detail route', () => {
+    render(
+      <MemoryRouter initialEntries={['/player/p2']}>
+        <SettingsProvider>
+        <Sidebar player={{ accountId: 'p1', displayName: 'P' } as any} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
+      </MemoryRouter>,
+    );
+    const link = screen.getByText('Statistics');
+    expectSidebarLinkInactive(link.closest('a'));
+  });
+
+  it('links the selected band footer profile to statistics', () => {
+    renderSidebar({ player: null, selectedProfile: selectedBandProfile });
+    expect(screen.getByTestId('sidebar-band-profile').querySelector('a')?.getAttribute('href')).toBe('/statistics');
   });
 });

@@ -23,6 +23,7 @@ import type { SongSortMode } from '../../../utils/songSettings';
 import { isBandIntensitySortMode } from '../../../utils/songSettings';
 import { getSongInstrumentDifficulty, songSupportsInstrument } from '../../../utils/songInstrumentDifficulty';
 import { resolveInstrumentChipRows, resolvePillFitsTopRow, splitInstrumentRows, type InstrumentChipRowCount } from '../layoutMode';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 import anim from '../../../styles/animations.module.css';
 
 /** Below this container width (px), mobile rows use unified wrapping instead of top-row primary element. */
@@ -157,6 +158,7 @@ export const SongRow = memo(function SongRow({ song,
   externalHref,
   invalidInstruments,
   containerWidth,
+  onBeforeInternalNavigate,
 }: {
   song: Song;
   score?: PlayerScore;
@@ -178,6 +180,8 @@ export const SongRow = memo(function SongRow({ song,
   invalidInstruments?: Map<InstrumentKey, 'fallback' | 'no-fallback' | 'over-threshold'>;
   /** Container width for threshold-based layout decisions. */
   containerWidth?: number;
+  /** Called immediately before internal same-tab navigation. */
+  onBeforeInternalNavigate?: () => void;
 }) {
   const s = useStyles();
   const { t } = useTranslation();
@@ -195,6 +199,13 @@ export const SongRow = memo(function SongRow({ song,
 
   const linkRef = useRef<HTMLAnchorElement>(null);
   const location = useLocation();
+  const defaultTo = `/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`;
+  const internalLinkPress = useNavLinkPress<HTMLAnchorElement>({
+    to: defaultTo,
+    state: { backTo: location.pathname },
+    disabled: !!externalHref,
+    onNavigate: onBeforeInternalNavigate,
+  });
 
   /* v8 ignore start — animation cleanup */
   const handleAnimEnd = useCallback(() => {
@@ -344,7 +355,6 @@ export const SongRow = memo(function SongRow({ song,
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} durationSeconds={song.durationSeconds} minWidth={infoMinWidth} />;
 
   // External link: render <a> instead of <Link>
-  const defaultTo = `/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`;
   const linkProps = externalHref
     ? { href: externalHref, target: '_blank' as const, rel: 'noopener noreferrer' }
     : undefined;
@@ -401,7 +411,7 @@ export const SongRow = memo(function SongRow({ song,
             {externalIndicator}
           </a>
         ) : (
-          <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
+          <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={{ ...mergedStyle, ...(internalLinkPress.isPressed ? s.rowPressed : undefined) }} onAnimationEnd={handleAnimEnd} data-pressed={internalLinkPress.isPressed ? 'true' : undefined} {...internalLinkPress.linkPressHandlers}>
             <div style={s.mobileTopRow}>
               {songInfo}
               <div style={s.detailStrip}>{primaryEl}{invalidIcon}</div>
@@ -429,7 +439,7 @@ export const SongRow = memo(function SongRow({ song,
           {externalIndicator}
         </a>
       ) : (
-        <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
+        <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={{ ...mergedStyle, ...(internalLinkPress.isPressed ? s.rowPressed : undefined) }} onAnimationEnd={handleAnimEnd} data-pressed={internalLinkPress.isPressed ? 'true' : undefined} {...internalLinkPress.linkPressHandlers}>
           <div style={s.mobileTopRow}>
             {songInfo}
             {invalidIcon}
@@ -459,7 +469,7 @@ export const SongRow = memo(function SongRow({ song,
           {externalIndicator}
         </a>
       ) : (
-      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={rowClassName} style={mergedChipStyle} onAnimationEnd={handleAnimEnd}>
+      <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={{ ...mergedChipStyle, ...(internalLinkPress.isPressed ? s.rowPressed : undefined) }} onAnimationEnd={handleAnimEnd} data-pressed={internalLinkPress.isPressed ? 'true' : undefined} {...internalLinkPress.linkPressHandlers}>
         <div style={s.mobileTopRow}>
           {songInfo}
           {stripEntries.length > 0 && <div style={s.detailStrip}>{stripEntries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}{invalidIcon}</div>}
@@ -485,7 +495,7 @@ export const SongRow = memo(function SongRow({ song,
           {externalIndicator}
         </a>
       ) : (
-      <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedPlainStyle} onAnimationEnd={handleAnimEnd}>
+      <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={{ ...mergedPlainStyle, ...(internalLinkPress.isPressed ? s.rowPressed : undefined) }} onAnimationEnd={handleAnimEnd} data-pressed={internalLinkPress.isPressed ? 'true' : undefined} {...internalLinkPress.linkPressHandlers}>
         <div style={s.mobileTopRow}>
           {songInfo}
         </div>
@@ -510,7 +520,7 @@ export const SongRow = memo(function SongRow({ song,
       </a>
       /* v8 ignore stop */
     ) : (
-    <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={desktopStyle} onAnimationEnd={handleAnimEnd}>
+    <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={{ ...desktopStyle, ...(internalLinkPress.isPressed ? s.rowPressed : undefined) }} onAnimationEnd={handleAnimEnd} data-pressed={internalLinkPress.isPressed ? 'true' : undefined} {...internalLinkPress.linkPressHandlers}>
       {songInfo}
       {chipRow}
       {chipRow && invalidIcon}
@@ -530,6 +540,7 @@ function useStyles() {
   return useMemo(() => ({
     row: { ...frostedCard, ...flexRow, gap: Gap.xl, padding: padding(0, Gap.xl), height: Layout.playerSongRowHeight, borderRadius: Radius.md, overflow: 'hidden', textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
     rowMobile: { ...frostedCard, ...flexColumn, gap: Gap.md, padding: padding(Gap.lg, Gap.xl), borderRadius: Radius.md, overflow: 'hidden', textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
+    rowPressed: { backgroundColor: 'rgba(255, 255, 255, 0.06)' } as CSSProperties,
     mobileTopRow: { ...flexRow, gap: Gap.lg, minWidth: 0 } as CSSProperties,
     detailStrip: { ...flexRow, gap: Gap.xl, flexShrink: 0, marginLeft: CssValue.auto } as CSSProperties,
     metadataWrap: { display: Display.flex, flexWrap: 'wrap', alignItems: Align.center, justifyContent: Justify.end, gap: Gap.lg } as CSSProperties,

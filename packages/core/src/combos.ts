@@ -37,6 +37,7 @@ export function isWithinGroupCombo(mask: number): boolean {
 
 /** Returns true if the combo ID (hex string) represents a within-group combo. */
 export function isWithinGroupComboId(comboId: string): boolean {
+  if (!isHexComboId(comboId)) return false;
   const mask = parseInt(comboId, 16);
   return !Number.isNaN(mask) && isWithinGroupCombo(mask);
 }
@@ -54,6 +55,7 @@ export function comboIdFromInstruments(instruments: readonly ServerInstrumentKey
 
 /** Recover the instrument list from a combo ID. Returns instruments in canonical order. */
 export function instrumentsFromComboId(comboId: string): ServerInstrumentKey[] {
+  if (!isHexComboId(comboId)) throw new Error(`Invalid combo ID: ${comboId}`);
   const mask = parseInt(comboId, 16);
   const maxMask = (1 << COMBO_INSTRUMENTS.length) - 1;
   if (Number.isNaN(mask) || mask < 0 || mask > maxMask)
@@ -67,8 +69,13 @@ export function instrumentsFromComboId(comboId: string): ServerInstrumentKey[] {
 
 /** True when the combo ID represents 2 or more instruments. */
 export function isMultiInstrumentCombo(comboId: string): boolean {
+  if (!isHexComboId(comboId)) return false;
   const mask = parseInt(comboId, 16);
   return !Number.isNaN(mask) && bitCount(mask) >= 2;
+}
+
+function isHexComboId(comboId: string): boolean {
+  return /^[0-9a-f]+$/i.test(comboId);
 }
 
 /** Number of set bits. */

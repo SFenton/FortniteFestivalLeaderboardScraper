@@ -4,6 +4,7 @@
  * to enable targeted invalidation and avoid stale-key bugs.
  */
 export const queryKeys = {
+  features: () => ['features'] as const,
   songs: () => ['songs'] as const,
   player: (accountId: string, songId?: string, instruments?: string[], leeway?: number) =>
     ['player', accountId, { songId, instruments, leeway }] as const,
@@ -14,6 +15,8 @@ export const queryKeys = {
     ['leaderboard', songId, instrument, { top, offset, leeway }] as const,
   allLeaderboards: (songId: string, top: number, leeway?: number) =>
     ['allLeaderboards', songId, { top, leeway }] as const,
+  memberScoreFilter: (hasAccountIds: readonly string[], missingAccountIds: readonly string[], instruments: readonly string[], leeway?: number) =>
+    ['memberScoreFilter', { hasAccountIds, missingAccountIds, instruments, leeway }] as const,
   selectedMemberSongScores: (songId: string, accountIds: readonly string[], instruments?: readonly string[], leeway?: number) =>
     ['selectedMemberSongScores', songId, { accountIds, instruments, leeway }] as const,
   songBandLeaderboard: (songId: string, bandType: string, top: number, offset: number, selectedAccountId?: string, selectedTeamKey?: string, comboId?: string) =>
@@ -36,6 +39,10 @@ export const queryKeys = {
     ['compositeRankings', { page, pageSize }] as const,
   playerCompositeRanking: (accountId: string) =>
     ['playerCompositeRanking', accountId] as const,
+  soloFamilyRankings: (scopeId: string, rankBy?: string, page?: number, pageSize?: number) =>
+    ['soloFamilyRankings', scopeId, { rankBy, page, pageSize }] as const,
+  playerSoloFamilyRanking: (accountId: string, scopeId: string, rankBy?: string) =>
+    ['playerSoloFamilyRanking', accountId, scopeId, { rankBy }] as const,
   comboRankings: (comboId: string, rankBy?: string, page?: number, pageSize?: number) =>
     ['comboRankings', comboId, { rankBy, page, pageSize }] as const,
   playerComboRanking: (accountId: string, comboId: string, rankBy?: string) =>

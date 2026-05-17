@@ -4,6 +4,7 @@
  */
 import { type ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
+import type { InitialEntry } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsProvider } from '../../src/contexts/SettingsContext';
 import { FestivalProvider } from '../../src/contexts/FestivalContext';
@@ -57,7 +58,7 @@ function ShellRefInjector({ children }: { children: ReactNode }) {
   );
 }
 
-export function TestProviders({ children, route = '/', accountId, bandFilter, queryClient }: { children: ReactNode; route?: string; accountId?: string; bandFilter?: AppliedBandComboFilter | null; queryClient?: QueryClient }) {
+export function TestProviders({ children, route = '/', accountId, bandFilter, queryClient }: { children: ReactNode; route?: InitialEntry; accountId?: string; bandFilter?: AppliedBandComboFilter | null; queryClient?: QueryClient }) {
   const qc = queryClient ?? createTestQueryClient();
   return (
     <QueryClientProvider client={qc}>

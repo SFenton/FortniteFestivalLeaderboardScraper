@@ -5,6 +5,7 @@ import {
   Align, BoxSizing, Colors, Cursor, Display, Font, Gap, IconSize, Layout, Radius,
   TextAlign, CssValue, frostedCard, padding,
 } from '@festival/theme';
+import { usePressAction } from '../../hooks/ui/usePressAction';
 
 interface SearchPillProps {
   onClick: () => void;
@@ -14,9 +15,10 @@ interface SearchPillProps {
 
 export default function SearchPill({ onClick, label }: SearchPillProps) {
   const st = useStyles();
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: onClick });
   return (
     <div style={st.container}>
-      <button type="button" style={st.button} onClick={onClick} aria-label={label}>
+      <button type="button" style={st.button} aria-label={label} {...pressHandlers}>
         <IoSearch size={IconSize.xs} style={st.icon} />
         <span>{label}</span>
       </button>

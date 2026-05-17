@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next';
 import { useAccountSearch } from '../../hooks/data/useAccountSearch';
 import { useFadeSpinner } from '../../hooks/ui/useFadeSpinner';
 import SearchBar from '../common/SearchBar';
+import PressableButton from '../common/PressableButton';
 import ArcSpinner, { SpinnerSize } from '../common/ArcSpinner';
 import { type AccountSearchResult } from '@festival/core/api/serverTypes';
 import {
@@ -120,21 +121,21 @@ export default function PlayerSearchBar({
           <div style={styles.hintAnimated}>{t('common.enterUsername')}</div>
         )}
         {hasResults && !spinner.visible && s.results.map((r, i) => (
-          <button
+          <PressableButton
             key={`${s.resultSeq}-${r.accountId}`}
             style={{
               ...(i === s.activeIndex ? styles.resultActive : styles.result),
               opacity: 0,
               animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards`,
             }}
-            onClick={() => s.selectResult(r)}
+            onPress={() => s.selectResult(r)}
             /* v8 ignore start */
             onMouseEnter={() => s.setActiveIndex(i)}
             onMouseLeave={() => s.setActiveIndex(-1)}
             /* v8 ignore stop */
           >
             {r.displayName}
-          </button>
+          </PressableButton>
         ))}
         </div>
       </div>

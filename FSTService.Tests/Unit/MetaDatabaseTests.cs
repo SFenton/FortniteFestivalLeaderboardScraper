@@ -1,4 +1,5 @@
 using FSTService.Persistence;
+using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -61,6 +62,44 @@ public sealed class MetaDatabaseTests : IDisposable
     {
         var last = Db.GetLastCompletedScrapeRun();
         Assert.Null(last);
+    }
+
+    [Fact]
+    public void PublishScrapeRun_requires_completed_scrape()
+    {
+        var id = Db.StartScrapeRun();
+
+        Assert.Throws<InvalidOperationException>(() => Db.PublishScrapeRun(id));
+        Assert.Null(Db.GetPublishedScrapeRun());
+    }
+
+    [Fact]
+    public void PublishScrapeRun_promotes_completed_scrape_and_staged_cache_atomically()
+    {
+        var oldId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldId, 1, 10, 1, 100);
+        Db.BulkSetCachedResponses([(Key: "player:acct_1:::", Json: new byte[] { 1 }, ETag: "\"old\"")]);
+        Db.PublishScrapeRun(oldId, promoteCachedResponses: false);
+
+        var nextId = Db.StartScrapeRun();
+        Db.BulkSetCachedResponsesStaging([(Key: "player:acct_1:::", Json: new byte[] { 2 }, ETag: "\"new\"")]);
+
+        var cachedBeforePublish = Db.GetCachedResponse("player:acct_1:::");
+        Assert.NotNull(cachedBeforePublish);
+        Assert.Equal(new byte[] { 1 }, cachedBeforePublish.Value.Json);
+        Assert.Equal(oldId, Db.GetPublishedScrapeRun()?.Id);
+
+        Db.CompleteScrapeRun(nextId, 2, 20, 2, 200);
+        Db.PublishScrapeRun(nextId);
+
+        var published = Db.GetPublishedScrapeRun();
+        Assert.NotNull(published);
+        Assert.Equal(nextId, published.Id);
+
+        var cachedAfterPublish = Db.GetCachedResponse("player:acct_1:::");
+        Assert.NotNull(cachedAfterPublish);
+        Assert.Equal(new byte[] { 2 }, cachedAfterPublish.Value.Json);
+        Assert.Equal("\"new\"", cachedAfterPublish.Value.ETag);
     }
 
     // ═══ AccountNames ═══════════════════════════════════════════
@@ -164,6 +203,15 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(2, ids.Count);
         Assert.Contains("acct_1", ids);
         Assert.Contains("acct_2", ids);
+    }
+
+    [Fact]
+    public void IsAccountRegistered_uses_account_point_lookup()
+    {
+        Db.RegisterUser("dev_1", "acct_1");
+
+        Assert.True(Db.IsAccountRegistered("acct_1"));
+        Assert.False(Db.IsAccountRegistered("acct_missing"));
     }
 
     // ═══ ScoreHistory ═══════════════════════════════════════════
@@ -307,6 +355,41 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(42, history[0].AllTimeRank);  // merged from batch
     }
 
+    [Fact]
+    public void InsertScoreChanges_large_batch_collapses_duplicate_source_keys()
+    {
+        var changes = new List<ScoreChangeRecord>();
+        for (var i = 0; i < 21; i++)
+        {
+            changes.Add(new ScoreChangeRecord
+            {
+                SongId = $"song_{i}", Instrument = "Solo_Guitar", AccountId = "acct_seed",
+                OldScore = null, NewScore = 100_000 + i, OldRank = null, NewRank = i + 1,
+                ScoreAchievedAt = $"2025-01-{(i % 9) + 1:00}T00:00:00Z", AllTimeRank = i + 1,
+            });
+        }
+
+        changes.Add(new ScoreChangeRecord
+        {
+            SongId = "song_dupe", Instrument = "Solo_Guitar", AccountId = "acct_1",
+            OldScore = null, NewScore = 123_456, OldRank = null, NewRank = 77,
+            ScoreAchievedAt = "2025-02-01T00:00:00Z", AllTimeRank = 77,
+        });
+        changes.Add(new ScoreChangeRecord
+        {
+            SongId = "song_dupe", Instrument = "Solo_Guitar", AccountId = "acct_1",
+            OldScore = null, NewScore = 123_456, OldRank = null, NewRank = 402,
+            ScoreAchievedAt = "2025-02-01T00:00:00Z", Season = 10, SeasonRank = 402,
+        });
+
+        Db.InsertScoreChanges(changes);
+
+        var history = Db.GetScoreHistory("acct_1");
+        Assert.Single(history);
+        Assert.Equal(77, history[0].AllTimeRank);
+        Assert.Equal(402, history[0].SeasonRank);
+    }
+
     // ═══ BackfillStatus ═════════════════════════════════════════
 
     [Fact]
@@ -407,6 +490,25 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(2, checkedPairs.Count);
         Assert.Contains(("song_1", "Solo_Guitar"), checkedPairs);
         Assert.Contains(("song_2", "Solo_Guitar"), checkedPairs);
+    }
+
+    [Fact]
+    public void BackfillSongProgress_reports_song_level_display_counts()
+    {
+        var instruments = GlobalLeaderboardScraper.AllInstruments;
+        var totalPairs = instruments.Count * 3;
+        Db.EnqueueBackfill("acct_1", totalPairs);
+        Db.UpdateBackfillProgress("acct_1", instruments.Count + 2, 3);
+
+        foreach (var instrument in instruments)
+            Db.MarkBackfillSongChecked("acct_1", "song_1", instrument, entryFound: true);
+        Db.MarkBackfillSongChecked("acct_1", "song_2", instruments[0], entryFound: false);
+
+        var progress = Db.GetBackfillSongProgress("acct_1", instruments.Count + 2, totalPairs);
+
+        Assert.NotNull(progress);
+        Assert.Equal(1, progress.SongsChecked);
+        Assert.Equal(3, progress.TotalSongs);
     }
 
     [Fact]

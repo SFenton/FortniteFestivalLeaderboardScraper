@@ -71,6 +71,9 @@ function useStyles(overlay: boolean, isContentIn: boolean, isSpinnerOut: boolean
     const hidden = isContentIn
       ? { opacity: 0, pointerEvents: PointerEvents.none } as const
       : {};
+    const spinnerOutHitTest = isSpinnerOut
+      ? { pointerEvents: PointerEvents.none } as const
+      : {};
     const fadeAnim = isSpinnerOut
       ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards` }
       : {};
@@ -80,6 +83,7 @@ function useStyles(overlay: boolean, isContentIn: boolean, isSpinnerOut: boolean
         zIndex: ZIndex.dropdown,
         ...flexCenter,
         ...fadeAnim,
+        ...spinnerOutHitTest,
         ...hidden,
       } as CSSProperties,
       /** Viewport minus shell chrome (header + bottom nav + padding) keeps spinner visually centered. */
@@ -87,12 +91,13 @@ function useStyles(overlay: boolean, isContentIn: boolean, isSpinnerOut: boolean
         ...flexCenter,
         minHeight: `calc(100vh - ${Layout.shellChromeHeight}px)`,
         ...fadeAnim,
+        ...spinnerOutHitTest,
         ...hidden,
       } as CSSProperties,
       fadeOut: isContentIn
         ? { opacity: 0, pointerEvents: PointerEvents.none } as CSSProperties
         : isSpinnerOut
-          ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards` } as CSSProperties
+          ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards`, pointerEvents: PointerEvents.none } as CSSProperties
           : undefined,
     };
   }, [overlay, isContentIn, isSpinnerOut, fadeDuration]);

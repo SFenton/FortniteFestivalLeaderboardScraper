@@ -1,10 +1,12 @@
-import { memo, useEffect, useMemo, type ReactNode, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useMemo, type ReactNode, type CSSProperties } from 'react';
 import { IoChevronBack, IoChevronForward } from 'react-icons/io5';
 import {
   Colors, Gap, IconSize, LineHeight, MetadataSize, Opacity, Cursor,
   CssValue, CssProp, PointerEvents,
   frostedCard, flexCenter, flexRow, transition, transitions, scale, FAST_FADE_MS,
 } from '@festival/theme';
+import { usePressAction } from '../../hooks/ui/usePressAction';
+import PressableButton from './PressableButton';
 
 /* ── Types ── */
 
@@ -72,29 +74,54 @@ function PaginatorInner({
   return (
     <div className={className} style={{ ...(className ? {} : s.container), ...style }}>
       {onSkipPrev && (
-        <button className={buttonClassName} style={buttonClassName ? undefined : s.prevBtn} disabled={prevDisabled} onClick={onSkipPrev} aria-label="Skip to start">
+        <PaginatorButton className={buttonClassName} style={buttonClassName ? undefined : s.prevBtn} disabled={prevDisabled} onPress={onSkipPrev} ariaLabel="Skip to start">
           <IoChevronBack size={IconSize.chevron} style={s.doubleChevronLeft} />
           <IoChevronBack size={IconSize.chevron} style={s.doubleChevronRight} />
-        </button>
+        </PaginatorButton>
       )}
       {onPrev && (
-        <button className={buttonClassName} style={buttonClassName ? undefined : s.prevBtn} disabled={prevDisabled} onClick={onPrev} aria-label="Previous">
+        <PaginatorButton className={buttonClassName} style={buttonClassName ? undefined : s.prevBtn} disabled={prevDisabled} onPress={onPrev} ariaLabel="Previous">
           <IoChevronBack size={IconSize.default} />
-        </button>
+        </PaginatorButton>
       )}
       {children && <div style={s.center}>{children}</div>}
       {onNext && (
-        <button className={buttonClassName} style={buttonClassName ? undefined : s.nextBtn} disabled={nextDisabled} onClick={onNext} aria-label="Next">
+        <PaginatorButton className={buttonClassName} style={buttonClassName ? undefined : s.nextBtn} disabled={nextDisabled} onPress={onNext} ariaLabel="Next">
           <IoChevronForward size={IconSize.default} />
-        </button>
+        </PaginatorButton>
       )}
       {onSkipNext && (
-        <button className={buttonClassName} style={buttonClassName ? undefined : s.nextBtn} disabled={nextDisabled} onClick={onSkipNext} aria-label="Skip to end">
+        <PaginatorButton className={buttonClassName} style={buttonClassName ? undefined : s.nextBtn} disabled={nextDisabled} onPress={onSkipNext} ariaLabel="Skip to end">
           <IoChevronForward size={IconSize.chevron} style={s.doubleChevronLeft} />
           <IoChevronForward size={IconSize.chevron} style={s.doubleChevronRight} />
-        </button>
+        </PaginatorButton>
       )}
     </div>
+  );
+}
+
+function PaginatorButton({
+  ariaLabel,
+  children,
+  className,
+  disabled,
+  onPress,
+  style,
+}: {
+  ariaLabel: string;
+  children: ReactNode;
+  className?: string;
+  disabled?: boolean;
+  onPress: () => void;
+  style?: CSSProperties;
+}) {
+  const handlePress = useCallback(() => onPress(), [onPress]);
+  const pressHandlers = usePressAction<HTMLButtonElement>({ onPress: handlePress, disabled });
+
+  return (
+    <button className={className} style={style} disabled={disabled} aria-label={ariaLabel} {...pressHandlers}>
+      {children}
+    </button>
   );
 }
 
@@ -112,9 +139,10 @@ export interface DotProps {
 const Dot = memo(function Dot({ active, onClick, label }: DotProps) {
   const s = useDotStyles(active);
   return (
-    <button
+    <PressableButton
       style={s.dot}
-      onClick={onClick}
+      onPress={() => onClick?.()}
+      disabled={!onClick}
       aria-label={label}
       tabIndex={-1}
     />

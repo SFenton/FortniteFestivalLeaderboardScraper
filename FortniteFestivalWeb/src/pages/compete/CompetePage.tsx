@@ -1,9 +1,9 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { useCallback, useEffect, useMemo, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
-import { IoChevronForward, IoCompass } from 'react-icons/io5';
+import { IoChevronForward, IoCompass, IoPeople, IoTrophy } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { rankingsCache } from '../../api/pageCache';
@@ -26,6 +26,7 @@ import { InstrumentHeaderSize, LoadPhase } from '@festival/core';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import EmptyState from '../../components/common/EmptyState';
+import CardPressable from '../../components/common/CardPressable';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { RankingEntry } from '../leaderboards/components/RankingEntry';
@@ -35,6 +36,7 @@ import RivalRow from '../rivals/components/RivalRow';
 import { ActionPill } from '../../components/common/ActionPill';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
+import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import {
   Colors, Font, Weight, Gap, Radius, Layout, InstrumentSize,
   Display, Align, Justify, Cursor, CssValue, CssProp, WhiteSpace, Size,
@@ -60,6 +62,8 @@ type NormalizedRankingEntry = {
 type CompeteQuickLink = PageQuickLinkItem & {
   id: 'leaderboards' | 'rivals';
 };
+
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 
 type CompeteScopeViewModel = {
   scope: RankingScope;
@@ -186,11 +190,13 @@ export default function CompetePage() {
       id: 'leaderboards',
       label: t('compete.leaderboards'),
       landmarkLabel: t('compete.leaderboards'),
+      icon: <IoTrophy size={QUICK_LINK_GLYPH_ICON_SIZE} />,
     },
     {
       id: 'rivals',
       label: t('compete.rivals'),
       landmarkLabel: t('compete.rivals'),
+      icon: <IoPeople size={QUICK_LINK_GLYPH_ICON_SIZE} />,
     },
   ], [t]);
   const firstRunGateCtx = useMemo(
@@ -315,16 +321,14 @@ export default function CompetePage() {
             <div style={s.scopeList}>
               {scopeSections.map((section) => (
                 <div key={`leaderboards:${section.scope.scopeKey}`} style={s.scopeGroup}>
-                  <div
-                    className={section.hasLeaderboardNavigation ? fx.sectionHeaderClickable : undefined}
-                    style={{ ...s.sectionHeaderClickable, ...(section.hasLeaderboardNavigation ? null : s.sectionHeaderDisabled), ...stagger() }}
+                  <CompeteSectionActionHeader
+                    enabled={section.hasLeaderboardNavigation}
+                    className={fx.sectionHeaderClickable}
+                    style={{ ...s.sectionHeaderClickable, ...stagger() }}
+                    disabledStyle={s.sectionHeaderDisabled}
+                    pressedStyle={s.pressablePressed}
                     onAnimationEnd={clearAnim}
-                    onClick={section.hasLeaderboardNavigation ? () => navigateToLeaderboards(section.scope) : undefined}
-                    role={section.hasLeaderboardNavigation ? 'button' : undefined}
-                    tabIndex={section.hasLeaderboardNavigation ? 0 : undefined}
-                    onKeyDown={section.hasLeaderboardNavigation
-                      ? (event) => { if (event.key === 'Enter') navigateToLeaderboards(section.scope); }
-                      : undefined}
+                    onPress={() => navigateToLeaderboards(section.scope)}
                   >
                     <div style={s.cardHeaderText}>
                       <CompeteScopeHeader scope={section.scope} iconSize={headerIconSize} labelStyle={s.cardTitle} />
@@ -335,13 +339,14 @@ export default function CompetePage() {
                         <IoChevronForward size={20} style={s.chevron} />
                       </>
                     )}
-                  </div>
+                  </CompeteSectionActionHeader>
                   <div style={s.list}>
                     {section.leaderboardEntries.map((entry) => (
-                      <Link
+                      <CompeteRankingLink
                         key={`${section.scope.scopeKey}:${entry.accountId}`}
                         to={`/player/${entry.accountId}`}
                         style={{ ...(entry.accountId === accountId ? s.playerRow : s.row), ...stagger() }}
+                        pressedStyle={s.pressablePressed}
                         onAnimationEnd={clearAnim}
                       >
                         <RankingEntry
@@ -352,10 +357,10 @@ export default function CompetePage() {
                           rankWidth={section.leaderboardRankWidth}
                           reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
                         />
-                      </Link>
+                      </CompeteRankingLink>
                     ))}
                     {section.playerEntry && !section.playerInTop && (
-                      <Link to={`/player/${section.playerEntry.accountId}`} style={{ ...s.playerRow, ...stagger() }} onAnimationEnd={clearAnim}>
+                      <CompeteRankingLink to={`/player/${section.playerEntry.accountId}`} style={{ ...s.playerRow, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim}>
                         <RankingEntry
                           rank={section.playerEntry.rank}
                           displayName={section.playerEntry.displayName ?? section.playerEntry.accountId.slice(0, 8)}
@@ -364,7 +369,7 @@ export default function CompetePage() {
                           rankWidth={section.leaderboardRankWidth}
                           reserveTenDigitScoreWidth={reserveTenDigitScoreWidth}
                         />
-                      </Link>
+                      </CompeteRankingLink>
                     )}
                     {!section.leaderboardError && section.leaderboardEntries.length === 0 && !section.playerEntry && (
                       <div style={{ ...s.emptyStateContainer, ...stagger() }} onAnimationEnd={clearAnim}>
@@ -387,9 +392,9 @@ export default function CompetePage() {
                     )}
                   </div>
                   {section.hasLeaderboardNavigation && (
-                    <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={() => navigateToLeaderboards(section.scope)}>
+                    <CardPressable style={{ ...s.viewAllButton, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim} onPress={() => navigateToLeaderboards(section.scope)}>
                       {t('compete.viewFullLeaderboards')}
-                    </div>
+                    </CardPressable>
                   )}
                 </div>
               ))}
@@ -403,16 +408,14 @@ export default function CompetePage() {
             <div style={s.scopeList}>
               {scopeSections.map((section) => (
                 <div key={`rivals:${section.scope.scopeKey}`} style={s.scopeGroup}>
-                  <div
-                    className={section.hasRivalsNavigation ? fx.sectionHeaderClickable : undefined}
-                    style={{ ...s.sectionHeaderClickable, ...(section.hasRivalsNavigation ? null : s.sectionHeaderDisabled), ...stagger() }}
+                  <CompeteSectionActionHeader
+                    enabled={section.hasRivalsNavigation}
+                    className={fx.sectionHeaderClickable}
+                    style={{ ...s.sectionHeaderClickable, ...stagger() }}
+                    disabledStyle={s.sectionHeaderDisabled}
+                    pressedStyle={s.pressablePressed}
                     onAnimationEnd={clearAnim}
-                    onClick={section.hasRivalsNavigation ? () => navigateToAllRivals(section.scope) : undefined}
-                    role={section.hasRivalsNavigation ? 'button' : undefined}
-                    tabIndex={section.hasRivalsNavigation ? 0 : undefined}
-                    onKeyDown={section.hasRivalsNavigation
-                      ? (event) => { if (event.key === 'Enter') navigateToAllRivals(section.scope); }
-                      : undefined}
+                    onPress={() => navigateToAllRivals(section.scope)}
                   >
                     <div style={s.cardHeaderText}>
                       <CompeteScopeHeader scope={section.scope} iconSize={headerIconSize} labelStyle={s.cardTitle} />
@@ -423,7 +426,7 @@ export default function CompetePage() {
                         <IoChevronForward size={20} style={s.chevron} />
                       </>
                     )}
-                  </div>
+                  </CompeteSectionActionHeader>
                   {section.rivalsAbove.length > 0 || section.rivalsBelow.length > 0 ? (
                     <div style={s.rivalList}>
                       {section.rivalsAbove.map((rival) => (
@@ -458,9 +461,9 @@ export default function CompetePage() {
                     </div>
                   )}
                   {section.hasRivalsNavigation && (
-                    <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={() => navigateToAllRivals(section.scope)}>
+                    <CardPressable style={{ ...s.viewAllButton, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim} onPress={() => navigateToAllRivals(section.scope)}>
                       {t('compete.viewAllRivals')}
-                    </div>
+                    </CardPressable>
                   )}
                 </div>
               ))}
@@ -469,6 +472,70 @@ export default function CompetePage() {
         </div>
       )}
     </Page>
+  );
+}
+
+function CompeteSectionActionHeader({
+  children,
+  className,
+  disabledStyle,
+  enabled,
+  onAnimationEnd,
+  onPress,
+  pressedStyle,
+  style,
+}: {
+  children: ReactNode;
+  className: string;
+  disabledStyle: CSSProperties;
+  enabled: boolean;
+  onAnimationEnd?: AnimationEventHandler<HTMLDivElement>;
+  onPress: () => void;
+  pressedStyle: CSSProperties;
+  style: CSSProperties;
+}) {
+  if (!enabled) {
+    return <div style={{ ...style, ...disabledStyle }} onAnimationEnd={onAnimationEnd}>{children}</div>;
+  }
+
+  return (
+    <CardPressable
+      className={className}
+      style={style}
+      pressedStyle={pressedStyle}
+      onAnimationEnd={onAnimationEnd}
+      onPress={onPress}
+    >
+      {children}
+    </CardPressable>
+  );
+}
+
+function CompeteRankingLink({
+  to,
+  style,
+  pressedStyle,
+  onAnimationEnd,
+  children,
+}: {
+  to: string;
+  style: CSSProperties;
+  pressedStyle: CSSProperties;
+  onAnimationEnd?: AnimationEventHandler<HTMLAnchorElement>;
+  children: ReactNode;
+}) {
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to });
+
+  return (
+    <Link
+      to={to}
+      style={{ ...style, ...(linkPress.isPressed ? pressedStyle : undefined) }}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      onAnimationEnd={onAnimationEnd}
+      {...linkPress.linkPressHandlers}
+    >
+      {children}
+    </Link>
   );
 }
 
@@ -681,6 +748,9 @@ function useCompeteStyles() {
         fontWeight: Weight.semibold,
         cursor: Cursor.pointer,
         transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+      } as CSSProperties,
+      pressablePressed: {
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
       } as CSSProperties,
     };
   }, []);

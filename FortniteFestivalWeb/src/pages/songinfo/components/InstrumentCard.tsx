@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type AnimationEventHandler, type CSSProperties, type MouseEventHandler, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
@@ -8,12 +8,15 @@ import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { leaderboardCache } from '../../../api/pageCache';
 import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, type SelectedMemberSongScore } from '@festival/core/api/serverTypes';
 import InstrumentEmptyState from '../../player/sections/InstrumentEmptyState';
-import { Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, TextAlign, WhiteSpace, WordBreak, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
+import { Colors, Font, Gap, Radius, Layout, Display, Align, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { parseApiError } from '../../../utils/apiError';
 import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
+import { useCardPressAction } from '../../../hooks/ui/usePressAction';
 import { resolveTopScoresColumns } from '../topScoresLayout';
 import CollapsePresence from '../../../components/common/CollapsePresence';
+import ViewFullLeaderboardCta from './ViewFullLeaderboardCta';
 
 interface InstrumentCardProps {
   songId: string;
@@ -139,6 +142,11 @@ export default memo(function InstrumentCard({
         total: totalEntries!.toLocaleString(),
       })
     : t('leaderboard.viewFullShort');
+  const navigateToLeaderboard = useCallback(() => {
+    leaderboardCache.delete(`${songId}:${instrument}`);
+    navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } });
+  }, [instrument, navigate, songId]);
+  const cardPress = useCardPressAction<HTMLDivElement>({ onPress: navigateToLeaderboard, disabled: !hasEntries });
 
   useLayoutEffect(() => {
     if (!hasViewAllCounts) {
@@ -195,10 +203,11 @@ export default memo(function InstrumentCard({
       </div>
       <div
         ref={cardRef}
-        style={hasEntries ? st.card : st.cardNoClick}
-        /* v8 ignore start — navigation */
-        {...(hasEntries ? { onClick: () => { leaderboardCache.delete(`${songId}:${instrument}`); navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } }); } } : {})}
-        /* v8 ignore stop */
+        style={{ ...(hasEntries ? st.card : st.cardNoClick), ...(hasEntries && cardPress.isPressed ? st.cardPressed : undefined) }}
+        role={hasEntries ? 'button' : undefined}
+        tabIndex={hasEntries ? 0 : undefined}
+        data-pressed={hasEntries && cardPress.isPressed ? 'true' : undefined}
+        {...(hasEntries ? cardPress.pressHandlers : {})}
       >
         <div style={st.cardBody}>
         {prefetchedError && <span style={st.cardError}>{parseApiError(prefetchedError).title}</span>}
@@ -213,13 +222,13 @@ export default memo(function InstrumentCard({
             const isPlayer = spotlightAccountIds.has(normalizeAccountId(entry.accountId));
             const rowStyle = { ...(isPlayer ? st.playerEntryRow : st.entryRow), ...(isCompactCard ? st.entryRowMobile : {}) };
             return (
-            <Link
+            <InstrumentCardRowLink
               key={entry.accountId}
               id={isPlayer ? getSpotlightRowId(instrument, entry.accountId, playerAccountId) : undefined}
               to={`/player/${entry.accountId}`}
               state={{ backTo: `/songs/${songId}` }}
               style={{ ...rowStyle, ...rowStagger }}
-              onClick={(ev) => ev.stopPropagation()}
+              pressedStyle={st.entryRowPressed}
               onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
             >
               <LeaderboardEntry
@@ -237,7 +246,7 @@ export default memo(function InstrumentCard({
                 scoreWidth={effectiveScoreWidth}
                 rankWidth={rankWidth}
               />
-            </Link>
+            </InstrumentCardRowLink>
             );
           })}
         {/* v8 ignore start — spotlight score rows; conditionally rendered animation block */}
@@ -249,7 +258,7 @@ export default memo(function InstrumentCard({
           const isTrackedPlayerRow = playerAccountId != null && normalizeAccountId(score.accountId) === normalizeAccountId(playerAccountId);
           const playerLeaderboardPage = Math.floor(((score.localRank ?? score.rank) - 1) / 25) + 1;
           return (
-            <Link
+            <InstrumentCardRowLink
               key={score.accountId}
               id={getSpotlightRowId(instrument, score.accountId, playerAccountId)}
               to={isTrackedPlayerRow
@@ -257,7 +266,7 @@ export default memo(function InstrumentCard({
                 : `/player/${score.accountId}`}
               state={isTrackedPlayerRow ? undefined : { backTo: `/songs/${songId}` }}
               style={{ ...playerRowStyle, ...playerStagger }}
-              onClick={(ev) => ev.stopPropagation()}
+              pressedStyle={st.entryRowPressed}
               onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
             >
               <LeaderboardEntry
@@ -275,7 +284,7 @@ export default memo(function InstrumentCard({
                 scoreWidth={effectiveScoreWidth}
                 rankWidth={rankWidth}
               />
-            </Link>
+            </InstrumentCardRowLink>
           );
         })}
         </CollapsePresence>
@@ -287,25 +296,26 @@ export default memo(function InstrumentCard({
           const shouldUseCompactViewAll = hasViewAllCounts && (isCompactCard || viewAllNeedsCompact);
           if (shouldUseCompactViewAll) {
             return (
-              <div
-                ref={viewAllButtonRef}
-                style={{ ...st.viewAllButtonCompact, ...viewAllStagger }}
+              <ViewFullLeaderboardCta
+                compact
+                componentRef={(element) => { viewAllButtonRef.current = element as HTMLDivElement | null; }}
+                style={viewAllStagger}
                 onAnimationEnd={clearAnim}
               >
                 <span>{t('leaderboard.viewFullShort')}</span>
                 <span>{t('leaderboard.trackedCount', { count: localEntries!.toLocaleString() as unknown as number })}</span>
                 <span>{t('leaderboard.totalCount', { count: totalEntries!.toLocaleString() as unknown as number })}</span>
-              </div>
+              </ViewFullLeaderboardCta>
             );
           }
           return (
-            <div
-              ref={viewAllButtonRef}
-              style={{ ...st.viewAllButton, ...viewAllStagger }}
+            <ViewFullLeaderboardCta
+              componentRef={(element) => { viewAllButtonRef.current = element as HTMLDivElement | null; }}
+              style={viewAllStagger}
               onAnimationEnd={clearAnim}
             >
               {fullViewAllLabel}
-            </div>
+            </ViewFullLeaderboardCta>
           );
         })()}
         {/* v8 ignore stop */}
@@ -314,6 +324,46 @@ export default memo(function InstrumentCard({
     </div>
   );
 });
+
+function InstrumentCardRowLink({
+  id,
+  to,
+  state,
+  style,
+  pressedStyle,
+  onAnimationEnd,
+  children,
+}: {
+  id?: string;
+  to: string;
+  state?: unknown;
+  style: CSSProperties;
+  pressedStyle: CSSProperties;
+  onAnimationEnd?: AnimationEventHandler<HTMLAnchorElement>;
+  children: ReactNode;
+}) {
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({ to, state });
+
+  const handleClick = useCallback<MouseEventHandler<HTMLAnchorElement>>((event) => {
+    event.stopPropagation();
+    linkPress.linkPressHandlers.onClick(event);
+  }, [linkPress.linkPressHandlers]);
+
+  return (
+    <Link
+      id={id}
+      to={to}
+      state={state}
+      style={{ ...style, ...(linkPress.isPressed ? pressedStyle : undefined) }}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      onAnimationEnd={onAnimationEnd}
+      {...linkPress.linkPressHandlers}
+      onClick={handleClick}
+    >
+      {children}
+    </Link>
+  );
+}
 
 function useInstrumentCardStyles() {
   return useMemo(() => {
@@ -345,6 +395,9 @@ function useInstrumentCardStyles() {
         height: '100%',
         cursor: Cursor.pointer,
       } as CSSProperties,
+      cardPressed: {
+        backgroundColor: 'rgba(255, 255, 255, 0.04)',
+      } as CSSProperties,
       cardNoClick: {
         ...flexColumn,
         height: '100%',
@@ -374,43 +427,8 @@ function useInstrumentCardStyles() {
         backgroundColor: Colors.purpleHighlight,
         border: border(Border.thin, Colors.purpleHighlightBorder),
       } as CSSProperties,
-      viewAllButton: {
-        ...frostedCard,
-        display: Display.flex,
-        position: 'relative',
-        alignItems: Align.center,
-        justifyContent: Justify.center,
-        minHeight: Layout.entryRowHeight,
-        padding: padding(Gap.sm, Gap.md),
-        borderRadius: Radius.md,
-        color: Colors.textPrimary,
-        fontSize: Font.md,
-        fontWeight: Weight.semibold,
-        cursor: Cursor.pointer,
-        textAlign: TextAlign.center,
-        whiteSpace: WhiteSpace.nowrap,
-        wordBreak: WordBreak.normal,
-        transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
-      } as CSSProperties,
-      viewAllButtonCompact: {
-        ...frostedCard,
-        display: Display.flex,
-        position: 'relative',
-        flexDirection: 'column',
-        alignItems: Align.center,
-        justifyContent: Justify.center,
-        minHeight: Layout.entryRowHeight,
-        gap: Gap.xs,
-        padding: padding(Gap.sm, Gap.md),
-        borderRadius: Radius.md,
-        color: Colors.textPrimary,
-        fontSize: Font.md,
-        fontWeight: Weight.semibold,
-        cursor: Cursor.pointer,
-        textAlign: TextAlign.center,
-        whiteSpace: WhiteSpace.nowrap,
-        wordBreak: WordBreak.normal,
-        transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+      entryRowPressed: {
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
       } as CSSProperties,
     };
   }, []);

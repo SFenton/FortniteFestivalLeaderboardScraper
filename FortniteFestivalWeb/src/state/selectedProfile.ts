@@ -1,4 +1,5 @@
 import type { BandType } from '@festival/core/api/serverTypes';
+import { resetSongSettingsForDeselect } from '../utils/songSettings';
 
 export const SELECTED_PROFILE_STORAGE_KEY = 'fst:selectedProfile';
 export const SELECTED_PROFILE_SYNC_EVENT = 'fst:selectedProfileChanged';
@@ -114,6 +115,12 @@ function writeProfileToStorage(storage: Storage, profile: SelectedProfile): void
   }
 }
 
+function shouldResetSongSettingsForProfileChange(previous: SelectedProfile | null, next: SelectedProfile | null): boolean {
+  if (!previous) return false;
+  if (!next) return true;
+  return previous.type !== next.type;
+}
+
 export function readSelectedProfile(): SelectedProfile | null {
   const storage = getStorage();
   if (!storage) return null;
@@ -147,7 +154,11 @@ export function writeSelectedProfile(profile: SelectedProfile): SelectedProfile 
   const normalized = normalizeSelectedProfile(profile);
   if (!normalized) throw new Error('Invalid selected profile');
   const storage = getStorage();
-  if (storage) writeProfileToStorage(storage, normalized);
+  if (storage) {
+    const previous = readSelectedProfile();
+    writeProfileToStorage(storage, normalized);
+    if (shouldResetSongSettingsForProfileChange(previous, normalized)) resetSongSettingsForDeselect();
+  }
   dispatchSelectionEvents();
   return normalized;
 }
@@ -155,8 +166,10 @@ export function writeSelectedProfile(profile: SelectedProfile): SelectedProfile 
 export function clearSelectedProfileStorage(): void {
   const storage = getStorage();
   if (storage) {
+    const previous = readSelectedProfile();
     storage.removeItem(SELECTED_PROFILE_STORAGE_KEY);
     storage.removeItem(LEGACY_TRACKED_PLAYER_STORAGE_KEY);
+    if (shouldResetSongSettingsForProfileChange(previous, null)) resetSongSettingsForDeselect();
   }
   dispatchSelectionEvents();
 }

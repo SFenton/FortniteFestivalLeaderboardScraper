@@ -11,18 +11,21 @@ import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { staggerCompletionDelay, useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
+import SearchModal from '../../components/search/SearchModal';
+import CardPressable from '../../components/common/CardPressable';
 
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
-import { IoChevronForward, IoCompass, IoMusicalNotes, IoOptions, IoTrophy } from 'react-icons/io5';
+import { IoChevronForward, IoCompass, IoMusicalNotes, IoOptions, IoPeople, IoSearch, IoTrophy } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
 import { Gap, Size, flexColumn } from '@festival/theme';
-import { serverInstrumentLabel, type RivalsListResponse, type ServerInstrumentKey, type RankingMetric } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, type AccountSearchResult, type RivalsListResponse, type ServerInstrumentKey, type RankingMetric } from '@festival/core/api/serverTypes';
 import type { RivalSummary } from '@festival/core/api/serverTypes';
-import { deriveComboFromSettings } from './helpers/comboUtils';
+import { deriveRivalScopeFromSettings, isProDrumsRivalScope } from './helpers/comboUtils';
+import { RIVAL_COMBO_SCOPE_SETTINGS } from './helpers/rivalRouteState';
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
@@ -54,7 +57,6 @@ type RivalQuickLink = PageQuickLinkItem & {
 };
 
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
-const QUICK_LINK_INSTRUMENT_ICON_SCALE = 1.15;
 
 export default function RivalsPage() {
   const { t } = useTranslation();
@@ -83,6 +85,7 @@ export default function RivalsPage() {
   }, [setSearchParams]);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
+  const [findRivalSearchVisible, setFindRivalSearchVisible] = useState(false);
 
   const openMetricModal = useCallback(() => {
     metricModal.open(rankBy);
@@ -97,13 +100,25 @@ export default function RivalsPage() {
     setTab(activeTab === 'song' ? 'leaderboard' : 'song');
   }, [activeTab, setTab]);
 
+  const openFindRivalSearch = useCallback(() => {
+    setFindRivalSearchVisible(true);
+  }, []);
+
+  const closeFindRivalSearch = useCallback(() => {
+    setFindRivalSearchVisible(false);
+  }, []);
+
   const activeInstruments = visibleInstruments(settings);
-  const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
+  const combo = useMemo(() => deriveRivalScopeFromSettings(settings), [settings]);
   const rivalsScopeKey = `${accountId ?? ''}:${activeInstruments.join(',')}:${combo ?? 'none'}`;
   const noRivalsSubtitle = useMemo(() => {
     if (activeInstruments.length === 0) return undefined;
     return t(activeInstruments.length === 1 ? 'rivals.noRivalsSubtitleSingle' : 'rivals.noRivalsSubtitlePlural');
   }, [activeInstruments.length, t]);
+  const comboDisplayLabel = useMemo(
+    () => isProDrumsRivalScope(combo) ? t('rivals.proDrumsFamily') : t('rivals.combo'),
+    [combo, t],
+  );
 
   // Data state: initialize from cache when returning to same account
   const hasCachedData = rivalsScopeKey === _cachedRivalsKey && _cachedInstrumentRivals.length > 0;
@@ -118,10 +133,13 @@ export default function RivalsPage() {
 
   // Register toggle action for FAB and sync active tab
   const toggleTabRef = useRef(toggleTab);
+  const findRivalRef = useRef(openFindRivalSearch);
   toggleTabRef.current = toggleTab;
+  findRivalRef.current = openFindRivalSearch;
   /* v8 ignore start — FAB registration */
   useEffect(() => {
-    fabSearch.registerRivalsActions({ toggleTab: () => toggleTabRef.current() });
+    fabSearch.registerRivalsActions({ toggleTab: () => toggleTabRef.current(), findRival: () => findRivalRef.current() });
+    return () => fabSearch.registerRivalsActions(null);
   }, [fabSearch]);
   useEffect(() => {
     fabSearch.setRivalsActiveTab(activeTab);
@@ -299,6 +317,12 @@ export default function RivalsPage() {
   const navigateToRival = (rivalId: string, rivalName?: string | null) => {
     navigate(Routes.rivalDetail(rivalId, rivalName ?? undefined), { state: { combo, rivalName } });
   };
+
+  const handleFindRivalSelect = (player: AccountSearchResult) => {
+    navigate(Routes.rivalDetail(player.accountId, player.displayName), {
+      state: { comboScope: RIVAL_COMBO_SCOPE_SETTINGS, rivalName: player.displayName },
+    });
+  };
   /* v8 ignore stop */
 
   const PREVIEW_COUNT = 3;
@@ -351,15 +375,17 @@ export default function RivalsPage() {
         id: 'common',
         label: commonLabel,
         landmarkLabel: commonLabel,
+        icon: <IoPeople size={QUICK_LINK_GLYPH_ICON_SIZE} />,
       });
     }
 
     if (combo && comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0)) {
-      const comboLabel = t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') });
+      const comboLabel = t('rivals.instrumentRivalsShort', { instrument: comboDisplayLabel });
       links.push({
         id: 'combo',
         label: comboLabel,
         landmarkLabel: comboLabel,
+        icon: <IoMusicalNotes size={QUICK_LINK_GLYPH_ICON_SIZE} />,
       });
     }
 
@@ -377,17 +403,13 @@ export default function RivalsPage() {
           <InstrumentIcon
             instrument={entry.instrument}
             size={QUICK_LINK_GLYPH_ICON_SIZE}
-            style={{
-              transform: `scale(${QUICK_LINK_INSTRUMENT_ICON_SCALE})`,
-              transformOrigin: 'center',
-            }}
           />
         ),
       });
     }
 
     return links;
-  }, [activeTab, combo, comboRivals, commonRivals.above.length, commonRivals.below.length, instrumentRivals, leaderboardQuickLinkItems, t]);
+  }, [activeTab, combo, comboDisplayLabel, comboRivals, commonRivals.above.length, commonRivals.below.length, instrumentRivals, leaderboardQuickLinkItems, t]);
 
   const {
     activeItemId,
@@ -452,6 +474,14 @@ export default function RivalsPage() {
     />
   );
 
+  const findRivalAction = (
+    <ActionPill
+      icon={<IoSearch size={Size.iconAction} />}
+      label={t('rivals.findRival')}
+      onClick={openFindRivalSearch}
+    />
+  );
+
   /* v8 ignore start -- JSX render tree */
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
 
@@ -468,6 +498,7 @@ export default function RivalsPage() {
             title={activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard')}
             actions={phase === LoadPhase.ContentIn ? (
               <>
+                {findRivalAction}
                 {toggleTabAction}
                 {compactQuickLinksAction}
                 {activeTab === 'leaderboard' && (
@@ -486,15 +517,23 @@ export default function RivalsPage() {
       firstRun={{ key: 'rivals', label: t('rivals.title'), slides: rivalsSlides, gateContext: firstRunGateCtx }}
       fabSpacer={phase === LoadPhase.ContentIn && !hasAnyRivals ? 'none' : 'end'}
       after={
-        <RankByModal
-          visible={metricModal.visible}
-          draft={metricModal.draft}
-          onDraftChange={metricModal.setDraft}
-          onClose={metricModal.close}
-          onApply={applyMetric}
-          onReset={metricModal.reset}
-          experimentalRanksEnabled={true}
-        />
+        <>
+          <RankByModal
+            visible={metricModal.visible}
+            draft={metricModal.draft}
+            onDraftChange={metricModal.setDraft}
+            onClose={metricModal.close}
+            onApply={applyMetric}
+            onReset={metricModal.reset}
+            experimentalRanksEnabled={true}
+          />
+          <SearchModal
+            visible={findRivalSearchVisible}
+            onClose={closeFindRivalSearch}
+            availableTargets={['players']}
+            onPlayerSelect={handleFindRivalSelect}
+          />
+        </>
       }
     >
       {phase === LoadPhase.ContentIn && (
@@ -513,21 +552,19 @@ export default function RivalsPage() {
                 const navigateToCommon = () => navigate(Routes.allRivals('common'), { state: { from: 'rivals' } });
                 return (
                 <div ref={(element) => registerSectionRef('common', element)} style={styles.section}>
-                  <div
+                  <CardPressable
                     className={fx.sectionHeaderClickable}
                     style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
+                    pressedStyle={styles.pressablePressed}
                     onAnimationEnd={clearAnim}
-                    onClick={navigateToCommon}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={e => { if (e.key === 'Enter') navigateToCommon(); }}
+                    onPress={navigateToCommon}
                   >
                     <div style={styles.cardHeaderText}>
                       <span style={styles.cardTitle}>{t('rivals.commonRivalsShort', 'Common Rivals')}</span>
                     </div>
                     <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
                     <IoChevronForward size={20} style={styles.chevron} />
-                  </div>
+                  </CardPressable>
                   <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
                     {allPreview.map(rival => (
                       <RivalRow
@@ -539,9 +576,9 @@ export default function RivalsPage() {
                         onAnimationEnd={clearAnim}
                       />
                     ))}
-                    <div style={{ ...styles.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToCommon}>
+                    <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToCommon}>
                       {t('rivals.viewAllRivals')}
-                    </div>
+                    </CardPressable>
                   </div>
                 </div>
                 );
@@ -555,21 +592,19 @@ export default function RivalsPage() {
                 const navigateToCombo = () => navigate(Routes.allRivals('combo'), { state: { from: 'rivals' } });
                 return (
                 <div ref={(element) => registerSectionRef('combo', element)} style={styles.section}>
-                  <div
+                  <CardPressable
                     className={fx.sectionHeaderClickable}
                     style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
+                    pressedStyle={styles.pressablePressed}
                     onAnimationEnd={clearAnim}
-                    onClick={navigateToCombo}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={e => { if (e.key === 'Enter') navigateToCombo(); }}
+                    onPress={navigateToCombo}
                   >
                     <div style={styles.cardHeaderText}>
-                      <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') })}</span>
+                      <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: comboDisplayLabel })}</span>
                     </div>
                     <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
                     <IoChevronForward size={20} style={styles.chevron} />
-                  </div>
+                  </CardPressable>
                   <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
                     {allPreview.map(rival => (
                       <RivalRow
@@ -581,9 +616,9 @@ export default function RivalsPage() {
                         onAnimationEnd={clearAnim}
                       />
                     ))}
-                    <div style={{ ...styles.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToCombo}>
+                    <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToCombo}>
                       {t('rivals.viewAllRivals')}
-                    </div>
+                    </CardPressable>
                   </div>
                 </div>
                 );
@@ -598,14 +633,12 @@ export default function RivalsPage() {
                 const navigateToInstrument = () => navigate(Routes.allRivals(entry.instrument), { state: { from: 'rivals' } });
                 return (
                   <div key={entry.instrument} ref={(element) => registerSectionRef(entry.instrument, element)} style={styles.section}>
-                    <div
+                    <CardPressable
                       className={fx.sectionHeaderClickable}
                       style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
+                      pressedStyle={styles.pressablePressed}
                       onAnimationEnd={clearAnim}
-                      onClick={navigateToInstrument}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={e => { if (e.key === 'Enter') navigateToInstrument(); }}
+                      onPress={navigateToInstrument}
                     >
                       <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
                       <div style={styles.cardHeaderText}>
@@ -613,7 +646,7 @@ export default function RivalsPage() {
                       </div>
                       <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
                       <IoChevronForward size={20} style={styles.chevron} />
-                    </div>
+                    </CardPressable>
                     <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
                       {allPreview.map(rival => (
                         <RivalRow
@@ -625,9 +658,9 @@ export default function RivalsPage() {
                           onAnimationEnd={clearAnim}
                         />
                       ))}
-                      <div style={{ ...styles.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToInstrument}>
+                      <CardPressable style={{ ...styles.viewAllButton, ...nextStagger() }} pressedStyle={styles.pressablePressed} onAnimationEnd={clearAnim} onPress={navigateToInstrument}>
                         {t('rivals.viewAllRivals')}
-                      </div>
+                      </CardPressable>
                     </div>
                   </div>
                 );

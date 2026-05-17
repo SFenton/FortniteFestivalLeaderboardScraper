@@ -1,6 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo } from 'react';
 import { Colors, Font, Gap, Weight, Border, Display, Justify, Align, TextAlign, TextTransform, Cursor, CssValue, QUICK_FADE_MS, padding, border, transition } from '@festival/theme';
+import { useCardPressAction } from '../../hooks/ui/usePressAction';
 import PercentilePill from '../songs/metadata/PercentilePill';
 
 export const PlayerPercentileHeader = memo(function PlayerPercentileHeader({
@@ -30,9 +31,16 @@ export const PlayerPercentileRow = memo(function PlayerPercentileRow({
   isLast: boolean;
   onClick: () => void;
 }) {
+  const cardPress = useCardPressAction<HTMLDivElement>({ onPress: () => onClick() });
   const s = useStyles(isLast);
   return (
-    <div style={s.rowItem} onClick={onClick}>
+    <div
+      style={{ ...s.rowItem, ...(cardPress.isPressed ? s.rowItemPressed : undefined) }}
+      role="button"
+      tabIndex={0}
+      data-pressed={cardPress.isPressed ? 'true' : undefined}
+      {...cardPress.pressHandlers}
+    >
       <span>
         <PercentilePill display={`Top ${pct}%`} />
       </span>
@@ -70,7 +78,11 @@ function useStyles(isLast: boolean) {
         fontSize: Font.md,
         color: Colors.textPrimary,
         minWidth: Gap.none,
+        touchAction: 'manipulation',
         '--frosted-card': '1',
+      },
+      rowItemPressed: {
+        backgroundColor: 'rgba(255, 255, 255, 0.04)',
       },
       countText: {
         fontWeight: Weight.semibold,

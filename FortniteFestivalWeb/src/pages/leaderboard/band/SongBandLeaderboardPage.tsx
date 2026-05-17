@@ -38,7 +38,9 @@ export default function SongBandLeaderboardPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const scrollContainerRef = useScrollContainer();
   const isMobile = useIsMobile();
-  const hasFab = useIsMobileChrome();
+  const isMobileChrome = useIsMobileChrome();
+  const hasFab = isMobileChrome;
+  const reserveFabSpace = false;
   const {
     state: { songs },
   } = useFestival();
@@ -185,11 +187,12 @@ export default function SongBandLeaderboardPage() {
               onGoToPage={goToPage}
               isMobile={isMobile}
               hasFab={hasFab}
+              reserveFabSpace={reserveFabSpace}
               hasPlayerFooter={hasSelectedBandFooter}
             />
           )}
           {hasSelectedBandFooter && selectedBandEntry && selectedBandFooterName && selectedBandFooterRoute && (
-            <FixedLeaderboardPlayerFooter hasFab={hasFab}>
+            <FixedLeaderboardPlayerFooter hasFab={hasFab} reserveFabSpace={reserveFabSpace}>
               {({ className, style }) => (
                 <Link to={selectedBandFooterRoute} className={className} style={style}>
                   <LeaderboardEntry

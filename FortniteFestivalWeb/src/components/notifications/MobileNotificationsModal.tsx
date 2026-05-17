@@ -13,6 +13,7 @@ import { SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey
 import { isExperimentalRankingMetric } from '../../pages/leaderboards/helpers/rankingHelpers';
 import { InstrumentIcon } from '../display/InstrumentIcons';
 import MarqueeText from '../common/MarqueeText';
+import PressableButton from '../common/PressableButton';
 import { getNotificationDestination, type NotificationNavigationContext } from './notificationDestination';
 import { getNotificationRankingMetric, isAggregateRankNotificationEvent } from './notificationRanking';
 import { formatNotificationPresentation, type NotificationFlagGroup, type NotificationFlagKind, type NotificationMessagePart, type NotificationPresentation, type NotificationTextEvent, type NotificationTextInput } from './notificationText';
@@ -590,13 +591,12 @@ function NotificationRow({
   };
 
   return canOpenNotification ? (
-    <button
-      type="button"
-      onClick={() => onNotificationOpen?.(notification)}
+    <PressableButton
+      onPress={() => onNotificationOpen?.(notification)}
       {...rowProps}
     >
       {rowContent}
-    </button>
+    </PressableButton>
   ) : (
     <article {...rowProps}>
       {rowContent}

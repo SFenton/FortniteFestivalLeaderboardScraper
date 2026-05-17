@@ -12,6 +12,8 @@ export interface PageHeaderProps {
   subtitle?: string;
   /** Keep one subtitle line reserved even when subtitle is not yet available. */
   reserveSubtitleSpace?: boolean;
+  /** Optional non-interactive visual anchored to the right side of the title row. */
+  titleAccessory?: ReactNode;
   /** Optional action elements (pills, buttons) rendered on the right. */
   actions?: ReactNode;
   /** Vertical alignment for the actions slot relative to the title block. */
@@ -34,6 +36,7 @@ export default function PageHeader({
   title,
   subtitle,
   reserveSubtitleSpace = false,
+  titleAccessory,
   actions,
   actionsAlign = 'center',
   style,
@@ -66,13 +69,14 @@ export default function PageHeader({
             ) : (
               title
             )}
-            {(subtitle || reserveSubtitleSpace) && (
-              <div style={subtitle ? s.subtitle : s.subtitleReserved} aria-hidden={subtitle ? undefined : true}>
-                {subtitle || '\u00a0'}
-              </div>
-            )}
-            </div>
+            {subtitle ? (
+              <MarqueeText text={subtitle} as="p" style={s.subtitle} />
+            ) : reserveSubtitleSpace ? (
+              <div style={s.subtitleReserved} aria-hidden="true">{'\u00a0'}</div>
+            ) : null}
+          </div>
         )}
+        {titleAccessory && <div style={s.titleAccessory}>{titleAccessory}</div>}
         {resolvedActions && <div style={actionsAlign === 'start' ? s.actionsTop : s.actions}>{resolvedActions}</div>}
       </div>
     </div>
@@ -90,6 +94,7 @@ function useStyles() {
     } as CSSProperties,
     row: {
       ...flexBetween,
+      alignItems: 'center',
       gap: Gap.xl,
       minHeight: Layout.entryRowHeight,
     } as CSSProperties,
@@ -113,6 +118,13 @@ function useStyles() {
       color: Colors.textSubtle,
       marginTop: Gap.xs,
       visibility: 'hidden',
+    } as CSSProperties,
+    titleAccessory: {
+      ...flexRow,
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      flexShrink: 0,
+      lineHeight: 0,
     } as CSSProperties,
     actions: {
       ...flexRow,

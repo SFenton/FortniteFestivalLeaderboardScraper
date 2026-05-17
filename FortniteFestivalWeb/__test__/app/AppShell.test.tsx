@@ -207,7 +207,7 @@ describe('AppShell', () => {
     });
     const { container } = render(<App />);
     await waitFor(() => {
-      const profileBtn = container.querySelector('[aria-label="Select Profile"]');
+      const profileBtn = container.querySelector('[data-testid="desktop-header-profile"]');
       expect(profileBtn).toBeTruthy();
     });
   });
@@ -254,13 +254,10 @@ describe('getProfileClickDestination', () => {
     expect(dest).toContain('statistics');
   });
 
-  it('navigates to band route when no player and selected profile is a band with full context', () => {
+  it('navigates to statistics when no player and selected profile is a band with full context', () => {
     const dest = getProfileClickDestination(null, bandProfile);
     expect(typeof dest).toBe('string');
-    expect(dest).toContain('bands');
-    expect(dest).toContain('band-123');
-    expect(dest).toContain('Band_Duets');
-    expect(dest).toContain('tk-abc');
+    expect(dest).toContain('statistics');
   });
 
   it('falls back to sidebar when selected band profile has no bandId', () => {

@@ -48,6 +48,20 @@ describe('ModalShell', () => {
     expect(screen.getByText('Modal Content')).toBeTruthy();
   });
 
+  it('allows overlay and panel hit-testing immediately before the entrance frame runs', () => {
+    vi.mocked(window.requestAnimationFrame).mockImplementation(() => 1);
+    render(
+      <ModalShell visible={true} title="Test Modal" onClose={vi.fn()}>
+        <div>Modal Content</div>
+      </ModalShell>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    const overlay = dialog.previousElementSibling as HTMLElement;
+    expect(overlay.style.pointerEvents).toBe('auto');
+    expect(dialog.style.pointerEvents).toBe('auto');
+  });
+
   it('renders dialog with correct aria attributes', () => {
     render(
       <ModalShell visible={true} title="Aria Test" onClose={vi.fn()}>
@@ -118,6 +132,24 @@ describe('ModalShell', () => {
       </ModalShell>,
     );
     const closeBtn = screen.getByRole('button', { name: /close/i });
+    fireEvent.click(closeBtn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onClose from touch pointerup on the close button without double firing on click', () => {
+    const onClose = vi.fn();
+    render(
+      <ModalShell visible={true} title="Test" onClose={onClose}>
+        <div>Content</div>
+      </ModalShell>,
+    );
+
+    const closeBtn = screen.getByRole('button', { name: /close/i });
+    fireEvent.pointerDown(closeBtn, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 370, clientY: 120 });
+    fireEvent.pointerUp(closeBtn, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 370, clientY: 120 });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+
     fireEvent.click(closeBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

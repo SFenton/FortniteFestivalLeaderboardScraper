@@ -60,7 +60,14 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         {
             _log.LogInformation("Initializing databases and song catalog...");
 
-            await EnsureSchemaWithRetryAsync(ct);
+            if (_scraperOptions.ApiOnly)
+            {
+                _log.LogInformation("API-only mode: skipping startup schema initialization; relying on existing database schema.");
+            }
+            else
+            {
+                await EnsureSchemaWithRetryAsync(ct);
+            }
 
             // Clean up any leftover spool files from previous runs
             SpoolWriter<LeaderboardEntry>.CleanupStaleFiles(_log);

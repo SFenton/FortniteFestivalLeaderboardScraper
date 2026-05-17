@@ -77,6 +77,98 @@ import { SYNC_POLL_ACTIVE_MS, SYNC_POLL_IDLE_MS } from '@festival/theme';
 /** How long to wait without a WS message before falling back to HTTP polling */
 const WS_STALE_MS = 10_000;
 
+function resolveDisplayProgress(
+  rawCompleted: number,
+  rawTotal: number,
+  displayCompleted?: number | null,
+  displayTotal?: number | null,
+): { completed: number; total: number } {
+  const completed = typeof displayCompleted === 'number' ? displayCompleted : rawCompleted;
+  const total = typeof displayTotal === 'number' ? displayTotal : rawTotal;
+  return {
+    completed: Math.max(0, completed),
+    total: Math.max(0, total),
+  };
+}
+
+function deriveSyncStateFromStatus(res: SyncStatusResponse, prev: SyncState): SyncState {
+  const bf = res.backfill;
+  const hr = res.historyRecon;
+  const rv = res.rivals;
+  const ps = res.postScrape;
+
+  const bfStatus = bf?.status ?? null;
+  const bfDeferred = bfStatus === BackfillStatus.Deferred;
+  const bfActive = bfStatus === BackfillStatus.Pending || bfStatus === BackfillStatus.InProgress;
+  const bfDisplay = resolveDisplayProgress(
+    bf?.songsChecked ?? 0,
+    bf?.totalSongsToCheck ?? 0,
+    bf?.displaySongsChecked,
+    bf?.displayTotalSongs,
+  );
+  const bfProgress = bfDisplay.total > 0
+    ? Math.min(bfDisplay.completed / bfDisplay.total, 1) : 0;
+
+  const hrStatus = hr?.status ?? null;
+  const hrActive = hrStatus === BackfillStatus.Pending || hrStatus === BackfillStatus.InProgress;
+  const hrProgress = hr && hr.totalSongsToProcess > 0
+    ? Math.min(hr.songsProcessed / hr.totalSongsToProcess, 1) : 0;
+
+  const rvStatus = rv?.status ?? null;
+  const rvActive = rvStatus === BackfillStatus.Pending || rvStatus === BackfillStatus.InProgress;
+  const rvProgress = rv && rv.totalCombosToCompute > 0
+    ? Math.min(rv.combosComputed / rv.totalCombosToCompute, 1) : 0;
+
+  const psActive = ps?.status === BackfillStatus.Pending || ps?.status === BackfillStatus.InProgress;
+  const isSyncing = bfDeferred || bfActive || hrActive || rvActive || psActive;
+
+  let phase: SyncPhase;
+  if (bfDeferred) phase = SyncPhase.Queued;
+  else if (bfActive) phase = SyncPhase.Backfill;
+  else if (hrActive) phase = SyncPhase.History;
+  else if (rvActive) phase = SyncPhase.Rivals;
+  else if (psActive) phase = SyncPhase.PostScrape;
+  else if (bfStatus === BackfillStatus.Complete || hrStatus === BackfillStatus.Complete) phase = SyncPhase.Complete;
+  else if (bfStatus === BackfillStatus.Error || hrStatus === BackfillStatus.Error) phase = SyncPhase.Error;
+  else phase = SyncPhase.Idle;
+
+  return {
+    isTracked: !!res.isTracked,
+    syncStatusLoaded: true,
+    isSyncing,
+    phase,
+    backfillProgress: bfDeferred ? 0 : bfProgress,
+    historyProgress: hrProgress,
+    rivalsProgress: rvProgress,
+    entriesFound: psActive ? (ps?.entriesFound ?? prev.entriesFound) : (bf?.entriesFound ?? prev.entriesFound),
+    itemsCompleted: bfActive ? bfDisplay.completed : hrActive ? (hr?.songsProcessed ?? 0) : rvActive ? (rv?.combosComputed ?? 0) : psActive ? (ps?.itemsCompleted ?? 0) : prev.itemsCompleted,
+    totalItems: bfDeferred ? bfDisplay.total : bfActive ? bfDisplay.total : hrActive ? (hr?.totalSongsToProcess ?? 0) : rvActive ? (rv?.totalCombosToCompute ?? 0) : psActive ? (ps?.totalItems ?? 0) : prev.totalItems,
+    currentSongName: ps?.currentSongName ?? bf?.currentSongName ?? hr?.currentSongName ?? null,
+    seasonsQueried: hr?.seasonsQueried ?? prev.seasonsQueried,
+    rivalsFound: rv?.rivalsFound ?? prev.rivalsFound,
+    isThrottled: false,
+    throttleStatusKey: null,
+    pendingRankUpdate: res.pendingRankUpdate ?? bf?.rankingsPending ?? false,
+    estimatedRankUpdateMinutes: null,
+    probeStatusKey: null,
+    nextRetrySeconds: null,
+  };
+}
+
+function getSyncPhaseFromStatus(res: SyncStatusResponse): SyncPhase {
+  return deriveSyncStateFromStatus(res, createIdleSyncState()).phase;
+}
+
+function isSyncingStatus(res: SyncStatusResponse): boolean {
+  return deriveSyncStateFromStatus(res, createIdleSyncState()).isSyncing;
+}
+
+function shouldOptimisticallyQueueAfterStatus(res: SyncStatusResponse): boolean {
+  if (res.isTracked || isSyncingStatus(res)) return false;
+  const phase = getSyncPhaseFromStatus(res);
+  return phase !== SyncPhase.Complete;
+}
+
 export function useSyncStatus(accountId: string | undefined, options?: { track?: boolean; useWebSocket?: boolean }) {
   const track = options?.track ?? true;
   const useWebSocket = options?.useWebSocket ?? true;
@@ -90,6 +182,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   const lastWsMsgRef = useRef(0);
   const desiredAccountRef = useRef<string | null>(accountId ?? null);
   const hasSyncSubscriptionRef = useRef(false);
+  const checkStatusRef = useRef<(() => void) | null>(null);
   /** Timestamp (ms) until which probe status is locked to prevent blips */
   const probeLockedUntilRef = useRef(0);
   const { subscribe, connected: wsConnected, send: wsSend, subscribeOpen } = useAppWebSocket();
@@ -120,7 +213,6 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     if (msg.type === 'sync_progress') {
       const sp = msg as SyncProgressMessage;
       if (sp.accountId !== accountId) return;
-      lastWsMsgRef.current = Date.now();
 
       const phaseMap: Record<string, SyncPhase> = {
         queued: SyncPhase.Queued,
@@ -132,8 +224,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
         error: SyncPhase.Error,
       };
       const phase = phaseMap[sp.phase] ?? SyncPhase.Idle;
+      lastWsMsgRef.current = phase === SyncPhase.Queued ? 0 : Date.now();
       const isSyncing = phase === SyncPhase.Queued || phase === SyncPhase.Backfill || phase === SyncPhase.History || phase === SyncPhase.Rivals || phase === SyncPhase.PostScrape;
-      const phaseProgress = sp.totalItems > 0 ? Math.min(sp.itemsCompleted / sp.totalItems, 1) : 0;
+      const displayProgress = resolveDisplayProgress(sp.itemsCompleted, sp.totalItems, sp.displayItemsCompleted, sp.displayTotalItems);
+      const phaseProgress = displayProgress.total > 0 ? Math.min(displayProgress.completed / displayProgress.total, 1) : 0;
 
       if (isSyncing) wasSyncingRef.current = true;
 
@@ -169,8 +263,8 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
           historyProgress: phase === SyncPhase.History ? phaseProgress : (phase === SyncPhase.Rivals || phase === SyncPhase.Complete ? 1 : prev.historyProgress),
           rivalsProgress: phase === SyncPhase.Rivals ? phaseProgress : (phase === SyncPhase.Complete ? 1 : prev.rivalsProgress),
           entriesFound: sp.entriesFound,
-          itemsCompleted: sp.itemsCompleted,
-          totalItems: sp.totalItems,
+          itemsCompleted: displayProgress.completed,
+          totalItems: displayProgress.total,
           currentSongName: sp.currentSongName ?? null,
           seasonsQueried: sp.seasonsQueried ?? prev.seasonsQueried,
           rivalsFound: sp.rivalsFound ?? prev.rivalsFound,
@@ -186,8 +280,11 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       if (!isSyncing && phase === SyncPhase.Complete && (wasSyncingRef.current || syncKickedRef.current)) {
         setJustCompleted(true);
       }
-      // While receiving WS messages, suppress HTTP polling
       stopPolling();
+      if (!document.hidden && mountedRef.current && desiredAccountRef.current === accountId) {
+        const delay = phase === SyncPhase.Queued ? SYNC_POLL_ACTIVE_MS : WS_STALE_MS;
+        pollRef.current = setTimeout(() => { checkStatusRef.current?.(); }, delay);
+      }
       return;
     }
 
@@ -266,71 +363,18 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
 
     try {
       const res: SyncStatusResponse = await api.getSyncStatus(requestedAccountId);
-
-      const bf = res.backfill;
-      const hr = res.historyRecon;
-      const rv = res.rivals;
-      const ps = res.postScrape;
-
-      const bfStatus = bf?.status ?? null;
-      const bfDeferred = bfStatus === BackfillStatus.Deferred;
-      const bfActive = bfStatus === BackfillStatus.Pending || bfStatus === BackfillStatus.InProgress;
-      const bfProgress = bf && bf.totalSongsToCheck > 0
-        ? Math.min(bf.songsChecked / bf.totalSongsToCheck, 1) : 0;
-
-      const hrStatus = hr?.status ?? null;
-      const hrActive = hrStatus === BackfillStatus.Pending || hrStatus === BackfillStatus.InProgress;
-      const hrProgress = hr && hr.totalSongsToProcess > 0
-        ? Math.min(hr.songsProcessed / hr.totalSongsToProcess, 1) : 0;
-
-      const rvStatus = rv?.status ?? null;
-      const rvActive = rvStatus === BackfillStatus.Pending || rvStatus === BackfillStatus.InProgress;
-      const rvProgress = rv && rv.totalCombosToCompute > 0
-        ? Math.min(rv.combosComputed / rv.totalCombosToCompute, 1) : 0;
-
-      const psActive = ps?.status === BackfillStatus.Pending || ps?.status === BackfillStatus.InProgress;
-
-      const isSyncing = bfDeferred || bfActive || hrActive || rvActive || psActive;
+      const isSyncing = isSyncingStatus(res);
 
       if (isSyncing) {
         wasSyncingRef.current = true;
       }
-
-      let phase: SyncPhase;
-      if (bfDeferred) phase = SyncPhase.Queued;
-      else if (bfActive) phase = SyncPhase.Backfill;
-      else if (hrActive) phase = SyncPhase.History;
-      else if (rvActive) phase = SyncPhase.Rivals;
-      else if (psActive) phase = SyncPhase.PostScrape;
-      else if (bfStatus === BackfillStatus.Complete || hrStatus === BackfillStatus.Complete) phase = SyncPhase.Complete;
-      else if (bfStatus === BackfillStatus.Error || hrStatus === BackfillStatus.Error) phase = SyncPhase.Error;
-      else phase = SyncPhase.Idle;
+      const phase = getSyncPhaseFromStatus(res);
 
       /* v8 ignore start */
       if (!mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
       /* v8 ignore stop */
 
-      setSyncState(prev => ({
-        isTracked: res.isTracked,
-        syncStatusLoaded: true,
-        isSyncing,
-        phase,
-        backfillProgress: bfDeferred ? 0 : bfProgress,
-        historyProgress: hrProgress,
-        rivalsProgress: rvProgress,
-        entriesFound: psActive ? (ps?.entriesFound ?? prev.entriesFound) : (bf?.entriesFound ?? prev.entriesFound),
-        itemsCompleted: bfActive ? (bf?.songsChecked ?? 0) : hrActive ? (hr?.songsProcessed ?? 0) : rvActive ? (rv?.combosComputed ?? 0) : psActive ? (ps?.itemsCompleted ?? 0) : prev.itemsCompleted,
-        totalItems: bfDeferred ? (bf?.totalSongsToCheck ?? 0) : bfActive ? (bf?.totalSongsToCheck ?? 0) : hrActive ? (hr?.totalSongsToProcess ?? 0) : rvActive ? (rv?.totalCombosToCompute ?? 0) : psActive ? (ps?.totalItems ?? 0) : prev.totalItems,
-        currentSongName: ps?.currentSongName ?? bf?.currentSongName ?? hr?.currentSongName ?? null,
-        seasonsQueried: hr?.seasonsQueried ?? prev.seasonsQueried,
-        rivalsFound: rv?.rivalsFound ?? prev.rivalsFound,
-        isThrottled: false,
-        throttleStatusKey: null,
-        pendingRankUpdate: res.pendingRankUpdate ?? bf?.rankingsPending ?? false,
-        estimatedRankUpdateMinutes: null,
-        probeStatusKey: null,
-        nextRetrySeconds: null,
-      }));
+      setSyncState(prev => deriveSyncStateFromStatus(res, prev));
 
       if (!isSyncing && (phase === SyncPhase.Complete || phase === SyncPhase.Error)) {
         // Sync finished — stop active polling entirely
@@ -359,6 +403,10 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     }
   }, [accountId, stopPolling, useWebSocket, wsConnected]);
 
+  useEffect(() => {
+    checkStatusRef.current = checkStatus;
+  }, [checkStatus]);
+
   // Track player and start polling on mount; pause when tab is hidden
   useEffect(() => {
     if (!accountId) {
@@ -369,8 +417,48 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
     mountedRef.current = true;
 
     const init = async () => {
-      // Fire track request (idempotent) and capture whether a sync was kicked
+      let preflightStatus: SyncStatusResponse | null = null;
+      let preflightPhase = SyncPhase.Idle;
+      let preflightWasSyncing = false;
+      let optimisticQueued = false;
+
+      // Fast read first: completed/tracked profiles should not flash a queued card.
       if (track) {
+        try {
+          preflightStatus = await api.getSyncStatus(requestedAccountId);
+          if (!mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
+
+          preflightPhase = getSyncPhaseFromStatus(preflightStatus);
+          preflightWasSyncing = isSyncingStatus(preflightStatus);
+          if (preflightWasSyncing) wasSyncingRef.current = true;
+
+          setSyncState(prev => deriveSyncStateFromStatus(preflightStatus!, prev));
+
+          if (shouldOptimisticallyQueueAfterStatus(preflightStatus)) {
+            optimisticQueued = true;
+            syncKickedRef.current = true;
+            wasSyncingRef.current = true;
+            setSyncState(prev => ({
+              ...prev,
+              isSyncing: true,
+              phase: SyncPhase.Queued,
+              backfillProgress: 0,
+              historyProgress: 0,
+              rivalsProgress: 0,
+              entriesFound: 0,
+              itemsCompleted: 0,
+              totalItems: 0,
+              currentSongName: null,
+              isThrottled: false,
+              throttleStatusKey: null,
+              probeStatusKey: null,
+              nextRetrySeconds: null,
+            }));
+          }
+        } catch {
+          preflightStatus = null;
+        }
+
         try {
           const res = await api.trackPlayer(requestedAccountId);
           if (!mountedRef.current || desiredAccountRef.current !== requestedAccountId) return;
@@ -380,7 +468,6 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
             setSyncState(prev => ({
               ...prev,
               isTracked: true,
-              syncStatusLoaded: true,
               isSyncing: true,
               phase: SyncPhase.Queued,
               pendingRankUpdate: res.pendingRankUpdate ?? prev.pendingRankUpdate,
@@ -393,13 +480,28 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
             setSyncState(prev => ({
               ...prev,
               isTracked: true,
-              syncStatusLoaded: true,
               isSyncing: true,
               phase: SyncPhase.Backfill,
             }));
+          } else if (optimisticQueued) {
+            syncKickedRef.current = false;
+            wasSyncingRef.current = preflightWasSyncing;
+            if (preflightStatus) {
+              setSyncState(prev => deriveSyncStateFromStatus(preflightStatus!, prev));
+            } else {
+              setSyncState(createIdleSyncState());
+            }
           }
         } catch {
-          // Ignore if track fails (e.g. in api-only mode without scraper)
+          if (optimisticQueued) {
+            syncKickedRef.current = false;
+            wasSyncingRef.current = preflightWasSyncing;
+            if (preflightStatus) {
+              setSyncState(prev => deriveSyncStateFromStatus(preflightStatus!, prev));
+            } else {
+              setSyncState(createIdleSyncState());
+            }
+          }
         }
       }
 
@@ -413,6 +515,11 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
       if (syncKickedRef.current) {
         stopPolling();
         pollRef.current = setTimeout(checkStatus, SYNC_POLL_ACTIVE_MS);
+      } else if (preflightStatus) {
+        stopPolling();
+        if (preflightPhase !== SyncPhase.Complete && preflightPhase !== SyncPhase.Error && !document.hidden && mountedRef.current && desiredAccountRef.current === requestedAccountId) {
+          pollRef.current = setTimeout(checkStatus, preflightWasSyncing ? SYNC_POLL_ACTIVE_MS : SYNC_POLL_IDLE_MS);
+        }
       } else {
         await checkStatus();
       }

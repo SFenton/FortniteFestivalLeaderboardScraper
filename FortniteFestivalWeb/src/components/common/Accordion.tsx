@@ -3,6 +3,7 @@ import { Size } from '@festival/theme';
 import { useState } from 'react';
 import { IoChevronDown } from 'react-icons/io5';
 import { modalStyles as ms } from '../modals/modalStyles';
+import PressableButton from './PressableButton';
 
 export interface AccordionProps {
   title: string;
@@ -16,14 +17,14 @@ export function Accordion({ title, hint, icon, defaultOpen = false, children }: 
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
-      <button style={ms.accordionHeader} onClick={() => setOpen(o => !o)}>
+      <PressableButton style={ms.accordionHeader} onPress={() => setOpen(o => !o)}>
         {icon && <span style={ms.accordionIcon}>{icon}</span>}
         <div style={ms.accordionTitleGroup}>
           <span style={ms.accordionTitle}>{title}</span>
           {hint && <span style={ms.accordionHint}>{hint}</span>}
         </div>
         <IoChevronDown style={{ ...ms.accordionChevron, transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }} size={Size.iconChevron} />
-      </button>
+      </PressableButton>
       <div style={{ ...ms.accordionBodyWrap, gridTemplateRows: open ? '1fr' : '0fr' }}>
         <div style={ms.accordionBodyInner}>{children}</div>
       </div>

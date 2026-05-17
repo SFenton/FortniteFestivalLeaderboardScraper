@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { ShopSong } from '@festival/core/api/serverTypes';
 import { Colors, Font, Weight, Gap, Radius, Display, Position, Overflow, ObjectFit, Opacity, CssValue, FADE_DURATION, frostedCard } from '@festival/theme';
 import { truncate } from '@festival/theme';
+import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 import anim from '../../../styles/animations.module.css';
 
 interface ShopCardProps {
@@ -18,6 +19,11 @@ export default memo(function ShopCard({ song, leavingTomorrow, staggerDelay }: S
   const href = song.shopUrl ?? `/songs/${song.songId}`;
   const isExternal = !!song.shopUrl;
   const ref = useRef<HTMLAnchorElement>(null);
+  const linkPress = useNavLinkPress<HTMLAnchorElement>({
+    to: href,
+    disabled: isExternal,
+    target: isExternal ? '_blank' : undefined,
+  });
 
   /* v8 ignore start — animation cleanup */
   const handleAnimEnd = useCallback(() => {
@@ -39,9 +45,11 @@ export default memo(function ShopCard({ song, leavingTomorrow, staggerDelay }: S
       ref={ref}
       href={isExternal ? href : `#${href}`}
       {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-      style={{ ...s.card, ...animStyle }}
+      style={{ ...s.card, ...animStyle, ...(linkPress.isPressed ? s.cardPressed : undefined) }}
       className={leavingTomorrow ? anim.shopHighlightRed : undefined}
       onAnimationEnd={handleAnimEnd}
+      data-pressed={linkPress.isPressed ? 'true' : undefined}
+      {...linkPress.linkPressHandlers}
     >
       {song.albumArt ? (
         <img src={song.albumArt} alt="" style={s.art} loading="lazy" />
@@ -73,6 +81,9 @@ function useStyles() {
       overflow: Overflow.hidden,
       textDecoration: CssValue.none,
       color: CssValue.inherit,
+    } as CSSProperties,
+    cardPressed: {
+      transform: 'scale(0.99)',
     } as CSSProperties,
     art: {
       width: CssValue.full,
