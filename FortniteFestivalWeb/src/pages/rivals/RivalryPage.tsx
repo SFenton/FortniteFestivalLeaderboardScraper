@@ -1,9 +1,13 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
+import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
+import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { useSettings } from '../../contexts/SettingsContext';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { useSongLookups } from '../../hooks/data/useSongLookups';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
@@ -13,7 +17,7 @@ import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { IoPerson } from 'react-icons/io5';
-import type { RivalSongComparison } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, type RivalSongComparison } from '@festival/core/api/serverTypes';
 import { STAGGER_INTERVAL, Gap, Layout, IconSize } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import { categorizeRivalSongs } from './helpers/rivalCategories';
@@ -39,6 +43,14 @@ let _cachedRivalrySongs: RivalSongComparison[] = [];
 let _cachedRivalryName: string | null = null;
 let _cachedRivalryKey: string | null = null;
 
+const QUICK_LINK_GLYPH_ICON_SIZE = 20;
+
+type RivalryQuickLink = PageQuickLinkItem;
+
+function rivalrySongQuickLinkId(song: RivalSongComparison, index: number): string {
+  return `${song.songId}:${song.instrument}:${index}`;
+}
+
 export default function RivalryPage() {
   const { t } = useTranslation();
   const { rivalId } = useParams<{ rivalId: string }>();
@@ -50,6 +62,7 @@ export default function RivalryPage() {
   const navigate = useNavigate();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
+  const scrollContainerRef = useScrollContainer();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
 
@@ -130,6 +143,55 @@ export default function RivalryPage() {
   let staggerIdx = 0;
 
   const title = MODE_TITLE_KEYS[mode] ? t(MODE_TITLE_KEYS[mode]) : mode;
+
+  const quickLinkItems = useMemo<RivalryQuickLink[]>(() => {
+    if (!isMobile || phase !== LoadPhase.ContentIn || !category || category.songs.length === 0) return [];
+
+    return category.songs.map((song, index) => {
+      const label = song.title ?? song.songId;
+      const instrumentLabel = serverInstrumentLabel(song.instrument);
+
+      return {
+        id: rivalrySongQuickLinkId(song, index),
+        label,
+        landmarkLabel: `${label} (${instrumentLabel})`,
+        icon: <InstrumentIcon instrument={song.instrument} sig={sigMap.get(song.songId)} size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+      };
+    });
+  }, [category, isMobile, phase, sigMap]);
+
+  const {
+    activeItemId,
+    quickLinksOpen,
+    openQuickLinks,
+    closeQuickLinks,
+    handleQuickLinkSelect,
+    registerSectionRef,
+  } = usePageQuickLinks<RivalryQuickLink>({
+    items: quickLinkItems,
+    scrollContainerRef,
+    isDesktopRailEnabled: false,
+  });
+
+  const handleModalQuickLinkSelect = useCallback((item: RivalryQuickLink) => {
+    closeQuickLinks();
+    handleQuickLinkSelect(item);
+  }, [closeQuickLinks, handleQuickLinkSelect]);
+
+  const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
+    if (!isMobile || phase !== LoadPhase.ContentIn || quickLinkItems.length === 0) return undefined;
+
+    return {
+      title: t('common.quickLinks', 'Quick Links'),
+      items: quickLinkItems,
+      activeItemId,
+      visible: quickLinksOpen,
+      onOpen: openQuickLinks,
+      onClose: closeQuickLinks,
+      onSelect: (item) => handleModalQuickLinkSelect(item as RivalryQuickLink),
+      testIdPrefix: 'rivalry',
+    };
+  }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, isMobile, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
   /* v8 ignore stop */
 
   /* v8 ignore start -- JSX render tree */
@@ -139,6 +201,7 @@ export default function RivalryPage() {
       scrollDeps={[phase]}
       loadPhase={phase}
       containerStyle={styles.container}
+      quickLinks={pageQuickLinks}
       before={<PageHeader title={title} actions={!isMobile && phase === LoadPhase.ContentIn ? (
         <PressableButton style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onPress={() => navigate(Routes.player(rivalId!))}>
           <IoPerson size={IconSize.action} />
@@ -154,21 +217,26 @@ export default function RivalryPage() {
                 <EmptyState fullPage title={t('rivals.detail.noSongs')} style={stagger(200)} onAnimationEnd={clearAnim} />
               ) : (
                 <div style={{ ...styles.songList, paddingTop: Gap.md }}>
-                  {category.songs.map((song) => (
-                    <RivalSongRow
-                      key={`${song.songId}-${song.instrument}`}
-                      song={song}
-                      albumArt={albumArtMap.get(song.songId)}
-                      year={yearMap.get(song.songId)}
-                      sig={sigMap.get(song.songId)}
-                      playerName={player?.displayName}
-                      rivalName={rivalName ?? undefined}
-                      onClick={() => navigate(Routes.songDetail(song.songId))}
-                      standalone
-                      style={stagger((++staggerIdx) * staggerInterval)}
-                      onAnimationEnd={clearAnim}
-                    />
-                  ))}
+                  {category.songs.map((song, index) => {
+                    const quickLinkId = rivalrySongQuickLinkId(song, index);
+
+                    return (
+                      <div key={`${song.songId}-${song.instrument}`} ref={(element) => { registerSectionRef(quickLinkId, element); }}>
+                        <RivalSongRow
+                          song={song}
+                          albumArt={albumArtMap.get(song.songId)}
+                          year={yearMap.get(song.songId)}
+                          sig={sigMap.get(song.songId)}
+                          playerName={player?.displayName}
+                          rivalName={rivalName ?? undefined}
+                          onClick={() => navigate(Routes.songDetail(song.songId))}
+                          standalone
+                          style={stagger((++staggerIdx) * staggerInterval)}
+                          onAnimationEnd={clearAnim}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

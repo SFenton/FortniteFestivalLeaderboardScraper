@@ -1136,25 +1136,29 @@ function AppShell() {
         return currentRivalId ? (
         <MobileFloatingActionButton
           mode="players"
-          actionGroups={withPageQuickLinks(
-            [{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }],
-          )}
-          onPress={() => {}}
+          ariaLabel={pageQuickLinks.hasPageQuickLinks ? getFabQuickLinksActionLabel(t) : undefined}
+          sideActions={[{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }]}
+          directAction={pageQuickLinks.hasPageQuickLinks}
+          onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
         ) : null;
       })()}
       {showMobileFab && RoutePatterns.rivalry.test(location.pathname) && (() => {
         const rivalryIdMatch = location.pathname.match(/^\/rivals\/([^/]+)\/rivalry/);
         const currentRivalId = rivalryIdMatch?.[1];
-        const rivalName = new URLSearchParams(location.search).get('name');
+        const searchParams = new URLSearchParams(location.search);
+        const rivalName = searchParams.get('name');
+        const hasExplicitMode = searchParams.has('mode');
         const profileLabel = rivalName ? t('common.viewNameProfile', { name: rivalName }) : t('common.viewProfile');
+        const showQuickLinksFab = !hasExplicitMode && pageQuickLinks.hasPageQuickLinks;
+
         return currentRivalId ? (
         <MobileFloatingActionButton
           mode="players"
-          actionGroups={withPageQuickLinks(
-            [{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }],
-          )}
-          onPress={() => {}}
+          ariaLabel={showQuickLinksFab ? getFabQuickLinksActionLabel(t) : undefined}
+          sideActions={[{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }]}
+          directAction={showQuickLinksFab}
+          onPress={showQuickLinksFab ? () => pageQuickLinks.openPageQuickLinks() : () => {}}
         />
         ) : null;
       })()}

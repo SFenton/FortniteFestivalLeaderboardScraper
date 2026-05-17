@@ -199,6 +199,12 @@ const mockApi = vi.hoisted(() => {
       above: [{ accountId: 'rival-1', displayName: 'RivalAbove', sharedSongCount: 5, rivalScore: 300, aheadCount: 2, behindCount: 3, avgSignedDelta: 1.5 }],
       below: [{ accountId: 'rival-2', displayName: 'RivalBelow', sharedSongCount: 4, rivalScore: 200, aheadCount: 1, behindCount: 4, avgSignedDelta: -1.2 }],
     }),
+    getRivalDetail: fn().mockResolvedValue({
+      rival: { accountId: 'rival-1', displayName: 'TestRival' },
+      songs: [
+        { songId: 's1', title: 'Test Song', artist: 'Artist A', instrument: 'Solo_Guitar', userRank: 5, rivalRank: 8, userScore: 100000, rivalScore: 98000, rankDelta: 3 },
+      ],
+    }),
     getRivalsAll: fn().mockResolvedValue({ accountId: 'p1', songs: [], combos: [] }),
     getLeaderboardRivals: fn().mockResolvedValue({
       instrument: 'Solo_Guitar',
@@ -1641,6 +1647,70 @@ describe('App — mobile FAB branches', () => {
     expect(await screen.findByRole('dialog', { name: 'Search' })).toBeDefined();
     expect(screen.queryByRole('group', { name: 'Search targets' })).toBeNull();
     expect(screen.getByPlaceholderText('Search players…')).toBeDefined();
+
+    window.location.hash = '';
+  });
+
+  it('opens rival detail quick links directly from the mobile FAB with a View profile side pill', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/rivals/rival-1?name=TestRival';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    }, { timeout: 5000 });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const profileButton = within(sideActions).getByRole('button', { name: "View TestRival's Profile" });
+    expect(within(profileButton).getByText("View TestRival's Profile")).toBeDefined();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
+
+    window.location.hash = '';
+  });
+
+  it('shows only the View profile side pill on rivalry mode routes (no quick-links FAB)', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/rivals/rival-1/rivalry?mode=closest_battles&name=TestRival';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fab-side-actions')).toBeDefined();
+    }, { timeout: 5000 });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const profileButton = within(sideActions).getByRole('button', { name: "View TestRival's Profile" });
+    expect(within(profileButton).getByText("View TestRival's Profile")).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+
+    window.location.hash = '';
+  });
+
+  it('shows rivalry quick-links FAB when mode query is not explicit', async () => {
+    setMobile();
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
+    window.location.hash = '#/rivals/rival-1/rivalry?name=TestRival';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick Links' })).toBeDefined();
+    }, { timeout: 5000 });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const profileButton = within(sideActions).getByRole('button', { name: "View TestRival's Profile" });
+    expect(within(profileButton).getByText("View TestRival's Profile")).toBeDefined();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Quick Links' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeDefined();
 
     window.location.hash = '';
   });

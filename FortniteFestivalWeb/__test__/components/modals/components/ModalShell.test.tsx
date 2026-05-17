@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+import { useState } from 'react';
 import ModalShell from '../../../../src/components/modals/components/ModalShell';
 
 // Mock useIsMobile
@@ -12,6 +13,45 @@ vi.mock('../../../../src/hooks/ui/useVisualViewport', () => ({
   useVisualViewportHeight: () => mockVisualViewportHeight,
   useVisualViewportOffsetTop: () => mockVisualViewportOffsetTop,
 }));
+
+function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as PointerEvent;
+  Object.defineProperties(event, {
+    pointerId: { value: props.pointerId ?? 1 },
+    pointerType: { value: props.pointerType ?? 'touch' },
+    isPrimary: { value: props.isPrimary ?? true },
+    button: { value: props.button ?? 0 },
+    clientX: { value: props.clientX ?? 0 },
+    clientY: { value: props.clientY ?? 0 },
+    timeStamp: { value: props.timeStamp ?? 0 },
+  });
+  fireEvent(target, event);
+  return event;
+}
+
+function dispatchClick(target: Element, props: { clientX?: number; clientY?: number; timeStamp?: number } = {}) {
+  const event = new MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    clientX: props.clientX ?? 0,
+    clientY: props.clientY ?? 0,
+  });
+  Object.defineProperty(event, 'timeStamp', { value: props.timeStamp ?? 0 });
+  fireEvent(target, event);
+  return event;
+}
+
+function ModalRetargetHarness({ onUnderlyingPress }: { onUnderlyingPress: () => void }) {
+  const [visible, setVisible] = useState(true);
+  return (
+    <>
+      <button type="button" onClick={onUnderlyingPress}>Underlying</button>
+      <ModalShell visible={visible} title="Test" onClose={() => setVisible(false)}>
+        <div>Content</div>
+      </ModalShell>
+    </>
+  );
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -152,6 +192,20 @@ describe('ModalShell', () => {
 
     fireEvent.click(closeBtn);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses a compatibility click retargeted beneath a closing modal', () => {
+    const onUnderlyingPress = vi.fn();
+    render(<ModalRetargetHarness onUnderlyingPress={onUnderlyingPress} />);
+    const closeBtn = screen.getByRole('button', { name: /close/i });
+
+    dispatchPointer(closeBtn, 'pointerdown', { clientX: 370, clientY: 120, timeStamp: 10 });
+    dispatchPointer(closeBtn, 'pointerup', { clientX: 370, clientY: 120, timeStamp: 20 });
+
+    const retargetedClick = dispatchClick(screen.getByRole('button', { name: 'Underlying' }), { clientX: 370, clientY: 120, timeStamp: 80 });
+
+    expect(retargetedClick.defaultPrevented).toBe(true);
+    expect(onUnderlyingPress).not.toHaveBeenCalled();
   });
 
   /* ── Transition callbacks ── */

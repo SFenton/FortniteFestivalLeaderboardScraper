@@ -752,6 +752,7 @@
       "hint": "Global leaderboard refresh timing and tracked player sync details.",
       "lastUpdateStart": "Most recent leaderboard update start",
       "lastUpdateComplete": "Last leaderboard update complete",
+      "currentUpdateStart": "Current leaderboard update start",
       "updateStatus": "Leaderboard update status",
       "updateSubStatus": "Leaderboard update step",
       "updateStepPosition": "Leaderboard update pipeline step",

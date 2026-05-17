@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { useState } from 'react';
 import { useCardPressAction, usePressAction } from '../../../src/hooks/ui/usePressAction';
 
 function dispatchPointer(target: Element, type: string, props: Partial<PointerEvent> = {}) {
@@ -17,9 +18,15 @@ function dispatchPointer(target: Element, type: string, props: Partial<PointerEv
   return event;
 }
 
-function dispatchClick(target: Element, timeStamp = 0) {
-  const event = new MouseEvent('click', { bubbles: true, cancelable: true });
-  Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+function dispatchClick(target: Element, timeStampOrProps: number | { clientX?: number; clientY?: number; timeStamp?: number } = 0) {
+  const props = typeof timeStampOrProps === 'number' ? { timeStamp: timeStampOrProps } : timeStampOrProps;
+  const event = new MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    clientX: props.clientX ?? 0,
+    clientY: props.clientY ?? 0,
+  });
+  Object.defineProperty(event, 'timeStamp', { value: props.timeStamp ?? 0 });
   fireEvent(target, event);
   return event;
 }
@@ -41,6 +48,16 @@ function ControlHarness({ onParentPress, onPress }: { onParentPress: () => void;
     <button type="button" data-testid="parent" onClick={onParentPress}>
       <span role="button" tabIndex={0} data-testid="control" {...pressHandlers}>Info</span>
     </button>
+  );
+}
+
+function CardRetargetHarness({ onUnderlyingPress }: { onUnderlyingPress: () => void }) {
+  const [cardOpen, setCardOpen] = useState(true);
+  return (
+    <>
+      <button type="button" data-testid="underlying" onClick={onUnderlyingPress}>Underlying</button>
+      {cardOpen && <CardHarness onPress={() => setCardOpen(false)} />}
+    </>
   );
 }
 
@@ -138,6 +155,21 @@ describe('useCardPressAction', () => {
 
     dispatchClick(card, 30);
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses a compatibility click retargeted under an unmounted card target', () => {
+    const onUnderlyingPress = vi.fn();
+    render(<CardRetargetHarness onUnderlyingPress={onUnderlyingPress} />);
+    const card = screen.getByTestId('card');
+
+    dispatchPointer(card, 'pointerdown', { clientX: 20, clientY: 20, timeStamp: 10 });
+    dispatchPointer(card, 'pointerup', { clientX: 20, clientY: 20, timeStamp: 20 });
+
+    expect(screen.queryByTestId('card')).toBeNull();
+    const syntheticClick = dispatchClick(screen.getByTestId('underlying'), { clientX: 20, clientY: 20, timeStamp: 80 });
+
+    expect(syntheticClick.defaultPrevented).toBe(true);
+    expect(onUnderlyingPress).not.toHaveBeenCalled();
   });
 
   it('supports keyboard activation and prevents Space scroll', () => {

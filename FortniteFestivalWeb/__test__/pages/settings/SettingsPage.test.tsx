@@ -231,7 +231,7 @@ describe('SettingsPage', () => {
     renderSettings();
 
     expect(screen.getByText('Diagnostics')).toBeDefined();
-    const diagnosticsToggle = screen.getByRole('button', { name: /Tap Diagnostics/i });
+    const diagnosticsToggle = screen.getByRole('button', { name: /^Tap Diagnostics\b/i });
     const telemetryToggle = screen.getByRole('button', { name: /Upload Tap Telemetry/i });
 
     expect(telemetryToggle).toBeDisabled();
@@ -244,7 +244,7 @@ describe('SettingsPage', () => {
     fireEvent.click(enabledTelemetryToggle);
     expect(localStorage.getItem('fst.tapTelemetry')).toBe('1');
 
-    fireEvent.click(screen.getByRole('button', { name: /Tap Diagnostics/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Tap Diagnostics\b/i }));
     expect(localStorage.getItem('fst.tapDiagnostics')).toBeNull();
     expect(localStorage.getItem('fst.tapTelemetry')).toBeNull();
   });

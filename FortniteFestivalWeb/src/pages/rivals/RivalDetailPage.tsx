@@ -1,9 +1,12 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
+import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useSettings } from '../../contexts/SettingsContext';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { useSongLookups } from '../../hooks/data/useSongLookups';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
@@ -31,6 +34,12 @@ let _cachedDetailSongs: RivalSongComparison[] = [];
 let _cachedDetailRivalName: string | null = null;
 let _cachedDetailKey: string | null = null;
 
+type RivalDetailQuickLink = PageQuickLinkItem;
+
+function rivalDetailCategoryQuickLinkId(categoryKey: string): string {
+  return `rival-category:${categoryKey}`;
+}
+
 export default function RivalDetailPage() {
   const { t } = useTranslation();
   const { rivalId } = useParams<{ rivalId: string }>();
@@ -39,6 +48,7 @@ export default function RivalDetailPage() {
   const navigate = useNavigate();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
+  const scrollContainerRef = useScrollContainer();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
 
@@ -120,6 +130,52 @@ export default function RivalDetailPage() {
   const PREVIEW_COUNT = 5;
   /* v8 ignore stop */
 
+  const quickLinkItems = useMemo<RivalDetailQuickLink[]>(() => {
+    if (!isMobile || phase !== LoadPhase.ContentIn || categories.length === 0) return [];
+
+    return categories.map((cat) => {
+      const label = t(cat.titleKey);
+      return {
+        id: rivalDetailCategoryQuickLinkId(cat.key),
+        label,
+        landmarkLabel: label,
+      };
+    });
+  }, [categories, isMobile, phase, t]);
+
+  const {
+    activeItemId,
+    quickLinksOpen,
+    openQuickLinks,
+    closeQuickLinks,
+    handleQuickLinkSelect,
+    registerSectionRef,
+  } = usePageQuickLinks<RivalDetailQuickLink>({
+    items: quickLinkItems,
+    scrollContainerRef,
+    isDesktopRailEnabled: false,
+  });
+
+  const handleModalQuickLinkSelect = useCallback((item: RivalDetailQuickLink) => {
+    closeQuickLinks();
+    handleQuickLinkSelect(item);
+  }, [closeQuickLinks, handleQuickLinkSelect]);
+
+  const pageQuickLinks = useMemo<PageQuickLinksConfig | undefined>(() => {
+    if (!isMobile || phase !== LoadPhase.ContentIn || quickLinkItems.length === 0) return undefined;
+
+    return {
+      title: t('common.quickLinks', 'Quick Links'),
+      items: quickLinkItems,
+      activeItemId,
+      visible: quickLinksOpen,
+      onOpen: openQuickLinks,
+      onClose: closeQuickLinks,
+      onSelect: (item) => handleModalQuickLinkSelect(item as RivalDetailQuickLink),
+      testIdPrefix: 'rival-detail',
+    };
+  }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, isMobile, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
+
   const staggerInterval = STAGGER_INTERVAL;
   const displayName = rivalName ?? '\u2026';
   const playerName = player?.displayName ?? 'You';
@@ -130,6 +186,7 @@ export default function RivalDetailPage() {
       scrollDeps={[phase]}
       loadPhase={phase}
       containerStyle={styles.container}
+      quickLinks={pageQuickLinks}
       before={<PageHeader title={`${playerName} vs. ${displayName}`} actions={!isMobile && phase === LoadPhase.ContentIn ? (
         <PressableButton style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onPress={() => navigate(Routes.player(rivalId!))}>
           <IoPerson size={IconSize.action} />
@@ -150,12 +207,13 @@ export default function RivalDetailPage() {
                   const preview = cat.songs.slice(0, PREVIEW_COUNT);
                   const baseDelay = runningDelay;
                   runningDelay += (1 + preview.length) * staggerInterval;
+                  const quickLinkId = rivalDetailCategoryQuickLinkId(cat.key);
                   const navigateToCategory = () =>
                     navigate(Routes.rivalry(rivalId, cat.key, rivalName ?? undefined), {
                       state: { ...rivalComboStateForNavigation(navState, combo), source, instrument: lbInstrument, rankBy: lbRankBy },
                     });
                   return (
-                    <div key={cat.key} style={styles.section}>
+                    <div key={cat.key} style={styles.section} ref={(element) => { registerSectionRef(quickLinkId, element); }}>
                       <CardPressable
                         className={fx.sectionHeaderClickable}
                         style={{ ...styles.sectionHeaderClickable, ...stagger(baseDelay) }}

@@ -165,6 +165,42 @@ function RivalsPageQuickLinksHarness() {
   );
 }
 
+function renderRivalDetailPageWithQuickLinks(route = '/rivals/rival-1?name=TestRival') {
+  return render(
+    <TestProviders route={route} accountId="test-1">
+      <Routes>
+        <Route path="/rivals/:rivalId" element={<RivalDetailPage />} />
+      </Routes>
+      <RivalryPageQuickLinksHarness />
+    </TestProviders>,
+  );
+}
+
+function renderRivalryPageWithQuickLinks(route = '/rivals/rival-1/rivalry?mode=closest_battles&name=TestRival') {
+  return render(
+    <TestProviders route={route} accountId="test-1">
+      <Routes>
+        <Route path="/rivals/:rivalId/rivalry" element={<RivalryPage />} />
+      </Routes>
+      <RivalryPageQuickLinksHarness />
+    </TestProviders>,
+  );
+}
+
+function RivalryPageQuickLinksHarness() {
+  const pageQuickLinks = usePageQuickLinksController();
+
+  if (!pageQuickLinks.hasPageQuickLinks) {
+    return null;
+  }
+
+  return (
+    <button type="button" data-testid="test-open-rivalry-page-quick-links" onClick={() => pageQuickLinks.openPageQuickLinks()}>
+      Open Rivalry Quick Links
+    </button>
+  );
+}
+
 function LocationProbe() {
   const location = useLocation();
   const state = location.state as { comboScope?: string } | null;
@@ -669,6 +705,20 @@ describe('RivalDetailPage', () => {
 
     expect(mockApi.getRivalDetail).not.toHaveBeenCalledWith(accountId, 'Solo_Drums', rivalId);
   });
+
+  it('registers quick links on mobile and opens the rival-detail quick-links modal', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    renderRivalDetailPageWithQuickLinks('/rivals/rival-1?name=TestRival');
+
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    const openQuickLinksButton = await screen.findByTestId('test-open-rivalry-page-quick-links');
+    fireEvent.click(openQuickLinksButton);
+
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeTruthy();
+    expect(screen.getByTestId('rival-detail-quick-links-modal-list')).toBeTruthy();
+  });
 });
 
 /* ── RivalryPage ── */
@@ -692,6 +742,20 @@ describe('RivalryPage', () => {
     await advancePastSpinner();
     await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(container.querySelector('div')).toBeTruthy();
+  });
+
+  it('registers quick links on mobile and opens the rivalry quick-links modal', async () => {
+    setViewportQueries({ mobile: true, wide: false });
+    renderRivalryPageWithQuickLinks('/rivals/rival-1/rivalry?mode=closest_battles&name=TestRival');
+
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    const openQuickLinksButton = await screen.findByTestId('test-open-rivalry-page-quick-links');
+    fireEvent.click(openQuickLinksButton);
+
+    expect(await screen.findByRole('dialog', { name: 'Quick Links' })).toBeTruthy();
+    expect(screen.getByTestId('rivalry-quick-links-modal-list')).toBeTruthy();
   });
 
   it('refetches settings-scoped Find Rival categories when visible instruments change', async () => {
