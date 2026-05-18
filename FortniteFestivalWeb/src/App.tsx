@@ -8,6 +8,7 @@ import { SettingsProvider } from './contexts/SettingsContext';
 import { ShopProvider } from './contexts/ShopContext';
 import { AnimatedBackground } from './components/shell/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPlayer';
+import { useSelectedProfileNameRefresh } from './hooks/data/useSelectedProfileNameRefresh';
 import { usePlayerBandsPrefetch } from './hooks/data/usePlayerBandsPrefetch';
 import type { SelectedProfile } from './hooks/data/useSelectedProfile';
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
@@ -404,6 +405,7 @@ function WideDesktopLayout({
 function AppShell() {
   const { t } = useTranslation();
   const { profile: selectedProfile, player, clearPlayer } = useTrackedPlayer();
+  useSelectedProfileNameRefresh(selectedProfile);
   const { state: { songs } } = useFestival();
   const useEmptyNotificationMock = hasWindowValidationToken(EMPTY_NOTIFICATIONS_VALIDATION_TOKEN);
   const useNotificationMockData = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;

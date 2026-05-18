@@ -430,6 +430,15 @@ export type AccountSearchResponse = {
   results: AccountSearchResult[];
 };
 
+export type AccountNameRefreshResponse = {
+  changed: number;
+  unchanged: number;
+  failed: number;
+  missing: number;
+  names: Record<string, string>;
+  changedAccountIds: string[];
+};
+
 export type ScrapeProgress = {
   isRunning: boolean;
   phase?: string;

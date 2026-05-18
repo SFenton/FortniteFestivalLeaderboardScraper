@@ -37,6 +37,22 @@ describe('api/client', () => {
     });
   });
 
+  describe('refreshAccountNames', () => {
+    it('posts account IDs to the silent refresh endpoint', async () => {
+      const data = { changed: 0, unchanged: 2, failed: 0, missing: 0, names: {}, changedAccountIds: [] };
+      mockFetchOk(data);
+
+      const result = await api.refreshAccountNames(['acct1', 'acct2']);
+
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/account/name-refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accountIds: ['acct1', 'acct2'] }),
+      });
+    });
+  });
+
   describe('getSongs', () => {
     it('fetches songs from /api/songs', async () => {
       const data = { songs: [{ songId: 's1', title: 'Test' }], count: 1, currentSeason: 5 };

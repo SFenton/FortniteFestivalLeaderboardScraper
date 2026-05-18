@@ -4,6 +4,7 @@ import type {
   MemberScoreFilterResponse,
   LeaderboardResponse,
   PlayerResponse,
+  AccountNameRefreshResponse,
   AccountSearchResponse,
   TrackPlayerResponse,
   SyncStatusResponse,
@@ -107,10 +108,11 @@ async function get<T>(path: string, options?: ApiRequestOptions): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function post<T>(path: string): Promise<T> {
+async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: withSelectedProfileHeaders({ 'Content-Type': 'application/json' }),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
     throw new Error(`API ${res.status}: ${res.statusText}`);
@@ -293,6 +295,9 @@ export const api = {
     get<AccountSearchResponse>(
       `/api/account/search?q=${encodeURIComponent(q)}&limit=${limit}`,
     ),
+
+  refreshAccountNames: (accountIds: string[]) =>
+    post<AccountNameRefreshResponse>('/api/account/name-refresh', { accountIds }),
 
   trackPlayer: (accountId: string) =>
     post<TrackPlayerResponse>(`/api/player/${encodeURIComponent(accountId)}/track`).then(normalizeDisplayName),

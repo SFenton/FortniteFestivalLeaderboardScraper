@@ -1,4 +1,6 @@
 using FSTService.Persistence;
+using FSTService.Scraping;
+using Microsoft.AspNetCore.Mvc;
 
 namespace FSTService.Api;
 
@@ -6,6 +8,38 @@ public static partial class ApiEndpoints
 {
     public static void MapAccountEndpoints(this WebApplication app)
     {
+        app.MapPost("/api/account/name-refresh", async (
+            HttpContext httpContext,
+            AccountNameRefreshRequest request,
+            AccountNameRefreshService refreshService,
+            [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService neighborhoodCache,
+            [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache,
+            [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService leaderboardRivalsCache,
+            CancellationToken ct) =>
+        {
+            httpContext.Response.Headers.CacheControl = "no-cache, no-store";
+
+            var accountIds = AccountNameRefreshService.NormalizeAccountIds(request.AccountIds);
+            if (accountIds.Count == 0)
+                return Results.Ok(AccountNameRefreshResult.Empty);
+            if (accountIds.Count > AccountNameRefreshService.MaxAccountIdsPerRequest)
+                return Results.BadRequest(new
+                {
+                    error = $"A maximum of {AccountNameRefreshService.MaxAccountIdsPerRequest} account IDs can be refreshed at once.",
+                });
+
+            var result = await refreshService.RefreshAsync(accountIds, ct);
+            if (result.ChangedAccountIds.Count > 0)
+            {
+                InvalidateAccountNameCaches(result.ChangedAccountIds, playerCache, neighborhoodCache, rivalsCache, leaderboardRivalsCache);
+            }
+
+            return Results.Ok(result);
+        })
+        .WithTags("Account")
+        .RequireRateLimiting("public");
+
         // Check if an account exists by username (used by mobile app before login)
         app.MapGet("/api/account/check", (string username, IMetaDatabase metaDb) =>
         {
@@ -43,4 +77,14 @@ public static partial class ApiEndpoints
         .WithTags("Account")
         .RequireRateLimiting("public");
     }
+
+    private static void InvalidateAccountNameCaches(IReadOnlyCollection<string> accountIds, params ResponseCacheService[] caches)
+    {
+        foreach (var cache in caches)
+        {
+            cache.InvalidateWhere(key => accountIds.Any(accountId => key.Contains(accountId, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
 }
+
+public sealed record AccountNameRefreshRequest(string[]? AccountIds);

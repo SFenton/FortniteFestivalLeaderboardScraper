@@ -246,6 +246,7 @@ const mockApi = vi.hoisted(() => {
       }],
       lastUpdated: '2026-05-12T00:00:00Z',
     }),
+    refreshAccountNames: fn().mockResolvedValue({ changed: 0, unchanged: 1, failed: 0, missing: 0, names: {}, changedAccountIds: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' }),
   };
 });

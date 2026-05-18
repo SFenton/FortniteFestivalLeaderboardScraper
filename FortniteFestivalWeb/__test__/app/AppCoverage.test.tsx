@@ -24,6 +24,7 @@ const mockApi = vi.hoisted(() => {
     getAllLeaderboards: fn().mockResolvedValue({ songId: 's1', instruments: [] }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'p1', stats: [] }),
+    refreshAccountNames: fn().mockResolvedValue({ changed: 0, unchanged: 1, failed: 0, missing: 0, names: {}, changedAccountIds: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' }),
     getRankings: fn().mockResolvedValue({ totalAccounts: 0, entries: [] }),
     getPlayerRanking: fn().mockResolvedValue(null),
@@ -126,6 +127,7 @@ function resetMocks() {
   mockApi.getAllLeaderboards.mockResolvedValue({ songId: 's1', instruments: [] });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'p1', stats: [] });
+  mockApi.refreshAccountNames.mockResolvedValue({ changed: 0, unchanged: 1, failed: 0, missing: 0, names: {}, changedAccountIds: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' });
   mockApi.getRankings.mockResolvedValue({ totalAccounts: 0, entries: [] });
   mockApi.getPlayerRanking.mockResolvedValue(null);

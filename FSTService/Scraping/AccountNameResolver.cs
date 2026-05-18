@@ -20,7 +20,7 @@ public class AccountNameResolver
     private const string AccountBase = "https://account-public-service-prod.ol.epicgames.com";
 
     /// <summary>Epic's bulk lookup supports up to 100 account IDs per request.</summary>
-    private const int BatchSize = 100;
+    public const int BatchSize = 100;
 
     private readonly HttpClient _http;
     private readonly ResilientHttpExecutor _executor;
@@ -96,7 +96,7 @@ public class AccountNameResolver
             await semaphore.WaitAsync(ct);
             try
             {
-                var resolved = await FetchAccountNamesAsync(batch, ct);
+                var resolved = await FetchAccountNamesBatchAsync(batch, ct);
                 if (resolved is not null)
                 {
                     // Persist immediately so progress survives crashes
@@ -148,6 +148,56 @@ public class AccountNameResolver
         return totalInserted;
     }
 
+    public virtual async Task<AccountNameLookupResult> LookupAccountNamesAsync(
+        IEnumerable<string> accountIds,
+        int maxConcurrency = 1,
+        CancellationToken ct = default)
+    {
+        var requestedIds = accountIds
+            .Select(id => id.Trim())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (requestedIds.Length == 0)
+            return new AccountNameLookupResult(new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase), 0, 0, 0);
+
+        var batches = requestedIds.Chunk(BatchSize).ToList();
+        var semaphore = new SemaphoreSlim(Math.Max(1, maxConcurrency), Math.Max(1, maxConcurrency));
+        var resolved = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var resolvedLock = new object();
+        var failedAccountCount = 0;
+
+        var tasks = batches.Select(async batch =>
+        {
+            await semaphore.WaitAsync(ct);
+            try
+            {
+                var batchResult = await FetchAccountNamesBatchAsync(batch, ct);
+                if (batchResult is null)
+                {
+                    Interlocked.Add(ref failedAccountCount, batch.Length);
+                    return;
+                }
+
+                lock (resolvedLock)
+                {
+                    foreach (var (accountId, displayName) in batchResult)
+                        resolved[accountId] = displayName;
+                }
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }).ToList();
+
+        await Task.WhenAll(tasks);
+
+        var missingAccountCount = requestedIds.Length - failedAccountCount - resolved.Count;
+        return new AccountNameLookupResult(resolved, requestedIds.Length, failedAccountCount, Math.Max(0, missingAccountCount));
+    }
+
     /// <summary>
     /// Call Epic's bulk account lookup for a batch of up to 100 account IDs.
     /// Gets a fresh access token from TokenManager on each call (cheap if cached).
@@ -155,7 +205,7 @@ public class AccountNameResolver
     /// On 403, forces a token refresh before retrying.
     /// Returns list of (AccountId, DisplayName) pairs, or null on permanent failure.
     /// </summary>
-    private async Task<List<(string AccountId, string? DisplayName)>?> FetchAccountNamesAsync(
+    private async Task<List<(string AccountId, string? DisplayName)>?> FetchAccountNamesBatchAsync(
         string[] accountIds, CancellationToken ct)
     {
         const int maxRetries = 3;

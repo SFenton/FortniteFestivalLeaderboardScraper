@@ -77,6 +77,18 @@ public sealed class ResponseCacheService : IDisposable
         _cache.TryRemove(key, out _);
     }
 
+    public int InvalidateWhere(Func<string, bool> predicate)
+    {
+        var removed = 0;
+        foreach (var key in _cache.Keys)
+        {
+            if (predicate(key) && _cache.TryRemove(key, out _))
+                removed++;
+        }
+
+        return removed;
+    }
+
     /// <summary>
     /// Invalidates all cached entries.
     /// </summary>

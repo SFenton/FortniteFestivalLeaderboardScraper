@@ -191,6 +191,22 @@ public class AccountNameResolverTests
         Assert.Equal("RateLimitedPlayer", metaDb.Db.GetDisplayName("acct1"));
     }
 
+    [Fact]
+    public async Task LookupAccountNamesAsync_429WithRetryAfter_WaitsAndRetriesWithoutPersisting()
+    {
+        var (resolver, handler, metaDb) = CreateResolver();
+
+        handler.Enqueue429(TimeSpan.FromMilliseconds(50));
+        handler.EnqueueJsonOk("""[{"id":"acct1","displayName":"RateLimitedPlayer"}]""");
+
+        var result = await resolver.LookupAccountNamesAsync(["acct1"]);
+
+        Assert.Equal(1, result.Requested);
+        Assert.Equal(0, result.Failed);
+        Assert.Equal("RateLimitedPlayer", result.Accounts["acct1"]);
+        Assert.Null(metaDb.Db.GetDisplayName("acct1"));
+    }
+
     // ─── HttpRequestException retry path ────────────────
 
     [Fact]
