@@ -4,11 +4,10 @@ using FSTService.Persistence;
 namespace FSTService.Scraping;
 
 /// <summary>
-/// Coordinates cache freezing across all keyed <see cref="ResponseCacheService"/>
-/// instances during scrape passes. During scrape collection, cached entries stay
-/// fresh and cache misses may still read the already-published read models. When
-/// public read models are being updated for publication, misses become cache-only
-/// until precomputed responses are ready and the new scrape is published.
+/// Coordinates cache freshness across all keyed <see cref="ResponseCacheService"/>
+/// instances during scrape passes. Cached entries stay fresh while cache misses
+/// continue through endpoint published-read fallbacks until the new scrape is
+/// fully published.
 /// </summary>
 public sealed class ScrapeLifecycleNotifier
 {
@@ -55,12 +54,12 @@ public sealed class ScrapeLifecycleNotifier
     }
 
     /// <summary>
-    /// Switch the public-read freeze into strict cache-only mode before public
-    /// read models are updated for the next published scrape.
+    /// Marks the public-read freeze as publishing before public read models are
+    /// updated for the next published scrape.
     /// </summary>
     public void ScrapePublishing()
     {
-        _log.LogInformation("Scrape publication starting — public cache misses will use persisted published responses.");
+        _log.LogInformation("Scrape publication starting — public reads will prefer persisted published responses and compute cold misses from stable read models.");
         try
         {
             _metaDb.SetPublicReadFreeze(true, reason: "publish");

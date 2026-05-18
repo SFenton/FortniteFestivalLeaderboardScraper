@@ -25,11 +25,12 @@ public sealed class ResponseCacheService : IDisposable
     /// <summary>
     /// When true, <see cref="Get"/> skips TTL checks and <see cref="Cleanup"/>
     /// skips eviction — all cached entries are treated as fresh.
-    /// Used during scrape passes to prevent partial data from leaking through.
+    /// Used during scrape passes so stable published responses remain fresh while
+    /// cold misses continue through endpoint published-read fallbacks.
     /// </summary>
     public bool IsFrozen => _frozen || (_publicReadGate?.IsFrozen ?? false);
 
-    public bool RequiresCachedReads => _frozen || (_publicReadGate?.RequiresCachedReads ?? false);
+    public bool RequiresCachedReads => _publicReadGate?.RequiresCachedReads ?? false;
 
     /// <summary>Freeze the cache — entries never expire until <see cref="Unfreeze"/> is called.</summary>
     public void Freeze() => _frozen = true;
@@ -86,7 +87,7 @@ public sealed class ResponseCacheService : IDisposable
 
     private void Cleanup()
     {
-        if (_frozen) return;
+        if (IsFrozen) return;
 
         var now = DateTime.UtcNow;
         foreach (var key in _cache.Keys)

@@ -122,8 +122,8 @@ internal static class CacheHelper
         httpContext.Response.Headers.CacheControl = "no-store";
         httpContext.Response.Headers["Retry-After"] = "30";
         return Results.Problem(
-            title: "Leaderboard update in progress",
-            detail: "This response is not cached from the published scrape yet. Retry after the current update is published.",
+            title: "Published data unavailable",
+            detail: "A stable published response is not available for this request yet. Retry shortly.",
             statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 }

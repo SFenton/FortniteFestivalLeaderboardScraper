@@ -51,7 +51,7 @@ public class PublicReadGateTests
     }
 
     [Fact]
-    public void ResponseCache_AllowsCacheMissesDuringScrapeFreezeOnly()
+    public void ResponseCache_AllowsCacheMissesDuringPublicReadFreeze()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
         metaDb.GetPublicReadFreezeState().Returns(new PublicReadFreezeState(true, DateTime.UtcNow, 794, "scrape"));
@@ -66,8 +66,15 @@ public class PublicReadGateTests
         metaDb.GetPublicReadFreezeState().Returns(new PublicReadFreezeState(true, DateTime.UtcNow, 794, "publish"));
         gate.Invalidate();
 
-        Assert.True(cache.RequiresCachedReads);
-        Assert.NotNull(CacheHelper.ServeUnavailableIfFrozen(new DefaultHttpContext(), cache));
+        Assert.True(cache.IsFrozen);
+        Assert.False(cache.RequiresCachedReads);
+        Assert.Null(CacheHelper.ServeUnavailableIfFrozen(new DefaultHttpContext(), cache));
+
+        cache.Freeze();
+
+        Assert.True(cache.IsFrozen);
+        Assert.False(cache.RequiresCachedReads);
+        Assert.Null(CacheHelper.ServeUnavailableIfFrozen(new DefaultHttpContext(), cache));
     }
 
     [Fact]
@@ -139,7 +146,7 @@ public class PublicReadGateTests
     }
 
     [Fact]
-    public async Task PublicReadGateMiddleware_BlocksClassifiedRoutesDuringPublishFreeze()
+    public async Task PublicReadGateMiddleware_AllowsClassifiedRoutesDuringPublishFreeze()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
         metaDb.GetPublicReadFreezeState().Returns(new PublicReadFreezeState(true, DateTime.UtcNow, 794, "publish"));
@@ -148,6 +155,7 @@ public class PublicReadGateTests
         var middleware = new PublicReadGateMiddleware(context =>
         {
             nextCalled = true;
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
             return Task.CompletedTask;
         });
         var context = new DefaultHttpContext();
@@ -157,8 +165,33 @@ public class PublicReadGateTests
 
         await middleware.InvokeAsync(context, gate);
 
-        Assert.False(nextCalled);
-        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+    Assert.True(nextCalled);
+    Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+    Assert.Equal("published", context.Response.Headers["X-FST-Public-Read-Mode"]);
+    Assert.Equal("publish", context.Response.Headers["X-FST-Public-Read-Freeze-Reason"]);
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_AddsPublishedModeHeadersForFrozenApiRoutes()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(new PublicReadFreezeState(true, DateTime.UtcNow, 794, "publish"));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var middleware = new PublicReadGateMiddleware(context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/api/rankings/composite/account-1";
+        context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+        Assert.Equal("published", context.Response.Headers["X-FST-Public-Read-Mode"]);
+        Assert.Equal("publish", context.Response.Headers["X-FST-Public-Read-Freeze-Reason"]);
     }
 
     [Theory]
@@ -268,5 +301,37 @@ public class PublicReadGateTests
         Assert.False(nextCalled);
         Assert.Equal("{\"publishedScrapeId\":793}", await reader.ReadToEndAsync());
         Assert.Equal("hit", context.Response.Headers["X-FST-Public-Cache"]);
+    }
+
+    [Fact]
+    public async Task PublicApiResponseCacheMiddleware_ContinuesOnFrozenCacheMiss()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(new PublicReadFreezeState(true, DateTime.UtcNow, 793, "publish"));
+        metaDb.GetCachedResponse(Arg.Any<string>()).Returns(((byte[] Json, string ETag)?)null);
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicApiResponseCacheMiddleware(async context =>
+        {
+            nextCalled = true;
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync("{\"computed\":true}");
+        }, NullLogger<PublicApiResponseCacheMiddleware>.Instance);
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/rankings/composite/account-1";
+        context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, metaDb, gate);
+
+        context.Response.Body.Position = 0;
+        using var reader = new StreamReader(context.Response.Body, Encoding.UTF8);
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal("miss", context.Response.Headers["X-FST-Public-Cache"]);
+        Assert.Equal("{\"computed\":true}", await reader.ReadToEndAsync());
+        metaDb.DidNotReceive().BulkSetCachedResponses(Arg.Any<IEnumerable<(string Key, byte[] Json, string ETag)>>());
     }
 }

@@ -19,14 +19,9 @@ public sealed class PublicReadGateService
 
     public bool IsFrozen => GetState().IsFrozen;
 
-    public bool RequiresCachedReads
-    {
-        get
-        {
-            var state = GetState();
-            return state.IsFrozen && !string.Equals(state.Reason, "scrape", StringComparison.OrdinalIgnoreCase);
-        }
-    }
+    // Public-read freezes keep cache entries fresh and mark responses as published-mode,
+    // but public GET/export endpoints must remain available on cold cache misses.
+    public bool RequiresCachedReads => false;
 
     public PublicReadFreezeState GetState()
     {
