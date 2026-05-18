@@ -20,6 +20,7 @@ vi.mock('../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
   };
 });
 
+import { Colors, Opacity } from '@festival/theme';
 import SettingsPage from '../../../src/pages/settings/SettingsPage';
 import { stubResizeObserver, stubScrollTo, stubElementDimensions } from '../../helpers/browserStubs';
 
@@ -276,6 +277,11 @@ describe('SettingsPage', () => {
     const licensesLink = screen.getByRole('link', { name: 'Licenses' });
     expect(licensesLink).toHaveAttribute('href', '/settings/licenses');
     expect(screen.getByText('Open source package license details.')).toBeDefined();
+
+    const licensesChevron = licensesLink.querySelector('svg[aria-hidden="true"]');
+    expect(licensesChevron).toHaveAttribute('width', '20');
+    expect(licensesChevron).toHaveAttribute('height', '20');
+    expect(licensesChevron).toHaveStyle({ color: Colors.textPrimary });
   });
 
   it('renders debug diagnostics toggles and persists them for mobile PWA sessions', () => {
@@ -396,7 +402,9 @@ describe('SettingsPage', () => {
     renderSettings();
     expect(screen.getAllByText('Export Data').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('Select a player or band profile to export data.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', true);
+    const exportButton = screen.getByRole('button', { name: 'Export Data' });
+    expect(exportButton).toHaveProperty('disabled', true);
+    expect(exportButton).toHaveStyle({ opacity: String(Opacity.faded) });
   });
 
   it('downloads the selected player export from Settings', async () => {
@@ -436,6 +444,7 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(exportButton).toHaveProperty('disabled', false);
     });
+    expect(exportButton).toHaveStyle({ backgroundColor: Colors.chipSelected });
     fireEvent.click(exportButton);
 
     await waitFor(() => {
@@ -447,7 +456,7 @@ describe('SettingsPage', () => {
     clickSpy.mockRestore();
   });
 
-  it('keeps player export disabled until selected player sync is complete', async () => {
+  it('allows player export before selected player sync is complete', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
 
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
@@ -479,9 +488,9 @@ describe('SettingsPage', () => {
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByText('Data export will be available after sync completes for Tracked Player.')).toBeDefined();
+      expect(screen.getByText('Download an Excel workbook archive with available data for Tracked Player.')).toBeDefined();
     });
-    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', false);
     expect(globalThis.fetch).not.toHaveBeenCalledWith('/api/player/tracked-player-1/export', expect.anything());
   });
 
@@ -542,7 +551,7 @@ describe('SettingsPage', () => {
     clickSpy.mockRestore();
   });
 
-  it('keeps band export disabled until selected band sync is complete', async () => {
+  it('allows band export before selected band sync is complete', async () => {
     localStorage.setItem('fst:selectedProfile', JSON.stringify({
       type: 'band',
       bandId: 'band-1',
@@ -574,9 +583,9 @@ describe('SettingsPage', () => {
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByText('Data export will be available after sync completes for Band Buddies.')).toBeDefined();
+      expect(screen.getByText('Download an Excel workbook archive with available data for Band Buddies.')).toBeDefined();
     });
-    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveProperty('disabled', false);
   });
 
   it('toggles Show Instrument Icons', () => {

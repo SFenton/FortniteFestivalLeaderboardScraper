@@ -1183,6 +1183,68 @@ public sealed class BandCurrentProjectionBuilder
                 combo_id AS entry_combo_id,
                 instrument_combo AS entry_instrument_combo,
                 team_members,
+                                COALESCE((
+                                        SELECT ARRAY_AGG(bms.account_id ORDER BY bms.member_index)
+                                        FROM band_member_stats bms
+                                        WHERE bms.song_id = ChosenEntries.song_id
+                                            AND bms.band_type = ChosenEntries.band_type
+                                            AND bms.team_key = ChosenEntries.team_key
+                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
+                                ), ARRAY[]::TEXT[]) AS member_account_ids,
+                                COALESCE((
+                                        SELECT ARRAY_AGG(COALESCE(bms.instrument_id, -1) ORDER BY bms.member_index)
+                                        FROM band_member_stats bms
+                                        WHERE bms.song_id = ChosenEntries.song_id
+                                            AND bms.band_type = ChosenEntries.band_type
+                                            AND bms.team_key = ChosenEntries.team_key
+                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
+                                ), ARRAY[]::INTEGER[]) AS member_instrument_ids,
+                                COALESCE((
+                                        SELECT ARRAY_AGG(COALESCE(bms.score, -1) ORDER BY bms.member_index)
+                                        FROM band_member_stats bms
+                                        WHERE bms.song_id = ChosenEntries.song_id
+                                            AND bms.band_type = ChosenEntries.band_type
+                                            AND bms.team_key = ChosenEntries.team_key
+                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
+                                ), ARRAY[]::INTEGER[]) AS member_scores,
+                                COALESCE((
+                                        SELECT ARRAY_AGG(COALESCE(bms.accuracy, -1) ORDER BY bms.member_index)
+                                        FROM band_member_stats bms
+                                        WHERE bms.song_id = ChosenEntries.song_id
+                                            AND bms.band_type = ChosenEntries.band_type
+                                            AND bms.team_key = ChosenEntries.team_key
+                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
+                                ), ARRAY[]::INTEGER[]) AS member_accuracies,
+                                COALESCE((
+                                        SELECT ARRAY_AGG(
+                                                CASE
+                                                        WHEN bms.is_full_combo IS TRUE THEN 1
+                                                        WHEN bms.is_full_combo IS FALSE THEN 0
+                                                        ELSE -1
+                                                END
+                                                ORDER BY bms.member_index)
+                                        FROM band_member_stats bms
+                                        WHERE bms.song_id = ChosenEntries.song_id
+                                            AND bms.band_type = ChosenEntries.band_type
+                                            AND bms.team_key = ChosenEntries.team_key
+                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
+                                ), ARRAY[]::INTEGER[]) AS member_full_combos,
+                                COALESCE((
+                                        SELECT ARRAY_AGG(COALESCE(bms.stars, -1) ORDER BY bms.member_index)
+                                        FROM band_member_stats bms
+                                        WHERE bms.song_id = ChosenEntries.song_id
+                                            AND bms.band_type = ChosenEntries.band_type
+                                            AND bms.team_key = ChosenEntries.team_key
+                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
+                                ), ARRAY[]::INTEGER[]) AS member_stars,
+                                COALESCE((
+                                        SELECT ARRAY_AGG(COALESCE(bms.difficulty, -1) ORDER BY bms.member_index)
+                                        FROM band_member_stats bms
+                                        WHERE bms.song_id = ChosenEntries.song_id
+                                            AND bms.band_type = ChosenEntries.band_type
+                                            AND bms.team_key = ChosenEntries.team_key
+                                            AND bms.instrument_combo = ChosenEntries.instrument_combo
+                                ), ARRAY[]::INTEGER[]) AS member_difficulties,
                 score,
                 accuracy,
                 is_full_combo,
@@ -1198,10 +1260,12 @@ public sealed class BandCurrentProjectionBuilder
         ), Inserted AS (
             INSERT INTO current_band_leaderboard_entries
             (song_id, band_type, ranking_scope, scope_combo_id, team_key, entry_combo_id, entry_instrument_combo,
-             team_members, score, accuracy, is_full_combo, stars, difficulty, season, rank, total_entries,
+                  team_members, member_account_ids, member_instrument_ids, member_scores, member_accuracies, member_full_combos,
+                  member_stars, member_difficulties, score, accuracy, is_full_combo, stars, difficulty, season, rank, total_entries,
              percentile, end_time, first_seen_at, last_updated_at, projection_generation, computed_at)
             SELECT song_id, band_type, ranking_scope, scope_combo_id, team_key, entry_combo_id, entry_instrument_combo,
-                   team_members, score, accuracy, is_full_combo, stars, difficulty, season, rank, total_entries,
+                     team_members, member_account_ids, member_instrument_ids, member_scores, member_accuracies, member_full_combos,
+                     member_stars, member_difficulties, score, accuracy, is_full_combo, stars, difficulty, season, rank, total_entries,
                    (rank::DOUBLE PRECISION / NULLIF(total_entries, 0)) * 100.0, end_time, first_seen_at, last_updated_at,
                    @generation, @now
             FROM RankedRows
@@ -1245,6 +1309,13 @@ public sealed class BandCurrentProjectionBuilder
             entry_combo_id         TEXT             NOT NULL DEFAULT '',
             entry_instrument_combo TEXT             NOT NULL DEFAULT '',
             team_members           TEXT[]           NOT NULL,
+            member_account_ids     TEXT[]           NOT NULL DEFAULT ARRAY[]::TEXT[],
+            member_instrument_ids  INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_scores          INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_accuracies      INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_full_combos     INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_stars           INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_difficulties    INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
             score                  INTEGER          NOT NULL,
             accuracy               INTEGER,
             is_full_combo          BOOLEAN,
@@ -1295,6 +1366,15 @@ public sealed class BandCurrentProjectionBuilder
         CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_duets PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Duets');
         CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_trios PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Trios');
         CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_quad  PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Quad');
+
+        ALTER TABLE current_band_leaderboard_entries
+            ADD COLUMN IF NOT EXISTS member_account_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            ADD COLUMN IF NOT EXISTS member_instrument_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_scores INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_accuracies INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_full_combos INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_stars INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_difficulties INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[];
 
         CREATE INDEX IF NOT EXISTS ix_cble_scope_rank
             ON current_band_leaderboard_entries (song_id, band_type, ranking_scope, scope_combo_id, rank);

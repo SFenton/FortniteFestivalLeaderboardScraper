@@ -36,13 +36,13 @@ public sealed class PlayerDataExportService
         _dataSource = dataSource;
     }
 
-    public PlayerDataExportResult BuildPlayerArchive(string accountId, string? timeZoneId = null)
+    public PlayerDataExportResult BuildPlayerArchive(string accountId, string? timeZoneId = null, bool usePublishedSnapshot = false)
     {
         if (string.IsNullOrWhiteSpace(accountId))
             throw new ArgumentException("Account ID is required.", nameof(accountId));
 
         var exportTimeZone = ResolveTimeZone(timeZoneId);
-        var snapshot = LoadExportSnapshot(accountId.Trim());
+        var snapshot = LoadExportSnapshot(accountId.Trim(), usePublishedSnapshot);
         var generatedAt = DateTimeOffset.UtcNow;
         var timestamp = generatedAt.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var playerFilePart = SanitizeFilePart(snapshot.DisplayName ?? accountId);
@@ -52,7 +52,7 @@ public sealed class PlayerDataExportService
         return new PlayerDataExportResult(zipContent, fileName, ContentType);
     }
 
-    public PlayerDataExportResult BuildBandArchive(string bandType, string teamKey, string? timeZoneId = null)
+    public PlayerDataExportResult BuildBandArchive(string bandType, string teamKey, string? timeZoneId = null, bool usePublishedSnapshot = false)
     {
         if (string.IsNullOrWhiteSpace(bandType))
             throw new ArgumentException("Band type is required.", nameof(bandType));
@@ -60,7 +60,7 @@ public sealed class PlayerDataExportService
             throw new ArgumentException("Team key is required.", nameof(teamKey));
 
         var exportTimeZone = ResolveTimeZone(timeZoneId);
-        var snapshot = LoadBandExportSnapshot(bandType.Trim(), teamKey.Trim());
+        var snapshot = LoadBandExportSnapshot(bandType.Trim(), teamKey.Trim(), usePublishedSnapshot);
         var generatedAt = DateTimeOffset.UtcNow;
         var timestamp = generatedAt.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         var bandFilePart = SanitizeFilePart(snapshot.DisplayName ?? "band");
@@ -70,17 +70,20 @@ public sealed class PlayerDataExportService
         return new PlayerDataExportResult(zipContent, fileName, ContentType);
     }
 
-    private PlayerExportSnapshot LoadExportSnapshot(string accountId)
+    private PlayerExportSnapshot LoadExportSnapshot(string accountId, bool usePublishedSnapshot)
     {
         var displayName = _metaDb.GetDisplayName(accountId);
-        var soloScores = _persistence.GetCurrentStatePlayerProfile(accountId)
-            .ToList();
+        var soloScores = usePublishedSnapshot
+            ? LoadPublishedSoloScores(accountId)
+            : _persistence.GetCurrentStatePlayerProfile(accountId).ToList();
         var soloScoreHistory = _metaDb.GetScoreHistory(accountId, int.MaxValue)
             .ToList();
         var soloRankHistory = LoadSoloRankHistory(accountId);
-        var bands = _persistence.GetPlayerBandsList(accountId, "all", page: 1, pageSize: null).Entries;
-        var bandScores = LoadBandScores(accountId);
-        var bandMemberStats = LoadBandMemberStats(accountId);
+        var bands = usePublishedSnapshot
+            ? LoadPublishedPlayerBands(accountId)
+            : _persistence.GetPlayerBandsList(accountId, "all", page: 1, pageSize: null).Entries;
+        var bandScores = usePublishedSnapshot ? LoadPublishedBandScores(accountId: accountId) : LoadBandScores(accountId);
+        var bandMemberStats = usePublishedSnapshot ? LoadPublishedBandMemberStats(accountId: accountId) : LoadBandMemberStats(accountId);
         var bandRankHistory = LoadBandRankHistory(bands);
         var displayNames = _metaDb.GetDisplayNames(
             bands.SelectMany(static band => band.Members.Select(static member => member.AccountId))
@@ -111,14 +114,16 @@ public sealed class PlayerDataExportService
             songs);
     }
 
-    private PlayerExportSnapshot LoadBandExportSnapshot(string bandType, string teamKey)
+    private PlayerExportSnapshot LoadBandExportSnapshot(string bandType, string teamKey, bool usePublishedSnapshot)
     {
         var bandId = BandIdentity.CreateBandId(bandType, teamKey);
-        var band = _persistence.GetBandById(bandId)
-            ?? throw new KeyNotFoundException("Band not found.");
+        var band = usePublishedSnapshot
+            ? LoadPublishedBand(bandType, teamKey)
+            : _persistence.GetBandById(bandId);
+        band ??= CreateBandEntryFromTeamKey(bandType, teamKey);
         var bands = new List<PlayerBandEntryDto> { band };
-        var bandScores = LoadBandScoresForTeam(bandType, teamKey);
-        var bandMemberStats = LoadBandMemberStatsForTeam(bandType, teamKey);
+        var bandScores = usePublishedSnapshot ? LoadPublishedBandScores(bandType: bandType, teamKey: teamKey) : LoadBandScoresForTeam(bandType, teamKey);
+        var bandMemberStats = usePublishedSnapshot ? LoadPublishedBandMemberStats(bandType: bandType, teamKey: teamKey) : LoadBandMemberStatsForTeam(bandType, teamKey);
         var bandRankHistory = LoadBandRankHistory(bands);
         var displayNames = _metaDb.GetDisplayNames(
             bands.SelectMany(static bandEntry => bandEntry.Members.Select(static member => member.AccountId))
@@ -344,6 +349,274 @@ public sealed class PlayerDataExportService
                 GetNullableInt32(reader, 12),
                 GetNullableInt32(reader, 13),
                 GetNullableInt32(reader, 14)));
+        }
+
+        return rows;
+    }
+
+    private List<PlayerScoreDto> LoadPublishedSoloScores(string accountId)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH base_rows AS (
+                SELECT snapshot.song_id, snapshot.instrument, snapshot.account_id, snapshot.score, snapshot.accuracy,
+                       snapshot.is_full_combo, snapshot.stars, snapshot.season, snapshot.difficulty, snapshot.percentile::DOUBLE PRECISION,
+                       snapshot.end_time, snapshot.rank, snapshot.api_rank, 1 AS origin_precedence, 0 AS source_priority
+                FROM leaderboard_entries_snapshot snapshot
+                JOIN leaderboard_snapshot_state state
+                  ON state.song_id = snapshot.song_id
+                 AND state.instrument = snapshot.instrument
+                 AND state.active_snapshot_id = snapshot.snapshot_id
+                 AND state.is_finalized = TRUE
+                WHERE snapshot.account_id = @accountId
+                UNION ALL
+                SELECT overlay.song_id, overlay.instrument, overlay.account_id, overlay.score, overlay.accuracy,
+                       overlay.is_full_combo, overlay.stars, overlay.season, overlay.difficulty, overlay.percentile::DOUBLE PRECISION,
+                       overlay.end_time, overlay.rank, overlay.api_rank, 0 AS origin_precedence, overlay.source_priority
+                FROM leaderboard_entries_overlay overlay
+                WHERE overlay.account_id = @accountId
+            ), resolved_rows AS (
+                SELECT DISTINCT ON (song_id, instrument, account_id)
+                       song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty,
+                       percentile, end_time, rank, api_rank
+                FROM base_rows
+                ORDER BY song_id, instrument, account_id, origin_precedence ASC, source_priority DESC
+            )
+            SELECT song_id, instrument, score, accuracy, is_full_combo, stars, season, difficulty,
+                   percentile, end_time, rank, api_rank
+            FROM resolved_rows
+            ORDER BY instrument, song_id
+            """;
+        cmd.CommandTimeout = 0;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+
+        var rows = new List<PlayerScoreDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new PlayerScoreDto
+            {
+                SongId = reader.GetString(0),
+                Instrument = reader.GetString(1),
+                Score = reader.GetInt32(2),
+                Accuracy = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
+                IsFullCombo = !reader.IsDBNull(4) && reader.GetBoolean(4),
+                Stars = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                Season = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                Difficulty = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
+                Percentile = reader.IsDBNull(8) ? 0 : reader.GetDouble(8),
+                EndTime = reader.IsDBNull(9) ? null : reader.GetString(9),
+                Rank = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
+                ApiRank = reader.IsDBNull(11) ? 0 : reader.GetInt32(11),
+            });
+        }
+
+        return rows;
+    }
+
+    private List<PlayerBandEntryDto> LoadPublishedPlayerBands(string accountId)
+    {
+        var rows = LoadPublishedBandProjectionRows(accountId, bandType: null, teamKey: null);
+        return rows.GroupBy(static row => (row.BandType, row.TeamKey))
+            .Select(group => BuildBandEntryFromPublishedRows(group.Key.BandType, group.Key.TeamKey, group.ToList()))
+            .OrderBy(static band => band.BandType, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static band => band.TeamKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private PlayerBandEntryDto? LoadPublishedBand(string bandType, string teamKey)
+    {
+        var rows = LoadPublishedBandProjectionRows(accountId: null, bandType, teamKey);
+        return rows.Count == 0 ? null : BuildBandEntryFromPublishedRows(bandType, teamKey, rows);
+    }
+
+    private PlayerBandEntryDto BuildBandEntryFromPublishedRows(string bandType, string teamKey, IReadOnlyList<PublishedBandProjectionRow> rows)
+    {
+        var memberIds = rows.SelectMany(static row => row.TeamMembers)
+            .Concat(rows.SelectMany(static row => row.MemberAccountIds))
+            .Where(static accountId => !string.IsNullOrWhiteSpace(accountId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static accountId => accountId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var displayNames = _metaDb.GetDisplayNames(memberIds);
+        var instrumentsByAccount = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in rows)
+        {
+            for (var index = 0; index < row.MemberAccountIds.Length; index++)
+            {
+                var accountId = row.MemberAccountIds[index];
+                var instrumentId = NullableArrayValue(row.MemberInstrumentIds, index);
+                if (instrumentId is null)
+                    continue;
+
+                if (!instrumentsByAccount.TryGetValue(accountId, out var instruments))
+                {
+                    instruments = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                    instrumentsByAccount[accountId] = instruments;
+                }
+
+                var instrument = BandInstrumentMapping.ToLeaderboardType(instrumentId.Value);
+                if (!string.IsNullOrWhiteSpace(instrument))
+                    instruments.Add(instrument);
+            }
+        }
+
+        return new PlayerBandEntryDto
+        {
+            BandId = BandIdentity.CreateBandId(bandType, teamKey),
+            TeamKey = teamKey,
+            BandType = bandType,
+            AppearanceCount = rows.Select(static row => (row.SongId, row.ComboId)).Distinct().Count(),
+            Members = memberIds.Select(accountId => new PlayerBandMemberDto
+            {
+                AccountId = accountId,
+                DisplayName = displayNames.GetValueOrDefault(accountId),
+                Instruments = instrumentsByAccount.TryGetValue(accountId, out var instruments) ? instruments.ToList() : [],
+            }).ToList(),
+        };
+    }
+
+    private PlayerBandEntryDto CreateBandEntryFromTeamKey(string bandType, string teamKey)
+    {
+        var memberIds = teamKey.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var displayNames = _metaDb.GetDisplayNames(memberIds);
+
+        return new PlayerBandEntryDto
+        {
+            BandId = BandIdentity.CreateBandId(bandType, teamKey),
+            TeamKey = teamKey,
+            BandType = bandType,
+            AppearanceCount = 0,
+            Members = memberIds.Select(accountId => new PlayerBandMemberDto
+            {
+                AccountId = accountId,
+                DisplayName = displayNames.GetValueOrDefault(accountId),
+            }).ToList(),
+        };
+    }
+
+    private List<BandScoreExportRow> LoadPublishedBandScores(string? accountId = null, string? bandType = null, string? teamKey = null)
+    {
+        return LoadPublishedBandProjectionRows(accountId, bandType, teamKey)
+            .Select(static row => new BandScoreExportRow(
+                row.SongId,
+                row.BandType,
+                row.TeamKey,
+                row.InstrumentCombo,
+                row.ComboId,
+                row.TeamMembers,
+                row.Score,
+                null,
+                null,
+                null,
+                row.Accuracy,
+                row.IsFullCombo,
+                row.Stars,
+                row.Difficulty,
+                row.Season,
+                row.Rank,
+                row.Percentile,
+                row.EndTime,
+                row.FirstSeenAt.ToString("o")))
+            .ToList();
+    }
+
+    private List<BandMemberStatExportRow> LoadPublishedBandMemberStats(string? accountId = null, string? bandType = null, string? teamKey = null)
+    {
+        var exportRows = new List<BandMemberStatExportRow>();
+        foreach (var row in LoadPublishedBandProjectionRows(accountId, bandType, teamKey))
+        {
+            var memberAccountIds = row.MemberAccountIds.Length > 0 ? row.MemberAccountIds : row.TeamMembers;
+            for (var index = 0; index < memberAccountIds.Length; index++)
+            {
+                var instrumentId = NullableArrayValue(row.MemberInstrumentIds, index);
+                exportRows.Add(new BandMemberStatExportRow(
+                    row.SongId,
+                    row.BandType,
+                    row.TeamKey,
+                    row.InstrumentCombo,
+                    row.ComboId,
+                    index,
+                    memberAccountIds[index],
+                    instrumentId,
+                    instrumentId is null ? null : BandInstrumentMapping.ToLeaderboardType(instrumentId.Value),
+                    NullableArrayValue(row.MemberScores, index),
+                    NullableArrayValue(row.MemberAccuracies, index),
+                    NullableBoolArrayValue(row.MemberFullCombos, index),
+                    NullableArrayValue(row.MemberStars, index),
+                    NullableArrayValue(row.MemberDifficulties, index),
+                    row.Season));
+            }
+        }
+
+        return exportRows;
+    }
+
+    private List<PublishedBandProjectionRow> LoadPublishedBandProjectionRows(string? accountId, string? bandType, string? teamKey)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT ON (cble.song_id, cble.band_type, cble.team_key, cble.entry_instrument_combo)
+                   cble.song_id, cble.band_type, cble.team_key, cble.entry_instrument_combo, cble.entry_combo_id,
+                   cble.team_members, cble.member_account_ids, cble.member_instrument_ids, cble.member_scores,
+                   cble.member_accuracies, cble.member_full_combos, cble.member_stars, cble.member_difficulties,
+                   cble.score, cble.accuracy, cble.is_full_combo, cble.stars, cble.difficulty, cble.season,
+                   cble.rank, cble.percentile, cble.end_time, cble.first_seen_at
+            FROM current_band_leaderboard_entries cble
+            JOIN band_current_projection_scope scope
+              ON scope.song_id = cble.song_id
+             AND scope.band_type = cble.band_type
+             AND scope.ranking_scope = cble.ranking_scope
+             AND scope.scope_combo_id = cble.scope_combo_id
+             AND scope.published_generation = cble.projection_generation
+            WHERE (@accountId IS NULL OR @accountId = ANY(cble.team_members))
+              AND (@bandType IS NULL OR cble.band_type = @bandType)
+              AND (@teamKey IS NULL OR cble.team_key = @teamKey)
+            ORDER BY cble.song_id, cble.band_type, cble.team_key, cble.entry_instrument_combo,
+                     CASE cble.ranking_scope WHEN 'overall' THEN 0 ELSE 1 END,
+                     cble.rank ASC
+            """;
+        cmd.CommandTimeout = 0;
+        cmd.Parameters.Add("accountId", NpgsqlDbType.Text).Value = accountId is null ? DBNull.Value : accountId;
+        cmd.Parameters.Add("bandType", NpgsqlDbType.Text).Value = bandType is null ? DBNull.Value : bandType;
+        cmd.Parameters.Add("teamKey", NpgsqlDbType.Text).Value = teamKey is null ? DBNull.Value : teamKey;
+
+        var rows = new List<PublishedBandProjectionRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var instrumentCombo = reader.GetString(3);
+            var entryComboId = reader.GetString(4);
+            var comboId = string.IsNullOrWhiteSpace(entryComboId) ? BandComboIds.FromEpicRawCombo(instrumentCombo) : entryComboId;
+            rows.Add(new PublishedBandProjectionRow(
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                instrumentCombo,
+                comboId,
+                reader.GetFieldValue<string[]>(5),
+                reader.GetFieldValue<string[]>(6),
+                reader.GetFieldValue<int[]>(7),
+                reader.GetFieldValue<int[]>(8),
+                reader.GetFieldValue<int[]>(9),
+                reader.GetFieldValue<int[]>(10),
+                reader.GetFieldValue<int[]>(11),
+                reader.GetFieldValue<int[]>(12),
+                reader.GetInt32(13),
+                GetNullableInt32(reader, 14),
+                GetNullableBoolean(reader, 15),
+                GetNullableInt32(reader, 16),
+                GetNullableInt32(reader, 17),
+                GetNullableInt32(reader, 18),
+                GetNullableInt32(reader, 19),
+                GetNullableDouble(reader, 20),
+                GetNullableString(reader, 21),
+                reader.GetFieldValue<DateTime>(22)));
         }
 
         return rows;
@@ -1410,6 +1683,19 @@ public sealed class PlayerDataExportService
     private static int? GetNullableInt32(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
     private static double? GetNullableDouble(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetDouble(ordinal);
     private static bool? GetNullableBoolean(NpgsqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetBoolean(ordinal);
+    private static int? NullableArrayValue(IReadOnlyList<int> values, int index) =>
+        index >= 0 && index < values.Count && values[index] >= 0 ? values[index] : null;
+
+    private static bool? NullableBoolArrayValue(IReadOnlyList<int> values, int index) =>
+        index >= 0 && index < values.Count
+            ? values[index] switch
+            {
+                0 => false,
+                1 => true,
+                _ => null,
+            }
+            : null;
+
     private sealed record ExcelIntegerCell(long Value, string NumberFormat);
     private sealed record ExcelNumberCell(double Value, string NumberFormat);
     private sealed record ExcelDateTimeCell(DateTime Value, string NumberFormat);
@@ -1418,6 +1704,30 @@ public sealed class PlayerDataExportService
     private sealed record StarImageAssets(byte[] Gold, byte[] White);
     private sealed record XlsxPackageEntry(string FullName, byte[] Content, DateTimeOffset LastWriteTime);
     private sealed record TeamMemberDisplay(string AccountId, string DisplayName);
+    private sealed record PublishedBandProjectionRow(
+        string SongId,
+        string BandType,
+        string TeamKey,
+        string InstrumentCombo,
+        string ComboId,
+        string[] TeamMembers,
+        string[] MemberAccountIds,
+        int[] MemberInstrumentIds,
+        int[] MemberScores,
+        int[] MemberAccuracies,
+        int[] MemberFullCombos,
+        int[] MemberStars,
+        int[] MemberDifficulties,
+        int Score,
+        int? Accuracy,
+        bool? IsFullCombo,
+        int? Stars,
+        int? Difficulty,
+        int? Season,
+        int? Rank,
+        double? Percentile,
+        string? EndTime,
+        DateTime FirstSeenAt);
 
     private sealed record PlayerExportSnapshot(
         string? AccountId,

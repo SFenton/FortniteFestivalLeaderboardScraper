@@ -11,7 +11,7 @@ public sealed class PublicReadGateMiddleware
 
     public async Task InvokeAsync(HttpContext context, PublicReadGateService gate)
     {
-        if (context.WebSockets.IsWebSocketRequest || !RequiresPublishedData(context.Request) || !gate.IsFrozen)
+        if (context.WebSockets.IsWebSocketRequest || !RequiresPublishedData(context.Request) || !gate.RequiresCachedReads)
         {
             await _next(context);
             return;
@@ -32,7 +32,6 @@ public sealed class PublicReadGateMiddleware
             return false;
 
         return path.EndsWith("/notifications", StringComparison.OrdinalIgnoreCase)
-            || (path.StartsWith("/api/player/", StringComparison.OrdinalIgnoreCase) && path.EndsWith("/export", StringComparison.OrdinalIgnoreCase))
             || path.StartsWith("/api/leaderboard-population", StringComparison.OrdinalIgnoreCase);
     }
 }

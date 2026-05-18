@@ -20,7 +20,7 @@ import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { ActionPill } from '../../components/common/ActionPill';
 import type { ServerInstrumentKey as InstrumentKey, BandSyncStatusResponse, ServiceInfoResponse, SyncStatusResponse } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
+import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, Opacity, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION, QUERY_NARROW_GRID } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
 import { FrostedCard } from '../../components/common/FrostedCard';
@@ -390,27 +390,6 @@ function describeTrackedPlayerRivalsStatus(t: TFunction, syncStatus: SyncStatusR
   }
 }
 
-function isCompleteStatus(status: string | null | undefined): boolean {
-  return status === 'complete';
-}
-
-function isPlayerExportSyncComplete(syncStatus: SyncStatusResponse | null): boolean {
-  if (!syncStatus?.isTracked || syncStatus.pendingRankUpdate) return false;
-
-  const statuses = [
-    syncStatus.backfill?.status,
-    syncStatus.historyRecon?.status,
-    syncStatus.rivals?.status,
-    syncStatus.postScrape?.status,
-  ].filter((status): status is string => !!status);
-
-  return statuses.length > 0 && statuses.every(isCompleteStatus);
-}
-
-function isBandExportSyncComplete(syncStatus: BandSyncStatusResponse | null): boolean {
-  return !!syncStatus?.isTracked && isCompleteStatus(syncStatus.processing?.status);
-}
-
 function estimateTextWidth(text: string, fontSize = Font.md): number {
   return Math.ceil(Array.from(text).length * fontSize * 0.62);
 }
@@ -689,28 +668,12 @@ export default function SettingsPage() {
   const trackedPlayerRivalsStatus = trackedPlayer
     ? describeTrackedPlayerRivalsStatus(t, trackedPlayerSyncStatus, selectedProfileFallback)
     : null;
-  const selectedProfileSyncStatusLoaded = selectedProfile?.type === 'player'
-    ? trackedPlayerSyncStatus !== null
-    : selectedProfile?.type === 'band'
-      ? selectedBandSyncStatus !== null
-      : false;
-  const selectedProfileSyncComplete = selectedProfile?.type === 'player'
-    ? isPlayerExportSyncComplete(trackedPlayerSyncStatus)
-    : selectedProfile?.type === 'band'
-      ? isBandExportSyncComplete(selectedBandSyncStatus)
-      : false;
-  const canExportData = !!selectedProfile && selectedProfileSyncComplete && !isExportingData;
+  const canExportData = !!selectedProfile && !isExportingData;
   const selectedProfileName = selectedProfile?.displayName?.trim()
     || (selectedProfile?.type === 'band' ? t('common.unknownBand') : 'Unknown Player');
   const exportDataDescription = !selectedProfile
     ? t('settings.exportDataNoProfileDescription')
-    : selectedProfileSyncLoadFailed
-      ? t('settings.exportDataSyncStatusFailed', { profile: selectedProfileName })
-      : !selectedProfileSyncStatusLoaded
-        ? t('settings.exportDataSyncStatusLoading', { profile: selectedProfileName })
-        : !selectedProfileSyncComplete
-          ? t('settings.exportDataSyncIncomplete', { profile: selectedProfileName })
-          : t('settings.exportDataDescription', { player: selectedProfileName });
+    : t('settings.exportDataDescription', { player: selectedProfileName });
   const phaseProgressText = serviceInfo
     ? serviceInfo.currentUpdate.status === 'updating'
       ? (formatPercentValue(serviceInfo.currentUpdate.progressPercent) ?? t('settings.serviceInfo.progressEstimating'))
@@ -804,7 +767,7 @@ export default function SettingsPage() {
   );
 
   const handleExportData = useCallback(async () => {
-    if (!selectedProfile || !selectedProfileSyncComplete || isExportingData) return;
+    if (!selectedProfile || isExportingData) return;
 
     setIsExportingData(true);
     setExportDataFailed(false);
@@ -819,7 +782,7 @@ export default function SettingsPage() {
     } finally {
       setIsExportingData(false);
     }
-  }, [isExportingData, selectedProfile, selectedProfileSyncComplete]);
+  }, [isExportingData, selectedProfile]);
 
   const handleToggleTapDiagnostics = useCallback(() => {
     const nextEnabled = !tapDiagnosticsEnabled;
@@ -1306,7 +1269,7 @@ export default function SettingsPage() {
                     flush
                   />
                 </div>
-                <IoChevronForward size={Size.iconAction} aria-hidden="true" style={st.navigationChevron} />
+                <IoChevronForward size={QUICK_LINK_GLYPH_ICON_SIZE} aria-hidden="true" style={st.navigationChevron} />
               </Link>
             </div>
           </FadeInDiv>
@@ -1553,7 +1516,7 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     } as CSSProperties,
     navigationChevron: {
       flexShrink: 0,
-      color: Colors.textMuted,
+      color: Colors.textPrimary,
     } as CSSProperties,
     resetButton: {
       ...btnDanger,
@@ -1581,7 +1544,7 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
       padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
       fontSize: isMobile ? Font.md : Font.sm,
       flexShrink: 0,
-      opacity: 0.55,
+      opacity: Opacity.faded,
       cursor: 'not-allowed',
       textAlign: TextAlign.center,
       ...(isMobile ? { width: CssValue.full } : { width: SETTINGS_ACTION_BUTTON_WIDTH }),

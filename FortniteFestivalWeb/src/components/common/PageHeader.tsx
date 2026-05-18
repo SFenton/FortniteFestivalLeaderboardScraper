@@ -70,7 +70,7 @@ export default function PageHeader({
               title
             )}
             {subtitle ? (
-              <MarqueeText text={subtitle} as="p" style={s.subtitle} />
+              <p style={s.subtitle}>{subtitle}</p>
             ) : reserveSubtitleSpace ? (
               <div style={s.subtitleReserved} aria-hidden="true">{'\u00a0'}</div>
             ) : null}
@@ -113,6 +113,9 @@ function useStyles() {
       fontSize: Font.sm,
       color: Colors.textSubtle,
       marginTop: Gap.xs,
+      marginBottom: Gap.none,
+      whiteSpace: 'normal',
+      overflowWrap: 'anywhere',
     } as CSSProperties,
     subtitleReserved: {
       fontSize: Font.sm,

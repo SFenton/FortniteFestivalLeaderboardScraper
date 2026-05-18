@@ -728,7 +728,7 @@
     "leeway": "Leeway",
     "exportDataButton": "Export Data",
     "exportDataSection": "Export Data",
-    "exportDataDescription": "Download an Excel workbook archive for {{player}}.",
+    "exportDataDescription": "Download an Excel workbook archive with available data for {{player}}.",
     "exportDataNoPlayerDescription": "Select a player profile to export data.",
     "exportDataNoProfileDescription": "Select a player or band profile to export data.",
     "exportDataSyncStatusLoading": "Checking sync status for {{profile}}.",

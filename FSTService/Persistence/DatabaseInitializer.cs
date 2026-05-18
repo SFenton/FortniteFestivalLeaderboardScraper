@@ -1548,6 +1548,10 @@ public static class DatabaseInitializer
             cached_at   TIMESTAMPTZ NOT NULL DEFAULT now()
         );
 
+        -- Export ZIPs are generated on demand and must not be retained after delivery.
+        DROP TABLE IF EXISTS export_archive_cache_staging;
+        DROP TABLE IF EXISTS export_archive_cache;
+
         -- =====================================================================
         -- LEADERBOARD STAGING (chunked scrape entries, merged on finalize)
         -- =====================================================================
@@ -1905,6 +1909,13 @@ public static class DatabaseInitializer
             entry_combo_id        TEXT             NOT NULL DEFAULT '',
             entry_instrument_combo TEXT            NOT NULL DEFAULT '',
             team_members          TEXT[]           NOT NULL,
+            member_account_ids    TEXT[]           NOT NULL DEFAULT ARRAY[]::TEXT[],
+            member_instrument_ids INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_scores         INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_accuracies     INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_full_combos    INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_stars          INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            member_difficulties   INTEGER[]        NOT NULL DEFAULT ARRAY[]::INTEGER[],
             score                 INTEGER          NOT NULL,
             accuracy              INTEGER,
             is_full_combo         BOOLEAN,
@@ -1955,6 +1966,15 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_duets PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Duets');
         CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_trios PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Trios');
         CREATE TABLE IF NOT EXISTS current_band_leaderboard_entries_quad  PARTITION OF current_band_leaderboard_entries FOR VALUES IN ('Band_Quad');
+
+        ALTER TABLE current_band_leaderboard_entries
+            ADD COLUMN IF NOT EXISTS member_account_ids TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            ADD COLUMN IF NOT EXISTS member_instrument_ids INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_scores INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_accuracies INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_full_combos INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_stars INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[],
+            ADD COLUMN IF NOT EXISTS member_difficulties INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[];
 
         CREATE INDEX IF NOT EXISTS ix_cble_scope_rank
             ON current_band_leaderboard_entries (song_id, band_type, ranking_scope, scope_combo_id, rank);

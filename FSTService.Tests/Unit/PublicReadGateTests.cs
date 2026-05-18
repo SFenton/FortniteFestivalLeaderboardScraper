@@ -92,7 +92,8 @@ public class PublicReadGateTests
     [InlineData("/api/player/account/notifications", true)]
     [InlineData("/api/rankings/bands/Band_Duets/team/notifications", true)]
     [InlineData("/api/bands/band-id/notifications", true)]
-    [InlineData("/api/player/account/export", true)]
+    [InlineData("/api/player/account/export", false)]
+    [InlineData("/api/bands/Band_Duets/team/export", false)]
     [InlineData("/api/leaderboard-population", true)]
     [InlineData("/api/rankings/Solo_Guitar", false)]
     [InlineData("/api/leaderboard/song/Solo_Guitar", false)]
@@ -111,6 +112,53 @@ public class PublicReadGateTests
         context.Request.Path = path;
 
         Assert.Equal(expected, PublicReadGateMiddleware.RequiresPublishedData(context.Request));
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_AllowsClassifiedRoutesDuringScrapeFreeze()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(new PublicReadFreezeState(true, DateTime.UtcNow, 794, "scrape"));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(context =>
+        {
+            nextCalled = true;
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/api/leaderboard-population";
+        context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.True(nextCalled);
+        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PublicReadGateMiddleware_BlocksClassifiedRoutesDuringPublishFreeze()
+    {
+        var metaDb = Substitute.For<IMetaDatabase>();
+        metaDb.GetPublicReadFreezeState().Returns(new PublicReadFreezeState(true, DateTime.UtcNow, 794, "publish"));
+        var gate = new PublicReadGateService(metaDb, NullLogger<PublicReadGateService>.Instance);
+        var nextCalled = false;
+        var middleware = new PublicReadGateMiddleware(context =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var context = new DefaultHttpContext();
+        context.Request.Path = "/api/leaderboard-population";
+        context.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context, gate);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
     }
 
     [Theory]
