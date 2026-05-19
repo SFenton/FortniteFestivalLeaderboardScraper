@@ -278,6 +278,10 @@ function expectRefreshRequest(accountIds: string[]) {
   }));
 }
 
+function expectBefore(first: Element, second: Element) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+}
+
 describe('SettingsPage', () => {
   it('renders content on mobile', () => {
     setViewportQueries({ mobile: true, wide: false });
@@ -391,6 +395,7 @@ describe('SettingsPage', () => {
     expect(within(list).getByTestId('settings-quick-link-service-info')).toHaveTextContent('Service Info');
     expect(within(list).getByTestId('settings-quick-link-first-run')).toHaveTextContent('First Run Guides');
     expect(within(list).getByTestId('settings-quick-link-licenses')).toHaveTextContent('Licenses');
+    expect(within(list).queryByTestId('settings-quick-link-refresh-profile-name')).toBeNull();
     expect(within(list).getByTestId('settings-quick-link-export')).toHaveTextContent('Export Data');
     expect(within(list).getByTestId('settings-quick-link-reset')).toHaveTextContent('Reset Settings');
 
@@ -401,6 +406,42 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Quick Links' })).toBeNull();
     });
+  });
+
+  it('adds the Refresh Profile Name quick link for a selected player profile in section order', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
+
+    renderSettings({ withQuickLinksHarness: true });
+    fireEvent.click(await screen.findByTestId('test-open-page-quick-links'));
+
+    const list = await screen.findByTestId('settings-quick-links-modal-list');
+    const licenses = within(list).getByTestId('settings-quick-link-licenses');
+    const refresh = within(list).getByTestId('settings-quick-link-refresh-profile-name');
+    const exportLink = within(list).getByTestId('settings-quick-link-export');
+
+    expect(refresh).toHaveTextContent('Refresh Profile Name');
+    expectBefore(licenses, refresh);
+    expectBefore(refresh, exportLink);
+  });
+
+  it('uses the plural Refresh Profile Names quick link for a selected band profile', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'member-a:member-b',
+      displayName: 'Member A + Member B',
+      members: [
+        { accountId: 'member-a', displayName: 'Member A' },
+        { accountId: 'member-b', displayName: 'Member B' },
+      ],
+    }));
+
+    renderSettings({ withQuickLinksHarness: true });
+    fireEvent.click(await screen.findByTestId('test-open-page-quick-links'));
+
+    const list = await screen.findByTestId('settings-quick-links-modal-list');
+    expect(within(list).getByTestId('settings-quick-link-refresh-profile-name')).toHaveTextContent('Refresh Profile Names');
   });
 
   it('renders Show Instruments section with all instruments', () => {

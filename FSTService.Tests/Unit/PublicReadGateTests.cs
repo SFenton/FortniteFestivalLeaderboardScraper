@@ -221,6 +221,20 @@ public class PublicReadGateTests
         Assert.Equal(expected, PublicApiResponseCachePolicy.IsCacheableRequest(context.Request, out _));
     }
 
+    [Theory]
+    [InlineData("?accountId=selectedAcct")]
+    [InlineData("?teamKey=selectedAcct%3AselectedMate")]
+    [InlineData("?selectedBandType=Band_Duets&selectedTeamKey=selectedAcct%3AselectedMate")]
+    public void PublicApiResponseCachePolicy_DoesNotCacheSelectedOverlayQueries(string query)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Path = "/api/leaderboard/song_1/bands/all";
+        context.Request.QueryString = new QueryString(query);
+
+        Assert.False(PublicApiResponseCachePolicy.IsCacheableRequest(context.Request, out _));
+    }
+
     [Fact]
     public void PublicApiResponseCachePolicy_KeyVariesBySelectedProfileHeaders()
     {

@@ -68,7 +68,7 @@ public static partial class ApiEndpoints
             }
             else
             {
-                if (lbCache.IsFrozen && normalizedComboId is null)
+                if (lbCache.RequiresCachedReads && lbCache.IsFrozen && normalizedComboId is null)
                 {
                     var cachedResult = serveGenericCachedPreview();
                     if (cachedResult is not null) return cachedResult;

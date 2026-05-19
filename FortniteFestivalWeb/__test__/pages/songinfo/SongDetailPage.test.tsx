@@ -7,8 +7,10 @@ import { songInfoSlides } from '../../../src/pages/songinfo/firstRun';
 import { contentHash } from '../../../src/firstRun/types';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
+import { songDetailCache } from '../../../src/api/pageCache';
 import type { PlayerBandType } from '@festival/core/api/serverTypes';
 import { SONG_BAND_TYPES } from '../../../src/utils/songBandLeaderboards';
+import { LEGACY_TRACKED_PLAYER_STORAGE_KEY, SELECTED_PROFILE_STORAGE_KEY } from '../../../src/state/selectedProfile';
 
 const mockApi = vi.hoisted(() => {
   const fn = vi.fn;
@@ -200,6 +202,11 @@ function writeSelectedBandProfile(bandType: PlayerBandType) {
   }));
 }
 
+function writeSelectedPlayerProfile(accountId: string, displayName: string) {
+  localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({ type: 'player', accountId, displayName }));
+  localStorage.setItem(LEGACY_TRACKED_PLAYER_STORAGE_KEY, JSON.stringify({ accountId, displayName }));
+}
+
 function expectBefore(first: Element, second: Element) {
   expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
@@ -225,6 +232,41 @@ const songBandLabels: Record<PlayerBandType, string> = {
   Band_Trios: 'Trios',
   Band_Quad: 'Quads',
 };
+
+function createSongBandEntryForTest(bandType: PlayerBandType, rank: number) {
+  const memberCount = bandType === 'Band_Quad' ? 4 : bandType === 'Band_Trios' ? 3 : 2;
+  const members = Array.from({ length: memberCount }, (_, memberIndex) => ({
+    accountId: `${bandType}-member-${rank}-${memberIndex}`,
+    displayName: `${songBandLabels[bandType]} Member ${memberIndex + 1}`,
+    instruments: ['Solo_Guitar'],
+    score: 100_000 - memberIndex,
+  }));
+
+  return {
+    bandId: `${bandType}-${rank}`,
+    bandType,
+    teamKey: members.map(member => member.accountId).join(':'),
+    comboId: members.map(() => 'Solo_Guitar').join('+'),
+    score: 1_000_000 - rank,
+    rank,
+    members,
+  };
+}
+
+function createAllSongBandResponseForTest(songId = 'song-1', includeSelectedPlayerEntries = false) {
+  return {
+    songId,
+    bands: SONG_BAND_TYPES.map((bandType, bandIndex) => ({
+      bandType,
+      count: 1,
+      totalEntries: 10 + bandIndex,
+      localEntries: 10 + bandIndex,
+      entries: [createSongBandEntryForTest(bandType, bandIndex + 1)],
+      selectedPlayerEntry: includeSelectedPlayerEntries ? createSongBandEntryForTest(bandType, bandIndex + 21) : null,
+      selectedBandEntry: null,
+    })),
+  };
+}
 
 function SettingsLeewayButton({ leeway }: { leeway: number; }) {
   const { updateSettings } = useSettings();
@@ -406,6 +448,82 @@ describe('SongDetailPage', () => {
         'Solo_Guitar+Solo_Bass',
       );
     });
+  });
+
+  it('requests global song-band previews with the selected solo account overlay', async () => {
+    writeSelectedPlayerProfile('test-player-1', 'TestPlayer');
+
+    renderSongDetail('/songs/song-1', 'test-player-1');
+
+    await waitFor(() => {
+      expect(mockApi.getAllSongBandLeaderboards).toHaveBeenCalledWith(
+        'song-1',
+        10,
+        'test-player-1',
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+  });
+
+  it('renders populated Duos, Trios, and Quads previews for a selected solo profile', async () => {
+    writeSelectedPlayerProfile('test-player-1', 'TestPlayer');
+    mockApi.getAllSongBandLeaderboards.mockResolvedValue(createAllSongBandResponseForTest());
+
+    renderSongDetail('/songs/song-1', 'test-player-1');
+
+    for (const bandType of SONG_BAND_TYPES) {
+      const list = await screen.findByTestId(`song-band-preview-list-${bandType}`);
+      expect(within(list).getByTestId(`song-band-entry-${bandType}-0`)).toBeDefined();
+      expect(screen.queryByTestId(`song-band-empty-${bandType}`)).toBeNull();
+    }
+  });
+
+  it('renders selected player band rows alongside global previews for a selected solo profile', async () => {
+    writeSelectedPlayerProfile('test-player-1', 'TestPlayer');
+    mockApi.getAllSongBandLeaderboards.mockResolvedValue(createAllSongBandResponseForTest('song-1', true));
+
+    renderSongDetail('/songs/song-1', 'test-player-1');
+
+    for (const bandType of SONG_BAND_TYPES) {
+      const list = await screen.findByTestId(`song-band-preview-list-${bandType}`);
+      expect(within(list).getByTestId(`song-band-entry-${bandType}-0`)).toBeDefined();
+      const selectedRow = within(list).getByTestId(`song-band-selected-entry-${bandType}`);
+      expect(selectedRow).toHaveStyle({ backgroundColor: 'rgba(75, 15, 99, 0.75)' });
+      expect(selectedRow).toHaveTextContent(`#${SONG_BAND_TYPES.indexOf(bandType) + 21}`);
+    }
+  });
+
+  it('refetches selected player band rows when a generic preview was cached first', async () => {
+    mockApi.getAllSongBandLeaderboards
+      .mockResolvedValueOnce(createAllSongBandResponseForTest('song-1', false))
+      .mockResolvedValueOnce(createAllSongBandResponseForTest('song-1', true));
+
+    const firstRender = renderSongDetail('/songs/song-1');
+
+    await screen.findByTestId('song-band-preview-list-Band_Duets');
+    await waitFor(() => {
+      expect(songDetailCache.get('song-1')?.bandSelectionKey).toBeUndefined();
+    });
+    firstRender.unmount();
+
+    writeSelectedPlayerProfile('test-player-1', 'TestPlayer');
+
+    renderSongDetail('/songs/song-1', 'test-player-1');
+
+    await waitFor(() => {
+      expect(mockApi.getAllSongBandLeaderboards).toHaveBeenCalledWith(
+        'song-1',
+        10,
+        'test-player-1',
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+    const list = await screen.findByTestId('song-band-preview-list-Band_Duets');
+    expect(within(list).getByTestId('song-band-selected-entry-Band_Duets')).toHaveStyle({ backgroundColor: 'rgba(75, 15, 99, 0.75)' });
   });
 
   it('renders song band previews after solo instruments when no band is selected', async () => {
@@ -702,7 +820,7 @@ describe('SongDetailPage', () => {
   });
 
   it('keeps the score history chart mounted long enough to collapse on deselect', async () => {
-    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
+    writeSelectedPlayerProfile('test-player-1', 'TestPlayer');
     renderSongDetail('/songs/song-1', 'test-player-1');
 
     await waitFor(() => {
@@ -710,7 +828,9 @@ describe('SongDetailPage', () => {
     });
 
     act(() => {
-      localStorage.removeItem('fst:trackedPlayer');
+      localStorage.removeItem(SELECTED_PROFILE_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_TRACKED_PLAYER_STORAGE_KEY);
+      window.dispatchEvent(new Event('fst:selectedProfileChanged'));
       window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
     });
 

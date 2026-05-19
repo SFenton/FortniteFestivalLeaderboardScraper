@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { LoadPhase } from '@festival/core';
 import type { ServerInstrumentKey, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
-import { Display, Gap, flexColumn } from '@festival/theme';
+import { Border, Colors, Display, Gap, border, flexColumn } from '@festival/theme';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';
 import EmptyState from '../../../components/common/EmptyState';
@@ -57,6 +57,7 @@ export default function SongBandLeaderboardPage() {
   const bandType = coerceSongBandType(rawBandType);
   const { profile } = useSelectedProfile();
   const selectedBand = profile?.type === 'band' ? profile : null;
+  const selectedAccountId = profile?.type === 'player' ? profile.accountId : undefined;
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const pageBandComboState = useMemo(
     () => resolvePageBandComboState(bandType, searchParams, appliedBandComboFilter),
@@ -64,6 +65,7 @@ export default function SongBandLeaderboardPage() {
   );
   const activeComboId = pageBandComboState.comboId;
   const selectedBandTeamKey = profile?.type === 'band' && profile.bandType === bandType ? profile.teamKey : undefined;
+  const selectedProfileKey = selectedAccountId ?? selectedBandTeamKey ?? 'none';
   const selectedBandHasGlobalFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const selectedBandMatchesView = selectedBand?.bandType === bandType;
   const bandLabel = bandType ? songBandTypeLabel(bandType, t) : '';
@@ -118,8 +120,8 @@ export default function SongBandLeaderboardPage() {
   }, [activeComboId, activeComboInstruments, comboFilterLabel, openComboModal, registerLeaderboardActions]);
 
   const leaderboardQuery = useQuery({
-    queryKey: queryKeys.songBandLeaderboard(songId, bandType ?? 'unknown', PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, selectedBandTeamKey, activeComboId),
-    queryFn: () => api.getSongBandLeaderboard(songId, bandType!, PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, selectedBandTeamKey, activeComboId),
+    queryKey: queryKeys.songBandLeaderboard(songId, bandType ?? 'unknown', PAGE_SIZE, (page - 1) * PAGE_SIZE, selectedAccountId, selectedBandTeamKey, activeComboId),
+    queryFn: () => api.getSongBandLeaderboard(songId, bandType!, PAGE_SIZE, (page - 1) * PAGE_SIZE, selectedAccountId, selectedBandTeamKey, activeComboId),
     enabled: !!songId && !!bandType,
     staleTime: SONG_BAND_LEADERBOARD_STALE_TIME_MS,
   });
@@ -128,28 +130,31 @@ export default function SongBandLeaderboardPage() {
   const loading = leaderboardQuery.isFetching && !data;
   const entries = data?.entries ?? [];
   const selectedBandEntry = data?.selectedBandEntry ?? null;
-  const hasSelectedBandFooter = !!selectedBandEntry;
-  const widthEntries = hasSelectedBandFooter && selectedBandEntry ? [...entries, selectedBandEntry] : entries;
+  const selectedPlayerEntry = data?.selectedPlayerEntry ?? null;
+  const selectedEntry = selectedBandEntry ?? selectedPlayerEntry;
+  const hasSelectedFooter = !!selectedEntry;
+  const widthEntries = hasSelectedFooter && selectedEntry ? [...entries, selectedEntry] : entries;
   const scoreWidth = useMemo(() => getSongBandScoreWidth(widthEntries), [widthEntries]);
   const memberScoreWidth = useMemo(() => getSongBandMemberScoreWidth(widthEntries), [widthEntries]);
   const showMemberStars = useMemo(() => hasSongBandMemberStars(widthEntries), [widthEntries]);
   const showMemberAccuracy = useMemo(() => hasSongBandMemberAccuracy(widthEntries), [widthEntries]);
-  const selectedBandFooterName = useMemo(() => {
-    if (!selectedBandEntry) return undefined;
-    return formatBandTeamName(selectedBandEntry.members, profile?.type === 'band' ? profile.displayName : selectedBandEntry.teamKey);
-  }, [profile, selectedBandEntry]);
-  const selectedBandFooterRoute = useMemo(() => {
-    if (!selectedBandEntry || !selectedBandFooterName) return undefined;
-    return getBandProfileRoute(selectedBandEntry.bandId, {
-      bandType: selectedBandEntry.bandType,
-      teamKey: selectedBandEntry.teamKey,
-      names: selectedBandFooterName,
+  const selectedFooterName = useMemo(() => {
+    if (!selectedEntry) return undefined;
+    return formatBandTeamName(selectedEntry.members, profile?.type === 'band' ? profile.displayName : selectedEntry.teamKey);
+  }, [profile, selectedEntry]);
+  const selectedFooterRoute = useMemo(() => {
+    if (!selectedEntry || !selectedFooterName) return undefined;
+    return getBandProfileRoute(selectedEntry.bandId, {
+      accountId: selectedAccountId,
+      bandType: selectedEntry.bandType,
+      teamKey: selectedEntry.teamKey,
+      names: selectedFooterName,
     }, profile);
-  }, [profile, selectedBandEntry, selectedBandFooterName]);
-  const selectedBandFooterRankWidth = useMemo(() => {
-    if (!selectedBandEntry) return undefined;
-    return computeRankWidth([selectedBandEntry.rank]);
-  }, [selectedBandEntry]);
+  }, [profile, selectedAccountId, selectedEntry, selectedFooterName]);
+  const selectedFooterRankWidth = useMemo(() => {
+    if (!selectedEntry) return undefined;
+    return computeRankWidth([selectedEntry.rank]);
+  }, [selectedEntry]);
   const totalEntries = data?.totalEntries ?? 0;
   const localEntries = data?.localEntries ?? totalEntries;
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
@@ -169,9 +174,9 @@ export default function SongBandLeaderboardPage() {
     }
   }, [data, goToPage, localEntries, page, totalPages]);
 
-  const { phase, shouldStagger } = usePageTransition(`songBandLeaderboard:${songId}:${bandType}:${activeComboId ?? 'all'}:${selectedBandTeamKey ?? 'none'}:${page}`, !loading);
+  const { phase, shouldStagger } = usePageTransition(`songBandLeaderboard:${songId}:${bandType}:${activeComboId ?? 'all'}:${selectedProfileKey}:${page}`, !loading);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
-  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter: hasSelectedBandFooter });
+  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter: hasSelectedFooter });
   const styles = useStyles();
 
   if (!songId || !bandType) {
@@ -246,6 +251,7 @@ export default function SongBandLeaderboardPage() {
                   showMemberStars={showMemberStars}
                   showMemberAccuracy={showMemberAccuracy}
                   activeFilterInstruments={activeComboInstruments}
+                  isSelected={!!selectedEntry && isSameSongBandEntry(entry, selectedEntry)}
                   style={stagger(index)}
                   onAnimationEnd={clearAnim}
                 />
@@ -261,29 +267,29 @@ export default function SongBandLeaderboardPage() {
               isMobile={isMobile}
               hasFab={hasFab}
               reserveFabSpace={reserveFabSpace}
-              hasPlayerFooter={hasSelectedBandFooter}
+              hasPlayerFooter={hasSelectedFooter}
             />
           )}
-          {hasSelectedBandFooter && selectedBandEntry && selectedBandFooterName && selectedBandFooterRoute && (
+          {hasSelectedFooter && selectedEntry && selectedFooterName && selectedFooterRoute && (
             <FixedLeaderboardPlayerFooter hasFab={hasFab} reserveFabSpace={reserveFabSpace}>
               {({ className, style }) => (
-                <Link to={selectedBandFooterRoute} className={className} style={style}>
+                <Link to={selectedFooterRoute} className={className} style={style}>
                   <LeaderboardEntry
-                    rank={selectedBandEntry.rank}
-                    displayName={selectedBandFooterName}
-                    score={selectedBandEntry.score}
-                    season={selectedBandEntry.season}
-                    accuracy={selectedBandEntry.accuracy}
-                    isFullCombo={!!selectedBandEntry.isFullCombo}
-                    stars={selectedBandEntry.stars}
-                    difficulty={normalizeSoloDifficulty(selectedBandEntry.difficulty)}
+                    rank={selectedEntry.rank}
+                    displayName={selectedFooterName}
+                    score={selectedEntry.score}
+                    season={selectedEntry.season}
+                    accuracy={selectedEntry.accuracy}
+                    isFullCombo={!!selectedEntry.isFullCombo}
+                    stars={selectedEntry.stars}
+                    difficulty={normalizeSoloDifficulty(selectedEntry.difficulty)}
                     showDifficulty={!isMobile}
                     showSeason={!isMobile}
                     showAccuracy={!isMobile}
                     showStars={!isMobile}
                     starsAfterScore
                     scoreWidth={scoreWidth}
-                    rankWidth={selectedBandFooterRankWidth}
+                    rankWidth={selectedFooterRankWidth}
                     isPlayer
                   />
                 </Link>
@@ -308,6 +314,7 @@ function SongBandLeaderboardRow({
   showMemberStars,
   showMemberAccuracy,
   activeFilterInstruments,
+  isSelected,
   style,
   onAnimationEnd,
 }: {
@@ -318,18 +325,21 @@ function SongBandLeaderboardRow({
   showMemberStars: boolean;
   showMemberAccuracy: boolean;
   activeFilterInstruments?: readonly ServerInstrumentKey[];
+  isSelected?: boolean;
   style?: CSSProperties;
   onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void;
 }) {
   const { t } = useTranslation();
+  const styles = useStyles();
   const playerBandEntry = songBandToPlayerBandEntry(entry, activeFilterInstruments);
   const names = formatPlayerBandNames(playerBandEntry);
 
   return (
     <PlayerBandCard
+      testId={`song-band-leaderboard-entry-${entry.rank}`}
       entry={playerBandEntry}
       rank={entry.rank}
-      style={style}
+      style={{ ...(isSelected ? styles.selectedCard : undefined), ...style }}
       onAnimationEnd={onAnimationEnd}
       ariaLabel={names ? t('bandList.viewBand', { names }) : t('band.title')}
       renderMemberMetadata={(member) => <SongBandMemberMetadata member={member} scoreWidth={memberScoreWidth} showDifficulty={!isMobile} showSeason={!isMobile} showStars={!isMobile && showMemberStars} showAccuracy={!isMobile && showMemberAccuracy} />}
@@ -345,6 +355,10 @@ function SongBandLeaderboardRow({
   );
 }
 
+function isSameSongBandEntry(a: SongBandLeaderboardEntry, b: SongBandLeaderboardEntry): boolean {
+  return (!!a.bandId && a.bandId === b.bandId) || (a.bandType === b.bandType && a.teamKey === b.teamKey);
+}
+
 function useStyles() {
   return useMemo(() => ({
     content: {
@@ -355,6 +369,10 @@ function useStyles() {
       display: Display.flex,
       flexDirection: 'column',
       gap: Gap.md,
+    } as CSSProperties,
+    selectedCard: {
+      backgroundColor: Colors.purpleHighlight,
+      border: border(Border.thin, Colors.purpleHighlightBorder),
     } as CSSProperties,
   }), []);
 }

@@ -46,7 +46,7 @@ import PageHeader from '../../components/common/PageHeader';
 import type { PageQuickLinksConfig } from '../../components/page/PageQuickLinks';
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
-import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoServer, IoSettings, IoSparkles, IoTrash } from 'react-icons/io5';
+import { IoBagHandle, IoChevronForward, IoCompass, IoDocumentText, IoDownload, IoInformationCircle, IoList, IoMusicalNotes, IoPersonCircle, IoServer, IoSettings, IoSparkles, IoTrash } from 'react-icons/io5';
 import { Routes as AppRoutes } from '../../routes';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
@@ -95,7 +95,7 @@ const SERVICE_PHASE_WEIGHTS: Record<(typeof SERVICE_PHASE_ORDER)[number], number
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;
 
- type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'export' | 'reset';
+ type SettingsQuickLinkId = 'app-settings' | 'diagnostics' | 'item-shop' | 'show-instruments' | 'show-metadata' | 'version' | 'service-info' | 'first-run' | 'licenses' | 'refresh-profile-name' | 'export' | 'reset';
 
 type SettingsQuickLink = PageQuickLinkItem & {
   id: SettingsQuickLinkId;
@@ -681,7 +681,8 @@ export default function SettingsPage() {
     () => getSelectedProfileRefreshKey(selectedProfile),
     [selectedProfile],
   );
-  const canRefreshProfileName = !!selectedProfile && selectedProfileRefreshAccountIds.length > 0 && !isRefreshingProfileName;
+  const hasSelectedProfile = selectedProfile != null;
+  const canRefreshProfileName = hasSelectedProfile && selectedProfileRefreshAccountIds.length > 0 && !isRefreshingProfileName;
   const refreshProfileNameLabel = selectedProfile?.type === 'band'
     ? t('settings.refreshProfileNamesButton')
     : t('settings.refreshProfileNameButton');
@@ -896,11 +897,14 @@ export default function SettingsPage() {
       { id: 'service-info', label: t('settings.serviceInfo.title'), landmarkLabel: t('settings.serviceInfo.title'), icon: <IoServer size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'first-run', label: t('firstRun.settings.showFirstRunTitle'), landmarkLabel: t('firstRun.settings.showFirstRunTitle'), icon: <IoSparkles size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'licenses', label: t('settings.licensesNavTitle'), landmarkLabel: t('settings.licensesNavTitle'), icon: <IoDocumentText size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
+      ...(hasSelectedProfile
+        ? [{ id: 'refresh-profile-name' as const, label: refreshProfileNameLabel, landmarkLabel: refreshProfileNameLabel, icon: <IoPersonCircle size={QUICK_LINK_GLYPH_ICON_SIZE} /> }]
+        : []),
       { id: 'export', label: t('settings.exportDataSection'), landmarkLabel: t('settings.exportDataSection'), icon: <IoDownload size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
       { id: 'reset', label: t('settings.resetSection'), landmarkLabel: t('settings.resetSection'), icon: <IoTrash size={QUICK_LINK_GLYPH_ICON_SIZE} /> },
     );
     return items;
-  }, [diagnosticsSettingsVisible, settingsQuickLinksTitle, t]);
+  }, [diagnosticsSettingsVisible, hasSelectedProfile, refreshProfileNameLabel, t]);
 
   const {
     activeItemId,
@@ -1312,7 +1316,7 @@ export default function SettingsPage() {
 
           {selectedProfile && (
             <FadeInDiv delay={stagger(staggerIndex++)}>
-              <div>
+              <section ref={(element) => registerSectionRef('refresh-profile-name', element)} aria-label={refreshProfileNameLabel}>
                 <div style={st.exportRow}>
                   <div>
                     <SectionHeader
@@ -1329,7 +1333,7 @@ export default function SettingsPage() {
                     {isRefreshingProfileName ? t('settings.refreshProfileNameChecking') : refreshProfileNameLabel}
                   </PressableButton>
                 </div>
-              </div>
+              </section>
             </FadeInDiv>
           )}
 

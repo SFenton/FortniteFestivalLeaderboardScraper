@@ -8,7 +8,7 @@ import SongBandLeaderboardPage from '../../../../src/pages/leaderboard/band/Song
 import { BandFilterActionProvider } from '../../../../src/contexts/BandFilterActionContext';
 import { FeatureFlagsProvider } from '../../../../src/contexts/FeatureFlagsContext';
 import type { AppliedBandComboFilter } from '../../../../src/types/bandFilter';
-import { SELECTED_PROFILE_STORAGE_KEY } from '../../../../src/state/selectedProfile';
+import { LEGACY_TRACKED_PLAYER_STORAGE_KEY, SELECTED_PROFILE_STORAGE_KEY } from '../../../../src/state/selectedProfile';
 
 const mockGetSongBandLeaderboard = vi.hoisted(() => vi.fn());
 const mockGetBandRankingCombos = vi.hoisted(() => vi.fn());
@@ -166,6 +166,11 @@ function renderPage(bandFilter?: AppliedBandComboFilter | null, route = '/songs/
       </FeatureFlagsProvider>
     </QueryClientProvider>,
   );
+}
+
+function writeSelectedPlayerProfile(accountId: string, displayName: string) {
+  localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({ type: 'player', accountId, displayName }));
+  localStorage.setItem(LEGACY_TRACKED_PLAYER_STORAGE_KEY, JSON.stringify({ accountId, displayName }));
 }
 
 describe('SongBandLeaderboardPage', () => {
@@ -511,6 +516,56 @@ describe('SongBandLeaderboardPage', () => {
     });
   });
 
+  it('requests and renders the selected player entry for a solo profile', async () => {
+    writeSelectedPlayerProfile('acct-selected', 'Selected Player');
+    mockGetSongBandLeaderboard.mockResolvedValue({
+      ...response,
+      selectedPlayerEntry: {
+        bandId: 'selected-player-band',
+        bandType: 'Band_Duets',
+        teamKey: 'acct-selected:acct-partner',
+        comboId: 'Solo_Guitar+Solo_Bass',
+        score: 777_777,
+        rank: 13,
+        accuracy: 912_345,
+        stars: 5,
+        season: 9,
+        difficulty: 3,
+        members: [
+          { accountId: 'acct-selected', displayName: 'Solo Selected', instruments: ['Solo_Guitar'], score: 400_000, accuracy: 910_000, difficulty: 3, season: 9, stars: 5, isFullCombo: false },
+          { accountId: 'acct-partner', displayName: 'Solo Partner', instruments: ['Solo_Bass'], score: 377_777, accuracy: 914_000, difficulty: 3, season: 9, stars: 5, isFullCombo: false },
+        ],
+      },
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, 'acct-selected', undefined, undefined);
+    });
+
+    const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
+    expect(within(footer).getByText('Solo Selected + Solo Partner')).toBeTruthy();
+    expect(within(footer).getByText('#13')).toBeTruthy();
+    expect(within(footer).getByText('777,777')).toBeTruthy();
+  });
+
+  it('highlights the visible selected player entry in the song-band leaderboard list', async () => {
+    writeSelectedPlayerProfile('acct-a', 'Alpha');
+    mockGetSongBandLeaderboard.mockResolvedValue({
+      ...response,
+      selectedPlayerEntry: response.entries[0],
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, 'acct-a', undefined, undefined);
+    });
+
+    expect(await screen.findByTestId('song-band-leaderboard-entry-1')).toHaveStyle({ backgroundColor: 'rgba(75, 15, 99, 0.75)' });
+  });
+
   it('requests and renders the selected band entry when it is outside the visible page', async () => {
     mockUseIsMobileChrome.mockReturnValue(true);
     localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
@@ -557,7 +612,7 @@ describe('SongBandLeaderboardPage', () => {
     expect(footer.style.bottom).toContain('84px');
     expect(footer.style.touchAction).toBe('none');
     const pagination = await screen.findByTestId('leaderboard-fixed-pagination');
-    expect(pagination.style.bottom).toContain('136px');
+    expect(pagination.style.bottom).toContain('144px');
     expect(pagination.style.touchAction).toBe('none');
     expect(within(footer).getByText('Selected + Partner')).toBeTruthy();
     expect(within(footer).getByText('#13')).toBeTruthy();

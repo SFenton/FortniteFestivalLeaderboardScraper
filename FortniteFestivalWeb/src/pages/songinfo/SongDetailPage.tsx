@@ -71,9 +71,11 @@ function createSongBandData(loading: boolean): Record<PlayerBandType, SongBandDa
   return data;
 }
 
-function getBandSelectionKey(bandType: PlayerBandType | undefined, teamKey: string | undefined, comboId: string | undefined): string | undefined {
+function getBandSelectionKey(selectedAccountId: string | undefined, bandType: PlayerBandType | undefined, teamKey: string | undefined, comboId: string | undefined): string | undefined {
+  const normalizedSelectedAccountId = normalizeAccountId(selectedAccountId);
+  if (normalizedSelectedAccountId) return `player:${normalizedSelectedAccountId}`;
   if (!bandType || !teamKey) return undefined;
-  return `${bandType}:${teamKey}:${comboId ?? 'all'}`;
+  return `band:${bandType}:${teamKey}:${comboId ?? 'all'}`;
 }
 
 type SelectedBandMember = {
@@ -130,7 +132,7 @@ export default function SongDetailPage() {
   const selectedBandMemberAccountIds = useMemo(() => selectedBandMembers.map(member => member.accountId), [selectedBandMembers]);
   const appliedBandComboFilter = useAppliedBandComboFilter();
   const activeBandComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === selectedBandType ? appliedBandComboFilter.comboId : undefined;
-  const bandSelectionKey = getBandSelectionKey(selectedBandType, selectedTeamKey, activeBandComboId);
+  const bandSelectionKey = getBandSelectionKey(selectedAccountId, selectedBandType, selectedTeamKey, activeBandComboId);
   const { settings } = useSettings();
   const song = songs.find((s) => s.songId === songId);
   const configuredInstruments = visibleInstruments(settings);
@@ -186,7 +188,7 @@ export default function SongDetailPage() {
         ) as unknown as Record<InstrumentKey, InstrumentData>,
   );
   const [bandData, setBandData] = useState<Record<PlayerBandType, SongBandData>>(
-    () => cached?.bandData ?? createSongBandData(true),
+    () => hasCachedBandData && cached?.bandData ? cached.bandData : createSongBandData(true),
   );
   const [showLeaderboardEntryTotals, setShowLeaderboardEntryTotals] = useState(
     () => cached?.showLeaderboardEntryTotals === true,

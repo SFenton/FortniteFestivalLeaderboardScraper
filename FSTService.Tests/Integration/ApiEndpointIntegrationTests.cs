@@ -2305,7 +2305,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task ApiSongBandLeaderboardsAll_SelectedRequestUsesGenericPrecomputedCacheWhileFrozen()
+    public async Task ApiSongBandLeaderboardsAll_SelectedRequestBypassesGenericCacheWhileFrozenReadsAreNonBlocking()
     {
         const string songId = "songBandSelectedFrozenCache";
         var publicationCache = _factory.Services.GetRequiredKeyedService<ResponseCacheService>("LeaderboardAllCache");
@@ -2345,6 +2345,20 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             {
                 (global::FSTService.LeaderboardCacheKeys.SongBandLeaderboardsAll(songId, 10), json, ResponseCacheService.ComputeETag(json)),
             });
+
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+            using var conn = dataSource.OpenConnection();
+            using var entryCmd = conn.CreateCommand();
+            entryCmd.CommandText = """
+                INSERT INTO band_entries (song_id, band_type, team_key, instrument_combo, team_members, score, accuracy, is_full_combo, stars, difficulty, season, rank, source)
+                VALUES (@songId, 'Band_Duets', 'selectedAcct:selectedMate', '', @teamMembers, 654321, 987654, true, 5, 3, 9, 7, 'test')
+                ON CONFLICT DO NOTHING
+                """;
+            entryCmd.Parameters.AddWithValue("songId", songId);
+            entryCmd.Parameters.AddWithValue("teamMembers", new[] { "selectedAcct", "selectedMate" });
+            entryCmd.ExecuteNonQuery();
+
+            SeedBandRows(dataSource, songId, "Band_Duets", "selectedAcct:selectedMate", (0, "selectedAcct", 0), (1, "selectedMate", 1));
         }
 
         publicationCache.Freeze();
@@ -2356,8 +2370,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             var duos = body.GetProperty("bands").EnumerateArray()
                 .Single(band => band.GetProperty("bandType").GetString() == "Band_Duets");
-            Assert.Equal("cachedA:cachedB", duos.GetProperty("entries")[0].GetProperty("teamKey").GetString());
-            Assert.Equal(JsonValueKind.Null, duos.GetProperty("selectedPlayerEntry").ValueKind);
+            Assert.Equal("selectedAcct:selectedMate", duos.GetProperty("selectedPlayerEntry").GetProperty("teamKey").GetString());
+            Assert.Equal(654_321, duos.GetProperty("selectedPlayerEntry").GetProperty("score").GetInt32());
         }
         finally
         {

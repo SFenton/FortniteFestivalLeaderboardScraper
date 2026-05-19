@@ -120,6 +120,7 @@ internal static class PublicApiResponseCachePolicy
 
         if (LiveExactPaths.Any(livePath => string.Equals(path, livePath, StringComparison.OrdinalIgnoreCase)) ||
             LivePrefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ||
+            HasSelectedOverlayQuery(request) ||
             path.EndsWith("/diagnostics", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith("/sync-status", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith("/export", StringComparison.OrdinalIgnoreCase))
@@ -130,6 +131,12 @@ internal static class PublicApiResponseCachePolicy
         cacheKey = BuildCacheKey(request);
         return true;
     }
+
+    private static bool HasSelectedOverlayQuery(HttpRequest request) =>
+        request.Query.ContainsKey("accountId") ||
+        request.Query.ContainsKey("teamKey") ||
+        request.Query.ContainsKey("selectedTeamKey") ||
+        request.Query.ContainsKey("selectedBandType");
 
     internal static string BuildCacheKey(HttpRequest request)
     {
