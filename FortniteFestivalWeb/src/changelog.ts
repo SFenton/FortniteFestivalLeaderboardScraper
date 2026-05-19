@@ -13,6 +13,15 @@ export const changelog: ChangelogEntry[] = [
   {
     sections: [
       {
+        title: 'Profiles And Bands',
+        items: [
+          'Added username refreshes against Epic servers when selecting a player profile or band profile.',
+          'Added an App Settings button to manually refresh player and band profile usernames.',
+          'Added band composition filtering when a solo profile or no profile is selected.',
+          'Fixed the Export Data button opacity in App Settings.',
+        ],
+      },
+      {
         title: 'Rivals',
         items: [
           'Added a full Rivals experience with rival lists, rival detail pages, category views, and head-to-head rivalry pages.',
