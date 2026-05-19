@@ -119,6 +119,7 @@ public class ScoreBackfiller
                 var lowToken = await pool.AcquireLowAsync(ct);
                 try
                 {
+                    using var admittedRequest = pool.TrafficCoordinator.BeginAdmittedRequest();
                     _progress.ReportPhaseRequest();
                     var found = await ProcessSingleLookupAsync(
                         accountId, item.SongId, item.Instrument,

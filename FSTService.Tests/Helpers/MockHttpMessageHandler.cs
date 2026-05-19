@@ -8,16 +8,25 @@ namespace FSTService.Tests.Helpers;
 /// </summary>
 public sealed class MockHttpMessageHandler : HttpMessageHandler
 {
+    private readonly object _lock = new();
     private readonly Queue<object> _responses = new();   // HttpResponseMessage or Exception
     private readonly List<HttpRequestMessage> _requests = new();
 
     /// <summary>All requests sent through this handler.</summary>
-    public IReadOnlyList<HttpRequestMessage> Requests => _requests;
+    public IReadOnlyList<HttpRequestMessage> Requests
+    {
+        get
+        {
+            lock (_lock)
+                return _requests.ToList();
+        }
+    }
 
     /// <summary>Enqueue a response to return for the next request.</summary>
     public void EnqueueResponse(HttpResponseMessage response)
     {
-        _responses.Enqueue(response);
+        lock (_lock)
+            _responses.Enqueue(response);
     }
 
     /// <summary>Enqueue a JSON response with the given status code.</summary>
@@ -27,7 +36,8 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
         {
             Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
         };
-        _responses.Enqueue(response);
+        lock (_lock)
+            _responses.Enqueue(response);
     }
 
     /// <summary>Enqueue a simple OK response with JSON body.</summary>
@@ -40,18 +50,24 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
         {
             Content = new StringContent(body),
         };
-        _responses.Enqueue(response);
+        lock (_lock)
+            _responses.Enqueue(response);
     }
 
     /// <summary>Enqueue an exception to throw on the next request.</summary>
-    public void EnqueueException(Exception exception) => _responses.Enqueue(exception);
+    public void EnqueueException(Exception exception)
+    {
+        lock (_lock)
+            _responses.Enqueue(exception);
+    }
 
     /// <summary>Enqueue a 429 response with a Retry-After header.</summary>
     public void Enqueue429(TimeSpan retryAfter)
     {
         var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
         response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(retryAfter);
-        _responses.Enqueue(response);
+        lock (_lock)
+            _responses.Enqueue(response);
     }
 
     /// <summary>Enqueue a CDN-style 403 response with HTML body (non-JSON).</summary>
@@ -63,7 +79,8 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
                 "<html><head><title>403 Forbidden</title></head><body><center><h1>403 Forbidden</h1></center></body></html>",
                 System.Text.Encoding.UTF8, "text/html"),
         };
-        _responses.Enqueue(response);
+        lock (_lock)
+            _responses.Enqueue(response);
     }
 
     /// <summary>Sentinel used to represent a "hang forever" response.</summary>
@@ -73,18 +90,27 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
     /// Simulates an infinite-timeout proxy-routed send that never returns on its own
     /// (the production CDN-probe wedge). The handler throws
     /// <see cref="OperationCanceledException"/> when the request's token cancels.</summary>
-    public void EnqueueHang() => _responses.Enqueue(HangSentinel.Instance);
+    public void EnqueueHang()
+    {
+        lock (_lock)
+            _responses.Enqueue(HangSentinel.Instance);
+    }
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        _requests.Add(request);
+        object entry;
+        lock (_lock)
+        {
+            _requests.Add(request);
 
-        if (_responses.Count == 0)
-            throw new InvalidOperationException(
-                $"MockHttpMessageHandler: No responses queued. Request: {request.Method} {request.RequestUri}");
+            if (_responses.Count == 0)
+                throw new InvalidOperationException(
+                    $"MockHttpMessageHandler: No responses queued. Request: {request.Method} {request.RequestUri}");
 
-        var entry = _responses.Dequeue();
+            entry = _responses.Dequeue();
+        }
+
         if (entry is Exception ex)
             throw ex;
         if (entry is HangSentinel)

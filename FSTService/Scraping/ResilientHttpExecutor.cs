@@ -32,6 +32,10 @@ public readonly record struct CdnProbeEvent(CdnProbeState State, int Attempt, in
 /// Used by the <c>/api/diag/inflight</c> endpoint to diagnose stuck scrapes.</summary>
 public enum InflightState
 {
+    /// <summary>Created and registered, but no asynchronous wait/send has started yet.</summary>
+    Created,
+    /// <summary>Awaiting foreground-registration traffic admission.</summary>
+    WaitingForTrafficTurn,
     /// <summary>Awaiting <see cref="ResilientHttpExecutor.WaitForCdnClearAsync"/> (CDN block active).</summary>
     WaitingForCdnClear,
     /// <summary>Between retries: sleeping for exponential backoff or post-error settle delay.</summary>
@@ -73,6 +77,7 @@ internal sealed class InflightOperation
     public InflightOperation(string label)
     {
         Label = label;
+        _state = (int)InflightState.Created;
         _stateEnteredTicks = StartedAt.UtcTicks;
     }
 
@@ -331,8 +336,11 @@ public sealed class ResilientHttpExecutor
         {
             op.SetAttempt(attempt, statusAttempt, networkErrors);
 
-            if (_trafficCoordinator is not null)
+            if (_trafficCoordinator is not null && !_trafficCoordinator.CurrentRequestCanBypassBackgroundGate)
+            {
+                op.SetState(InflightState.WaitingForTrafficTurn);
                 await _trafficCoordinator.WaitForTurnAsync(ct);
+            }
 
             // If CDN is blocked, throw immediately — don't waste a wire send.
             // The caller (SongMachine) will release its DOP slot and wait for the probe.
@@ -771,30 +779,48 @@ public sealed class ResilientHttpExecutor
             await WaitForCdnClearAsync(ct);
 
             bool acquired = false;
+            IDisposable? admittedRequest = null;
             try
             {
                 if (acquireSlot is not null)
                 {
                     await acquireSlot();
                     acquired = true;
+                    admittedRequest = _trafficCoordinator?.BeginAdmittedRequest();
                 }
 
                 var result = await work();
 
                 // Release slot before returning so caller does post-processing outside the slot
-                if (acquired) { releaseSlot?.Invoke(); acquired = false; }
+                if (acquired)
+                {
+                    admittedRequest?.Dispose();
+                    admittedRequest = null;
+                    releaseSlot?.Invoke();
+                    acquired = false;
+                }
                 return result;
             }
             catch (CdnBlockedException)
             {
-                if (acquired) { releaseSlot?.Invoke(); acquired = false; }
+                if (acquired)
+                {
+                    admittedRequest?.Dispose();
+                    admittedRequest = null;
+                    releaseSlot?.Invoke();
+                    acquired = false;
+                }
                 await WaitForCdnClearAsync(ct);
                 // Loop back to pre-wait + re-acquire + retry
             }
             finally
             {
                 // Safety: release slot if still held (e.g. non-CDN exception from work)
-                if (acquired) releaseSlot?.Invoke();
+                if (acquired)
+                {
+                    admittedRequest?.Dispose();
+                    releaseSlot?.Invoke();
+                }
             }
         }
     }

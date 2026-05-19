@@ -24,6 +24,22 @@ public sealed class ResilientHttpExecutorTests
     private static HttpRequestMessage MakeRequest()
         => new(HttpMethod.Get, "https://example.com/api/test");
 
+    private static async Task<InflightOperationSnapshot> WaitForInflightStateAsync(
+        ResilientHttpExecutor executor,
+        InflightState state)
+    {
+        for (var i = 0; i < 100; i++)
+        {
+            var snapshot = executor.InflightOperations.FirstOrDefault(op => op.State == state);
+            if (snapshot is not null)
+                return snapshot;
+
+            await Task.Delay(TimeSpan.FromMilliseconds(10));
+        }
+
+        throw new TimeoutException($"No in-flight operation reached {state}.");
+    }
+
     // ─── Success on first try ───────────────────────────────────
 
     [Fact]
@@ -33,6 +49,29 @@ public sealed class ResilientHttpExecutorTests
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
         var response = await executor.SendAsync(() => MakeRequest(), label: "test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_BackgroundWaitsForForegroundRegistration_ReportsTrafficTurnState()
+    {
+        var coordinator = new EpicTrafficCoordinator();
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+        using var http = new HttpClient(handler);
+        var executor = new ResilientHttpExecutor(http, _log, coordinator);
+
+        using var lease = coordinator.BeginForegroundRegistration();
+        var sendTask = executor.SendAsync(() => MakeRequest(), label: "traffic-wait", maxRetries: 0);
+
+        var snapshot = await WaitForInflightStateAsync(executor, InflightState.WaitingForTrafficTurn);
+        Assert.Equal("traffic-wait", snapshot.Label);
+        Assert.Empty(handler.Requests);
+
+        lease.Dispose();
+        using var response = await sendTask.WaitAsync(TimeSpan.FromSeconds(1));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Single(handler.Requests);

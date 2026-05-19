@@ -207,6 +207,7 @@ public class FirstSeenSeasonCalculator
 
         try
         {
+            using var admittedRequest = pool.TrafficCoordinator.BeginAdmittedRequest();
             await _scraper.LookupSeasonalAsync(
                 songId, "Solo_Guitar", seasonPrefix,
                 callerAccountId, accessToken, callerAccountId, ct: ct);

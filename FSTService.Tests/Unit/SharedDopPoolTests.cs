@@ -1,5 +1,7 @@
+using System.Net;
 using FortniteFestival.Core.Scraping;
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -120,5 +122,51 @@ public class SharedDopPoolTests : IDisposable
             CancellationToken.None,
             EpicTrafficKind.ForegroundRegistration).WaitAsync(TimeSpan.FromSeconds(1));
         _pool.ReleaseHigh();
+    }
+
+    [Fact]
+    public async Task WaitForTurnAsync_AdmittedBackgroundRequest_BypassesLaterForegroundGate()
+    {
+        var coordinator = new EpicTrafficCoordinator();
+
+        using var admittedRequest = coordinator.BeginAdmittedRequest();
+        using var lease = coordinator.BeginForegroundRegistration();
+
+        await coordinator.WaitForTurnAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task WithCdnResilience_AdmittedLowPrioritySend_DoesNotDeadlockBehindForegroundLease()
+    {
+        var coordinator = new EpicTrafficCoordinator();
+        _pool = new SharedDopPool(1, 1, 1, 100, _log, trafficCoordinator: coordinator);
+
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk("""{"ok":true}""");
+        using var http = new HttpClient(handler);
+        var executor = new ResilientHttpExecutor(http, _log, coordinator);
+
+        LowPriorityToken lowToken = default;
+        using var response = await executor.WithCdnResilienceAsync(
+            work: async () =>
+            {
+                using var lease = coordinator.BeginForegroundRegistration();
+                return await executor.SendAsync(
+                    () => new HttpRequestMessage(HttpMethod.Get, "https://example.com/api/test"),
+                    _pool.Limiter,
+                    "admitted-background",
+                    maxRetries: 0,
+                    CancellationToken.None);
+            },
+            CancellationToken.None,
+            acquireSlot: async () => { lowToken = await _pool.AcquireLowAsync(CancellationToken.None); },
+            releaseSlot: () =>
+            {
+                _pool.ReleaseLow(lowToken);
+                lowToken = default;
+            }).WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Single(handler.Requests);
     }
 }

@@ -529,6 +529,7 @@ public class HistoryReconstructor
             var lowToken = await pool.AcquireLowAsync(ct);
             try
             {
+                using var admittedRequest = pool.TrafficCoordinator.BeginAdmittedRequest();
                 var sessions = await _scraper.LookupSeasonalSessionsAsync(
                     songId, instrument, window.WindowId,
                     accountId, accessToken, callerAccountId, pool.Limiter, ct);

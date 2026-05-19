@@ -1174,14 +1174,18 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         // ── Page 0: discover totalPages ──
         bool page0Acquired = false;
+        IDisposable? page0Admission = null;
         if (limiter is not null) { await AcquireEpicSlotAsync(limiter, ct); page0Acquired = true; }
         (ParsedPage? firstPage, int firstLen, FetchStatus firstStatus) page0;
         try
         {
+            if (page0Acquired)
+                page0Admission = _trafficCoordinator?.BeginAdmittedRequest();
             page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct, accessTokenProvider);
         }
         finally
         {
+            page0Admission?.Dispose();
             if (page0Acquired) limiter?.Release();
         }
 
@@ -1406,12 +1410,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     {
                         if (batchCts.IsCancellationRequested) return;
                         bool acquired = false;
+                        IDisposable? admittedRequest = null;
                         try
                         {
                             if (limiter is not null)
                             {
                                 await AcquireEpicSlotAsync(limiter, batchCts.Token);
                                 acquired = true;
+                                admittedRequest = _trafficCoordinator?.BeginAdmittedRequest();
                             }
 
                             var (parsed, bodyLen, status) = await FetchPageAsync(
@@ -1450,6 +1456,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         }
                         finally
                         {
+                            admittedRequest?.Dispose();
                             if (acquired) limiter?.Release();
                         }
                     }
@@ -1521,12 +1528,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     {
                         if (wave2Cts.IsCancellationRequested) return;
                         bool acquired = false;
+                        IDisposable? admittedRequest = null;
                         try
                         {
                             if (limiter is not null)
                             {
                                 await AcquireEpicSlotAsync(limiter, wave2Cts.Token);
                                 acquired = true;
+                                admittedRequest = _trafficCoordinator?.BeginAdmittedRequest();
                             }
 
                             var (parsed, bodyLen, status) = await FetchPageAsync(
@@ -1563,6 +1572,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         }
                         finally
                         {
+                            admittedRequest?.Dispose();
                             if (acquired) limiter?.Release();
                         }
                     }

@@ -15,6 +15,7 @@ public sealed class EpicTrafficCoordinator
 {
     private readonly object _lock = new();
     private readonly AsyncLocal<EpicTrafficKind> _currentKind = new();
+    private readonly AsyncLocal<int> _admittedRequestDepth = new();
     private TaskCompletionSource<bool>? _backgroundResume;
     private int _foregroundRegistrationLeases;
 
@@ -28,6 +29,10 @@ public sealed class EpicTrafficCoordinator
     }
 
     public EpicTrafficKind CurrentKind => _currentKind.Value;
+
+    public bool CurrentRequestCanBypassBackgroundGate =>
+        _currentKind.Value == EpicTrafficKind.ForegroundRegistration ||
+        _admittedRequestDepth.Value > 0;
 
     public IDisposable BeginForegroundRegistration()
     {
@@ -50,8 +55,15 @@ public sealed class EpicTrafficCoordinator
         return new RequestScope(this, previousKind);
     }
 
+    public IDisposable BeginAdmittedRequest()
+    {
+        var previousDepth = _admittedRequestDepth.Value;
+        _admittedRequestDepth.Value = previousDepth + 1;
+        return new AdmittedRequestScope(this, previousDepth);
+    }
+
     public Task WaitForTurnAsync(CancellationToken ct)
-        => _currentKind.Value == EpicTrafficKind.ForegroundRegistration
+        => CurrentRequestCanBypassBackgroundGate
             ? Task.CompletedTask
             : WaitForBackgroundEpicAsync(ct);
 
@@ -117,6 +129,26 @@ public sealed class EpicTrafficCoordinator
         {
             if (_disposed) return;
             _owner._currentKind.Value = _previousKind;
+            _disposed = true;
+        }
+    }
+
+    private sealed class AdmittedRequestScope : IDisposable
+    {
+        private readonly EpicTrafficCoordinator _owner;
+        private readonly int _previousDepth;
+        private bool _disposed;
+
+        public AdmittedRequestScope(EpicTrafficCoordinator owner, int previousDepth)
+        {
+            _owner = owner;
+            _previousDepth = previousDepth;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _owner._admittedRequestDepth.Value = _previousDepth;
             _disposed = true;
         }
     }
