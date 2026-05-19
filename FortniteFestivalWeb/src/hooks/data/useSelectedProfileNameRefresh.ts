@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { QueryClient } from '@tanstack/react-query';
+import type { AccountNameRefreshResponse } from '@festival/core/api/serverTypes';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import {
@@ -49,9 +50,7 @@ export function useSelectedProfileNameRefresh(profile: SelectedProfile | null): 
       void api.refreshAccountNames(accountIds)
         .then(response => {
           if (requestSeq !== requestSeqRef.current || response.changed <= 0) return;
-          patchSelectedProfileNames(response.names, refreshKey);
-          patchAccountNameQueryData(queryClient, response.names);
-          invalidateAccountNameQueries(queryClient, response.changedAccountIds, requestProfile);
+          applyAccountNameRefreshResult(queryClient, requestProfile, refreshKey, response);
         })
         .catch(() => {
           // Silent best-effort refresh: keep the currently displayed names.
@@ -62,6 +61,22 @@ export function useSelectedProfileNameRefresh(profile: SelectedProfile | null): 
       window.clearTimeout(timer);
     };
   }, [queryClient, refreshKey]);
+}
+
+export function applyAccountNameRefreshResult(
+  queryClient: QueryClient,
+  profile: SelectedProfile,
+  requestKey: string,
+  response: AccountNameRefreshResponse,
+): boolean {
+  if (response.changed <= 0) return false;
+  const current = readSelectedProfile();
+  if (!current || getSelectedProfileRefreshKey(current) !== requestKey) return false;
+
+  const selectedProfileChanged = patchSelectedProfileNames(response.names, requestKey);
+  patchAccountNameQueryData(queryClient, response.names);
+  invalidateAccountNameQueries(queryClient, response.changedAccountIds, profile);
+  return selectedProfileChanged;
 }
 
 export function patchSelectedProfileNames(names: Record<string, string>, requestKey: string): boolean {

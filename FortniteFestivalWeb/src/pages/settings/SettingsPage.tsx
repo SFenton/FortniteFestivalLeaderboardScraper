@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
@@ -37,6 +38,7 @@ import { competeSlides } from '../compete/firstRun';
 import { rivalsSlides } from '../rivals/firstRun';
 import { shopSlides } from '../shop/firstRun';
 import { api } from '../../api/client';
+import { applyAccountNameRefreshResult, getSelectedProfileRefreshAccountIds, getSelectedProfileRefreshKey } from '../../hooks/data/useSelectedProfileNameRefresh';
 import { getTapDiagnosticsPreference, isTapDiagnosticsUiAvailable, setTapDiagnosticsPreference } from '../../diagnostics/tapDiagnostics';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
@@ -51,7 +53,7 @@ import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVe
 
 const SERVICE_INFO_POLL_MS = 5_000;
 const SERVICE_INFO_INLINE_KEY_MIN_WIDTH = 300;
-const SETTINGS_ACTION_BUTTON_WIDTH = 168;
+const SETTINGS_ACTION_BUTTON_WIDTH = 212;
 const QUICK_LINK_GLYPH_ICON_SIZE = 20;
 
 const SERVICE_PHASE_ORDER = [
@@ -472,6 +474,7 @@ function ServiceInfoRows({ rows, styles }: { rows: ServiceInfoRowItem[]; styles:
 
 export default function SettingsPage() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const { settings, updateSettings, resetSettings } = useSettings();
   const { profile: selectedProfile, player: trackedPlayer } = useTrackedPlayer();
   const isMobile = useIsMobile();
@@ -514,6 +517,7 @@ export default function SettingsPage() {
   const [selectedProfileSyncLoadFailed, setSelectedProfileSyncLoadFailed] = useState(false);
   const [isExportingData, setIsExportingData] = useState(false);
   const [exportDataFailed, setExportDataFailed] = useState(false);
+  const [isRefreshingProfileName, setIsRefreshingProfileName] = useState(false);
   const diagnosticsSettingsVisible = isTapDiagnosticsUiAvailable();
   const [tapDiagnosticsEnabled, setTapDiagnosticsEnabled] = useState(() => getTapDiagnosticsPreference('diagnostics'));
   const [tapTelemetryEnabled, setTapTelemetryEnabled] = useState(() => getTapDiagnosticsPreference('telemetry'));
@@ -669,8 +673,23 @@ export default function SettingsPage() {
     ? describeTrackedPlayerRivalsStatus(t, trackedPlayerSyncStatus, selectedProfileFallback)
     : null;
   const canExportData = !!selectedProfile && !isExportingData;
+  const selectedProfileRefreshAccountIds = useMemo(
+    () => getSelectedProfileRefreshAccountIds(selectedProfile),
+    [selectedProfile],
+  );
+  const selectedProfileRefreshKey = useMemo(
+    () => getSelectedProfileRefreshKey(selectedProfile),
+    [selectedProfile],
+  );
+  const canRefreshProfileName = !!selectedProfile && selectedProfileRefreshAccountIds.length > 0 && !isRefreshingProfileName;
+  const refreshProfileNameLabel = selectedProfile?.type === 'band'
+    ? t('settings.refreshProfileNamesButton')
+    : t('settings.refreshProfileNameButton');
   const selectedProfileName = selectedProfile?.displayName?.trim()
     || (selectedProfile?.type === 'band' ? t('common.unknownBand') : 'Unknown Player');
+  const refreshProfileNameDescription = selectedProfile?.type === 'band'
+    ? t('settings.refreshProfileNamesDescription', { profile: selectedProfileName })
+    : t('settings.refreshProfileNameDescription', { profile: selectedProfileName });
   const exportDataDescription = !selectedProfile
     ? t('settings.exportDataNoProfileDescription')
     : t('settings.exportDataDescription', { player: selectedProfileName });
@@ -783,6 +802,23 @@ export default function SettingsPage() {
       setIsExportingData(false);
     }
   }, [isExportingData, selectedProfile]);
+
+  const handleRefreshProfileName = useCallback(async () => {
+    if (!selectedProfile || selectedProfileRefreshAccountIds.length === 0 || isRefreshingProfileName) return;
+
+    const requestProfile = selectedProfile;
+    const requestKey = selectedProfileRefreshKey;
+    const accountIds = selectedProfileRefreshAccountIds;
+    setIsRefreshingProfileName(true);
+    try {
+      const response = await api.refreshAccountNames(accountIds);
+      applyAccountNameRefreshResult(queryClient, requestProfile, requestKey, response);
+    } catch {
+      // Manual refresh is best-effort; current names remain visible on failure.
+    } finally {
+      setIsRefreshingProfileName(false);
+    }
+  }, [isRefreshingProfileName, queryClient, selectedProfile, selectedProfileRefreshAccountIds, selectedProfileRefreshKey]);
 
   const handleToggleTapDiagnostics = useCallback(() => {
     const nextEnabled = !tapDiagnosticsEnabled;
@@ -1274,6 +1310,29 @@ export default function SettingsPage() {
             </div>
           </FadeInDiv>
 
+          {selectedProfile && (
+            <FadeInDiv delay={stagger(staggerIndex++)}>
+              <div>
+                <div style={st.exportRow}>
+                  <div>
+                    <SectionHeader
+                      title={refreshProfileNameLabel}
+                      description={refreshProfileNameDescription}
+                      flush
+                    />
+                  </div>
+                  <PressableButton
+                    style={!canRefreshProfileName ? st.profileRefreshButtonDisabled : st.profileRefreshButton}
+                    onPress={handleRefreshProfileName}
+                    disabled={!canRefreshProfileName}
+                  >
+                    {isRefreshingProfileName ? t('settings.refreshProfileNameChecking') : refreshProfileNameLabel}
+                  </PressableButton>
+                </div>
+              </div>
+            </FadeInDiv>
+          )}
+
           {/* ── Export Data ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
             <div ref={(element) => registerSectionRef('export', element)}>
@@ -1533,6 +1592,8 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     } as CSSProperties,
     exportButton: {
       ...btnPrimary,
+      background: Colors.accentBlue,
+      border: `1px solid ${Colors.accentBlue}`,
       padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
       fontSize: isMobile ? Font.md : Font.sm,
       flexShrink: 0,
@@ -1541,6 +1602,30 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     } as CSSProperties,
     exportButtonDisabled: {
       ...btnPrimary,
+      background: Colors.accentBlue,
+      border: `1px solid ${Colors.accentBlue}`,
+      padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
+      fontSize: isMobile ? Font.md : Font.sm,
+      flexShrink: 0,
+      opacity: Opacity.faded,
+      cursor: 'not-allowed',
+      textAlign: TextAlign.center,
+      ...(isMobile ? { width: CssValue.full } : { width: SETTINGS_ACTION_BUTTON_WIDTH }),
+    } as CSSProperties,
+    profileRefreshButton: {
+      ...btnPrimary,
+      background: Colors.accentBlue,
+      border: `1px solid ${Colors.accentBlue}`,
+      padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
+      fontSize: isMobile ? Font.md : Font.sm,
+      flexShrink: 0,
+      textAlign: TextAlign.center,
+      ...(isMobile ? { width: CssValue.full } : { width: SETTINGS_ACTION_BUTTON_WIDTH }),
+    } as CSSProperties,
+    profileRefreshButtonDisabled: {
+      ...btnPrimary,
+      background: Colors.accentBlue,
+      border: `1px solid ${Colors.accentBlue}`,
       padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
       fontSize: isMobile ? Font.md : Font.sm,
       flexShrink: 0,

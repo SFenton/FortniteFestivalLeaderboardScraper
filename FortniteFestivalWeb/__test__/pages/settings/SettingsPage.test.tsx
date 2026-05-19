@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
@@ -131,7 +132,7 @@ beforeEach(() => {
   mockIsMobileChromeOverride.value = null;
   setViewportQueries();
   // Mock fetch for /api/version
-  globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+  globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     if (typeof url === 'string' && url.includes('/api/version')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
     }
@@ -143,6 +144,18 @@ beforeEach(() => {
     }
     if (typeof url === 'string' && url.includes('/sync-status')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
+    }
+    if (typeof url === 'string' && url.includes('/api/account/name-refresh')) {
+      const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { accountIds?: string[] } : { accountIds: [] };
+      const accountIds = body.accountIds ?? [];
+      const names = Object.fromEntries(accountIds.map(accountId => [accountId, accountId === 'tracked-player-1'
+        ? 'Tracked Player Fresh'
+        : accountId === 'member-a'
+          ? 'Member A Fresh'
+          : accountId === 'member-b'
+            ? 'Member B Fresh'
+            : `${accountId} Fresh`]));
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ changed: accountIds.length, unchanged: 0, failed: 0, missing: 0, names, changedAccountIds: accountIds }) });
     }
     return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
   }) as unknown as typeof fetch;
@@ -226,23 +239,43 @@ function PageQuickLinksHarness() {
   );
 }
 
-function renderSettings({ withQuickLinksHarness = false }: { withQuickLinksHarness?: boolean; } = {}) {
-  return render(
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+}
+
+function renderSettings({ withQuickLinksHarness = false, queryClient = createTestQueryClient() }: { withQuickLinksHarness?: boolean; queryClient?: QueryClient; } = {}) {
+  const view = render(
     <ScrollContainerProvider>
       <ShellRefInjector>
         <MemoryRouter>
-          <PageQuickLinksProvider>
-            <SettingsProvider>
-              <FirstRunProvider>
-                <SettingsPage />
-                {withQuickLinksHarness ? <PageQuickLinksHarness /> : null}
-              </FirstRunProvider>
-            </SettingsProvider>
-          </PageQuickLinksProvider>
+          <QueryClientProvider client={queryClient}>
+            <PageQuickLinksProvider>
+              <SettingsProvider>
+                <FirstRunProvider>
+                  <SettingsPage />
+                  {withQuickLinksHarness ? <PageQuickLinksHarness /> : null}
+                </FirstRunProvider>
+              </SettingsProvider>
+            </PageQuickLinksProvider>
+          </QueryClientProvider>
         </MemoryRouter>
       </ShellRefInjector>
     </ScrollContainerProvider>,
   );
+
+  return { ...view, queryClient };
+}
+
+function expectRefreshRequest(accountIds: string[]) {
+  expect(globalThis.fetch).toHaveBeenCalledWith('/api/account/name-refresh', expect.objectContaining({
+    method: 'POST',
+    body: JSON.stringify({ accountIds }),
+  }));
 }
 
 describe('SettingsPage', () => {
@@ -402,9 +435,149 @@ describe('SettingsPage', () => {
     renderSettings();
     expect(screen.getAllByText('Export Data').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('Select a player or band profile to export data.')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Refresh Profile Name' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Refresh Profile Names' })).toBeNull();
     const exportButton = screen.getByRole('button', { name: 'Export Data' });
     expect(exportButton).toHaveProperty('disabled', true);
     expect(exportButton).toHaveStyle({ opacity: String(Opacity.faded) });
+  });
+
+  it('refreshes the selected player profile name from Settings', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(['player', 'tracked-player-1'], { accountId: 'tracked-player-1', displayName: 'Tracked Player' });
+
+    renderSettings({ queryClient });
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh Profile Name' });
+    expect(screen.getByText('Check Epic for the latest display name for Tracked Player.')).toBeDefined();
+    expect(refreshButton).toHaveStyle({ backgroundColor: Colors.accentBlue, width: '212px' });
+    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveStyle({ backgroundColor: Colors.accentBlue, width: '212px' });
+    expect(screen.getByRole('button', { name: 'Reset All Settings' })).toHaveStyle({ width: '212px' });
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => {
+      expectRefreshRequest(['tracked-player-1']);
+      expect(JSON.parse(localStorage.getItem('fst:selectedProfile')!).displayName).toBe('Tracked Player Fresh');
+    });
+    expect(JSON.parse(localStorage.getItem('fst:trackedPlayer')!).displayName).toBe('Tracked Player Fresh');
+    expect(queryClient.getQueryData(['player', 'tracked-player-1'])).toEqual({ accountId: 'tracked-player-1', displayName: 'Tracked Player Fresh' });
+  });
+
+  it('refreshes selected band member profile names from Settings', async () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'member-a:member-b',
+      displayName: 'Member A + Member B',
+      members: [
+        { accountId: 'member-a', displayName: 'Member A' },
+        { accountId: 'member-b', displayName: 'Member B' },
+        { accountId: 'member-a', displayName: 'Member A' },
+      ],
+    }));
+
+    renderSettings();
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh Profile Names' });
+    expect(screen.getByText('Check Epic for the latest member display names for Member A + Member B.')).toBeDefined();
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => {
+      expectRefreshRequest(['member-a', 'member-b']);
+      expect(JSON.parse(localStorage.getItem('fst:selectedProfile')!).members).toEqual([
+        { accountId: 'member-a', displayName: 'Member A Fresh' },
+        { accountId: 'member-b', displayName: 'Member B Fresh' },
+        { accountId: 'member-a', displayName: 'Member A Fresh' },
+      ]);
+    });
+  });
+
+  it('disables the profile name refresh action while the request is pending', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
+    let resolveRefresh: (value: unknown) => void = () => undefined;
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/sync-status')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
+      }
+      if (typeof url === 'string' && url.includes('/api/account/name-refresh')) {
+        return new Promise(resolve => {
+          resolveRefresh = resolve;
+        });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+    const refreshButton = await screen.findByRole('button', { name: 'Refresh Profile Name' });
+    fireEvent.click(refreshButton);
+
+    expect(refreshButton).toHaveProperty('disabled', true);
+    expect(refreshButton).toHaveTextContent('Checking...');
+
+    await act(async () => {
+      resolveRefresh({ ok: true, json: () => Promise.resolve({ changed: 0, unchanged: 1, failed: 0, missing: 0, names: {}, changedAccountIds: [] }) });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(refreshButton).toHaveProperty('disabled', false);
+    });
+  });
+
+  it('uses consistent desktop widths for Settings action buttons', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
+
+    renderSettings();
+
+    await screen.findByRole('button', { name: 'Refresh Profile Name' });
+    expect(screen.getByRole('button', { name: 'Refresh Profile Name' })).toHaveStyle({ width: '212px' });
+    expect(screen.getByRole('button', { name: 'Export Data' })).toHaveStyle({ width: '212px' });
+    expect(screen.getByRole('button', { name: 'Reset All Settings' })).toHaveStyle({ width: '212px' });
+  });
+
+  it('does not apply a late profile name refresh response after selection changes', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-1', displayName: 'Tracked Player' }));
+    let resolveRefresh: (value: unknown) => void = () => undefined;
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/sync-status')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
+      }
+      if (typeof url === 'string' && url.includes('/api/account/name-refresh')) {
+        return new Promise(resolve => {
+          resolveRefresh = resolve;
+        });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh Profile Name' }));
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({ type: 'player', accountId: 'tracked-player-2', displayName: 'Other Player' }));
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'tracked-player-2', displayName: 'Other Player' }));
+    window.dispatchEvent(new Event('fst:selectedProfileChanged'));
+    window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
+
+    await act(async () => {
+      resolveRefresh({ ok: true, json: () => Promise.resolve({ changed: 1, unchanged: 0, failed: 0, missing: 0, names: { 'tracked-player-1': 'Late Name' }, changedAccountIds: ['tracked-player-1'] }) });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('fst:selectedProfile')!).accountId).toBe('tracked-player-2');
+    });
+    expect(JSON.parse(localStorage.getItem('fst:selectedProfile')!).displayName).toBe('Other Player');
   });
 
   it('downloads the selected player export from Settings', async () => {
@@ -444,7 +617,7 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(exportButton).toHaveProperty('disabled', false);
     });
-    expect(exportButton).toHaveStyle({ backgroundColor: Colors.chipSelected });
+    expect(exportButton).toHaveStyle({ backgroundColor: Colors.accentBlue });
     fireEvent.click(exportButton);
 
     await waitFor(() => {
