@@ -2,6 +2,8 @@
 import { useRef, useCallback, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccountSearch } from '../../../hooks/data/useAccountSearch';
+import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
+import { getPlayerProfileRoute } from '../../../utils/profileNavigation';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
 import PressableButton from '../../common/PressableButton';
 import type { AccountSearchResult } from '@festival/core/api/serverTypes';
@@ -17,11 +19,12 @@ import {
  */
 export default function HeaderSearch() {
   const navigate = useNavigate();
+  const { profile } = useSelectedProfile();
   const searchRef = useRef<SearchBarRef>(null);
 
   const onSelect = useCallback((r: AccountSearchResult) => {
-    navigate(`/player/${r.accountId}`);
-  }, [navigate]);
+    navigate(getPlayerProfileRoute(r.accountId, profile));
+  }, [navigate, profile]);
 
   const s = useAccountSearch(onSelect);
   const st = useStyles();

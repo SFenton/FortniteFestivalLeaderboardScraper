@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { memo, useMemo, useRef, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useRef, type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
@@ -110,6 +110,9 @@ export default memo(function RankingCard({
   }, [entries, metric, spotlightRows]);
 
   const footerCount = spotlightFooterRows.length;
+  const getPlayerRoute = useCallback((accountId: string) => normalizeAccountId(accountId) === normalizeAccountId(playerAccountId)
+    ? Routes.statistics
+    : Routes.player(accountId), [playerAccountId]);
 
   const percentileValueMinWidth = useMemo(() => {
     if (!usePercentileMetric) return undefined;
@@ -172,7 +175,7 @@ export default memo(function RankingCard({
           return (
             <PressableRankingLink
               key={entry.accountId}
-              to={`/player/${entry.accountId}`}
+              to={getPlayerRoute(entry.accountId)}
               style={{ ...rowStyle, ...twoRowStyle, ...staggerStyle }}
               pressedStyle={st.pressablePressed}
               onAnimationEnd={(ev) => {
@@ -217,7 +220,7 @@ export default memo(function RankingCard({
           return (
             <PressableRankingLink
               key={ranking.accountId}
-              to={`/player/${ranking.accountId}`}
+              to={getPlayerRoute(ranking.accountId)}
               style={{ ...st.playerEntryRow, ...twoRowStyle, ...footerStaggerStyle }}
               pressedStyle={st.pressablePressed}
               onAnimationEnd={(ev) => {

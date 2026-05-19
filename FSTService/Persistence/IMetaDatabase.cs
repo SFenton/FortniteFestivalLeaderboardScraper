@@ -209,6 +209,7 @@ public interface IMetaDatabase : IDisposable
     // ── Band team rankings ──────────────────────────────────────────
     void RebuildBandTeamRankings(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
     BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null);
+    void PublishCurrentBandTeamRankings();
     void SnapshotBandRankHistory(string bandType, int retentionDays = 365);
     BandRankHistorySnapshotResult SnapshotBandRankHistoryChunked(string bandType, BandRankHistorySnapshotOptions options, long? jobId = null, CancellationToken ct = default);
     BandRankHistoryWideNarrowParitySummary GetBandRankHistoryWideNarrowParity(string bandType, DateOnly snapshotDate, string? rankingScope = null, string? comboId = null, int sampleLimit = 10, bool ensureSchema = true);
@@ -226,9 +227,9 @@ public interface IMetaDatabase : IDisposable
     void FailBandRankHistoryJob(long jobId, string error);
     BandRankHistoryStatusDto GetBandRankHistoryStatus(string bandType, string? comboId = null);
     BandSongTeamRankingRebuildMetrics RebuildBandSongTeamRankings(string bandType, BandTeamRankingRebuildOptions? options = null);
-    (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50);
-    BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null);
-    BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted");
+    (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50, bool usePublishedSnapshot = false);
+    BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null, bool usePublishedSnapshot = false);
+    BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted", bool usePublishedSnapshot = false);
     List<BandRankHistoryDto> GetBandRankHistory(string bandType, string teamKey, string? comboId = null, int days = 30);
     List<BandSongPerformanceDto> GetBandSongPerformances(string bandType, string teamKey, string? comboId = null);
     (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremes(string bandType, string teamKey, string? comboId = null, int limit = 5);
@@ -236,7 +237,7 @@ public interface IMetaDatabase : IDisposable
     SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForAccount(string songId, string bandType, string accountId, string? comboId = null, bool requireCurrentProjection = false);
     SongBandLeaderboardEntryDto? GetSongBandLeaderboardEntryForTeam(string songId, string bandType, string teamKey, string? comboId = null, bool requireCurrentProjection = false);
     IReadOnlyList<string> GetBandLeaderboardSongIds();
-    List<BandComboCatalogEntry> GetBandRankingCombos(string bandType);
+    List<BandComboCatalogEntry> GetBandRankingCombos(string bandType, bool usePublishedSnapshot = false);
 
     // ── Combo ranking deltas ─────────────────────────────────────────
     void TruncateComboRankingDeltas();

@@ -6,8 +6,9 @@ import {
   Display, Align, Gap, Radius, CssValue, CssProp,
   Border, frostedCard, padding, truncate, transition, border,
 } from '@festival/theme';
-import { Routes } from '../../../routes';
 import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
+import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
+import { getPlayerProfileRoute } from '../../../utils/profileNavigation';
 
 const FAST_FADE_MS = 150;
 
@@ -36,7 +37,8 @@ export const LeaderboardNeighborRow = memo(function LeaderboardNeighborRow({
   onAnimationEnd,
 }: LeaderboardNeighborRowProps) {
   const s = useStyles(isPlayer, rankWidth);
-  const route = Routes.player(accountId);
+  const { profile } = useSelectedProfile();
+  const route = getPlayerProfileRoute(accountId, profile);
   const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: route });
 
   return (

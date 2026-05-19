@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { act, render, waitFor, fireEvent, screen, within } from '@testing-library/react';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
-import { Colors } from '@festival/theme';
+import { Colors, Gap, Layout } from '@festival/theme';
 
 const OPAQUE_FAB_GLASS_BACKGROUND = 'rgba(18,24,38,0.96)';
 
@@ -38,6 +38,7 @@ const mockApi = vi.hoisted(() => {
     }),
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'p1', count: 0, history: [] }),
     getLeaderboard: fn().mockResolvedValue({ songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
+    getSongBandLeaderboard: fn().mockResolvedValue({ songId: 's1', bandType: 'Band_Duets', count: 0, totalEntries: 0, localEntries: 0, entries: [] }),
     getAllLeaderboards: fn().mockResolvedValue({ songId: 's1', instruments: [] }),
     getAllSongBandLeaderboards: fn().mockResolvedValue({ songId: 's1', bands: [] }),
     getComboRankings: fn().mockImplementation(async (comboId: string) => ({
@@ -154,6 +155,12 @@ const mockApi = vi.hoisted(() => {
       selectedPlayerEntry: null,
       selectedBandEntry: null,
     })),
+    getBandRankingCombos: fn().mockResolvedValue({
+      bandType: 'Band_Duets',
+      combos: [
+        { comboId: 'Solo_Guitar+Solo_Bass', instruments: ['Solo_Guitar', 'Solo_Bass'], teamCount: 1 },
+      ],
+    }),
     getBandRanking: fn().mockResolvedValue(null),
     getBandRankHistory: fn().mockResolvedValue({
       bandType: 'Band_Duets',
@@ -382,6 +389,10 @@ function storeSelectedProfile(profile: Record<string, unknown>) {
   window.dispatchEvent(new Event('fst:trackedPlayerChanged'));
 }
 
+function enableExperimentalRanks() {
+  localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: true }));
+}
+
 function markShopFirstRunSeen() {
   const seen = Object.fromEntries(shopSlides({ viewToggleAvailable: true }).map(slide => [slide.id, {
     version: slide.version,
@@ -483,6 +494,8 @@ describe('App — mobile FAB branches', () => {
 
     expect(shouldShowBandFilterAction(bandProfile, '/songs')).toBe(true);
     expect(shouldShowBandFilterAction(bandProfile, '/settings')).toBe(false);
+    expect(shouldShowBandFilterAction(bandProfile, '/songs/s1/bands/Band_Duets')).toBe(false);
+    expect(shouldShowBandFilterAction(bandProfile, '/leaderboards/bands/Band_Duets')).toBe(false);
     expect(shouldShowBandFilterAction(playerProfile, '/songs')).toBe(false);
     expect(shouldShowBandFilterAction(null, '/songs')).toBe(false);
   });
@@ -1073,6 +1086,224 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
+  it('shows full band rankings mobile actions as a direct rank FAB and combo filter circle', async () => {
+    setMobile();
+    enableExperimentalRanks();
+    window.location.hash = '#/leaderboards/bands/Band_Duets?rankBy=totalscore';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
+    }, { timeout: 5000 });
+
+    const backLink = await screen.findByRole('link', { name: 'Back' });
+    expect(backLink).toHaveAttribute('href', '#/leaderboards');
+    const rankButton = await screen.findByRole('button', { name: 'Change Leaderboard Ranking' });
+    const sideActions = screen.getByTestId('fab-side-actions');
+    expect(sideActions.parentElement?.style.flexDirection).toBe('');
+    const filterButton = within(sideActions).getByRole('button', { name: 'Filter by Combo' });
+    expect(rankButton).toHaveStyle({ backgroundColor: Colors.accentPurple });
+    expect(filterButton.style.backgroundColor).toBe(OPAQUE_FAB_GLASS_BACKGROUND.replace(/,/g, ', '));
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+
+    fireEvent.click(rankButton);
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Rank By' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('hides the full band rankings rank FAB when experimental ranks are disabled', async () => {
+    setMobile();
+    window.location.hash = '#/leaderboards/bands/Band_Duets?rankBy=totalscore';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
+    }, { timeout: 5000 });
+
+    expect(screen.queryByRole('button', { name: 'Change Leaderboard Ranking' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Filter by Combo' })).toBeDefined();
+    expect(screen.queryByTestId('fab-side-actions')).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    window.location.hash = '';
+  });
+
+  it('shows the active full band rankings combo filter as a blue pill beside the direct rank FAB', async () => {
+    setMobile();
+    enableExperimentalRanks();
+    window.location.hash = '#/leaderboards/bands/Band_Trios?rankBy=totalscore&combo=Solo_Guitar+Solo_Bass';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25, undefined, undefined);
+    }, { timeout: 5000 });
+
+    expect(await screen.findByRole('button', { name: 'Change Leaderboard Ranking' })).toBeDefined();
+    const sideActions = screen.getByTestId('fab-side-actions');
+    expect(sideActions.parentElement?.style.flexDirection).toBe('');
+    const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
+    expect(filterButton).toHaveStyle({ backgroundColor: '#2D82E6' });
+    expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
+    expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterButton).getByTestId('fab-band-filter-instruments')).toBeDefined();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    window.location.hash = '';
+  });
+
+  it('keeps the full band combo filter beside the mobile FAB when the selected band matches the leaderboard size', async () => {
+    setMobile();
+    enableExperimentalRanks();
+    storeSelectedProfile({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    });
+    window.location.hash = '#/leaderboards/bands/Band_Duets?rankBy=totalscore';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, 'p1:p2');
+    }, { timeout: 5000 });
+
+    expect(await screen.findByRole('button', { name: 'Change Leaderboard Ranking' })).toBeDefined();
+    expect(screen.queryByTestId('band-filter-pill')).toBeNull();
+    const sideActions = screen.getByTestId('fab-side-actions');
+    expect(sideActions.parentElement?.style.flexDirection).toBe('');
+    expect(within(sideActions).getByRole('button', { name: 'Filter by Combo' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('keeps the active full band combo filter beside the mobile FAB when the selected band matches', async () => {
+    setMobile();
+    enableExperimentalRanks();
+    storeSelectedProfile({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    });
+    window.location.hash = '#/leaderboards/bands/Band_Duets?rankBy=totalscore&combo=Solo_Guitar+Solo_Bass';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Bass', 'totalscore', 1, 25, undefined, 'p1:p2');
+    }, { timeout: 5000 });
+
+    expect(await screen.findByRole('button', { name: 'Change Leaderboard Ranking' })).toBeDefined();
+    expect(screen.queryByTestId('band-filter-pill')).toBeNull();
+    const sideActions = screen.getByTestId('fab-side-actions');
+    expect(sideActions.parentElement?.style.flexDirection).toBe('');
+    const filterButton = within(sideActions).getByRole('button', { name: 'Lead / Bass' });
+    expect(within(filterButton).queryByText('Lead / Bass')).toBeNull();
+    expect(within(filterButton).getByAltText('Solo_Guitar')).toBeDefined();
+    expect(within(filterButton).getByAltText('Solo_Bass')).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('places the selected band footer under pagination on mobile full band rankings', async () => {
+    setMobile();
+    storeSelectedProfile({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    });
+    mockApi.getBandRankings.mockResolvedValueOnce({
+      bandType: 'Band_Duets',
+      comboId: null,
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalTeams: 50,
+      entries: [],
+      selectedPlayerEntry: null,
+      selectedBandEntry: {
+        bandId: 'band-1',
+        bandType: 'Band_Duets',
+        teamKey: 'p1:p2',
+        teamMembers: [
+          { accountId: 'p1', displayName: 'TrackedP' },
+          { accountId: 'p2', displayName: 'BandMate' },
+        ],
+        members: [
+          { accountId: 'p1', displayName: 'TrackedP', instruments: ['Solo_Guitar'] },
+          { accountId: 'p2', displayName: 'BandMate', instruments: ['Solo_Bass'] },
+        ],
+        configurations: [],
+        adjustedSkillRank: 1,
+        weightedRank: 2,
+        fcRateRank: 3,
+        totalScoreRank: 4,
+        songsPlayed: 2,
+        totalChartedSongs: 10,
+        totalScore: 123456,
+        fcRate: 0.5,
+        avgAccuracy: 9900,
+        totalRankedTeams: 50,
+      },
+    });
+    window.location.hash = '#/leaderboards/bands/Band_Duets?rankBy=totalscore';
+    render(<App />);
+
+    const pagination = await screen.findByTestId('leaderboard-fixed-pagination');
+    const footer = await screen.findByTestId('leaderboard-fixed-player-footer');
+    expect(pagination).toBeDefined();
+    expect(pagination.style.bottom).toContain(`${Layout.fabBottom + Layout.fabSize + Gap.xl + Layout.entryRowHeight + Gap.xl}px`);
+    expect(footer.style.bottom).toContain(`${Layout.fabBottom + Layout.fabSize + Gap.xl}px`);
+    expect(footer.querySelector('.fab-player-footer')).toBeNull();
+    expect(within(footer).getByText('TrackedP + BandMate')).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('keeps the full band combo filter beside the mobile FAB when the selected band size differs', async () => {
+    setMobile();
+    enableExperimentalRanks();
+    storeSelectedProfile({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'TrackedP + BandMate',
+      members: [
+        { accountId: 'p1', displayName: 'TrackedP' },
+        { accountId: 'p2', displayName: 'BandMate' },
+      ],
+    });
+    window.location.hash = '#/leaderboards/bands/Band_Trios?rankBy=totalscore';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', undefined, 'totalscore', 1, 25, undefined, undefined);
+    }, { timeout: 5000 });
+
+    expect(await screen.findByRole('button', { name: 'Change Leaderboard Ranking' })).toBeDefined();
+    expect(screen.queryByTestId('band-filter-pill')).toBeNull();
+    const sideActions = screen.getByTestId('fab-side-actions');
+    expect(sideActions.parentElement?.style.flexDirection).toBe('');
+    expect(within(sideActions).getByRole('button', { name: 'Filter by Combo' })).toBeDefined();
+    window.location.hash = '';
+  });
+
   it('shows the selected-band combo filter as an inactive icon circle beside the mobile Leaderboards FAB', async () => {
     setMobile();
     localStorage.setItem('fst:selectedProfile', JSON.stringify({
@@ -1513,6 +1744,47 @@ describe('App — mobile FAB branches', () => {
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Filter Band Type' })).toBeDefined();
     expect(await screen.findByText('Instrument #1')).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('shows the song-band combo filter as a direct dark mobile FAB', async () => {
+    setMobile();
+    window.location.hash = '#/songs/s1/bands/Band_Duets';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getSongBandLeaderboard).toHaveBeenCalledWith('s1', 'Band_Duets', 25, 0, undefined, undefined, undefined);
+    }, { timeout: 5000 });
+
+    const filterFab = screen.getByRole('button', { name: 'Filter by Combo' });
+    expect(filterFab.style.backgroundColor).toBe(OPAQUE_FAB_GLASS_BACKGROUND.replace(/,/g, ', '));
+    expect(screen.queryByTestId('fab-side-actions')).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+
+    fireEvent.click(filterFab);
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Filter Duos by Combo' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('shows active song-band combo instruments on the direct mobile FAB', async () => {
+    setMobile();
+    window.location.hash = '#/songs/s1/bands/Band_Duets?combo=Solo_Guitar+Solo_Bass';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getSongBandLeaderboard).toHaveBeenCalledWith('s1', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
+    }, { timeout: 5000 });
+
+    const filterFab = screen.getByRole('button', { name: 'Lead / Bass' });
+    expect(filterFab).toHaveStyle({ backgroundColor: '#2D82E6' });
+    expect(within(filterFab).getByAltText('Solo_Guitar')).toBeDefined();
+    expect(within(filterFab).getByAltText('Solo_Bass')).toBeDefined();
+    expect(within(filterFab).getByTestId('fab-band-filter-instruments')).toBeDefined();
+    expect(screen.queryByTestId('fab-side-actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
     window.location.hash = '';
   });
 

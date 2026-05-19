@@ -88,7 +88,7 @@ export default function LeaderboardsOverviewPage() {
   const hasSelectedBandComboFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
   const isMobile = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
-  const fabSearch = useFabSearch();
+  const { registerLeaderboardActions } = useFabSearch();
   const scrollContainerRef = useScrollContainer();
   const [searchParams, setSearchParams] = useSearchParams();
   const rawMetric = searchParams.get('rankBy') ?? loadLeaderboardRankBy();
@@ -96,10 +96,11 @@ export default function LeaderboardsOverviewPage() {
   const bandMetric = coerceBandRankingMetric(metric, true);
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
+  const openMetricDraft = metricModal.open;
 
   const openMetricModal = useCallback(() => {
-    metricModal.open(metric);
-  }, [metricModal, metric]);
+    openMetricDraft(metric);
+  }, [metric, openMetricDraft]);
 
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
   const resetRush = useCallback(() => staggerRushRef.current?.(), []);
@@ -121,9 +122,9 @@ export default function LeaderboardsOverviewPage() {
   }, [metric, rawMetric, selectedBand, setSearchParams]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal });
-    return () => fabSearch.registerLeaderboardActions(null);
-  }, [fabSearch, openMetricModal]);
+    registerLeaderboardActions({ openMetric: openMetricModal });
+    return () => registerLeaderboardActions(null);
+  }, [openMetricModal, registerLeaderboardActions]);
 
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
 

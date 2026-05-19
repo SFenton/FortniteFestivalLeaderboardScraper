@@ -17,7 +17,7 @@ import PageHeader from '../../components/common/PageHeader';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { IoPerson } from 'react-icons/io5';
-import { serverInstrumentLabel, type RivalSongComparison } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, type RivalSongComparison, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { STAGGER_INTERVAL, Gap, Layout, IconSize } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import { categorizeRivalSongs } from './helpers/rivalCategories';
@@ -29,6 +29,7 @@ import Page from '../Page';
 import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
 import { resolveRivalCombo, resolveRivalCombos, type RivalRouteState } from './helpers/rivalRouteState';
 import { fetchCombinedRivalDetail } from './helpers/rivalDetailFetch';
+import { getPlayerProfileRoute } from '../../utils/profileNavigation';
 
 const MODE_TITLE_KEYS: Record<string, string> = {
   closest_battles: 'rivals.detail.closestBattles',
@@ -63,7 +64,7 @@ export default function RivalryPage() {
   const { settings } = useSettings();
   const isMobile = useIsMobileChrome();
   const scrollContainerRef = useScrollContainer();
-  const { player } = useTrackedPlayer();
+  const { profile, player } = useTrackedPlayer();
   const accountId = player?.accountId;
 
   /* v8 ignore start -- state derivation with null-coalescing */
@@ -149,13 +150,14 @@ export default function RivalryPage() {
 
     return category.songs.map((song, index) => {
       const label = song.title ?? song.songId;
-      const instrumentLabel = serverInstrumentLabel(song.instrument);
+      const instrument = song.instrument as ServerInstrumentKey;
+      const instrumentLabel = serverInstrumentLabel(instrument);
 
       return {
         id: rivalrySongQuickLinkId(song, index),
         label,
         landmarkLabel: `${label} (${instrumentLabel})`,
-        icon: <InstrumentIcon instrument={song.instrument} sig={sigMap.get(song.songId)} size={QUICK_LINK_GLYPH_ICON_SIZE} />,
+        icon: <InstrumentIcon instrument={instrument} sig={sigMap.get(song.songId)} size={QUICK_LINK_GLYPH_ICON_SIZE} />,
       };
     });
   }, [category, isMobile, phase, sigMap]);
@@ -204,7 +206,7 @@ export default function RivalryPage() {
       containerStyle={styles.container}
       quickLinks={pageQuickLinks}
       before={<PageHeader title={title} actions={!isMobile && phase === LoadPhase.ContentIn ? (
-        <PressableButton style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onPress={() => navigate(Routes.player(rivalId!))}>
+        <PressableButton style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onPress={() => navigate(getPlayerProfileRoute(rivalId!, profile))}>
           <IoPerson size={IconSize.action} />
           {(rivalName || searchParams.get('name'))
             ? t('common.viewNameProfile', { name: rivalName ?? searchParams.get('name') })

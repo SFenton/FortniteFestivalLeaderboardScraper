@@ -140,6 +140,8 @@ public sealed class MetaDatabase : IMetaDatabase
             cache.ExecuteNonQuery();
         }
 
+        PublishCurrentBandTeamRankings(conn, tx);
+
         using (var publish = conn.CreateCommand())
         {
             publish.Transaction = tx;
@@ -3034,6 +3036,51 @@ public sealed class MetaDatabase : IMetaDatabase
         RebuildBandTeamRankingsMeasured(bandType, totalChartedSongs, credibilityThreshold, populationMedian, options);
     }
 
+    public void PublishCurrentBandTeamRankings()
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        PublishCurrentBandTeamRankings(conn, tx);
+        tx.Commit();
+    }
+
+    private static void PublishCurrentBandTeamRankings(NpgsqlConnection conn, NpgsqlTransaction tx)
+    {
+        var options = BandTeamRankingRebuildOptions.Default;
+        foreach (var bandType in BandRankingStorageNames.AllBandTypes)
+            PublishCurrentBandTeamRankingTables(conn, tx, options, bandType);
+    }
+
+    private static void PublishCurrentBandTeamRankingTables(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string bandType)
+    {
+        var currentRankingTable = BandRankingStorageNames.GetCurrentRankingTable(bandType);
+        var currentStatsTable = BandRankingStorageNames.GetCurrentStatsTable(bandType);
+        if (!TableExists(conn, tx, currentRankingTable) || !TableExists(conn, tx, currentStatsTable))
+            return;
+
+        var buildSuffix = Guid.NewGuid().ToString("N")[..8];
+        var buildRankingTable = CreateBandRankingBuildTable(conn, tx, options, bandType, buildSuffix);
+        var buildStatsTable = CreateBandRankingStatsBuildTable(conn, tx, options, bandType, buildSuffix);
+
+        using (var copyRankings = conn.CreateCommand())
+        {
+            ConfigureBandRebuildCommand(copyRankings, tx, options);
+            copyRankings.CommandText = $"INSERT INTO {BandRankingStorageNames.QuoteIdentifier(buildRankingTable)} SELECT * FROM {BandRankingStorageNames.QuoteIdentifier(currentRankingTable)}";
+            copyRankings.ExecuteNonQuery();
+        }
+
+        using (var copyStats = conn.CreateCommand())
+        {
+            ConfigureBandRebuildCommand(copyStats, tx, options);
+            copyStats.CommandText = $"INSERT INTO {BandRankingStorageNames.QuoteIdentifier(buildStatsTable)} SELECT * FROM {BandRankingStorageNames.QuoteIdentifier(currentStatsTable)}";
+            copyStats.ExecuteNonQuery();
+        }
+
+        CreateBandRankingIndexes(conn, tx, options, buildRankingTable);
+        CreateBandRankingStatsIndexes(conn, tx, options, buildStatsTable);
+        SwapBandPublishedTables(conn, tx, options, bandType, buildRankingTable, buildStatsTable, buildSuffix);
+    }
+
     public BandTeamRankingRebuildMetrics RebuildBandTeamRankingsMeasured(string bandType, int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, BandTeamRankingRebuildOptions? options = null)
     {
         var resolvedOptions = ResolveBandTeamRankingRebuildOptions(options);
@@ -4122,6 +4169,31 @@ public sealed class MetaDatabase : IMetaDatabase
         // Use IF EXISTS so Postgres evaluates existence at statement time and
         // drops the backup regardless of whether the first RENAME ran (no-op on
         // first-ever build when currentRankingTable did not exist).
+        statements.Add($"DROP TABLE IF EXISTS {BandRankingStorageNames.QuoteIdentifier(backupRankingTable)}");
+        statements.Add($"DROP TABLE IF EXISTS {BandRankingStorageNames.QuoteIdentifier(backupStatsTable)}");
+
+        using var cmd = conn.CreateCommand();
+        ConfigureBandRebuildCommand(cmd, tx, options);
+        cmd.CommandText = string.Join(";\n", statements) + ";";
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void SwapBandPublishedTables(NpgsqlConnection conn, NpgsqlTransaction tx, BandTeamRankingRebuildOptions options, string bandType, string buildRankingTable, string buildStatsTable, string buildSuffix)
+    {
+        var publishedRankingTable = BandRankingStorageNames.GetPublishedRankingTable(bandType);
+        var publishedStatsTable = BandRankingStorageNames.GetPublishedStatsTable(bandType);
+        var backupRankingTable = $"{publishedRankingTable}_old_{buildSuffix}";
+        var backupStatsTable = $"{publishedStatsTable}_old_{buildSuffix}";
+        var statements = new List<string>();
+
+        if (TableExists(conn, tx, publishedRankingTable))
+            statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(publishedRankingTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(backupRankingTable)}");
+
+        if (TableExists(conn, tx, publishedStatsTable))
+            statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(publishedStatsTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(backupStatsTable)}");
+
+        statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(buildRankingTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(publishedRankingTable)}");
+        statements.Add($"ALTER TABLE {BandRankingStorageNames.QuoteIdentifier(buildStatsTable)} RENAME TO {BandRankingStorageNames.QuoteIdentifier(publishedStatsTable)}");
         statements.Add($"DROP TABLE IF EXISTS {BandRankingStorageNames.QuoteIdentifier(backupRankingTable)}");
         statements.Add($"DROP TABLE IF EXISTS {BandRankingStorageNames.QuoteIdentifier(backupStatsTable)}");
 
@@ -6796,15 +6868,15 @@ public sealed class MetaDatabase : IMetaDatabase
         _ => null,
     };
 
-    public (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50)
+    public (List<BandTeamRankingDto> Entries, int TotalTeams) GetBandTeamRankings(string bandType, string? comboId = null, string rankBy = "adjusted", int page = 1, int pageSize = 50, bool usePublishedSnapshot = false)
     {
         var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
         var normalizedComboId = comboId ?? string.Empty;
-        var totalTeams = GetBandRankingTotalTeams(bandType, rankingScope, normalizedComboId);
+        var totalTeams = GetBandRankingTotalTeams(bandType, rankingScope, normalizedComboId, usePublishedSnapshot);
         var rankColumn = BandRankColumn(rankBy);
 
         using var conn = _ds.OpenConnection();
-        var rankingsTable = ResolveBandRankingReadTable(conn, bandType);
+        var rankingsTable = ResolveBandRankingReadTable(conn, bandType, usePublishedSnapshot);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT
@@ -6839,14 +6911,14 @@ public sealed class MetaDatabase : IMetaDatabase
         return (entries, totalTeams);
     }
 
-    public BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null)
+    public BandTeamRankingDto? GetBandTeamRanking(string bandType, string teamKey, string? comboId = null, bool usePublishedSnapshot = false)
     {
         var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
         var normalizedComboId = comboId ?? string.Empty;
-        var totalTeams = GetBandRankingTotalTeams(bandType, rankingScope, normalizedComboId);
+        var totalTeams = GetBandRankingTotalTeams(bandType, rankingScope, normalizedComboId, usePublishedSnapshot);
 
         using var conn = _ds.OpenConnection();
-        var rankingsTable = ResolveBandRankingReadTable(conn, bandType);
+        var rankingsTable = ResolveBandRankingReadTable(conn, bandType, usePublishedSnapshot);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT
@@ -6875,15 +6947,15 @@ public sealed class MetaDatabase : IMetaDatabase
         return ranking;
     }
 
-    public BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted")
+    public BandTeamRankingDto? GetBandTeamRankingForAccount(string bandType, string accountId, string? comboId = null, string rankBy = "adjusted", bool usePublishedSnapshot = false)
     {
         var rankingScope = string.IsNullOrWhiteSpace(comboId) ? "overall" : "combo";
         var normalizedComboId = comboId ?? string.Empty;
-        var totalTeams = GetBandRankingTotalTeams(bandType, rankingScope, normalizedComboId);
+        var totalTeams = GetBandRankingTotalTeams(bandType, rankingScope, normalizedComboId, usePublishedSnapshot);
         var rankColumn = BandRankColumn(rankBy);
 
         using var conn = _ds.OpenConnection();
-        var rankingsTable = ResolveBandRankingReadTable(conn, bandType);
+        var rankingsTable = ResolveBandRankingReadTable(conn, bandType, usePublishedSnapshot);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             WITH candidate_teams AS (
@@ -8705,10 +8777,10 @@ public sealed class MetaDatabase : IMetaDatabase
     private static bool? ReadOptionalBool(IReadOnlyList<int> values, int index) =>
         index < values.Count && values[index] >= 0 ? values[index] == 1 : null;
 
-    public List<BandComboCatalogEntry> GetBandRankingCombos(string bandType)
+    public List<BandComboCatalogEntry> GetBandRankingCombos(string bandType, bool usePublishedSnapshot = false)
     {
         using var conn = _ds.OpenConnection();
-        var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
+        var statsTable = ResolveBandRankingStatsReadTable(conn, bandType, usePublishedSnapshot);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT combo_id, total_teams
@@ -9330,10 +9402,10 @@ public sealed class MetaDatabase : IMetaDatabase
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
-    private int GetBandRankingTotalTeams(string bandType, string rankingScope, string comboId)
+    private int GetBandRankingTotalTeams(string bandType, string rankingScope, string comboId, bool usePublishedSnapshot = false)
     {
         using var conn = _ds.OpenConnection();
-        var statsTable = ResolveBandRankingStatsReadTable(conn, bandType);
+        var statsTable = ResolveBandRankingStatsReadTable(conn, bandType, usePublishedSnapshot);
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $@"
             SELECT total_teams
@@ -9668,11 +9740,15 @@ public sealed class MetaDatabase : IMetaDatabase
         }
     }
 
-    private static string ResolveBandRankingReadTable(NpgsqlConnection conn, string bandType)
-        => BandRankingStorageNames.GetCurrentRankingTable(bandType);
+    private static string ResolveBandRankingReadTable(NpgsqlConnection conn, string bandType, bool usePublishedSnapshot = false)
+        => usePublishedSnapshot
+            ? BandRankingStorageNames.GetPublishedRankingTable(bandType)
+            : BandRankingStorageNames.GetCurrentRankingTable(bandType);
 
-    private static string ResolveBandRankingStatsReadTable(NpgsqlConnection conn, string bandType)
-        => BandRankingStorageNames.GetCurrentStatsTable(bandType);
+    private static string ResolveBandRankingStatsReadTable(NpgsqlConnection conn, string bandType, bool usePublishedSnapshot = false)
+        => usePublishedSnapshot
+            ? BandRankingStorageNames.GetPublishedStatsTable(bandType)
+            : BandRankingStorageNames.GetCurrentStatsTable(bandType);
 
     private static long ReadCurrentBandRankingGeneration(NpgsqlConnection conn, string bandType)
     {

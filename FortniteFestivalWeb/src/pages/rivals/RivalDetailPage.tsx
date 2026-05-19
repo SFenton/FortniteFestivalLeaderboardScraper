@@ -29,6 +29,7 @@ import Page from '../Page';
 import { coerceRankingMetric } from '../leaderboards/helpers/rankingHelpers';
 import { resolveRivalCombo, resolveRivalCombos, rivalComboStateForNavigation, type RivalRouteState } from './helpers/rivalRouteState';
 import { fetchCombinedRivalDetail } from './helpers/rivalDetailFetch';
+import { getPlayerProfileRoute } from '../../utils/profileNavigation';
 
 let _cachedDetailSongs: RivalSongComparison[] = [];
 let _cachedDetailRivalName: string | null = null;
@@ -49,7 +50,7 @@ export default function RivalDetailPage() {
   const { settings } = useSettings();
   const isMobile = useIsMobileChrome();
   const scrollContainerRef = useScrollContainer();
-  const { player } = useTrackedPlayer();
+  const { profile, player } = useTrackedPlayer();
   const accountId = player?.accountId;
 
   /* v8 ignore start -- state derivation with null-coalescing */
@@ -189,7 +190,7 @@ export default function RivalDetailPage() {
       containerStyle={styles.container}
       quickLinks={pageQuickLinks}
       before={<PageHeader title={`${playerName} vs. ${displayName}`} actions={!isMobile && phase === LoadPhase.ContentIn ? (
-        <PressableButton style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onPress={() => navigate(Routes.player(rivalId!))}>
+        <PressableButton style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onPress={() => navigate(getPlayerProfileRoute(rivalId!, profile))}>
           <IoPerson size={IconSize.action} />
           {(rivalName || searchParams.get('name'))
             ? t('common.viewNameProfile', { name: rivalName ?? searchParams.get('name') })

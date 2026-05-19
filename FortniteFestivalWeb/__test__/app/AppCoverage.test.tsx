@@ -252,6 +252,7 @@ describe('App — coverage: backFallback for detail routes', () => {
     expect(getBackFallback('/bands/band-1', '?bandType=Band_Duets&teamKey=p1%3Ap2')).toBe('/leaderboards/bands/Band_Duets');
     expect(getBackFallback('/bands/band-1')).toBe('/leaderboards');
     expect(getBackFallback('/bands', '?bandType=Band_Trios&teamKey=p1%3Ap2%3Ap3')).toBe('/leaderboards/bands/Band_Trios');
+    expect(getBackFallback('/leaderboards/bands/Band_Duets', '?rankBy=totalscore')).toBe('/leaderboards');
     expect(getBackFallback('/songs')).toBeNull();
   });
 

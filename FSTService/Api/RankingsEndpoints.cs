@@ -641,6 +641,7 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string bandType,
             IMetaDatabase metaDb,
+            PublicReadGateService publicReadGate,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
@@ -651,7 +652,9 @@ public static partial class ApiEndpoints
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
             if (frozenMiss is not null) return frozenMiss;
 
-            var combos = metaDb.GetBandRankingCombos(bandType)
+            var publicReadState = publicReadGate.GetState();
+            var usePublishedSnapshot = publicReadState.IsFrozen && string.Equals(publicReadState.Reason, "publish", StringComparison.OrdinalIgnoreCase);
+            var combos = metaDb.GetBandRankingCombos(bandType, usePublishedSnapshot)
                 .Select(combo => new
                 {
                     comboId = combo.ComboId,
@@ -678,6 +681,7 @@ public static partial class ApiEndpoints
             string? teamKey,
             IMetaDatabase metaDb,
             ScrapeTimePrecomputer precomputer,
+            PublicReadGateService publicReadGate,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
@@ -693,7 +697,10 @@ public static partial class ApiEndpoints
             var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
             var metric = rankBy ?? "adjusted";
             var hasSelectedContext = !string.IsNullOrWhiteSpace(accountId) || !string.IsNullOrWhiteSpace(teamKey);
-            if (effectivePage > 0 && effectivePageSize <= 50 && effectivePage <= 50 / effectivePageSize && comboValidation.ComboId is null && (!hasSelectedContext || publicationCache.IsFrozen))
+            var publicReadState = publicReadGate.GetState();
+            var isPublishFreeze = publicReadState.IsFrozen && string.Equals(publicReadState.Reason, "publish", StringComparison.OrdinalIgnoreCase);
+            var canUseOverallSnapshot = effectivePage > 0 && effectivePageSize <= 50 && effectivePage <= 50 / effectivePageSize && comboValidation.ComboId is null;
+            if (canUseOverallSnapshot && !hasSelectedContext)
             {
                 var result = CacheHelper.ServeFirstPageSubsetIfCached(
                     httpContext,
@@ -706,15 +713,15 @@ public static partial class ApiEndpoints
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
             if (frozenMiss is not null) return frozenMiss;
 
-            var (entries, totalTeams) = metaDb.GetBandTeamRankings(bandType, comboValidation.ComboId, metric, effectivePage, effectivePageSize);
+            var (entries, totalTeams) = metaDb.GetBandTeamRankings(bandType, comboValidation.ComboId, metric, effectivePage, effectivePageSize, usePublishedSnapshot: isPublishFreeze);
             var selectedAccountId = string.IsNullOrWhiteSpace(accountId) ? null : accountId.Trim();
             var selectedEntry = selectedAccountId is null
                 ? null
-                : metaDb.GetBandTeamRankingForAccount(bandType, selectedAccountId, comboValidation.ComboId, metric);
+                : metaDb.GetBandTeamRankingForAccount(bandType, selectedAccountId, comboValidation.ComboId, metric, usePublishedSnapshot: isPublishFreeze);
             var selectedTeamKey = string.IsNullOrWhiteSpace(teamKey) ? null : teamKey.Trim();
             var selectedBandEntry = selectedTeamKey is null
                 ? null
-                : metaDb.GetBandTeamRanking(bandType, selectedTeamKey, comboValidation.ComboId);
+                : metaDb.GetBandTeamRanking(bandType, selectedTeamKey, comboValidation.ComboId, usePublishedSnapshot: isPublishFreeze);
             IEnumerable<string> accountIdsForNames = entries.SelectMany(entry => entry.TeamMembers);
             if (selectedEntry is not null)
                 accountIdsForNames = accountIdsForNames.Concat(selectedEntry.TeamMembers);
@@ -800,6 +807,7 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             ImprovementNotificationService improvementNotifications,
+            PublicReadGateService publicReadGate,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
@@ -811,7 +819,9 @@ public static partial class ApiEndpoints
             if (band is null)
                 return Results.NotFound(new { error = "Band not found." });
 
-            var ranking = metaDb.GetBandTeamRanking(band.BandType, band.TeamKey);
+            var publicReadState = publicReadGate.GetState();
+            var usePublishedSnapshot = publicReadState.IsFrozen && string.Equals(publicReadState.Reason, "publish", StringComparison.OrdinalIgnoreCase);
+            var ranking = metaDb.GetBandTeamRanking(band.BandType, band.TeamKey, usePublishedSnapshot: usePublishedSnapshot);
             var names = ranking is null
                 ? new Dictionary<string, string>()
                 : metaDb.GetDisplayNames(ranking.TeamMembers);
@@ -962,6 +972,7 @@ public static partial class ApiEndpoints
             string? rankBy,
             IMetaDatabase metaDb,
             GlobalLeaderboardPersistence persistence,
+            PublicReadGateService publicReadGate,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
@@ -977,7 +988,9 @@ public static partial class ApiEndpoints
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, publicationCache);
             if (frozenMiss is not null) return frozenMiss;
 
-            var ranking = metaDb.GetBandTeamRanking(bandType, teamKey, comboValidation.ComboId);
+            var publicReadState = publicReadGate.GetState();
+            var usePublishedSnapshot = publicReadState.IsFrozen && string.Equals(publicReadState.Reason, "publish", StringComparison.OrdinalIgnoreCase);
+            var ranking = metaDb.GetBandTeamRanking(bandType, teamKey, comboValidation.ComboId, usePublishedSnapshot: usePublishedSnapshot);
             if (ranking is null)
                 return Results.NotFound(new { error = "Team not found in this band ranking." });
             ranking.Configurations.AddRange(persistence.GetBandConfigurations(bandType, teamKey));

@@ -5101,13 +5101,84 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task Rankings_Bands_ServesGenericPrecomputedSubsetWhileFrozen()
+    public async Task Rankings_Bands_ServesGenericPrecomputedSubsetOnlyWithoutSelectedContextWhileFrozen()
     {
         var publicationCache = _factory.Services.GetRequiredKeyedService<ResponseCacheService>("NeighborhoodCache");
+        var publicReadGate = _factory.Services.GetRequiredService<PublicReadGateService>();
         using (var scope = _factory.Services.CreateScope())
         {
-            var metaDb = scope.ServiceProvider.GetRequiredService<IMetaDatabase>();
-            var payload = new
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var dataSource = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>();
+
+            metaDb.InsertAccountIds(["selectedCacheAcct", "selectedCacheMate", "publishCacheAcct", "publishCacheMate"]);
+            metaDb.InsertAccountNames([
+                ("selectedCacheAcct", (string?)"Selected Cache Player"),
+                ("selectedCacheMate", (string?)"Selected Cache Mate"),
+                ("publishCacheAcct", (string?)"Publish Cache Player"),
+                ("publishCacheMate", (string?)"Publish Cache Mate"),
+            ]);
+            using (var conn = dataSource.OpenConnection())
+            {
+                using var membershipCmd = conn.CreateCommand();
+                membershipCmd.CommandText = """
+                    INSERT INTO band_team_membership (account_id, band_type, team_key, instrument_combo, appearance_count, member_instruments_json, updated_at)
+                    VALUES
+                        ('selectedCacheAcct', 'Band_Duets', 'selectedCacheAcct:selectedCacheMate', '', 1, '{}'::jsonb, now()),
+                        ('selectedCacheMate', 'Band_Duets', 'selectedCacheAcct:selectedCacheMate', '', 1, '{}'::jsonb, now()),
+                        ('publishCacheAcct', 'Band_Duets', 'publishCacheAcct:publishCacheMate', '', 1, '{}'::jsonb, now()),
+                        ('publishCacheMate', 'Band_Duets', 'publishCacheAcct:publishCacheMate', '', 1, '{}'::jsonb, now())
+                    ON CONFLICT (account_id, band_type, team_key, instrument_combo) DO UPDATE SET
+                        appearance_count = EXCLUDED.appearance_count,
+                        member_instruments_json = EXCLUDED.member_instruments_json,
+                        updated_at = EXCLUDED.updated_at
+                    """;
+                membershipCmd.ExecuteNonQuery();
+
+                using var rankingCmd = conn.CreateCommand();
+                rankingCmd.CommandText = """
+                    INSERT INTO band_team_rankings_current_band_duets (
+                        band_type, ranking_scope, combo_id, team_key, team_members,
+                        songs_played, total_charted_songs, coverage,
+                        raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank,
+                        weighted_rating, weighted_rank, fc_rate, fc_rate_rank,
+                        total_score, total_score_rank, avg_accuracy, full_combo_count,
+                        avg_stars, best_rank, avg_rank, raw_weighted_rating, computed_at)
+                    VALUES (
+                        'Band_Duets', 'overall', '', 'selectedCacheAcct:selectedCacheMate', @teamMembers,
+                        1, 1, 1,
+                        0, 0, 1,
+                        0, 1, 1, 1,
+                        123456, 1, 100, 1,
+                        6, 1, 1, 0, now()),
+                        (
+                        'Band_Duets', 'overall', '', 'publishCacheAcct:publishCacheMate', @publishTeamMembers,
+                        1, 1, 1,
+                        0, 0, 2,
+                        0, 2, 1, 2,
+                        654321, 2, 100, 1,
+                        6, 1, 1, 0, now())
+                    ON CONFLICT (band_type, ranking_scope, combo_id, team_key) DO UPDATE SET
+                        team_members = EXCLUDED.team_members,
+                        total_score = EXCLUDED.total_score,
+                        total_score_rank = EXCLUDED.total_score_rank,
+                        computed_at = EXCLUDED.computed_at
+                    """;
+                rankingCmd.Parameters.AddWithValue("teamMembers", new[] { "selectedCacheAcct", "selectedCacheMate" });
+                rankingCmd.Parameters.AddWithValue("publishTeamMembers", new[] { "publishCacheAcct", "publishCacheMate" });
+                rankingCmd.ExecuteNonQuery();
+
+                using var statsCmd = conn.CreateCommand();
+                statsCmd.CommandText = """
+                    INSERT INTO band_team_ranking_stats_current_band_duets (band_type, ranking_scope, combo_id, total_teams, computed_at)
+                    VALUES ('Band_Duets', 'overall', '', 2, now())
+                    ON CONFLICT (band_type, ranking_scope, combo_id) DO UPDATE SET
+                        total_teams = EXCLUDED.total_teams,
+                        computed_at = EXCLUDED.computed_at
+                    """;
+                statsCmd.ExecuteNonQuery();
+            }
+
+            var genericPayload = new
             {
                 bandType = "Band_Duets",
                 comboId = (string?)null,
@@ -5123,28 +5194,84 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 selectedPlayerEntry = (object?)null,
                 selectedBandEntry = (object?)null,
             };
-            var json = JsonSerializer.SerializeToUtf8Bytes(payload);
+            var selectedContextPayload = new
+            {
+                bandType = "Band_Duets",
+                comboId = (string?)null,
+                rankBy = "totalscore",
+                page = 1,
+                pageSize = 50,
+                totalTeams = 2,
+                entries = new[]
+                {
+                    new { bandId = "cached-totalscore-band-1", teamKey = "cachedTotalscoreA:cachedTotalscoreB", teamMembers = Array.Empty<object>() },
+                },
+                selectedPlayerEntry = (object?)null,
+                selectedBandEntry = (object?)null,
+            };
+            var genericJson = JsonSerializer.SerializeToUtf8Bytes(genericPayload);
+            var selectedContextJson = JsonSerializer.SerializeToUtf8Bytes(selectedContextPayload);
             metaDb.BulkSetCachedResponses(new[]
             {
-                ("rankings:bands:Band_Duets:cachetestband:1:50", json, ResponseCacheService.ComputeETag(json)),
+                ("rankings:bands:Band_Duets:cachetestband:1:50", genericJson, ResponseCacheService.ComputeETag(genericJson)),
+                ("rankings:bands:Band_Duets:totalscore:1:50", selectedContextJson, ResponseCacheService.ComputeETag(selectedContextJson)),
             });
         }
 
         publicationCache.Freeze();
         try
         {
-            var response = await _client.GetAsync("/api/rankings/bands/Band_Duets?rankBy=cachetestband&page=2&pageSize=1&accountId=selectedAcct");
+            var genericResponse = await _client.GetAsync("/api/rankings/bands/Band_Duets?rankBy=cachetestband&page=2&pageSize=1");
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal(2, body.GetProperty("page").GetInt32());
-            Assert.Equal(1, body.GetProperty("pageSize").GetInt32());
-            Assert.Equal(1, body.GetProperty("entries").GetArrayLength());
-            Assert.Equal("cachedC:cachedD", body.GetProperty("entries")[0].GetProperty("teamKey").GetString());
-            Assert.Equal(JsonValueKind.Null, body.GetProperty("selectedPlayerEntry").ValueKind);
+            Assert.Equal(HttpStatusCode.OK, genericResponse.StatusCode);
+            var genericBody = await genericResponse.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(2, genericBody.GetProperty("page").GetInt32());
+            Assert.Equal(1, genericBody.GetProperty("pageSize").GetInt32());
+            Assert.Equal(1, genericBody.GetProperty("entries").GetArrayLength());
+            Assert.Equal("cachedC:cachedD", genericBody.GetProperty("entries")[0].GetProperty("teamKey").GetString());
+            Assert.Equal(JsonValueKind.Null, genericBody.GetProperty("selectedPlayerEntry").ValueKind);
+
+            var selectedResponse = await _client.GetAsync("/api/rankings/bands/Band_Duets?rankBy=totalscore&page=1&pageSize=10&accountId=selectedCacheAcct");
+
+            Assert.Equal(HttpStatusCode.OK, selectedResponse.StatusCode);
+            var selectedBody = await selectedResponse.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(JsonValueKind.Object, selectedBody.GetProperty("selectedPlayerEntry").ValueKind);
+            Assert.Equal("selectedCacheAcct:selectedCacheMate", selectedBody.GetProperty("selectedPlayerEntry").GetProperty("teamKey").GetString());
+
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+                metaDb.PublishCurrentBandTeamRankings();
+                metaDb.SetPublicReadFreeze(true, reason: "publish");
+            }
+            publicReadGate.Invalidate();
+
+            using (var scope = _factory.Services.CreateScope())
+            using (var conn = scope.ServiceProvider.GetRequiredService<NpgsqlDataSource>().OpenConnection())
+            {
+                using var mutateCurrent = conn.CreateCommand();
+                mutateCurrent.CommandText = """
+                    DELETE FROM band_team_rankings_current_band_duets
+                    WHERE team_key = 'publishCacheAcct:publishCacheMate'
+                    """;
+                mutateCurrent.ExecuteNonQuery();
+            }
+
+            var publishFrozenSelectedResponse = await _client.GetAsync("/api/rankings/bands/Band_Duets?rankBy=totalscore&page=1&pageSize=10&accountId=publishCacheAcct");
+
+            Assert.Equal(HttpStatusCode.OK, publishFrozenSelectedResponse.StatusCode);
+            var publishFrozenSelectedBody = await publishFrozenSelectedResponse.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(JsonValueKind.Object, publishFrozenSelectedBody.GetProperty("selectedPlayerEntry").ValueKind);
+            Assert.Equal("publishCacheAcct:publishCacheMate", publishFrozenSelectedBody.GetProperty("selectedPlayerEntry").GetProperty("teamKey").GetString());
         }
         finally
         {
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+                metaDb.SetPublicReadFreeze(false);
+            }
+            publicReadGate.Invalidate();
             publicationCache.Unfreeze();
             publicationCache.InvalidateAll();
         }

@@ -9,6 +9,7 @@ import { SELECTED_PROFILE_STORAGE_KEY, writeSelectedProfile } from '../../../src
 
 const mockApi = vi.hoisted(() => ({
   getBandRankings: vi.fn(),
+  getBandRankingCombos: vi.fn(),
   getSongs: vi.fn(),
   getShop: vi.fn(),
 }));
@@ -68,6 +69,13 @@ beforeEach(() => {
   localStorage.clear();
   mockApi.getSongs.mockResolvedValue({ currentSeason: 9, songs: [] });
   mockApi.getShop.mockResolvedValue({ songs: [] });
+  mockApi.getBandRankingCombos.mockResolvedValue({
+    bandType: 'Band_Duets',
+    combos: [
+      { comboId: 'Solo_Guitar+Solo_Bass', instruments: ['Solo_Guitar', 'Solo_Bass'], teamCount: 12 },
+      { comboId: 'Solo_Guitar+Solo_Vocals', instruments: ['Solo_Guitar', 'Solo_Vocals'], teamCount: 8 },
+    ],
+  });
   mockApi.getBandRankings.mockImplementation((bandType: BandType, _comboId: string | undefined, rankBy: string, page: number, pageSize: number) => Promise.resolve({
     bandType,
     comboId: null,
@@ -78,6 +86,10 @@ beforeEach(() => {
     entries: [makeBandEntry(page === 1 ? 1 : 26, page === 1 ? ['Alpha', 'Beta'] : ['Gamma', 'Delta'])],
   }));
 });
+
+function enableExperimentalRanks() {
+  localStorage.setItem('fst:appSettings', JSON.stringify({ enableExperimentalRanks: true }));
+}
 
 describe('BandRankingsPage', () => {
   it('renders all-up band rankings with shared pagination and band detail links', async () => {
@@ -116,8 +128,55 @@ describe('BandRankingsPage', () => {
     });
   });
 
+  it('hides the desktop rank pill when experimental ranks are disabled', async () => {
+    render(
+      <TestProviders route="/leaderboards/bands/Band_Duets?rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await screen.findByTestId('band-rankings-card-list');
+
+    expect(screen.getByRole('button', { name: 'Filter by Combo' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Total Score' })).toBeNull();
+  });
+
+  it('shows the desktop rank pill when experimental ranks are enabled', async () => {
+    enableExperimentalRanks();
+
+    render(
+      <TestProviders route="/leaderboards/bands/Band_Duets?rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await screen.findByTestId('band-rankings-card-list');
+
+    expect(screen.getByRole('button', { name: 'Filter by Combo' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Total Score' })).toBeTruthy();
+  });
+
+  it('coerces experimental rank query params to total score when experimental ranks are disabled', async () => {
+    render(
+      <TestProviders route="/leaderboards/bands/Band_Duets?rankBy=adjusted">
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
+    });
+  });
+
   it('uses compact Bayesian metadata for mobile adjusted band ranking cards', async () => {
     stubMatchMedia(true);
+    enableExperimentalRanks();
     mockApi.getBandRankings.mockResolvedValue({
       bandType: 'Band_Duets',
       comboId: null,
@@ -182,6 +241,178 @@ describe('BandRankingsPage', () => {
     });
   });
 
+  it('uses a route combo before the selected-band combo and preserves it during pagination', async () => {
+    render(
+      <TestProviders
+        route="/leaderboards/bands/Band_Duets?rankBy=totalscore&combo=Solo_Guitar+Solo_Vocals"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'acct-a:acct-b',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+            { accountId: 'acct-b', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'totalscore', 1, 25, undefined, undefined);
+    });
+    expect(await screen.findByTestId('leaderboard-page-info')).toHaveTextContent('1 / 2');
+
+    mockApi.getBandRankings.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Vocals', 'totalscore', 2, 25, undefined, undefined);
+    });
+  });
+
+  it('uses combo=all to suppress the selected-band combo fallback', async () => {
+    render(
+      <TestProviders
+        route="/leaderboards/bands/Band_Duets?rankBy=totalscore&combo=all"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'acct-a:acct-b',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+            { accountId: 'acct-b', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'totalscore', 1, 25, undefined, undefined);
+    });
+  });
+
+  it('shows the page-local combo notice when the selected band type matches the viewed band type', async () => {
+    writeSelectedProfile({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Duets',
+      teamKey: 'selected:partner',
+      displayName: 'Selected + Partner',
+      members: [
+        { accountId: 'selected', displayName: 'Selected' },
+        { accountId: 'partner', displayName: 'Partner' },
+      ],
+    });
+
+    render(
+      <TestProviders
+        route="/leaderboards/bands/Band_Duets?rankBy=totalscore"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Duets',
+          teamKey: 'selected:partner',
+          comboId: 'Solo_Guitar+Solo_Bass',
+          assignments: [
+            { accountId: 'selected', instrument: 'Solo_Guitar' },
+            { accountId: 'partner', instrument: 'Solo_Bass' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await screen.findByTestId('band-rankings-card-list');
+    fireEvent.click(screen.getByTestId('band-filter-pill'));
+
+    expect(await screen.findByRole('dialog', { name: 'Filter Duos by Combo' })).toBeTruthy();
+    expect(screen.getByText('Changing this page filter will not change the globally filtered combo for Selected + Partner.')).toBeTruthy();
+  });
+
+  it('hides the page-local combo notice when the selected band type does not match the viewed band type', async () => {
+    writeSelectedProfile({
+      type: 'band',
+      bandId: 'selected-band',
+      bandType: 'Band_Trios',
+      teamKey: 'selected:partner:third',
+      displayName: 'Selected Trio',
+      members: [
+        { accountId: 'selected', displayName: 'Selected' },
+        { accountId: 'partner', displayName: 'Partner' },
+        { accountId: 'third', displayName: 'Third' },
+      ],
+    });
+
+    render(
+      <TestProviders
+        route="/leaderboards/bands/Band_Duets?rankBy=totalscore"
+        bandFilter={{
+          bandId: 'selected-band',
+          bandType: 'Band_Trios',
+          teamKey: 'selected:partner:third',
+          comboId: 'Solo_Guitar+Solo_Bass+Solo_Drums',
+          assignments: [
+            { accountId: 'selected', instrument: 'Solo_Guitar' },
+            { accountId: 'partner', instrument: 'Solo_Bass' },
+            { accountId: 'third', instrument: 'Solo_Drums' },
+          ],
+        }}
+      >
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await screen.findByTestId('band-rankings-card-list');
+    fireEvent.click(screen.getByTestId('band-filter-pill'));
+
+    expect(await screen.findByRole('dialog', { name: 'Filter Duos by Combo' })).toBeTruthy();
+    expect(screen.queryByText(/Changing this page filter will not/)).toBeNull();
+  });
+
+  it('uses the band instrument selector to apply an arbitrary page-local combo', async () => {
+    render(
+      <TestProviders route="/leaderboards/bands/Band_Duets?rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await screen.findByTestId('band-rankings-card-list');
+    fireEvent.click(screen.getByTestId('band-filter-pill'));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Filter Duos by Combo' });
+    expect(within(dialog).getByText('Instrument #1')).toBeTruthy();
+    expect(within(dialog).getByText('Instrument #2')).toBeTruthy();
+
+    const leadButtons = within(dialog).getAllByTitle('Lead');
+    fireEvent.click(leadButtons[0]!);
+    expect(within(dialog).getByRole('button', { name: 'Apply' })).toBeDisabled();
+    fireEvent.click(leadButtons[1]!);
+
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Apply' })).not.toBeDisabled());
+    mockApi.getBandRankings.mockClear();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', 'Solo_Guitar+Solo_Guitar', 'totalscore', 1, 25, undefined, undefined);
+    });
+  });
+
   it('requests and renders the selected band entry when it is outside the current page', async () => {
     localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
       type: 'band',
@@ -224,6 +455,7 @@ describe('BandRankingsPage', () => {
     expect(footer).toHaveStyle({ position: 'fixed' });
     expect(within(footer).getByText('Selected + Partner')).toBeTruthy();
     expect(within(footer).getByText('#13')).toBeTruthy();
+    expect(within(footer).getByRole('link')).toHaveAttribute('href', '/statistics');
     expect(within(footer).queryByText('Tracked Player + Other Partner')).toBeNull();
   });
 
@@ -385,5 +617,71 @@ describe('BandRankingsPage', () => {
     expect(within(rows[1]!).getByAltText('Solo_Guitar')).toBeTruthy();
     expect(within(rows[1]!).getByAltText('Solo_Vocals')).toBeTruthy();
     expect(row).toHaveAttribute('href', '/bands/band-1?bandType=Band_Duets&teamKey=alpha%3Abeta&names=Alpha%20%2B%20Beta');
+  });
+
+  it('renders only matching instruments for a filtered Trio ranking card', async () => {
+    const configurations: BandConfiguration[] = [
+      {
+        rawInstrumentCombo: '0:1:3',
+        comboId: 'Solo_Guitar+Solo_Bass+Solo_Drums',
+        instruments: ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums'],
+        assignmentKey: 'acct-1-0=Solo_Guitar|acct-1-1=Solo_Bass|acct-1-2=Solo_Drums',
+        appearanceCount: 3,
+        memberInstruments: {
+          'acct-1-0': 'Solo_Guitar',
+          'acct-1-1': 'Solo_Bass',
+          'acct-1-2': 'Solo_Drums',
+        },
+      },
+      {
+        rawInstrumentCombo: '0:2:3',
+        comboId: 'Solo_Guitar+Solo_Drums+Solo_Vocals',
+        instruments: ['Solo_Guitar', 'Solo_Drums', 'Solo_Vocals'],
+        assignmentKey: 'acct-1-0=Solo_Vocals|acct-1-1=Solo_Guitar|acct-1-2=Solo_Drums',
+        appearanceCount: 1,
+        memberInstruments: {
+          'acct-1-0': 'Solo_Vocals',
+          'acct-1-1': 'Solo_Guitar',
+          'acct-1-2': 'Solo_Drums',
+        },
+      },
+    ];
+    mockApi.getBandRankings.mockResolvedValue({
+      bandType: 'Band_Trios',
+      comboId: 'Solo_Guitar+Solo_Bass+Solo_Drums',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalTeams: 42,
+      entries: [{
+        ...makeBandEntry(1, ['Alpha', 'Beta', 'Gamma'], configurations),
+        members: [
+          { accountId: 'acct-1-0', displayName: 'Alpha', instruments: ['Solo_Guitar', 'Solo_Vocals'] },
+          { accountId: 'acct-1-1', displayName: 'Beta', instruments: ['Solo_Bass', 'Solo_Drums'] },
+          { accountId: 'acct-1-2', displayName: 'Gamma', instruments: ['Solo_Drums', 'Solo_Vocals'] },
+        ],
+      }],
+    });
+
+    render(
+      <TestProviders route="/leaderboards/bands/Band_Trios?rankBy=totalscore&combo=Solo_Guitar+Solo_Bass+Solo_Drums">
+        <Routes>
+          <Route path="/leaderboards/bands/:bandType" element={<BandRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Trios', 'Solo_Guitar+Solo_Bass+Solo_Drums', 'totalscore', 1, 25, undefined, undefined);
+    });
+
+    const row = await screen.findByTestId('band-rankings-entry-0');
+    const rows = within(row).getAllByTestId('band-member-row');
+    expect(within(rows[0]!).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(rows[0]!).queryByAltText('Solo_Vocals')).toBeNull();
+    expect(within(rows[1]!).getByAltText('Solo_Bass')).toBeTruthy();
+    expect(within(rows[1]!).queryByAltText('Solo_Drums')).toBeNull();
+    expect(within(rows[2]!).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(rows[2]!).queryByAltText('Solo_Vocals')).toBeNull();
   });
 });

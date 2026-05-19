@@ -243,6 +243,28 @@ describe('FullRankingsPage', () => {
     expect(within(headerPortal).getByText('Bass Leaderboards')).toBeTruthy();
   });
 
+  it('links selected player ranking rows directly to statistics', async () => {
+    mockApi.getRankings.mockResolvedValue({
+      entries: [makeAccountRankingEntry(1, { accountId: 'test-player', displayName: 'Test Player' })],
+      totalAccounts: 1,
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+    });
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const selectedRowLink = (await screen.findByText('Test Player')).closest('a');
+    expect(selectedRowLink).toHaveAttribute('href', '/statistics');
+  });
+
   it('keeps combo rankings text-only in the mobile page header', async () => {
     stubMatchMedia(true);
 

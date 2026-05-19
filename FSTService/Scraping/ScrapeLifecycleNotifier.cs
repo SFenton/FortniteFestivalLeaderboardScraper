@@ -62,12 +62,14 @@ public sealed class ScrapeLifecycleNotifier
         _log.LogInformation("Scrape publication starting — public reads will prefer persisted published responses and compute cold misses from stable read models.");
         try
         {
+            _metaDb.PublishCurrentBandTeamRankings();
             _metaDb.SetPublicReadFreeze(true, reason: "publish");
             _publicReadGate.Invalidate();
         }
         catch (Exception ex)
         {
-            _log.LogError(ex, "Failed to persist public-read publish freeze state.");
+            _log.LogError(ex, "Failed to prepare public-read publish freeze state.");
+            throw;
         }
     }
 

@@ -34,6 +34,7 @@ import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { formatBandTeamName } from '../../leaderboards/helpers/bandRankingHelpers';
 import Page, { PageBackground } from '../../Page';
 import { Routes } from '../../../routes';
+import { getBandProfileRoute, getPlayerProfileRoute } from '../../../utils/profileNavigation';
 
 const PAGE_SIZE = 25;
 
@@ -104,12 +105,12 @@ export default function LeaderboardPage() {
 
   const selectedBandFooterRoute = useMemo(() => {
     if (!selectedBand || !selectedBandFooterName) return undefined;
-    return Routes.band(selectedBand.bandId, {
+    return getBandProfileRoute(selectedBand.bandId, {
       bandType: selectedBand.bandType,
       teamKey: selectedBand.teamKey,
       names: selectedBandFooterName,
-    });
-  }, [selectedBand, selectedBandFooterName]);
+    }, profile);
+  }, [profile, selectedBand, selectedBandFooterName]);
 
   const [entries, setEntries] = useState<LeaderboardEntryType[]>(hasCached ? cached.entries : []);
   const [showLeaderboardEntryTotals, setShowLeaderboardEntryTotals] = useState(hasCached ? cached.showLeaderboardEntryTotals === true : false);
@@ -467,7 +468,7 @@ export default function LeaderboardPage() {
                     rankWidth={rankWidth}
                   />
                 )}
-                entryLinkTo={(e, isPlayer) => isPlayer ? '/statistics' : `/player/${e.accountId}`}
+                entryLinkTo={(e, isPlayer) => isPlayer ? Routes.statistics : getPlayerProfileRoute(e.accountId, profile)}
                 linkState={{ backTo: location.pathname }}
                 playerRowRef={playerRowRef}
                 hasPlayerFooter={hasFooter}

@@ -4,13 +4,15 @@ import { coerceRankingMetric, DEFAULT_METRICS } from './rankingHelpers';
 export const BAND_EXPERIMENTAL_METRICS: BandRankingMetric[] = ['adjusted', 'weighted', 'fcrate'];
 export const BAND_RANKING_METRICS: BandRankingMetric[] = [...DEFAULT_METRICS, ...BAND_EXPERIMENTAL_METRICS] as BandRankingMetric[];
 
-export function getEnabledBandRankingMetrics(_experimentalRanksEnabled: boolean): BandRankingMetric[] {
-  return BAND_RANKING_METRICS;
+export function getEnabledBandRankingMetrics(experimentalRanksEnabled: boolean): BandRankingMetric[] {
+  return experimentalRanksEnabled ? BAND_RANKING_METRICS : DEFAULT_METRICS as BandRankingMetric[];
 }
 
 export function coerceBandRankingMetric(metric: string | RankingMetric | BandRankingMetric | null | undefined, experimentalRanksEnabled: boolean): BandRankingMetric {
   const rankingMetric = coerceRankingMetric(metric as RankingMetric | null | undefined, experimentalRanksEnabled);
-  return rankingMetric === 'maxscore' ? 'totalscore' : rankingMetric;
+  if (rankingMetric === 'maxscore') return 'totalscore';
+  if (!experimentalRanksEnabled && BAND_EXPERIMENTAL_METRICS.includes(rankingMetric as BandRankingMetric)) return 'totalscore';
+  return rankingMetric;
 }
 
 export function getBandRankForMetric(entry: BandRankingEntry, metric: BandRankingMetric): number {

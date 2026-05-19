@@ -49,6 +49,7 @@ import { rankingScopeLabel, resolveSupportedRankingScopes, type RankingScope } f
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import InstrumentHeader, { getInstrumentHeaderConfig } from '../../components/display/InstrumentHeader';
 import InstrumentEmptyState from '../player/sections/InstrumentEmptyState';
+import { getPlayerProfileRoute } from '../../utils/profileNavigation';
 
 type PlayerRankingResult = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
 
@@ -86,7 +87,7 @@ let _cachedCompeteSections: CompeteScopeViewModel[] = [];
 export default function CompetePage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { player } = useTrackedPlayer();
+  const { profile, player } = useTrackedPlayer();
   const { settings } = useSettings();
   const isMobile = useIsMobileChrome();
   const isWideDesktop = useIsWideDesktop();
@@ -344,7 +345,7 @@ export default function CompetePage() {
                     {section.leaderboardEntries.map((entry) => (
                       <CompeteRankingLink
                         key={`${section.scope.scopeKey}:${entry.accountId}`}
-                        to={`/player/${entry.accountId}`}
+                        to={getPlayerProfileRoute(entry.accountId, profile)}
                         style={{ ...(entry.accountId === accountId ? s.playerRow : s.row), ...stagger() }}
                         pressedStyle={s.pressablePressed}
                         onAnimationEnd={clearAnim}
@@ -360,7 +361,7 @@ export default function CompetePage() {
                       </CompeteRankingLink>
                     ))}
                     {section.playerEntry && !section.playerInTop && (
-                      <CompeteRankingLink to={`/player/${section.playerEntry.accountId}`} style={{ ...s.playerRow, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim}>
+                      <CompeteRankingLink to={getPlayerProfileRoute(section.playerEntry.accountId, profile)} style={{ ...s.playerRow, ...stagger() }} pressedStyle={s.pressablePressed} onAnimationEnd={clearAnim}>
                         <RankingEntry
                           rank={section.playerEntry.rank}
                           displayName={section.playerEntry.displayName ?? section.playerEntry.accountId.slice(0, 8)}

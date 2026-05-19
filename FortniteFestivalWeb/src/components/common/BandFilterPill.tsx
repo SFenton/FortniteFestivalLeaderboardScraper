@@ -78,7 +78,7 @@ export default function BandFilterPill({ label, selectedInstruments, bandType, o
         </>
       ) : (
         <>
-          <IoFunnel size={IconSize.action} data-testid="band-filter-pill-filter-icon" />
+          <IoFunnel size={IconSize.action} data-testid="band-filter-pill-filter-icon" aria-hidden="true" />
           <span>{label}</span>
         </>
       )}
@@ -86,26 +86,26 @@ export default function BandFilterPill({ label, selectedInstruments, bandType, o
   );
 }
 
-function useStyles(iconOnly: boolean) {
+function useStyles(active: boolean) {
   return useMemo(() => ({
     button: {
       ...flexCenter,
       position: 'relative',
       width: 'auto',
-      minWidth: iconOnly ? Layout.pillButtonHeight : undefined,
-      gap: iconOnly ? Gap.lg : Gap.md,
+      minWidth: active ? Layout.pillButtonHeight : undefined,
+      gap: active ? Gap.lg : Gap.md,
       height: Layout.pillButtonHeight,
       borderRadius: Radius.full,
       cursor: 'pointer',
       fontWeight: Weight.semibold,
       whiteSpace: 'nowrap',
-      paddingLeft: iconOnly ? Gap.lg : Gap.xl,
-      paddingRight: iconOnly ? Gap.lg : Gap.xl,
+      paddingLeft: active ? Gap.lg : Gap.xl,
+      paddingRight: active ? Gap.lg : Gap.xl,
       fontSize: Font.sm,
       ...frostedCard,
       color: Colors.textPrimary,
       transition: bandFilterPillTransition,
-      ...(iconOnly ? activeButtonOverrides : null),
+      ...(active ? activeButtonOverrides : null),
     } as CSSProperties,
     bandTypeLabel: {
       color: 'inherit',
@@ -122,5 +122,5 @@ function useStyles(iconOnly: boolean) {
       display: 'block',
       flexShrink: 0,
     } as CSSProperties,
-  }), [iconOnly]);
+  }), [active]);
 }

@@ -16,6 +16,10 @@ internal static class BandRankingStorageNames
 
     internal static string GetCurrentStatsTable(string bandType) => $"band_team_ranking_stats_current_{GetBandTypeSlug(bandType)}";
 
+    internal static string GetPublishedRankingTable(string bandType) => $"band_team_rankings_published_{GetBandTypeSlug(bandType)}";
+
+    internal static string GetPublishedStatsTable(string bandType) => $"band_team_ranking_stats_published_{GetBandTypeSlug(bandType)}";
+
     internal static string GetCurrentBandSongRankingTable(string bandType) => $"band_song_team_rankings_current_{GetBandTypeSlug(bandType)}";
 
     internal static string GetBandSongRankingBuildTable(string bandType, string buildSuffix) => $"band_song_team_rankings_build_{GetBandTypeSlug(bandType)}_{buildSuffix}".Replace('-', '_');
@@ -155,11 +159,17 @@ internal static class BandRankingStorageNames
         {
             var rankingsTable = GetCurrentRankingTable(bandType);
             var statsTable = GetCurrentStatsTable(bandType);
+            var publishedRankingsTable = GetPublishedRankingTable(bandType);
+            var publishedStatsTable = GetPublishedStatsTable(bandType);
             var songRankingsTable = GetCurrentBandSongRankingTable(bandType);
 
             statements.Add(GetCreateRankingTableSql(rankingsTable, includePrimaryKey: true, ifNotExists: true));
             statements.Add(GetEnsureRankingMetadataColumnsSql(rankingsTable));
             statements.Add(GetCreateStatsTableSql(statsTable, includePrimaryKey: true, ifNotExists: true));
+            statements.Add(GetCreateRankingTableSql(publishedRankingsTable, includePrimaryKey: true, ifNotExists: true));
+            statements.Add(GetEnsureRankingMetadataColumnsSql(publishedRankingsTable));
+            statements.Add(GetCreateRankingIndexesSql(publishedRankingsTable, ifNotExists: true));
+            statements.Add(GetCreateStatsTableSql(publishedStatsTable, includePrimaryKey: true, ifNotExists: true));
             statements.Add(GetCreateBandSongRankingTableSql(songRankingsTable, includePrimaryKey: true, ifNotExists: true));
         }
 

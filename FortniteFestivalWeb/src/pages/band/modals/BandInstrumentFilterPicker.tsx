@@ -31,7 +31,7 @@ type UseBandInstrumentFilterControllerProps = {
   onReset: () => void;
 };
 
-const INSTRUMENT_ITEMS: InstrumentSelectorItem<ServerInstrumentKey>[] = SERVER_INSTRUMENT_KEYS.map(key => ({
+export const BAND_INSTRUMENT_ITEMS: InstrumentSelectorItem<ServerInstrumentKey>[] = SERVER_INSTRUMENT_KEYS.map(key => ({
   key,
   label: serverInstrumentLabel(key),
 }));
@@ -190,7 +190,7 @@ export function BandInstrumentFilterPicker({ controller, compact }: { controller
   return (
     <>
       {controller.members.map((member, index) => (
-        <InstrumentSlotSection
+        <BandInstrumentSlotSelector
           key={member.accountId}
           index={index}
           selected={controller.draft[index] ?? null}
@@ -199,10 +199,41 @@ export function BandInstrumentFilterPicker({ controller, compact }: { controller
           disabledInstruments={controller.instrumentStates[index]?.disabled ?? []}
           mutedInstruments={controller.instrumentStates[index]?.muted ?? []}
           compact={compact}
-          styles={styles}
         />
       ))}
     </>
+  );
+}
+
+export function BandInstrumentSlotSelector({
+  index,
+  selected,
+  onSelect,
+  availableInstruments,
+  disabledInstruments = [],
+  mutedInstruments = [],
+  compact,
+}: {
+  index: number;
+  selected: ServerInstrumentKey | null;
+  onSelect: (instrument: ServerInstrumentKey | null) => void;
+  availableInstruments: readonly ServerInstrumentKey[];
+  disabledInstruments?: readonly ServerInstrumentKey[];
+  mutedInstruments?: readonly ServerInstrumentKey[];
+  compact: boolean;
+}) {
+  const styles = useStyles();
+  return (
+    <InstrumentSlotSection
+      index={index}
+      selected={selected}
+      onSelect={onSelect}
+      availableInstruments={availableInstruments}
+      disabledInstruments={disabledInstruments}
+      mutedInstruments={mutedInstruments}
+      compact={compact}
+      styles={styles}
+    />
   );
 }
 
@@ -256,7 +287,7 @@ function InstrumentSlotSection({
     >
       {availableInstruments.length > 0 ? (
         <InstrumentSelector
-          instruments={INSTRUMENT_ITEMS}
+          instruments={BAND_INSTRUMENT_ITEMS}
           selected={selected}
           onSelect={onSelect}
           hiddenInstruments={hiddenInstruments}

@@ -28,6 +28,7 @@ import { useStagger } from '../../hooks/ui/useStagger';
 import { useSelectedProfile, type SelectedBandProfile } from '../../hooks/data/useSelectedProfile';
 import { defaultSongFilters, loadSongSettings, saveSongSettings, type SongSettings } from '../../utils/songSettings';
 import { createPreserveShellScrollState } from '../../utils/quietNavigation';
+import { getPlayerProfileRoute } from '../../utils/profileNavigation';
 import { Routes } from '../../routes';
 import Page from '../Page';
 import { getLeaderboardPageForRank } from '../leaderboards/helpers/rankingHelpers';
@@ -583,8 +584,9 @@ function BandSummarySection({ band, sectionRef, style, onAnimationEnd }: { band:
 
 function BandMemberCard({ member, activeFilterInstrumentByAccountId, fallbackName }: { member: PlayerBandMember; activeFilterInstrumentByAccountId?: MemberInstrumentFilter | null; fallbackName: string }) {
   const styles = useStyles();
+  const { profile } = useSelectedProfile();
   const displayName = formatMemberName(member, fallbackName);
-  const route = Routes.player(member.accountId);
+  const route = getPlayerProfileRoute(member.accountId, profile);
   const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: route });
   const assignedInstrument = activeFilterInstrumentByAccountId?.get(member.accountId);
   const instruments = activeFilterInstrumentByAccountId

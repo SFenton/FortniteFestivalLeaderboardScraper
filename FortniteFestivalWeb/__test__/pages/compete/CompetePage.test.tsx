@@ -221,6 +221,7 @@ function renderCompete(route = '/compete') {
       <Routes>
         <Route path="/compete" element={<CompetePage />} />
         <Route path="/leaderboards/all" element={<LocationEcho />} />
+        <Route path="/statistics" element={<LocationEcho />} />
         <Route path="/rivals/:rivalId" element={<RivalDetailEcho />} />
       </Routes>
     </TestProviders>,
@@ -347,6 +348,17 @@ describe('CompetePage', () => {
     fireEvent.click(leaderboardsHeader);
 
     expect(await screen.findByTestId('location-search')).toHaveTextContent('/leaderboards/all?combo=05&rankBy=totalscore');
+  });
+
+  it('links selected player ranking rows directly to statistics', async () => {
+    renderCompete();
+    await advancePastPageTransition();
+
+    const selectedPlayerLink = (await screen.findAllByText('Test Player'))[0]!.closest('a');
+    expect(selectedPlayerLink).toHaveAttribute('href', '/statistics');
+
+    fireEvent.click(selectedPlayerLink!);
+    expect(await screen.findByTestId('location-search')).toHaveTextContent('/statistics');
   });
 
   it('renders empty-state cards for empty leaderboard and rivals scopes', async () => {

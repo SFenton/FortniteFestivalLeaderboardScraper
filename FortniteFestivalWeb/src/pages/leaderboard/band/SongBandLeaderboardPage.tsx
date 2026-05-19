@@ -1,14 +1,15 @@
 /* eslint-disable react/forbid-dom-props -- page-level dynamic styles use inline style objects */
-import { useCallback, useEffect, useMemo, type AnimationEvent, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useState, type AnimationEvent, type CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { LoadPhase } from '@festival/core';
-import type { SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';
 import { Display, Gap, flexColumn } from '@festival/theme';
 import { api } from '../../../api/client';
 import { queryKeys } from '../../../api/queryKeys';
 import EmptyState from '../../../components/common/EmptyState';
+import BandFilterPill from '../../../components/common/BandFilterPill';
 import { FixedLeaderboardPagination, FixedLeaderboardPlayerFooter, useLeaderboardFooterScrollMargin } from '../../../components/leaderboard/LeaderboardPaginationFooter';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import SongBandScoreFooter, { SongBandMemberMetadata, formatSongBandAccuracy, getSongBandMemberScoreWidth, getSongBandScoreWidth, hasSongBandMemberAccuracy, hasSongBandMemberStars } from '../../../components/bands/SongBandScoreFooter';
@@ -19,8 +20,11 @@ import { useStagger } from '../../../hooks/ui/useStagger';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { useAppliedBandComboFilter } from '../../../contexts/BandFilterActionContext';
+import { useFabSearch } from '../../../contexts/FabSearchContext';
 import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
 import { parseApiError } from '../../../utils/apiError';
+import { isBandFilterForSelectedProfile } from '../../../state/bandFilter';
+import { formatPageBandComboLabel, getPageBandComboInstruments, PAGE_BAND_COMBO_ALL_VALUE, resolvePageBandComboState } from '../../../utils/pageBandComboFilter';
 import { coerceSongBandType, songBandToPlayerBandEntry, songBandTypeLabel } from '../../../utils/songBandLeaderboards';
 import Page, { PageBackground } from '../../Page';
 import { PageMessage } from '../../PageMessage';
@@ -28,9 +32,12 @@ import PlayerBandCard, { formatPlayerBandNames } from '../../player/components/P
 import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { formatBandTeamName } from '../../leaderboards/helpers/bandRankingHelpers';
-import { Routes } from '../../../routes';
+import BandComboFilterModal from '../../leaderboards/modals/BandComboFilterModal';
+import { getBandProfileRoute } from '../../../utils/profileNavigation';
 
 const PAGE_SIZE = 25;
+const COMBO_CATALOG_STALE_TIME_MS = 10 * 60_000;
+const SONG_BAND_LEADERBOARD_STALE_TIME_MS = 5 * 60_000;
 
 export default function SongBandLeaderboardPage() {
   const { t } = useTranslation();
@@ -39,6 +46,7 @@ export default function SongBandLeaderboardPage() {
   const scrollContainerRef = useScrollContainer();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
+  const { registerLeaderboardActions } = useFabSearch();
   const hasFab = isMobileChrome;
   const reserveFabSpace = false;
   const {
@@ -48,18 +56,72 @@ export default function SongBandLeaderboardPage() {
   const song = songs.find((s) => s.songId === songId);
   const bandType = coerceSongBandType(rawBandType);
   const { profile } = useSelectedProfile();
+  const selectedBand = profile?.type === 'band' ? profile : null;
   const appliedBandComboFilter = useAppliedBandComboFilter();
-  const activeComboId = appliedBandComboFilter && appliedBandComboFilter.bandType === bandType ? appliedBandComboFilter.comboId : undefined;
+  const pageBandComboState = useMemo(
+    () => resolvePageBandComboState(bandType, searchParams, appliedBandComboFilter),
+    [appliedBandComboFilter, bandType, searchParams],
+  );
+  const activeComboId = pageBandComboState.comboId;
   const selectedBandTeamKey = profile?.type === 'band' && profile.bandType === bandType ? profile.teamKey : undefined;
+  const selectedBandHasGlobalFilter = isBandFilterForSelectedProfile(appliedBandComboFilter, profile);
+  const selectedBandMatchesView = selectedBand?.bandType === bandType;
   const bandLabel = bandType ? songBandTypeLabel(bandType, t) : '';
   const page = Math.max(1, Number(searchParams.get('page')) || 1);
   const goToSongDetail = useNavigateToSongDetail(songId);
+  const [comboModalOpen, setComboModalOpen] = useState(false);
+
+  const comboCatalogQuery = useQuery({
+    queryKey: queryKeys.bandRankingCombos(bandType ?? 'unknown'),
+    queryFn: () => api.getBandRankingCombos(bandType!),
+    enabled: !!bandType,
+    staleTime: COMBO_CATALOG_STALE_TIME_MS,
+  });
+
+  const activeComboInstruments = useMemo(
+    () => getPageBandComboInstruments(pageBandComboState, bandType, appliedBandComboFilter, comboCatalogQuery.data?.combos),
+    [appliedBandComboFilter, bandType, comboCatalogQuery.data?.combos, pageBandComboState],
+  );
+  const comboFilterLabel = activeComboInstruments.length > 0
+    ? formatPageBandComboLabel(activeComboInstruments)
+    : t('bandComboFilter.actionLabel');
+  const openComboModal = useCallback(() => setComboModalOpen(true), []);
+  const closeComboModal = useCallback(() => setComboModalOpen(false), []);
+  const applyComboFilter = useCallback((comboId: string) => {
+    if (!bandType) return;
+    const params = new URLSearchParams(searchParams);
+    params.set('combo', comboId);
+    params.set('page', '1');
+    scrollContainerRef.current?.scrollTo(0, 0);
+    setSearchParams(params, { replace: true });
+    setComboModalOpen(false);
+  }, [bandType, scrollContainerRef, searchParams, setSearchParams]);
+  const clearComboFilter = useCallback(() => {
+    if (!bandType) return;
+    const params = new URLSearchParams(searchParams);
+    if (appliedBandComboFilter?.bandType === bandType) params.set('combo', PAGE_BAND_COMBO_ALL_VALUE);
+    else params.delete('combo');
+    params.set('page', '1');
+    scrollContainerRef.current?.scrollTo(0, 0);
+    setSearchParams(params, { replace: true });
+    setComboModalOpen(false);
+  }, [appliedBandComboFilter?.bandType, bandType, scrollContainerRef, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    registerLeaderboardActions({
+      openBandCombo: openComboModal,
+      bandComboActive: !!activeComboId,
+      bandComboInstruments: activeComboInstruments,
+      bandComboLabel: comboFilterLabel,
+    });
+    return () => registerLeaderboardActions(null);
+  }, [activeComboId, activeComboInstruments, comboFilterLabel, openComboModal, registerLeaderboardActions]);
 
   const leaderboardQuery = useQuery({
     queryKey: queryKeys.songBandLeaderboard(songId, bandType ?? 'unknown', PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, selectedBandTeamKey, activeComboId),
     queryFn: () => api.getSongBandLeaderboard(songId, bandType!, PAGE_SIZE, (page - 1) * PAGE_SIZE, undefined, selectedBandTeamKey, activeComboId),
     enabled: !!songId && !!bandType,
-    staleTime: 5 * 60_000,
+    staleTime: SONG_BAND_LEADERBOARD_STALE_TIME_MS,
   });
 
   const data = leaderboardQuery.data;
@@ -78,12 +140,12 @@ export default function SongBandLeaderboardPage() {
   }, [profile, selectedBandEntry]);
   const selectedBandFooterRoute = useMemo(() => {
     if (!selectedBandEntry || !selectedBandFooterName) return undefined;
-    return Routes.band(selectedBandEntry.bandId, {
+    return getBandProfileRoute(selectedBandEntry.bandId, {
       bandType: selectedBandEntry.bandType,
       teamKey: selectedBandEntry.teamKey,
       names: selectedBandFooterName,
-    });
-  }, [selectedBandEntry, selectedBandFooterName]);
+    }, profile);
+  }, [profile, selectedBandEntry, selectedBandFooterName]);
   const selectedBandFooterRankWidth = useMemo(() => {
     if (!selectedBandEntry) return undefined;
     return computeRankWidth([selectedBandEntry.rank]);
@@ -139,8 +201,19 @@ export default function SongBandLeaderboardPage() {
           hideBackground
           onTitleClick={goToSongDetail}
           subtitle2={subtitle}
+          actions={!isMobileChrome ? <BandFilterPill label={comboFilterLabel} selectedInstruments={activeComboInstruments} bandType={activeComboId ? bandType : null} onClick={openComboModal} /> : undefined}
         />
       )}
+      after={<BandComboFilterModal
+        visible={comboModalOpen}
+        bandType={bandType}
+        activeInstruments={activeComboInstruments}
+        selectedBandName={selectedBandMatchesView ? selectedBand?.displayName : undefined}
+        selectedBandHasGlobalFilter={selectedBandMatchesView && selectedBandHasGlobalFilter}
+        onCancel={closeComboModal}
+        onApplyCombo={applyComboFilter}
+        onClearCombo={clearComboFilter}
+      />}
     >
       {phase === LoadPhase.ContentIn && leaderboardQuery.error && (
         <EmptyState
@@ -172,6 +245,7 @@ export default function SongBandLeaderboardPage() {
                   memberScoreWidth={memberScoreWidth}
                   showMemberStars={showMemberStars}
                   showMemberAccuracy={showMemberAccuracy}
+                  activeFilterInstruments={activeComboInstruments}
                   style={stagger(index)}
                   onAnimationEnd={clearAnim}
                 />
@@ -233,6 +307,7 @@ function SongBandLeaderboardRow({
   memberScoreWidth,
   showMemberStars,
   showMemberAccuracy,
+  activeFilterInstruments,
   style,
   onAnimationEnd,
 }: {
@@ -242,11 +317,12 @@ function SongBandLeaderboardRow({
   memberScoreWidth?: string;
   showMemberStars: boolean;
   showMemberAccuracy: boolean;
+  activeFilterInstruments?: readonly ServerInstrumentKey[];
   style?: CSSProperties;
   onAnimationEnd: (e: AnimationEvent<HTMLElement>) => void;
 }) {
   const { t } = useTranslation();
-  const playerBandEntry = songBandToPlayerBandEntry(entry);
+  const playerBandEntry = songBandToPlayerBandEntry(entry, activeFilterInstruments);
   const names = formatPlayerBandNames(playerBandEntry);
 
   return (

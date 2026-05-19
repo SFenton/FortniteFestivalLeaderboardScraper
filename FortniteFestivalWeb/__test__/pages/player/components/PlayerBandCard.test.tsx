@@ -126,6 +126,7 @@ function getInstrumentRowCountsForMember(memberRow: HTMLElement): number[] {
 
 describe('PlayerBandCard adaptive instrument layout', () => {
   beforeEach(() => {
+    localStorage.clear();
     mockUseContainerWidth.mockReturnValue(800);
   });
 
@@ -277,6 +278,24 @@ describe('PlayerBandCard adaptive instrument layout', () => {
     dispatchClick(card, 80);
 
     expect(screen.getByTestId('location-probe')).toHaveTextContent('/bands/band-1');
+  });
+
+  it('links selected band cards directly to statistics', () => {
+    localStorage.setItem('fst:selectedProfile', JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'p1:p2',
+      displayName: 'One + Two',
+      members: [
+        { accountId: 'p1', displayName: 'One' },
+        { accountId: 'p2', displayName: 'Two' },
+      ],
+    }));
+
+    renderCard(makeMixedEntry());
+
+    expect(screen.getByTestId('band-card')).toHaveAttribute('href', '/statistics');
   });
 
   it('leaves modified pointer gestures to native link behavior', () => {

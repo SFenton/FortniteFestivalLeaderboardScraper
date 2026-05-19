@@ -5,9 +5,10 @@ import type { PlayerBandEntry, PlayerBandMember } from '@festival/core/api/serve
 import { Colors, CssProp, FAST_FADE_MS, Font, Gap, Radius, Weight, flexColumn, flexRow, frostedCard, transition } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import CardPressable from '../../../components/common/CardPressable';
-import { Routes } from '../../../routes';
 import { useContainerWidth } from '../../../hooks/ui/useContainerWidth';
 import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
+import { useSelectedProfile, type SelectedProfile } from '../../../hooks/data/useSelectedProfile';
+import { getBandLookupProfileRoute, getBandProfileRoute } from '../../../utils/profileNavigation';
 import { getInstrumentRowWidth, splitInstrumentRows } from '../../songs/layoutMode';
 
 const MEMBER_ROW_HEIGHT = 32;
@@ -119,14 +120,14 @@ export function formatPlayerBandNames(entry: PlayerBandEntry): string | undefine
   return names.length > 0 ? names.join(' + ') : undefined;
 }
 
-export function getPlayerBandRoute(entry: PlayerBandEntry, sourceAccountId?: string): string | null {
+export function getPlayerBandRoute(entry: PlayerBandEntry, sourceAccountId?: string, selectedProfile?: SelectedProfile | null): string | null {
   const names = formatPlayerBandNames(entry);
   if (entry.bandId) {
-    return Routes.band(entry.bandId, sourceAccountId
+    return getBandProfileRoute(entry.bandId, sourceAccountId
       ? { accountId: sourceAccountId, bandType: entry.bandType, teamKey: entry.teamKey, names }
-      : { bandType: entry.bandType, teamKey: entry.teamKey, names });
+      : { bandType: entry.bandType, teamKey: entry.teamKey, names }, selectedProfile);
   }
-  if (sourceAccountId) return Routes.bandLookup(sourceAccountId, entry.bandType, entry.teamKey, names);
+  if (sourceAccountId) return getBandLookupProfileRoute(sourceAccountId, entry.bandType, entry.teamKey, names, selectedProfile);
   return null;
 }
 
@@ -161,7 +162,8 @@ export default function PlayerBandCard({
   onPress,
   onAnimationEnd,
 }: PlayerBandCardProps) {
-  const route = getPlayerBandRoute(entry, sourceAccountId);
+  const { profile } = useSelectedProfile();
+  const route = getPlayerBandRoute(entry, sourceAccountId, profile);
   const linkPress = useNavLinkPress<HTMLAnchorElement>({ to: route ?? '', disabled: !route });
   const appearanceCount = entry.appearanceCount ?? 0;
   const contentRef = useRef<HTMLDivElement>(null);

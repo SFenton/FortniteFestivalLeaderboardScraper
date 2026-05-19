@@ -50,8 +50,8 @@ import RankByModal from './modals/RankByModal';
 import { comboScopeLabel, isRankingScopeComboId } from '../../utils/rankingScopes';
 import { coerceRankingMetric } from './helpers/rankingHelpers';
 import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContext';
-import { Routes } from '../../routes';
 import { isBandFilterForSelectedProfile } from '../../state/bandFilter';
+import { getBandProfileRoute, getPlayerProfileRoute } from '../../utils/profileNavigation';
 
 type FullRankingsData = RankingsPageResponse | ComboPageResponse | SoloFamilyPageResponse;
 type FullPlayerRanking = AccountRankingDto | SoloFamilyRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
@@ -93,19 +93,21 @@ export default function FullRankingsPage() {
       : undefined;
   const isMobileChrome = useIsMobileChrome();
   const hasFab = isMobileChrome;
-  const fabSearch = useFabSearch();
+  const { registerLeaderboardActions } = useFabSearch();
   const scrollContainerRef = useScrollContainer();
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
   const instrumentModal = useModalState<InstrumentKey>(() => DEFAULT_INSTRUMENT);
+  const openMetricDraft = metricModal.open;
+  const openInstrumentDraft = instrumentModal.open;
 
   const openMetricModal = useCallback(() => {
-    metricModal.open(metric);
-  }, [metricModal, metric]);
+    openMetricDraft(metric);
+  }, [metric, openMetricDraft]);
 
   const openInstrumentModal = useCallback(() => {
-    instrumentModal.open(instrument);
-  }, [instrumentModal, instrument]);
+    openInstrumentDraft(instrument);
+  }, [instrument, openInstrumentDraft]);
 
   const applyMetric = useCallback(() => {
     const nextMetric = selectedBand ? coerceBandRankingMetric(metricModal.draft, true) : coerceRankingMetric(metricModal.draft, true);
@@ -132,9 +134,9 @@ export default function FullRankingsPage() {
   }, [instrumentModal, metric, scrollContainerRef, setSearchParams]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: isCombo || isFamily ? undefined : openInstrumentModal });
-    return () => fabSearch.registerLeaderboardActions(null);
-  }, [fabSearch, isCombo, isFamily, openInstrumentModal, openMetricModal]);
+    registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: isCombo || isFamily ? undefined : openInstrumentModal });
+    return () => registerLeaderboardActions(null);
+  }, [isCombo, isFamily, openInstrumentModal, openMetricModal, registerLeaderboardActions]);
 
   const cacheKey = isCombo ? `combo:${comboId}:${metric}` : isFamily ? `family:${familyScopeId}:${metric}` : `${instrument}:${metric}`;
   const cached = rankingsCache.get(cacheKey);
@@ -259,12 +261,12 @@ export default function FullRankingsPage() {
 
   const selectedBandFooterRoute = useMemo(() => {
     if (!selectedBand || !selectedBandFooterName) return undefined;
-    return Routes.band(selectedBand.bandId, {
+    return getBandProfileRoute(selectedBand.bandId, {
       bandType: selectedBand.bandType,
       teamKey: selectedBand.teamKey,
       names: selectedBandFooterName,
-    });
-  }, [selectedBand, selectedBandFooterName]);
+    }, profile);
+  }, [profile, selectedBand, selectedBandFooterName]);
 
   const totalPages = data ? Math.ceil(data.totalAccounts / LEADERBOARD_PAGE_SIZE) : 0;
   const entries = data?.entries ?? EMPTY_RANKING_ENTRIES;
@@ -467,7 +469,7 @@ export default function FullRankingsPage() {
             />
           );
         }}
-        entryLinkTo={(entry) => `/player/${entry.accountId}`}
+        entryLinkTo={(entry) => getPlayerProfileRoute(entry.accountId, profile)}
         hasPlayerFooter={hasFooter}
         renderPlayerFooter={hasSelectedBandSoloFooter ? ({ className, style }) => (
           <SelectedBandMemberRotatingFooter
@@ -505,7 +507,7 @@ export default function FullRankingsPage() {
             />
           </Link>
         ) : playerRanking ? ({ className, style }) => (
-          <Link to={`/player/${playerRanking.accountId}`} className={className} style={style}>
+          <Link to={getPlayerProfileRoute(playerRanking.accountId, profile)} className={className} style={style}>
             <RankingEntry
               rank={getDisplayRank(playerRanking, metric)}
               displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}

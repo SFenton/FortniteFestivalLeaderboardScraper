@@ -17,6 +17,7 @@ import { useCardPressAction } from '../../../hooks/ui/usePressAction';
 import { resolveTopScoresColumns } from '../topScoresLayout';
 import CollapsePresence from '../../../components/common/CollapsePresence';
 import ViewFullLeaderboardCta from './ViewFullLeaderboardCta';
+import { Routes } from '../../../routes';
 
 interface InstrumentCardProps {
   songId: string;
@@ -129,6 +130,9 @@ export default memo(function InstrumentCard({
     [spotlightRows, topAccountIds],
   );
   const hasEntries = prefetchedEntries.length > 0 || spotlightFooterRows.length > 0;
+  const getPlayerRoute = useCallback((accountId: string) => normalizeAccountId(accountId) === normalizeAccountId(playerAccountId)
+    ? Routes.statistics
+    : Routes.player(accountId), [playerAccountId]);
 
   const rankWidth = useMemo(() => {
     const ranks = prefetchedEntries.map((entry, index) => entry.rank ?? index + 1);
@@ -226,7 +230,7 @@ export default memo(function InstrumentCard({
             <InstrumentCardRowLink
               key={entry.accountId}
               id={isPlayer ? getSpotlightRowId(instrument, entry.accountId, playerAccountId) : undefined}
-              to={`/player/${entry.accountId}`}
+              to={getPlayerRoute(entry.accountId)}
               state={{ backTo: `/songs/${songId}` }}
               style={{ ...rowStyle, ...rowStagger }}
               pressedStyle={st.entryRowPressed}

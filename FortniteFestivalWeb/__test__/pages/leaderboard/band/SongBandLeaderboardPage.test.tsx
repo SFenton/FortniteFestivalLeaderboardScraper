@@ -11,6 +11,7 @@ import type { AppliedBandComboFilter } from '../../../../src/types/bandFilter';
 import { SELECTED_PROFILE_STORAGE_KEY } from '../../../../src/state/selectedProfile';
 
 const mockGetSongBandLeaderboard = vi.hoisted(() => vi.fn());
+const mockGetBandRankingCombos = vi.hoisted(() => vi.fn());
 const mockScrollTo = vi.hoisted(() => vi.fn());
 const mockScrollElement = vi.hoisted(() => ({
   clientHeight: 800,
@@ -30,6 +31,7 @@ const mockFestivalValue = vi.hoisted(() => ({
 vi.mock('../../../../src/api/client', () => ({
   api: {
     getSongBandLeaderboard: mockGetSongBandLeaderboard,
+    getBandRankingCombos: mockGetBandRankingCombos,
   },
 }));
 
@@ -38,7 +40,12 @@ vi.mock('../../../../src/components/display/InstrumentIcons', () => ({
 }));
 
 vi.mock('../../../../src/components/songs/headers/SongInfoHeader', () => ({
-  default: ({ subtitle2 }: { subtitle2?: string }) => <header>{subtitle2}</header>,
+  default: ({ subtitle2, actions }: { subtitle2?: string; actions?: ReactNode }) => (
+    <header>
+      {subtitle2}
+      {actions && <div data-testid="song-info-header-actions">{actions}</div>}
+    </header>
+  ),
 }));
 
 vi.mock('../../../../src/contexts/FestivalContext', async () => {
@@ -76,10 +83,11 @@ vi.mock('../../../../src/hooks/ui/useStagger', () => ({
 }));
 
 vi.mock('../../../../src/pages/Page', () => ({
-  default: ({ before, children }: { before?: ReactNode; children?: ReactNode }) => (
+  default: ({ before, after, children }: { before?: ReactNode; after?: ReactNode; children?: ReactNode }) => (
     <main>
       {before}
       {children}
+      {after}
     </main>
   ),
   PageBackground: () => null,
@@ -134,7 +142,7 @@ const response: SongBandLeaderboardResponse = {
   ],
 };
 
-function renderPage(bandFilter?: AppliedBandComboFilter | null) {
+function renderPage(bandFilter?: AppliedBandComboFilter | null, route = '/songs/song-a/bands/Band_Duets') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -149,7 +157,7 @@ function renderPage(bandFilter?: AppliedBandComboFilter | null) {
         appliedFilter: bandFilter ?? null,
         onPress: () => {},
       }}>
-      <MemoryRouter initialEntries={['/songs/song-a/bands/Band_Duets']}>
+      <MemoryRouter initialEntries={[route]}>
         <Routes>
           <Route path="/songs/:songId/bands/:bandType" element={<SongBandLeaderboardPage />} />
         </Routes>
@@ -168,6 +176,13 @@ describe('SongBandLeaderboardPage', () => {
     mockUseIsMobile.mockReturnValue(false);
     mockUseIsMobileChrome.mockReturnValue(false);
     mockGetSongBandLeaderboard.mockResolvedValue(response);
+    mockGetBandRankingCombos.mockResolvedValue({
+      bandType: 'Band_Duets',
+      combos: [
+        { comboId: 'Solo_Guitar+Solo_Bass', instruments: ['Solo_Guitar', 'Solo_Bass'], teamCount: 12 },
+        { comboId: 'Solo_Guitar+Solo_Vocals', instruments: ['Solo_Guitar', 'Solo_Vocals'], teamCount: 8 },
+      ],
+    });
   });
 
   it('renders full song-band leaderboard rows as one ranked column', async () => {
@@ -276,6 +291,26 @@ describe('SongBandLeaderboardPage', () => {
     expect(screen.queryByText('Duos • 42 entries')).toBeNull();
   });
 
+  it('shows the combo filter pill in the desktop song header', async () => {
+    renderPage();
+
+    await screen.findByTestId('song-band-leaderboard-list');
+
+    expect(screen.getByTestId('song-info-header-actions')).toBeInTheDocument();
+    expect(screen.getByTestId('band-filter-pill')).toBeInTheDocument();
+  });
+
+  it('hides the combo filter pill in the mobile/PWA song header', async () => {
+    mockUseIsMobileChrome.mockReturnValue(true);
+
+    renderPage();
+
+    await screen.findByTestId('song-band-leaderboard-list');
+
+    expect(screen.queryByTestId('song-info-header-actions')).toBeNull();
+    expect(screen.queryByTestId('band-filter-pill')).toBeNull();
+  });
+
   it('shows only member score before instrument icons on mobile song-band rows', async () => {
     mockUseIsMobile.mockReturnValue(true);
 
@@ -317,6 +352,162 @@ describe('SongBandLeaderboardPage', () => {
 
     await waitFor(() => {
       expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
+    });
+  });
+
+  it('shows the page-local combo notice when the selected band type matches the viewed song-band type', async () => {
+    localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
+      type: 'band',
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'acct-a:acct-b',
+      displayName: 'Alpha + Beta',
+      members: [
+        { accountId: 'acct-a', displayName: 'Alpha' },
+        { accountId: 'acct-b', displayName: 'Beta' },
+      ],
+    }));
+
+    renderPage({
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'acct-a:acct-b',
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+        { accountId: 'acct-b', instrument: 'Solo_Bass' },
+      ],
+    });
+
+    await screen.findByTestId('song-band-leaderboard-list');
+    fireEvent.click(screen.getByTestId('band-filter-pill'));
+
+    expect(await screen.findByRole('dialog', { name: 'Filter Duos by Combo' })).toBeInTheDocument();
+    expect(screen.getByText('Changing this page filter will not change the globally filtered combo for Alpha + Beta.')).toBeInTheDocument();
+  });
+
+  it('hides the page-local combo notice when the selected band type does not match the viewed song-band type', async () => {
+    localStorage.setItem(SELECTED_PROFILE_STORAGE_KEY, JSON.stringify({
+      type: 'band',
+      bandId: 'band-trio',
+      bandType: 'Band_Trios',
+      teamKey: 'acct-a:acct-b:acct-c',
+      displayName: 'Alpha Trio',
+      members: [
+        { accountId: 'acct-a', displayName: 'Alpha' },
+        { accountId: 'acct-b', displayName: 'Beta' },
+        { accountId: 'acct-c', displayName: 'Gamma' },
+      ],
+    }));
+
+    renderPage({
+      bandId: 'band-trio',
+      bandType: 'Band_Trios',
+      teamKey: 'acct-a:acct-b:acct-c',
+      comboId: 'Solo_Guitar+Solo_Bass+Solo_Drums',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+        { accountId: 'acct-b', instrument: 'Solo_Bass' },
+        { accountId: 'acct-c', instrument: 'Solo_Drums' },
+      ],
+    });
+
+    await screen.findByTestId('song-band-leaderboard-list');
+    fireEvent.click(screen.getByTestId('band-filter-pill'));
+
+    expect(await screen.findByRole('dialog', { name: 'Filter Duos by Combo' })).toBeInTheDocument();
+    expect(screen.queryByText(/Changing this page filter will not/)).toBeNull();
+  });
+
+  it('uses the band instrument selector to apply an arbitrary page-local song-band combo', async () => {
+    renderPage();
+
+    await screen.findByTestId('song-band-leaderboard-list');
+    fireEvent.click(screen.getByTestId('band-filter-pill'));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Filter Duos by Combo' });
+    expect(within(dialog).getByText('Instrument #1')).toBeInTheDocument();
+    expect(within(dialog).getByText('Instrument #2')).toBeInTheDocument();
+
+    const leadButtons = within(dialog).getAllByTitle('Lead');
+    fireEvent.click(leadButtons[0]!);
+    expect(within(dialog).getByRole('button', { name: 'Apply' })).toBeDisabled();
+    fireEvent.click(leadButtons[1]!);
+
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Apply' })).not.toBeDisabled());
+    mockGetSongBandLeaderboard.mockClear();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Guitar');
+    });
+  });
+
+  it('uses a route combo before the selected-band combo and preserves it during pagination', async () => {
+    renderPage({
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'acct-a:acct-b',
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+        { accountId: 'acct-b', instrument: 'Solo_Bass' },
+      ],
+    }, '/songs/song-a/bands/Band_Duets?combo=Solo_Guitar+Solo_Vocals');
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Vocals');
+    });
+    expect(await screen.findByTestId('leaderboard-page-info')).toHaveTextContent('1 / 2');
+
+    mockGetSongBandLeaderboard.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 25, undefined, undefined, 'Solo_Guitar+Solo_Vocals');
+    });
+  });
+
+  it('renders only matching instruments for filtered song-band cards', async () => {
+    mockGetSongBandLeaderboard.mockResolvedValue({
+      ...response,
+      entries: [{
+        ...response.entries[0]!,
+        members: [
+          { ...response.entries[0]!.members[0]!, instruments: ['Solo_Guitar', 'Solo_Drums'] },
+          { ...response.entries[0]!.members[1]!, instruments: ['Solo_Bass', 'Solo_Vocals'] },
+        ],
+      }],
+    });
+
+    renderPage(null, '/songs/song-a/bands/Band_Duets?combo=Solo_Guitar+Solo_Bass');
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, 'Solo_Guitar+Solo_Bass');
+    });
+
+    const list = await screen.findByTestId('song-band-leaderboard-list');
+    const rows = within(list).getAllByTestId('band-member-row');
+    expect(within(rows[0]!).getByTestId('instrument-icon-Solo_Guitar')).toBeInTheDocument();
+    expect(within(rows[0]!).queryByTestId('instrument-icon-Solo_Drums')).toBeNull();
+    expect(within(rows[1]!).getByTestId('instrument-icon-Solo_Bass')).toBeInTheDocument();
+    expect(within(rows[1]!).queryByTestId('instrument-icon-Solo_Vocals')).toBeNull();
+  });
+
+  it('uses combo=all to suppress the selected-band combo fallback', async () => {
+    renderPage({
+      bandId: 'band-1',
+      bandType: 'Band_Duets',
+      teamKey: 'acct-a:acct-b',
+      comboId: 'Solo_Guitar+Solo_Bass',
+      assignments: [
+        { accountId: 'acct-a', instrument: 'Solo_Guitar' },
+        { accountId: 'acct-b', instrument: 'Solo_Bass' },
+      ],
+    }, '/songs/song-a/bands/Band_Duets?combo=all');
+
+    await waitFor(() => {
+      expect(mockGetSongBandLeaderboard).toHaveBeenCalledWith('song-a', 'Band_Duets', 25, 0, undefined, undefined, undefined);
     });
   });
 
