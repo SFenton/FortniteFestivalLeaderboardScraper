@@ -2,9 +2,14 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoBagHandle } from 'react-icons/io5';
-import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, Position, Isolation, opaqueGlass, padding } from '@festival/theme';
+import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, Position, Isolation, BoxSizing, Overflow, opaqueGlass, padding } from '@festival/theme';
 import { useSettings } from '../../../../contexts/SettingsContext';
 import anim from '../../../../styles/animations.module.css';
+
+type ShopButtonDemoProps = {
+  mobile?: boolean;
+  tone?: 'default' | 'new';
+};
 
 /**
  * Demo component for the SongInfo FRE slide showing the Item Shop button.
@@ -12,17 +17,19 @@ import anim from '../../../../styles/animations.module.css';
  * Pulse is only active when shop highlighting is enabled in settings.
  */
 /* v8 ignore start -- demo component uses SettingsContext */
-export default function ShopButtonDemo({ mobile }: { mobile?: boolean }) {
+export default function ShopButtonDemo({ mobile, tone = 'default' }: ShopButtonDemoProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
   const pulse = !settings.disableShopHighlighting && !settings.hideItemShop;
   const s = useStyles();
+  const pulseClass = tone === 'new' ? anim.shopBreatheGold : anim.shopBreathe;
 
   if (mobile) {
     return (
       <div style={s.wrap}>
-        <div className={pulse ? anim.shopCircleBreathe : undefined} style={pulse ? s.shopCirclePulse : s.shopCircle}>
-          <IoBagHandle size={72} />
+        <div className={pulse ? pulseClass : undefined} style={pulse ? s.shopMobileButtonPulse : s.shopMobileButton}>
+          <IoBagHandle size={IconSize.action} />
+          <span style={s.mobileShopLabel}>{t('shop.itemShop')}</span>
         </div>
       </div>
     );
@@ -30,7 +37,7 @@ export default function ShopButtonDemo({ mobile }: { mobile?: boolean }) {
 
   return (
     <div style={s.wrap}>
-      <div className={pulse ? anim.shopBreathe : undefined} style={pulse ? s.shopButtonPulse : s.shopButton}>
+      <div className={pulse ? pulseClass : undefined} style={pulse ? s.shopButtonPulse : s.shopButton}>
         <IoBagHandle size={IconSize.md} style={s.iconMargin} />
         {t('shop.itemShop')}
       </div>
@@ -55,17 +62,6 @@ function useStyles() {
       flexShrink: 0,
       height: Layout.shopDesktopHeight,
     } as CSSProperties,
-    shopCircle: {
-      width: Layout.shopCircleSize,
-      height: Layout.shopCircleSize,
-      borderRadius: Radius.full,
-      backgroundColor: Colors.accentBlue,
-      display: Display.flex,
-      alignItems: Align.center,
-      justifyContent: Justify.center,
-      color: Colors.textPrimary,
-      flexShrink: 0,
-    } as CSSProperties,
     shopButtonPulse: {
       ...opaqueGlass,
       display: Display.inlineFlex,
@@ -81,18 +77,50 @@ function useStyles() {
       position: Position.relative,
       isolation: Isolation.isolate,
     } as CSSProperties,
-    shopCirclePulse: {
-      ...opaqueGlass,
-      width: Layout.shopCircleSize,
-      height: Layout.shopCircleSize,
-      borderRadius: Radius.full,
-      display: Display.flex,
+    shopMobileButton: {
+      display: Display.inlineFlex,
       alignItems: Align.center,
       justifyContent: Justify.center,
+      gap: Gap.sm,
+      minWidth: Layout.pillButtonHeight,
+      maxWidth: 132,
+      height: Layout.pillButtonHeight,
+      borderRadius: Radius.full,
+      padding: padding(0, Gap.lg),
+      backgroundColor: Colors.accentBlue,
+      color: Colors.textPrimary,
+      flexShrink: 0,
+      boxSizing: BoxSizing.borderBox,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    shopMobileButtonPulse: {
+      ...opaqueGlass,
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      gap: Gap.sm,
+      minWidth: Layout.pillButtonHeight,
+      maxWidth: 132,
+      height: Layout.pillButtonHeight,
+      borderRadius: Radius.full,
+      padding: padding(0, Gap.lg),
       color: Colors.textPrimary,
       flexShrink: 0,
       position: Position.relative,
       isolation: Isolation.isolate,
+      boxSizing: BoxSizing.borderBox,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    mobileShopLabel: {
+      minWidth: 0,
+      overflow: Overflow.hidden,
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: Font.sm,
+      fontWeight: Weight.semibold,
+      lineHeight: 1,
     } as CSSProperties,
     iconMargin: { marginRight: Gap.lg } as CSSProperties,
   }), []);

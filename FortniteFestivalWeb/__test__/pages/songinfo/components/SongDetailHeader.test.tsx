@@ -63,6 +63,8 @@ beforeEach(() => {
   shopStateMock.useShopState.mockReturnValue({
     isShopVisible: false,
     isShopHighlighted: () => false,
+    isLeavingTomorrow: () => false,
+    isShopNew: () => false,
     getShopUrl: () => undefined,
   });
 });
@@ -110,11 +112,13 @@ describe('SongDetailHeader', () => {
     expect(screen.getByText('s1')).toBeTruthy();
   });
 
-  it('renders mobile Item Shop with compact path circle metrics', () => {
+  it('renders mobile Item Shop as a compact opaque pill', () => {
     stubMatchMedia(true);
     shopStateMock.useShopState.mockReturnValue({
       isShopVisible: true,
       isShopHighlighted: () => false,
+      isLeavingTomorrow: () => false,
+      isShopNew: () => false,
       getShopUrl: () => 'https://example.com/shop/s1',
     });
 
@@ -126,9 +130,11 @@ describe('SongDetailHeader', () => {
 
     const link = screen.getByRole('link', { name: 'Item Shop' });
     const linkStyle = link.getAttribute('style') ?? '';
-    expect(linkStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain(`min-width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain('max-width: 112px');
     expect(linkStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
     expect(linkStyle).toContain('border-radius: 999px');
+    expect(screen.getByText('Item Shop')).toBeTruthy();
   });
 
   it('renders pulsing mobile Item Shop with neutral opaque glass backing', () => {
@@ -136,6 +142,8 @@ describe('SongDetailHeader', () => {
     shopStateMock.useShopState.mockReturnValue({
       isShopVisible: true,
       isShopHighlighted: () => true,
+      isLeavingTomorrow: () => false,
+      isShopNew: () => false,
       getShopUrl: () => 'https://example.com/shop/s1',
     });
 

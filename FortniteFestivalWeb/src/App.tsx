@@ -876,7 +876,7 @@ function AppShell() {
       target: '_blank',
       rel: 'noopener noreferrer',
       tone: isShopHighlighted(songDetailId) ? 'pulse' as const : 'accent' as const,
-      className: isShopHighlighted(songDetailId) ? (isLeavingTomorrow(songDetailId) ? anim.shopCircleBreatheRed : isShopNew(songDetailId) ? anim.shopCircleBreatheGold : anim.shopCircleBreathe) : undefined,
+      className: isShopHighlighted(songDetailId) ? (isLeavingTomorrow(songDetailId) ? anim.shopBreatheRed : isShopNew(songDetailId) ? anim.shopBreatheGold : anim.shopBreathe) : undefined,
       onPress: () => {},
     }] : []),
     ...(hasVisiblePathInstruments && fabSearch.songDetailActionsReady ? [{

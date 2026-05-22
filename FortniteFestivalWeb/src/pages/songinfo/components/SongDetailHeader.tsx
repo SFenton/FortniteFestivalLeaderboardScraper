@@ -10,7 +10,7 @@ import { IoFlash, IoBagHandle } from 'react-icons/io5';
 import {
   Align, AlbumArtSize, Colors, CssProp, CssValue, Cursor, Display, Font, Gap,
   IconSize, Isolation, Justify, Layout, ObjectFit, Position, Radius,
-  TRANSITION_MS, EASE_SMOOTH, Weight, flexCenter, flexRow, opaqueGlass, padding, purpleGlass, transition,
+  TRANSITION_MS, EASE_SMOOTH, Weight, BoxSizing, Overflow, flexCenter, flexRow, opaqueGlass, padding, purpleGlass, transition,
 } from '@festival/theme';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useShopState } from '../../../hooks/data/useShopState';
@@ -75,9 +75,10 @@ export default function SongDetailHeader({
         /* v8 ignore stop */
       )}
       {isMobile && showShop && (
-        /* v8 ignore start — mobile shop icon */
-        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? (shopLeavingTomorrow ? anim.shopCircleBreatheRed : shopNew ? anim.shopCircleBreatheGold : anim.shopCircleBreathe) : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
-          <IoBagHandle size={IconSize.sm} />
+        /* v8 ignore start — mobile shop link */
+        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopMobileButtonPulse : s.shopMobileButton} className={shopPulse ? (shopLeavingTomorrow ? anim.shopBreatheRed : shopNew ? anim.shopBreatheGold : anim.shopBreathe) : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
+          <IoBagHandle size={IconSize.action} />
+          <span style={s.mobileShopLabel}>{t('common.itemShop', 'Item Shop')}</span>
         </a>
         /* v8 ignore stop */
       )}
@@ -120,28 +121,53 @@ function useStyles(collapsed: boolean, noTransition?: boolean) {
       viewPathsButton: { ...purpleGlass, ...buttonBase },
       shopButton,
       shopButtonPulse: { ...opaqueGlass, ...buttonBase, ...pulseBase },
-      shopCircle: {
-        width: Layout.pillButtonHeight,
+      shopMobileButton: {
+        display: Display.inlineFlex,
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        gap: Gap.sm,
+        minWidth: Layout.pillButtonHeight,
+        maxWidth: 112,
         height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
+        padding: padding(0, Gap.lg),
         backgroundColor: Colors.accentBlue,
-        ...flexCenter,
         color: Colors.textPrimary,
         textDecoration: CssValue.none,
         flexShrink: 0,
         alignSelf: Align.center,
+        boxSizing: BoxSizing.borderBox,
+        whiteSpace: 'nowrap',
+        overflow: Overflow.hidden,
       },
-      shopCirclePulse: {
-        width: Layout.pillButtonHeight,
+      shopMobileButtonPulse: {
+        display: Display.inlineFlex,
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        gap: Gap.sm,
+        minWidth: Layout.pillButtonHeight,
+        maxWidth: 112,
         height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
-        ...flexCenter,
+        padding: padding(0, Gap.lg),
         color: Colors.textPrimary,
         textDecoration: CssValue.none,
         flexShrink: 0,
         alignSelf: Align.center,
+        boxSizing: BoxSizing.borderBox,
+        whiteSpace: 'nowrap',
+        overflow: Overflow.hidden,
         ...opaqueGlass,
         ...pulseBase,
+      },
+      mobileShopLabel: {
+        minWidth: 0,
+        overflow: Overflow.hidden,
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        fontSize: Font.sm,
+        fontWeight: Weight.semibold,
+        lineHeight: 1,
       },
     };
   }, [collapsed, noTransition]);

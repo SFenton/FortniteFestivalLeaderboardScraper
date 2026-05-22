@@ -7,6 +7,7 @@ import { viewAllSlide } from './pages/ViewAll';
 import { topScoresSlide } from './pages/TopScores';
 import { pathsMobileSlide, pathsDesktopSlide } from './pages/PathPreview';
 import { shopButtonMobileSlide, shopButtonDesktopSlide } from './pages/ShopButton';
+import { newInShopMobileSlide, newInShopDesktopSlide } from './pages/NewInShop';
 import { leavingTomorrowMobileSlide, leavingTomorrowDesktopSlide } from './pages/LeavingTomorrow';
 import type { FirstRunSlideDef } from '../../../firstRun/types';
 
@@ -18,6 +19,7 @@ export function songInfoSlides(isMobile: boolean): FirstRunSlideDef[] {
     topScoresSlide,
     isMobile ? pathsMobileSlide : pathsDesktopSlide,
     isMobile ? shopButtonMobileSlide : shopButtonDesktopSlide,
+    isMobile ? newInShopMobileSlide : newInShopDesktopSlide,
     isMobile ? leavingTomorrowMobileSlide : leavingTomorrowDesktopSlide,
   ];
 }

@@ -2,7 +2,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoBagHandle } from 'react-icons/io5';
-import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, Position, Isolation, opaqueGlass, padding } from '@festival/theme';
+import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, Position, Isolation, BoxSizing, Overflow, opaqueGlass, padding } from '@festival/theme';
 import anim from '../../../../styles/animations.module.css';
 
 /**
@@ -17,8 +17,9 @@ export default function LeavingTomorrowButtonDemo({ mobile }: { mobile?: boolean
   if (mobile) {
     return (
       <div style={s.wrap}>
-        <div className={anim.shopCircleBreatheRed} style={s.shopCirclePulse}>
-          <IoBagHandle size={72} />
+        <div className={anim.shopBreatheRed} style={s.shopMobileButtonPulse}>
+          <IoBagHandle size={IconSize.action} />
+          <span style={s.mobileShopLabel}>{t('shop.itemShop')}</span>
         </div>
       </div>
     );
@@ -53,18 +54,33 @@ function useStyles() {
       position: Position.relative,
       isolation: Isolation.isolate,
     } as CSSProperties,
-    shopCirclePulse: {
+    shopMobileButtonPulse: {
       ...opaqueGlass,
-      width: Layout.shopCircleSize,
-      height: Layout.shopCircleSize,
-      borderRadius: Radius.full,
-      display: Display.flex,
+      display: Display.inlineFlex,
       alignItems: Align.center,
       justifyContent: Justify.center,
+      gap: Gap.sm,
+      minWidth: Layout.pillButtonHeight,
+      maxWidth: 132,
+      height: Layout.pillButtonHeight,
+      borderRadius: Radius.full,
+      padding: padding(0, Gap.lg),
       color: Colors.textPrimary,
       flexShrink: 0,
       position: Position.relative,
       isolation: Isolation.isolate,
+      boxSizing: BoxSizing.borderBox,
+      whiteSpace: 'nowrap',
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    mobileShopLabel: {
+      minWidth: 0,
+      overflow: Overflow.hidden,
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: Font.sm,
+      fontWeight: Weight.semibold,
+      lineHeight: 1,
     } as CSSProperties,
     iconMargin: { marginRight: Gap.md } as CSSProperties,
   }), []);

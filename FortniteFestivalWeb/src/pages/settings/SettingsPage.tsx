@@ -1145,7 +1145,7 @@ export default function SettingsPage() {
               <Card>
                 <ToggleRow
                   label={t('settings.disableShopHighlighting', 'Disable Item Shop Highlighting')}
-                  description={t('settings.disableShopHighlightingDesc', 'Turn off the pulsing highlight on songs available in the Item Shop.')}
+                  description={t('settings.disableShopHighlightingDesc', 'Turn off blue, gold, and red pulsing Item Shop highlights.')}
                   checked={settings.disableShopHighlighting}
                   onToggle={() => updateSettings({ disableShopHighlighting: !settings.disableShopHighlighting })}
                   disabled={settings.hideItemShop}

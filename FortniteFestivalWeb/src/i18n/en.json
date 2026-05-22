@@ -1594,6 +1594,10 @@
         "title": "Item Shop Highlights",
         "description": "Songs currently available in the Item Shop are highlighted with a pulsing glow so you can spot them at a glance."
       },
+      "new": {
+        "title": "New in the Item Shop",
+        "description": "New songs in Festival that are in the item shop for the first time pulse gold, while regular shop songs keep the blue highlight."
+      },
       "leaving": {
         "title": "Leaving Tomorrow",
         "description": "Songs about to leave the Item Shop pulse red so you know which ones to grab before they're gone."
@@ -1695,9 +1699,14 @@
         "descriptionMobile": "When a song is in the Item Shop, a shop icon appears on the song card. Tap it to go straight to the store.",
         "descriptionDesktop": "When a song is in the Item Shop, an Item Shop button appears in the header. Tap it to go straight to the store."
       },
+      "new": {
+        "title": "New Shop Songs",
+        "descriptionMobile": "When a shop song is newly added, the Item Shop pill pulses gold instead of blue.",
+        "descriptionDesktop": "When a shop song is newly added, the Item Shop button pulses gold instead of blue."
+      },
       "leaving": {
         "title": "Leaving Tomorrow",
-        "descriptionMobile": "When a song is about to leave the Item Shop, the shop icon turns red so you know to act fast.",
+        "descriptionMobile": "When a song is about to leave the Item Shop, the Item Shop pill turns red so you know to act fast.",
         "descriptionDesktop": "When a song is about to leave the Item Shop, the Item Shop button turns red so you know to act fast."
       }
     },
@@ -1864,6 +1873,10 @@
       "highlighting": {
         "title": "Shop Highlighting",
         "description": "Songs from the Item Shop are highlighted with a pulsing glow on the Songs page so you can spot them at a glance."
+      },
+      "new": {
+        "title": "New Shop Songs",
+        "description": "New songs in Festival that are in the item shop for the first time pulse gold in shop views and on song rows."
       },
       "leaving": {
         "title": "Leaving Tomorrow",

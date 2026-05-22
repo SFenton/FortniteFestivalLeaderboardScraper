@@ -6,12 +6,14 @@ import { viewAllSlide } from '../../../../src/pages/songinfo/firstRun/pages/View
 import { topScoresSlide } from '../../../../src/pages/songinfo/firstRun/pages/TopScores';
 import { pathsMobileSlide, pathsDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/PathPreview';
 import { shopButtonMobileSlide, shopButtonDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/ShopButton';
+import { newInShopMobileSlide, newInShopDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/NewInShop';
+import { leavingTomorrowMobileSlide, leavingTomorrowDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/LeavingTomorrow';
 import { historySlide } from '../../../../src/pages/songinfo/firstRun/pages/History';
 
 describe('songInfoSlides', () => {
-  it('returns 7 slides', () => {
-    expect(songInfoSlides(false)).toHaveLength(7);
-    expect(songInfoSlides(true)).toHaveLength(7);
+  it('returns 8 slides', () => {
+    expect(songInfoSlides(false)).toHaveLength(8);
+    expect(songInfoSlides(true)).toHaveLength(8);
   });
 
   it('returns desktop paths slide when isMobile is false', () => {
@@ -34,6 +36,13 @@ describe('songInfoSlides', () => {
     expect(slides[5]).toBe(shopButtonMobileSlide);
   });
 
+  it('returns new-in-shop slide before leaving tomorrow', () => {
+    expect(songInfoSlides(false)[6]).toBe(newInShopDesktopSlide);
+    expect(songInfoSlides(false)[7]).toBe(leavingTomorrowDesktopSlide);
+    expect(songInfoSlides(true)[6]).toBe(newInShopMobileSlide);
+    expect(songInfoSlides(true)[7]).toBe(leavingTomorrowMobileSlide);
+  });
+
   it('includes chart, barSelect, viewAll, topScores in both modes', () => {
     for (const isMobile of [true, false]) {
       const slides = songInfoSlides(isMobile);
@@ -46,7 +55,7 @@ describe('songInfoSlides', () => {
 });
 
 describe('slide definitions', () => {
-  const slides = [chartSlide, barSelectSlide, viewAllSlide, topScoresSlide, pathsMobileSlide, pathsDesktopSlide, shopButtonMobileSlide, shopButtonDesktopSlide, historySlide];
+  const slides = [chartSlide, barSelectSlide, viewAllSlide, topScoresSlide, pathsMobileSlide, pathsDesktopSlide, shopButtonMobileSlide, shopButtonDesktopSlide, newInShopMobileSlide, newInShopDesktopSlide, leavingTomorrowMobileSlide, leavingTomorrowDesktopSlide, historySlide];
 
   it.each(slides.map(s => [s.id, s]))('%s has required fields', (_id, slide) => {
     expect(slide.id).toBeTruthy();
@@ -100,6 +109,13 @@ describe('slide definitions', () => {
     expect(shopButtonMobileSlide.description).not.toBe(shopButtonDesktopSlide.description);
   });
 
+  it('new shop slides share the same id and content key but differ in description', () => {
+    expect(newInShopMobileSlide.id).toBe(newInShopDesktopSlide.id);
+    expect(newInShopMobileSlide.contentKey).toBe('songinfo-new-in-shop');
+    expect(newInShopDesktopSlide.contentKey).toBe('songinfo-new-in-shop');
+    expect(newInShopMobileSlide.description).not.toBe(newInShopDesktopSlide.description);
+  });
+
   it('slide render() returns JSX', () => {
     for (const slide of slides) {
       const el = slide.render();
@@ -114,6 +130,8 @@ describe('slide definitions', () => {
     expect(topScoresSlide.version).toBe(2);
     expect(pathsMobileSlide.version).toBe(2);
     expect(pathsDesktopSlide.version).toBe(2);
+    expect(newInShopMobileSlide.version).toBe(1);
+    expect(newInShopDesktopSlide.version).toBe(1);
     expect(historySlide.version).toBe(1);
   });
 });

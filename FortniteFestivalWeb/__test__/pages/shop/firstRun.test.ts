@@ -3,7 +3,7 @@ import { shopSlides } from '../../../src/pages/shop/firstRun';
 
 describe('shop first-run slides', () => {
   it('includes the views slide when the view toggle is available', () => {
-    expect(shopSlides({ viewToggleAvailable: true })).toHaveLength(4);
+    expect(shopSlides({ viewToggleAvailable: true })).toHaveLength(5);
   });
 
   it('all slides have required fields', () => {
@@ -25,7 +25,7 @@ describe('shop first-run slides', () => {
     const ids = shopSlides({ viewToggleAvailable: false }).map(s => s.id);
 
     expect(ids).not.toContain('shop-views');
-    expect(ids).toEqual(['shop-overview', 'shop-highlighting', 'shop-leaving-tomorrow']);
+    expect(ids).toEqual(['shop-overview', 'shop-highlighting', 'shop-new-items', 'shop-leaving-tomorrow']);
   });
 
   it('shop-highlighting slide is gated on shopHighlightEnabled', () => {
@@ -34,5 +34,13 @@ describe('shop first-run slides', () => {
     expect(highlighting!.gate).toBeDefined();
     expect(highlighting!.gate!({ hasPlayer: false, shopHighlightEnabled: false })).toBe(false);
     expect(highlighting!.gate!({ hasPlayer: false, shopHighlightEnabled: true })).toBe(true);
+  });
+
+  it('shop-new-items slide is gated on shopHighlightEnabled', () => {
+    const newItems = shopSlides({ viewToggleAvailable: true }).find(s => s.id === 'shop-new-items');
+    expect(newItems).toBeDefined();
+    expect(newItems!.gate).toBeDefined();
+    expect(newItems!.gate!({ hasPlayer: false, shopHighlightEnabled: false })).toBe(false);
+    expect(newItems!.gate!({ hasPlayer: false, shopHighlightEnabled: true })).toBe(true);
   });
 });

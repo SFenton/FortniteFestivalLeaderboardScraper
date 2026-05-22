@@ -11,7 +11,7 @@ import { IoFlash, IoBagHandle } from 'react-icons/io5';
 import {
   Colors, Font, Gap, Radius, Layout, Weight, ObjectFit, Size, AlbumArtSize,
   IconSize, Display, Align, Justify, CssValue, Cursor, Position, Isolation,
-  flexRow, flexCenter, opaqueGlass, purpleGlass,
+  BoxSizing, Overflow, flexRow, flexCenter, opaqueGlass, purpleGlass, padding,
 } from '@festival/theme';
 import type { CSSProperties } from 'react';
 import { type ServerSong as Song, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
@@ -46,7 +46,7 @@ export interface SongInfoHeaderProps {
   animate?: boolean;
   /** When set, renders a "View Paths" pill button (desktop only). */
   onOpenPaths?: () => void;
-  /** When set, renders an Item Shop button/circle linking to this URL. */
+  /** When set, renders an Item Shop button linking to this URL. */
   shopUrl?: string;
   /** When true, the shop button pulses to draw attention. */
   shopPulse?: boolean;
@@ -149,8 +149,9 @@ export default function SongInfoHeader({
               </a>
             )}
             {isMobile && showShop && (
-              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? (shopLeavingTomorrow ? anim.shopCircleBreatheRed : shopNew ? anim.shopCircleBreatheGold : anim.shopCircleBreathe) : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
-                <IoBagHandle size={IconSize.sm} />
+              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopMobileButtonPulse : s.shopMobileButton} className={shopPulse ? (shopLeavingTomorrow ? anim.shopBreatheRed : shopNew ? anim.shopBreatheGold : anim.shopBreathe) : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
+                <IoBagHandle size={IconSize.action} />
+                <span style={s.mobileShopLabel}>{t('common.itemShop', 'Item Shop')}</span>
               </a>
             )}
             {/* v8 ignore stop */}
@@ -216,28 +217,53 @@ function useStyles(collapsed: boolean, animate?: boolean) {
       } as CSSProperties,
       shopButton,
       shopButtonPulse: { ...opaqueGlass, ...buttonBase, ...pulseBase } as CSSProperties,
-      shopCircle: {
-        width: Layout.pillButtonHeight,
+      shopMobileButton: {
+        display: Display.inlineFlex,
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        gap: Gap.sm,
+        minWidth: Layout.pillButtonHeight,
+        maxWidth: 112,
         height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
+        padding: padding(0, Gap.lg),
         backgroundColor: Colors.accentBlue,
-        ...flexCenter,
         color: Colors.textPrimary,
         textDecoration: CssValue.none,
         flexShrink: 0,
         alignSelf: Align.center,
+        boxSizing: BoxSizing.borderBox,
+        whiteSpace: 'nowrap',
+        overflow: Overflow.hidden,
       } as CSSProperties,
-      shopCirclePulse: {
-        width: Layout.pillButtonHeight,
+      shopMobileButtonPulse: {
+        display: Display.inlineFlex,
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        gap: Gap.sm,
+        minWidth: Layout.pillButtonHeight,
+        maxWidth: 112,
         height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
-        ...flexCenter,
+        padding: padding(0, Gap.lg),
         color: Colors.textPrimary,
         textDecoration: CssValue.none,
         flexShrink: 0,
         alignSelf: Align.center,
+        boxSizing: BoxSizing.borderBox,
+        whiteSpace: 'nowrap',
+        overflow: Overflow.hidden,
         ...opaqueGlass,
         ...pulseBase,
+      } as CSSProperties,
+      mobileShopLabel: {
+        minWidth: 0,
+        overflow: Overflow.hidden,
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        fontSize: Font.sm,
+        fontWeight: Weight.semibold,
+        lineHeight: 1,
       } as CSSProperties,
     };
   }, [collapsed, animate]);

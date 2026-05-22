@@ -275,7 +275,7 @@ describe('SongInfoHeader', () => {
     expect(icon).not.toBeNull();
   });
 
-  it('renders Item Shop on mobile with compact path circle metrics', () => {
+  it('renders Item Shop on mobile as a compact opaque pill', () => {
     stubMatchMedia(true);
 
     render(
@@ -286,11 +286,13 @@ describe('SongInfoHeader', () => {
 
     const link = screen.getByRole('link', { name: 'Item Shop' });
     const linkStyle = link.getAttribute('style') ?? '';
-    expect(linkStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain(`min-width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain('max-width: 112px');
     expect(linkStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
     expect(linkStyle).toContain('border-radius: 999px');
+    expect(screen.getByText('Item Shop')).toBeTruthy();
 
-    const icon = link.querySelector(`[data-size="${IconSize.sm}"]`);
+    const icon = link.querySelector(`[data-size="${IconSize.action}"]`);
     expect(icon).not.toBeNull();
   });
 
@@ -305,11 +307,25 @@ describe('SongInfoHeader', () => {
 
     const link = screen.getByRole('link', { name: 'Item Shop' });
     const linkStyle = link.getAttribute('style') ?? '';
-    expect(linkStyle).toContain(`width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain(`min-width: ${Layout.pillButtonHeight}px`);
+    expect(linkStyle).toContain('max-width: 112px');
     expect(linkStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
     expect(linkStyle).toContain('border-radius: 999px');
     expect(link.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
     expect(link.style.border).toBe('1px solid rgba(255, 255, 255, 0.08)');
+  });
+
+  it('uses gold Item Shop pulse on mobile for new shop songs', () => {
+    stubMatchMedia(true);
+
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} shopUrl="https://example.com/shop/s1" shopPulse shopNew />
+      </TestProviders>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    expect(link.className).toContain(anim.shopBreatheGold);
   });
 
   it('uses gold Item Shop pulse for new shop songs', () => {

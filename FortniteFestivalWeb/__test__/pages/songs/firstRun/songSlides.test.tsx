@@ -7,11 +7,13 @@ import { filterSlide } from '../../../../src/pages/songs/firstRun/pages/Filter';
 import { songIconsSlide } from '../../../../src/pages/songs/firstRun/pages/SongIcons';
 import { metadataSlide } from '../../../../src/pages/songs/firstRun/pages/MetadataFilter';
 import { shopHighlightSlide } from '../../../../src/pages/songs/firstRun/pages/ShopHighlight';
+import { newInShopSlide } from '../../../../src/pages/songs/firstRun/pages/NewInShop';
+import { leavingTomorrowSlide } from '../../../../src/pages/songs/firstRun/pages/LeavingTomorrow';
 
 describe('songSlides', () => {
-  it('returns 8 slides', () => {
-    expect(songSlides(false)).toHaveLength(8);
-    expect(songSlides(true)).toHaveLength(8);
+  it('returns 9 slides', () => {
+    expect(songSlides(false)).toHaveLength(9);
+    expect(songSlides(true)).toHaveLength(9);
   });
 
   it('returns desktop navigation slide when isMobile is false', () => {
@@ -33,12 +35,14 @@ describe('songSlides', () => {
       expect(slides[4]).toBe(songIconsSlide);
       expect(slides[5]).toBe(metadataSlide);
       expect(slides[6]).toBe(shopHighlightSlide);
+      expect(slides[7]).toBe(newInShopSlide);
+      expect(slides[8]).toBe(leavingTomorrowSlide);
     }
   });
 });
 
 describe('slide definitions', () => {
-  const slides = [songListSlide, sortSlide, navigationMobileSlide, navigationDesktopSlide, filterSlide, songIconsSlide, metadataSlide, shopHighlightSlide];
+  const slides = [songListSlide, sortSlide, navigationMobileSlide, navigationDesktopSlide, filterSlide, songIconsSlide, metadataSlide, shopHighlightSlide, newInShopSlide, leavingTomorrowSlide];
 
   it.each(slides.map(s => [s.id, s]))('%s has required fields', (_id, slide) => {
     expect(slide.id).toBeTruthy();
@@ -88,6 +92,13 @@ describe('slide definitions', () => {
     expect(shopHighlightSlide.gate!({ hasPlayer: true, shopHighlightEnabled: true })).toBe(true);
   });
 
+  it('newInShopSlide is gated on shopHighlightEnabled', () => {
+    expect(newInShopSlide.gate).toBeDefined();
+    expect(newInShopSlide.gate!({ hasPlayer: false })).toBe(false);
+    expect(newInShopSlide.gate!({ hasPlayer: true, shopHighlightEnabled: false })).toBe(false);
+    expect(newInShopSlide.gate!({ hasPlayer: true, shopHighlightEnabled: true })).toBe(true);
+  });
+
   it('slide render() returns JSX', () => {
     for (const slide of slides) {
       const el = slide.render();
@@ -103,6 +114,7 @@ describe('slide definitions', () => {
     expect(filterSlide.version).toBe(4);
     expect(songIconsSlide.version).toBe(3);
     expect(metadataSlide.version).toBe(3);
+    expect(newInShopSlide.version).toBe(1);
   });
 
   it('slide ids are correct', () => {
@@ -113,5 +125,6 @@ describe('slide definitions', () => {
     expect(filterSlide.id).toBe('songs-filter');
     expect(songIconsSlide.id).toBe('songs-icons');
     expect(metadataSlide.id).toBe('songs-metadata');
+    expect(newInShopSlide.id).toBe('songs-new-in-shop');
   });
 });
