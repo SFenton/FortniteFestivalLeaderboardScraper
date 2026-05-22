@@ -7,6 +7,8 @@ namespace FSTService.Api;
 
 public static partial class ApiEndpoints
 {
+    private static readonly JsonSerializerOptions LeaderboardRankOffsetJsonOptions = new(JsonSerializerDefaults.Web);
+
     public static void MapLeaderboardEndpoints(this WebApplication app)
     {
         app.MapGet("/api/leaderboard/{songId}/bands/all", (
@@ -341,6 +343,7 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             IPathDataStore pathStore,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
@@ -351,6 +354,7 @@ public static partial class ApiEndpoints
             if (frozenMiss is not null) return frozenMiss;
 
             int? maxScore = null;
+            int? rawMaxScore = null;
             if (leeway.HasValue)
             {
                 var allMax = pathStore.GetAllMaxScores();
@@ -358,7 +362,10 @@ public static partial class ApiEndpoints
                 {
                     var raw = ms.GetByInstrument(instrument);
                     if (raw.HasValue)
+                    {
+                        rawMaxScore = raw.Value;
                         maxScore = (int)(raw.Value * (1.0 + leeway.Value / 100.0));
+                    }
                 }
             }
             var result = persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, top, offset ?? 0, maxScore);
@@ -371,12 +378,18 @@ public static partial class ApiEndpoints
             var totalEntries = Math.Max(pop > 0 ? (int)pop : 0, dbCount);
             var showLeaderboardEntryTotals = metaDb.ShouldShowLeaderboardEntryTotals();
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
+            var exactRemovedAbove = leeway.HasValue
+                ? GetExactRemovedAbove(precomputer, persistence, songId, instrument, rawMaxScore, leeway.Value)
+                : null;
             var enriched = entries.Select(e => new
             {
                 e.AccountId,
                 DisplayName = names.GetValueOrDefault(e.AccountId),
                 e.Score,
-                Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, useFilteredRank),
+                Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, useFilteredRank, exactRemovedAbove),
+                LocalRank = useFilteredRank ? e.Rank : (int?)null,
+                ApiRank = e.ApiRank > 0 ? e.ApiRank : (int?)null,
+                RankSource = LeaderboardResponseRanks.ResolveSource(e.ApiRank, e.Rank, e.Rank, useFilteredRank, exactRemovedAbove),
                 e.Accuracy,
                 e.IsFullCombo,
                 e.Stars,
@@ -397,6 +410,37 @@ public static partial class ApiEndpoints
                 localEntries = dbCount,
                 entries = enriched
             });
+        })
+        .WithTags("Leaderboards")
+        .RequireRateLimiting("public");
+
+        app.MapGet("/api/leaderboard-rank-offsets/{songId}/{instrument}", (
+            HttpContext httpContext,
+            string songId,
+            string instrument,
+            GlobalLeaderboardPersistence persistence,
+            IPathDataStore pathStore,
+            ScrapeTimePrecomputer precomputer) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
+            if (!GlobalLeaderboardPersistence.IsValidInstrument(instrument))
+                return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+
+            var cacheKey = LeaderboardCacheKeys.LeaderboardRankOffsets(songId, instrument);
+            var cached = precomputer.TryGet(cacheKey);
+            var cachedResult = CacheHelper.ServeIfCached(httpContext, cached);
+            if (cachedResult is not null) return cachedResult;
+
+            var allMax = pathStore.GetAllMaxScores();
+            if (!allMax.TryGetValue(songId, out var maxScores))
+                return Results.NotFound(new { error = $"No CHOpt max scores for song: {songId}" });
+            var rawMaxScore = maxScores.GetByInstrument(instrument);
+            if (!rawMaxScore.HasValue)
+                return Results.NotFound(new { error = $"No CHOpt max score for {songId}/{instrument}" });
+
+            var db = persistence.GetOrCreateInstrumentDb(instrument);
+            var offsets = LeaderboardRankOffsetCalculator.Compute(songId, instrument, rawMaxScore.Value, db);
+            return Results.Ok(offsets);
         })
         .WithTags("Leaderboards")
         .RequireRateLimiting("public");
@@ -449,18 +493,25 @@ public static partial class ApiEndpoints
 
             // Collect raw data per instrument (parallel — each instrument is a separate SQLite DB)
             var instrumentArr = instrumentKeys.ToArray();
-            var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank)?[instrumentArr.Length];
+            var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank, int? ExactRemovedAbove)?[instrumentArr.Length];
             Parallel.For(0, instrumentArr.Length, i =>
             {
                 var instrument = instrumentArr[i];
                 int? maxScore = null;
+                int? rawMaxScore = null;
                 if (maxScoresMap is not null && maxScoresMap.TryGetValue(songId, out var ms))
                 {
                     var raw = ms.GetByInstrument(instrument);
                     if (raw.HasValue)
+                    {
+                        rawMaxScore = raw.Value;
                         maxScore = (int)(raw.Value * (1.0 + leeway!.Value / 100.0));
+                    }
                 }
                 var useFilteredRank = maxScore.HasValue;
+                var exactRemovedAbove = leeway.HasValue
+                    ? GetExactRemovedAbove(precomputer, persistence, songId, instrument, rawMaxScore, leeway.Value)
+                    : null;
                 var result = persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, effectiveTop, maxScore: maxScore);
                 if (result is null) return;
 
@@ -470,11 +521,11 @@ public static partial class ApiEndpoints
                     population.TryGetValue(popKey, out var pop) && pop > 0 ? (int)pop : 0,
                     dbCount);
 
-                rawResults[i] = (instrument, entries, dbCount, totalEntries, useFilteredRank);
+                rawResults[i] = (instrument, entries, dbCount, totalEntries, useFilteredRank, exactRemovedAbove);
             });
 
             var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank)>();
+            var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank, int? ExactRemovedAbove)>();
             foreach (var r in rawResults)
             {
                 if (r is null) continue;
@@ -498,7 +549,10 @@ public static partial class ApiEndpoints
                     e.AccountId,
                     DisplayName = names.GetValueOrDefault(e.AccountId),
                     e.Score,
-                    Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank),
+                    Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank, ri.ExactRemovedAbove),
+                    LocalRank = ri.UseFilteredRank ? e.Rank : (int?)null,
+                    ApiRank = e.ApiRank > 0 ? e.ApiRank : (int?)null,
+                    RankSource = LeaderboardResponseRanks.ResolveSource(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank, ri.ExactRemovedAbove),
                     e.Accuracy,
                     e.IsFullCombo,
                     e.Stars,
@@ -567,6 +621,45 @@ public static partial class ApiEndpoints
             .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
             .Value.SerializerOptions;
         return JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+    }
+
+    private static int? GetExactRemovedAbove(
+        ScrapeTimePrecomputer precomputer,
+        GlobalLeaderboardPersistence persistence,
+        string songId,
+        string instrument,
+        int? rawMaxScore,
+        double leeway)
+    {
+        var offsets = GetLeaderboardRankOffsets(precomputer, persistence, songId, instrument, rawMaxScore);
+        return LeaderboardRankOffsetCalculator.TryGetExactRemovedAbove(offsets, leeway, out var removedAbove)
+            ? removedAbove
+            : null;
+    }
+
+    private static LeaderboardRankOffsetData? GetLeaderboardRankOffsets(
+        ScrapeTimePrecomputer precomputer,
+        GlobalLeaderboardPersistence persistence,
+        string songId,
+        string instrument,
+        int? rawMaxScore)
+    {
+        var cached = precomputer.TryGet(LeaderboardCacheKeys.LeaderboardRankOffsets(songId, instrument));
+        if (cached is not null)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<LeaderboardRankOffsetData>(cached.Value.Json, LeaderboardRankOffsetJsonOptions);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        if (!rawMaxScore.HasValue) return null;
+        var db = persistence.GetOrCreateInstrumentDb(instrument);
+        return LeaderboardRankOffsetCalculator.Compute(songId, instrument, rawMaxScore.Value, db);
     }
 
     private static List<string> ParseCsvParameter(string? value, int maxItems)

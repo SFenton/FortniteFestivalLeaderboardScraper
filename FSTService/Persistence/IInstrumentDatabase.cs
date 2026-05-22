@@ -46,6 +46,7 @@ public interface IInstrumentDatabase : IDisposable
     Dictionary<string, int> GetCurrentStatePlayerRankingsFiltered(string accountId, Dictionary<string, int> maxScores, string? songId = null);
     int GetRankForScore(string songId, int score, int? maxScore = null);
     int GetCurrentStateRankForScore(string songId, int score, int? maxScore = null);
+    (int TotalCount, int? MaxScore, int? MinScrapeScore) GetCurrentStateRankOffsetCoverage(string songId);
     Dictionary<string, int> GetFilteredEntryCounts(Dictionary<string, int> maxScores);
     Dictionary<string, int> GetCurrentStateFilteredEntryCounts(Dictionary<string, int> maxScores);
     Dictionary<string, (int Rank, int Total)> GetPlayerStoredRankings(string accountId, string? songId = null);

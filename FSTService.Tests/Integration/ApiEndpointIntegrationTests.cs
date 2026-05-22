@@ -566,9 +566,20 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(2, filteredJson.GetProperty("localEntries").GetInt32());
         var entries = filteredJson.GetProperty("entries");
         Assert.Equal("valid1", entries[0].GetProperty("accountId").GetString());
-        Assert.Equal(1, entries[0].GetProperty("rank").GetInt32());
+        Assert.Equal(55_941, entries[0].GetProperty("rank").GetInt32());
+        Assert.Equal(1, entries[0].GetProperty("localRank").GetInt32());
+        Assert.Equal(55_942, entries[0].GetProperty("apiRank").GetInt32());
+        Assert.Equal("choptExact", entries[0].GetProperty("rankSource").GetString());
         Assert.Equal("valid2", entries[1].GetProperty("accountId").GetString());
-        Assert.Equal(2, entries[1].GetProperty("rank").GetInt32());
+        Assert.Equal(95_204, entries[1].GetProperty("rank").GetInt32());
+        Assert.Equal(2, entries[1].GetProperty("localRank").GetInt32());
+
+        var offsetsResponse = await _client.GetAsync($"/api/leaderboard-rank-offsets/{songId}/Solo_Guitar");
+        Assert.Equal(HttpStatusCode.OK, offsetsResponse.StatusCode);
+        var offsetsJson = await offsetsResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var leewayOneIndex = 10 - offsetsJson.GetProperty("minLeewayTenths").GetInt32();
+        Assert.True(offsetsJson.GetProperty("exact")[leewayOneIndex].GetBoolean());
+        Assert.Equal(1, offsetsJson.GetProperty("removed")[leewayOneIndex].GetInt32());
     }
 
     [Fact]
@@ -602,6 +613,42 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var entries = json.GetProperty("entries");
         Assert.Equal("top3", entries[0].GetProperty("accountId").GetString());
         Assert.Equal(1, entries[0].GetProperty("rank").GetInt32());
+        Assert.Equal("choptExact", entries[0].GetProperty("rankSource").GetString());
+    }
+
+    [Fact]
+    public async Task ApiLeaderboard_Leeway_PrefersEpicRank_WhenOffsetBoundaryIsNotExact()
+    {
+        const string songId = "leewayInexactBoundarySong";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores
+            {
+                MaxLeadScore = 90_000,
+            }, "testhash-inexact");
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(songId, new List<LeaderboardEntry>
+            {
+                new() { AccountId = "over1", Score = 200_000, Accuracy = 100, Stars = 6, Source = "scrape" },
+                new() { AccountId = "over2", Score = 150_000, Accuracy = 100, Stars = 6, Source = "scrape" },
+                new() { AccountId = "registeredValid", Score = 85_000, Accuracy = 99, Stars = 6, ApiRank = 55_942, Source = "backfill" },
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/Solo_Guitar?leeway=1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var entry = json.GetProperty("entries")[0];
+
+        Assert.Equal("registeredValid", entry.GetProperty("accountId").GetString());
+        Assert.Equal(55_942, entry.GetProperty("rank").GetInt32());
+        Assert.Equal(1, entry.GetProperty("localRank").GetInt32());
+        Assert.Equal("epic", entry.GetProperty("rankSource").GetString());
     }
 
     [Fact]
@@ -645,7 +692,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             if (name == "Solo_Guitar")
             {
                 Assert.Equal(1, inst.GetProperty("count").GetInt32());
-                Assert.Equal(1, inst.GetProperty("entries")[0].GetProperty("rank").GetInt32());
+                Assert.Equal(55_941, inst.GetProperty("entries")[0].GetProperty("rank").GetInt32());
+                Assert.Equal("choptExact", inst.GetProperty("entries")[0].GetProperty("rankSource").GetString());
             }
             else if (name == "Solo_Bass")
                 Assert.Equal(1, inst.GetProperty("count").GetInt32());

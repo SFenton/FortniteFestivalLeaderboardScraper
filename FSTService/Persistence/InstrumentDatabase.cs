@@ -1390,6 +1390,43 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             cmd.Parameters.AddWithValue("maxScore", maxScore.Value);
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
+
+    public (int TotalCount, int? MaxScore, int? MinScrapeScore) GetCurrentStateRankOffsetCoverage(string songId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+
+        if (TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        {
+            cmd.CommandText = $"""
+                SELECT COUNT(*)::INT,
+                       MAX(score)::INT,
+                       MIN(score) FILTER (WHERE source = 'scrape')::INT
+                FROM {SoloCurrentProjectionTable}
+                WHERE song_id = @songId
+                  AND instrument = @instrument
+                """;
+        }
+        else
+        {
+            cmd.CommandText = $"""
+                SELECT COUNT(*)::INT,
+                       MAX(score)::INT,
+                       MIN(score) FILTER (WHERE source = 'scrape')::INT
+                FROM ({BuildCurrentStateLeaderboardSql(includeTotalCount: false, hasMaxScore: false, limitClause: string.Empty)}) current_rows
+                """;
+        }
+
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return (0, null, null);
+        return (
+            reader.IsDBNull(0) ? 0 : reader.GetInt32(0),
+            reader.IsDBNull(1) ? null : reader.GetInt32(1),
+            reader.IsDBNull(2) ? null : reader.GetInt32(2));
+    }
+
     public Dictionary<string, int> GetFilteredEntryCounts(Dictionary<string, int> maxScores) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); if (maxScores.Count == 0) return GetAllSongCounts(); using var tx = conn.BeginTransaction(); using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _max_thresholds2 (song_id TEXT PRIMARY KEY, max_score INTEGER NOT NULL) ON COMMIT DROP"; c.ExecuteNonQuery(); } using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _max_thresholds2 VALUES (@sid, @ms)"; var ps = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var (s, m) in maxScores) { ps.Value = s; pm.Value = m; c.ExecuteNonQuery(); } } cmd.Transaction = tx; cmd.CommandText = "SELECT le.song_id, COUNT(*) FROM leaderboard_entries le LEFT JOIN _max_thresholds2 mt ON mt.song_id = le.song_id WHERE le.instrument = @instrument AND le.score <= COALESCE(mt.max_score, le.score + 1) GROUP BY le.song_id"; cmd.Parameters.AddWithValue("instrument", Instrument); var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) dict[r.GetString(0)] = r.GetInt32(1); return dict; }
     public Dictionary<string, int> GetCurrentStateFilteredEntryCounts(Dictionary<string, int> maxScores)
     {

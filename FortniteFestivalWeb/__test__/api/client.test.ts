@@ -108,6 +108,12 @@ describe('api/client', () => {
       await api.getLeaderboard('s1', 'Solo_Guitar' as any, 100, 0, 1.5);
       expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/Solo_Guitar?top=100&offset=0&leeway=1.5', { headers: {} });
     });
+
+    it('fetches leaderboard rank offsets', async () => {
+      mockFetchOk({ songId: 's1', instrument: 'Solo_Guitar', maxScore: 100000, minLeewayTenths: -50, maxLeewayTenths: 50, stepTenths: 1, removed: [], exact: [] });
+      await api.getLeaderboardRankOffsets('s1', 'Solo_Guitar' as any);
+      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard-rank-offsets/s1/Solo_Guitar', { headers: {} });
+    });
   });
 
   describe('getMemberScoreFilter', () => {

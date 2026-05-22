@@ -3,6 +3,7 @@ import type {
   FeatureFlagsResponse,
   MemberScoreFilterResponse,
   LeaderboardResponse,
+  LeaderboardRankOffsetsResponse,
   PlayerResponse,
   AccountNameRefreshResponse,
   AccountSearchResponse,
@@ -278,6 +279,11 @@ export const api = {
   getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
     get<LeaderboardResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}?top=${top}&offset=${offset}${leeway != null ? `&leeway=${leeway}` : ''}`,
+    ),
+
+  getLeaderboardRankOffsets: (songId: string, instrument: InstrumentKey) =>
+    get<LeaderboardRankOffsetsResponse>(
+      `/api/leaderboard-rank-offsets/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}`,
     ),
 
   getPlayer: (accountId: string, songId?: string, instruments?: string[], leeway?: number) => {

@@ -323,6 +323,9 @@ export type LeaderboardEntry = {
   displayName?: string;
   score: number;
   rank: number;
+  localRank?: number | null;
+  apiRank?: number | null;
+  rankSource?: 'computed' | 'choptExact' | 'epic' | 'localFiltered' | 'stored' | string;
   percentile?: number;
   accuracy?: number;
   isFullCombo?: boolean;
@@ -339,6 +342,18 @@ export type LeaderboardResponse = {
   totalEntries: number;
   localEntries: number;
   entries: LeaderboardEntry[];
+};
+
+export type LeaderboardRankOffsetsResponse = {
+  songId: string;
+  instrument: string;
+  maxScore: number;
+  minLeewayTenths: number;
+  maxLeewayTenths: number;
+  stepTenths: number;
+  removed: number[];
+  exact: boolean[];
+  generatedAt?: string;
 };
 
 export type PlayerScore = {

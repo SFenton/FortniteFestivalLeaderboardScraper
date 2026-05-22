@@ -147,11 +147,15 @@ internal static class PublicApiResponseCachePolicy
         var selectedBandId = HeaderValue(request, SelectedProfileHeaders.SelectedBandIdHeader);
         var selectedBandType = HeaderValue(request, SelectedProfileHeaders.SelectedBandTypeHeader);
         var selectedBandTeamKey = HeaderValue(request, SelectedProfileHeaders.SelectedBandTeamKeyHeader);
+        var routeCacheVersion = request.Path.StartsWithSegments(new PathString("/api/leaderboard"), StringComparison.OrdinalIgnoreCase)
+            ? "|routeVersion=rank-offsets-v1"
+            : string.Empty;
 
         return string.Concat(
             "public-route:",
             request.Path.Value,
             request.QueryString.Value,
+            routeCacheVersion,
             "|profileType=", selectedProfileType,
             "|profileId=", selectedProfileId,
             "|legacyPlayer=", legacySelectedPlayer,

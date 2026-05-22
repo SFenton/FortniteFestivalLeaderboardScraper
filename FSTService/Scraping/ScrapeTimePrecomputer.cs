@@ -126,17 +126,19 @@ public sealed class ScrapeTimePrecomputer
         var registeredIds = _metaDb.GetRegisteredAccountIds();
         var instrumentKeys = _persistence.GetInstrumentKeys();
 
-        // ── Phase 1: Population tiers (must complete before player phases) ──
-        _progress.SetSubOperation("population_tiers");
-        var tiers = ComputePopulationTiers(allMaxScores, instrumentKeys);
-        _populationTiers = tiers;
-        _log.LogInformation("Precomputed population tiers for {Count} (song, instrument) pairs in {Elapsed}ms.",
-            tiers.Count, sw.ElapsedMilliseconds);
-
         // ── Set up disk staging (shared across phases 2-7) ──────
         await using var staging = new DiskStagingWriter(
             _loggerFactory.CreateLogger<DiskStagingWriter>());
         _staging = staging;
+
+        // ── Phase 1: Leeway metadata (must complete before player phases) ──
+        _progress.SetSubOperation("population_tiers");
+        var leewayMetadata = ComputeLeewayMetadata(allMaxScores, instrumentKeys);
+        var tiers = leewayMetadata.PopulationTiers;
+        _populationTiers = tiers;
+        StoreLeaderboardRankOffsets(leewayMetadata.RankOffsets);
+        _log.LogInformation("Precomputed population tiers for {Count} (song, instrument) pairs and rank offsets for {OffsetCount} pairs in {Elapsed}ms.",
+            tiers.Count, leewayMetadata.RankOffsets.Count, sw.ElapsedMilliseconds);
 
         var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
         _singleUserSharedInputs = new SharedPrecomputeInputs(
@@ -158,7 +160,7 @@ public sealed class ScrapeTimePrecomputer
             }, ct);
             var phase3 = Task.Run(() =>
             {
-                PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals);
+                PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals, leewayMetadata.RankOffsetsByKey);
                 PrecomputeSongBandLeaderboardsAll(showLeaderboardEntryTotals);
             }, ct);
             var phase4 = Task.Run(() =>
@@ -176,7 +178,7 @@ public sealed class ScrapeTimePrecomputer
         {
             await PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
                 tiers, bandScoresCache, ct);
-            PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals);
+            PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals, leewayMetadata.RankOffsetsByKey);
             PrecomputeSongBandLeaderboardsAll(showLeaderboardEntryTotals);
             await PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct);
             PrecomputeRankingsPages(instrumentKeys);
@@ -325,8 +327,14 @@ public sealed class ScrapeTimePrecomputer
     private Dictionary<(string, string), PopulationTierData> ComputePopulationTiers(
         Dictionary<string, SongMaxScores> allMaxScores,
         IReadOnlyList<string> instrumentKeys)
+        => ComputeLeewayMetadata(allMaxScores, instrumentKeys).PopulationTiers;
+
+    private LeewayMetadata ComputeLeewayMetadata(
+        Dictionary<string, SongMaxScores> allMaxScores,
+        IReadOnlyList<string> instrumentKeys)
     {
         var result = new ConcurrentDictionary<(string, string), PopulationTierData>();
+        var rankOffsets = new ConcurrentBag<LeaderboardRankOffsetData>();
 
         // Build flat list of (songId, instrument, maxScore) to process
         var workItems = new List<(string SongId, string Instrument, int MaxScore)>();
@@ -376,9 +384,29 @@ public sealed class ScrapeTimePrecomputer
                 BaseCount = baseCount,
                 Tiers = tiers,
             };
+
+            rankOffsets.Add(LeaderboardRankOffsetCalculator.Compute(
+                songId,
+                instrument,
+                maxScore,
+                db.GetCurrentStateRankOffsetCoverage(songId),
+                baseCount,
+                bandScores));
         });
 
-        return new Dictionary<(string, string), PopulationTierData>(result);
+        var populationTiers = new Dictionary<(string, string), PopulationTierData>(result);
+        var offsets = rankOffsets.ToList();
+        var offsetsByKey = offsets.ToDictionary(offset => (offset.SongId, offset.Instrument));
+        return new LeewayMetadata(populationTiers, offsets, offsetsByKey);
+    }
+
+    private void StoreLeaderboardRankOffsets(IReadOnlyList<LeaderboardRankOffsetData> offsets)
+    {
+        foreach (var offset in offsets)
+        {
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(offset, _jsonOpts);
+            Store(LeaderboardCacheKeys.LeaderboardRankOffsets(offset.SongId, offset.Instrument), jsonBytes);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -643,7 +671,8 @@ public sealed class ScrapeTimePrecomputer
         Dictionary<string, SongMaxScores> allMaxScores,
         Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
         IReadOnlyList<string> instrumentKeys,
-        bool showLeaderboardEntryTotals)
+        bool showLeaderboardEntryTotals,
+        IReadOnlyDictionary<(string SongId, string Instrument), LeaderboardRankOffsetData> rankOffsets)
     {
         // Get all song IDs that have leaderboard data
         var allSongIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -664,9 +693,9 @@ public sealed class ScrapeTimePrecomputer
             try
             {
                 // No-leeway variant
-                PrecomputeLeaderboardAllForSong(songId, null, allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals);
+                PrecomputeLeaderboardAllForSong(songId, null, allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals, rankOffsets);
                 // Leeway=1 variant
-                PrecomputeLeaderboardAllForSong(songId, 1.0, allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals);
+                PrecomputeLeaderboardAllForSong(songId, 1.0, allMaxScores, unfilteredPopulation, instrumentKeys, showLeaderboardEntryTotals, rankOffsets);
             }
             catch (Exception ex)
             {
@@ -680,10 +709,11 @@ public sealed class ScrapeTimePrecomputer
         Dictionary<string, SongMaxScores> allMaxScores,
         Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
         IReadOnlyList<string> instrumentKeys,
-        bool showLeaderboardEntryTotals)
+        bool showLeaderboardEntryTotals,
+        IReadOnlyDictionary<(string SongId, string Instrument), LeaderboardRankOffsetData> rankOffsets)
     {
         var instrumentArr = instrumentKeys.ToArray();
-        var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank)?[instrumentArr.Length];
+        var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank, int? ExactRemovedAbove)?[instrumentArr.Length];
 
         var instrumentParallelism = Math.Max(1, _scraperOptions.PrecomputeLeaderboardInstrumentParallelism);
         Parallel.For(0, instrumentArr.Length, new ParallelOptions { MaxDegreeOfParallelism = instrumentParallelism }, i =>
@@ -696,6 +726,13 @@ public sealed class ScrapeTimePrecomputer
                 if (raw.HasValue) maxScore = (int)(raw.Value * (1.0 + leeway.Value / 100.0));
             }
             var useFilteredRank = maxScore.HasValue;
+            int? exactRemovedAbove = null;
+            if (leeway.HasValue
+                && rankOffsets.TryGetValue((songId, instrument), out var offsetData)
+                && LeaderboardRankOffsetCalculator.TryGetExactRemovedAbove(offsetData, leeway.Value, out var removedAbove))
+            {
+                exactRemovedAbove = removedAbove;
+            }
             var result = _persistence.GetCurrentStateLeaderboardWithCount(songId, instrument, 10, maxScore: maxScore);
             if (result is null) return;
 
@@ -705,11 +742,11 @@ public sealed class ScrapeTimePrecomputer
                 unfilteredPopulation.TryGetValue(popKey, out var pop) && pop > 0 ? (int)pop : 0,
                 dbCount);
 
-            rawResults[i] = (instrument, entries, dbCount, totalEntries, useFilteredRank);
+            rawResults[i] = (instrument, entries, dbCount, totalEntries, useFilteredRank, exactRemovedAbove);
         });
 
         var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank)>();
+        var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries, bool UseFilteredRank, int? ExactRemovedAbove)>();
         foreach (var r in rawResults)
         {
             if (r is null) continue;
@@ -731,7 +768,10 @@ public sealed class ScrapeTimePrecomputer
                 e.AccountId,
                 DisplayName = names.GetValueOrDefault(e.AccountId),
                 e.Score,
-                Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank),
+                Rank = LeaderboardResponseRanks.Resolve(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank, ri.ExactRemovedAbove),
+                LocalRank = ri.UseFilteredRank ? e.Rank : (int?)null,
+                ApiRank = e.ApiRank > 0 ? e.ApiRank : (int?)null,
+                RankSource = LeaderboardResponseRanks.ResolveSource(e.ApiRank, e.Rank, e.Rank, ri.UseFilteredRank, ri.ExactRemovedAbove),
                 e.Accuracy,
                 e.IsFullCombo,
                 e.Stars,
@@ -1279,6 +1319,11 @@ public sealed class ScrapeTimePrecomputer
             userLeaderboardRank = r.UserRank,
         };
     }
+
+    private sealed record LeewayMetadata(
+        Dictionary<(string SongId, string Instrument), PopulationTierData> PopulationTiers,
+        IReadOnlyList<LeaderboardRankOffsetData> RankOffsets,
+        IReadOnlyDictionary<(string SongId, string Instrument), LeaderboardRankOffsetData> RankOffsetsByKey);
 
     private sealed record SharedPrecomputeInputs(
         Dictionary<string, SongMaxScores> AllMaxScores,

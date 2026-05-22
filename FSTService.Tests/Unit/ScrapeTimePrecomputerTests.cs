@@ -276,8 +276,15 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         var json = JsonDocument.Parse(noLeeway.Value.Json);
         Assert.Equal("s1", json.RootElement.GetProperty("songId").GetString());
 
-        var lb1 = _sut.TryGet("lb:s1:10:1");
+        var lb1 = _sut.TryGet(global::FSTService.LeaderboardCacheKeys.LeaderboardAll("s1", 10, 1));
         Assert.NotNull(lb1);
+
+        var offsets = _sut.TryGet(global::FSTService.LeaderboardCacheKeys.LeaderboardRankOffsets("s1", "Solo_Guitar"));
+        Assert.NotNull(offsets);
+        var offsetsJson = JsonDocument.Parse(offsets.Value.Json);
+        Assert.Equal("s1", offsetsJson.RootElement.GetProperty("songId").GetString());
+        Assert.Equal("Solo_Guitar", offsetsJson.RootElement.GetProperty("instrument").GetString());
+        Assert.Equal(101, offsetsJson.RootElement.GetProperty("removed").GetArrayLength());
     }
 
     [Fact]
