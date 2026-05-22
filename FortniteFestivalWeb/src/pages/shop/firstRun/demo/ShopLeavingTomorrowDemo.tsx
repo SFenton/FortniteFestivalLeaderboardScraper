@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Song rows showing the "leaving tomorrow" red pulse contrast.
- * Alternates between red-pulsing (leaving), blue-pulsing (shop), and no highlight.
+ * Alternates between red-pulsing (leaving), green-pulsing (shop), and no highlight.
  */
 import { useMemo, type CSSProperties } from 'react';
 import AlbumArt from '../../../../components/songs/metadata/AlbumArt';
@@ -45,7 +45,7 @@ export default function ShopLeavingTomorrowDemo() {
   return (
     <div style={s.wrapper}>
       {songs.map((song, i) => {
-        // Pattern: leaving (red), shop (blue), none, leaving, shop, none...
+        // Pattern: leaving (red), shop (green), none, leaving, shop, none...
         const phase = i % 3;
         const isLeaving = phase === 0;
         const isShop = phase === 1;

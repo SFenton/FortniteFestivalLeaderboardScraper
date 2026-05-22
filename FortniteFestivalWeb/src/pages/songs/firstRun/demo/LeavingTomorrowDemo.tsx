@@ -16,7 +16,7 @@ const ROW_H_MOBILE = Layout.demoRowMobileHeight;
 
 /**
  * Demo for the Songs FRE "leaving tomorrow" slide.
- * Shows three states: red-pulsing (leaving), blue-pulsing (in shop), and plain (not in shop).
+ * Shows three states: red-pulsing (leaving), green-pulsing (in shop), and plain (not in shop).
  */
 /* v8 ignore start -- demo component requires FestivalContext + ShopContext + SlideHeightContext */
 export default function LeavingTomorrowDemo() {
@@ -39,7 +39,7 @@ export default function LeavingTomorrowDemo() {
 
     // Ensure ceil(n/2) rows pulse red, even if no real leaving-tomorrow data exists
     const redCount = Math.ceil(maxRows / 2);
-    const blueCount = maxRows - redCount;
+    const greenCount = maxRows - redCount;
 
     const result: { song: typeof songs[0]; state: 'leaving' | 'shop' | 'none' }[] = [];
 
@@ -55,7 +55,7 @@ export default function LeavingTomorrowDemo() {
       }
     }
     // Fill remaining rows as non-leaving
-    for (let i = 0; i < blueCount; i++) {
+    for (let i = 0; i < greenCount; i++) {
       if (si < shopSongs.length) {
         result.push({ song: shopSongs[si++]!, state: 'shop' });
       } else if (ni < nonShopSongs.length) {

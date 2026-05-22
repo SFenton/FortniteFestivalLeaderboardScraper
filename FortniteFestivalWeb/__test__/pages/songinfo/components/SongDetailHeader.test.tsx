@@ -134,6 +134,7 @@ describe('SongDetailHeader', () => {
     expect(linkStyle).toContain('max-width: 112px');
     expect(linkStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
     expect(linkStyle).toContain('border-radius: 999px');
+    expect(link).toHaveStyle({ backgroundColor: Colors.statusGreenStroke });
     expect(screen.getByText('Item Shop')).toBeTruthy();
   });
 
@@ -156,5 +157,23 @@ describe('SongDetailHeader', () => {
     const link = screen.getByRole('link', { name: 'Item Shop' });
     expect(link.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
     expect(link.style.border).toBe('1px solid rgba(255, 255, 255, 0.08)');
+  });
+
+  it('uses green as the static Item Shop availability color', () => {
+    shopStateMock.useShopState.mockReturnValue({
+      isShopVisible: true,
+      isShopHighlighted: () => false,
+      isLeavingTomorrow: () => false,
+      isShopNew: () => false,
+      getShopUrl: () => 'https://example.com/shop/s1',
+    });
+
+    render(
+      <TestProviders>
+        <SongDetailHeader song={baseSong} songId="s1" collapsed={false} onOpenPaths={vi.fn()} />
+      </TestProviders>,
+    );
+
+    expect(screen.getByRole('link', { name: 'Item Shop' })).toHaveStyle({ backgroundColor: Colors.statusGreenStroke });
   });
 });

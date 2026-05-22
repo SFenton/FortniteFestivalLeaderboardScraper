@@ -1596,7 +1596,7 @@
       },
       "new": {
         "title": "New in the Item Shop",
-        "description": "New songs in Festival that are in the item shop for the first time pulse gold, while regular shop songs keep the blue highlight."
+        "description": "New songs in Festival that are in the item shop for the first time pulse gold, while regular shop songs keep the green highlight."
       },
       "leaving": {
         "title": "Leaving Tomorrow",
@@ -1701,8 +1701,8 @@
       },
       "new": {
         "title": "New Shop Songs",
-        "descriptionMobile": "When a shop song is newly added, the Item Shop pill pulses gold instead of blue.",
-        "descriptionDesktop": "When a shop song is newly added, the Item Shop button pulses gold instead of blue."
+        "descriptionMobile": "When a shop song is newly added, the Item Shop pill pulses gold instead of green.",
+        "descriptionDesktop": "When a shop song is newly added, the Item Shop button pulses gold instead of green."
       },
       "leaving": {
         "title": "Leaving Tomorrow",

@@ -50,9 +50,9 @@ export interface SongInfoHeaderProps {
   shopUrl?: string;
   /** When true, the shop button pulses to draw attention. */
   shopPulse?: boolean;
-  /** When true, uses red "leaving tomorrow" pulse instead of blue. */
+  /** When true, uses red "leaving tomorrow" pulse instead of normal shop green. */
   shopLeavingTomorrow?: boolean;
-  /** When true, uses gold "new in shop" pulse instead of blue. */
+  /** When true, uses gold "new in shop" pulse instead of normal shop green. */
   shopNew?: boolean;
   /** Skip rendering BackgroundImage (caller renders it separately). */
   hideBackground?: boolean;
@@ -186,7 +186,7 @@ function useStyles(collapsed: boolean, animate?: boolean) {
       alignSelf: Align.center,
       height: Layout.pillButtonHeight,
     };
-    const shopButton: CSSProperties = { ...buttonBase, backgroundColor: Colors.accentBlue };
+    const shopButton: CSSProperties = { ...buttonBase, backgroundColor: Colors.statusGreenStroke };
     const pulseBase: CSSProperties = {
       position: Position.relative,
       isolation: Isolation.isolate,
@@ -227,7 +227,7 @@ function useStyles(collapsed: boolean, animate?: boolean) {
         height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
         padding: padding(0, Gap.lg),
-        backgroundColor: Colors.accentBlue,
+        backgroundColor: Colors.statusGreenStroke,
         color: Colors.textPrimary,
         textDecoration: CssValue.none,
         flexShrink: 0,

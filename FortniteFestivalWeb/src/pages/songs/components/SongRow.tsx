@@ -173,9 +173,9 @@ export const SongRow = memo(function SongRow({ song,
   isMobile: boolean;
   staggerDelay?: number;
   shopHighlight?: boolean;
-  /** When true, uses red "leaving tomorrow" pulse instead of blue shop pulse. */
+  /** When true, uses red "leaving tomorrow" pulse instead of normal shop green. */
   shopHighlightRed?: boolean;
-  /** When true, uses gold "new in shop" pulse instead of blue shop pulse. */
+  /** When true, uses gold "new in shop" pulse instead of normal shop green. */
   shopHighlightGold?: boolean;
   /** When set, the row links to this external URL in a new tab instead of routing internally. */
   externalHref?: string;

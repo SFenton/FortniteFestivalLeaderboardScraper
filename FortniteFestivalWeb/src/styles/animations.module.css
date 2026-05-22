@@ -55,7 +55,7 @@
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  border: 2px solid var(--color-accent-blue);
+  border: 2px solid var(--color-status-green, #2ECC71);
   opacity: 0;
   animation: shopPulse 2s ease-in-out infinite;
   pointer-events: none;
@@ -103,13 +103,13 @@
 
 @keyframes shopBreathe {
   0%, 100% { background-color: var(--shop-pulse-base, rgba(18,24,38,0.96)); }
-  50% { background-color: var(--shop-pulse-target, var(--color-accent-blue)); }
+  50% { background-color: var(--shop-pulse-target, var(--color-status-green-stroke, #1E7F46)); }
 }
 
 .shopBreathe,
 .shopCircleBreathe {
   --shop-pulse-base: rgba(18,24,38,0.96);
-  --shop-pulse-target: var(--color-accent-blue);
+  --shop-pulse-target: var(--color-status-green-stroke, #1E7F46);
 
   position: relative;
   isolation: isolate;

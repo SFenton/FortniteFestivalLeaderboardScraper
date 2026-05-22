@@ -290,6 +290,7 @@ describe('SongInfoHeader', () => {
     expect(linkStyle).toContain('max-width: 112px');
     expect(linkStyle).toContain(`height: ${Layout.pillButtonHeight}px`);
     expect(linkStyle).toContain('border-radius: 999px');
+    expect(link).toHaveStyle({ backgroundColor: Colors.statusGreenStroke });
     expect(screen.getByText('Item Shop')).toBeTruthy();
 
     const icon = link.querySelector(`[data-size="${IconSize.action}"]`);
@@ -313,6 +314,16 @@ describe('SongInfoHeader', () => {
     expect(linkStyle).toContain('border-radius: 999px');
     expect(link.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
     expect(link.style.border).toBe('1px solid rgba(255, 255, 255, 0.08)');
+  });
+
+  it('uses green as the static Item Shop availability color', () => {
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} shopUrl="https://example.com/shop/s1" />
+      </TestProviders>,
+    );
+
+    expect(screen.getByRole('link', { name: 'Item Shop' })).toHaveStyle({ backgroundColor: Colors.statusGreenStroke });
   });
 
   it('uses gold Item Shop pulse on mobile for new shop songs', () => {

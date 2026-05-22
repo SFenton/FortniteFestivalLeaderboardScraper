@@ -106,7 +106,7 @@ function useStyles(collapsed: boolean, noTransition?: boolean) {
       alignSelf: Align.center,
       height: Layout.pillButtonHeight,
     };
-    const shopButton = { ...buttonBase, backgroundColor: Colors.accentBlue };
+    const shopButton = { ...buttonBase, backgroundColor: Colors.statusGreenStroke };
     const pulseBase = {
       position: Position.relative,
       isolation: Isolation.isolate,
@@ -131,7 +131,7 @@ function useStyles(collapsed: boolean, noTransition?: boolean) {
         height: Layout.pillButtonHeight,
         borderRadius: Radius.full,
         padding: padding(0, Gap.lg),
-        backgroundColor: Colors.accentBlue,
+        backgroundColor: Colors.statusGreenStroke,
         color: Colors.textPrimary,
         textDecoration: CssValue.none,
         flexShrink: 0,
