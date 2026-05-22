@@ -18,6 +18,8 @@ export type ShopState = {
   shopSongIds: ReadonlySet<string> | null;
   /** Set of in-shop songIds whose offer expires tomorrow (UTC). */
   leavingTomorrowIds: ReadonlySet<string> | null;
+  /** Set of in-shop songIds marked New by the upstream shop API. */
+  newShopIds: ReadonlySet<string> | null;
   /** Map of songId → ShopSong for enriched shop data from WS. */
   shopSongsMap: ReadonlyMap<string, ShopSong> | null;
   /** Whether the WebSocket is currently connected. */
@@ -34,9 +36,11 @@ export type ShopState = {
 export function useShopWebSocket(
   initialShopIds: ReadonlySet<string> | null,
   initialLeavingIds: ReadonlySet<string> | null = null,
+  initialNewIds: ReadonlySet<string> | null = null,
 ): ShopState {
   const [shopSongIds, setShopSongIds] = useState<ReadonlySet<string> | null>(initialShopIds);
   const [leavingTomorrowIds, setLeavingTomorrowIds] = useState<ReadonlySet<string> | null>(initialLeavingIds);
+  const [newShopIds, setNewShopIds] = useState<ReadonlySet<string> | null>(initialNewIds);
   const [shopSongsMap, setShopSongsMap] = useState<ReadonlyMap<string, ShopSong> | null>(null);
   const { connected, subscribe } = useAppWebSocket();
 
@@ -53,6 +57,12 @@ export function useShopWebSocket(
     }
   }, [initialLeavingIds, leavingTomorrowIds]);
 
+  useEffect(() => {
+    if (initialNewIds && !newShopIds) {
+      setNewShopIds(initialNewIds);
+    }
+  }, [initialNewIds, newShopIds]);
+
   const handleMessage = useCallback((msg: WsNotificationMessage) => {
     switch (msg.type) {
       case 'shop_snapshot': {
@@ -67,6 +77,7 @@ export function useShopWebSocket(
         setShopSongsMap(map);
         setShopSongIds(ids);
         setLeavingTomorrowIds(new Set(snap.leavingTomorrow ?? []));
+        setNewShopIds(new Set(snap.newSongs ?? snap.songs.filter(s => s.isNew).map(s => s.songId)));
         break;
       }
       case 'shop_changed': {
@@ -76,6 +87,13 @@ export function useShopWebSocket(
           const next = new Map(prev ?? []);
           for (const id of delta.removed) next.delete(id);
           for (const s of delta.added) next.set(s.songId, s);
+          if (delta.newSongs) {
+            const newIds = new Set(delta.newSongs);
+            for (const [songId, song] of next.entries()) {
+              const isNew = newIds.has(songId);
+              if (!!song.isNew !== isNew) next.set(songId, { ...song, isNew });
+            }
+          }
           return next;
         });
         setShopSongIds(prev => {
@@ -85,6 +103,7 @@ export function useShopWebSocket(
           return next;
         });
         setLeavingTomorrowIds(new Set(delta.leavingTomorrow ?? []));
+        setNewShopIds(new Set(delta.newSongs ?? []));
         break;
       }
       default:
@@ -96,6 +115,6 @@ export function useShopWebSocket(
     return subscribe(handleMessage);
   }, [subscribe, handleMessage]);
 
-  return { shopSongIds, leavingTomorrowIds, shopSongsMap, connected };
+  return { shopSongIds, leavingTomorrowIds, newShopIds, shopSongsMap, connected };
 }
 /* v8 ignore stop */

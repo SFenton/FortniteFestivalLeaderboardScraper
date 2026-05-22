@@ -69,6 +69,36 @@
   composes: shopPulse;
 }
 
+/* ── Gold "new in shop" pulse variants ── */
+
+@keyframes shopPulseGold {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.75; }
+}
+
+.shopPulseGold {
+  position: relative;
+}
+
+.shopPulseGold::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid var(--color-gold, #FFD700);
+  opacity: 0;
+  animation: shopPulseGold 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.albumPulseGold {
+  composes: shopPulseGold;
+}
+
+.shopHighlightGold {
+  composes: shopPulseGold;
+}
+
 /* ── Shop breathe (SongDetailHeader + ShopButtonDemo) ── */
 
 @keyframes shopBreathe {
@@ -84,6 +114,21 @@
   position: relative;
   isolation: isolate;
   animation: shopBreathe 3s ease-in-out infinite;
+}
+
+@keyframes shopBreatheGold {
+  0%, 100% { background-color: var(--shop-pulse-base, rgba(18,24,38,0.96)); }
+  50% { background-color: var(--shop-pulse-target, var(--color-gold-stroke, #CFA500)); }
+}
+
+.shopBreatheGold,
+.shopCircleBreatheGold {
+  --shop-pulse-base: rgba(18,24,38,0.96);
+  --shop-pulse-target: var(--color-gold-stroke, #CFA500);
+
+  position: relative;
+  isolation: isolate;
+  animation: shopBreatheGold 3s ease-in-out infinite;
 }
 
 /* ── Purple breathe (SelectProfilePill mobile pill) ── */

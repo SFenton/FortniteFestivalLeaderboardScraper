@@ -7,7 +7,7 @@ import { useShop } from '../../contexts/ShopContext';
 import { useSettings } from '../../contexts/SettingsContext';
 
 export function useShopState() {
-  const { shopSongIds, leavingTomorrowIds, getShopUrl, shopSongs, connected } = useShop();
+  const { shopSongIds, leavingTomorrowIds, newShopIds, getShopUrl, shopSongs, connected } = useShop();
   const { settings } = useSettings();
 
   const effectiveHighlightDisabled = settings.hideItemShop || settings.disableShopHighlighting;
@@ -29,6 +29,12 @@ export function useShopState() {
     return leavingTomorrowIds?.has(songId) ?? false;
   }, [leavingTomorrowIds, effectiveHighlightDisabled]);
 
+  /** True if the song is marked New by the shop API and highlighting is enabled. */
+  const isShopNew = useCallback((songId: string): boolean => {
+    if (effectiveHighlightDisabled) return false;
+    return newShopIds?.has(songId) ?? false;
+  }, [newShopIds, effectiveHighlightDisabled]);
+
   /** True if shop UI elements should be visible. */
   const isShopVisible = !settings.hideItemShop;
 
@@ -41,6 +47,7 @@ export function useShopState() {
     isShopHighlighted,
     isInShop,
     isLeavingTomorrow,
+    isShopNew,
     isShopVisible,
     getShopUrl,
     shopSongs: visibleShopSongs,

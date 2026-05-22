@@ -1,6 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useShopWebSocket } from '../../../src/hooks/data/useShopWebSocket';
+import type { WsNotificationMessage } from '@festival/core/api/serverTypes';
+
+const mockAppWebSocket = vi.hoisted(() => ({
+  connected: true,
+  handler: null as ((msg: WsNotificationMessage) => void) | null,
+  unsubscribe: vi.fn(),
+}));
+
+vi.mock('../../../src/hooks/data/useAppWebSocket', () => ({
+  useAppWebSocket: () => ({
+    connected: mockAppWebSocket.connected,
+    subscribe: (handler: (msg: WsNotificationMessage) => void) => {
+      mockAppWebSocket.handler = handler;
+      return mockAppWebSocket.unsubscribe;
+    },
+    send: vi.fn(),
+    subscribeOpen: vi.fn(),
+  }),
+}));
 
 // Mock WebSocket
 class MockWebSocket {
@@ -39,6 +58,9 @@ describe('useShopWebSocket', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    mockAppWebSocket.connected = true;
+    mockAppWebSocket.handler = null;
+    mockAppWebSocket.unsubscribe.mockClear();
     origWebSocket = globalThis.WebSocket;
     (globalThis as any).WebSocket = MockWebSocket;
   });
@@ -59,17 +81,51 @@ describe('useShopWebSocket', () => {
     expect(result.current.shopSongIds).toEqual(initial);
   });
 
-  it('handles shop_snapshot message', () => {
+  it('seeds from initialNewIds', () => {
+    const initialNew = new Set(['s2']);
+    const { result } = renderHook(() => useShopWebSocket(new Set(['s1', 's2']), null, initialNew));
+    expect(result.current.newShopIds).toEqual(initialNew);
+  });
+
+  it('handles shop_snapshot message with newSongs', () => {
     const { result } = renderHook(() => useShopWebSocket(null));
 
-    // Trigger onopen
-    act(() => { vi.advanceTimersByTime(10); });
+    act(() => {
+      mockAppWebSocket.handler?.({
+        type: 'shop_snapshot',
+        songs: [
+          { songId: 's1', title: 'Song One', artist: 'Artist', shopUrl: '/s1' },
+          { songId: 's2', title: 'Song Two', artist: 'Artist', shopUrl: '/s2', isNew: true },
+        ],
+        total: 2,
+        leavingTomorrow: [],
+        newSongs: ['s2'],
+      });
+    });
 
-    // Get the WS instance and send a snapshot
-    // We need the actual instance - let's re-approach
-    // The hook creates a WS internally; we simulate via the class
-    // Since our mock fires onopen in setTimeout(0), advance timers
     expect(result.current.connected).toBe(true);
+    expect(result.current.shopSongIds?.has('s1')).toBe(true);
+    expect(result.current.newShopIds?.has('s2')).toBe(true);
+    expect(result.current.shopSongsMap?.get('s2')?.isNew).toBe(true);
+  });
+
+  it('handles shop_changed newSongs updates', () => {
+    const { result } = renderHook(() => useShopWebSocket(new Set(['s1'])));
+
+    act(() => {
+      mockAppWebSocket.handler?.({
+        type: 'shop_changed',
+        added: [{ songId: 's2', title: 'Song Two', artist: 'Artist', shopUrl: '/s2' }],
+        removed: [],
+        total: 2,
+        leavingTomorrow: [],
+        newSongs: ['s2'],
+      });
+    });
+
+    expect(result.current.shopSongIds?.has('s2')).toBe(true);
+    expect(result.current.newShopIds?.has('s2')).toBe(true);
+    expect(result.current.shopSongsMap?.get('s2')?.isNew).toBe(true);
   });
 
   it('cleans up on unmount', () => {

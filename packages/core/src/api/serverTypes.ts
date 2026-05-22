@@ -150,10 +150,12 @@ export type ShopSong = {
   albumArt?: string;
   shopUrl: string;
   leavingTomorrow?: boolean;
+  isNew?: boolean;
 };
 
 export type ShopResponse = {
   songs: ShopSong[];
+  newSongs?: string[];
   lastUpdated?: string;
 };
 
@@ -182,6 +184,7 @@ export type ShopChangedMessage = {
   removed: string[];
   total: number;
   leavingTomorrow: string[];
+  newSongs?: string[];
 };
 
 export type ShopSnapshotMessage = {
@@ -189,6 +192,7 @@ export type ShopSnapshotMessage = {
   songs: ShopSong[];
   total: number;
   leavingTomorrow: string[];
+  newSongs?: string[];
 };
 
 export type SyncProgressMessage = {

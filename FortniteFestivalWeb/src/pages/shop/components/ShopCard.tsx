@@ -10,11 +10,12 @@ import anim from '../../../styles/animations.module.css';
 interface ShopCardProps {
   song: ShopSong;
   leavingTomorrow?: boolean;
+  isNew?: boolean;
   staggerDelay?: number;
 }
 
 /* v8 ignore start -- visual component tested via ShopPage integration */
-export default memo(function ShopCard({ song, leavingTomorrow, staggerDelay }: ShopCardProps) {
+export default memo(function ShopCard({ song, leavingTomorrow, isNew, staggerDelay }: ShopCardProps) {
   const { t } = useTranslation();
   const href = song.shopUrl ?? `/songs/${song.songId}`;
   const isExternal = !!song.shopUrl;
@@ -46,7 +47,7 @@ export default memo(function ShopCard({ song, leavingTomorrow, staggerDelay }: S
       href={isExternal ? href : `#${href}`}
       {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
       style={{ ...s.card, ...animStyle, ...(linkPress.isPressed ? s.cardPressed : undefined) }}
-      className={leavingTomorrow ? anim.shopHighlightRed : undefined}
+      className={leavingTomorrow ? anim.shopHighlightRed : isNew ? anim.shopHighlightGold : undefined}
       onAnimationEnd={handleAnimEnd}
       data-pressed={linkPress.isPressed ? 'true' : undefined}
       {...linkPress.linkPressHandlers}

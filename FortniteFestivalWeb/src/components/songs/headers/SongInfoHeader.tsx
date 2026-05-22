@@ -52,6 +52,8 @@ export interface SongInfoHeaderProps {
   shopPulse?: boolean;
   /** When true, uses red "leaving tomorrow" pulse instead of blue. */
   shopLeavingTomorrow?: boolean;
+  /** When true, uses gold "new in shop" pulse instead of blue. */
+  shopNew?: boolean;
   /** Skip rendering BackgroundImage (caller renders it separately). */
   hideBackground?: boolean;
   /** Extra inline styles on the outer PageHeader wrapper. */
@@ -74,6 +76,7 @@ export default function SongInfoHeader({
   shopUrl,
   shopPulse,
   shopLeavingTomorrow,
+  shopNew,
   hideBackground,
   style: extraStyle,
   onTitleClick,
@@ -140,13 +143,13 @@ export default function SongInfoHeader({
               </PressableButton>
             )}
             {!isMobile && showShop && (
-              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? (shopLeavingTomorrow ? anim.shopBreatheRed : anim.shopBreathe) : undefined}>
+              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? (shopLeavingTomorrow ? anim.shopBreatheRed : shopNew ? anim.shopBreatheGold : anim.shopBreathe) : undefined}>
                 <IoBagHandle size={IconSize.action} style={{ marginRight: Gap.md }} />
                 {t('common.itemShop', 'Item Shop')}
               </a>
             )}
             {isMobile && showShop && (
-              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? (shopLeavingTomorrow ? anim.shopCircleBreatheRed : anim.shopCircleBreathe) : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
+              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? (shopLeavingTomorrow ? anim.shopCircleBreatheRed : shopNew ? anim.shopCircleBreatheGold : anim.shopCircleBreathe) : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
                 <IoBagHandle size={IconSize.sm} />
               </a>
             )}

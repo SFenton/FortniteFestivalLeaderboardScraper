@@ -2613,16 +2613,16 @@ public sealed class MetaDatabase : IMetaDatabase
 
     // ── Item shop ────────────────────────────────────────────────────
 
-    public void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, DateTime scrapedAt)
+    public void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, IReadOnlySet<string> newSongIds, DateTime scrapedAt)
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
         using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM item_shop_tracks"; c.ExecuteNonQuery(); }
-        if (songIds.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO item_shop_tracks (song_id, scraped_at, leaving_tomorrow) VALUES (@songId, @ts, @leaving)"; var pSong = c.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text); var pTs = c.Parameters.Add("ts", NpgsqlTypes.NpgsqlDbType.TimestampTz); var pLeaving = c.Parameters.Add("leaving", NpgsqlTypes.NpgsqlDbType.Boolean); c.Prepare(); foreach (var songId in songIds) { pSong.Value = songId; pTs.Value = scrapedAt; pLeaving.Value = leavingTomorrow.Contains(songId); c.ExecuteNonQuery(); } }
+        if (songIds.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO item_shop_tracks (song_id, scraped_at, leaving_tomorrow, is_new) VALUES (@songId, @ts, @leaving, @isNew)"; var pSong = c.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text); var pTs = c.Parameters.Add("ts", NpgsqlTypes.NpgsqlDbType.TimestampTz); var pLeaving = c.Parameters.Add("leaving", NpgsqlTypes.NpgsqlDbType.Boolean); var pIsNew = c.Parameters.Add("isNew", NpgsqlTypes.NpgsqlDbType.Boolean); c.Prepare(); foreach (var songId in songIds) { pSong.Value = songId; pTs.Value = scrapedAt; pLeaving.Value = leavingTomorrow.Contains(songId); pIsNew.Value = newSongIds.Contains(songId); c.ExecuteNonQuery(); } }
         tx.Commit();
     }
 
-    public (HashSet<string> InShop, HashSet<string> LeavingTomorrow) LoadItemShopTracks() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, leaving_tomorrow FROM item_shop_tracks"; var inShop = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var leaving = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) { inShop.Add(r.GetString(0)); if (r.GetBoolean(1)) leaving.Add(r.GetString(0)); } return (inShop, leaving); }
+    public (HashSet<string> InShop, HashSet<string> LeavingTomorrow, HashSet<string> NewSongIds) LoadItemShopTracks() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, leaving_tomorrow, is_new FROM item_shop_tracks"; var inShop = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var leaving = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var newSongIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) { var songId = r.GetString(0); inShop.Add(songId); if (r.GetBoolean(1)) leaving.Add(songId); if (r.GetBoolean(2)) newSongIds.Add(songId); } return (inShop, leaving, newSongIds); }
 
     // ── Composite rankings ───────────────────────────────────────────
 

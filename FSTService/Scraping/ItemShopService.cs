@@ -15,10 +15,11 @@ public interface IShopProvider
 {
     IReadOnlySet<string> InShopSongIds { get; }
     IReadOnlySet<string> LeavingTomorrowSongIds { get; }
+    IReadOnlySet<string> NewSongIds { get; }
 }
 
 /// <summary>Entry extracted from the fortnite-api.com shop JSON for a single jam track.</summary>
-internal readonly record struct ShopTrackEntry(string Title, DateTime? OutDate);
+internal readonly record struct ShopTrackEntry(string Title, DateTime? OutDate, bool IsNew = false);
 
 /// <summary>
 /// Scrapes the Fortnite Item Shop Jam Tracks page to determine which songs
@@ -41,6 +42,7 @@ public sealed partial class ItemShopService : IShopProvider
 
     private HashSet<string> _inShopSongIds = new();
     private HashSet<string> _leavingTomorrowSongIds = new();
+    private HashSet<string> _newSongIds = new();
     private string? _lastContentHash;
     private DateTime? _lastScrapedAt;
     private Timer? _midnightTimer;
@@ -56,6 +58,12 @@ public sealed partial class ItemShopService : IShopProvider
     public IReadOnlySet<string> LeavingTomorrowSongIds
     {
         get { lock (_lock) return _leavingTomorrowSongIds; }
+    }
+
+    /// <summary>The subset of in-shop songIds marked New by the upstream shop API.</summary>
+    public IReadOnlySet<string> NewSongIds
+    {
+        get { lock (_lock) return _newSongIds; }
     }
 
     /// <summary>When the last successful scrape completed (UTC).</summary>
@@ -93,15 +101,16 @@ public sealed partial class ItemShopService : IShopProvider
     public async Task InitializeAsync(CancellationToken ct = default)
     {
         // Load stale-but-valid data from DB to serve immediately
-        var (persisted, persistedLeaving) = _metaDb.LoadItemShopTracks();
+        var (persisted, persistedLeaving, persistedNew) = _metaDb.LoadItemShopTracks();
         if (persisted.Count > 0)
         {
             lock (_lock)
             {
                 _inShopSongIds = persisted;
                 _leavingTomorrowSongIds = persistedLeaving;
-                _log.LogInformation("Loaded {Count} in-shop songs from DB ({Leaving} leaving tomorrow).",
-                    persisted.Count, persistedLeaving.Count);
+                _newSongIds = persistedNew;
+                _log.LogInformation("Loaded {Count} in-shop songs from DB ({Leaving} leaving tomorrow, {New} new).",
+                    persisted.Count, persistedLeaving.Count, persistedNew.Count);
             }
         }
 
@@ -147,7 +156,7 @@ public sealed partial class ItemShopService : IShopProvider
         }
 
         // Content change detection
-        var contentHash = ComputeContentHash(titles);
+        var contentHash = ComputeContentHash(entries);
         if (contentHash == _lastContentHash)
         {
             _log.LogDebug("Shop content unchanged ({Count} tracks).", titles.Count);
@@ -186,10 +195,12 @@ public sealed partial class ItemShopService : IShopProvider
         // Compute diff before updating state
         HashSet<string> previousIds;
         HashSet<string> previousLeaving;
+        HashSet<string> previousNew;
         lock (_lock)
         {
             previousIds = _inShopSongIds;
             previousLeaving = _leavingTomorrowSongIds;
+            previousNew = _newSongIds;
         }
         var added = matched.Except(previousIds).ToList();
         var removed = previousIds.Except(matched).ToList();
@@ -197,6 +208,8 @@ public sealed partial class ItemShopService : IShopProvider
         // Compute leaving-tomorrow set from outDate
         var leavingTomorrow = ComputeLeavingTomorrow(entries, matched);
         var leavingChanged = !leavingTomorrow.SetEquals(previousLeaving);
+        var newSongIds = ComputeNewSongIds(entries, matched);
+        var newChanged = !newSongIds.SetEquals(previousNew);
 
         // Update state
         var now = DateTime.UtcNow;
@@ -204,27 +217,28 @@ public sealed partial class ItemShopService : IShopProvider
         {
             _inShopSongIds = matched;
             _leavingTomorrowSongIds = leavingTomorrow;
+            _newSongIds = newSongIds;
             _lastContentHash = contentHash;
             _lastScrapedAt = now;
         }
 
         // Persist to DB
-        _metaDb.SaveItemShopTracks(matched, leavingTomorrow, now);
+        _metaDb.SaveItemShopTracks(matched, leavingTomorrow, newSongIds, now);
 
         // Prime the shop cache so /api/shop serves instantly
-        PrimeShopCache(matched, leavingTomorrow);
+        PrimeShopCache(matched, leavingTomorrow, newSongIds);
 
         // Broadcast shop change to all connected WebSocket clients
-        if (_notifications is not null && (added.Count > 0 || removed.Count > 0 || leavingChanged))
+        if (_notifications is not null && (added.Count > 0 || removed.Count > 0 || leavingChanged || newChanged))
         {
             try
             {
                 var addedEnriched = FSTService.Api.ShopCacheService.BuildEnrichedSongList(
-                    added, leavingTomorrow, _festivalService);
-                await _notifications.NotifyShopChangedAsync(addedEnriched, removed, matched.Count, leavingTomorrow);
+                    added, leavingTomorrow, newSongIds, _festivalService);
+                await _notifications.NotifyShopChangedAsync(addedEnriched, removed, matched.Count, leavingTomorrow, newSongIds);
                 _log.LogInformation(
-                    "Shop change broadcast: {Added} added, {Removed} removed, leaving changed: {LeavingChanged}.",
-                    added.Count, removed.Count, leavingChanged);
+                    "Shop change broadcast: {Added} added, {Removed} removed, leaving changed: {LeavingChanged}, new changed: {NewChanged}.",
+                    added.Count, removed.Count, leavingChanged, newChanged);
             }
             catch (Exception ex)
             {
@@ -317,6 +331,7 @@ public sealed partial class ItemShopService : IShopProvider
                 if (!entry.TryGetProperty("tracks", out var tracks)) continue;
 
                 DateTime? outDate = null;
+                var isNew = false;
                 if (entry.TryGetProperty("outDate", out var outDateProp) &&
                     outDateProp.GetString() is { Length: > 0 } outDateStr &&
                     DateTime.TryParse(outDateStr, System.Globalization.CultureInfo.InvariantCulture,
@@ -326,13 +341,18 @@ public sealed partial class ItemShopService : IShopProvider
                     outDate = parsedOutDate;
                 }
 
+                if (entry.TryGetProperty("banner", out var banner))
+                {
+                    isNew = IsNewBannerValue(banner, "value") || IsNewBannerValue(banner, "backendValue");
+                }
+
                 foreach (var track in tracks.EnumerateArray())
                 {
                     if (track.TryGetProperty("title", out var title) &&
                         title.GetString() is { Length: > 0 } t &&
                         seen.Add(t))
                     {
-                        result.Add(new ShopTrackEntry(t, outDate));
+                        result.Add(new ShopTrackEntry(t, outDate, isNew));
                     }
                 }
             }
@@ -342,6 +362,12 @@ public sealed partial class ItemShopService : IShopProvider
             // Malformed JSON — return empty
         }
         return result;
+    }
+
+    private static bool IsNewBannerValue(System.Text.Json.JsonElement banner, string propertyName)
+    {
+        return banner.TryGetProperty(propertyName, out var value) &&
+            string.Equals(value.GetString(), "New", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -390,6 +416,40 @@ public sealed partial class ItemShopService : IShopProvider
         return ComputeLeavingTomorrow(entries, matchedSongIds, titleToSongId);
     }
 
+    internal static HashSet<string> ComputeNewSongIds(
+        List<ShopTrackEntry> entries,
+        HashSet<string> matchedSongIds,
+        Dictionary<string, string> titleToSongId)
+    {
+        var newSongIds = new HashSet<string>();
+
+        foreach (var entry in entries)
+        {
+            if (!entry.IsNew) continue;
+            if (titleToSongId.TryGetValue(entry.Title, out var songId) &&
+                matchedSongIds.Contains(songId))
+            {
+                newSongIds.Add(songId);
+            }
+        }
+
+        return newSongIds;
+    }
+
+    private HashSet<string> ComputeNewSongIds(
+        List<ShopTrackEntry> entries,
+        HashSet<string> matchedSongIds)
+    {
+        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var song in _festivalService.Songs)
+        {
+            if (song.track?.tt is not null && song.track.su is not null)
+                titleToSongId.TryAdd(song.track.tt, song.track.su);
+        }
+
+        return ComputeNewSongIds(entries, matchedSongIds, titleToSongId);
+    }
+
     // ─── HTML Parsing (legacy) ──────────────────────────────────
 
     /// <summary>
@@ -412,9 +472,12 @@ public sealed partial class ItemShopService : IShopProvider
 
     // ─── Content Hashing ────────────────────────────────────────
 
-    private static string ComputeContentHash(List<string> slugs)
+    private static string ComputeContentHash(List<ShopTrackEntry> entries)
     {
-        var sorted = slugs.OrderBy(s => s, StringComparer.Ordinal).ToList();
+        var sorted = entries
+            .Select(e => string.Concat(e.Title, '\t', e.OutDate?.ToString("O") ?? "", '\t', e.IsNew ? "1" : "0"))
+            .OrderBy(s => s, StringComparer.Ordinal)
+            .ToList();
         var combined = string.Join('\n', sorted);
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(combined));
         return Convert.ToHexString(bytes);
@@ -492,25 +555,31 @@ public sealed partial class ItemShopService : IShopProvider
 
             var entries = ExtractJamTrackEntries(json);
             HashSet<string> currentIds;
+            HashSet<string> previousNew;
             lock (_lock) currentIds = _inShopSongIds;
+            lock (_lock) previousNew = _newSongIds;
 
             var leavingTomorrow = ComputeLeavingTomorrow(entries, currentIds);
             HashSet<string> previousLeaving;
+            var newSongIds = ComputeNewSongIds(entries, currentIds);
             lock (_lock)
             {
                 previousLeaving = _leavingTomorrowSongIds;
                 _leavingTomorrowSongIds = leavingTomorrow;
+                _newSongIds = newSongIds;
             }
 
-            if (!leavingTomorrow.SetEquals(previousLeaving))
+            var leavingChanged = !leavingTomorrow.SetEquals(previousLeaving);
+            var newChanged = !newSongIds.SetEquals(previousNew);
+            if (leavingChanged || newChanged)
             {
-                _metaDb.SaveItemShopTracks(currentIds, leavingTomorrow, DateTime.UtcNow);
-                PrimeShopCache(currentIds, leavingTomorrow);
+                _metaDb.SaveItemShopTracks(currentIds, leavingTomorrow, newSongIds, DateTime.UtcNow);
+                PrimeShopCache(currentIds, leavingTomorrow, newSongIds);
 
                 if (_notifications is not null)
                 {
-                    await _notifications.NotifyShopChangedAsync([], [], currentIds.Count, leavingTomorrow);
-                    _log.LogInformation("Leaving-tomorrow set updated at midnight: {Count} songs.", leavingTomorrow.Count);
+                    await _notifications.NotifyShopChangedAsync([], [], currentIds.Count, leavingTomorrow, newSongIds);
+                    _log.LogInformation("Shop metadata updated at midnight: {Leaving} leaving tomorrow, {New} new.", leavingTomorrow.Count, newSongIds.Count);
                 }
             }
         }
@@ -522,12 +591,12 @@ public sealed partial class ItemShopService : IShopProvider
 
     // ─── Shop Cache Priming ────────────────────────────────────
 
-    private void PrimeShopCache(IReadOnlySet<string> inShop, IReadOnlySet<string> leaving)
+    private void PrimeShopCache(IReadOnlySet<string> inShop, IReadOnlySet<string> leaving, IReadOnlySet<string> newSongIds)
     {
         if (_shopCache is null || _jsonOpts is null) return;
         try
         {
-            _shopCache.Prime(inShop, leaving, _festivalService, _jsonOpts);
+            _shopCache.Prime(inShop, leaving, newSongIds, _festivalService, _jsonOpts);
         }
         catch (Exception ex)
         {

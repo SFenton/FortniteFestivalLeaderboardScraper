@@ -41,7 +41,7 @@ function loadViewMode(): 'grid' | 'list' {
 
 export default function ShopPage() {
   const { t } = useTranslation();
-  const { shopSongs, isLeavingTomorrow } = useShopState();
+  const { shopSongs, isLeavingTomorrow, isShopNew } = useShopState();
   const { settings } = useSettings();
   const isMobileChrome = useIsMobileChrome();
   const navType = useNavigationType();
@@ -176,6 +176,7 @@ export default function ShopPage() {
               {sorted.map((song, i) => (
                 <ShopCard key={song.songId} song={song}
                   leavingTomorrow={isLeavingTomorrow(song.songId)}
+                  isNew={isShopNew(song.songId)}
                   staggerDelay={shouldStagger ? calcStagger(Math.min(i, maxVisibleGrid - 1), gridInterval, maxVisibleGrid) : undefined}
                 />
               ))}
@@ -194,6 +195,7 @@ export default function ShopPage() {
                   isMobile={false}
                   externalHref={song.shopUrl}
                   shopHighlightRed={isLeavingTomorrow(song.songId)}
+                  shopHighlightGold={isShopNew(song.songId)}
                   staggerDelay={shouldStagger ? calcStagger(Math.min(i, maxVisibleRows - 1), rowInterval, maxVisibleRows) : undefined}
                 />
               ))}

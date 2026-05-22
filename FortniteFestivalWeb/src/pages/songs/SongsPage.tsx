@@ -636,7 +636,7 @@ export default function SongsPage() {
   useEffect(() => { if (bannerVisible) setBannerCollapsed(false); }, [bannerVisible]);
 
   const shopCtx = useShop();
-  const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
+  const { isShopHighlighted, isLeavingTomorrow, isShopNew, isShopVisible } = useShopState();
   const filtersActive = isFilterActive(settings.filters, displayInstrumentFilter, isShopVisible, enabledInstruments, isSelectedBand) || displayInstrumentFilter != null;
   /* v8 ignore start � FAB action registration callbacks */
   useEffect(() => {
@@ -1344,6 +1344,7 @@ export default function SongsPage() {
                         staggerDelay={rowDelay}
                         shopHighlight={isShopHighlighted(row.song.songId)}
                         shopHighlightRed={isLeavingTomorrow(row.song.songId)}
+                        shopHighlightGold={isShopNew(row.song.songId)}
                         invalidInstruments={invalidScoreMap.get(row.song.songId)}
                         containerWidth={containerWidth}
                       />

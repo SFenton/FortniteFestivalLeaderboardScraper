@@ -82,13 +82,16 @@ public class MetaDatabaseAdditionalTests : IDisposable
     {
         var songIds = new HashSet<string> { "shop1", "shop2" };
         var leaving = new HashSet<string> { "shop2" };
-        Db.SaveItemShopTracks(songIds, leaving, DateTime.UtcNow);
+        var newSongs = new HashSet<string> { "shop1" };
+        Db.SaveItemShopTracks(songIds, leaving, newSongs, DateTime.UtcNow);
 
-        var (loaded, loadedLeaving) = Db.LoadItemShopTracks();
+        var (loaded, loadedLeaving, loadedNewSongs) = Db.LoadItemShopTracks();
         Assert.Equal(2, loaded.Count);
         Assert.Contains("shop1", loaded);
         Assert.Contains("shop2", loaded);
         Assert.Single(loadedLeaving);
         Assert.Contains("shop2", loadedLeaving);
+        Assert.Single(loadedNewSongs);
+        Assert.Contains("shop1", loadedNewSongs);
     }
 }

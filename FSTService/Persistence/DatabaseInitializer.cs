@@ -1090,8 +1090,11 @@ public static class DatabaseInitializer
         CREATE TABLE IF NOT EXISTS item_shop_tracks (
             song_id           TEXT    PRIMARY KEY,
             scraped_at        TIMESTAMPTZ NOT NULL,
-            leaving_tomorrow  BOOLEAN NOT NULL DEFAULT FALSE
+            leaving_tomorrow  BOOLEAN NOT NULL DEFAULT FALSE,
+            is_new            BOOLEAN NOT NULL DEFAULT FALSE
         );
+
+        ALTER TABLE item_shop_tracks ADD COLUMN IF NOT EXISTS is_new BOOLEAN NOT NULL DEFAULT FALSE;
 
         -- =====================================================================
         -- COMPOSITE RANKINGS (from fst-meta.db)

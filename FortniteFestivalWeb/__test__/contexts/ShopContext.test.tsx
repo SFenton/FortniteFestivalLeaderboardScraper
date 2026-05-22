@@ -12,7 +12,7 @@ import type { ShopSong } from '@festival/core/api/serverTypes';
 
 // Mock shop songs map for WS
 const mockShopSongsMap = vi.hoisted(() => new Map<string, ShopSong>([
-  ['song-1', { songId: 'song-1', title: 'Song One', artist: 'Artist 1', shopUrl: 'https://shop/1' }],
+  ['song-1', { songId: 'song-1', title: 'Song One', artist: 'Artist 1', shopUrl: 'https://shop/1', isNew: true }],
   ['song-3', { songId: 'song-3', title: 'Song Three', artist: 'Artist 3', shopUrl: 'https://shop/3' }],
 ]));
 
@@ -21,6 +21,7 @@ const mockShopState = vi.hoisted(() => ({
   shopSongsMap: mockShopSongsMap as ReadonlyMap<string, ShopSong>,
   connected: true,
   leavingTomorrowIds: null as ReadonlySet<string> | null,
+  newShopIds: new Set(['song-1']) as ReadonlySet<string>,
 }));
 
 vi.mock('../../src/hooks/data/useShopWebSocket', () => ({
@@ -76,6 +77,8 @@ beforeEach(() => {
   mockShopState.shopSongIds = new Set(['song-1', 'song-3']);
   mockShopState.shopSongsMap = mockShopSongsMap;
   mockShopState.connected = true;
+  mockShopState.leavingTomorrowIds = null;
+  mockShopState.newShopIds = new Set(['song-1']);
 });
 
 describe('ShopContext', () => {
@@ -101,6 +104,13 @@ describe('ShopContext', () => {
     const { result } = renderHook(() => useShop(), { wrapper: shopWrapper });
     expect(result.current.shopSongs.length).toBe(2);
     expect(result.current.shopSongs.map(s => s.songId)).toEqual(['song-1', 'song-3']);
+    expect(result.current.shopSongs.find(s => s.songId === 'song-1')?.isNew).toBe(true);
+  });
+
+  it('provides newShopIds', () => {
+    const { result } = renderHook(() => useShop(), { wrapper: shopWrapper });
+    expect(result.current.newShopIds?.has('song-1')).toBe(true);
+    expect(result.current.newShopIds?.has('song-3')).toBe(false);
   });
 
   it('returns empty shopSongs when shopSongsMap is null', () => {
@@ -129,12 +139,20 @@ describe('useShopState', () => {
     const { result } = renderHook(() => useShopState(), { wrapper: fullWrapper });
     expect(result.current.isInShop('song-1')).toBe(true);
     expect(result.current.isShopHighlighted('song-1')).toBe(false);
+    expect(result.current.isShopNew('song-1')).toBe(false);
+  });
+
+  it('reports isShopNew for new shop songs', () => {
+    const { result } = renderHook(() => useShopState(), { wrapper: fullWrapper });
+    expect(result.current.isShopNew('song-1')).toBe(true);
+    expect(result.current.isShopNew('song-3')).toBe(false);
   });
 
   it('disables highlighting when hideItemShop is true', () => {
     localStorage.setItem('fst:appSettings', JSON.stringify({ hideItemShop: true }));
     const { result } = renderHook(() => useShopState(), { wrapper: fullWrapper });
     expect(result.current.isShopHighlighted('song-1')).toBe(false);
+    expect(result.current.isShopNew('song-1')).toBe(false);
     expect(result.current.isShopVisible).toBe(false);
   });
 

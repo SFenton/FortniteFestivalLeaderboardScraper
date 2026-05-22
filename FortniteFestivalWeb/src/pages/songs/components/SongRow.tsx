@@ -155,6 +155,7 @@ export const SongRow = memo(function SongRow({ song,
   staggerDelay,
   shopHighlight,
   shopHighlightRed,
+  shopHighlightGold,
   externalHref,
   invalidInstruments,
   containerWidth,
@@ -174,6 +175,8 @@ export const SongRow = memo(function SongRow({ song,
   shopHighlight?: boolean;
   /** When true, uses red "leaving tomorrow" pulse instead of blue shop pulse. */
   shopHighlightRed?: boolean;
+  /** When true, uses gold "new in shop" pulse instead of blue shop pulse. */
+  shopHighlightGold?: boolean;
   /** When set, the row links to this external URL in a new tab instead of routing internally. */
   externalHref?: string;
   /** Map of instrument → hasFallback for invalid scores on this song. */
@@ -349,7 +352,7 @@ export const SongRow = memo(function SongRow({ song,
 
   /* v8 ignore start -- computed rendering variables with ternaries */
   const rowStyle = isMobile ? s.rowMobile : s.row;
-  const rowClassName = shopHighlightRed ? anim.shopHighlightRed : shopHighlight ? anim.shopHighlight : undefined;
+  const rowClassName = shopHighlightRed ? anim.shopHighlightRed : shopHighlightGold ? anim.shopHighlightGold : shopHighlight ? anim.shopHighlight : undefined;
 
   const infoMinWidth = isMobile || externalHref ? 0 : 200;
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} durationSeconds={song.durationSeconds} minWidth={infoMinWidth} />;

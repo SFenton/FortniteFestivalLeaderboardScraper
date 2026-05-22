@@ -1,8 +1,8 @@
 using System.Text.Json;
+using System.Reflection;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
-using FSTService.Scraping;
 using Xunit;
 
 namespace FSTService.Tests.Unit;
@@ -63,9 +63,10 @@ public sealed class ShopCacheServiceTests
         var festivalService = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
         var inShop = new HashSet<string> { "song1" };
         var leaving = new HashSet<string>();
+        var newSongs = new HashSet<string>();
         var opts = new JsonSerializerOptions();
 
-        var bytes = svc.Prime(inShop, leaving, festivalService, opts);
+        var bytes = svc.Prime(inShop, leaving, newSongs, festivalService, opts);
 
         Assert.NotNull(bytes);
         Assert.True(bytes.Length > 0);
@@ -76,6 +77,25 @@ public sealed class ShopCacheServiceTests
         Assert.NotNull(svc.Get());
     }
 
+    [Fact]
+    public void Prime_IncludesNewSongsAndIsNewFlag()
+    {
+        var svc = new ShopCacheService();
+        var festivalService = CreateFestivalServiceWithSong("song1", "Song One");
+        var opts = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+        var bytes = svc.Prime(
+            new HashSet<string> { "song1" },
+            new HashSet<string>(),
+            new HashSet<string> { "song1" },
+            festivalService,
+            opts);
+
+        using var doc = JsonDocument.Parse(bytes);
+        Assert.Equal("song1", doc.RootElement.GetProperty("newSongs")[0].GetString());
+        Assert.True(doc.RootElement.GetProperty("songs")[0].GetProperty("isNew").GetBoolean());
+    }
+
     // ─── BuildEnrichedSongList ─────────────────────────────
 
     [Fact]
@@ -83,10 +103,26 @@ public sealed class ShopCacheServiceTests
     {
         var festivalService = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
         var leaving = new HashSet<string>();
+        var newSongs = new HashSet<string>();
 
         var result = ShopCacheService.BuildEnrichedSongList(
-            new[] { "song1" }, leaving, festivalService);
+            new[] { "song1" }, leaving, newSongs, festivalService);
 
         Assert.Empty(result);
+    }
+
+    private static FestivalService CreateFestivalServiceWithSong(string songId, string title)
+    {
+        var festivalService = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var songsField = typeof(FestivalService).GetField("_songs", flags)!;
+        var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;
+        var songs = (Dictionary<string, Song>)songsField.GetValue(festivalService)!;
+        songs[songId] = new Song
+        {
+            track = new Track { su = songId, tt = title, an = "Artist" }
+        };
+        dirtyField.SetValue(festivalService, true);
+        return festivalService;
     }
 }

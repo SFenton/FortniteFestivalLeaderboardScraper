@@ -477,7 +477,7 @@ function AppShell() {
   const isWideDesktop = useIsWideDesktop();
   const hasVisiblePathInstruments = visiblePathInstruments(settings).length > 0;
   const fabSearch = useFabSearch();
-  const { isShopVisible, isShopHighlighted, isLeavingTomorrow, getShopUrl } = useShopState();
+  const { isShopVisible, isShopHighlighted, isLeavingTomorrow, isShopNew, getShopUrl } = useShopState();
   const pageQuickLinks = usePageQuickLinksController();
   const {
     scrollRef: shellScrollRef,
@@ -876,7 +876,7 @@ function AppShell() {
       target: '_blank',
       rel: 'noopener noreferrer',
       tone: isShopHighlighted(songDetailId) ? 'pulse' as const : 'accent' as const,
-      className: isShopHighlighted(songDetailId) ? (isLeavingTomorrow(songDetailId) ? anim.shopCircleBreatheRed : anim.shopCircleBreathe) : undefined,
+      className: isShopHighlighted(songDetailId) ? (isLeavingTomorrow(songDetailId) ? anim.shopCircleBreatheRed : isShopNew(songDetailId) ? anim.shopCircleBreatheGold : anim.shopCircleBreathe) : undefined,
       onPress: () => {},
     }] : []),
     ...(hasVisiblePathInstruments && fabSearch.songDetailActionsReady ? [{

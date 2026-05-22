@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SongRow, compareByMode } from '../../../../src/pages/songs/components/SongRow';
 import { resolvePillFitsTopRow } from '../../../../src/pages/songs/layoutMode';
+import anim from '../../../../src/styles/animations.module.css';
 import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 
 import type { SongSortMode } from '../../../../src/utils/songSettings';
@@ -137,6 +138,18 @@ describe('SongRow', () => {
   it('renders score value', () => {
     renderSongRow();
     expect(screen.getByText('150,000')).toBeTruthy();
+  });
+
+  it('uses gold shop highlight for new shop songs', () => {
+    const { container } = renderSongRow({ shopHighlight: true, shopHighlightGold: true } as Partial<typeof defaultProps>);
+    expect(container.querySelector('a')?.className).toContain(anim.shopHighlightGold);
+  });
+
+  it('prioritizes red shop highlight over gold', () => {
+    const { container } = renderSongRow({ shopHighlight: true, shopHighlightGold: true, shopHighlightRed: true } as Partial<typeof defaultProps>);
+    const className = container.querySelector('a')?.className ?? '';
+    expect(className).toContain(anim.shopHighlightRed);
+    expect(className).not.toContain(anim.shopHighlightGold);
   });
 
   it('renders accuracy display', () => {

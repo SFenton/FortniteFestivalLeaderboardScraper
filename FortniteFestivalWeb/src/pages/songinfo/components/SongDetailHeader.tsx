@@ -36,11 +36,13 @@ export default function SongDetailHeader({
 }: SongDetailHeaderProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
-  const { isShopVisible, isShopHighlighted, getShopUrl } = useShopState();
+  const { isShopVisible, isShopHighlighted, isLeavingTomorrow, isShopNew, getShopUrl } = useShopState();
   /* v8 ignore start -- shop branch coverage depends on ShopContext mock state */
   const shopUrl = song ? getShopUrl(song.songId) : undefined;
   const showShop = isShopVisible && !!shopUrl;
   const shopPulse = showShop && song ? isShopHighlighted(song.songId) : false;
+  const shopLeavingTomorrow = showShop && song ? isLeavingTomorrow(song.songId) : false;
+  const shopNew = showShop && song ? isShopNew(song.songId) : false;
   /* v8 ignore stop */
   const s = useStyles(collapsed, noTransition);
 
@@ -66,7 +68,7 @@ export default function SongDetailHeader({
       )}
       {!isMobile && showShop && (
         /* v8 ignore start — external link */
-        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? anim.shopBreathe : undefined}>
+        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? (shopLeavingTomorrow ? anim.shopBreatheRed : shopNew ? anim.shopBreatheGold : anim.shopBreathe) : undefined}>
           <IoBagHandle size={IconSize.action} style={{ marginRight: Gap.md }} />
           {t('common.itemShop', 'Item Shop')}
         </a>
@@ -74,7 +76,7 @@ export default function SongDetailHeader({
       )}
       {isMobile && showShop && (
         /* v8 ignore start — mobile shop icon */
-        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? anim.shopCircleBreathe : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
+        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? (shopLeavingTomorrow ? anim.shopCircleBreatheRed : shopNew ? anim.shopCircleBreatheGold : anim.shopCircleBreathe) : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
           <IoBagHandle size={IconSize.sm} />
         </a>
         /* v8 ignore stop */

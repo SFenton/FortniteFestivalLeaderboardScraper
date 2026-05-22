@@ -50,6 +50,7 @@ public sealed class ShopCacheService
     public byte[] Prime(
         IReadOnlySet<string> inShopSongIds,
         IReadOnlySet<string> leavingTomorrowSongIds,
+        IReadOnlySet<string> newSongIds,
         FestivalService festivalService,
         JsonSerializerOptions jsonOpts)
     {
@@ -76,6 +77,7 @@ public sealed class ShopCacheService
                 albumArt = TrimAlbumArt(entry.track.au),
                 shopUrl = ShopUrlHelper.ComputeShopUrl(songId, entry.track.tt ?? songId),
                 leavingTomorrow = leavingTomorrowSongIds.Contains(songId),
+                isNew = newSongIds.Contains(songId),
             });
         }
 
@@ -83,6 +85,7 @@ public sealed class ShopCacheService
         {
             count = songs.Count,
             songs,
+            newSongs = newSongIds.ToArray(),
             lastUpdated = DateTime.UtcNow.ToString("o"),
         };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
@@ -97,6 +100,7 @@ public sealed class ShopCacheService
     public static List<object> BuildEnrichedSongList(
         IEnumerable<string> songIds,
         IReadOnlySet<string> leavingTomorrowSongIds,
+        IReadOnlySet<string> newSongIds,
         FestivalService festivalService)
     {
         var songLookup = new Dictionary<string, FortniteFestival.Core.Song>(
@@ -122,6 +126,7 @@ public sealed class ShopCacheService
                 albumArt = TrimAlbumArt(entry.track.au),
                 shopUrl = ShopUrlHelper.ComputeShopUrl(songId, entry.track.tt ?? songId),
                 leavingTomorrow = leavingTomorrowSongIds.Contains(songId),
+                isNew = newSongIds.Contains(songId),
             });
         }
         return result;

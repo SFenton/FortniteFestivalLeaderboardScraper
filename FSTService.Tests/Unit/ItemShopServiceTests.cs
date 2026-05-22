@@ -415,6 +415,28 @@ public class ItemShopServiceTests
     }
 
     [Fact]
+    public void ExtractEntries_ParsesNewBanner()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "title": "Dream On" }], "banner": { "value": "New" } },
+                    { "tracks": [{ "title": "Flowers" }], "banner": { "backendValue": "New" } },
+                    { "tracks": [{ "title": "Maps" }], "banner": { "value": "Featured" } }
+                ]
+            }
+        }
+        """;
+
+        var entries = ItemShopService.ExtractJamTrackEntries(json);
+
+        Assert.True(entries.First(e => e.Title == "Dream On").IsNew);
+        Assert.True(entries.First(e => e.Title == "Flowers").IsNew);
+        Assert.False(entries.First(e => e.Title == "Maps").IsNew);
+    }
+
+    [Fact]
     public void ExtractEntries_Deduplicates()
     {
         var json = """
@@ -541,6 +563,29 @@ public class ItemShopServiceTests
     }
 
     [Fact]
+    public void ComputeNewSongIds_ReturnsOnlyMatchedNewEntries()
+    {
+        var entries = new List<ShopTrackEntry>
+        {
+            new("Dream On", null, true),
+            new("Flowers", null, false),
+            new("Maps", null, true),
+        };
+        var matched = new HashSet<string> { "song-1", "song-2" };
+        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Dream On"] = "song-1",
+            ["Flowers"] = "song-2",
+            ["Maps"] = "song-3",
+        };
+
+        var result = ItemShopService.ComputeNewSongIds(entries, matched, titleToSongId);
+
+        Assert.Single(result);
+        Assert.Contains("song-1", result);
+    }
+
+    [Fact]
     public async Task ScrapeAsync_WithOutDates_SetsLeavingTomorrow()
     {
         // Build JSON where "Flowers" leaves today (outDate = today = last day in shop)
@@ -604,6 +649,7 @@ public class ItemShopServiceTests
         metaFixture.Db.SaveItemShopTracks(
             new HashSet<string> { "pre-existing-song" },
             new HashSet<string> { "leaving-song" },
+            new HashSet<string> { "new-song" },
             DateTime.UtcNow);
 
         var service = CreateService(handler, metaFixture.Db);

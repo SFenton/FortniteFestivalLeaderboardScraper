@@ -175,8 +175,8 @@ public interface IMetaDatabase : IDisposable
     List<LeaderboardRivalSongSampleRow> GetLeaderboardRivalSongSamples(string userId, string rivalAccountId, string instrument, string rankMethod);
 
     // ── Item shop ────────────────────────────────────────────────────
-    void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, DateTime scrapedAt);
-    (HashSet<string> InShop, HashSet<string> LeavingTomorrow) LoadItemShopTracks();
+    void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, IReadOnlySet<string> newSongIds, DateTime scrapedAt);
+    (HashSet<string> InShop, HashSet<string> LeavingTomorrow, HashSet<string> NewSongIds) LoadItemShopTracks();
 
     // ── Composite rankings ───────────────────────────────────────────
     void ReplaceCompositeRankings(IReadOnlyList<CompositeRankingDto> rankings);

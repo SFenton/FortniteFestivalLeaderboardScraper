@@ -383,11 +383,12 @@ public sealed class NotificationServiceTests
         var ws = Substitute.For<WebSocket>();
         ws.State.Returns(WebSocketState.Open);
 
-        await svc.SendShopSnapshotAsync(ws, new[] { "song1" }, Array.Empty<string>());
+        await svc.SendShopSnapshotAsync(ws, new[] { "song1" }, Array.Empty<string>(), new[] { "song1" });
 
         await ws.Received(1).SendAsync(
             Arg.Is<ArraySegment<byte>>(seg =>
-                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("shop_snapshot")),
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("shop_snapshot") &&
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("newSongs")),
             WebSocketMessageType.Text, true,
             Arg.Any<CancellationToken>());
     }
@@ -399,7 +400,7 @@ public sealed class NotificationServiceTests
         var ws = Substitute.For<WebSocket>();
         ws.State.Returns(WebSocketState.Closed);
 
-        await svc.SendShopSnapshotAsync(ws, new[] { "song1" }, Array.Empty<string>());
+        await svc.SendShopSnapshotAsync(ws, new[] { "song1" }, Array.Empty<string>(), Array.Empty<string>());
 
         await ws.DidNotReceive().SendAsync(
             Arg.Any<ArraySegment<byte>>(),
@@ -418,11 +419,12 @@ public sealed class NotificationServiceTests
         svc.AddConnection("acct1", "dev1", ws);
 
         await svc.NotifyShopChangedAsync(
-            new[] { "added1" }, new[] { "removed1" }, 5, new[] { "leaving1" });
+            new[] { "added1" }, new[] { "removed1" }, 5, new[] { "leaving1" }, new[] { "added1" });
 
         await ws.Received(1).SendAsync(
             Arg.Is<ArraySegment<byte>>(seg =>
-                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("shop_changed")),
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("shop_changed") &&
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("newSongs")),
             WebSocketMessageType.Text, true,
             Arg.Any<CancellationToken>());
     }
@@ -436,6 +438,7 @@ public sealed class NotificationServiceTests
         var shopProvider = Substitute.For<IShopProvider>();
         shopProvider.InShopSongIds.Returns(new HashSet<string> { "shop_s1" });
         shopProvider.LeavingTomorrowSongIds.Returns(new HashSet<string> { "leaving_s1" });
+        shopProvider.NewSongIds.Returns(new HashSet<string> { "shop_s1" });
         svc.SetShopProvider(shopProvider);
 
         // FestivalService is needed to enrich shop snapshots — use a real one (empty songs is fine)

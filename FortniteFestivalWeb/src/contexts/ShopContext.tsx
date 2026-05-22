@@ -9,6 +9,8 @@ type ShopContextValue = {
   shopSongIds: ReadonlySet<string> | null;
   /** Set of in-shop songIds whose offer expires tomorrow (UTC). */
   leavingTomorrowIds: ReadonlySet<string> | null;
+  /** Set of in-shop songIds marked New by the upstream shop API. */
+  newShopIds: ReadonlySet<string> | null;
   /** Whether the WebSocket is connected. */
   connected: boolean;
   /** Look up the shopUrl for a song, if it's in the shop. */
@@ -51,7 +53,13 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     return ids.length > 0 ? new Set(ids) as ReadonlySet<string> : null;
   }, [shopData]);
 
-  const { shopSongIds, leavingTomorrowIds, shopSongsMap, connected }: ShopState = useShopWebSocket(initialShopIds, initialLeavingIds);
+  const initialNewIds = useMemo(() => {
+    if (!shopData) return null;
+    const ids = shopData.filter(s => s.isNew).map(s => s.songId);
+    return ids.length > 0 ? new Set(ids) as ReadonlySet<string> : null;
+  }, [shopData]);
+
+  const { shopSongIds, leavingTomorrowIds, newShopIds, shopSongsMap, connected }: ShopState = useShopWebSocket(initialShopIds, initialLeavingIds, initialNewIds);
 
   // Merge shop data: WS shopSongsMap > /api/shop response > empty
   const mergedShopSongs = useMemo((): ShopSong[] => {
@@ -92,10 +100,11 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ShopContextValue>(() => ({
     shopSongIds,
     leavingTomorrowIds,
+    newShopIds,
     connected,
     getShopUrl,
     shopSongs: enrichedShopSongs,
-  }), [shopSongIds, leavingTomorrowIds, connected, getShopUrl, enrichedShopSongs]);
+  }), [shopSongIds, leavingTomorrowIds, newShopIds, connected, getShopUrl, enrichedShopSongs]);
 
   return (
     <ShopContext.Provider value={value}>

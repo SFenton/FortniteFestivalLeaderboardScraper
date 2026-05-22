@@ -188,9 +188,10 @@ public sealed class NotificationService
         IReadOnlyCollection<object> addedEnriched,
         IReadOnlyCollection<string> removed,
         int total,
-        IReadOnlyCollection<string> leavingTomorrow)
+        IReadOnlyCollection<string> leavingTomorrow,
+        IReadOnlyCollection<string> newSongs)
     {
-        return BroadcastAllAsync(new { type = "shop_changed", added = addedEnriched, removed, total, leavingTomorrow });
+        return BroadcastAllAsync(new { type = "shop_changed", added = addedEnriched, removed, total, leavingTomorrow, newSongs });
     }
 
     /// <summary>
@@ -226,9 +227,9 @@ public sealed class NotificationService
     /// Send the current shop snapshot to a single WebSocket (used on reconnect).
     /// Sends enriched song objects so the client can render the shop page without /api/songs.
     /// </summary>
-    public async Task SendShopSnapshotAsync(WebSocket ws, IReadOnlyCollection<object> enrichedSongs, IReadOnlyCollection<string> leavingTomorrow)
+    public async Task SendShopSnapshotAsync(WebSocket ws, IReadOnlyCollection<object> enrichedSongs, IReadOnlyCollection<string> leavingTomorrow, IReadOnlyCollection<string> newSongs)
     {
-        var json = JsonSerializer.Serialize(new { type = "shop_snapshot", songs = enrichedSongs, total = enrichedSongs.Count, leavingTomorrow });
+        var json = JsonSerializer.Serialize(new { type = "shop_snapshot", songs = enrichedSongs, total = enrichedSongs.Count, leavingTomorrow, newSongs });
         var bytes = Encoding.UTF8.GetBytes(json);
         if (ws.State == WebSocketState.Open)
             await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
@@ -282,9 +283,10 @@ public sealed class NotificationService
             {
                 var shopIds = _shopProvider.InShopSongIds;
                 var leavingIds = _shopProvider.LeavingTomorrowSongIds;
+                var newIds = _shopProvider.NewSongIds;
                 var enrichedSongs = ShopCacheService.BuildEnrichedSongList(
-                    shopIds, leavingIds, _festivalService);
-                await SendShopSnapshotAsync(ws, enrichedSongs, leavingIds.ToArray());
+                    shopIds, leavingIds, newIds, _festivalService);
+                await SendShopSnapshotAsync(ws, enrichedSongs, leavingIds.ToArray(), newIds.ToArray());
             }
             catch (Exception ex)
             {

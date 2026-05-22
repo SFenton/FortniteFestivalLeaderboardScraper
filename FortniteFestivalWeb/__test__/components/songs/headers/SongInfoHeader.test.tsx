@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { TestProviders } from '../../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver, stubMatchMedia } from '../../../helpers/browserStubs';
 import { Colors, IconSize, Layout } from '@festival/theme';
+import anim from '../../../../src/styles/animations.module.css';
 
 vi.mock('../../../../src/api/client', () => ({
   api: {
@@ -309,5 +310,28 @@ describe('SongInfoHeader', () => {
     expect(linkStyle).toContain('border-radius: 999px');
     expect(link.style.backgroundColor).toBe('rgba(18, 24, 38, 0.96)');
     expect(link.style.border).toBe('1px solid rgba(255, 255, 255, 0.08)');
+  });
+
+  it('uses gold Item Shop pulse for new shop songs', () => {
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} shopUrl="https://example.com/shop/s1" shopPulse shopNew />
+      </TestProviders>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    expect(link.className).toContain(anim.shopBreatheGold);
+  });
+
+  it('prioritizes leaving-tomorrow pulse over gold Item Shop pulse', () => {
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} shopUrl="https://example.com/shop/s1" shopPulse shopNew shopLeavingTomorrow />
+      </TestProviders>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Item Shop' });
+    expect(link.className).toContain(anim.shopBreatheRed);
+    expect(link.className).not.toContain(anim.shopBreatheGold);
   });
 });
