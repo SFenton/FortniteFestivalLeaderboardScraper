@@ -210,5 +210,30 @@ public static class ImprovementNotificationSchema
             ON band_improvement_events (event_kind, detected_at DESC);
         CREATE UNIQUE INDEX IF NOT EXISTS ux_band_improvement_events_notification_guid
             ON band_improvement_events (notification_guid);
+
+        CREATE TABLE IF NOT EXISTS service_notifications (
+            event_id          BIGSERIAL PRIMARY KEY,
+            notification_guid UUID        NOT NULL DEFAULT gen_random_uuid(),
+            notification_kind TEXT        NOT NULL,
+            song_id           TEXT        NOT NULL,
+            title             TEXT        NOT NULL,
+            artist            TEXT        NOT NULL,
+            album_art         TEXT,
+            payload           JSONB       NOT NULL DEFAULT '{}'::jsonb,
+            detected_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+            expires_at        TIMESTAMPTZ NOT NULL,
+            source            TEXT        NOT NULL DEFAULT 'item_shop',
+            source_key        TEXT        NOT NULL,
+            created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_service_notifications_notification_guid
+            ON service_notifications (notification_guid);
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_service_notifications_kind_song_source
+            ON service_notifications (notification_kind, song_id, source_key);
+        CREATE INDEX IF NOT EXISTS ix_service_notifications_live
+            ON service_notifications (expires_at DESC, detected_at DESC);
+        CREATE INDEX IF NOT EXISTS ix_service_notifications_kind
+            ON service_notifications (notification_kind, detected_at DESC);
         """;
 }

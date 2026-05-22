@@ -83,6 +83,7 @@ export type MobileNotification = NotificationTextInput & {
   songId?: string;
   instrument?: ServerInstrumentKey;
   title: string;
+  artist?: string;
   context: string;
   detectedLabel: string;
   media: NotificationMedia;
@@ -622,6 +623,8 @@ function NotificationFlags({ presentation, styles }: { presentation: Notificatio
       </div>
     );
   }
+
+  if (presentation.flags.length === 0) return null;
 
   return (
     <div style={styles.flags} data-testid="notification-flags">

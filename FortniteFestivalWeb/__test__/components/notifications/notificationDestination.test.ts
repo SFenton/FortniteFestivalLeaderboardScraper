@@ -85,6 +85,18 @@ describe('getNotificationDestination', () => {
     expect(getNotificationDestination(notification)?.path).toBe(`/songs/${APPLE_SONG_ID}`);
   });
 
+  it('routes new item shop song service notifications to song detail', () => {
+    const notification: NotificationDestinationInput = {
+      eventKind: 'service_new_shop_song',
+      songId: APPLE_SONG_ID,
+    };
+
+    const destination = getNotificationDestination(notification);
+
+    expect(destination?.path).toBe(`/songs/${APPLE_SONG_ID}`);
+    expect(destination?.state).toBeUndefined();
+  });
+
   it('returns null for notifications without a supported destination', () => {
     const notification: NotificationDestinationInput = {
       eventKind: 'player_total_score_improved',

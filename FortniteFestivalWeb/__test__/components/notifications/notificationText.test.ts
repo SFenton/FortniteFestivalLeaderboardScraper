@@ -25,6 +25,26 @@ function emphasizedText(input: ReturnType<typeof formatNotificationPresentation>
 }
 
 describe('notificationText', () => {
+  it('formats new item shop song service notifications without badges', () => {
+    const presentation = present({
+      eventKind: 'service_new_shop_song',
+      title: 'Folded',
+      songTitle: 'Folded',
+      artist: 'Kehlani',
+    });
+
+    expect(presentation.title).toBe('New Song · Folded - Kehlani');
+    expect(presentation.message).toBe('Folded by Kehlani has been added to the Item Shop.');
+    expect(presentation.messageParts).toEqual([
+      { text: 'Folded', emphasis: true },
+      { text: ' by ' },
+      { text: 'Kehlani', emphasis: true },
+      { text: ' has been added to the Item Shop.' },
+    ]);
+    expect(presentation.badges).toEqual([]);
+    expect(presentation.flags).toEqual([]);
+  });
+
   it.each([
     ['player_first_score', { newNumeric: 180005, newRank: 1288 }, 'Your first Drums play on Apple scored 180,005 points and started at #1,288.'],
     ['player_score_pb', { oldNumeric: 127025, newNumeric: 137700 }, 'You set a new personal best on Drums for Apple with 137,700 points.'],

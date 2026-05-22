@@ -440,6 +440,7 @@ builder.Services.AddSingleton<ItemShopService>(sp =>
             http,
             sp.GetRequiredService<FestivalService>(),
             sp.GetRequiredService<IMetaDatabase>(),
+            sp.GetRequiredService<ImprovementNotificationService>(),
             sp.GetRequiredService<ILogger<ItemShopService>>())
         : throw new InvalidOperationException());
 

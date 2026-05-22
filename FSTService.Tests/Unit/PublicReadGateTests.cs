@@ -96,7 +96,7 @@ public class PublicReadGateTests
     }
 
     [Theory]
-    [InlineData("/api/player/account/notifications", true)]
+    [InlineData("/api/player/account/notifications", false)]
     [InlineData("/api/rankings/bands/Band_Duets/team/notifications", true)]
     [InlineData("/api/bands/band-id/notifications", true)]
     [InlineData("/api/player/account/export", false)]
@@ -198,7 +198,7 @@ public class PublicReadGateTests
     [InlineData("/api/rankings/Solo_Guitar", true)]
     [InlineData("/api/leaderboard/song_1/bands/all", true)]
     [InlineData("/api/player/account/rivals", true)]
-    [InlineData("/api/player/account/notifications", true)]
+    [InlineData("/api/player/account/notifications", false)]
     [InlineData("/api/leaderboard-population", true)]
     [InlineData("/api/songs/member-score-filter", true)]
     [InlineData("/api/songs", false)]

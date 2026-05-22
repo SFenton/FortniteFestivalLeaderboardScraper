@@ -223,6 +223,15 @@ public sealed class NotificationService
         });
     }
 
+    public Task NotifyNotificationFeedChangedAsync()
+    {
+        return BroadcastAllAsync(new
+        {
+            type = "notification_feed_changed",
+            at = DateTime.UtcNow.ToString("o"),
+        });
+    }
+
     /// <summary>
     /// Send the current shop snapshot to a single WebSocket (used on reconnect).
     /// Sends enriched song objects so the client can render the shop page without /api/songs.

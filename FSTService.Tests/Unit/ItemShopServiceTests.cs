@@ -6,6 +6,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using System.Reflection;
@@ -210,7 +211,10 @@ public class ItemShopServiceTests
 
     // ─── ScrapeAsync ────────────────────────────────────
 
-    private static ItemShopService CreateService(HttpMessageHandler handler, MetaDatabase? metaDb = null)
+    private static ItemShopService CreateService(
+        HttpMessageHandler handler,
+        MetaDatabase? metaDb = null,
+        ImprovementNotificationService? improvementNotifications = null)
     {
         var http = new HttpClient(handler);
         var svc = new FestivalService((IFestivalPersistence?)null);
@@ -230,6 +234,7 @@ public class ItemShopServiceTests
             http,
             svc,
             metaDb ?? new InMemoryMetaDatabase().Db,
+            improvementNotifications,
             Substitute.For<ILogger<ItemShopService>>());
     }
 
@@ -394,6 +399,25 @@ public class ItemShopServiceTests
         Assert.Equal(2026, flowers.OutDate!.Value.Year);
         Assert.Equal(4, flowers.OutDate!.Value.Month);
         Assert.Equal(2, flowers.OutDate!.Value.Day);
+    }
+
+    [Fact]
+    public void ExtractEntries_ParsesInDate()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "title": "Dream On" }], "inDate": "2026-05-22T00:00:00.000Z" }
+                ]
+            }
+        }
+        """;
+
+        var entry = Assert.Single(ItemShopService.ExtractJamTrackEntries(json));
+
+        Assert.NotNull(entry.InDate);
+        Assert.Equal(new DateTime(2026, 5, 22, 0, 0, 0, DateTimeKind.Utc), entry.InDate!.Value);
     }
 
     [Fact]
@@ -623,6 +647,48 @@ public class ItemShopServiceTests
         var result = await service.ScrapeAsync(CancellationToken.None);
         Assert.Equal(1, result);
         // Notification was sent (no crash) — we just verify the code path runs
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_NewShopSong_InsertsServiceNotificationForLateProfiles()
+    {
+        const string json = """
+        {
+            "data": {
+                "entries": [
+                    {
+                        "tracks": [{ "title": "Flowers" }],
+                        "banner": { "value": "New" },
+                        "inDate": "2026-05-22T00:00:00.000Z"
+                    }
+                ]
+            }
+        }
+        """;
+        var metaFixture = new InMemoryMetaDatabase();
+        var notifications = new ImprovementNotificationService(
+            metaFixture.DataSource,
+            NullLogger<ImprovementNotificationService>.Instance);
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(json);
+        var service = CreateService(handler, metaFixture.Db, notifications);
+
+        var result = await service.ScrapeAsync(CancellationToken.None);
+
+        Assert.Equal(1, result);
+        var feed = notifications.GetPlayerNotifications("registered-after-shop-update");
+        var notification = Assert.Single(feed.Items);
+        Assert.Equal(ImprovementNotificationService.ServiceNewShopSongKind, notification.EventKind);
+        Assert.Equal("1faef457-e84e-424b-b9de-65417f34f863", notification.SongId);
+        Assert.Equal("Flowers", notification.Payload.GetProperty("songTitle").GetString());
+        Assert.Equal("Miley Cyrus", notification.Payload.GetProperty("artist").GetString());
+
+        var retryHandler = new MockHttpMessageHandler();
+        retryHandler.EnqueueJsonOk(json);
+        var retryService = CreateService(retryHandler, metaFixture.Db, notifications);
+        await retryService.ScrapeAsync(CancellationToken.None);
+
+        Assert.Single(notifications.GetPlayerNotifications("registered-after-shop-update", includeExpired: true).Items);
     }
 
     [Fact]

@@ -46,6 +46,7 @@ export type NotificationDestination = {
 };
 
 const SONG_EVENT_KINDS = new Set([
+  'service_new_shop_song',
   'player_first_score',
   'player_score_pb',
   'player_song_rank_improved',

@@ -137,6 +137,81 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void ServiceNotifications_AreVisibleInPlayerAndBandFeeds()
+    {
+        var detectedAt = DateTime.UtcNow.AddMinutes(-5);
+
+        var inserted = _sut.UpsertNewShopSongNotifications(
+            new[]
+            {
+                new NewShopSongServiceNotification(
+                    SongId,
+                    "Folded",
+                    "Kehlani",
+                    "folded.jpg",
+                    "in:2026-05-22T00:00:00.0000000Z",
+                    new DateTime(2026, 5, 22, 0, 0, 0, DateTimeKind.Utc)),
+            },
+            detectedAt);
+
+        var playerNotifications = _sut.GetPlayerNotifications("late-player");
+        var bandNotifications = _sut.GetBandNotificationsByTeamKey("Band_Duets", "late-player:friend");
+
+        Assert.Equal(1, inserted);
+        var playerNotification = Assert.Single(playerNotifications.Items);
+        var bandNotification = Assert.Single(bandNotifications.Items);
+        Assert.Equal(playerNotification.NotificationGuid, bandNotification.NotificationGuid);
+        Assert.Equal(ImprovementNotificationService.ServiceNewShopSongKind, playerNotification.EventKind);
+        Assert.Equal(SongId, playerNotification.SongId);
+        Assert.Null(playerNotification.AccountId);
+        Assert.Null(playerNotification.BandSubjectId);
+        Assert.Equal("Folded", playerNotification.Payload.GetProperty("songTitle").GetString());
+        Assert.Equal("Kehlani", playerNotification.Payload.GetProperty("artist").GetString());
+        Assert.Equal("folded.jpg", playerNotification.Payload.GetProperty("albumArt").GetString());
+        AssertDistinctNotificationGuids(playerNotifications.Items);
+    }
+
+    [Fact]
+    public void ServiceNotifications_DedupeBySongKindAndSourceKey()
+    {
+        var detectedAt = DateTime.UtcNow;
+        var notification = new NewShopSongServiceNotification(
+            SongId,
+            "Folded",
+            "Kehlani",
+            null,
+            "in:2026-05-22T00:00:00.0000000Z",
+            new DateTime(2026, 5, 22, 0, 0, 0, DateTimeKind.Utc));
+
+        var first = _sut.UpsertNewShopSongNotifications(new[] { notification }, detectedAt);
+        var second = _sut.UpsertNewShopSongNotifications(new[] { notification }, detectedAt.AddMinutes(1));
+
+        Assert.Equal(1, first);
+        Assert.Equal(0, second);
+        Assert.Single(_sut.GetPlayerNotifications(AccountId, includeExpired: true).Items);
+    }
+
+    [Fact]
+    public void ServiceNotifications_CleanupExpiredRows()
+    {
+        var detectedAt = DateTime.UtcNow.AddHours(-(ImprovementNotificationService.DefaultLiveHours + 2));
+        _sut.UpsertNewShopSongNotifications(
+            new[]
+            {
+                new NewShopSongServiceNotification(SongId, "Folded", "Kehlani", null, "old-shop-window", detectedAt),
+            },
+            detectedAt);
+
+        Assert.Empty(_sut.GetPlayerNotifications(AccountId).Items);
+        Assert.Single(_sut.GetPlayerNotifications(AccountId, includeExpired: true).Items);
+
+        var deleted = _sut.CleanupExpiredServiceNotifications(DateTime.UtcNow);
+
+        Assert.Equal(1, deleted);
+        Assert.Empty(_sut.GetPlayerNotifications(AccountId, includeExpired: true).Items);
+    }
+
+    [Fact]
     public void Precompute_ExpiresOlderPlayerSongNotification_WhenNewSameLaneNotificationArrives()
     {
         InsertCurrentEntry(score: 100000, rank: 100);

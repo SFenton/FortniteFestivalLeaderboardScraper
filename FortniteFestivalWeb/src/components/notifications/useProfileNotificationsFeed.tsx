@@ -34,6 +34,7 @@ const PROFILE_SYNC_COMPLETION_MESSAGE_TYPES = new Set([
   'history_recon_complete',
   'rivals_complete',
 ]);
+const SERVICE_NEW_SHOP_SONG_KIND = 'service_new_shop_song';
 
 export type NotificationGenerationStatus = 'generated' | 'notGenerated';
 export type NotificationFeedStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -153,6 +154,9 @@ function mapNotificationDto(
   profile: SelectedProfile,
   songsById: ReadonlyMap<string, ServerSong>,
 ): MobileNotification {
+  if (dto.eventKind === SERVICE_NEW_SHOP_SONG_KIND) {
+    return mapServiceNewShopSongNotificationDto(dto, profile, songsById);
+  }
   const instrument = normalizeServerInstrument(dto.instrument);
   const instrumentLabel = instrument ? serverInstrumentLabel(instrument) : null;
   const song = dto.songId ? songsById.get(dto.songId) : undefined;
@@ -198,6 +202,39 @@ function mapNotificationDto(
       newFullCombo: booleanValue(dto.payload?.newFullCombo),
       oldStars: numberValue(dto.payload?.oldStars),
       newStars: numberValue(dto.payload?.newStars),
+    },
+  };
+}
+
+function mapServiceNewShopSongNotificationDto(
+  dto: ImprovementNotificationDto,
+  profile: SelectedProfile,
+  songsById: ReadonlyMap<string, ServerSong>,
+): MobileNotification {
+  const song = dto.songId ? songsById.get(dto.songId) : undefined;
+  const songTitle = stringValue(dto.payload?.songTitle) ?? song?.title ?? dto.songId ?? 'New Song';
+  const artist = stringValue(dto.payload?.artist) ?? song?.artist ?? 'Unknown Artist';
+  const albumArt = song?.albumArt ?? stringValue(dto.payload?.albumArt);
+
+  return {
+    eventId: dto.eventId,
+    notificationGuid: dto.notificationGuid || `${profile.type}:service:${dto.eventId}`,
+    detectedAt: dto.detectedAt,
+    eventKind: dto.eventKind,
+    songId: dto.songId ?? undefined,
+    title: songTitle,
+    songTitle,
+    artist,
+    context: 'Item Shop',
+    detectedLabel: formatDetectedLabel(dto.detectedAt),
+    media: albumArt
+      ? { kind: 'song', albumArt, alt: `${songTitle} album art` }
+      : { kind: 'soloInstrument', instrument: DEFAULT_INSTRUMENT, label: 'Item Shop' },
+    navigation: dto.songId ? { songId: dto.songId } : null,
+    payload: {
+      coalescedEventCount: 1,
+      coalescedEventKinds: [dto.eventKind],
+      coalescedEvents: [{ eventKind: dto.eventKind }],
     },
   };
 }

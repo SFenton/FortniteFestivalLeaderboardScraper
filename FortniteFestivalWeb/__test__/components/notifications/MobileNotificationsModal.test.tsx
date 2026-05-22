@@ -218,6 +218,39 @@ describe('MobileNotificationsModal', () => {
     expect(within(flagGroups[2]!).getByText('Gold Stars')).toBeTruthy();
   });
 
+  it('renders new item shop song service notifications with album art and no flags', () => {
+    const notification: MobileNotification = {
+      eventId: 100,
+      notificationGuid: 'service-new-shop-song',
+      detectedAt: '2026-05-22T00:05:00Z',
+      eventKind: 'service_new_shop_song',
+      songId: 'e90125a8-742a-4be9-baa0-4d93f5fba556',
+      title: 'Folded',
+      songTitle: 'Folded',
+      artist: 'Kehlani',
+      context: 'Item Shop',
+      detectedLabel: 'May 22, 12:05 AM',
+      media: { kind: 'song', albumArt: 'https://cdn2.unrealengine.com/folded.jpg', alt: 'Folded album art' },
+      navigation: { songId: 'e90125a8-742a-4be9-baa0-4d93f5fba556' },
+      payload: {
+        coalescedEventCount: 1,
+        coalescedEventKinds: ['service_new_shop_song'],
+        coalescedEvents: [{ eventKind: 'service_new_shop_song' }],
+      },
+    };
+
+    render(<MobileNotificationsModal visible={true} onClose={() => {}} notifications={[notification]} onNotificationOpen={() => {}} />);
+
+    expect(screen.getByText('New Song · Folded - Kehlani')).toBeTruthy();
+    expect(screen.getByTestId('notification-summary').textContent).toBe('Folded by Kehlani has been added to the Item Shop.');
+    expect(screen.getByAltText('Folded album art')).toBeTruthy();
+    expect(screen.queryByTestId('notification-flags')).toBeNull();
+    expect(screen.queryByTestId('notification-flag-groups')).toBeNull();
+    expect(screen.getByTestId('mock-notification-row').getAttribute('data-actionable')).toBe('true');
+    const emphasizedText = Array.from(document.body.querySelectorAll('[data-notification-emphasis="true"]')).map((element) => element.textContent);
+    expect(emphasizedText).toEqual(['Folded', 'Kehlani']);
+  });
+
   it('renders grouped notification statements with visible line breaks', () => {
     const notification: MobileNotification = {
       ...mockMobileNotifications[3]!,

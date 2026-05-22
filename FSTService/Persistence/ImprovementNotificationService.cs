@@ -7,7 +7,8 @@ namespace FSTService.Persistence;
 
 public sealed class ImprovementNotificationService
 {
-    private const int DefaultLiveHours = 72;
+    public const int DefaultLiveHours = 72;
+    public const string ServiceNewShopSongKind = "service_new_shop_song";
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly ILogger<ImprovementNotificationService> _log;
@@ -30,6 +31,7 @@ public sealed class ImprovementNotificationService
         using var conn = _dataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
+            WITH combined AS (
             SELECT event_id,
                    notification_guid,
                    run_id,
@@ -73,7 +75,38 @@ public sealed class ImprovementNotificationService
                   )
               )
               AND (@songId IS NULL OR song_id = @songId)
-            ORDER BY detected_at DESC, event_id DESC
+                        UNION ALL
+                        SELECT event_id,
+                                     notification_guid,
+                                     NULL::BIGINT AS run_id,
+                                     NULL::TEXT AS account_id,
+                                     NULL::BIGINT AS band_subject_id,
+                                     NULL::TEXT AS band_type,
+                                     NULL::TEXT AS team_key,
+                                     notification_kind AS event_kind,
+                                     song_id,
+                                     NULL::TEXT AS instrument,
+                                     NULL::TEXT AS ranking_scope,
+                                     NULL::TEXT AS combo_id,
+                                     NULL::TEXT AS metric,
+                                     NULL::NUMERIC AS old_numeric,
+                                     NULL::NUMERIC AS new_numeric,
+                                     NULL::INTEGER AS old_rank,
+                                     NULL::INTEGER AS new_rank,
+                                     (payload || jsonb_build_object(
+                                             'songTitle', title,
+                                             'artist', artist,
+                                             'albumArt', album_art))::TEXT AS payload,
+                                     detected_at,
+                                     expires_at
+                        FROM service_notifications
+                        WHERE (@includeExpired OR expires_at > now())
+                            AND (@kind IS NULL OR notification_kind = @kind)
+                            AND (@instrument IS NULL)
+                            AND (@songId IS NULL OR song_id = @songId)
+                        )
+                        SELECT * FROM combined
+                        ORDER BY detected_at DESC, event_id DESC
             LIMIT @limit;
             """;
         cmd.Parameters.AddWithValue("accountId", accountId);
@@ -86,6 +119,56 @@ public sealed class ImprovementNotificationService
         var items = ReadNotifications(cmd);
         var source = ReadLatestNotificationSource(conn);
         return new ImprovementNotificationsEnvelope(DateTime.UtcNow, DefaultLiveHours, source.RunId, source.CompletedAt, items);
+    }
+
+    public long UpsertNewShopSongNotifications(
+        IReadOnlyCollection<NewShopSongServiceNotification> notifications,
+        DateTime detectedAtUtc)
+    {
+        if (notifications.Count == 0) return 0;
+
+        var expiresAt = detectedAtUtc.AddHours(DefaultLiveHours);
+        long inserted = 0;
+        using var conn = _dataSource.OpenConnection();
+        using var tx = conn.BeginTransaction();
+
+        foreach (var notification in notifications)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO service_notifications (
+                    notification_kind, song_id, title, artist, album_art, payload,
+                    detected_at, expires_at, source, source_key)
+                VALUES (
+                    @kind, @songId, @title, @artist, @albumArt, @payload,
+                    @detectedAt, @expiresAt, 'item_shop', @sourceKey)
+                ON CONFLICT (notification_kind, song_id, source_key) DO NOTHING
+                RETURNING 1;
+                """;
+            cmd.Parameters.AddWithValue("kind", ServiceNewShopSongKind);
+            cmd.Parameters.AddWithValue("songId", notification.SongId);
+            cmd.Parameters.AddWithValue("title", notification.Title);
+            cmd.Parameters.AddWithValue("artist", notification.Artist);
+            cmd.Parameters.Add("albumArt", NpgsqlDbType.Text).Value = NullableValue(notification.AlbumArt);
+            cmd.Parameters.Add("payload", NpgsqlDbType.Jsonb).Value = BuildNewShopSongPayload(notification);
+            cmd.Parameters.AddWithValue("detectedAt", detectedAtUtc);
+            cmd.Parameters.AddWithValue("expiresAt", expiresAt);
+            cmd.Parameters.AddWithValue("sourceKey", notification.SourceKey);
+            if (cmd.ExecuteScalar() is not null) inserted++;
+        }
+
+        tx.Commit();
+        return inserted;
+    }
+
+    public long CleanupExpiredServiceNotifications(DateTime detectedAtUtc)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM service_notifications WHERE expires_at <= @detectedAt;";
+        cmd.Parameters.AddWithValue("detectedAt", detectedAtUtc);
+        return cmd.ExecuteNonQuery();
     }
 
     public ImprovementNotificationsEnvelope GetBandNotificationsBySubject(
@@ -304,6 +387,7 @@ public sealed class ImprovementNotificationService
         using var conn = _dataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
+            WITH combined AS (
             SELECT e.event_id,
                    e.notification_guid,
                    e.run_id,
@@ -362,7 +446,38 @@ public sealed class ImprovementNotificationService
                       WHERE COALESCE(child->>'scopeComboId', child->>'comboId', '') = @comboId
                   )
               )
-            ORDER BY e.detected_at DESC, e.event_id DESC
+                        UNION ALL
+                        SELECT event_id,
+                                     notification_guid,
+                                     NULL::BIGINT AS run_id,
+                                     NULL::TEXT AS account_id,
+                                     NULL::BIGINT AS band_subject_id,
+                                     NULL::TEXT AS band_type,
+                                     NULL::TEXT AS team_key,
+                                     notification_kind AS event_kind,
+                                     song_id,
+                                     NULL::TEXT AS instrument,
+                                     NULL::TEXT AS ranking_scope,
+                                     NULL::TEXT AS combo_id,
+                                     NULL::TEXT AS metric,
+                                     NULL::NUMERIC AS old_numeric,
+                                     NULL::NUMERIC AS new_numeric,
+                                     NULL::INTEGER AS old_rank,
+                                     NULL::INTEGER AS new_rank,
+                                     (payload || jsonb_build_object(
+                                             'songTitle', title,
+                                             'artist', artist,
+                                             'albumArt', album_art))::TEXT AS payload,
+                                     detected_at,
+                                     expires_at
+                        FROM service_notifications
+                        WHERE (@includeExpired OR expires_at > now())
+                            AND (@kind IS NULL OR notification_kind = @kind)
+                            AND (@rankingScope = 'overall' OR @rankingScope = 'all')
+                            AND (@comboId IS NULL)
+                        )
+                        SELECT * FROM combined
+                        ORDER BY detected_at DESC, event_id DESC
             LIMIT @limit;
             """;
         cmd.Parameters.Add("bandSubjectId", NpgsqlDbType.Bigint).Value = NullableValue(bandSubjectId);
@@ -377,6 +492,18 @@ public sealed class ImprovementNotificationService
         var items = ReadNotifications(cmd);
         var source = ReadLatestNotificationSource(conn);
         return new ImprovementNotificationsEnvelope(DateTime.UtcNow, DefaultLiveHours, source.RunId, source.CompletedAt, items);
+    }
+
+    private static string BuildNewShopSongPayload(NewShopSongServiceNotification notification)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            songTitle = notification.Title,
+            artist = notification.Artist,
+            albumArt = notification.AlbumArt,
+            sourceKey = notification.SourceKey,
+            shopInDate = notification.ShopInDateUtc?.ToString("O"),
+        });
     }
 
     private static ImprovementNotificationSourceCursor ReadLatestNotificationSource(NpgsqlConnection conn)
@@ -1594,6 +1721,14 @@ public sealed record ImprovementNotificationDto(
     JsonElement Payload,
     DateTime DetectedAt,
     DateTime ExpiresAt);
+
+public sealed record NewShopSongServiceNotification(
+    string SongId,
+    string Title,
+    string Artist,
+    string? AlbumArt,
+    string SourceKey,
+    DateTime? ShopInDateUtc);
 
 public sealed record ImprovementNotificationsEnvelope(
     DateTime GeneratedAt,

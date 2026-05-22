@@ -195,6 +195,11 @@ export type ShopSnapshotMessage = {
   newSongs?: string[];
 };
 
+export type NotificationFeedChangedMessage = {
+  type: 'notification_feed_changed';
+  at: string;
+};
+
 export type SyncProgressMessage = {
   type: 'sync_progress';
   accountId: string;
@@ -243,6 +248,7 @@ export type WsNotificationMessage =
   | SyncProgressMessage
   | SongsChangedMessage
   | ScoresChangedMessage
+  | NotificationFeedChangedMessage
   | { type: 'backfill_complete' }
   | { type: 'history_recon_complete' }
   | { type: 'rivals_complete' };

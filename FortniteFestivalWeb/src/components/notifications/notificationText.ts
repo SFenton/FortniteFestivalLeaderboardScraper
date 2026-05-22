@@ -37,6 +37,7 @@ export type NotificationTextPayload = {
 export type NotificationTextInput = NotificationTextEvent & {
   title?: string | null;
   songTitle?: string | null;
+  artist?: string | null;
   instrumentLabel?: string | null;
   comboLabel?: string | null;
   scopeLabel?: string | null;
@@ -87,6 +88,7 @@ type NotificationClause = {
 };
 
 const EVENT_PRIORITY: Record<string, number> = {
+  service_new_shop_song: 5,
   player_first_score: 10,
   band_first_score: 10,
   player_score_pb: 20,
@@ -117,6 +119,7 @@ const EVENT_PRIORITY: Record<string, number> = {
 };
 
 export function formatNotificationPresentation(t: TFunction, input: NotificationTextInput): NotificationPresentation {
+  if (input.eventKind === 'service_new_shop_song') return formatServiceNewShopSongPresentation(input);
   const events = getDisplayEvents(input);
   const title = formatNotificationTitle(t, input, events);
   const statementStyleMessage = shouldUseStatementStyleMessage(events);
@@ -139,6 +142,28 @@ export function formatNotificationPresentation(t: TFunction, input: Notification
     badges: flags.map(flag => flag.label),
     flags,
     ...(flagGroups.length > 0 ? { flagGroups } : {}),
+    accessibilityLabel: `${title}. ${message}`,
+  };
+}
+
+function formatServiceNewShopSongPresentation(input: NotificationTextInput): NotificationPresentation {
+  const songTitle = input.songTitle?.trim() || input.title?.trim() || 'New Song';
+  const artist = input.artist?.trim() || 'Unknown Artist';
+  const title = `New Song · ${songTitle} - ${artist}`;
+  const message = `${songTitle} by ${artist} has been added to the Item Shop.`;
+  const messageParts: NotificationMessagePart[] = [
+    { text: songTitle, emphasis: true },
+    { text: ' by ' },
+    { text: artist, emphasis: true },
+    { text: ' has been added to the Item Shop.' },
+  ];
+
+  return {
+    title,
+    message,
+    messageParts,
+    badges: [],
+    flags: [],
     accessibilityLabel: `${title}. ${message}`,
   };
 }

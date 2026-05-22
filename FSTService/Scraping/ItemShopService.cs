@@ -19,7 +19,7 @@ public interface IShopProvider
 }
 
 /// <summary>Entry extracted from the fortnite-api.com shop JSON for a single jam track.</summary>
-internal readonly record struct ShopTrackEntry(string Title, DateTime? OutDate, bool IsNew = false);
+internal readonly record struct ShopTrackEntry(string Title, DateTime? OutDate, bool IsNew = false, DateTime? InDate = null);
 
 /// <summary>
 /// Scrapes the Fortnite Item Shop Jam Tracks page to determine which songs
@@ -35,6 +35,7 @@ public sealed partial class ItemShopService : IShopProvider
     private readonly HttpClient _http;
     private readonly FestivalService _festivalService;
     private readonly IMetaDatabase _metaDb;
+    private readonly ImprovementNotificationService? _improvementNotifications;
     private readonly ILogger<ItemShopService> _log;
     private NotificationService? _notifications;
     private FSTService.Api.ShopCacheService? _shopCache;
@@ -76,12 +77,23 @@ public sealed partial class ItemShopService : IShopProvider
         HttpClient http,
         FestivalService festivalService,
         IMetaDatabase metaDb,
+        ImprovementNotificationService? improvementNotifications,
         ILogger<ItemShopService> log)
     {
         _http = http;
         _festivalService = festivalService;
         _metaDb = metaDb;
+        _improvementNotifications = improvementNotifications;
         _log = log;
+    }
+
+    public ItemShopService(
+        HttpClient http,
+        FestivalService festivalService,
+        IMetaDatabase metaDb,
+        ILogger<ItemShopService> log)
+        : this(http, festivalService, metaDb, null, log)
+    {
     }
 
     /// <summary>
@@ -148,10 +160,13 @@ public sealed partial class ItemShopService : IShopProvider
 
         // Parse the API response for jam track entries (title + outDate)
         var entries = ExtractJamTrackEntries(json);
+        var now = DateTime.UtcNow;
+        var expiredServiceNotificationCount = CleanupExpiredServiceNotifications(now);
         var titles = entries.Select(e => e.Title).ToList();
         if (titles.Count == 0)
         {
             _log.LogWarning("No Jam Tracks found in fortnite-api.com shop response.");
+            await NotifyNotificationFeedChangedIfNeededAsync(0, expiredServiceNotificationCount);
             return 0;
         }
 
@@ -160,6 +175,7 @@ public sealed partial class ItemShopService : IShopProvider
         if (contentHash == _lastContentHash)
         {
             _log.LogDebug("Shop content unchanged ({Count} tracks).", titles.Count);
+            await NotifyNotificationFeedChangedIfNeededAsync(0, expiredServiceNotificationCount);
             return -1;
         }
 
@@ -210,9 +226,10 @@ public sealed partial class ItemShopService : IShopProvider
         var leavingChanged = !leavingTomorrow.SetEquals(previousLeaving);
         var newSongIds = ComputeNewSongIds(entries, matched);
         var newChanged = !newSongIds.SetEquals(previousNew);
+        var serviceNotificationInputs = BuildNewShopSongNotifications(entries, matched, now);
+        var insertedServiceNotificationCount = UpsertNewShopSongNotifications(serviceNotificationInputs, now);
 
         // Update state
-        var now = DateTime.UtcNow;
         lock (_lock)
         {
             _inShopSongIds = matched;
@@ -245,6 +262,8 @@ public sealed partial class ItemShopService : IShopProvider
                 _log.LogWarning(ex, "Failed to broadcast shop change notification.");
             }
         }
+
+        await NotifyNotificationFeedChangedIfNeededAsync(insertedServiceNotificationCount, expiredServiceNotificationCount);
 
         _log.LogInformation(
             "Item Shop update complete: {Matched}/{Total} tracks matched.",
@@ -331,6 +350,7 @@ public sealed partial class ItemShopService : IShopProvider
                 if (!entry.TryGetProperty("tracks", out var tracks)) continue;
 
                 DateTime? outDate = null;
+                DateTime? inDate = null;
                 var isNew = false;
                 if (entry.TryGetProperty("outDate", out var outDateProp) &&
                     outDateProp.GetString() is { Length: > 0 } outDateStr &&
@@ -339,6 +359,15 @@ public sealed partial class ItemShopService : IShopProvider
                         out var parsedOutDate))
                 {
                     outDate = parsedOutDate;
+                }
+
+                if (entry.TryGetProperty("inDate", out var inDateProp) &&
+                    inDateProp.GetString() is { Length: > 0 } inDateStr &&
+                    DateTime.TryParse(inDateStr, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                        out var parsedInDate))
+                {
+                    inDate = parsedInDate;
                 }
 
                 if (entry.TryGetProperty("banner", out var banner))
@@ -352,7 +381,7 @@ public sealed partial class ItemShopService : IShopProvider
                         title.GetString() is { Length: > 0 } t &&
                         seen.Add(t))
                     {
-                        result.Add(new ShopTrackEntry(t, outDate, isNew));
+                        result.Add(new ShopTrackEntry(t, outDate, isNew, inDate));
                     }
                 }
             }
@@ -582,6 +611,9 @@ public sealed partial class ItemShopService : IShopProvider
                     _log.LogInformation("Shop metadata updated at midnight: {Leaving} leaving tomorrow, {New} new.", leavingTomorrow.Count, newSongIds.Count);
                 }
             }
+
+            var expiredServiceNotificationCount = CleanupExpiredServiceNotifications(DateTime.UtcNow);
+            await NotifyNotificationFeedChangedIfNeededAsync(0, expiredServiceNotificationCount);
         }
         catch (Exception ex)
         {
@@ -603,6 +635,100 @@ public sealed partial class ItemShopService : IShopProvider
             _log.LogWarning(ex, "Failed to prime shop cache.");
         }
     }
+
+    private IReadOnlyList<NewShopSongServiceNotification> BuildNewShopSongNotifications(
+        List<ShopTrackEntry> entries,
+        HashSet<string> matchedSongIds,
+        DateTime detectedAtUtc)
+    {
+        if (_improvementNotifications is null) return [];
+
+        var titleToSong = new Dictionary<string, FortniteFestival.Core.Song>(StringComparer.OrdinalIgnoreCase);
+        foreach (var song in _festivalService.Songs)
+        {
+            if (song.track?.tt is not null)
+                titleToSong.TryAdd(song.track.tt, song);
+        }
+
+        var notifications = new List<NewShopSongServiceNotification>();
+        var seenSongIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            if (!entry.IsNew) continue;
+            if (!titleToSong.TryGetValue(entry.Title, out var song) || song.track?.su is null) continue;
+            var songId = song.track.su;
+            if (!matchedSongIds.Contains(songId) || !seenSongIds.Add(songId)) continue;
+
+            notifications.Add(new NewShopSongServiceNotification(
+                songId,
+                (song.track.tt ?? entry.Title).Trim(),
+                (song.track.an ?? "Unknown Artist").Trim(),
+                TrimAlbumArt(song.track.au),
+                BuildServiceNotificationSourceKey(entry, detectedAtUtc),
+                entry.InDate));
+        }
+
+        return notifications;
+    }
+
+    private long UpsertNewShopSongNotifications(
+        IReadOnlyList<NewShopSongServiceNotification> notifications,
+        DateTime detectedAtUtc)
+    {
+        if (_improvementNotifications is null || notifications.Count == 0) return 0;
+        try
+        {
+            var inserted = _improvementNotifications.UpsertNewShopSongNotifications(notifications, detectedAtUtc);
+            if (inserted > 0)
+                _log.LogInformation("Inserted {Count} service notification(s) for new Item Shop songs.", inserted);
+            return inserted;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to insert service notifications for new Item Shop songs.");
+            return 0;
+        }
+    }
+
+    private long CleanupExpiredServiceNotifications(DateTime detectedAtUtc)
+    {
+        if (_improvementNotifications is null) return 0;
+        try
+        {
+            var deleted = _improvementNotifications.CleanupExpiredServiceNotifications(detectedAtUtc);
+            if (deleted > 0)
+                _log.LogInformation("Deleted {Count} expired service notification(s) during Item Shop poll.", deleted);
+            return deleted;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to cleanup expired service notifications during Item Shop poll.");
+            return 0;
+        }
+    }
+
+    private async Task NotifyNotificationFeedChangedIfNeededAsync(long inserted, long deleted)
+    {
+        if (_notifications is null || inserted <= 0 && deleted <= 0) return;
+        try
+        {
+            await _notifications.NotifyNotificationFeedChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to broadcast service notification feed change.");
+        }
+    }
+
+    private static string BuildServiceNotificationSourceKey(ShopTrackEntry entry, DateTime detectedAtUtc)
+        => entry.InDate is { } inDate
+            ? $"in:{inDate.ToUniversalTime():O}"
+            : $"detected-day:{detectedAtUtc:yyyy-MM-dd}";
+
+    private static string? TrimAlbumArt(string? url)
+        => url is not null && url.StartsWith(ApiEndpoints.AlbumArtPrefix, StringComparison.Ordinal)
+            ? url[ApiEndpoints.AlbumArtPrefix.Length..]
+            : url;
 
     // ─── Regex ──────────────────────────────────────────────────
 
