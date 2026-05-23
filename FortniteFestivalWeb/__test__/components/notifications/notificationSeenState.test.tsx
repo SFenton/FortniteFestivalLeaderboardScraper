@@ -1,6 +1,9 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  NOTIFICATION_FRESHNESS_STORAGE_KEY,
+} from '../../../src/components/notifications/notificationFreshnessState';
+import {
   NOTIFICATION_FEED_META_STORAGE_KEY,
   NOTIFICATION_FEED_RETENTION_MS,
   NOTIFICATION_MOCK_FEED_KEY,
@@ -23,6 +26,10 @@ function sortedSetValues(values: ReadonlySet<string>) {
 
 function storedSeenState() {
   return JSON.parse(localStorage.getItem(NOTIFICATION_SEEN_STORAGE_KEY) ?? '{}') as Record<string, string[]>;
+}
+
+function storedFreshnessState() {
+  return JSON.parse(localStorage.getItem(NOTIFICATION_FRESHNESS_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
 }
 
 describe('notificationSeenState', () => {
@@ -107,6 +114,27 @@ describe('notificationSeenState', () => {
     expect(metadata['player:old']).toBeUndefined();
   });
 
+  it('prunes abandoned freshness state with abandoned seen state', () => {
+    const now = new Date('2026-05-09T16:00:00Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    writeSeenNotificationIds('player:old', ['old-seen']);
+    writeSeenNotificationIds('player:current', ['current-seen']);
+    localStorage.setItem(NOTIFICATION_FRESHNESS_STORAGE_KEY, JSON.stringify({
+      'player:old': { knownNotificationIds: ['old-seen'], newNotificationIds: ['old-seen'], sourceVersion: '1' },
+      'player:current': { knownNotificationIds: ['current-seen'], newNotificationIds: [], sourceVersion: '1' },
+    }));
+    touchNotificationFeed('player:old', localStorage, now.getTime() - NOTIFICATION_FEED_RETENTION_MS - 1);
+
+    writeSeenNotificationIds('player:current', ['current-seen', 'next-seen']);
+
+    expect(storedSeenState()).toEqual({ 'player:current': ['current-seen', 'next-seen'] });
+    expect(storedFreshnessState()).toEqual({
+      'player:current': { knownNotificationIds: ['current-seen'], newNotificationIds: [], sourceVersion: '1' },
+    });
+  });
+
   it('builds feed keys from the selected profile', () => {
     expect(notificationFeedKeyForProfile(null)).toBe(NOTIFICATION_MOCK_FEED_KEY);
     expect(notificationFeedKeyForProfile({ type: 'player', accountId: 'p1', displayName: 'Player' })).toBe('player:p1');
@@ -160,6 +188,19 @@ describe('notificationSeenState', () => {
     expect(sortedSetValues(result.current.seenNotificationIds)).toEqual(['alpha']);
     expect(sortedSetValues(result.current.unreadNotificationIds)).toEqual(['beta']);
     expect(storedSeenState()).toEqual({ 'player:p1': ['alpha'] });
+  });
+
+  it('keeps other selected-profile feed IDs while that feed is still loading', () => {
+    writeSeenNotificationIds('player:a', ['seen-a']);
+    writeSeenNotificationIds('player:b', ['seen-b']);
+
+    const { result } = renderHook(() => useNotificationSeenState('player:b', [], { isCurrentFeedLoaded: false }));
+
+    expect(sortedSetValues(result.current.seenNotificationIds)).toEqual(['seen-b']);
+    expect(storedSeenState()).toEqual({
+      'player:a': ['seen-a'],
+      'player:b': ['seen-b'],
+    });
   });
 
   it('still prunes seen IDs when a loaded feed is empty', () => {

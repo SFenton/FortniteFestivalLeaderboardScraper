@@ -267,6 +267,7 @@ import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
 import { contentHash } from '../../src/firstRun/types';
 import { shopSlides } from '../../src/pages/shop/firstRun';
+import { NOTIFICATION_SEEN_STORAGE_KEY } from '../../src/components/notifications/notificationSeenState';
 import { defaultSongSettings } from '../../src/utils/songSettings';
 
 function setMobile() {
@@ -366,6 +367,8 @@ beforeEach(() => {
   queryClient.clear();
   localStorage.clear();
   localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
+  mockApi.getPlayerNotifications.mockResolvedValue(notificationResponse());
+  mockApi.getBandNotificationsById.mockResolvedValue(notificationResponse());
 });
 
 function notificationResponse(items: unknown[] = []) {
@@ -376,6 +379,10 @@ function notificationResponse(items: unknown[] = []) {
     sourceCompletedAt: '2026-05-09T16:00:00Z',
     items,
   };
+}
+
+function storedNotificationSeenState() {
+  return JSON.parse(localStorage.getItem(NOTIFICATION_SEEN_STORAGE_KEY) ?? '{}') as Record<string, string[]>;
 }
 
 function storeSelectedProfile(profile: Record<string, unknown>) {
@@ -651,6 +658,80 @@ describe('App — mobile FAB branches', () => {
     expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('p-populated', 50, expect.any(Object));
   });
 
+  it('keeps read notifications through a cold start while the feed loads', async () => {
+    setMobile();
+    let resolveNotifications!: (value: unknown) => void;
+    const pendingNotifications = new Promise(resolve => {
+      resolveNotifications = resolve;
+    });
+    mockApi.getPlayerNotifications.mockReturnValueOnce(pendingNotifications);
+    localStorage.setItem(NOTIFICATION_SEEN_STORAGE_KEY, JSON.stringify({
+      'player:p-cold': ['cold-notification'],
+    }));
+    storeSelectedProfile({ type: 'player', accountId: 'p-cold', displayName: 'Cold Profile' });
+
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    expect(storedNotificationSeenState()).toEqual({ 'player:p-cold': ['cold-notification'] });
+
+    await act(async () => {
+      resolveNotifications(notificationResponse([
+        playerNotificationItem(401, 'cold-notification', 'Solo_Guitar'),
+      ]));
+    });
+
+    const notificationsButton = await screen.findByRole('button', { name: 'Notifications' });
+    await waitFor(() => {
+      expect(notificationsButton.getAttribute('data-notification-state')).toBe('populated');
+    });
+    expect(within(notificationsButton).queryByText('1')).toBeNull();
+    expect(storedNotificationSeenState()).toEqual({ 'player:p-cold': ['cold-notification'] });
+  });
+
+  it('preserves local read state for ready notification feeds that are not generated yet', async () => {
+    setMobile();
+    mockApi.getPlayerNotifications.mockResolvedValueOnce({
+      generatedAt: '2026-05-09T16:00:00Z',
+      expiresAfterHours: 72,
+      sourceRunId: null,
+      sourceCompletedAt: null,
+      notificationsGenerated: false,
+      items: [],
+    });
+    localStorage.setItem(NOTIFICATION_SEEN_STORAGE_KEY, JSON.stringify({
+      'player:p-not-generated': ['pending-notification'],
+    }));
+    storeSelectedProfile({ type: 'player', accountId: 'p-not-generated', displayName: 'Pending Profile' });
+
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    const notificationsButton = await screen.findByRole('button', { name: 'Notifications' });
+    await waitFor(() => {
+      expect(notificationsButton.getAttribute('data-notification-state')).toBe('empty');
+    });
+    expect(storedNotificationSeenState()).toEqual({ 'player:p-not-generated': ['pending-notification'] });
+  });
+
+  it('clears local read state when a generated notification feed is empty', async () => {
+    setMobile();
+    mockApi.getPlayerNotifications.mockResolvedValueOnce(notificationResponse([]));
+    localStorage.setItem(NOTIFICATION_SEEN_STORAGE_KEY, JSON.stringify({
+      'player:p-empty': ['expired-notification'],
+    }));
+    storeSelectedProfile({ type: 'player', accountId: 'p-empty', displayName: 'Empty Profile' });
+
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    const notificationsButton = await screen.findByRole('button', { name: 'Notifications' });
+    await waitFor(() => {
+      expect(notificationsButton.getAttribute('data-notification-state')).toBe('empty');
+      expect(localStorage.getItem(NOTIFICATION_SEEN_STORAGE_KEY)).toBeNull();
+    });
+  });
+
   it('filters selected player notification badge and modal rows by visible instruments', async () => {
     setMobile();
     mockApi.getPlayerNotifications.mockResolvedValueOnce(notificationResponse([
@@ -759,6 +840,68 @@ describe('App — mobile FAB branches', () => {
     await waitFor(() => {
       expect(screen.getByTestId('mobile-header-notifications').getAttribute('data-notification-visual-state')).toBe('icon');
       expect(screen.getByTestId('mobile-header-notifications').getAttribute('data-notification-state')).toBe('populated');
+    });
+  });
+
+  it('keeps each profile read state while switching to a loading notification feed', async () => {
+    setMobile();
+    let resolveProfileB!: (value: unknown) => void;
+    const pendingProfileB = new Promise(resolve => {
+      resolveProfileB = resolve;
+    });
+    mockApi.getPlayerNotifications.mockImplementation(async (accountId: string) => {
+      if (accountId === 'profile-b') return pendingProfileB;
+      return notificationResponse([
+        playerNotificationItem(501, 'profile-a-read', 'Solo_Guitar'),
+      ]);
+    });
+    localStorage.setItem(NOTIFICATION_SEEN_STORAGE_KEY, JSON.stringify({
+      'player:profile-a': ['profile-a-read'],
+      'player:profile-b': ['profile-b-read'],
+    }));
+    storeSelectedProfile({ type: 'player', accountId: 'profile-a', displayName: 'Profile A' });
+
+    render(<App />);
+
+    await screen.findByText('Test Song', undefined, { timeout: 5000 });
+    await waitFor(() => {
+      expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('profile-a', 50, expect.any(Object));
+      expect(screen.getByRole('button', { name: 'Notifications' }).getAttribute('data-notification-state')).toBe('populated');
+    });
+
+    await act(async () => {
+      storeSelectedProfile({ type: 'player', accountId: 'profile-b', displayName: 'Profile B' });
+    });
+
+    await waitFor(() => {
+      expect(mockApi.getPlayerNotifications).toHaveBeenCalledWith('profile-b', 50, expect.any(Object));
+    });
+    expect(storedNotificationSeenState()).toEqual({
+      'player:profile-a': ['profile-a-read'],
+      'player:profile-b': ['profile-b-read'],
+    });
+
+    await act(async () => {
+      resolveProfileB(notificationResponse([
+        playerNotificationItem(502, 'profile-b-read', 'Solo_Guitar'),
+      ]));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Notifications' }).getAttribute('data-notification-state')).toBe('populated');
+    });
+    expect(storedNotificationSeenState()).toEqual({
+      'player:profile-a': ['profile-a-read'],
+      'player:profile-b': ['profile-b-read'],
+    });
+
+    await act(async () => {
+      storeSelectedProfile({ type: 'player', accountId: 'profile-a', displayName: 'Profile A' });
+    });
+
+    expect(storedNotificationSeenState()).toEqual({
+      'player:profile-a': ['profile-a-read'],
+      'player:profile-b': ['profile-b-read'],
     });
   });
 

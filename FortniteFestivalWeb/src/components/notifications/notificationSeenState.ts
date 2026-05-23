@@ -4,8 +4,10 @@ import type { SelectedProfile } from '../../hooks/data/useSelectedProfile';
 export const NOTIFICATION_SEEN_STORAGE_KEY = 'fst:notificationSeen:v1';
 export const NOTIFICATION_FEED_META_STORAGE_KEY = 'fst:notificationFeedMeta:v1';
 export const NOTIFICATION_MOCK_FEED_KEY = 'mock';
-export const NOTIFICATION_FEED_RETENTION_MS = 1000 * 60 * 60 * 24 * 90;
+export const NOTIFICATION_FEED_RETENTION_MS = 1000 * 60 * 60 * 24 * 3;
 const NOTIFICATION_FEED_MAX_ENTRIES = 32;
+const NOTIFICATION_FRESHNESS_STORAGE_KEY = 'fst:notificationFreshness:v1';
+const NOTIFICATION_LOCAL_STATE_STORAGE_KEYS = [NOTIFICATION_SEEN_STORAGE_KEY, NOTIFICATION_FRESHNESS_STORAGE_KEY] as const;
 
 type NotificationSeenStore = Record<string, string[]>;
 export type NotificationStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -77,6 +79,41 @@ function writeFeedMetaStore(storage: NotificationStorage | null, store: Notifica
   }
 }
 
+function deleteFeedsFromJsonStore(storage: NotificationStorage, storageKey: string, feedKeys: ReadonlySet<string>): void {
+  try {
+    const raw = storage.getItem(storageKey);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+
+    const store = { ...(parsed as Record<string, unknown>) };
+    let changed = false;
+    for (const feedKey of feedKeys) {
+      if (!Object.prototype.hasOwnProperty.call(store, feedKey)) continue;
+      delete store[feedKey];
+      changed = true;
+    }
+
+    if (!changed) return;
+    if (Object.keys(store).length === 0) storage.removeItem(storageKey);
+    else storage.setItem(storageKey, JSON.stringify(store));
+  } catch {
+    // Best-effort local cleanup only.
+  }
+}
+
+export function deleteNotificationLocalStateFeeds(
+  feedKeys: Iterable<string>,
+  storage: NotificationStorage | null = getStorage(),
+): void {
+  if (!storage) return;
+  const normalizedFeedKeys = new Set(normalizeNotificationIds(feedKeys));
+  if (normalizedFeedKeys.size === 0) return;
+  for (const storageKey of NOTIFICATION_LOCAL_STATE_STORAGE_KEYS) {
+    deleteFeedsFromJsonStore(storage, storageKey, normalizedFeedKeys);
+  }
+}
+
 export function touchNotificationFeed(feedKey: string, storage: NotificationStorage | null = getStorage(), now = Date.now()): void {
   if (!storage) return;
   const store = readFeedMetaStore(storage);
@@ -105,6 +142,7 @@ export function pruneStaleNotificationFeeds(feedKey: string, storage: Notificati
   if (staleKeys.size === 0) return staleKeys;
   for (const staleKey of staleKeys) delete store[staleKey];
   writeFeedMetaStore(storage, store);
+  deleteNotificationLocalStateFeeds(staleKeys, storage);
   return staleKeys;
 }
 

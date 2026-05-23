@@ -6,7 +6,11 @@ import {
   updateNotificationFreshnessState,
   useNotificationFreshnessState,
 } from '../../../src/components/notifications/notificationFreshnessState';
-import { NOTIFICATION_FEED_RETENTION_MS, touchNotificationFeed } from '../../../src/components/notifications/notificationSeenState';
+import {
+  NOTIFICATION_FEED_RETENTION_MS,
+  NOTIFICATION_SEEN_STORAGE_KEY,
+  touchNotificationFeed,
+} from '../../../src/components/notifications/notificationSeenState';
 
 function sortedSetValues(values: ReadonlySet<string>) {
   return Array.from(values).sort();
@@ -14,6 +18,10 @@ function sortedSetValues(values: ReadonlySet<string>) {
 
 function storedFreshnessState() {
   return JSON.parse(localStorage.getItem(NOTIFICATION_FRESHNESS_STORAGE_KEY) ?? '{}') as Record<string, unknown>;
+}
+
+function storedSeenState() {
+  return JSON.parse(localStorage.getItem(NOTIFICATION_SEEN_STORAGE_KEY) ?? '{}') as Record<string, string[]>;
 }
 
 describe('notificationFreshnessState', () => {
@@ -104,6 +112,62 @@ describe('notificationFreshnessState', () => {
         sourceVersion: '10',
       },
     });
+  });
+
+  it('keeps freshness cohorts while the current feed is still loading', () => {
+    localStorage.setItem(NOTIFICATION_FRESHNESS_STORAGE_KEY, JSON.stringify({
+      'player:p1': {
+        knownNotificationIds: ['alpha', 'beta'],
+        newNotificationIds: ['beta'],
+        sourceVersion: '10',
+      },
+    }));
+
+    const { result, rerender } = renderHook(
+      ({ currentIds, isCurrentFeedLoaded }) => useNotificationFreshnessState('player:p1', currentIds, 10, { isCurrentFeedLoaded }),
+      { initialProps: { currentIds: [] as string[], isCurrentFeedLoaded: false } },
+    );
+
+    expect(sortedSetValues(result.current.knownNotificationIds)).toEqual(['alpha', 'beta']);
+    expect(sortedSetValues(result.current.newNotificationIds)).toEqual(['beta']);
+    expect(storedFreshnessState()).toEqual({
+      'player:p1': {
+        knownNotificationIds: ['alpha', 'beta'],
+        newNotificationIds: ['beta'],
+        sourceVersion: '10',
+      },
+    });
+
+    rerender({ currentIds: ['alpha', 'beta'], isCurrentFeedLoaded: true });
+
+    expect(sortedSetValues(result.current.newNotificationIds)).toEqual(['beta']);
+    expect(storedFreshnessState()).toEqual({
+      'player:p1': {
+        knownNotificationIds: ['alpha', 'beta'],
+        newNotificationIds: ['beta'],
+        sourceVersion: '10',
+      },
+    });
+  });
+
+  it('clears local notification state when a loaded feed is empty', () => {
+    localStorage.setItem(NOTIFICATION_FRESHNESS_STORAGE_KEY, JSON.stringify({
+      'player:p1': { knownNotificationIds: ['alpha'], newNotificationIds: ['alpha'], sourceVersion: '10' },
+      'player:p2': { knownNotificationIds: ['other'], newNotificationIds: [], sourceVersion: '10' },
+    }));
+    localStorage.setItem(NOTIFICATION_SEEN_STORAGE_KEY, JSON.stringify({
+      'player:p1': ['alpha'],
+      'player:p2': ['other'],
+    }));
+
+    const snapshot = updateNotificationFreshnessState('player:p1', [], 11);
+
+    expect(sortedSetValues(snapshot.knownNotificationIds)).toEqual([]);
+    expect(sortedSetValues(snapshot.newNotificationIds)).toEqual([]);
+    expect(storedFreshnessState()).toEqual({
+      'player:p2': { knownNotificationIds: ['other'], newNotificationIds: [], sourceVersion: '10' },
+    });
+    expect(storedSeenState()).toEqual({ 'player:p2': ['other'] });
   });
 
   it('updates cohort state from the hook when notifications and source change', () => {

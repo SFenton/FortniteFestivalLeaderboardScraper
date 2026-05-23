@@ -410,8 +410,18 @@ function AppShell() {
   const notificationIds = notificationFeed.notificationIds;
   const notificationFeedReadyForHeader = useNotificationMockData || notificationFeed.status !== 'loading';
   const notificationFeedKey = notificationFeed.feedKey;
-  const { unreadNotificationIds, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds);
-  const { newNotificationIds } = useNotificationFreshnessState(notificationFeedKey, notificationIds, notificationFeed.sourceVersion);
+  const notificationRequestMatchesSelection = selectedProfile != null && selectedNotificationFeedKey === requestedNotificationFeedKey;
+  const notificationFeedAuthoritative = useNotificationMockData || (
+    notificationRequestMatchesSelection
+    && notificationFeed.status === 'ready'
+    && notificationFeed.generationStatus === 'generated'
+  );
+  const { unreadNotificationIds, markNotificationsSeen } = useNotificationSeenState(notificationFeedKey, notificationIds, {
+    isCurrentFeedLoaded: notificationFeedAuthoritative,
+  });
+  const { newNotificationIds } = useNotificationFreshnessState(notificationFeedKey, notificationIds, notificationFeed.sourceVersion, {
+    isCurrentFeedLoaded: notificationFeedAuthoritative,
+  });
   const notificationInstrumentFilter = useMemo(() => {
     if (notificationRequestProfile?.type !== 'player') return null;
     return new Set(visibleInstruments(settings));
@@ -494,7 +504,6 @@ function AppShell() {
 
   const shouldAutoOpenNotifications = hasWindowValidationToken(NOTIFICATIONS_VALIDATION_TOKEN) || useEmptyNotificationMock;
   const notificationHeaderBusy = notificationHeaderVisualState !== 'icon';
-  const notificationRequestMatchesSelection = selectedProfile != null && selectedNotificationFeedKey === requestedNotificationFeedKey;
   const canOpenNotifications = selectedProfile != null && notificationRequestMatchesSelection && notificationFeedReadyForHeader && !notificationHeaderBusy;
   const handleOpenNotifications = useCallback(() => setNotificationsOpen(true), []);
 

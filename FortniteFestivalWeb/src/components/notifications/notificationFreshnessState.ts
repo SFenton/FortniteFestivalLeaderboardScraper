@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  deleteNotificationLocalStateFeeds,
   normalizeNotificationFeedKey,
   pruneStaleNotificationFeeds,
   touchNotificationFeed,
@@ -138,6 +139,14 @@ export function updateNotificationFreshnessState(
   touchNotificationFeed(normalizedFeedKey, storage);
   const staleKeys = pruneStaleNotificationFeeds(normalizedFeedKey, storage);
   deleteStaleFeedsFromStore(store, staleKeys);
+
+  if (currentIds.length === 0) {
+    delete store[normalizedFeedKey];
+    writeStore(storage, store);
+    deleteNotificationLocalStateFeeds([normalizedFeedKey], storage);
+    return toSnapshot(emptyFeedState());
+  }
+
   const previous = store[normalizedFeedKey] ?? emptyFeedState();
   const previousKnownIds = new Set(previous.knownNotificationIds);
   const unknownIds = currentIds.filter(id => !previousKnownIds.has(id));
@@ -183,15 +192,23 @@ export function useNotificationFreshnessState(
   feedKey: string,
   currentNotificationIds: readonly string[],
   sourceVersion: string | number | null | undefined,
+  options?: { isCurrentFeedLoaded?: boolean },
 ): NotificationFreshnessSnapshot {
+  const isCurrentFeedLoaded = options?.isCurrentFeedLoaded ?? true;
   const currentIds = useMemo(() => normalizeNotificationIds(currentNotificationIds), [currentNotificationIds]);
   const currentIdsSignature = currentIds.join('\n');
   const normalizedSourceVersion = normalizeSourceVersion(sourceVersion);
-  const [freshness, setFreshness] = useState(() => updateNotificationFreshnessState(feedKey, currentIds, normalizedSourceVersion));
+  const [freshness, setFreshness] = useState(() => (
+    isCurrentFeedLoaded
+      ? updateNotificationFreshnessState(feedKey, currentIds, normalizedSourceVersion)
+      : readNotificationFreshnessState(feedKey)
+  ));
 
   useEffect(() => {
-    setFreshness(updateNotificationFreshnessState(feedKey, currentIds, normalizedSourceVersion));
-  }, [currentIds, currentIdsSignature, feedKey, normalizedSourceVersion]);
+    setFreshness(isCurrentFeedLoaded
+      ? updateNotificationFreshnessState(feedKey, currentIds, normalizedSourceVersion)
+      : readNotificationFreshnessState(feedKey));
+  }, [currentIds, currentIdsSignature, feedKey, isCurrentFeedLoaded, normalizedSourceVersion]);
 
   return freshness;
 }
