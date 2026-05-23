@@ -82,6 +82,51 @@ describe('useScrollFade', () => {
     renderHook(() => useScrollFade(scrollRef as any, listRef as any, [], { distance: 20 }), { wrapper });
   });
 
+  it('returned update recalculates child fade geometry synchronously', () => {
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    class MockIntersectionObserver {
+      readonly root = null;
+      readonly rootMargin = '';
+      readonly thresholds = [] as readonly number[];
+
+      constructor(private readonly callback: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        this.callback([{ target, isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+      }
+      unobserve() {}
+      disconnect() {}
+      takeRecords(): IntersectionObserverEntry[] { return []; }
+    }
+    globalThis.IntersectionObserver = MockIntersectionObserver as unknown as typeof globalThis.IntersectionObserver;
+
+    try {
+      const { wrapper } = createScrollContainerWrapper();
+      let viewportHeight = 120;
+      const scrollEl = document.createElement('div');
+      Object.defineProperty(scrollEl, 'scrollHeight', { value: 1000, configurable: true });
+      Object.defineProperty(scrollEl, 'scrollTop', { value: 0, configurable: true });
+      scrollEl.getBoundingClientRect = () => ({ top: 0, bottom: viewportHeight, left: 0, right: 300, width: 300, height: viewportHeight, x: 0, y: 0, toJSON: () => '' });
+      const listEl = document.createElement('div');
+      const child = document.createElement('div');
+      child.getBoundingClientRect = () => ({ top: 0, bottom: 400, left: 0, right: 300, width: 300, height: 400, x: 0, y: 0, toJSON: () => '' });
+      listEl.appendChild(child);
+      const scrollRef = { current: scrollEl };
+      const listRef = { current: listEl };
+      const { result } = renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
+
+      result.current();
+      expect(child.style.maskImage).toContain('120px');
+
+      viewportHeight = 220;
+      result.current();
+
+      expect(child.style.maskImage).not.toContain('120px');
+      expect(child.style.maskImage).toContain('220px');
+    } finally {
+      globalThis.IntersectionObserver = originalIntersectionObserver;
+    }
+  });
+
   it('creates ResizeObserver on the scroll container', () => {
     const observers = stubResizeObserver();
     const { wrapper } = createScrollContainerWrapper();

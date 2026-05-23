@@ -43,7 +43,13 @@ export function useScrollFade(
   const distance = options.distance ?? DEFAULT_DISTANCE;
   const stops = options.stops ?? DEFAULT_STOPS;
   const rafId = useRef(0);
+  const viewportTimeoutsRef = useRef<number[]>([]);
   const scrollContainerRef = useScrollContainer();
+
+  const clearViewportTimeouts = useCallback(() => {
+    for (const id of viewportTimeoutsRef.current) window.clearTimeout(id);
+    viewportTimeoutsRef.current = [];
+  }, []);
 
   const getScrollElement = useCallback(() => scrollRef.current ?? scrollContainerRef.current, [scrollRef, scrollContainerRef]);
 
@@ -122,6 +128,18 @@ export function useScrollFade(
     });
   }, [applyMasks]);
 
+  const updateNow = useCallback(() => {
+    cancelAnimationFrame(rafId.current);
+    rafId.current = 0;
+    applyMasks();
+  }, [applyMasks]);
+
+  const scheduleViewportUpdate = useCallback(() => {
+    clearViewportTimeouts();
+    throttledUpdate();
+    viewportTimeoutsRef.current = [80, 180, 320].map(delay => window.setTimeout(throttledUpdate, delay));
+  }, [clearViewportTimeouts, throttledUpdate]);
+
   // Set up IntersectionObserver to track children near scroll container edges
   useEffect(() => {
     const listEl = listRef.current;
@@ -170,6 +188,19 @@ export function useScrollFade(
     return () => scrollEl.removeEventListener('scroll', throttledUpdate);
   }, [throttledUpdate, getScrollElement]);
 
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener('resize', scheduleViewportUpdate);
+    visualViewport?.addEventListener('scroll', scheduleViewportUpdate);
+    window.addEventListener('resize', scheduleViewportUpdate);
+    return () => {
+      visualViewport?.removeEventListener('resize', scheduleViewportUpdate);
+      visualViewport?.removeEventListener('scroll', scheduleViewportUpdate);
+      window.removeEventListener('resize', scheduleViewportUpdate);
+      clearViewportTimeouts();
+    };
+  }, [clearViewportTimeouts, scheduleViewportUpdate]);
+
   // Re-evaluate masks when the scroll container resizes (e.g. header portal
   // rendering, fab spacer margin, window resize).
   useEffect(() => {
@@ -180,11 +211,14 @@ export function useScrollFade(
     return () => ro.disconnect();
   }, [getScrollElement, throttledUpdate]);
 
-  useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
+  useEffect(() => () => {
+    cancelAnimationFrame(rafId.current);
+    clearViewportTimeouts();
+  }, [clearViewportTimeouts]);
 
   // Initial computation
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { applyMasks(); }, [applyMasks, ...deps]);
 
-  return throttledUpdate;
+  return updateNow;
 }

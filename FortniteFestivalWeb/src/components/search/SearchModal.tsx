@@ -319,6 +319,7 @@ export default function SearchModal({ visible, onClose, availableTargets, placeh
             search={search}
             styles={st}
             resultsRef={resultsRef}
+            keyboardInset={keyboardInset}
             isMobile={isMobile}
             t={t}
             onSongNavigateStart={onClose}
@@ -368,6 +369,7 @@ interface RenderResultsArgs {
   search: ReturnType<typeof useUnifiedSearch>;
   styles: ReturnType<typeof useStyles>;
   resultsRef: React.RefObject<HTMLDivElement | null>;
+  keyboardInset: number;
   isMobile: boolean;
   t: ReturnType<typeof useTranslation>['t'];
   onSongNavigateStart: () => void;
@@ -376,7 +378,7 @@ interface RenderResultsArgs {
 }
 
 function SearchResultsPanel(props: RenderResultsArgs) {
-  const { activeTarget, visibleTargets, query, search, styles: st, resultsRef } = props;
+  const { activeTarget, visibleTargets, query, search, styles: st, resultsRef, keyboardInset } = props;
   const resultListRef = useRef<HTMLDivElement>(null);
   const trimmedQuery = query.trim();
   const isShort = trimmedQuery.length < 2;
@@ -394,8 +396,8 @@ function SearchResultsPanel(props: RenderResultsArgs) {
   const loadPhaseRef = useRef(loadPhase);
   const staggeredSignaturesRef = useRef<Partial<Record<SearchViewKey, string>>>({});
   const previousQueryRef = useRef(trimmedQuery);
-  const updateScrollMask = useScrollMask(resultsRef, [activeTarget, contentSignature, loadPhase], { selfScroll: true, size: SEARCH_SCROLL_FADE_SIZE });
-  useScrollFade(resultsRef, resultListRef, [activeTarget, contentSignature, loadPhase], { distance: SEARCH_SCROLL_FADE_SIZE });
+  const updateScrollMask = useScrollMask(resultsRef, [activeTarget, contentSignature, loadPhase, keyboardInset], { selfScroll: true, size: SEARCH_SCROLL_FADE_SIZE });
+  const updateScrollFade = useScrollFade(resultsRef, resultListRef, [activeTarget, contentSignature, loadPhase, keyboardInset], { distance: SEARCH_SCROLL_FADE_SIZE });
   const { resetRush } = useStaggerRush(resultListRef, resultsRef);
   loadPhaseRef.current = loadPhase;
 
@@ -413,7 +415,27 @@ function SearchResultsPanel(props: RenderResultsArgs) {
 
   useEffect(() => {
     updateScrollMask();
-  }, [contentSignature, loadPhase, updateScrollMask]);
+    updateScrollFade();
+  }, [contentSignature, loadPhase, updateScrollFade, updateScrollMask]);
+
+  useEffect(() => {
+    updateScrollMask();
+    updateScrollFade();
+
+    const rafId = requestAnimationFrame(() => {
+      updateScrollMask();
+      updateScrollFade();
+    });
+    const timeoutId = window.setTimeout(() => {
+      updateScrollMask();
+      updateScrollFade();
+    }, QUICK_FADE_MS + 20);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [keyboardInset, updateScrollFade, updateScrollMask]);
 
   useEffect(() => {
     if (isShort) {
@@ -725,6 +747,7 @@ function useStyles(isMobile: boolean, keyboardInset: number) {
       resultList: {
         ...flexColumn,
         gap: Gap.xs,
+        flexGrow: 1,
         flexShrink: 0,
         minHeight: CssValue.full,
         boxSizing: BoxSizing.borderBox,
@@ -734,6 +757,7 @@ function useStyles(isMobile: boolean, keyboardInset: number) {
       globalResultList: {
         ...flexColumn,
         gap: Gap.md,
+        flexGrow: 1,
         flexShrink: 0,
         minHeight: CssValue.full,
         boxSizing: BoxSizing.borderBox,

@@ -652,6 +652,50 @@ describe('SearchModal', () => {
     expectCenteredHint(emptyState);
   });
 
+  it('lets populated mobile results expand after the keyboard is dismissed', async () => {
+    const visualViewport = installVisualViewport();
+    setViewportQueries({ mobile: true });
+
+    renderModal();
+    const input = screen.getByPlaceholderText('Search songs, players, or bands…');
+    const filterGroup = screen.getByRole('group', { name: 'Search targets' });
+    mockElementRect(filterGroup, { top: 576, bottom: 620, height: 44 });
+    await advanceAndFlush(60);
+    fireEvent.focus(input);
+    setVisualViewport(visualViewport, 544);
+    await advanceAndFlush(0);
+    fireEvent.change(input, { target: { value: 'but' } });
+
+    await advanceAndFlush(SEARCH_SETTLE_MS);
+    await waitFor(() => expect(screen.getByTestId('search-section-songs')).toBeDefined());
+
+    const panel = screen.getByTestId('search-results-panel');
+    const resultList = screen.getByTestId('search-result-list');
+    let panelClientHeight = 171;
+    Object.defineProperty(panel, 'clientHeight', { configurable: true, get: () => panelClientHeight });
+    Object.defineProperty(panel, 'scrollHeight', { configurable: true, get: () => 800 });
+    Object.defineProperty(panel, 'scrollTop', { configurable: true, value: 0, writable: true });
+    fireEvent.scroll(panel);
+    await advanceAndFlush(20);
+
+    expect(panel.style.marginBottom).toBe('88px');
+    expect(filterGroup.style.transform).toBe('translate3d(0, -88px, 0)');
+    expect(resultList.style.flexGrow).toBe('1');
+    expect(panel.style.maskImage).toContain('transparent 171px');
+    expectResultListEdgePadding(findAnimatedAncestor('Butter Barn Hoedown'));
+
+    panelClientHeight = 483;
+    setVisualViewport(visualViewport, 844);
+    await advanceAndFlush(300);
+
+    expect(panel.style.marginBottom).toBe('0px');
+    expect(filterGroup.style.transform).toBe('');
+    expect(resultList.style.flexGrow).toBe('1');
+    expect(panel.style.maskImage).not.toContain('transparent 171px');
+    expect(panel.style.maskImage).toContain('transparent 483px');
+    expectResultListEdgePadding(findAnimatedAncestor('Butter Barn Hoedown'));
+  });
+
   it('matches songs the same way as the Songs page search', async () => {
     renderModal();
     fireEvent.change(screen.getByPlaceholderText('Search songs, players, or bands…'), { target: { value: "Don't Fear" } });

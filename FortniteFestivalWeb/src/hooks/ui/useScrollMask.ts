@@ -25,8 +25,14 @@ export function useScrollMask(
   const selfScroll = options.selfScroll ?? false;
   const disabled = options.disabled ?? false;
   const rafId = useRef(0);
+  const viewportTimeoutsRef = useRef<number[]>([]);
   const hasMask = useRef(false);
   const scrollContainerRef = useScrollContainer();
+
+  const clearViewportTimeouts = useCallback(() => {
+    for (const id of viewportTimeoutsRef.current) window.clearTimeout(id);
+    viewportTimeoutsRef.current = [];
+  }, []);
 
   const update = useCallback(() => {
     const el = containerRef.current;
@@ -83,7 +89,7 @@ export function useScrollMask(
     hasMask.current = true;
     el!.style.maskImage = mask;
     el!.style.webkitMaskImage = mask;
-  }, [size, selfScroll, containerRef, scrollContainerRef]);
+  }, [disabled, size, selfScroll, containerRef, scrollContainerRef]);
 
   /** rAF-throttled wrapper — at most one update per animation frame. */
   const throttledUpdate = useCallback(() => {
@@ -94,8 +100,23 @@ export function useScrollMask(
     });
   }, [update]);
 
+  const updateNow = useCallback(() => {
+    cancelAnimationFrame(rafId.current);
+    rafId.current = 0;
+    update();
+  }, [update]);
+
+  const scheduleViewportUpdate = useCallback(() => {
+    clearViewportTimeouts();
+    throttledUpdate();
+    viewportTimeoutsRef.current = [80, 180, 320].map(delay => window.setTimeout(throttledUpdate, delay));
+  }, [clearViewportTimeouts, throttledUpdate]);
+
   // Cancel pending rAF on unmount
-  useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
+  useEffect(() => () => {
+    cancelAnimationFrame(rafId.current);
+    clearViewportTimeouts();
+  }, [clearViewportTimeouts]);
 
   // Listen to scroll container (self or app-level)
   useEffect(() => {
@@ -105,6 +126,20 @@ export function useScrollMask(
     target.addEventListener('scroll', throttledUpdate, { passive: true });
     return () => target.removeEventListener('scroll', throttledUpdate);
   }, [disabled, selfScroll, throttledUpdate, containerRef, scrollContainerRef]);
+
+  useEffect(() => {
+    if (disabled) return;
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener('resize', scheduleViewportUpdate);
+    visualViewport?.addEventListener('scroll', scheduleViewportUpdate);
+    window.addEventListener('resize', scheduleViewportUpdate);
+    return () => {
+      visualViewport?.removeEventListener('resize', scheduleViewportUpdate);
+      visualViewport?.removeEventListener('scroll', scheduleViewportUpdate);
+      window.removeEventListener('resize', scheduleViewportUpdate);
+      clearViewportTimeouts();
+    };
+  }, [clearViewportTimeouts, disabled, scheduleViewportUpdate]);
 
   // Re-evaluate mask when the scroll container or content container resizes.
   // This catches layout changes that happen after the initial mount measurement
@@ -123,5 +158,5 @@ export function useScrollMask(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { update(); }, [update, ...deps]);
 
-  return throttledUpdate;
+  return updateNow;
 }

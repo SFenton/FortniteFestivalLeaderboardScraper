@@ -51,6 +51,25 @@ describe('useScrollMask', () => {
     result.current();
   });
 
+  it('returned update recalculates mask geometry synchronously', () => {
+    let clientHeight = 200;
+    const el = document.createElement('div');
+    Object.defineProperty(el, 'scrollHeight', { value: 500, configurable: true });
+    Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => clientHeight });
+    Object.defineProperty(el, 'scrollTop', { value: 0, configurable: true });
+    const ref = { current: el };
+    const { result } = renderHook(() => useScrollMask(ref as any, [], { selfScroll: true }));
+
+    result.current();
+    expect(el.style.maskImage).toContain('transparent 200px');
+
+    clientHeight = 300;
+    result.current();
+
+    expect(el.style.maskImage).not.toContain('transparent 200px');
+    expect(el.style.maskImage).toContain('transparent 300px');
+  });
+
   it('shows top mask when at bottom', () => {
     const el = document.createElement('div');
     Object.defineProperty(el, 'scrollHeight', { value: 500, configurable: true });
