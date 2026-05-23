@@ -440,10 +440,16 @@ export const api = {
       `/api/player/${encodeURIComponent(accountId)}/rivals/${encodeURIComponent(combo)}`,
     ),
 
-  getRivalDetail: (accountId: string, combo: string, rivalId: string, sort = 'closest') =>
-    get<RivalDetailResponse>(
-      `/api/player/${encodeURIComponent(accountId)}/rivals/${encodeURIComponent(combo)}/${encodeURIComponent(rivalId)}?limit=0&sort=${encodeURIComponent(sort)}`,
-    ),
+  getRivalDetail: (accountId: string, combo: string, rivalId: string, sort = 'closest', options?: { allowLiveFallback?: boolean; includeGaps?: boolean }) => {
+    const params = new URLSearchParams();
+    params.set('limit', '0');
+    params.set('sort', sort);
+    if (options?.allowLiveFallback) params.set('allowLiveFallback', 'true');
+    if (options?.includeGaps) params.set('includeGaps', 'true');
+    return get<RivalDetailResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/rivals/${encodeURIComponent(combo)}/${encodeURIComponent(rivalId)}?${params.toString()}`,
+    );
+  },
 
   // ─── Rankings ──────────────────────────────────────────────────
 

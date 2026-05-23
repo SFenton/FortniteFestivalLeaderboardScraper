@@ -503,6 +503,7 @@ public sealed class ScraperWorker : BackgroundService
 
             if (postProcessCompleted)
             {
+                var publicationCleanupCompleted = true;
                 try
                 {
                     await _postScrapeOrchestrator.RunPublicationCleanupAsync(ctx, resolvedPhases, ct);
@@ -510,8 +511,11 @@ public sealed class ScraperWorker : BackgroundService
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "Publication cleanup failed. Continuing to publish with live-read fallback where available.");
+                    publicationCleanupCompleted = false;
+                    _log.LogError(ex, "Publication cleanup failed. Published scrape will remain unchanged to avoid live-read fallback.");
                 }
+
+                postProcessCompleted = publicationCleanupCompleted;
             }
             else
             {

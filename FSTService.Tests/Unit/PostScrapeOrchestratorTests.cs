@@ -737,7 +737,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RunPublicationCleanupAsync_WithLowSoloCoverage_SkipsSoloCurrentProjectionRefresh()
+    public async Task RunPublicationCleanupAsync_WithLowSoloCoverage_StillRefreshesSoloCurrentProjection()
     {
         await _soloCurrentProjectionBuilder.EnsureSchemaAsync();
         InsertSnapshotState("song_low_coverage", "Solo_Guitar", 55);
@@ -764,11 +764,11 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         await _sut.RunPublicationCleanupAsync(ctx, ScrapePhase.SoloScrape | ScrapePhase.SoloFinalize, CancellationToken.None);
 
-        Assert.Equal(54, GetProjectionScopeSourceSnapshot("song_low_coverage", "Solo_Guitar"));
-        Assert.Null(GetProjectedScore("song_low_coverage", "Solo_Guitar", "acct_low_cov"));
+        Assert.Equal(55, GetProjectionScopeSourceSnapshot("song_low_coverage", "Solo_Guitar"));
+        Assert.Equal(101_000, GetProjectedScore("song_low_coverage", "Solo_Guitar", "acct_low_cov"));
         Assert.Contains(_log.Entries, entry =>
             entry.Level == LogLevel.Warning &&
-            entry.Message.Contains("Cleanup solo current projection refresh skipped because solo scrape coverage was below threshold", StringComparison.Ordinal));
+            entry.Message.Contains("Cleanup solo current projection refresh will run despite low solo scrape coverage", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -819,6 +819,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         Assert.Equal(84, GetProjectionScopeSourceSnapshot(songId, "Solo_Vocals"));
 
+        _metaDb.SwapCachedResponsesFromStaging();
         var cached = _metaDb.GetCachedResponse($"player:{accountId}:::");
         Assert.NotNull(cached);
 

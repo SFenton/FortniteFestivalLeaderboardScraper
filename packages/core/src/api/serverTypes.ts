@@ -1294,11 +1294,14 @@ export type RivalSongComparison = {
 export type RivalDetailResponse = {
   rival: { accountId: string; displayName: string | null };
   combo: string;
+  source?: 'precomputed' | 'live';
   totalSongs: number;
   offset: number;
   limit: number;
   sort: string;
   songs: RivalSongComparison[];
+  songsToCompete?: Array<{ songId: string; title: string | null; artist: string | null; instrument: string; score: number; rank: number }>;
+  yourExclusiveSongs?: Array<{ songId: string; title: string | null; artist: string | null; instrument: string; score: number; rank: number }>;
 };
 
 export type RivalSuggestionSong = {

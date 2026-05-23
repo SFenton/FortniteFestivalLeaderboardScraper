@@ -186,6 +186,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
+                                WITH publication AS (
+                                    SELECT COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
+                                           (SELECT published_scrape_id FROM scrape_publication_state WHERE id = TRUE) AS published_scrape_id
+                                )
                                 SELECT scope.row_count
                                 FROM {SoloCurrentProjectionScopeTable} scope
                                 LEFT JOIN {LeaderboardSnapshotStateTable} state
@@ -193,10 +197,18 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                                  AND state.instrument = scope.instrument
                                  AND state.is_finalized = TRUE
                                  AND state.active_snapshot_id IS NOT NULL
+                                CROSS JOIN publication
                                 WHERE scope.song_id = @songId
                                     AND scope.instrument = @instrument
                                     AND scope.status = 'ready'
-                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM state.active_snapshot_id
+                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM
+                                        CASE
+                                            WHEN state.active_snapshot_id IS NOT NULL
+                                             AND publication.public_reads_frozen
+                                             AND publication.published_scrape_id IS NOT NULL
+                                                THEN publication.published_scrape_id
+                                            ELSE state.active_snapshot_id
+                                        END
                 LIMIT 1
                 """;
             cmd.Parameters.AddWithValue("songId", songId);
@@ -216,6 +228,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
+                WITH publication AS (
+                    SELECT COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
+                           (SELECT published_scrape_id FROM scrape_publication_state WHERE id = TRUE) AS published_scrape_id
+                )
                 SELECT EXISTS (
                     SELECT 1
                     FROM {SoloCurrentProjectionScopeTable}
@@ -234,9 +250,16 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                       AND (
                           scope.song_id IS NULL
                           OR scope.status <> 'ready'
-                          OR scope.source_snapshot_id IS DISTINCT FROM state.active_snapshot_id
+                          OR scope.source_snapshot_id IS DISTINCT FROM
+                              CASE
+                                  WHEN publication.public_reads_frozen
+                                   AND publication.published_scrape_id IS NOT NULL
+                                      THEN publication.published_scrape_id
+                                  ELSE state.active_snapshot_id
+                              END
                       )
                 )
+                FROM publication
                 """;
             cmd.Parameters.AddWithValue("instrument", Instrument);
             return Convert.ToBoolean(cmd.ExecuteScalar());
@@ -260,8 +283,11 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                                WITH requested AS (
+                        WITH requested AS (
                                         SELECT unnest(@songIds::text[]) AS song_id
+                        ), publication AS (
+                            SELECT COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
+                                   (SELECT published_scrape_id FROM scrape_publication_state WHERE id = TRUE) AS published_scrape_id
                                 )
                                 SELECT COUNT(*)
                                 FROM requested
@@ -273,8 +299,16 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                                  AND state.instrument = scope.instrument
                                  AND state.is_finalized = TRUE
                                  AND state.active_snapshot_id IS NOT NULL
+                                CROSS JOIN publication
                                 WHERE scope.status = 'ready'
-                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM state.active_snapshot_id
+                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM
+                                        CASE
+                                            WHEN state.active_snapshot_id IS NOT NULL
+                                             AND publication.public_reads_frozen
+                                             AND publication.published_scrape_id IS NOT NULL
+                                                THEN publication.published_scrape_id
+                                            ELSE state.active_snapshot_id
+                                        END
                 """;
             cmd.Parameters.AddWithValue("instrument", Instrument);
             cmd.Parameters.AddWithValue("songIds", distinctSongIds);

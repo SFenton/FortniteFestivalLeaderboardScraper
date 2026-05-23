@@ -426,9 +426,12 @@ public static partial class ApiEndpoints
             int? limit,
             int? offset,
             string? sort,
+            bool? allowLiveFallback,
+            bool? includeGaps,
             IMetaDatabase metaDb,
             FestivalService festivalService,
             RivalsCalculator rivalsCalculator,
+            SoloCurrentProjectionBuilder soloCurrentProjectionBuilder,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
@@ -443,7 +446,9 @@ public static partial class ApiEndpoints
             var effectiveLimit = limit ?? 50;
             var effectiveOffset = offset ?? 0;
             var sortMode = sort?.ToLowerInvariant() ?? "closest";
-            var cacheKey = $"detail:{accountId}:{combo}:{rivalId}:{effectiveLimit}:{effectiveOffset}:{sortMode}";
+            var liveFallbackAllowed = allowLiveFallback == true;
+            var liveGapsRequested = includeGaps == true;
+            var cacheKey = $"detail:{accountId}:{combo}:{rivalId}:{effectiveLimit}:{effectiveOffset}:{sortMode}:live={liveFallbackAllowed}:gaps={liveGapsRequested}";
             {
                 var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
                 if (result is not null) return result;
@@ -455,9 +460,20 @@ public static partial class ApiEndpoints
             }
 
             var allSamples = new List<RivalSongSampleRow>();
+            var usedLiveComputation = false;
             if (resolvedCombo.Value.IsProDrumsFamilyScope)
             {
-                allSamples.AddRange(rivalsCalculator.ComputeDirectProDrumsFamilySongSamples(accountId, rivalId));
+                foreach (var inst in instruments)
+                    allSamples.AddRange(metaDb.GetRivalSongSamples(accountId, rivalId, inst));
+
+                if (allSamples.Count == 0 && liveFallbackAllowed)
+                {
+                    var unavailable = ServeProjectionUnavailableIfStale(soloCurrentProjectionBuilder, instruments);
+                    if (unavailable is not null) return unavailable;
+
+                    allSamples.AddRange(rivalsCalculator.ComputeDirectProDrumsFamilySongSamples(accountId, rivalId));
+                    usedLiveComputation = true;
+                }
             }
             else
             {
@@ -471,12 +487,18 @@ public static partial class ApiEndpoints
                         allSamples.AddRange(storedSamples);
                 }
 
-                if (missingSampleInstruments.Count > 0)
+                if (missingSampleInstruments.Count > 0 && liveFallbackAllowed)
+                {
+                    var unavailable = ServeProjectionUnavailableIfStale(soloCurrentProjectionBuilder, instruments);
+                    if (unavailable is not null) return unavailable;
+
                     allSamples.AddRange(rivalsCalculator.ComputeDirectSongSamples(accountId, rivalId, missingSampleInstruments));
+                    usedLiveComputation = true;
+                }
             }
 
             if (allSamples.Count == 0)
-                return Results.NotFound(new { error = "No song data for this rival." });
+                return Results.NotFound(new { error = "No precomputed song data for this rival.", reason = "not_precomputed" });
 
             // Sort
             IEnumerable<RivalSongSampleRow> sorted = sortMode switch
@@ -498,15 +520,53 @@ public static partial class ApiEndpoints
                 .ToDictionary(s => s.track.su, StringComparer.OrdinalIgnoreCase);
             var rivalName = metaDb.GetDisplayName(rivalId);
 
-            // Compute song gaps on-the-fly
-            var gaps = resolvedCombo.Value.IsProDrumsFamilyScope
-                ? rivalsCalculator.ComputeProDrumsFamilySongGaps(accountId, rivalId)
-                : rivalsCalculator.ComputeSongGaps(accountId, rivalId, instruments);
+            IReadOnlyList<object> songsToCompete = Array.Empty<object>();
+            IReadOnlyList<object> yourExclusiveSongs = Array.Empty<object>();
+            if (liveGapsRequested)
+            {
+                var unavailable = ServeProjectionUnavailableIfStale(soloCurrentProjectionBuilder, instruments);
+                if (unavailable is not null) return unavailable;
+
+                var gaps = resolvedCombo.Value.IsProDrumsFamilyScope
+                    ? rivalsCalculator.ComputeProDrumsFamilySongGaps(accountId, rivalId)
+                    : rivalsCalculator.ComputeSongGaps(accountId, rivalId, instruments);
+
+                songsToCompete = gaps.SongsToCompete.Select(g =>
+                {
+                    songLookup.TryGetValue(g.SongId, out var song);
+                    return (object)new
+                    {
+                        g.SongId,
+                        title = song?.track?.tt,
+                        artist = song?.track?.an,
+                        g.Instrument,
+                        g.Score,
+                        g.Rank,
+                    };
+                }).ToList();
+
+                yourExclusiveSongs = gaps.YourExclusives.Select(g =>
+                {
+                    songLookup.TryGetValue(g.SongId, out var song);
+                    return (object)new
+                    {
+                        g.SongId,
+                        title = song?.track?.tt,
+                        artist = song?.track?.an,
+                        g.Instrument,
+                        g.Score,
+                        g.Rank,
+                    };
+                }).ToList();
+
+                usedLiveComputation = true;
+            }
 
             var payload = new
             {
                 rival = new { accountId = rivalId, displayName = rivalName },
                 combo,
+                source = usedLiveComputation ? "live" : "precomputed",
                 totalSongs = total,
                 offset = effectiveOffset,
                 limit = effectiveLimit,
@@ -529,32 +589,8 @@ public static partial class ApiEndpoints
                         s.RivalScore,
                     };
                 }).ToList(),
-                songsToCompete = gaps.SongsToCompete.Select(g =>
-                {
-                    songLookup.TryGetValue(g.SongId, out var song);
-                    return new
-                    {
-                        g.SongId,
-                        title = song?.track?.tt,
-                        artist = song?.track?.an,
-                        g.Instrument,
-                        g.Score,
-                        g.Rank,
-                    };
-                }).ToList(),
-                yourExclusiveSongs = gaps.YourExclusives.Select(g =>
-                {
-                    songLookup.TryGetValue(g.SongId, out var song);
-                    return new
-                    {
-                        g.SongId,
-                        title = song?.track?.tt,
-                        artist = song?.track?.an,
-                        g.Instrument,
-                        g.Score,
-                        g.Rank,
-                    };
-                }).ToList(),
+                songsToCompete,
+                yourExclusiveSongs,
             };
             var jsonOpts = httpContext.RequestServices
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
@@ -685,6 +721,22 @@ public static partial class ApiEndpoints
             behindCount = r.BehindCount,
             avgSignedDelta = r.AvgSignedDelta,
         };
+    }
+
+    private static IResult? ServeProjectionUnavailableIfStale(
+        SoloCurrentProjectionBuilder soloCurrentProjectionBuilder,
+        IReadOnlyCollection<string> instruments)
+    {
+        if (soloCurrentProjectionBuilder.AreActiveScopesFreshForInstruments(instruments))
+            return null;
+
+        return Results.Json(
+            new
+            {
+                error = "Live rival comparison requires fresh solo current projections.",
+                reason = "projection_stale",
+            },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
     internal static ResolvedRivalCombo? TryResolveRivalCombo(string? combo)

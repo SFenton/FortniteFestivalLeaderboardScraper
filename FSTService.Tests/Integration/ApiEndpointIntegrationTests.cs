@@ -3714,6 +3714,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task Rivals_GetComboDetail_WithoutStoredSamples_LiveComputesSharedSongs()
     {
         var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var projectionBuilder = _factory.Services.GetRequiredService<SoloCurrentProjectionBuilder>();
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         var userId = "live_rival_user";
         var rivalId = "live_rival_target";
@@ -3737,11 +3738,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             new LeaderboardEntry { AccountId = rivalId, Score = 9_500, Accuracy = 93 },
         });
         db.RecomputeAllRanks();
+        await projectionBuilder.EnsureSchemaAsync();
+        await projectionBuilder.RebuildAllAsync(new SoloCurrentProjectionRebuildOptions { ClearExisting = true });
 
-        var response = await _client.GetAsync($"/api/player/{userId}/rivals/Solo_Guitar/{rivalId}?limit=0");
+        var storedOnlyResponse = await _client.GetAsync($"/api/player/{userId}/rivals/Solo_Guitar/{rivalId}?limit=0");
+        Assert.Equal(HttpStatusCode.NotFound, storedOnlyResponse.StatusCode);
+
+        var response = await _client.GetAsync($"/api/player/{userId}/rivals/Solo_Guitar/{rivalId}?limit=0&allowLiveFallback=true&includeGaps=true");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("live", json.GetProperty("source").GetString());
         Assert.Equal(2, json.GetProperty("totalSongs").GetInt32());
         var songs = json.GetProperty("songs").EnumerateArray().ToList();
         Assert.Contains(songs, song => song.GetProperty("songId").GetString() == "live_shared_1" && song.GetProperty("rankDelta").GetInt32() == -1);
@@ -3755,6 +3762,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task Rivals_GetComboDetail_WithProDrumsFamilyScope_LiveComputesMixedCharts()
     {
         var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var projectionBuilder = _factory.Services.GetRequiredService<SoloCurrentProjectionBuilder>();
         var cymbalsDb = persistence.GetOrCreateInstrumentDb("Solo_PeripheralCymbals");
         var drumsDb = persistence.GetOrCreateInstrumentDb("Solo_PeripheralDrums");
         var userId = "live_family_user";
@@ -3778,12 +3786,18 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         });
         cymbalsDb.RecomputeAllRanks();
         drumsDb.RecomputeAllRanks();
+        await projectionBuilder.EnsureSchemaAsync();
+        await projectionBuilder.RebuildAllAsync(new SoloCurrentProjectionRebuildOptions { ClearExisting = true });
 
-        var response = await _client.GetAsync($"/api/player/{userId}/rivals/pro_drums/{rivalId}?limit=0");
+        var storedOnlyResponse = await _client.GetAsync($"/api/player/{userId}/rivals/pro_drums/{rivalId}?limit=0");
+        Assert.Equal(HttpStatusCode.NotFound, storedOnlyResponse.StatusCode);
+
+        var response = await _client.GetAsync($"/api/player/{userId}/rivals/pro_drums/{rivalId}?limit=0&allowLiveFallback=true");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("pro_drums", json.GetProperty("combo").GetString());
+        Assert.Equal("live", json.GetProperty("source").GetString());
         Assert.Equal(2, json.GetProperty("totalSongs").GetInt32());
         var songs = json.GetProperty("songs").EnumerateArray().ToList();
         Assert.Contains(songs, song =>
@@ -3795,7 +3809,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             song.GetProperty("userInstrument").GetString() == "Solo_PeripheralDrums" &&
             song.GetProperty("rivalInstrument").GetString() == "Solo_PeripheralCymbals");
 
-        var aliasResponse = await _client.GetAsync($"/api/player/{userId}/rivals/180/{rivalId}?limit=0");
+        var aliasResponse = await _client.GetAsync($"/api/player/{userId}/rivals/180/{rivalId}?limit=0&allowLiveFallback=true");
         Assert.Equal(HttpStatusCode.OK, aliasResponse.StatusCode);
         var aliasJson = await aliasResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("pro_drums", aliasJson.GetProperty("combo").GetString());
@@ -3870,6 +3884,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
         var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var projectionBuilder = _factory.Services.GetRequiredService<SoloCurrentProjectionBuilder>();
 
         // Seed instrument DB with asymmetric songs
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -3900,6 +3915,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                      SongId = "shared_song", UserRank = 1, RivalRank = 2, RankDelta = 1, UserScore = 10000, RivalScore = 9000 },
         };
         metaDb.ReplaceRivalsData("gap_user", rivals, samples);
+        await projectionBuilder.EnsureSchemaAsync();
+        await projectionBuilder.RebuildAllAsync(new SoloCurrentProjectionRebuildOptions { ClearExisting = true });
 
         var response = await _client.GetAsync("/api/player/gap_user/rivals/Solo_Guitar/gap_rival");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -3907,6 +3924,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         // Shared songs present
         Assert.Equal(1, json.GetProperty("totalSongs").GetInt32());
+
+        // Stored-only detail keeps the response shape but skips live gap computation by default.
+        Assert.Empty(json.GetProperty("songsToCompete").EnumerateArray());
+        Assert.Empty(json.GetProperty("yourExclusiveSongs").EnumerateArray());
+
+        response = await _client.GetAsync("/api/player/gap_user/rivals/Solo_Guitar/gap_rival?includeGaps=true");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        json = await response.Content.ReadFromJsonAsync<JsonElement>();
 
         // Song gaps present
         var songsToCompete = json.GetProperty("songsToCompete");

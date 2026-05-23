@@ -679,13 +679,13 @@ public sealed class PostScrapeOrchestrator
             return true;
 
         _log.LogWarning(
-            "Cleanup solo current projection refresh skipped because solo scrape coverage was below threshold: {Actual:N0}/{Expected:N0} leaderboards with data ({Coverage:P1}) below required {Required:P1}. Preserving previous current projection.",
+            "Cleanup solo current projection refresh will run despite low solo scrape coverage because projection freshness is publication-critical: {Actual:N0}/{Expected:N0} leaderboards with data ({Coverage:P1}) below required {Required:P1}.",
             actualSoloLeaderboards,
             expectedSoloLeaderboards,
             coverage,
             minimumCoverage);
 
-        return false;
+        return true;
     }
 
     private static bool ShouldPrecomputeDuringPublicationCleanup(ScrapePhase resolvedPhases) =>
@@ -735,7 +735,7 @@ public sealed class PostScrapeOrchestrator
             var result = await builder.RefreshScopesAsync(staleScopes, refreshOptions, ct);
             if (result.FailedScopeCount > 0)
             {
-                _log.LogWarning(
+                _log.LogError(
                     "Cleanup solo current projection refresh completed with failures: {Succeeded:N0}/{ScopeCount:N0} scope(s), {Failed:N0} failed, rows {Deleted:N0}->{Inserted:N0}, elapsed {ElapsedMs:N0}ms.",
                     result.SucceededScopeCount,
                     result.ScopeCount,
@@ -743,6 +743,8 @@ public sealed class PostScrapeOrchestrator
                     result.DeletedRows,
                     result.InsertedRows,
                     result.TotalElapsedMs);
+
+                throw new InvalidOperationException($"Cleanup solo current projection refresh failed for {result.FailedScopeCount} scope(s).");
             }
             else
             {
@@ -754,10 +756,10 @@ public sealed class PostScrapeOrchestrator
                     result.InsertedRows,
                     result.TotalElapsedMs);
             }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Cleanup solo current projection refresh failed. Stale scopes will fall back to snapshot reads and retry next cleanup.");
+
+            var remainingStaleScopes = await builder.LoadStaleScopesAsync(ct);
+            if (remainingStaleScopes.Count > 0)
+                throw new InvalidOperationException($"Cleanup solo current projection refresh left {remainingStaleScopes.Count} stale scope(s).");
         }
         finally
         {

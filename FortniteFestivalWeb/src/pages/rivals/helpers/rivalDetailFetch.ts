@@ -6,13 +6,14 @@ export async function fetchCombinedRivalDetail(
   rivalId: string,
   scopes: readonly string[],
   sort?: string,
+  options?: { allowLiveFallback?: boolean; includeGaps?: boolean },
 ): Promise<RivalDetailResponse> {
   const uniqueScopes = [...new Set(scopes.filter(Boolean))];
   if (uniqueScopes.length === 0) throw new Error('No rival scopes resolved.');
-  if (uniqueScopes.length === 1) return fetchRivalDetail(accountId, uniqueScopes[0]!, rivalId, sort);
+  if (uniqueScopes.length === 1) return fetchRivalDetail(accountId, uniqueScopes[0]!, rivalId, sort, options);
 
   const results = await Promise.allSettled(
-    uniqueScopes.map(scope => fetchRivalDetail(accountId, scope, rivalId, sort)),
+    uniqueScopes.map(scope => fetchRivalDetail(accountId, scope, rivalId, sort, options)),
   );
   const fulfilled = results.filter((result): result is PromiseFulfilledResult<RivalDetailResponse> => result.status === 'fulfilled');
   if (fulfilled.length === 0) {
@@ -33,10 +34,12 @@ export async function fetchCombinedRivalDetail(
   };
 }
 
-function fetchRivalDetail(accountId: string, scope: string, rivalId: string, sort?: string): Promise<RivalDetailResponse> {
+function fetchRivalDetail(accountId: string, scope: string, rivalId: string, sort?: string, options?: { allowLiveFallback?: boolean; includeGaps?: boolean }): Promise<RivalDetailResponse> {
+  if (!sort && !options) return api.getRivalDetail(accountId, scope, rivalId);
+
   return sort
-    ? api.getRivalDetail(accountId, scope, rivalId, sort)
-    : api.getRivalDetail(accountId, scope, rivalId);
+    ? api.getRivalDetail(accountId, scope, rivalId, sort, options)
+    : api.getRivalDetail(accountId, scope, rivalId, undefined, options);
 }
 
 function dedupeSongs(songs: RivalSongComparison[]): RivalSongComparison[] {

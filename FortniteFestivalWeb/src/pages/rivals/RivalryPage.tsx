@@ -73,6 +73,7 @@ export default function RivalryPage() {
   const combos = useMemo(() => resolveRivalCombos(navState, settings), [navState, settings]);
   const combo = combos[0] ?? resolveRivalCombo(navState, settings);
   const comboKey = combos.join(',');
+  const allowLiveFallback = navState?.allowLiveFallback === true;
 
   // Leaderboard rival source: forwarded from RivalDetailPage
   const source = (navState?.source as 'song' | 'leaderboard') ?? 'song';
@@ -102,7 +103,7 @@ export default function RivalryPage() {
 
     const fetchPromise = source === 'leaderboard' && lbInstrument
       ? api.getLeaderboardRivalDetail(lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0], accountId, rivalId, lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3])
-      : fetchCombinedRivalDetail(accountId, rivalId, combos);
+      : fetchCombinedRivalDetail(accountId, rivalId, combos, undefined, allowLiveFallback ? { allowLiveFallback: true } : undefined);
 
     fetchPromise.then(res => {
       if (cancelled) return;
@@ -119,7 +120,7 @@ export default function RivalryPage() {
     });
 
     return () => { cancelled = true; };
-  }, [accountId, rivalId, comboKey, source, lbInstrument, lbRankBy]);
+  }, [accountId, rivalId, comboKey, source, lbInstrument, lbRankBy, allowLiveFallback]);
   /* v8 ignore stop */
 
   /* v8 ignore start -- category/score computation */

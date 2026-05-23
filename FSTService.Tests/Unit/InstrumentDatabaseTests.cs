@@ -405,6 +405,21 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void GetCurrentStatePlayerScores_uses_published_projection_during_public_read_freeze()
+    {
+        InsertSnapshotEntry(816, "song_frozen", "acct_user", 120_000, source: "scrape");
+        InsertSnapshotState("song_frozen", 816, isFinalized: true);
+        InsertProjectionScope("song_frozen", sourceSnapshotId: 815);
+        InsertProjectionEntry("song_frozen", "acct_user", 130_000, source: "projection");
+        SetPublicationState(publishedScrapeId: 815, publicReadsFrozen: true);
+
+        var scores = Db.GetCurrentStatePlayerScores("acct_user", "song_frozen");
+
+        var score = Assert.Single(scores);
+        Assert.Equal(130_000, score.Score);
+    }
+
+    [Fact]
     public void GetCurrentStateSongIdsForAccount_excludes_live_row_when_snapshot_omits_account()
     {
         Db.UpsertEntries("song_kept",
@@ -1643,6 +1658,32 @@ public sealed class InstrumentDatabaseTests : IDisposable
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("source", source);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SetPublicationState(int publishedScrapeId, bool publicReadsFrozen)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO scrape_log (id, started_at, completed_at)
+            VALUES (@publishedScrapeId, @now, @now)
+            ON CONFLICT (id) DO NOTHING;
+
+            INSERT INTO scrape_publication_state
+            (id, published_scrape_id, published_at, public_reads_frozen, public_reads_frozen_at, public_reads_frozen_reason, updated_at)
+            VALUES (TRUE, @publishedScrapeId, @now, @publicReadsFrozen, CASE WHEN @publicReadsFrozen THEN @now ELSE NULL END, CASE WHEN @publicReadsFrozen THEN 'publish' ELSE NULL END, @now)
+            ON CONFLICT (id) DO UPDATE SET
+                published_scrape_id = EXCLUDED.published_scrape_id,
+                published_at = EXCLUDED.published_at,
+                public_reads_frozen = EXCLUDED.public_reads_frozen,
+                public_reads_frozen_at = EXCLUDED.public_reads_frozen_at,
+                public_reads_frozen_reason = EXCLUDED.public_reads_frozen_reason,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("publishedScrapeId", publishedScrapeId);
+        cmd.Parameters.AddWithValue("publicReadsFrozen", publicReadsFrozen);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }

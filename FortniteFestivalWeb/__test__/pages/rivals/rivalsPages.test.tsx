@@ -214,8 +214,8 @@ function RivalryPageQuickLinksHarness() {
 
 function LocationProbe() {
   const location = useLocation();
-  const state = location.state as { comboScope?: string } | null;
-  return <div data-testid="route-probe" data-combo-scope={state?.comboScope ?? ''}>{location.pathname}{location.search}</div>;
+  const state = location.state as { comboScope?: string; allowLiveFallback?: boolean } | null;
+  return <div data-testid="route-probe" data-combo-scope={state?.comboScope ?? ''} data-live-fallback={state?.allowLiveFallback ? 'true' : 'false'}>{location.pathname}{location.search}</div>;
 }
 
 function SettingsUpdater({ settings }: { settings?: Partial<AppSettings> }) {
@@ -447,6 +447,7 @@ describe('RivalsPage', () => {
     const routeProbe = await screen.findByTestId('route-probe');
     expect(routeProbe).toHaveTextContent('/rivals/searched-rival?name=SearchRival');
     expect(routeProbe).toHaveAttribute('data-combo-scope', 'settings');
+    expect(routeProbe).toHaveAttribute('data-live-fallback', 'true');
   });
 });
 
@@ -683,6 +684,33 @@ describe('RivalDetailPage', () => {
 
     expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, '05', rivalId);
     expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'pro_drums', rivalId);
+  });
+
+  it('allows live fallback for details opened from Find Rival', async () => {
+    const accountId = 'test-detail-live-fallback';
+    const rivalId = 'rival-live-fallback';
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId, displayName: 'TestPlayer' }));
+    localStorage.setItem('fst:appSettings', JSON.stringify(visibleInstrumentSettings({ showLead: true })));
+
+    render(
+      <TestProviders
+        route={{
+          pathname: `/rivals/${rivalId}`,
+          search: '?name=LiveFallbackRival',
+          state: { comboScope: 'settings', rivalName: 'LiveFallbackRival', allowLiveFallback: true },
+        }}
+        accountId={accountId}
+      >
+        <Routes>
+          <Route path="/rivals/:rivalId" element={<RivalDetailPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    await advancePastSpinner();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+
+    expect(mockApi.getRivalDetail).toHaveBeenCalledWith(accountId, 'Solo_Guitar', rivalId, undefined, { allowLiveFallback: true });
   });
 
   it('keeps fixed combo rival detail pinned when visible instruments change', async () => {

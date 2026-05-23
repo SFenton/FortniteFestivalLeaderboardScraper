@@ -486,6 +486,12 @@ describe('api/client', () => {
       await api.getRivalDetail('acc-1', 'Solo_Guitar', 'r1', 'they_lead');
       expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=they_lead', { headers: {} });
     });
+
+    it('passes explicit live fallback options for Find Rival', async () => {
+      mockFetchOk({ rival: { accountId: 'r1', displayName: null }, combo: 'Solo_Guitar', totalSongs: 0, offset: 0, limit: 0, sort: 'closest', songs: [] });
+      await api.getRivalDetail('acc-1', 'Solo_Guitar', 'r1', 'closest', { allowLiveFallback: true, includeGaps: true });
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=closest&allowLiveFallback=true&includeGaps=true', { headers: {} });
+    });
   });
 
   describe('error handling', () => {

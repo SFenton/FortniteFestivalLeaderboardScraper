@@ -176,6 +176,74 @@ public sealed class SoloCurrentProjectionBuilder
         return scopes;
     }
 
+    public bool AreActiveScopesFreshForInstruments(IReadOnlyCollection<string> instruments)
+    {
+        var requestedInstruments = instruments
+            .Where(static instrument => !string.IsNullOrWhiteSpace(instrument))
+            .Select(static instrument => instrument.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (requestedInstruments.Length == 0)
+            return true;
+
+        using var conn = _dataSource.OpenConnection();
+        if (!TableExists(conn, ScopeTable))
+            return false;
+
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"""
+                WITH requested AS (
+                    SELECT unnest(@instruments::text[]) AS instrument
+                ), publication AS (
+                    SELECT COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
+                           (SELECT published_scrape_id FROM scrape_publication_state WHERE id = TRUE) AS published_scrape_id
+                ), status_by_instrument AS (
+                    SELECT requested.instrument,
+                           EXISTS (
+                               SELECT 1
+                               FROM {ScopeTable} scope
+                               WHERE scope.instrument = requested.instrument
+                                 AND scope.status = 'ready'
+                           ) AS has_ready_scope,
+                           NOT EXISTS (
+                               SELECT 1
+                               FROM leaderboard_snapshot_state state
+                               LEFT JOIN {ScopeTable} scope
+                                 ON scope.song_id = state.song_id
+                                AND scope.instrument = state.instrument
+                               WHERE state.instrument = requested.instrument
+                                 AND state.is_finalized = TRUE
+                                 AND state.active_snapshot_id IS NOT NULL
+                                 AND (
+                                     scope.song_id IS NULL
+                                     OR scope.status <> 'ready'
+                                     OR scope.source_snapshot_id IS DISTINCT FROM
+                                         CASE
+                                             WHEN publication.public_reads_frozen
+                                              AND publication.published_scrape_id IS NOT NULL
+                                                 THEN publication.published_scrape_id
+                                             ELSE state.active_snapshot_id
+                                         END
+                                 )
+                           ) AS has_no_stale_active_scope
+                    FROM requested
+                    CROSS JOIN publication
+                )
+                SELECT COALESCE(bool_and(has_ready_scope AND has_no_stale_active_scope), FALSE)
+                FROM status_by_instrument
+                """;
+            cmd.Parameters.AddWithValue("instruments", requestedInstruments);
+            return Convert.ToBoolean(cmd.ExecuteScalar());
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            return false;
+        }
+    }
+
     public async Task<SoloCurrentProjectionRebuildResult> RebuildAllAsync(
         SoloCurrentProjectionRebuildOptions? options = null,
         CancellationToken ct = default)

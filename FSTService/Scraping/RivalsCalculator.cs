@@ -283,12 +283,27 @@ public sealed class RivalsCalculator
             }
         }
 
+        foreach (var rivalId in rivalRows
+            .Where(r => ComboIds.IsProDrumsFamilyScope(r.InstrumentCombo))
+            .Select(r => r.RivalAccountId)
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            sampleRows.AddRange(ComputeDirectProDrumsFamilySongSamples(userId, rivalId)
+                .OrderBy(row => Math.Abs(row.RankDelta))
+                .Take(MaxSamplesPerRivalPerInstrument));
+        }
+
+        var dedupedSampleRows = sampleRows
+            .GroupBy(row => (row.UserId, row.RivalAccountId, row.Instrument, row.SongId))
+            .Select(group => group.First())
+            .ToList();
+
         var comboCount = rivalRows.Select(r => r.InstrumentCombo).Distinct().Count();
 
         return new RivalsResult
         {
             Rivals = rivalRows,
-            Samples = sampleRows,
+            Samples = dedupedSampleRows,
             CombosComputed = comboCount,
         };
     }

@@ -322,7 +322,7 @@ export default function RivalsPage() {
 
   const handleFindRivalSelect = (player: AccountSearchResult) => {
     navigate(Routes.rivalDetail(player.accountId, player.displayName), {
-      state: { comboScope: RIVAL_COMBO_SCOPE_SETTINGS, rivalName: player.displayName },
+      state: { comboScope: RIVAL_COMBO_SCOPE_SETTINGS, rivalName: player.displayName, allowLiveFallback: true },
     });
   };
   /* v8 ignore stop */

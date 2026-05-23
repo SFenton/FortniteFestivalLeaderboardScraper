@@ -33,6 +33,40 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
         Assert.Equal(["song_failed", "song_missing", "song_stale"], scopeIds);
     }
 
+    [Fact]
+    public async Task AreActiveScopesFreshForInstruments_requires_ready_matching_active_snapshots()
+    {
+        var builder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await builder.EnsureSchemaAsync();
+
+        InsertSnapshotState("song_fresh", 42);
+        InsertProjectionScope("song_fresh", sourceSnapshotId: 42, status: "ready");
+
+        Assert.True(builder.AreActiveScopesFreshForInstruments([_fixture.Db.Instrument]));
+
+        InsertSnapshotState("song_stale", 43);
+        InsertProjectionScope("song_stale", sourceSnapshotId: 42, status: "ready");
+
+        Assert.False(builder.AreActiveScopesFreshForInstruments([_fixture.Db.Instrument]));
+    }
+
+    [Fact]
+    public async Task AreActiveScopesFreshForInstruments_uses_published_snapshot_during_public_read_freeze()
+    {
+        var builder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await builder.EnsureSchemaAsync();
+
+        InsertSnapshotState("song_frozen", 816);
+        InsertProjectionScope("song_frozen", sourceSnapshotId: 815, status: "ready");
+        SetPublicationState(publishedScrapeId: 815, publicReadsFrozen: true);
+
+        Assert.True(builder.AreActiveScopesFreshForInstruments([_fixture.Db.Instrument]));
+    }
+
     private void InsertSnapshotState(string songId, long activeSnapshotId)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -67,6 +101,32 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
         cmd.Parameters.AddWithValue("instrument", _fixture.Db.Instrument);
         cmd.Parameters.AddWithValue("sourceSnapshotId", sourceSnapshotId.HasValue ? sourceSnapshotId.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("status", status);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SetPublicationState(int publishedScrapeId, bool publicReadsFrozen)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO scrape_log (id, started_at, completed_at)
+            VALUES (@publishedScrapeId, @now, @now)
+            ON CONFLICT (id) DO NOTHING;
+
+            INSERT INTO scrape_publication_state
+            (id, published_scrape_id, published_at, public_reads_frozen, public_reads_frozen_at, public_reads_frozen_reason, updated_at)
+            VALUES (TRUE, @publishedScrapeId, @now, @publicReadsFrozen, CASE WHEN @publicReadsFrozen THEN @now ELSE NULL END, CASE WHEN @publicReadsFrozen THEN 'publish' ELSE NULL END, @now)
+            ON CONFLICT (id) DO UPDATE SET
+                published_scrape_id = EXCLUDED.published_scrape_id,
+                published_at = EXCLUDED.published_at,
+                public_reads_frozen = EXCLUDED.public_reads_frozen,
+                public_reads_frozen_at = EXCLUDED.public_reads_frozen_at,
+                public_reads_frozen_reason = EXCLUDED.public_reads_frozen_reason,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("publishedScrapeId", publishedScrapeId);
+        cmd.Parameters.AddWithValue("publicReadsFrozen", publicReadsFrozen);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }

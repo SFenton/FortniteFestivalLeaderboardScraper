@@ -7,6 +7,7 @@ export type RivalRouteState = {
   combo?: string;
   comboScope?: typeof RIVAL_COMBO_SCOPE_SETTINGS;
   rivalName?: string;
+  allowLiveFallback?: boolean;
   source?: 'song' | 'leaderboard';
   instrument?: string;
   rankBy?: string;
@@ -25,10 +26,12 @@ export function resolveRivalCombos(state: RivalRouteState | null, settings: AppS
   return [state?.combo ?? deriveRivalScopeFromSettings(settings) ?? getEnabledInstruments(settings)[0] ?? 'Solo_Guitar'];
 }
 
-export function rivalComboStateForNavigation(state: RivalRouteState | null, combo: string | undefined): Pick<RivalRouteState, 'combo' | 'comboScope'> {
+export function rivalComboStateForNavigation(state: RivalRouteState | null, combo: string | undefined): Pick<RivalRouteState, 'combo' | 'comboScope' | 'allowLiveFallback'> {
+  const liveFallbackState = state?.allowLiveFallback ? { allowLiveFallback: true } : {};
+
   if (state?.comboScope === RIVAL_COMBO_SCOPE_SETTINGS) {
-    return { comboScope: RIVAL_COMBO_SCOPE_SETTINGS };
+    return { comboScope: RIVAL_COMBO_SCOPE_SETTINGS, ...liveFallbackState };
   }
 
-  return combo ? { combo } : {};
+  return combo ? { combo, ...liveFallbackState } : liveFallbackState;
 }
