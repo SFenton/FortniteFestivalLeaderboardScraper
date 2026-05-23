@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -473,6 +474,7 @@ function ServiceInfoRows({ rows, styles }: { rows: ServiceInfoRowItem[]; styles:
 }
 
 export default function SettingsPage() {
+  useSetPageReady(true);
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { settings, updateSettings, resetSettings } = useSettings();

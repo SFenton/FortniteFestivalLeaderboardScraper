@@ -109,7 +109,9 @@ import MobileHeader from './components/shell/mobile/MobileHeader';
 import { HEADER_NOTIFICATION_SWAP_FADE_MS, type HeaderNotificationVisualState } from './components/shell/HeaderActions';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { PageQuickLinksProvider, usePageQuickLinksController } from './contexts/PageQuickLinksContext';
+import { PageReadyProvider, usePageReady } from './contexts/PageReadyContext';
 import { BandFilterActionProvider, type BandFilterActionContextValue } from './contexts/BandFilterActionContext';
+import { FabVisibilityProvider } from './contexts/FabVisibilityContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings, visibleInstruments, visiblePathInstruments } from './contexts/SettingsContext';
 import { useShopState } from './hooks/data/useShopState';
@@ -118,7 +120,9 @@ import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
 import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
-import FloatingActionButton, { type ActionItem } from './components/shell/fab/FloatingActionButton';
+import MobileFloatingActionButton from './components/shell/fab/MobileFloatingActionButton';
+import ComboInstrumentFabAccessory from './components/shell/fab/ComboInstrumentFabAccessory';
+import type { ActionItem } from './components/shell/fab/FloatingActionButton';
 import { InstrumentIcon } from './components/display/InstrumentIcons';
 import SearchModal from './components/search/SearchModal';
 import MobileNotificationsModal, { filterSurfaceNotifications, type MobileNotification } from './components/notifications/MobileNotificationsModal';
@@ -168,17 +172,6 @@ const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
 const MOCK_NOTIFICATION_SOURCE_VERSION = 'mock-source-2026-05-09';
 const PROFILE_SEARCH_TARGETS: readonly SearchTarget[] = ['players', 'bands'];
 const PLAYER_BANDS_ACTIVE_FILTER_GROUPS = new Set(['duos', 'trios', 'quads']);
-const FAB_COMBO_INSTRUMENT_ICON_SIZE = Size.iconSm;
-const FAB_COMBO_INSTRUMENTS_STYLE = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 4,
-  lineHeight: 0,
-} as const;
-const FAB_COMBO_INSTRUMENT_ICON_STYLE = {
-  display: 'block',
-  flexShrink: 0,
-} as const;
 
 function ManualRouteElement() {
   const { flags, resolved } = useFeatureFlagsState();
@@ -218,9 +211,11 @@ export default function App() {
         <PageQuickLinksProvider>
           <SearchQueryProvider>
             <HashRouter>
+              <PageReadyProvider>
               <ScrollContainerProvider>
               <AppShell />
               </ScrollContainerProvider>
+              </PageReadyProvider>
             </HashRouter>
           </SearchQueryProvider>
         </PageQuickLinksProvider>
@@ -302,31 +297,6 @@ export function mergePageQuickLinksIntoFabGroups(
     ...actionGroups,
     ...otherGroups.filter(group => group.length > 0),
   ];
-}
-
-function MobileFloatingActionButton(props: React.ComponentProps<typeof FloatingActionButton>) {
-  const actionGroups = props.actionGroups ?? [];
-  const hasActions = actionGroups.some(group => group.length > 0);
-  const hasSideActions = (props.sideActions?.length ?? 0) > 0;
-  if (!props.defaultOpen && !hasActions && !hasSideActions && !props.directAction) return null;
-  return <FloatingActionButton {...props} actionGroups={actionGroups} />;
-}
-
-function ComboInstrumentFabAccessory({ instruments }: { instruments: readonly ServerInstrumentKey[] }) {
-  if (instruments.length === 0) return null;
-
-  return (
-    <span data-testid="fab-band-filter-instruments" aria-hidden="true" style={FAB_COMBO_INSTRUMENTS_STYLE}>
-      {instruments.map((instrument, index) => (
-        <InstrumentIcon
-          key={`${instrument}:${index}`}
-          instrument={instrument}
-          size={FAB_COMBO_INSTRUMENT_ICON_SIZE}
-          style={FAB_COMBO_INSTRUMENT_ICON_STYLE}
-        />
-      ))}
-    </span>
-  );
 }
 
 function resolveLeaderboardInstrument(search: string): ServerInstrumentKey {
@@ -864,7 +834,6 @@ function AppShell() {
       onPress: () => pageQuickLinks.openPageQuickLinks(),
     }]
     : [];
-  const songsQuickLinksAvailable = pageQuickLinks.hasPageQuickLinks && pageQuickLinks.pageQuickLinks != null;
   const songDetailId = getSongDetailId(location.pathname);
   const songDetailShopUrl = songDetailId ? getShopUrl(songDetailId) : undefined;
   const showSongDetailShopAction = !!songDetailId && isShopVisible && !!songDetailShopUrl;
@@ -890,13 +859,23 @@ function AppShell() {
       bandFilterFabActions,
       mergePageQuickLinksIntoFabGroups(quickLinksActions, pageSpecificActions, ...groups),
     );
-  const songsDockActions: ActionItem[] = [
-    { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: fabSearch.songsSortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
-    ...(player || selectedProfile?.type === 'band' ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: fabSearch.songsFilterActive || bandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: bandFilterIconAccessory, onPress: () => fabSearch.openFilter() }] : []),
-  ];
   const playerBandsFilterGroup = useMemo(() => new URLSearchParams(location.search).get('group') ?? 'all', [location.search]);
   const playerBandsFilterActive = PLAYER_BANDS_ACTIVE_FILTER_GROUPS.has(playerBandsFilterGroup);
   const showMobileFab = isMobile && !notificationsOpen;
+  // Pages publish their content-ready state via `useSetPageReady` (defaults to
+  // true for pages that don't opt in). The FAB row's `ready` prop AND's with
+  // this so the FAB reveals in lockstep with the page's own staggered content.
+  const pageReady = usePageReady();
+  const isStatisticsRoute = location.pathname === AppRoutes.statistics;
+  const isPlayerDetailRoute = RoutePatterns.player.test(location.pathname);
+  const playerDetailFabReady = isStatisticsRoute
+    ? pageReady
+    : pageReady && playerSelectSideActions.length > 0;
+  const bandDetailFabReady = pageReady && (
+    bandSelectSideActions.length > 0
+    || bandFilterFabActions.length > 0
+    || pageQuickLinks.hasPageQuickLinks
+  );
   const isBandRankingsRoute = /^\/leaderboards\/bands\/[^/]+$/.test(location.pathname);
   const leaderboardBandComboSideActions = leaderboardBandComboFabActions.map(action => ({ ...action, iconOnly: true }));
   const showBandRankingsMetricFab = isBandRankingsRoute && settings.enableExperimentalRanks && fabSearch.leaderboardMetricReady;
@@ -905,6 +884,7 @@ function AppShell() {
   return (
     <BandFilterActionProvider value={bandFilterActionValue}>
     <PlayerDataProvider accountId={player?.accountId}>
+    <FabVisibilityProvider mobileFabHidden={!showMobileFab}>
     <div style={appStyles.shell}>
       <ScrollToTop />
 
@@ -987,19 +967,10 @@ function AppShell() {
 
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} selectedProfile={selectedProfile} activeTab={activeTab} onTabClick={handleTabClick} />}
-      {showMobileFab && location.pathname === AppRoutes.songs && (
-        <MobileFloatingActionButton
-          mode="songs"
-          defaultOpen
-          placeholder={t('songs.searchPlaceholder')}
-          dockActions={fabSearch.songsActionsReady ? songsDockActions : []}
-          ariaLabel={songsQuickLinksAvailable ? getFabQuickLinksActionLabel(t) : undefined}
-          directAction={songsQuickLinksAvailable}
-          onPress={songsQuickLinksAvailable ? () => pageQuickLinks.openPageQuickLinks() : () => {}}
-        />
-      )}
       {showMobileFab && location.pathname === AppRoutes.suggestions && fabSearch.suggestionsActionsReady && (
         <MobileFloatingActionButton
+          pageKey="suggestions"
+          ready={pageReady}
           mode="players"
           ariaLabel={t('common.filterSuggestions')}
           icon={<IoFunnel size={Size.iconFab} />}
@@ -1012,6 +983,8 @@ function AppShell() {
       )}
       {showMobileFab && location.pathname === AppRoutes.settings && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
+          pageKey="settings"
+          ready={pageReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           directAction
@@ -1020,23 +993,29 @@ function AppShell() {
       )}
       {showMobileFab && location.pathname === AppRoutes.manual && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
+          pageKey="manual"
+          ready={pageReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           directAction
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && (location.pathname === AppRoutes.statistics || RoutePatterns.player.test(location.pathname)) && (pageQuickLinks.hasPageQuickLinks || statisticsSideActions.length > 0 || playerSelectSideActions.length > 0) && (
+      {showMobileFab && (isStatisticsRoute || isPlayerDetailRoute) && (
         <MobileFloatingActionButton
+          pageKey={isStatisticsRoute ? 'statistics' : `player:${location.pathname}`}
+          ready={playerDetailFabReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           sideActions={[...statisticsSideActions, ...playerSelectSideActions]}
-          directAction={pageQuickLinks.hasPageQuickLinks}
+          directAction={isPlayerDetailRoute || pageQuickLinks.hasPageQuickLinks}
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
-      {showMobileFab && RoutePatterns.history.test(location.pathname) && (fabSearch.playerHistoryActionsReady || pageQuickLinks.hasPageQuickLinks || bandFilterFabActions.length > 0) && (
+      {showMobileFab && RoutePatterns.history.test(location.pathname) && (
         <MobileFloatingActionButton
+          pageKey="history"
+          ready={pageReady}
           mode="players"
           actionGroups={withPageQuickLinks(
             fabSearch.playerHistoryActionsReady ? [
@@ -1046,8 +1025,10 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {showMobileFab && RoutePatterns.songDetail.test(location.pathname) && (pageQuickLinks.hasPageQuickLinks || songDetailSideActions.length > 0) && (
+      {showMobileFab && RoutePatterns.songDetail.test(location.pathname) && (
         <MobileFloatingActionButton
+          pageKey="songDetail"
+          ready={pageReady}
           mode="players"
           ariaLabel={pageQuickLinks.hasPageQuickLinks ? getFabQuickLinksActionLabel(t) : undefined}
           sideActions={songDetailSideActions}
@@ -1057,6 +1038,8 @@ function AppShell() {
       )}
       {showMobileFab && location.pathname === AppRoutes.shop && (
         <MobileFloatingActionButton
+          pageKey="shop"
+          ready={pageReady}
           mode="players"
           actionGroups={withPageQuickLinks(
             fabSearch.shopActionsReady && !isNarrowGrid ? [{
@@ -1068,8 +1051,10 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {showMobileFab && location.pathname === AppRoutes.leaderboards && (pageQuickLinks.hasPageQuickLinks || leaderboardsSideActions.length > 0) && (
+      {showMobileFab && location.pathname === AppRoutes.leaderboards && (
         <MobileFloatingActionButton
+          pageKey="leaderboards"
+          ready={pageReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           sideActions={leaderboardsSideActions}
@@ -1079,6 +1064,8 @@ function AppShell() {
       )}
       {showMobileFab && showBandRankingsMetricFab && (
         <MobileFloatingActionButton
+          pageKey="bandRankings:metric"
+          ready={pageReady}
           mode="players"
           ariaLabel={t('rankings.changeRanking')}
           icon={<IoOptions size={Size.iconFab} />}
@@ -1089,6 +1076,8 @@ function AppShell() {
       )}
       {showMobileFab && isBandRankingsRoute && bandRankingsComboOnlyAction && (
         <MobileFloatingActionButton
+          pageKey="bandRankings:combo"
+          ready={pageReady}
           mode="players"
           ariaLabel={bandRankingsComboOnlyAction.label}
           icon={bandRankingsComboOnlyAction.icon}
@@ -1107,6 +1096,8 @@ function AppShell() {
         ];
         return (
         <MobileFloatingActionButton
+          pageKey={`leaderboards:${location.pathname}`}
+          ready={pageReady}
           mode="players"
           actionGroups={withPageQuickLinks(
             leaderboardActions,
@@ -1117,6 +1108,8 @@ function AppShell() {
       })()}
       {showMobileFab && RoutePatterns.songBandLeaderboard.test(location.pathname) && leaderboardBandComboFabActions[0] && (
         <MobileFloatingActionButton
+          pageKey="songBandLeaderboard"
+          ready={pageReady}
           mode="players"
           ariaLabel={leaderboardBandComboFabActions[0].label}
           icon={leaderboardBandComboFabActions[0].icon}
@@ -1129,6 +1122,8 @@ function AppShell() {
       )}
       {showMobileFab && RoutePatterns.rivals.test(location.pathname) && (
         <MobileFloatingActionButton
+          pageKey="rivals"
+          ready={pageReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           sideActions={[
@@ -1143,12 +1138,14 @@ function AppShell() {
               onPress: () => fabSearch.rivalsFindRival(),
             }] : []),
           ]}
-          directAction={pageQuickLinks.hasPageQuickLinks}
+          directAction
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
       {showMobileFab && RoutePatterns.playerBands.test(location.pathname) && fabSearch.bandActionsReady && (
         <MobileFloatingActionButton
+          pageKey="playerBands"
+          ready={pageReady}
           mode="players"
           ariaLabel={t('common.filterBands')}
           icon={<IoFunnel size={Size.iconFab} />}
@@ -1158,17 +1155,21 @@ function AppShell() {
           onPress={() => fabSearch.openBandFilter()}
         />
       )}
-      {showMobileFab && RoutePatterns.bands.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (pageQuickLinks.hasPageQuickLinks || bandFilterFabActions.length > 0 || bandSelectSideActions.length > 0) && (
+      {showMobileFab && RoutePatterns.bands.test(location.pathname) && !RoutePatterns.playerBands.test(location.pathname) && (
         <MobileFloatingActionButton
+          pageKey={`bands:${location.pathname}${location.search}`}
+          ready={bandDetailFabReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           sideActions={[...bandFilterFabActions, ...bandSelectSideActions]}
-          directAction={pageQuickLinks.hasPageQuickLinks}
+          directAction={pageQuickLinks.hasPageQuickLinks || bandSelectSideActions.length > 0}
           onPress={() => pageQuickLinks.openPageQuickLinks()}
         />
       )}
       {showMobileFab && location.pathname === AppRoutes.compete && pageQuickLinks.hasPageQuickLinks && (
         <MobileFloatingActionButton
+          pageKey="compete"
+          ready={pageReady}
           mode="players"
           ariaLabel={getFabQuickLinksActionLabel(t)}
           sideActions={[
@@ -1195,6 +1196,8 @@ function AppShell() {
         const profileLabel = rivalName ? t('common.viewNameProfile', { name: rivalName }) : t('common.viewProfile');
         return currentRivalId ? (
         <MobileFloatingActionButton
+          pageKey={`rivalDetail:${currentRivalId}`}
+          ready={pageReady}
           mode="players"
           ariaLabel={pageQuickLinks.hasPageQuickLinks ? getFabQuickLinksActionLabel(t) : undefined}
           sideActions={[{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(getPlayerProfileRoute(currentRivalId, selectedProfile)) }]}
@@ -1214,6 +1217,8 @@ function AppShell() {
 
         return currentRivalId ? (
         <MobileFloatingActionButton
+          pageKey={`rivalry:${currentRivalId}:${hasExplicitMode ? 'mode' : 'main'}`}
+          ready={pageReady}
           mode="players"
           ariaLabel={showQuickLinksFab ? getFabQuickLinksActionLabel(t) : undefined}
           sideActions={[{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(getPlayerProfileRoute(currentRivalId, selectedProfile)) }]}
@@ -1224,6 +1229,8 @@ function AppShell() {
       })()}
       {showMobileFab && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.statistics && location.pathname !== AppRoutes.settings && location.pathname !== AppRoutes.manual && location.pathname !== AppRoutes.shop && location.pathname !== AppRoutes.compete && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.player.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.songBandLeaderboard.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && !RoutePatterns.bands.test(location.pathname) && (
         <MobileFloatingActionButton
+          pageKey={`fallback:${location.pathname}`}
+          ready={pageReady}
           mode="players"
           actionGroups={withPageQuickLinks(
             pageQuickLinks.hasPageQuickLinks || fabSearch.playerPageSelect ? [
@@ -1273,6 +1280,7 @@ function AppShell() {
       )}
       {/* v8 ignore stop */}
     </div>
+    </FabVisibilityProvider>
     </PlayerDataProvider>
     </BandFilterActionProvider>
   );

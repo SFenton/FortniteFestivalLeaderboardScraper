@@ -1,6 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- page follows the app's inline theme style pattern */
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { IoBagHandle, IoChevronBack, IoChevronForward, IoCompass, IoMusicalNotes, IoPeople, IoPhonePortrait, IoSettings, IoSparkles, IoStatsChart, IoSync, IoTrophy } from 'react-icons/io5';
 import {
   Align, Border, BoxSizing, Colors, CssValue, Display, Font, Gap, Layout, LineHeight,
@@ -206,6 +207,7 @@ function subsectionCarouselTitleKey(section: ManualSection, subsection: ManualSu
 }
 
 export default function ManualPage() {
+  useSetPageReady(true);
   const { t } = useTranslation();
   const styles = useStyles();
   const scrollContainerRef = useScrollContainer();

@@ -10,6 +10,7 @@ import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { useSongLookups } from '../../hooks/data/useSongLookups';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import PressableButton from '../../components/common/PressableButton';
@@ -129,6 +130,7 @@ export default function RivalryPage() {
   /* v8 ignore stop */
 
   const { phase, shouldStagger } = usePageTransition(`rivalry:${cacheKey}:${mode}`, !loading, hasCachedData);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { forDelay: stagger, clearAnim } = useStagger(shouldStagger);
 
   const styles = useRivalsSharedStyles();

@@ -12,6 +12,7 @@ import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { LoadPhase } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
 import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS, CONTENT_OUT_MS, PointerEvents } from '@festival/theme';
@@ -181,6 +182,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     && (hasRankTiers || instrumentRankingQueries.every(q => q.data != null))
     && historyAllCached;
   const { phase: loadPhase, triggerContentOut } = useLoadPhase(dataReady, { skipAnimation: skipAnim || allCached });
+  useSetPageReady(loadPhase === LoadPhase.ContentIn);
   triggerContentOutRef.current = triggerContentOut;
 
   // When content-out finishes and phase reaches Loading, invalidate queries so fresh data arrives

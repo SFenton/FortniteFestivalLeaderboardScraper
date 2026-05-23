@@ -18,6 +18,7 @@ import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useStagger } from '../../hooks/ui/useStagger';
 import Page from '../Page';
 import PlayerBandCard, { formatPlayerBandNames } from '../player/components/PlayerBandCard';
@@ -106,6 +107,7 @@ export default function PlayerBandsPage() {
   }, [data, group, page, setRoute, totalPages]);
 
   const { phase, shouldStagger } = usePageTransition(`playerBands:${accountId}:${group}:${page}`, !loading);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   const styles = useStyles();
 

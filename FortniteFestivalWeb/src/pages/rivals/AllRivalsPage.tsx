@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
@@ -219,6 +220,7 @@ export default function AllRivalsPage() {
   // ─── UI hooks ────────────────────────────────────────────────
 
   const { phase, shouldStagger } = usePageTransition(`rivals-all:${cacheKey}`, !loading, hasCachedData);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { forDelay: stagger, next: nextStagger, clearAnim } = useStagger(shouldStagger);
 
   if (!accountId) {

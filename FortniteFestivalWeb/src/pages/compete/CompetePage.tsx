@@ -35,6 +35,7 @@ import { Routes } from '../../routes';
 import RivalRow from '../rivals/components/RivalRow';
 import { ActionPill } from '../../components/common/ActionPill';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import {
@@ -182,6 +183,7 @@ export default function CompetePage() {
   const isReady = hasCachedData || liveReady;
   const hasError = allLeaderboardsErrored;
   const { phase, shouldStagger } = usePageTransition(`compete:${competeViewKey}`, isReady, hasCachedData);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
   const reserveTenDigitScoreWidth = true;

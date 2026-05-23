@@ -39,6 +39,7 @@ import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useScrollFade } from '../../hooks/ui/useScrollFade';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import FadeIn from '../../components/page/FadeIn';
 import { CategoryCard } from './components/CategoryCard';
@@ -287,6 +288,7 @@ export default function SuggestionsPage({ accountId, selectedBand = null }: Sugg
     : !(isLoading || playerLoading) || categories.length > 0;
   const hasCachedData = categories.length > 0;
   const { phase, shouldStagger } = usePageTransition(`suggestions:${mode}:${accountId ?? ''}:${bandIdentity}`, dataReady, hasCachedData);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const skipAnim = !shouldStagger;
 
   // Per-card scroll fade

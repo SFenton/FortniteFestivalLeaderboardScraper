@@ -23,6 +23,7 @@ import { useBandRankHistory } from '../../hooks/chart/useBandRankHistory';
 import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useSelectedProfile, type SelectedBandProfile } from '../../hooks/data/useSelectedProfile';
@@ -223,6 +224,7 @@ export default function BandPage({ statisticsBand = null }: BandPageProps) {
   const secondaryLoading = !!payload && (bandRankHistory.loading || bandSongsQuery.isLoading || scopedRankingQuery.isLoading || detailScopedRankingQuery.isLoading);
   const hasCachedData = !!payload && bandRankHistory.hasData && bandSongsQuery.data != null;
   const { phase, shouldStagger } = usePageTransition(`band:${scopedPageKey}`, !loading && !secondaryLoading, hasCachedData);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();

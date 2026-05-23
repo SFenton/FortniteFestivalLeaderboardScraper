@@ -7,6 +7,7 @@ import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { COMPACT_PERCENTILE_ROW_HEIGHT, RankingEntry } from './components/RankingEntry';
 import { PaginatedLeaderboard } from '../../components/leaderboard/PaginatedLeaderboard';
@@ -303,6 +304,7 @@ export default function FullRankingsPage() {
 
   const isMobile = useIsMobile();
   const loading = isFetching && !data;
+  useSetPageReady(!loading);
   const useTwoRowPercentile = isMobile && usePercentileMetric;
   const leaderboardRowHeight = useTwoRowPercentile ? COMPACT_PERCENTILE_ROW_HEIGHT : Layout.entryRowHeight;
 

@@ -1,6 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- page uses inline theme style objects */
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { IoChevronForward } from 'react-icons/io5';
 import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, flexColumn, flexBetween, padding } from '@festival/theme';
 import Page from '../Page';
@@ -24,6 +25,7 @@ function formatEcosystem(ecosystem: LicenseManifestEntry['ecosystem']): string {
 }
 
 export default function LicensesPage() {
+  useSetPageReady(true);
   const { t } = useTranslation();
   const styles = useStyles();
   const [selectedEntry, setSelectedEntry] = useState<LicenseManifestEntry | null>(null);

@@ -29,6 +29,7 @@ import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { useNavLinkPress } from '../../../hooks/navigation/useNavLinkPress';
 import { useSelectedProfile } from '../../../hooks/data/useSelectedProfile';
+import { useSetPageReady } from '../../../contexts/PageReadyContext';
 import { useAppliedBandComboFilter } from '../../../contexts/BandFilterActionContext';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { formatBandTeamName } from '../../leaderboards/helpers/bandRankingHelpers';
@@ -168,6 +169,7 @@ export default function LeaderboardPage() {
   const [headerCollapsed, setHeaderCollapsed] = useState(isNarrow);
   const headerPinned = useRef(false);
   const [loadPhase, setLoadPhase] = useState<LoadPhase>(hasCached ? LoadPhase.ContentIn : LoadPhase.Loading);
+  useSetPageReady(loadPhase === LoadPhase.ContentIn);
   // Tracks: 'first' = initial load (stagger everything), 'paginate' = page change (stagger rows only), 'cached' = from cache (no stagger)
   const [animMode, setAnimMode] = useState<'first' | 'paginate' | 'cached'>(skipAllAnim ? 'cached' : 'first');
   const userScrolledRef = useRef(false);

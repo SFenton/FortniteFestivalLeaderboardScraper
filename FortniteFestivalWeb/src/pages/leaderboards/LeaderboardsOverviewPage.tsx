@@ -19,6 +19,7 @@ import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerS
 import { serverInstrumentLabel, type AccountRankingDto, type BandType, type RankingMetric, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import RankByModal from './modals/RankByModal';
 import RankHistoryChart from './components/RankHistoryChart';
 import { useRankHistoryAll } from '../../hooks/chart/useRankHistory';
@@ -225,6 +226,7 @@ export default function LeaderboardsOverviewPage() {
     && (selectedBandMemberAccountIds.length === 0 || selectedMemberRankingsQuery.data != null);
   const allErrored = !isLoading && leaderboardQueries.length > 0 && leaderboardQueries.every(query => query.error);
   const { phase: loadPhase } = useLoadPhase(!isLoading, { skipAnimation: hasCachedData });
+  useSetPageReady(loadPhase === LoadPhase.ContentIn);
 
   const [shouldStagger, setShouldStagger] = useState(!hasCachedData);
   const maxEntriesPerCard = useMemo(

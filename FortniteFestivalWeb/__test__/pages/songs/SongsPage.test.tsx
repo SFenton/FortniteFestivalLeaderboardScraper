@@ -148,7 +148,11 @@ function querySongsMobileHeaderSpacer() {
 
 function expectNoSongsMobileHeaderSpacer() {
   expect(querySongsMobileHeaderSpacer()).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+  // Quick Links button may exist as the mobile FAB (Option B FAB architecture).
+  // Assert only that no header-level Quick Links trigger is rendered.
+  const quickLinksButtons = screen.queryAllByRole('button', { name: 'Quick Links' });
+  const headerQuickLinks = quickLinksButtons.filter(btn => !btn.closest('[data-testid="mobile-fab"]'));
+  expect(headerQuickLinks).toHaveLength(0);
 }
 
 function expectMobileSongsCenterBounds(element: HTMLElement) {
@@ -1432,7 +1436,10 @@ describe('SongsPage quick links', () => {
 
     await settleSongsPage();
 
-    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    // Quick Links may exist as the mobile FAB; assert only that no header trigger renders.
+    const quickLinksButtons = screen.queryAllByRole('button', { name: 'Quick Links' });
+    const headerQuickLinks = quickLinksButtons.filter(btn => !btn.closest('[data-testid="mobile-fab"]'));
+    expect(headerQuickLinks).toHaveLength(0);
     expect(querySongsMobileHeaderSpacer()).toBeNull();
   });
 });

@@ -36,6 +36,7 @@ import { PlayerScoreSortMode as CoreSortMode } from '@festival/core';
 import { LoadPhase } from '@festival/core';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import { useLoadPhase } from '../../../hooks/data/useLoadPhase';
+import { useSetPageReady } from '../../../contexts/PageReadyContext';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import { playerHistorySlides } from './firstRun';
 import { hasVisitedPage, markPageVisited } from '../../../hooks/ui/usePageTransition';
@@ -71,6 +72,7 @@ export default function PlayerHistoryPage() {
   const skipHistoryAnim = hasVisitedPage(historyKey);
   markPageVisited(historyKey);
   const { phase: loadPhase } = useLoadPhase(!loading && !error, { skipAnimation: skipHistoryAnim });
+  useSetPageReady(loadPhase === LoadPhase.ContentIn);
 
   const headerStagger: CSSProperties | undefined = hasFab || skipHistoryAnim
     ? undefined

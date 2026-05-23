@@ -1,11 +1,11 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type ButtonHTMLAttributes, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type AnimationEvent as ReactAnimationEvent, type ButtonHTMLAttributes, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IoClose, IoMenu, IoSearch } from 'react-icons/io5';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { useSearchQuery } from '../../../contexts/SearchQueryContext';
-import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, Isolation, FAB_DISMISS_MS, QUICK_FADE_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
+import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, Font, Isolation, FAB_DISMISS_MS, QUICK_FADE_MS, FADE_DURATION, STAGGER_INTERVAL, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, scale } from '@festival/theme';
 import { safeAreaBottomOffset } from '../../../utils/safeAreaStyles';
 import { useIOSKeyboardPanGuard } from '../../../hooks/ui/useIOSKeyboardPanGuard';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
@@ -62,6 +62,21 @@ interface Props {
   sideActions?: ActionItem[];
   directAction?: boolean;
   onPress: () => void;
+  /**
+   * When true, the dock layout reveal gate starts in the "ready" state so the
+   * surface mounts without a measurement flicker. Set by `MobileFloatingActionButton`
+   * when the owning page has been visited earlier in this session.
+   */
+  initialRevealed?: boolean;
+  /**
+   * Whether the owning page considers its FAB row ready to display. While
+  * false, the entire row (search slot, dock action pills, main FAB,
+  * side actions) is held hidden. When it flips to true, each slot fades
+  * up + in right-to-left with `STAGGER_INTERVAL` between slots. Default
+   * true preserves existing call-site behaviour for sites that haven't
+   * been migrated yet.
+   */
+  ready?: boolean;
 }
 
 type SearchGestureEvent = ReactPointerEvent<HTMLDivElement> | ReactTouchEvent<HTMLDivElement> | ReactMouseEvent<HTMLDivElement>;
@@ -96,6 +111,8 @@ export default function FloatingActionButton({
   sideActions,
   directAction,
   onPress,
+  initialRevealed = false,
+  ready = true,
 }: Props) {
   const { t } = useTranslation();
   const searchVisible = !!defaultOpen;
@@ -107,15 +124,35 @@ export default function FloatingActionButton({
   const [searchFieldContentVisible, setSearchFieldContentVisible] = useState(false);
   const [dockActionsPhase, setDockActionsPhase] = useState<DockActionsPhase>('visible');
   const [dockLabelLayout, setDockLabelLayout] = useState<DockLabelLayout>(DEFAULT_DOCK_LABEL_LAYOUT);
-  const [dockLayoutReady, setDockLayoutReady] = useState(false);
+  const [dockLayoutReady, setDockLayoutReady] = useState(initialRevealed);
+  // Reveal latch: tracks whether the FAB's owning page has signalled ready.
+  // We capture the mount-time ready state in a ref so call sites that don't
+  // opt into `ready` gating (default `ready=true`) render fully visible with
+  // no animation. Only when `ready` flips false→true at runtime (page-owned
+  // FAB waiting for its data) do we play the right-to-left fade-up stagger.
+  const mountedReadyRef = useRef(initialRevealed || ready);
+  const [hasRevealed, setHasRevealed] = useState(mountedReadyRef.current);
+  const [shouldAnimateReveal, setShouldAnimateReveal] = useState(false);
+  const [, bumpRevealRevision] = useState(0);
+  useEffect(() => {
+    if (!hasRevealed && ready) {
+      setHasRevealed(true);
+      if (!initialRevealed) setShouldAnimateReveal(true);
+    }
+  }, [hasRevealed, initialRevealed, ready]);
   const [searchFocused, setSearchFocused] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const scrollContainerRef = useScrollContainer();
   const useSongsDock = mode === 'songs' && searchVisible && dockActions != null;
   const hasSideActions = (sideActions?.length ?? 0) > 0;
   const hasMenuActions = (actionGroups ?? []).some(group => group.length > 0);
-  const hasMainFab = !hasSideActions || directAction || searchVisible || hasMenuActions;
-  const hasDockMainFab = directAction || hasMenuActions;
+  const [directActionLatched, setDirectActionLatched] = useState(Boolean(directAction));
+  useEffect(() => {
+    if (directAction) setDirectActionLatched(true);
+  }, [directAction]);
+  const effectiveDirectAction = Boolean(directAction) || directActionLatched;
+  const hasMainFab = !hasSideActions || effectiveDirectAction || searchVisible || hasMenuActions;
+  const hasDockMainFab = effectiveDirectAction || hasMenuActions;
   const dockActionCount = dockActions?.length ?? 0;
   const dockMeasurementSignature = (dockActions ?? [])
     .map(action => `${action.label}\u001f${action.displayLabel ?? ''}\u001f${action.iconAccessory ? 'accessory' : ''}`)
@@ -138,12 +175,12 @@ export default function FloatingActionButton({
   }, []);
 
   const handleFabPress = useCallback(() => {
-    if (directAction) {
+    if (effectiveDirectAction) {
       onPress();
       return;
     }
     actionsOpen ? closeActions() : openActions();
-  }, [actionsOpen, closeActions, directAction, onPress, openActions]);
+  }, [actionsOpen, closeActions, effectiveDirectAction, onPress, openActions]);
   /* v8 ignore stop */
   const mainFabPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleFabPress });
 
@@ -512,24 +549,86 @@ export default function FloatingActionButton({
   const gateDockInitialTransition = useCallback((style: CSSProperties): CSSProperties => (
     dockLayoutReady ? style : { ...style, transition: CssValue.none }
   ), [dockLayoutReady]);
-  const dockSearchSlotStyle = gateDockInitialTransition(searchExpanded
+  // Per-slot reveal animation. When the FAB mounted already-ready
+  // (`ready=true` from mount, default for call sites that don't opt in)
+  // we render fully visible with no animation. When the page transitioned
+  // not-ready → ready at runtime we play a right-to-left fade-up stagger
+  // (rightmost slot first, working leftward — visually anchored to the FAB).
+  // Each slot's animation style is cached by a stable key the first time it
+  // is emitted; subsequent renders return the same style so React doesn't
+  // strip the in-flight animation when neighbouring slots come and go (which
+  // would otherwise change totals/delays and interrupt already-revealing
+  // slots). The cache lives for the lifetime of this FAB instance — proper
+  // route changes remount the wrapper which re-initialises `initialRevealed`.
+  //
+  // Slots that arrive AFTER the initial reveal window has closed (e.g. main
+  // FAB joining once `pageQuickLinks` registers via effect later) appear
+  // without animation. Otherwise late-joiners visually "stagger in" on their
+  // own which the user reads as the FAB still re-staggering.
+  const revealedSlotsRef = useRef<Map<string, CSSProperties>>(new Map());
+  const settledSlotsRef = useRef<Set<string>>(new Set());
+  const revealWindowEndRef = useRef<number>(0);
+  const getRevealStyle = useCallback((key: string, index: number, total: number): CSSProperties => {
+    if (!hasRevealed) return { opacity: 0 };
+    if (!shouldAnimateReveal) return {};
+    if (settledSlotsRef.current.has(key)) return {};
+    const cached = revealedSlotsRef.current.get(key);
+    if (cached) return cached;
+    // First slot to reveal in this cycle opens the window; later slots that
+    // emit beyond it just appear.
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (revealWindowEndRef.current === 0) {
+      // Total possible stagger ≤ (total-1) * STAGGER_INTERVAL + FADE_DURATION.
+      // Allow a small grace so slots that emit one frame late still animate.
+      revealWindowEndRef.current = now + Math.max(0, total - 1) * STAGGER_INTERVAL + FADE_DURATION;
+    } else if (now > revealWindowEndRef.current) {
+      const skipped: CSSProperties = {};
+      revealedSlotsRef.current.set(key, skipped);
+      return skipped;
+    }
+    const delay = Math.max(0, total - 1 - index) * STAGGER_INTERVAL;
+    const style: CSSProperties = { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` };
+    revealedSlotsRef.current.set(key, style);
+    return style;
+  }, [hasRevealed, shouldAnimateReveal]);
+  const getRevealAnimationHandlers = useCallback((key: string) => ({
+    onAnimationEnd: (event: ReactAnimationEvent<HTMLElement>) => {
+      if (event.animationName !== 'fadeInUp') return;
+      if (settledSlotsRef.current.has(key)) return;
+      settledSlotsRef.current.add(key);
+      revealedSlotsRef.current.set(key, {});
+      bumpRevealRevision(value => value + 1);
+    },
+  }), []);
+  // Slot totals for right-to-left stagger ordering.
+  const dockRevealTotal = 1 + dockActionCount + (hasDockMainFab ? 1 : 0);
+  const sideActionsCount = sideActions?.length ?? 0;
+  const nonDockRevealTotal = sideActionsCount + (hasMainFab ? 1 : 0);
+  const dockSearchSlotStyle: CSSProperties = { ...gateDockInitialTransition(searchExpanded
     ? s.dockSearchExpanded
     : searchInputMounted
       ? { ...s.dockSearchCollapsing, width: dockSearchCollapsedWidth, flexBasis: dockSearchCollapsedWidth }
       : dockSearchTextVisible
         ? { ...s.dockSearchCollapsed, width: dockSearchCollapsedWidth, flexBasis: dockSearchCollapsedWidth, minWidth: dockSearchMinWidth }
-        : { ...s.dockSearchCollapsed, width: dockSearchCollapsedWidth, flexBasis: dockSearchCollapsedWidth });
+        : { ...s.dockSearchCollapsed, width: dockSearchCollapsedWidth, flexBasis: dockSearchCollapsedWidth }), ...getRevealStyle('dock:search', 0, dockRevealTotal) };
   const dockRowStyle = searchInputMounted ? s.dockRowExpanded : dockSearchTextVisible ? s.dockRowLabeled : s.dockRow;
-  const dockVisibleContentStyle = dockLayoutReady ? s.dockVisibleContentReady : s.dockVisibleContentPending;
+  // Hold the entire dock visible content hidden until the page signals ready
+  // and we've finished measuring. After that the per-slot stagger fades each
+  // child up + in from right to left.
+  const dockVisibleContentStyle = hasRevealed && dockLayoutReady ? s.dockVisibleContentReady : s.dockVisibleContentPending;
   const dockAnchorSpacerStyle = searchInputMounted ? s.dockAnchorSpacerExpanded : s.dockAnchorSpacer;
   const getDockActionSlotStyle = useCallback((actionIndex: number) => {
     const actionWidth = dockLabelLayout.actionWidths[actionIndex] ?? Layout.fabSize;
     const sizedSlotStyle = { width: actionWidth, flex: `0 0 ${actionWidth}px` };
-    if (dockActionsPhase === 'visible') return gateDockInitialTransition({ ...s.dockActionSlot, ...sizedSlotStyle });
-    if (dockActionsPhase === 'fadingOut') return gateDockInitialTransition({ ...s.dockActionSlotFadingOut, ...sizedSlotStyle });
-    if (dockActionsPhase === 'expandingIn') return gateDockInitialTransition({ ...s.dockActionSlotExpandingIn, ...sizedSlotStyle });
-    return gateDockInitialTransition(s.dockActionSlotCollapsed);
-  }, [dockActionsPhase, dockLabelLayout.actionWidths, dockLabelsEnabled, gateDockInitialTransition, s.dockActionSlot, s.dockActionSlotCollapsed, s.dockActionSlotExpandingIn, s.dockActionSlotFadingOut]);
+    // Slot index in the dock row: 0 = search, 1+ = action pills, last = main FAB.
+    // Key by position (not action label) so label/icon swaps within the same
+    // page render (e.g. tab toggles) don't re-trigger the reveal animation.
+    const reveal = getRevealStyle(`dock:${actionIndex}`, actionIndex + 1, dockRevealTotal);
+    if (dockActionsPhase === 'visible') return { ...gateDockInitialTransition({ ...s.dockActionSlot, ...sizedSlotStyle }), ...reveal };
+    if (dockActionsPhase === 'fadingOut') return { ...gateDockInitialTransition({ ...s.dockActionSlotFadingOut, ...sizedSlotStyle }), ...reveal };
+    if (dockActionsPhase === 'expandingIn') return { ...gateDockInitialTransition({ ...s.dockActionSlotExpandingIn, ...sizedSlotStyle }), ...reveal };
+    return { ...gateDockInitialTransition(s.dockActionSlotCollapsed), ...reveal };
+  }, [dockActionsPhase, dockLabelLayout.actionWidths, dockLabelsEnabled, dockRevealTotal, gateDockInitialTransition, getRevealStyle, s.dockActionSlot, s.dockActionSlotCollapsed, s.dockActionSlotExpandingIn, s.dockActionSlotFadingOut]);
   const dockFieldContentVisible = searchFieldContentVisible || hasSearchQuery;
   const searchFieldContentStyle = dockFieldContentVisible
     ? s.searchFieldContentVisible
@@ -563,7 +662,7 @@ export default function FloatingActionButton({
     return s.fabSideActionCircle;
   }, [s.fabActionCircle, s.fabActionCircleActive, s.fabActionPill, s.fabActionPillActive, s.fabSideActionCircle, s.fabSideActionCircleAccent, s.fabSideActionCirclePulse]);
 
-  const renderSideAction = useCallback((action: ActionItem) => {
+  const renderSideAction = useCallback((action: ActionItem, index: number) => {
     const content = action.iconOnly ? (
       <>
         {action.icon}
@@ -576,18 +675,19 @@ export default function FloatingActionButton({
         <span style={s.sideActionLabel}>{action.displayLabel ?? action.label}</span>
       </>
     );
-    const style = getSideActionButtonStyle(action);
+    const style = { ...getSideActionButtonStyle(action), ...getRevealStyle(`side:${index}`, index, nonDockRevealTotal) };
     const commonProps = {
       className: action.className,
       style,
       'aria-label': action.label,
       title: action.label,
       'data-testid': 'fab-side-action',
+      ...getRevealAnimationHandlers(`side:${index}`),
     };
     if (action.href) {
       return (
         <a
-          key={action.label}
+          key={`side:${index}`}
           {...commonProps}
           href={action.href}
           target={action.target}
@@ -600,7 +700,7 @@ export default function FloatingActionButton({
     }
     return (
       <FabPressButton
-        key={action.label}
+        key={`side:${index}`}
         type="button"
         {...commonProps}
         onPress={action.onPress}
@@ -608,7 +708,7 @@ export default function FloatingActionButton({
         {content}
       </FabPressButton>
     );
-  }, [getSideActionButtonStyle, s.sideActionLabel]);
+  }, [getRevealAnimationHandlers, getRevealStyle, getSideActionButtonStyle, nonDockRevealTotal, s.sideActionLabel]);
 
   const clearSearchAndFocus = useCallback(() => {
     searchQuery.setQuery('');
@@ -629,7 +729,7 @@ export default function FloatingActionButton({
 
   if (useSongsDock) {
     return (
-      <div ref={containerRef}>
+      <div ref={containerRef} data-testid="mobile-fab">
         <div className="fab-search-dock" style={{ ...s.dockOuter, transform: keyboardTransform, transition: keyboardTransition }}>
           <div ref={dockStageRef} style={s.dockStage} data-testid="fab-dock-stage">
             <div ref={dockLabelMeasureRef} style={s.dockLabelMeasure} aria-hidden="true">
@@ -638,7 +738,7 @@ export default function FloatingActionButton({
                 <span style={s.dockButtonLabel}>{searchButtonLabel}</span>
               </div>
               {(dockActions ?? []).map((action, index) => (
-                <div key={action.label} style={s.fabPill} data-dock-label-measure="control" data-dock-label-index={index + 1}>
+                <div key={`dock-measure:${index}`} style={s.fabPill} data-dock-label-measure="control" data-dock-label-index={index + 1}>
                   {action.icon}
                   {action.iconAccessory ?? <span style={s.dockButtonLabel}>{action.displayLabel ?? action.label}</span>}
                 </div>
@@ -649,6 +749,7 @@ export default function FloatingActionButton({
                 <div
                   ref={searchOuterRef}
                   style={dockSearchSlotStyle}
+                  {...getRevealAnimationHandlers('dock:search')}
                   onPointerDownCapture={searchInputMounted ? handleSearchPressStart : undefined}
                   onPointerUpCapture={searchInputMounted ? handleSearchPressEnd : undefined}
                   onTouchStartCapture={searchInputMounted ? handleSearchPressStart : undefined}
@@ -706,7 +807,7 @@ export default function FloatingActionButton({
                   )}
                 </div>
                 {(dockActions ?? []).map((action, index) => (
-                  <div key={action.label} style={getDockActionSlotStyle(index)}>
+                  <div key={`dock:${index}`} style={getDockActionSlotStyle(index)} {...getRevealAnimationHandlers(`dock:${index}`)}>
                     <FabPressButton
                       type="button"
                       style={getDockActionButtonStyle(action)}
@@ -722,7 +823,7 @@ export default function FloatingActionButton({
                 {hasDockMainFab && <div style={dockAnchorSpacerStyle} aria-hidden="true" />}
               </div>
               {hasDockMainFab && (
-                <div ref={fabContainerRef} style={s.dockFabSlot}>
+                <div ref={fabContainerRef} style={{ ...s.dockFabSlot, ...getRevealStyle('dock:main', 1 + dockActionCount, dockRevealTotal) }} {...getRevealAnimationHandlers('dock:main')}>
                   <button
                     type="button"
                     style={mainFabStyle}
@@ -732,7 +833,7 @@ export default function FloatingActionButton({
                   >
                     {mainFabContent}
                   </button>
-                  {!directAction && popupMounted && (
+                  {!effectiveDirectAction && popupMounted && (
                     <FABMenu
                       groups={actionGroups ?? []}
                       visible={popupVisible}
@@ -749,11 +850,12 @@ export default function FloatingActionButton({
   }
 
   return (
-    <div ref={containerRef}>
+    <div ref={containerRef} data-testid="mobile-fab">
       {searchVisible && (
         <div
           ref={searchOuterRef}
-          style={{ ...s.searchBarOuter, transform: keyboardTransform, transition: keyboardTransition }}
+          style={{ ...s.searchBarOuter, transform: keyboardTransform, transition: keyboardTransition, ...getRevealStyle('searchBar', 0, 1) }}
+          {...getRevealAnimationHandlers('searchBar')}
           onPointerDownCapture={handleSearchPressStart}
           onPointerUpCapture={handleSearchPressEnd}
           onTouchStartCapture={handleSearchPressStart}
@@ -785,7 +887,8 @@ export default function FloatingActionButton({
         )}
         {hasMainFab && (
           <button
-            style={mainFabStyle}
+            style={{ ...mainFabStyle, ...getRevealStyle('main', sideActionsCount, nonDockRevealTotal) }}
+            {...getRevealAnimationHandlers('main')}
             /* v8 ignore start -- action toggle */
             {...mainFabPressHandlers}
             /* v8 ignore stop */
@@ -795,7 +898,7 @@ export default function FloatingActionButton({
             {mainFabContent}
           </button>
         )}
-        {hasMainFab && !directAction && popupMounted && (
+        {hasMainFab && !effectiveDirectAction && popupMounted && (
           <FABMenu
             groups={actionGroups ?? []}
             visible={popupVisible}
@@ -858,7 +961,6 @@ function useFABStyles() {
       height: CssValue.full,
       opacity: 0,
       pointerEvents: PointerEvents.none,
-      transition: `opacity ${DOCK_ACTION_FADE_MS}ms ease`,
     } as CSSProperties,
     dockVisibleContentReady: {
       position: Position.relative,
@@ -866,7 +968,6 @@ function useFABStyles() {
       height: CssValue.full,
       opacity: 1,
       pointerEvents: PointerEvents.none,
-      transition: `opacity ${DOCK_ACTION_FADE_MS}ms ease`,
     } as CSSProperties,
     dockRow: {
       ...flexRow,

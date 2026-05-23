@@ -16,6 +16,7 @@ import SongBandScoreFooter, { SongBandMemberMetadata, formatSongBandAccuracy, ge
 import { useFestival } from '../../../contexts/FestivalContext';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { usePageTransition } from '../../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../../contexts/PageReadyContext';
 import { useStagger } from '../../../hooks/ui/useStagger';
 import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
@@ -175,6 +176,7 @@ export default function SongBandLeaderboardPage() {
   }, [data, goToPage, localEntries, page, totalPages]);
 
   const { phase, shouldStagger } = usePageTransition(`songBandLeaderboard:${songId}:${bandType}:${activeComboId ?? 'all'}:${selectedProfileKey}:${page}`, !loading);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter: hasSelectedFooter });
   const styles = useStyles();

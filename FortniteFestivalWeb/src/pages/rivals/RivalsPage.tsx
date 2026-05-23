@@ -8,6 +8,7 @@ import { useSettings, visibleInstruments } from '../../contexts/SettingsContext'
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { usePageQuickLinks, type PageQuickLinkItem } from '../../hooks/ui/usePageQuickLinks';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { staggerCompletionDelay, useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
@@ -295,6 +296,7 @@ export default function RivalsPage() {
   /* v8 ignore stop */
 
   const { phase, shouldStagger } = usePageTransition(`rivals:${rivalsScopeKey}`, allReady, hasCachedData);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { forDelay: stagger, next: nextStagger, clearAnim } = useStagger(shouldStagger);
   const shared = useRivalsSharedStyles();
   const styles = useMemo(() => ({

@@ -26,6 +26,7 @@ import { useSelectedProfile } from '../../hooks/data/useSelectedProfile';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { bandTypeLabel, coerceBandType } from '../../utils/bandTypes';
@@ -218,6 +219,7 @@ export default function BandRankingsPage() {
   }, [goToPage, pageParam, totalPages]);
 
   const { phase, shouldStagger } = usePageTransition(`bandRankings:${bandType}:${activeComboId ?? 'all'}:${metric}:${selectedBandTeamKey ?? selectedPlayerAccountId ?? 'none'}:${pageParam}`, !loading);
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { forIndex: stagger, clearAnim } = useStagger(shouldStagger);
   const selectedFooterPlacement = isMobileChrome ? 'aboveFab' : 'default';
   useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter: hasSelectedFooter, footerPlacement: selectedFooterPlacement });

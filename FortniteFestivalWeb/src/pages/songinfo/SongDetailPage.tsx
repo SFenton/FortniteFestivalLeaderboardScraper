@@ -32,6 +32,7 @@ import { useAppliedBandComboFilter } from '../../contexts/BandFilterActionContex
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { useShopState } from '../../hooks/data/useShopState';
 import { LoadPhase } from '@festival/core';
 import PathsModal from './components/path/PathsModal';
@@ -447,6 +448,7 @@ export default function SongDetailPage() {
   const skipAnimRef = useRef(allCached);
   const skipAnim = skipAnimRef.current;
   const { phase } = useLoadPhase(allReady, { skipAnimation: allCached });
+  useSetPageReady(phase === LoadPhase.ContentIn);
   const { forDelay: stagger, clearAnim } = useStagger(!skipAnim);
   const hasFab = useIsMobile();
 

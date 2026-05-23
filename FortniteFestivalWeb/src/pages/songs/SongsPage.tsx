@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useQuery } from '@tanstack/react-query';
-import { IoCompass } from 'react-icons/io5';
+import { IoCompass, IoFunnel, IoSwapVerticalSharp } from 'react-icons/io5';
 import { staggerDelay, estimateVisibleCount, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import { useStaggerStyle, buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
@@ -13,6 +13,9 @@ import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import MobileFloatingActionButton from '../../components/shell/fab/MobileFloatingActionButton';
+import ComboInstrumentFabAccessory from '../../components/shell/fab/ComboInstrumentFabAccessory';
+import type { ActionItem } from '../../components/shell/fab/FloatingActionButton';
 import { useSearchQuery } from '../../contexts/SearchQueryContext';
 import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
@@ -602,11 +605,6 @@ export default function SongsPage() {
 
   const sortActive = effectiveSortMode !== 'title' || !settings.sortAscending;
 
-  // Register sort/filter actions for FAB — uses refs so latest closures are always captured
-  const openSortRef = useRef(openSort);
-  const openFilterRef = useRef(openFilter);
-  openSortRef.current = openSort;
-  openFilterRef.current = openFilter;
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, isThrottled, throttleStatusKey, pendingRankUpdate, estimatedRankUpdateMinutes, probeStatusKey, nextRetrySeconds, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted, syncBannerDismissed, dismissSyncBanner } = usePlayerData();
   const [showCompleteBanner, setShowCompleteBanner] = useState(false);
 
@@ -638,17 +636,6 @@ export default function SongsPage() {
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopNew, isShopVisible } = useShopState();
   const filtersActive = isFilterActive(settings.filters, displayInstrumentFilter, isShopVisible, enabledInstruments, isSelectedBand) || displayInstrumentFilter != null;
-  /* v8 ignore start � FAB action registration callbacks */
-  useEffect(() => {
-    fabSearch.registerActions({
-      openSort: () => openSortRef.current(),
-      openFilter: () => openFilterRef.current(),
-      sortActive,
-      filterActive: filtersActive,
-    });
-    return () => fabSearch.registerActions(null);
-  }, [fabSearch, filtersActive, sortActive]);
-  /* v8 ignore stop */
   const hasFilterableProfile = isSelectedBand || !!playerData;
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: hasFilterableProfile, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [hasFilterableProfile, isShopVisible, appSettings.disableShopHighlighting]);
 
@@ -1157,7 +1144,28 @@ export default function SongsPage() {
     ? keyboardAwareMessageStyle ? { ...buildStaggerStyle(200), ...keyboardAwareMessageStyle } : buildStaggerStyle(200)
     : undefined;
 
+  // Mobile FAB: Songs owns its dock actions directly because the search/sort/filter
+  // row is coupled to Songs page state and should not depend on shell registration.
+  const fabSelectedInstruments = bandFilterAction.selectedInstruments;
+  const fabBandFilterActive = fabSelectedInstruments.length > 0;
+  const fabBandFilterAccessory = fabBandFilterActive
+    ? <ComboInstrumentFabAccessory instruments={fabSelectedInstruments} />
+    : undefined;
+  const fabHasFilterPill = !!playerData || isSelectedBand;
+  // FAB content is built unconditionally; the FAB itself gates visibility on
+  // `ready` so search bar, dock pills, and main FAB stay hidden until the
+  // page reports ContentIn, then fade up + in right-to-left with stagger.
+  // On revisit the wrapper passes initialRevealed so nothing re-staggers.
+  const fabReady = loadPhase === LoadPhase.ContentIn;
+  const fabDockActions: ActionItem[] = useMemo(() => [
+    { label: t('common.sortSongs'), displayLabel: t('common.sort', 'Sort'), active: sortActive, icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: openSort },
+    ...(fabHasFilterPill ? [{ label: t('common.filterSongs'), displayLabel: t('common.filter', 'Filter'), active: filtersActive || fabBandFilterActive, icon: <IoFunnel size={Size.iconFab} />, iconAccessory: fabBandFilterAccessory, onPress: openFilter }] : []),
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- openSort/openFilter are stable per-render closures intentionally re-read
+  ], [t, sortActive, filtersActive, fabHasFilterPill, fabBandFilterActive, fabBandFilterAccessory]);
+  const fabHasQuickLinks = pageQuickLinks != null;
+
   return (
+    <>
     <Page
       scrollRestoreKey="songs"
       scrollDeps={[loadPhase, filtered, quickLinkItems.length]}
@@ -1356,6 +1364,18 @@ export default function SongsPage() {
         )}
       </div>
     </Page>
+    <MobileFloatingActionButton
+      pageKey="songs"
+      mode="songs"
+      defaultOpen
+      ready={fabReady}
+      placeholder={t('songs.searchPlaceholder')}
+      dockActions={fabDockActions}
+      ariaLabel={fabHasQuickLinks ? t('songs.quickLinksButton') : undefined}
+      directAction={fabHasQuickLinks}
+      onPress={fabHasQuickLinks ? openQuickLinks : () => {}}
+    />
+    </>
   );
 }
 
