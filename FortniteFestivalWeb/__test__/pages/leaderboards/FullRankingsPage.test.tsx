@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { computeRankWidth } from '../../../src/pages/leaderboards/helpers/rankingHelpers';
-import { DEMO_SWAP_INTERVAL_MS, FADE_DURATION } from '@festival/theme';
+import { DEMO_SWAP_INTERVAL_MS, FADE_DURATION, Gap, Layout } from '@festival/theme';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 
@@ -147,6 +147,7 @@ beforeEach(() => {
       totalScore: 123456,
       maxScorePercent: 0.88,
       songsPlayed: 25,
+      totalChartedSongs: 50,
       fullComboCount: 20,
       computedAt: '2026-01-01T00:00:00Z',
     }],
@@ -164,6 +165,7 @@ beforeEach(() => {
     totalScore: 654321,
     maxScorePercent: 0.76,
     songsPlayed: 20,
+    totalChartedSongs: 50,
     fullComboCount: 12,
     computedAt: '2026-01-01T00:00:00Z',
   });
@@ -265,7 +267,7 @@ describe('FullRankingsPage', () => {
     expect(selectedRowLink).toHaveAttribute('href', '/statistics');
   });
 
-  it('keeps combo rankings text-only in the mobile page header', async () => {
+  it('renders combo rankings as instrument icons in the mobile page header', async () => {
     stubMatchMedia(true);
 
     render(
@@ -281,8 +283,49 @@ describe('FullRankingsPage', () => {
     });
 
     const headerPortal = screen.getByTestId('test-header-portal');
-    expect(headerPortal.querySelector('img[alt]')).toBeNull();
-    expect(within(headerPortal).getByText('Lead + Drums Leaderboards')).toBeTruthy();
+    const iconTitle = within(headerPortal).getByTestId('combo-ranking-title-icons');
+    expect(iconTitle).toHaveAttribute('aria-label', 'Lead + Drums Leaderboards');
+    expect(within(iconTitle).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(iconTitle).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(within(headerPortal).queryByText('Lead + Drums Leaderboards')).toBeNull();
+  });
+
+  it('shows full paths played fraction on mobile combo score rankings', async () => {
+    stubMatchMedia(true);
+    mockApi.getComboRankings.mockResolvedValue({
+      comboId: '05',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 100,
+      entries: [{
+        rank: 1,
+        accountId: 'top-05',
+        displayName: 'Top 05',
+        adjustedRating: 0.9,
+        weightedRating: 0.8,
+        fcRate: 0.7,
+        totalScore: 123456,
+        maxScorePercent: 0.88,
+        songsPlayed: 25,
+        totalChartedSongs: 50,
+        fullComboCount: 20,
+        computedAt: '2026-01-01T00:00:00Z',
+      }],
+    });
+
+    render(
+      <TestProviders route="/leaderboards/all?combo=05&rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText('Top 05')).toBeTruthy();
+    expect(await screen.findByText('25 / 50')).toBeTruthy();
+    expect(await screen.findByText('123,456')).toBeTruthy();
+    expect(screen.queryByText(/^25$/)).toBeNull();
   });
 
   it('keeps family rankings text-only in the mobile page header', async () => {
@@ -349,7 +392,11 @@ describe('FullRankingsPage', () => {
     });
     expect(mockApi.getPlayerComboRanking).toHaveBeenCalledWith('test-player', '05', 'totalscore');
     expect(await screen.findByText('Top 05')).toBeTruthy();
-    expect(await screen.findByText('Lead + Drums Leaderboards')).toBeTruthy();
+    const iconTitle = await screen.findByTestId('combo-ranking-title-icons');
+    expect(iconTitle).toHaveAttribute('aria-label', 'Lead + Drums Leaderboards');
+    expect(within(iconTitle).getByAltText('Solo_Guitar')).toBeTruthy();
+    expect(within(iconTitle).getByAltText('Solo_Drums')).toBeTruthy();
+    expect(screen.queryByText('Lead + Drums Leaderboards')).toBeNull();
   });
 
   it('includes the tracked player rank in desktop scroll-row width calculation', async () => {
@@ -411,6 +458,37 @@ describe('FullRankingsPage', () => {
     expect(topRank).toHaveStyle({ width: `${computeRankWidth([1])}px` });
     expect(playerRank).toHaveStyle({ width: `${computeRankWidth([12345])}px` });
     expect(topRank.style.width).not.toBe(playerRank.style.width);
+  });
+
+  it('places the mobile selected solo footer above the docked FAB row', async () => {
+    stubMatchMedia(true);
+
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 12345,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
+    });
+    mockApi.getPlayerRanking.mockResolvedValue(
+      makeAccountRankingEntry(12345, { accountId: 'test-player', displayName: 'Test Player' }),
+    );
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore" accountId="test-player">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const footerName = await screen.findByText('Test Player');
+    const footerLink = footerName.closest('a');
+
+    expect(footerLink).toBeTruthy();
+    expect(footerLink).not.toHaveClass('fab-player-footer');
+    expect(footerLink?.parentElement?.style.bottom).toContain(`${Layout.fabBottom + Layout.fabSize + Gap.xl}px`);
   });
 
   it('syncs desktop footer rank width to the shared page width when page rows are wider than the player rank', async () => {
@@ -541,6 +619,37 @@ describe('FullRankingsPage', () => {
     expect(mockApi.getSelectedMemberRankings).toHaveBeenCalledWith(['band-a', 'band-b'], ['Solo_Guitar'], 'totalscore');
     expect(mockApi.getBandRanking).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain('Alpha + Beta');
+  });
+
+  it('places the mobile selected band member footer above the docked FAB row', async () => {
+    stubMatchMedia(true);
+    selectBandProfile();
+    mockApi.getRankings.mockResolvedValue({
+      instrument: 'Solo_Guitar',
+      rankBy: 'totalscore',
+      page: 1,
+      pageSize: 25,
+      totalAccounts: 100,
+      entries: [makeAccountRankingEntry(1, { accountId: 'top-player', displayName: 'Top Player' })],
+    });
+    mockApi.getSelectedMemberRankings.mockResolvedValue(makeSelectedMemberRankings([
+      makeAccountRankingEntry(12, { accountId: 'band-a', displayName: 'Alpha', totalScore: 765432, totalScoreRank: 12 }),
+    ]));
+
+    render(
+      <TestProviders route="/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore">
+        <Routes>
+          <Route path="/leaderboards/all" element={<FullRankingsPage />} />
+        </Routes>
+      </TestProviders>,
+    );
+
+    const footerName = await screen.findByText('Alpha');
+    const footerLink = footerName.closest('a');
+
+    expect(footerLink).toBeTruthy();
+    expect(footerLink).not.toHaveClass('fab-player-footer');
+    expect(footerLink?.parentElement?.style.bottom).toContain(`${Layout.fabBottom + Layout.fabSize + Gap.xl}px`);
   });
 
   it('links the selected band solo footer to the active member route', async () => {

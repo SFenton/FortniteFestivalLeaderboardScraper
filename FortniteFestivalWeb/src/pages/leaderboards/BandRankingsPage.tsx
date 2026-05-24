@@ -142,13 +142,14 @@ export default function BandRankingsPage() {
   useEffect(() => {
     registerLeaderboardActions({
       openMetric: experimentalRanksEnabled ? openMetricModal : undefined,
+      metricActive: metric !== 'totalscore',
       openBandCombo: openComboModal,
       bandComboActive: !!activeComboId,
       bandComboInstruments: activeComboInstruments,
       bandComboLabel: comboFilterLabel,
     });
     return () => registerLeaderboardActions(null);
-  }, [activeComboId, activeComboInstruments, comboFilterLabel, experimentalRanksEnabled, openComboModal, openMetricModal, registerLeaderboardActions]);
+  }, [activeComboId, activeComboInstruments, comboFilterLabel, experimentalRanksEnabled, metric, openComboModal, openMetricModal, registerLeaderboardActions]);
 
   const leaderboardQuery = useQuery({
     queryKey: queryKeys.bandRankings(bandType ?? 'unknown', activeComboId, metric, pageParam, LEADERBOARD_PAGE_SIZE, selectedPlayerAccountId, selectedBandTeamKey),

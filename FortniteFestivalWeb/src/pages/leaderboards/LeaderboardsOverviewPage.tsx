@@ -123,9 +123,9 @@ export default function LeaderboardsOverviewPage() {
   }, [metric, rawMetric, selectedBand, setSearchParams]);
 
   useEffect(() => {
-    registerLeaderboardActions({ openMetric: openMetricModal });
+    registerLeaderboardActions({ openMetric: openMetricModal, metricActive: metric !== 'totalscore' });
     return () => registerLeaderboardActions(null);
-  }, [openMetricModal, registerLeaderboardActions]);
+  }, [metric, openMetricModal, registerLeaderboardActions]);
 
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
 

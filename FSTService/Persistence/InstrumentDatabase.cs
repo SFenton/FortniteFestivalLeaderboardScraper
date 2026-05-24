@@ -2243,6 +2243,15 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return GetRankedAccountCountWithBackfill(conn);
     }
 
+    public int GetTotalChartedSongs()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COALESCE(MAX(total_charted_songs), 0) FROM account_rankings WHERE instrument = @instrument";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     public List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries()
     {
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();

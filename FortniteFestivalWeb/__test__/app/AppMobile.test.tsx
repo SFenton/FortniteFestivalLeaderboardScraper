@@ -1191,7 +1191,9 @@ describe('App — mobile FAB branches', () => {
 
     const quickLinksButton = await screen.findByRole('button', { name: 'Quick Links' });
     const sideActions = screen.getByTestId('fab-side-actions');
-    expect(within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' })).toBeDefined();
+    const rankButton = within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' });
+    expect(rankButton).toBeDefined();
+    expect(rankButton.style.backgroundColor).toBe(OPAQUE_FAB_GLASS_BACKGROUND.replace(/,/g, ', '));
     expect(screen.queryByLabelText('Actions')).toBeNull();
     expect(screen.queryByTestId('fab-menu')).toBeNull();
 
@@ -1211,6 +1213,21 @@ describe('App — mobile FAB branches', () => {
     window.location.hash = '';
   });
 
+  it('colors the mobile Leaderboards rank action when a non-score metric is selected', async () => {
+    setMobile();
+    window.location.hash = '#/leaderboards?rankBy=adjusted';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalled();
+    }, { timeout: 5000 });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    expect(within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' })).toHaveStyle({ backgroundColor: Colors.accentBlue });
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    window.location.hash = '';
+  });
+
   it('opens Rank By from a separate mobile Leaderboards side action', async () => {
     setMobile();
     window.location.hash = '#/leaderboards';
@@ -1223,6 +1240,69 @@ describe('App — mobile FAB branches', () => {
     await screen.findByRole('button', { name: 'Quick Links' });
     const sideActions = screen.getByTestId('fab-side-actions');
     fireEvent.click(within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' }));
+
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    expect(await screen.findByRole('dialog', { name: 'Rank By' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('shows full solo rankings mobile actions as docked controls without a selected profile', async () => {
+    setMobile();
+    window.location.hash = '#/leaderboards/all?instrument=Solo_Guitar&rankBy=totalscore';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'totalscore', 1, 25);
+    }, { timeout: 5000 });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    const instrumentButton = within(sideActions).getByRole('button', { name: 'Change Instrument' });
+    expect(instrumentButton).toBeDefined();
+    expect(within(instrumentButton).getByText('Lead')).toBeDefined();
+    const instrumentIcon = within(instrumentButton).getByAltText('Solo_Guitar');
+    expect(instrumentIcon).toBeDefined();
+    expect(instrumentIcon).toHaveAttribute('width', '32');
+    expect(instrumentIcon).toHaveAttribute('height', '32');
+    const rankButton = within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' });
+    expect(rankButton).toBeDefined();
+    expect(rankButton.style.backgroundColor).toBe(OPAQUE_FAB_GLASS_BACKGROUND.replace(/,/g, ', '));
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    window.location.hash = '';
+  });
+
+  it('colors the full solo rankings rank action when a non-score metric is selected', async () => {
+    setMobile();
+    window.location.hash = '#/leaderboards/all?instrument=Solo_Guitar&rankBy=adjusted';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getRankings).toHaveBeenCalledWith('Solo_Guitar', 'adjusted', 1, 25);
+    }, { timeout: 5000 });
+
+    const sideActions = screen.getByTestId('fab-side-actions');
+    expect(within(sideActions).getByRole('button', { name: 'Change Leaderboard Ranking' })).toHaveStyle({ backgroundColor: Colors.accentBlue });
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+    window.location.hash = '';
+  });
+
+  it('suppresses the inert main FAB on full combo rankings while keeping Rank By docked', async () => {
+    setMobile();
+    window.location.hash = '#/leaderboards/all?combo=05&rankBy=totalscore';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getComboRankings).toHaveBeenCalledWith('05', 'totalscore', 1, 25);
+    }, { timeout: 5000 });
+
+    const rankButton = await screen.findByRole('button', { name: 'Change Leaderboard Ranking' });
+    expect(rankButton.style.backgroundColor).toBe(OPAQUE_FAB_GLASS_BACKGROUND.replace(/,/g, ', '));
+    expect(screen.queryByRole('button', { name: 'Quick Links' })).toBeNull();
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
+
+    fireEvent.click(rankButton);
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Rank By' })).toBeDefined();
@@ -1254,6 +1334,22 @@ describe('App — mobile FAB branches', () => {
 
     expect(screen.queryByTestId('fab-menu')).toBeNull();
     expect(await screen.findByRole('dialog', { name: 'Rank By' })).toBeDefined();
+    window.location.hash = '';
+  });
+
+  it('colors the full band rankings rank FAB when a non-score metric is selected', async () => {
+    setMobile();
+    enableExperimentalRanks();
+    window.location.hash = '#/leaderboards/bands/Band_Duets?rankBy=adjusted';
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockApi.getBandRankings).toHaveBeenCalledWith('Band_Duets', undefined, 'adjusted', 1, 25, undefined, undefined);
+    }, { timeout: 5000 });
+
+    expect(await screen.findByRole('button', { name: 'Change Leaderboard Ranking' })).toHaveStyle({ backgroundColor: Colors.accentBlue });
+    expect(screen.queryByLabelText('Actions')).toBeNull();
+    expect(screen.queryByTestId('fab-menu')).toBeNull();
     window.location.hash = '';
   });
 

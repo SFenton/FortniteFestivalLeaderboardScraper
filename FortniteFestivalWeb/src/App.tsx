@@ -136,7 +136,7 @@ import { IS_IOS, IS_ANDROID, IS_PWA, IS_PAGE_RELOAD } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
 import ConfirmAlert from './components/modals/ConfirmAlert';
 import BandInstrumentFilterModal, { type BandInstrumentFilterApplyPayload, type BandInstrumentFilterAssignment } from './pages/band/modals/BandInstrumentFilterModal';
-import { DEFAULT_INSTRUMENT, SERVER_INSTRUMENT_KEYS, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, SERVER_INSTRUMENT_KEYS, serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type { AppliedBandComboFilter } from './types/bandFilter';
 import { APP_VERSION } from './hooks/data/useVersions';
 import { changelogHash } from './changelog';
@@ -166,6 +166,7 @@ import { useTapDiagnostics } from './diagnostics/useTapDiagnostics';
 import anim from './styles/animations.module.css';
 
 const consumedPreserveShellScrollKeys = new Set<string>();
+const LEADERBOARD_INSTRUMENT_ACTION_ICON_SIZE = 32;
 const showReactQueryDevtools = import.meta.env.DEV && import.meta.env.MODE !== 'e2e';
 const NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-open';
 const EMPTY_NOTIFICATIONS_VALIDATION_TOKEN = 'notifications-empty';
@@ -811,7 +812,7 @@ function AppShell() {
       iconAccessory: bandFilterIconAccessory,
       onPress: handleBandFilterPress,
     }] : []),
-      ...(fabSearch.leaderboardMetricReady ? [{ label: t('rankings.changeRanking'), iconOnly: true, icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
+      ...(fabSearch.leaderboardMetricReady ? [{ label: t('rankings.changeRanking'), active: fabSearch.leaderboardMetricActive, iconOnly: true, icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
     ]
     : [];
   const leaderboardBandComboFabActions: ActionItem[] = fabSearch.leaderboardBandComboReady ? [{
@@ -1078,6 +1079,7 @@ function AppShell() {
           mode="players"
           ariaLabel={t('rankings.changeRanking')}
           icon={<IoOptions size={Size.iconFab} />}
+          active={fabSearch.leaderboardMetricActive}
           sideActions={leaderboardBandComboSideActions}
           directAction
           onPress={() => fabSearch.openLeaderboardMetric()}
@@ -1098,11 +1100,30 @@ function AppShell() {
         />
       )}
       {showMobileFab && RoutePatterns.leaderboards.test(location.pathname) && location.pathname !== AppRoutes.leaderboards && !isBandRankingsRoute && (() => {
+        const isAllLeaderboardsRoute = location.pathname === '/leaderboards/all';
+        const allLeaderboardsParams = isAllLeaderboardsRoute ? new URLSearchParams(location.search) : null;
+        const isScopedAllLeaderboardsRoute = !!(allLeaderboardsParams?.has('combo') || allLeaderboardsParams?.has('family'));
+        const showAllLeaderboardsMainFab = pageQuickLinks.hasPageQuickLinks && !isScopedAllLeaderboardsRoute;
+        const changeInstrumentLabel = t('rankings.changeInstrument');
+        const leaderboardInstrumentLabel = serverInstrumentLabel(leaderboardInstrument);
         const leaderboardActions = [
-          ...leaderboardBandComboFabActions,
-          ...(location.pathname === '/leaderboards/all' && fabSearch.leaderboardInstrumentReady ? [{ label: t('rankings.changeInstrument'), icon: <InstrumentIcon instrument={leaderboardInstrument} size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
-          ...(fabSearch.leaderboardMetricReady ? [{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
+          ...(isAllLeaderboardsRoute ? [] : leaderboardBandComboFabActions),
+          ...(isAllLeaderboardsRoute && fabSearch.leaderboardInstrumentReady ? [{ label: changeInstrumentLabel, displayLabel: leaderboardInstrumentLabel, icon: <InstrumentIcon instrument={leaderboardInstrument} size={LEADERBOARD_INSTRUMENT_ACTION_ICON_SIZE} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
+          ...(fabSearch.leaderboardMetricReady ? [{ label: t('rankings.changeRanking'), active: fabSearch.leaderboardMetricActive, icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
         ];
+        if (isAllLeaderboardsRoute) {
+          return (
+          <MobileFloatingActionButton
+            pageKey={`leaderboards:${location.pathname}`}
+            ready={pageReady}
+            mode="players"
+            ariaLabel={showAllLeaderboardsMainFab ? getFabQuickLinksActionLabel(t) : undefined}
+            sideActions={leaderboardActions.map(action => ({ ...action, iconOnly: action.label !== changeInstrumentLabel }))}
+            directAction={showAllLeaderboardsMainFab}
+            onPress={() => pageQuickLinks.openPageQuickLinks()}
+          />
+          );
+        }
         return (
         <MobileFloatingActionButton
           pageKey={`leaderboards:${location.pathname}`}

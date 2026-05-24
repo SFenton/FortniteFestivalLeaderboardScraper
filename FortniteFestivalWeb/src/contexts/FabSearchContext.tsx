@@ -17,6 +17,7 @@ type LeaderboardFabActions = {
   openMetric?: () => void;
   openInstrument?: () => void;
   openBandCombo?: () => void;
+  metricActive?: boolean;
   bandComboActive?: boolean;
   bandComboInstruments?: readonly ServerInstrumentKey[];
   bandComboLabel?: string;
@@ -49,6 +50,7 @@ type FabSearchContextType = {
   openLeaderboardInstrument: () => void;
   openLeaderboardBandCombo: () => void;
   leaderboardMetricReady: boolean;
+  leaderboardMetricActive: boolean;
   leaderboardInstrumentReady: boolean;
   leaderboardBandComboReady: boolean;
   leaderboardBandComboActive: boolean;
@@ -79,7 +81,7 @@ const FabSearchContext = createContext<FabSearchContextType>({
   registerPlayerHistoryActions: () => {}, openPlayerHistorySort: () => {}, playerHistoryActionsReady: false,
   registerSongDetailActions: () => {}, openPaths: () => {}, songDetailActionsReady: false,
   registerShopActions: () => {}, shopToggleView: () => {}, shopActionsReady: false, shopViewMode: 'grid', setShopViewMode: () => {},
-  registerLeaderboardActions: () => {}, openLeaderboardMetric: () => {}, openLeaderboardInstrument: () => {}, openLeaderboardBandCombo: () => {}, leaderboardMetricReady: false, leaderboardInstrumentReady: false, leaderboardBandComboReady: false, leaderboardBandComboActive: false, leaderboardBandComboInstruments: [], leaderboardBandComboLabel: '',
+  registerLeaderboardActions: () => {}, openLeaderboardMetric: () => {}, openLeaderboardInstrument: () => {}, openLeaderboardBandCombo: () => {}, leaderboardMetricReady: false, leaderboardMetricActive: false, leaderboardInstrumentReady: false, leaderboardBandComboReady: false, leaderboardBandComboActive: false, leaderboardBandComboInstruments: [], leaderboardBandComboLabel: '',
   registerRivalsActions: () => {}, rivalsToggleTab: () => {}, rivalsFindRival: () => {}, rivalsToggleTabReady: false, rivalsFindRivalReady: false, rivalsActiveTab: 'song', setRivalsActiveTab: () => {},
   registerBandActions: () => {}, openBandFilter: () => {}, bandActionsReady: false,
   registerPlayerQuickLinks: () => {}, openPlayerQuickLinks: () => {}, hasPlayerQuickLinks: false,
@@ -111,6 +113,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const leaderboardActionsRef = useRef<{ openMetric: () => void; openInstrument: () => void; openBandCombo: () => void }>(defaultLeaderboardActions);
   const [leaderboardActionState, setLeaderboardActionState] = useState<{
     metricReady: boolean;
+    metricActive: boolean;
     instrumentReady: boolean;
     bandComboReady: boolean;
     bandComboActive: boolean;
@@ -118,6 +121,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     bandComboLabel: string;
   }>({
     metricReady: false,
+    metricActive: false,
     instrumentReady: false,
     bandComboReady: false,
     bandComboActive: false,
@@ -173,6 +177,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     };
     const nextState = {
       metricReady: !!actions?.openMetric,
+      metricActive: !!actions?.openMetric && !!actions?.metricActive,
       instrumentReady: !!actions?.openInstrument,
       bandComboReady: !!actions?.openBandCombo,
       bandComboActive: !!actions?.bandComboActive,
@@ -181,6 +186,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     };
     setLeaderboardActionState(previous => (
       previous.metricReady === nextState.metricReady
+        && previous.metricActive === nextState.metricActive
         && previous.instrumentReady === nextState.instrumentReady
         && previous.bandComboReady === nextState.bandComboReady
         && previous.bandComboActive === nextState.bandComboActive
@@ -253,6 +259,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     openLeaderboardInstrument,
     openLeaderboardBandCombo,
     leaderboardMetricReady: leaderboardActionState.metricReady,
+    leaderboardMetricActive: leaderboardActionState.metricActive,
     leaderboardInstrumentReady: leaderboardActionState.instrumentReady,
     leaderboardBandComboReady: leaderboardActionState.bandComboReady,
     leaderboardBandComboActive: leaderboardActionState.bandComboActive,
@@ -268,7 +275,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerPlayerHistoryActions, openPlayerHistorySort, playerHistoryActionsReady,
     registerSongDetailActions, openPaths, songDetailActionsReady,
     registerShopActions, shopToggleView, shopActionsReady, shopViewMode, setShopViewMode,
-    registerLeaderboardActions, openLeaderboardMetric, openLeaderboardInstrument, openLeaderboardBandCombo, leaderboardActionState.metricReady, leaderboardActionState.instrumentReady, leaderboardActionState.bandComboReady, leaderboardActionState.bandComboActive, leaderboardActionState.bandComboInstruments, leaderboardActionState.bandComboLabel,
+    registerLeaderboardActions, openLeaderboardMetric, openLeaderboardInstrument, openLeaderboardBandCombo, leaderboardActionState.metricReady, leaderboardActionState.metricActive, leaderboardActionState.instrumentReady, leaderboardActionState.bandComboReady, leaderboardActionState.bandComboActive, leaderboardActionState.bandComboInstruments, leaderboardActionState.bandComboLabel,
     registerRivalsActions, rivalsToggleTab, rivalsFindRival, rivalsActionState.toggleTabReady, rivalsActionState.findRivalReady, rivalsActiveTab, setRivalsActiveTab,
     registerBandActions, openBandFilter, bandActionsReady,
     registerPlayerQuickLinks, openPlayerQuickLinks, hasPlayerQuickLinks,

@@ -93,6 +93,7 @@ public interface IInstrumentDatabase : IDisposable
     List<RankHistoryDto> GetRankHistory(string accountId, int days = 30);
     List<RankHistoryDeltaDto> GetRankHistoryDeltas(string accountId, double leewayBucket, int days = 30);
     int GetRankedAccountCount();
+    int GetTotalChartedSongs();
     List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries();
     List<(string AccountId, double AdjustedSkillRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> GetAllRankingSummariesFull();
     List<AccountRankingSummary> GetAllRankingSummariesDetailed();

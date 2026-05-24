@@ -23,6 +23,7 @@ describe('FabSearchContext', () => {
     expect(result.current.hasPlayerQuickLinks).toBe(false);
     expect(result.current.shopActionsReady).toBe(false);
     expect(result.current.leaderboardMetricReady).toBe(false);
+    expect(result.current.leaderboardMetricActive).toBe(false);
     expect(result.current.leaderboardInstrumentReady).toBe(false);
     expect(result.current.rivalsToggleTabReady).toBe(false);
     expect(result.current.rivalsFindRivalReady).toBe(false);
@@ -98,8 +99,9 @@ describe('FabSearchContext', () => {
   it('tracks partial leaderboard and rivals action readiness independently', () => {
     const { result } = renderHook(() => useFabSearch(), { wrapper });
 
-    act(() => { result.current.registerLeaderboardActions({ openMetric: () => {} }); });
+    act(() => { result.current.registerLeaderboardActions({ openMetric: () => {}, metricActive: true }); });
     expect(result.current.leaderboardMetricReady).toBe(true);
+    expect(result.current.leaderboardMetricActive).toBe(true);
     expect(result.current.leaderboardInstrumentReady).toBe(false);
 
     act(() => { result.current.registerRivalsActions({ findRival: () => {} }); });
@@ -109,6 +111,7 @@ describe('FabSearchContext', () => {
     act(() => { result.current.registerLeaderboardActions(null); });
     act(() => { result.current.registerRivalsActions(null); });
     expect(result.current.leaderboardMetricReady).toBe(false);
+    expect(result.current.leaderboardMetricActive).toBe(false);
     expect(result.current.leaderboardInstrumentReady).toBe(false);
     expect(result.current.rivalsToggleTabReady).toBe(false);
     expect(result.current.rivalsFindRivalReady).toBe(false);

@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties }
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
 import { IoOptions } from 'react-icons/io5';
+import { instrumentsFromComboId } from '@festival/core/combos';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
@@ -135,9 +136,9 @@ export default function FullRankingsPage() {
   }, [instrumentModal, metric, scrollContainerRef, setSearchParams]);
 
   useEffect(() => {
-    registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: isCombo || isFamily ? undefined : openInstrumentModal });
+    registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: isCombo || isFamily ? undefined : openInstrumentModal, metricActive: metric !== 'totalscore' });
     return () => registerLeaderboardActions(null);
-  }, [isCombo, isFamily, openInstrumentModal, openMetricModal, registerLeaderboardActions]);
+  }, [isCombo, isFamily, metric, openInstrumentModal, openMetricModal, registerLeaderboardActions]);
 
   const cacheKey = isCombo ? `combo:${comboId}:${metric}` : isFamily ? `family:${familyScopeId}:${metric}` : `${instrument}:${metric}`;
   const cached = rankingsCache.get(cacheKey);
@@ -307,6 +308,7 @@ export default function FullRankingsPage() {
   useSetPageReady(!loading);
   const useTwoRowPercentile = isMobile && usePercentileMetric;
   const leaderboardRowHeight = useTwoRowPercentile ? COMPACT_PERCENTILE_ROW_HEIGHT : Layout.entryRowHeight;
+  const selectedFooterPlacement = isMobileChrome ? 'aboveFab' : 'default';
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
@@ -347,6 +349,11 @@ export default function FullRankingsPage() {
     return computeRankWidth(selectedBandSoloFooterRankings.map(ranking => getDisplayRank(ranking, metric)));
   }, [metric, selectedBandSoloFooterRankings]);
 
+  const comboInstruments = useMemo(
+    () => comboId ? instrumentsFromComboId(comboId) : undefined,
+    [comboId],
+  );
+
   const percentileValueMinWidth = useMemo(() => {
     if (!usePercentileMetric) return undefined;
     const labels = entries.map((entry) => formatRankingValueDisplay(getDisplayRating(entry, metric), metric));
@@ -380,11 +387,11 @@ export default function FullRankingsPage() {
       fabSpacer="none"
       before={isMobileChrome ? (
         <PageHeaderTransition visible={showMobilePageHeader}>
-          <PageHeader title={renderPageTitle(isCombo || isFamily, pageLabel, t('rankings.title'), data?.totalAccounts, t, isFamily ? undefined : instrument)} />
+          <PageHeader title={renderPageTitle(isCombo || isFamily, pageLabel, t('rankings.title'), data?.totalAccounts, t, isFamily ? undefined : instrument, comboInstruments)} />
         </PageHeaderTransition>
       ) : showMobilePageHeader ? (
         <PageHeader
-          title={renderPageTitle(isCombo || isFamily, pageLabel, t('rankings.title'), data?.totalAccounts, t, isFamily ? undefined : instrument)}
+          title={renderPageTitle(isCombo || isFamily, pageLabel, t('rankings.title'), data?.totalAccounts, t, isFamily ? undefined : instrument, comboInstruments)}
           actions={
             !isMobileChrome ? (
               <>
@@ -534,6 +541,8 @@ export default function FullRankingsPage() {
         cached={!!cached}
         isMobile={isMobile}
         hasFab={hasFab}
+        reserveFabSpace={selectedFooterPlacement === 'aboveFab' ? false : hasFab}
+        footerPlacement={selectedFooterPlacement}
         rowHeight={leaderboardRowHeight}
         staggerRushRef={staggerRushRef}
         footerAnimKey={cacheKey}
@@ -661,6 +670,7 @@ function renderPageTitle(
   totalAccounts: number | undefined,
   t: ReturnType<typeof useTranslation>['t'],
   instrument?: InstrumentKey,
+  comboInstruments?: readonly InstrumentKey[],
 ) {
   if (!isCombo && instrument) {
     return (
@@ -673,9 +683,26 @@ function renderPageTitle(
     );
   }
 
+  const title = `${pageLabel} ${rankingsTitle}`;
+
+  if (comboInstruments && comboInstruments.length > 0) {
+    return (
+      <div style={comboTitleStyles.wrapper} aria-label={title} title={title} data-testid="combo-ranking-title-icons">
+        <div style={comboTitleStyles.iconRow} aria-hidden="true">
+          {comboInstruments.map(comboInstrument => (
+            <InstrumentIcon key={comboInstrument} instrument={comboInstrument} size={Size.iconInstrumentSm} />
+          ))}
+        </div>
+        {totalAccounts != null && (
+          <span style={comboTitleStyles.subtitle}>{t('rankings.totalRanked', { count: totalAccounts, formattedCount: totalAccounts.toLocaleString() })}</span>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={comboTitleStyles.wrapper}>
-      <span style={comboTitleStyles.title}>{`${pageLabel} ${rankingsTitle}`}</span>
+      <span style={comboTitleStyles.title}>{title}</span>
       {totalAccounts != null && (
         <span style={comboTitleStyles.subtitle}>{t('rankings.totalRanked', { count: totalAccounts, formattedCount: totalAccounts.toLocaleString() })}</span>
       )}
@@ -737,7 +764,9 @@ function getDisplaySongsLabel(entry: AccountRankingEntry | ComboRankingEntry | F
     return `${entry.fullComboCount} / ${entry.songsPlayed}`;
   }
 
-  return `${entry.songsPlayed}`;
+  return entry.totalChartedSongs && entry.totalChartedSongs > 0
+    ? `${entry.songsPlayed} / ${entry.totalChartedSongs}`
+    : `${entry.songsPlayed}`;
 }
 
 const comboTitleStyles = {
@@ -745,6 +774,11 @@ const comboTitleStyles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 4,
+  },
+  iconRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
   },
   title: {
     color: Colors.textPrimary,

@@ -10,7 +10,7 @@ import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { LoadPhase } from '@festival/core';
 import { useNavLinkPress } from '../../hooks/navigation/useNavLinkPress';
 import { plbStyles as s, fixedFooterWide } from './paginatedLeaderboardStyles';
-import { FixedLeaderboardPagination, getFixedPlayerFooterStyle, useLeaderboardFooterScrollMargin } from './LeaderboardPaginationFooter';
+import { FixedLeaderboardPagination, getFixedPlayerFooterStyle, useLeaderboardFooterScrollMargin, type FixedLeaderboardFooterPlacement } from './LeaderboardPaginationFooter';
 
 export interface PaginatedLeaderboardProps<T> {
   /** Page entries to render. */
@@ -56,6 +56,8 @@ export interface PaginatedLeaderboardProps<T> {
   hasFab: boolean;
   /** Whether fixed footer content should reserve horizontal space for the FAB. Defaults to hasFab. */
   reserveFabSpace?: boolean;
+  /** Where to position fixed selected-profile footer content relative to mobile FAB chrome. */
+  footerPlacement?: FixedLeaderboardFooterPlacement;
   /** Whether the scroll container should reserve space below fixed footer chrome. Defaults to true. */
   reserveFooterScrollSpace?: boolean;
   /** Pixel height for each row. Defaults to the standard leaderboard row height. */
@@ -108,6 +110,7 @@ export function PaginatedLeaderboard<T>({
   isMobile,
   hasFab,
   reserveFabSpace = hasFab,
+  footerPlacement = 'default',
   reserveFooterScrollSpace = true,
   rowHeight = Layout.entryRowHeight,
   error = false,
@@ -197,7 +200,7 @@ export function PaginatedLeaderboard<T>({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- scheduleRetire is stable
   }, [page]);
 
-  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter, reserveBottomSpace: reserveFooterScrollSpace, rowHeight });
+  useLeaderboardFooterScrollMargin({ hasFab, hasPagination, hasPlayerFooter, footerPlacement, reserveBottomSpace: reserveFooterScrollSpace, rowHeight });
 
   const contentVisible = loadPhase === LoadPhase.ContentIn;
 
@@ -291,12 +294,13 @@ export function PaginatedLeaderboard<T>({
           hasFab={hasFab}
           reserveFabSpace={reserveFabSpace}
           hasPlayerFooter={hasPlayerFooter}
+          footerPlacement={footerPlacement}
           rowHeight={rowHeight}
         />
       )}
       {hasPlayerFooter && renderPlayerFooter && createPortal(
         <div
-          style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight), ...wideOverride, ...footerStaggerStyle }}
+          style={{ ...getFixedPlayerFooterStyle(hasFab, rowHeight, footerPlacement), ...wideOverride, ...footerStaggerStyle }}
           onAnimationEnd={(ev) => {
             footerShownRef.current = true;
             const el = ev.currentTarget;

@@ -1263,6 +1263,7 @@ export type ComboRankingEntry = {
   totalScore: number;
   maxScorePercent: number;
   songsPlayed: number;
+  totalChartedSongs?: number;
   fullComboCount: number;
   computedAt: string;
 };

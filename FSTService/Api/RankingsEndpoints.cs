@@ -539,6 +539,7 @@ public static partial class ApiEndpoints
             string? rankBy,
             int? page,
             int? pageSize,
+            GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
@@ -555,6 +556,7 @@ public static partial class ApiEndpoints
             var metric = rankBy ?? "adjusted";
             var (entries, totalAccounts) = metaDb.GetComboLeaderboard(
                 comboId, metric, page ?? 1, Math.Clamp(pageSize ?? 50, 1, 200));
+            var totalChartedSongs = GetComboTotalChartedSongs(persistence, comboId);
 
             var entryList = entries.ToList();
             var names = metaDb.GetDisplayNames(entryList.Select(e => e.AccountId));
@@ -569,6 +571,7 @@ public static partial class ApiEndpoints
                 e.TotalScore,
                 e.MaxScorePercent,
                 e.SongsPlayed,
+                totalChartedSongs,
                 e.FullComboCount,
                 e.ComputedAt,
             }).ToList();
@@ -594,6 +597,7 @@ public static partial class ApiEndpoints
             string? combo,
             string? instruments,
             string? rankBy,
+            GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService publicationCache) =>
         {
@@ -613,6 +617,7 @@ public static partial class ApiEndpoints
                 return Results.NotFound(new { error = "Account not found in this combo ranking." });
 
             var totalAccounts = metaDb.GetComboTotalAccounts(comboId);
+            var totalChartedSongs = GetComboTotalChartedSongs(persistence, comboId);
 
             return Results.Ok(new
             {
@@ -627,6 +632,7 @@ public static partial class ApiEndpoints
                 entry.TotalScore,
                 entry.MaxScorePercent,
                 entry.SongsPlayed,
+                totalChartedSongs,
                 entry.FullComboCount,
                 totalAccounts,
                 entry.ComputedAt,
@@ -634,6 +640,14 @@ public static partial class ApiEndpoints
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");
+
+        static int GetComboTotalChartedSongs(GlobalLeaderboardPersistence persistence, string comboId)
+        {
+            var total = 0;
+            foreach (var instrument in ComboIds.ToInstruments(comboId))
+                total += persistence.GetOrCreateInstrumentDb(instrument).GetTotalChartedSongs();
+            return total;
+        }
 
         // ─── Band combo catalog ───────────────────────────────
 
