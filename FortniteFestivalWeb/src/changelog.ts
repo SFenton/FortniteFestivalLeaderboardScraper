@@ -13,116 +13,44 @@ export const changelog: ChangelogEntry[] = [
   {
     sections: [
       {
-        title: 'Profiles And Bands',
+        title: 'ITEM SHOP',
         items: [
-          'Added username refreshes against Epic servers when selecting a player profile or band profile.',
-          'Added an App Settings button to manually refresh player and band profile usernames.',
-          'Added band composition filtering when a solo profile or no profile is selected.',
-          'Fixed the Export Data button opacity in App Settings.',
+          'Newly released songs in the Item Shop have a gold pulse on Songs Page and Song Details.',
+          "Songs in the Item Shop that aren't leaving tomorrow now have a green pulse, to match the gold/green/red styles of the instrument chips on Songs Page.",
         ],
       },
       {
-        title: 'Rivals',
+        title: 'MOBILE',
         items: [
-          'Added a full Rivals experience with rival lists, rival detail pages, category views, and head-to-head rivalry pages.',
-          'Added global leaderboard rivals and song-gap comparisons so you can see where you are gaining or losing ground.',
-          'Added profile navigation from rival views.',
+          'FAB buttons and other dock buttons now animate in for a more visually pleasing experience.',
+          'Fixed a bug in search modal where dismissing the keyboard after results show did not expand results view appropriately.',
         ],
       },
       {
-        title: 'Bands',
+        title: 'SONG DETAILS',
         items: [
-          'Added band and team leaderboard views, selected-band stats, and combo-specific band detail stats.',
-          'Added selected-band song rows, selected-band leaderboard footers, and selected bandmate solo rows.',
-          'Added exact band instrument filters, persisted band filter state, and band intensity sort modes.',
+          'Fixed a bug where leaderboard ranks did not reflect the actual Epic leaderboard value in some cases.',
         ],
       },
       {
-        title: 'Rankings And Statistics',
+        title: 'NOTIFICATIONS',
         items: [
-          'Added overall player rankings, all-combo rankings, and per-metric rank cards.',
-          'Added rank history charts, including per-instrument charts on player pages.',
-          'Added raw skill values, Bayesian-adjusted ranking views, percentile pills, and clearer rank and score displays.',
+          'Fixed a bug where notification alerts would reset when you re-open the web browser.',
+          'Added support for switching profiles/bands and returning to a different profile/band and seeing the appropriate amount of unread notifications, instead of all of them.',
         ],
       },
       {
-        title: 'Songs And Song Details',
+        title: 'RIVALS',
         items: [
-          'Added song intensity, duration, difficulty metadata, and Max Score Diff sorting.',
-          'Added support for Karaoke, Pro Drums, Pro Drums + Cymbals, and Tap Vocals.',
-          'Added CHOpt warnings, path visualization improvements, and better instrument-aware empty states.',
+          'Improved performance when viewing a Rival for the first time.',
+          'Improved availability of Rivals during scrape.',
         ],
       },
       {
-        title: 'Item Shop',
+        title: 'LEADERBOARDS',
         items: [
-          'Added a Jam Tracks Item Shop page.',
-          'Added Item Shop filtering on Songs and contextual actions for songs currently available in the shop.',
-          'Improved shop cards, images, view toggles, and mobile behavior.',
-        ],
-      },
-      {
-        title: 'Improvement Notifications',
-        items: [
-          'Added score-improvement notifications with click-through navigation.',
-          'Improved notification copy, freshness indicators, read-state behavior, and profile-switch transitions.',
-          'Reduced notification noise by grouping related improvements.',
-        ],
-      },
-      {
-        title: 'Search And Navigation',
-        items: [
-          'Improved global search and profile search, especially on mobile.',
-          'Added shared quick links across major pages.',
-          'Improved page transitions, scroll restoration, and return-position behavior.',
-        ],
-      },
-      {
-        title: 'First-Run Guides',
-        items: [
-          'Added guided first-run experiences across Songs, Song Info, Player History, Statistics, Shop, and related flows.',
-          'Added Settings controls for replaying guides.',
-          'Improved guide sequencing, transitions, demos, and mobile layouts.',
-        ],
-      },
-      {
-        title: 'Mobile And PWA',
-        items: [
-          'Refined the mobile shell, header actions, dock controls, search modal, and FAB behavior.',
-          'Added PWA app icons.',
-          'Improved iOS safe-area handling, mobile keyboard behavior, and empty-state positioning.',
-        ],
-      },
-      {
-        title: 'Leaderboard Polish',
-        items: [
-          'Improved compact leaderboard rows, rank columns, headers, subtitles, score cards, and percentile displays.',
-          'Added Epic entry counts and tracked score counts where useful.',
-          'Improved loading, stagger, and spinner behavior so leaderboard pages feel steadier.',
-        ],
-      },
-      {
-        title: 'Settings And Personalization',
-        items: [
-          'Added service info and guide replay controls in Settings.',
-          'Improved profile deselection, profile search, selected-profile transitions, and Settings mobile layout.',
-          'Added better controls for ranking display, filters, visible instruments, and shop visibility.',
-        ],
-      },
-      {
-        title: 'Faster Data Loading',
-        items: [
-          'Improved loading speed for leaderboards, player profiles, song details, rankings, statistics, and shop data.',
-          'Reduced large profile responses so player pages feel lighter and faster.',
-          'Added smarter caching so common pages stay responsive after scrapes and during busy periods.',
-        ],
-      },
-      {
-        title: 'More Accurate Rankings',
-        items: [
-          'Improved ranking calculations across total score, full combos, skill values, percentiles, instruments, and band/team views.',
-          'Fixed cases where valid scores could be excluded or undercounted by ranking thresholds.',
-          'Improved rival and leaderboard-rival calculations so comparisons update more reliably and reflect the latest available data.',
+          'Changed to instrument icons on combo leaderboards instead of "Lead + ..." text.',
+          'Updated FAB dock on mobile to match other pages.',
         ],
       },
     ],
