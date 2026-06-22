@@ -43,12 +43,24 @@ public class HistoryReconstructor
         ScrapeProgressTracker progress,
         UserSyncProgressTracker syncTracker,
         ILogger<HistoryReconstructor> log)
+        : this(scraper, persistence, http, progress, syncTracker, log, proxyHealth: null)
+    {
+    }
+
+    internal HistoryReconstructor(
+        ILeaderboardQuerier scraper,
+        GlobalLeaderboardPersistence persistence,
+        HttpClient http,
+        ScrapeProgressTracker progress,
+        UserSyncProgressTracker syncTracker,
+        ILogger<HistoryReconstructor> log,
+        IProxyHealthReporter? proxyHealth)
     {
         _scraper = scraper;
         _persistence = persistence;
         _metaDb = persistence.Meta;
         _http = http;
-        _executor = new ResilientHttpExecutor(http, log);
+        _executor = new ResilientHttpExecutor(http, log, proxyHealth);
         _progress = progress;
         _syncTracker = syncTracker;
         _log = log;

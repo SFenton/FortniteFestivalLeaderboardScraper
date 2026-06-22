@@ -9,6 +9,7 @@ import fx from '../../../styles/effects.module.css';
 import { paddingWithSafeAreaBottom } from '../../../utils/safeAreaStyles';
 import { getStatisticsNavigationPath } from '../../../utils/profileNavigation';
 import { TabKey } from '@festival/core';
+import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import {
   Colors, Font, Weight, Gap, ZIndex, Layout,
   Display, Align, Justify, Position, Cursor, CssValue, CssProp, BoxSizing,

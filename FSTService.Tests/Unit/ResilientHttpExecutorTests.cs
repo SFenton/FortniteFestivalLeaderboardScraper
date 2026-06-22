@@ -384,6 +384,27 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_Cdn403_ReportsCdnBlockToProxyHealth()
+    {
+        var handler = new MockHttpMessageHandler();
+        var http = new HttpClient(handler);
+        var proxyHealth = new RecordingProxyHealthReporter();
+        var executor = new ResilientHttpExecutor(http, _log, proxyHealth)
+        {
+            CdnRetryDelaysOverride = new TimeSpan[9],
+        };
+
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var response = await executor.SendAsync(() => MakeRequest(), label: "proxy-cdn-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(ProxyFailureKind.CdnBlock, proxyHealth.Failures);
+        Assert.Equal(1, proxyHealth.Successes);
+    }
+
+    [Fact]
     public async Task SendAsync_Cdn403_DoesNotConsumeNormalRetryBudget()
     {
         var handler = new MockHttpMessageHandler();
@@ -1330,5 +1351,15 @@ public sealed class ResilientHttpExecutorTests
         // Hang (~100 ms) + 500ms post-error settle delay + success should land well under 3s.
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3),
             $"Expected elapsed < 3s but was {sw.Elapsed.TotalMilliseconds:F0}ms");
+    }
+
+    private sealed class RecordingProxyHealthReporter : IProxyHealthReporter
+    {
+        public List<ProxyFailureKind> Failures { get; } = [];
+        public int Successes { get; private set; }
+        public void ReportSuccess(HttpRequestMessage request) => Successes++;
+        public void ReportSuccess(HttpRequestMessage request) => Successes++;
+        public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind) => Failures.Add(kind);
+        public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind) => Failures.Add(kind);
     }
 }

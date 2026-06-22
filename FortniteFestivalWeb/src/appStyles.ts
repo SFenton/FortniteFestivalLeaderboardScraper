@@ -1,11 +1,13 @@
 import type { CSSProperties } from 'react';
-import { Layout, MaxWidth, Gap, ZIndex, Overflow, flexColumn, flexRow, CssValue, Position, Display, Align, BoxSizing, PointerEvents } from '@festival/theme';
+import { Layout, MaxWidth, Gap, ZIndex, Overflow, flexColumn, flexRow, CssValue, Position, Display, Align, BoxSizing, PointerEvents, Isolation } from '@festival/theme';
+import { IS_PWA } from '@festival/ui-utils';
 
 /** Computed max-width for the wide-desktop layout (2×sidebar + content + 2×padding). */
 const wideMaxWidth = Layout.sidebarWidth * 2 + MaxWidth.card + Layout.paddingHorizontalPinned * 2;
+const shellHeight = IS_PWA ? '100vh' : '100dvh';
 
 export const appStyles = {
-  shell: { ...flexColumn, height: '100vh', overflow: Overflow.hidden } as CSSProperties,
+  shell: { ...flexColumn, height: shellHeight, overflow: Overflow.hidden, position: Position.relative, isolation: Isolation.isolate, zIndex: ZIndex.base } as CSSProperties,
   /**
    * Wide-desktop body section: positioned container for overlays + scroll.
    * The scroll container is absolute-fill for native scroll everywhere.

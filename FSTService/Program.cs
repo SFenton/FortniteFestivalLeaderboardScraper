@@ -101,6 +101,8 @@ builder.Services.Configure<DatabaseMaintenanceOptions>(
     builder.Configuration.GetSection(DatabaseMaintenanceOptions.Section));
 builder.Services.Configure<ApiSettings>(
     builder.Configuration.GetSection(ApiSettings.Section));
+builder.Services.AddSingleton<ProxyPool>();
+builder.Services.AddSingleton<IProxyHealthReporter>(sp => sp.GetRequiredService<ProxyPool>());
 
 // Parse CLI arguments and overlay onto options
 builder.Services.PostConfigure<ScraperOptions>(opts =>
@@ -194,55 +196,30 @@ var apiSettings = builder.Configuration
     .GetSection(ApiSettings.Section)
     .Get<ApiSettings>() ?? new ApiSettings();
 
+static HttpMessageHandler CreateEpicLeaderboardHandler(IServiceProvider sp, int maxConnectionsPerServer)
+{
+    var proxyPool = sp.GetRequiredService<ProxyPool>();
+    if (proxyPool.IsEnabled)
+        return new ProxyRoutingHttpMessageHandler(proxyPool);
+
+    return new SocketsHttpHandler
+    {
+        MaxConnectionsPerServer = maxConnectionsPerServer,
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        EnableMultipleHttp2Connections = true,
+        AutomaticDecompression = System.Net.DecompressionMethods.All,
+    };
+}
+
 // ─── HTTP clients ───────────────────────────────────────────
 
 builder.Services.AddHttpClient<EpicAuthService>()
     .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan);
 
-Func<SocketsHttpHandler> leaderboardHandlerFactory = () => new SocketsHttpHandler
-{
-    MaxConnectionsPerServer = 2048,
-    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
-    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-    EnableMultipleHttp2Connections = true,
-    AutomaticDecompression = System.Net.DecompressionMethods.All,
-};
-
-// Register the container recycler when Docker-based VPN cycling is configured.
-// Must be singleton — holds the Docker.DotNet client connection to the Unix socket.
-{
-    var scraperOpts = builder.Configuration.GetSection(ScraperOptions.Section).Get<ScraperOptions>() ?? new ScraperOptions();
-    if (scraperOpts.ContainerNames.Count > 0)
-        builder.Services.AddSingleton<GluetunContainerRecycler>();
-}
-
-builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
+builder.Services.AddHttpClient(nameof(GlobalLeaderboardScraper))
     .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
-    .ConfigurePrimaryHttpMessageHandler(sp =>
-    {
-        var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
-        if (opts.ProxyUrls.Count > 0)
-        {
-            var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("ProxyRotation");
-            log.LogInformation("Proxy rotation enabled: {Count} proxies configured", opts.ProxyUrls.Count);
-            var recycler = opts.ContainerNames.Count > 0
-                ? sp.GetService<GluetunContainerRecycler>()
-                : null;
-            var handler = new RoundRobinProxyHandler(
-                opts.ProxyUrls,
-                accounts: null,
-                leaderboardHandlerFactory,
-                log,
-                opts.ControlUrls.Count > 0 ? opts.ControlUrls : null,
-                opts.ContainerNames.Count > 0 ? opts.ContainerNames : null,
-                recycler,
-                activeStandby: opts.ProxyActiveStandby);
-            // Publish the handler to DI so diagnostic endpoints can snapshot slot state.
-            sp.GetRequiredService<ProxyHandlerAccessor>().Set(handler);
-            return handler;
-        }
-        return leaderboardHandlerFactory();
-    });
+    .ConfigurePrimaryHttpMessageHandler(sp => CreateEpicLeaderboardHandler(sp, maxConnectionsPerServer: 2048));
 
 // Accessor that lets endpoints reach the active RoundRobinProxyHandler without a full DI
 // refactor. Null when proxy rotation is disabled (e.g. tests, single-proxy configs).
@@ -263,7 +240,14 @@ builder.Services.AddSingleton<GlobalLeaderboardScraper>(sp =>
     var log = sp.GetRequiredService<ILogger<GlobalLeaderboardScraper>>();
     var festival = sp.GetService<FortniteFestival.Core.Services.FestivalService>();
     var trafficCoordinator = sp.GetRequiredService<EpicTrafficCoordinator>();
-    return new GlobalLeaderboardScraper(http, progress, log, festivalService: festival, trafficCoordinator: trafficCoordinator);
+    var proxyHealth = sp.GetRequiredService<IProxyHealthReporter>();
+    return new GlobalLeaderboardScraper(
+        http,
+        progress,
+        log,
+        festivalService: festival,
+        trafficCoordinator: trafficCoordinator,
+        proxyHealth: proxyHealth);
 });
 
 builder.Services.AddHttpClient<AccountNameResolver>()
@@ -445,15 +429,17 @@ builder.Services.AddSingleton<ItemShopService>(sp =>
         : throw new InvalidOperationException());
 
 
-builder.Services.AddHttpClient<HistoryReconstructor>()
+builder.Services.AddHttpClient(nameof(HistoryReconstructor))
     .ConfigureHttpClient(c => c.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
-    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-    {
-        MaxConnectionsPerServer = 32,
-        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
-        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-        AutomaticDecompression = System.Net.DecompressionMethods.All,
-    });
+    .ConfigurePrimaryHttpMessageHandler(sp => CreateEpicLeaderboardHandler(sp, maxConnectionsPerServer: 32))
+    .AddTypedClient((http, sp) => new HistoryReconstructor(
+        sp.GetRequiredService<ILeaderboardQuerier>(),
+        sp.GetRequiredService<GlobalLeaderboardPersistence>(),
+        http,
+        sp.GetRequiredService<ScrapeProgressTracker>(),
+        sp.GetRequiredService<UserSyncProgressTracker>(),
+        sp.GetRequiredService<ILogger<HistoryReconstructor>>(),
+        sp.GetRequiredService<IProxyHealthReporter>()));
 
 // ─── Path Generation ────────────────────────────────────────
 

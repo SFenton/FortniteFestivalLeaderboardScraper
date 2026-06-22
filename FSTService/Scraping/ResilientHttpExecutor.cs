@@ -178,6 +178,7 @@ public sealed class ResilientHttpExecutor
     private readonly HttpClient _http;
     private readonly ILogger _log;
     private readonly EpicTrafficCoordinator? _trafficCoordinator;
+    private readonly IProxyHealthReporter? _proxyHealth;
 
     // ── In-flight operation tracking (for /api/diag/inflight) ──────────
     // Keyed by Guid so removal is O(1) and independent of label collisions.
@@ -256,6 +257,16 @@ public sealed class ResilientHttpExecutor
     public ResilientHttpExecutor(HttpClient http, ILogger log, EpicTrafficCoordinator trafficCoordinator)
         : this(http, log, probeSendTimeout: null, sendWallClockTimeout: null, executorLifetime: default, trafficCoordinator) { }
 
+    public ResilientHttpExecutor(HttpClient http, ILogger log, IProxyHealthReporter? proxyHealth)
+        : this(http, log, probeSendTimeout: null, sendWallClockTimeout: null, executorLifetime: default, trafficCoordinator: null, proxyHealth) { }
+
+    public ResilientHttpExecutor(
+        HttpClient http,
+        ILogger log,
+        EpicTrafficCoordinator? trafficCoordinator,
+        IProxyHealthReporter? proxyHealth)
+        : this(http, log, probeSendTimeout: null, sendWallClockTimeout: null, executorLifetime: default, trafficCoordinator, proxyHealth) { }
+
     /// <param name="probeSendTimeout">Per-attempt timeout for the background CDN probe
     /// send. Defaults to <see cref="DefaultProbeSendTimeout"/>. A single probe
     /// <c>HttpClient.SendAsync</c> call will not block longer than this, regardless of
@@ -275,11 +286,13 @@ public sealed class ResilientHttpExecutor
         TimeSpan? probeSendTimeout,
         TimeSpan? sendWallClockTimeout,
         CancellationToken executorLifetime,
-        EpicTrafficCoordinator? trafficCoordinator = null)
+        EpicTrafficCoordinator? trafficCoordinator = null,
+        IProxyHealthReporter? proxyHealth = null)
     {
         _http = http;
         _log = log;
         _trafficCoordinator = trafficCoordinator;
+        _proxyHealth = proxyHealth;
         _probeSendTimeout = probeSendTimeout ?? DefaultProbeSendTimeout;
         _sendWallClockTimeout = sendWallClockTimeout ?? DefaultSendWallClockTimeout;
         _executorLifetime = executorLifetime;
@@ -373,6 +386,7 @@ public sealed class ResilientHttpExecutor
                 await (limiter?.AcquireRateTokenAsync(ct) ?? Task.CompletedTask);
             }
 
+            using var sentRequest = requestFactory();
             HttpResponseMessage res;
             // Per-attempt wall-clock deadline: HttpClient.Timeout is typically Infinite
             // so a wedged connection (zombie TCP after proxy recycle) can hang forever.
@@ -385,7 +399,9 @@ public sealed class ResilientHttpExecutor
             {
                 Interlocked.Increment(ref _totalHttpSends);
                 op.SetState(InflightState.Sending);
-                res = await _http.SendAsync(requestFactory(), sendCts.Token);
+                res = await _http.SendAsync(sentRequest, sendCts.Token);
+                if (res.IsSuccessStatusCode)
+                    _proxyHealth?.ReportSuccess(sentRequest);
             }
             catch (HttpRequestException ex)
             {
@@ -398,6 +414,7 @@ public sealed class ResilientHttpExecutor
                     "HTTP error for {Operation} (networkError {NetErr}, DOP {Dop}): {Error}",
                     label ?? "request", networkErrors, limiter?.CurrentDop ?? -1, ex.Message);
                 limiter?.ReportFailure();
+                _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.Transport);
                 continue; // transient — retry indefinitely
             }
             catch (ObjectDisposedException ex) when (!ct.IsCancellationRequested)
@@ -414,6 +431,7 @@ public sealed class ResilientHttpExecutor
                     "Connection disposed for {Operation} (networkError {NetErr}, DOP {Dop}): {Error}",
                     label ?? "request", networkErrors, limiter?.CurrentDop ?? -1, ex.Message);
                 limiter?.ReportFailure();
+                _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.Transport);
                 continue; // transient — retry indefinitely
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
@@ -430,6 +448,7 @@ public sealed class ResilientHttpExecutor
                     "Timeout for {Operation} (networkError {NetErr}, DOP {Dop}, wall-clock {WallClockMs}ms)",
                     label ?? "request", networkErrors, limiter?.CurrentDop ?? -1, _sendWallClockTimeout.TotalMilliseconds);
                 limiter?.ReportFailure();
+                _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.Timeout);
                 continue; // transient timeout — retry indefinitely
             }
 
@@ -457,6 +476,7 @@ public sealed class ResilientHttpExecutor
                     res.Dispose();
                     limiter?.ReportFailure();
                     limiter?.SlashDop();
+                    _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.CdnBlock);
                     LaunchCdnProbe(requestFactory, limiter, label, ct);
                     throw new CdnBlockedException(
                         $"CDN block on {label ?? "request"} (wire sends: {TotalHttpSends}, blocks: {CdnBlocksDetected})");
@@ -485,6 +505,7 @@ public sealed class ResilientHttpExecutor
                         "Rate-limited on {Operation}, waiting {Delay:F1}s (DOP {Dop})",
                         label ?? "request", retryAfter.TotalSeconds, limiter?.CurrentDop ?? -1);
                     limiter?.ReportFailure();
+                    _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.RateLimited);
                     res.Dispose();
                     await Task.Delay(retryAfter, ct);
                     continue;
@@ -494,6 +515,9 @@ public sealed class ResilientHttpExecutor
                     "{StatusCode} for {Operation} (attempt {Attempt}/{MaxAttempts}, DOP {Dop})",
                     statusCode, label ?? "request", statusAttempt, maxRetries + 1, limiter?.CurrentDop ?? -1);
                 if (countsAsLimiterFailure) limiter?.ReportFailure();
+                _proxyHealth?.ReportFailure(
+                    sentRequest,
+                    statusCode == 429 ? ProxyFailureKind.RateLimited : ProxyFailureKind.ServerError);
                 res.Dispose();
                 continue;
             }
@@ -503,7 +527,10 @@ public sealed class ResilientHttpExecutor
             // non-retryable codes (400, 403, 404, …) are not "failures" for
             // the adaptive limiter (the server handled the request properly).
             if (countsAsLimiterFailure)
+            {
                 limiter?.ReportFailure();
+                _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.RateLimited);
+            }
 
             return res;
         }
@@ -576,16 +603,20 @@ public sealed class ResilientHttpExecutor
                     using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(probeToken);
                     sendCts.CancelAfter(_probeSendTimeout);
 
+                    using var probeRequest = requestFactory();
                     HttpResponseMessage res;
                     try
                     {
                         Interlocked.Increment(ref _cdnProbeAttempts);
                         Interlocked.Increment(ref _totalHttpSends);
-                        res = await _http.SendAsync(requestFactory(), sendCts.Token);
+                        res = await _http.SendAsync(probeRequest, sendCts.Token);
+                        if (res.IsSuccessStatusCode)
+                            _proxyHealth?.ReportSuccess(probeRequest);
                     }
                     catch (HttpRequestException ex)
                     {
                         _log.LogWarning("CDN probe HTTP error (attempt {CdnAttempt}): {Error}", i + 1, ex.Message);
+                        _proxyHealth?.ReportFailure(probeRequest, ProxyFailureKind.Transport);
                         continue;
                     }
                     catch (OperationCanceledException) when (!probeToken.IsCancellationRequested)
@@ -594,6 +625,7 @@ public sealed class ResilientHttpExecutor
                         _log.LogWarning(
                             "CDN probe send timed out after {Timeout:F1}s (attempt {CdnAttempt})",
                             _probeSendTimeout.TotalSeconds, i + 1);
+                        _proxyHealth?.ReportFailure(probeRequest, ProxyFailureKind.Timeout);
                         continue;
                     }
 
@@ -609,6 +641,7 @@ public sealed class ResilientHttpExecutor
 
                     if (isCdnBlock)
                     {
+                        _proxyHealth?.ReportFailure(probeRequest, ProxyFailureKind.CdnBlock);
                         res.Dispose();
                         continue; // still blocked
                     }

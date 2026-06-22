@@ -62,6 +62,12 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       port: 3000,
+      fs: {
+        allow: [
+          path.resolve(__dirname),
+          path.resolve(__dirname, '..'),
+        ],
+      },
       watch: {
         ignored: ['**/coverage/**', '**/TestResults/**', '**/__test__/**'],
       },

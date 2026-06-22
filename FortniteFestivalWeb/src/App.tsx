@@ -895,6 +895,8 @@ function AppShell() {
     <BandFilterActionProvider value={bandFilterActionValue}>
     <PlayerDataProvider accountId={player?.accountId}>
     <FabVisibilityProvider mobileFabHidden={!showMobileFab}>
+    <>
+    {showAnimatedBg && <AnimatedBackground songs={songs} />}
     <div style={appStyles.shell}>
       <ScrollToTop />
 
@@ -910,8 +912,6 @@ function AppShell() {
         />
       )}
       {/* v8 ignore stop */}
-
-      {showAnimatedBg && <AnimatedBackground songs={songs} />}
 
       {/* v8 ignore start — mobile header conditional rendering */}
       {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} />}
@@ -1310,6 +1310,7 @@ function AppShell() {
       )}
       {/* v8 ignore stop */}
     </div>
+    </>
     </FabVisibilityProvider>
     </PlayerDataProvider>
     </BandFilterActionProvider>
@@ -1343,4 +1344,3 @@ function ScrollToTop() {
   return null;
 }
 /* v8 ignore stop */
-

@@ -43,6 +43,55 @@ public sealed class ScraperOptions
     public int MaxRequestsPerSecond { get; set; }
 
     /// <summary>
+    /// Optional HTTP proxy URLs used for Epic leaderboard traffic. When multiple
+    /// URLs are supplied, requests are routed through a health-aware proxy pool.
+    /// </summary>
+    public List<string> ProxyUrls { get; set; } = [];
+
+    /// <summary>
+    /// Optional Gluetun control URLs aligned with <see cref="ProxyUrls"/>.
+    /// </summary>
+    public List<string> ControlUrls { get; set; } = [];
+
+    /// <summary>
+    /// Optional VPN provider labels aligned with <see cref="ProxyUrls"/>.
+    /// </summary>
+    public List<string> VpnProviders { get; set; } = [];
+
+    /// <summary>
+    /// Optional container names aligned with <see cref="ProxyUrls"/>.
+    /// </summary>
+    public List<string> ContainerNames { get; set; } = [];
+
+    /// <summary>
+    /// When true, prefer one active proxy and fail over to standbys on cooldown.
+    /// When false, distribute across all healthy proxies using least-in-flight.
+    /// </summary>
+    public bool ProxyActiveStandby { get; set; } = true;
+
+    /// <summary>
+    /// Proactively rotate the active proxy after this many seconds. 0 disables
+    /// proactive rotation; unhealthy proxies still cool down and fail over.
+    /// </summary>
+    public int ProxyActiveRotationSeconds { get; set; } = 0;
+
+    /// <summary>
+    /// Cooldown applied to a proxy after CDN/tarpit signals. Defaults to 45s,
+    /// long enough for the pool to drain pressure before probing the exit again.
+    /// </summary>
+    public int ProxyCooldownSeconds { get; set; } = 45;
+
+    /// <summary>
+    /// Consecutive transport timeouts before a proxy is treated as tarpitted.
+    /// </summary>
+    public int ProxyTimeoutFailureThreshold { get; set; } = 2;
+
+    /// <summary>
+    /// Consecutive 429/5xx responses before a proxy is cooled down.
+    /// </summary>
+    public int ProxyHttpFailureThreshold { get; set; } = 5;
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;
@@ -440,44 +489,6 @@ public sealed class ScraperOptions
     public int ScrapePassTimeoutMinutes { get; set; }
 
     // ─── Band Scraping ─────────────────────────────────
-
-    /// <summary>
-    /// HTTP proxy URLs for round-robin rotation during leaderboard scraping.
-    /// Each URL should be a full proxy address (e.g. "http://127.0.0.1:8888").
-    /// When empty, requests go direct (no proxy). When populated, each request
-    /// is dispatched through the next proxy in round-robin order.
-    /// Set via <c>Scraper__ProxyUrls__0</c>, <c>Scraper__ProxyUrls__1</c>, etc.
-    /// </summary>
-    public List<string> ProxyUrls { get; set; } = [];
-
-    /// <summary>
-    /// Gluetun control API URLs for VPN city cycling on CDN blocks.
-    /// Each URL maps 1:1 to the corresponding <see cref="ProxyUrls"/> entry.
-    /// When a proxy gets CDN-blocked, the handler cycles its VPN to a new city
-    /// for a fresh egress IP, then verifies connectivity before resuming.
-    /// Set via <c>Scraper__ControlUrls__0</c>, <c>Scraper__ControlUrls__1</c>, etc.
-    /// Example: "http://172.17.0.2:8000"
-    /// </summary>
-    public List<string> ControlUrls { get; set; } = [];
-
-    /// <summary>
-    /// Docker container names for each gluetun proxy, mapped 1:1 to <see cref="ProxyUrls"/>.
-    /// When populated, the handler recreates the container (stop/rm/run) instead of using
-    /// the gluetun control API to cycle VPN servers. This is more reliable when gluetun is
-    /// crash-looping or the control API is wedged.
-    /// Requires the Docker socket to be mounted into the FSTService container.
-    /// Set via <c>Scraper__ContainerNames__0</c>, <c>Scraper__ContainerNames__1</c>, etc.
-    /// Example: "gluetun-1"
-    /// </summary>
-    public List<string> ContainerNames { get; set; } = [];
-
-    /// <summary>
-    /// When true, use active/standby proxy mode: all traffic goes through one proxy
-    /// at a time, failing over to the next on CDN block. Other proxies stay idle with
-    /// fresh IPs. When false (default), round-robin distributes across all proxies.
-    /// Set via <c>Scraper__ProxyActiveStandby</c> env var.
-    /// </summary>
-    public bool ProxyActiveStandby { get; set; } = true;
 
     /// <summary>
     /// When true, scrape Band_Duets, Band_Trios, and Band_Quad leaderboards

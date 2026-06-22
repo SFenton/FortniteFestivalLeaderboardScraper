@@ -96,7 +96,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         ILogger<GlobalLeaderboardScraper> log,
         int maxLookupRetries,
         FestivalService? festivalService)
-        : this(http, progress, log, maxLookupRetries, festivalService, trafficCoordinator: null) { }
+        : this(http, progress, log, maxLookupRetries, festivalService, trafficCoordinator: null, proxyHealth: null) { }
 
     public GlobalLeaderboardScraper(
         HttpClient http,
@@ -104,7 +104,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         ILogger<GlobalLeaderboardScraper> log,
         int maxLookupRetries = ResilientHttpExecutor.DefaultMaxRetries,
         FestivalService? festivalService = null,
-        EpicTrafficCoordinator? trafficCoordinator = null)
+        EpicTrafficCoordinator? trafficCoordinator = null,
+        IProxyHealthReporter? proxyHealth = null)
     {
         _http = http;
         _progress = progress;
@@ -112,9 +113,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         _trafficCoordinator = trafficCoordinator;
         _maxLookupRetries = maxLookupRetries;
         _festivalService = festivalService;
-        _executor = trafficCoordinator is null
-            ? new ResilientHttpExecutor(http, log)
-            : new ResilientHttpExecutor(http, log, trafficCoordinator);
+        _executor = new ResilientHttpExecutor(http, log, trafficCoordinator, proxyHealth);
     }
 
     internal async Task AcquireEpicSlotAsync(AdaptiveConcurrencyLimiter limiter, CancellationToken ct)
