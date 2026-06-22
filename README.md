@@ -5,12 +5,6 @@ A simple Windows utility for retrieving your highest Fortnite Festival scores ac
 <img width="835" alt="image" src="https://github.com/user-attachments/assets/9c9f8213-8f5e-401f-a925-d26d1824f47b">
 <img width="833" alt="image" src="https://github.com/user-attachments/assets/ca5dbd34-a7be-41c5-932c-57b9e9bc527b">
 
-## Service and harness docs
-
-The current service-side post-scrape clone and benchmark workflow is documented in [docs/design/PostScrapeCloneHarness.md](docs/design/PostScrapeCloneHarness.md).
-
-
-
 ## Why?
 
 The Fortnite Festival leaderboards reset at the beginning of every season. This means that, while Epic is still saving your highest scores from previous seasons in their leaderboards (actually, every single session you've played!), they aren't surfaced in the game anywhere, most importantly on the song select screen, as they have been for the past... nearly twenty years. I wanted to make this tool because I worked hard for the FCs I've gotten, and it's kind of maddening that I didn't have a foolproof in-game way to track that across seasons.

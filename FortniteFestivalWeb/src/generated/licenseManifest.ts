@@ -725,7 +725,7 @@ export const licenseManifest = [
     licenseText: licenseTexts["PostgreSQL"],
     packageUrl: "https://github.com/npgsql/npgsql",
     repositoryUrl: "https://github.com/npgsql/npgsql",
-    consumers: ["FSTService.Harnesses/BandCurrentProjectionHarness/BandCurrentProjectionHarness.csproj","FSTService.Harnesses/BandRankHistoryHarness/BandRankHistoryHarness.csproj","FSTService.Harnesses/BandRankingRepairHarness/BandRankingRepairHarness.csproj","FSTService.Harnesses/BandSearchProjectionHarness/BandSearchProjectionHarness.csproj","FSTService.Harnesses/BandSongRankingBackfillHarness/BandSongRankingBackfillHarness.csproj","FSTService.Harnesses/ComboRankingRepairHarness/ComboRankingRepairHarness.csproj","FSTService.Harnesses/DatabaseMaintenanceDryRunHarness/DatabaseMaintenanceDryRunHarness.csproj","FSTService.Harnesses/FirstSeenHarness/FirstSeenHarness.csproj","FSTService.Harnesses/ImprovementNotificationsHarness/ImprovementNotificationsHarness.csproj","FSTService.Harnesses/PlayerScoreObservationBackfillHarness/PlayerScoreObservationBackfillHarness.csproj","FSTService.Harnesses/PlayerScoreUnionProbeHarness/PlayerScoreUnionProbeHarness.csproj","FSTService.Harnesses/PostScrapeCloneHarness/PostScrapeCloneHarness.csproj","FSTService.Harnesses/RankingsPerfHarness/RankingsPerfHarness.csproj","FSTService.Harnesses/SoloCurrentProjectionHarness/SoloCurrentProjectionHarness.csproj","FSTService.Harnesses/SoloFamilyRankingBackfillHarness/SoloFamilyRankingBackfillHarness.csproj","FSTService.Harnesses/SongMachineHarness/SongMachineHarness.csproj","FSTService.Harnesses/V1ScrapeHarness/V1ScrapeHarness.csproj","FSTService.Tests/FSTService.Tests.csproj","FSTService/FSTService.csproj"],
+    consumers: ["FSTService.Tests/FSTService.Tests.csproj","FSTService/FSTService.csproj"],
   },
   {
     id: "nuget:NSubstitute@5.3.0",
@@ -1099,7 +1099,7 @@ export const licenseManifest = [
     licenseText: licenseTexts["MIT"],
     packageUrl: "https://dotnet.testcontainers.org/",
     repositoryUrl: "https://github.com/testcontainers/testcontainers-dotnet",
-    consumers: ["FSTService.Harnesses/FirstSeenHarness/FirstSeenHarness.csproj","FSTService.Harnesses/SongMachineHarness/SongMachineHarness.csproj","FSTService.Harnesses/V1ScrapeHarness/V1ScrapeHarness.csproj","FSTService.Tests/FSTService.Tests.csproj"],
+    consumers: ["FSTService.Tests/FSTService.Tests.csproj"],
   },
   {
     id: "npm:typescript@5.7.3",

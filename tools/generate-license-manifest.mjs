@@ -23,7 +23,6 @@ const NPM_PACKAGE_MANIFESTS = [
 const NUGET_SCAN_ROOTS = [
   'FSTService',
   'FSTService.Tests',
-  'FSTService.Harnesses',
   'FortniteFestival.Core',
   'tools',
 ];

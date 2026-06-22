@@ -278,7 +278,7 @@ Implemented Phase 6B scope:
 - Rebuilds create and publish `band_team_ranking_generation` rows.
 - Dual mode shadow-writes `band_team_rank_history_snapshot_v2`, `band_team_rank_history_points_v2`, and `band_team_rank_history_latest_v2` from the existing chunk path.
 - Public API history reads remain on legacy narrow/wide sources.
-- `BandRankHistoryHarness --write-mode Dual` can process explicit jobs with v2 shadow writes when separately approved.
+- Explicit band rank-history jobs can process v2 shadow writes when separately approved.
 
 ### Phase 6C: Narrow/v2 Read Source Gate
 
@@ -357,7 +357,7 @@ Implemented Phase 6F scope:
 - `MetaDatabase.GetBandRankHistoryWideNarrowParity(...)` compares legacy wide history to legacy narrow points for a band type, snapshot date, optional ranking scope, and optional combo id.
 - The parity report counts wide rows, narrow rows, key matches, rows missing from narrow, rows missing from wide, and API-visible value mismatches.
 - Compared values include ranks, ratings, scores, songs played, coverage, full combos, total charted songs, raw ratings, snapshot timestamp, and total ranked teams via stats history.
-- `BandRankHistoryHarness --parity` emits read-only console/JSON parity output and separately labels existing legacy-narrow-vs-v2 parity when v2 rows exist.
+- The parity helper emits read-only console/JSON parity output and separately labels existing legacy-narrow-vs-v2 parity when v2 rows exist.
 - This proof does not flip `ApiReadSource` and does not disable wide compatibility writes.
 
 Live scrape 770 validation on `2026-05-10`:
