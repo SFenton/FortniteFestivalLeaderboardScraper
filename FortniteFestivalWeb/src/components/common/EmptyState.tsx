@@ -9,17 +9,19 @@ export interface EmptyStateProps {
   /** When true, applies a minHeight so the empty state is vertically centered in the viewport. */
   fullPage?: boolean;
   style?: CSSProperties;
+  titleStyle?: CSSProperties;
+  subtitleStyle?: CSSProperties;
   onAnimationEnd?: (e: React.AnimationEvent<HTMLElement>) => void;
   className?: string;
 }
 
-export default function EmptyState({ title, subtitle, icon, fullPage, style, onAnimationEnd, className }: EmptyStateProps) {
+export default function EmptyState({ title, subtitle, icon, fullPage, style, titleStyle, subtitleStyle, onAnimationEnd, className }: EmptyStateProps) {
   const s = useStyles(fullPage);
   return (
     <div className={className} style={{ ...s.root, ...style }} onAnimationEnd={onAnimationEnd}>
       {icon}
-      <div style={s.title}>{title}</div>
-      {subtitle && <div style={s.subtitle}>{subtitle}</div>}
+      <div style={{ ...s.title, ...titleStyle }}>{title}</div>
+      {subtitle && <div style={{ ...s.subtitle, ...subtitleStyle }}>{subtitle}</div>}
     </div>
   );
 }
@@ -36,6 +38,6 @@ function useStyles(fullPage?: boolean) {
       ...(fullPage ? { minHeight: `calc(100vh - ${Layout.shellChromeHeight}px)` } : undefined),
     },
     title: { fontSize: Font.xl, fontWeight: Weight.bold, color: Colors.textPrimary },
-    subtitle: { fontSize: Font.md, color: Colors.textMuted },
-  }), []);
+    subtitle: { fontSize: Font.md, color: Colors.textPrimary },
+  }), [fullPage]);
 }

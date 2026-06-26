@@ -179,7 +179,11 @@ export default function FloatingActionButton({
       onPress();
       return;
     }
-    actionsOpen ? closeActions() : openActions();
+    if (actionsOpen) {
+      closeActions();
+    } else {
+      openActions();
+    }
   }, [actionsOpen, closeActions, effectiveDirectAction, onPress, openActions]);
   /* v8 ignore stop */
   const mainFabPressHandlers = usePressAction<HTMLButtonElement>({ onPress: handleFabPress });

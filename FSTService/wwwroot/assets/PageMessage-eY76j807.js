@@ -1,0 +1,1 @@
+import{j as t,r as n,L as o,F as r,C as i,aY as g,p,G as e}from"./index-Ds41-gwi.js";function m({children:s}){const a=u();return t.jsx("div",{style:a.message,children:s})}function u(){return n.useMemo(()=>({message:{...g,padding:p(e.section,e.none),color:i.textSecondary,fontSize:r.lg,minHeight:o.pageMessageMinHeight}}),[])}export{m as P};

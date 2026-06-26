@@ -737,7 +737,6 @@ function NotificationMediaCycle({ comboContent, cycleAlbumArt, styles }: { combo
   const [isFading, setIsFading] = useState(false);
 
   useEffect(() => {
-    let firstSwapTimer: ReturnType<typeof setTimeout> | undefined;
     let fadeTimer: ReturnType<typeof setTimeout> | undefined;
     let swapInterval: ReturnType<typeof setInterval> | undefined;
 
@@ -749,7 +748,7 @@ function NotificationMediaCycle({ comboContent, cycleAlbumArt, styles }: { combo
       }, MEDIA_CYCLE_FADE_MS);
     };
 
-    firstSwapTimer = setTimeout(() => {
+    const firstSwapTimer = setTimeout(() => {
       swapLayer();
       swapInterval = setInterval(swapLayer, MEDIA_CYCLE_SWAP_INTERVAL_MS);
     }, mediaCycleDelayUntilNextSwap(Date.now()));

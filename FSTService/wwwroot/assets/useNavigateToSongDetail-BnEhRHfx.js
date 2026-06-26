@@ -1,1 +1,0 @@
-import{aC as i,b as c,r,an as u}from"./index-C6Li_E7C.js";function g(o){var s;const n=i(),t=c(),e=(s=n.state)==null?void 0:s.backTo,a=o?u.songDetail(o):void 0;return r.useCallback(()=>{a&&t(e===a?-1:a)},[e,a,t])}export{g as u};

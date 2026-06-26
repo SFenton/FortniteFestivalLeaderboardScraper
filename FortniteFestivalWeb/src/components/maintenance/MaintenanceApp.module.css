@@ -1,0 +1,63 @@
+@keyframes maintenance-background-drift {
+  0%,
+  100% {
+    opacity: 0.1;
+    transform: translate3d(-1rem, -0.75rem, 0) scale(1.08) rotate(-2deg);
+  }
+
+  50% {
+    opacity: 0.18;
+    transform: translate3d(1rem, 0.75rem, 0) scale(1.16) rotate(2deg);
+  }
+}
+
+.page {
+  position: relative;
+  display: grid;
+  min-height: 100dvh;
+  padding: calc(env(safe-area-inset-top, 0px) + 32px) 24px calc(env(safe-area-inset-bottom, 0px) + 32px);
+  overflow: hidden;
+  place-items: center;
+  isolation: isolate;
+  color: var(--color-text-primary);
+  background:
+    radial-gradient(circle at 50% 14%, rgb(124 58 237 / 34%), transparent 34rem),
+    radial-gradient(circle at 18% 82%, rgb(45 130 230 / 22%), transparent 26rem),
+    linear-gradient(135deg, var(--color-bg-app), var(--color-bg-card) 58%, var(--color-bg-card-purple));
+}
+
+.page::before {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background-image: url('/icons/fst-icon-512.png');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: min(680px, 88vw);
+  content: '';
+  filter: blur(2px) saturate(1.15);
+  opacity: 0.1;
+  animation: maintenance-background-drift 18s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+.page::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(180deg, rgb(11 3 24 / 18%), rgb(11 18 32 / 70%)),
+    radial-gradient(circle at center, transparent, rgb(0 0 0 / 38%));
+  content: '';
+}
+
+.emptyState {
+  width: min(680px, 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page::before {
+    opacity: 1;
+    animation: none;
+  }
+}

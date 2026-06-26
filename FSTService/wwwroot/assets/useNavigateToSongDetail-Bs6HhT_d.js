@@ -1,0 +1,1 @@
+import{aH as n,b as c,r,ad as u}from"./index-Ds41-gwi.js";function g(o){var s;const i=n(),t=c(),e=(s=i.state)==null?void 0:s.backTo,a=o?u.songDetail(o):void 0;return r.useCallback(()=>{a&&t(e===a?-1:a)},[e,a,t])}export{g as u};

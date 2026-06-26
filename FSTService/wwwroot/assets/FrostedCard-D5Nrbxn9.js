@@ -1,0 +1,1 @@
+import{r as a,j as e,h as d}from"./index-Ds41-gwi.js";const x=a.forwardRef(function({children:r,className:s,style:t},o){return e.jsx("div",{ref:o,className:s,style:{...d,...t},children:r})});export{x as F};

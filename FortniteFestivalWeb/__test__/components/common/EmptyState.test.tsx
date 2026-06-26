@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { Colors } from '@festival/theme';
 import EmptyState from '../../../src/components/common/EmptyState';
 
 describe('EmptyState', () => {
@@ -10,7 +11,7 @@ describe('EmptyState', () => {
 
   it('renders subtitle when provided', () => {
     render(<EmptyState title="Empty" subtitle="Try again later" />);
-    expect(screen.getByText('Try again later')).toBeTruthy();
+    expect(screen.getByText('Try again later')).toHaveStyle({ color: Colors.textPrimary });
   });
 
   it('does not render subtitle when omitted', () => {
@@ -43,6 +44,20 @@ describe('EmptyState', () => {
     expect(root.style.marginTop).toBe('20px');
     // Root styles still present
     expect(root.style.textAlign).toBe('center');
+  });
+
+  it('merges title and subtitle style overrides', () => {
+    render(
+      <EmptyState
+        title="Empty"
+        subtitle="Try again later"
+        titleStyle={{ fontSize: '30px' }}
+        subtitleStyle={{ fontSize: '21px' }}
+      />,
+    );
+
+    expect(screen.getByText('Empty')).toHaveStyle({ fontSize: '30px' });
+    expect(screen.getByText('Try again later')).toHaveStyle({ fontSize: '21px' });
   });
 
   it('applies className', () => {

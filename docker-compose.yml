@@ -132,9 +132,8 @@ services:
       - "127.0.0.1:3000:80"
     environment:
       - API_BACKEND_URL=http://fstservice:8080
-    depends_on:
-      fstservice:
-        condition: service_healthy
+    # Start independently so the static maintenance UI can render when the API
+    # or database is unavailable.
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/"]
       interval: 30s
