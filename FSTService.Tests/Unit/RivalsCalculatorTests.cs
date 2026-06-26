@@ -897,7 +897,8 @@ public sealed class RivalsCalculatorTests : IDisposable
         var persistence = CreatePersistence();
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
 
-        // Seed 12 backfill entries — Rank stays 0 after RecomputeAllRanks, ApiRank is set
+        // Seed 12 backfill entries; current-state diagnostics assign dense local
+        // ranks while preserving Epic ApiRank.
         for (int i = 0; i < 12; i++)
         {
             SeedEntriesEx(db, $"song_{i}",
@@ -911,11 +912,11 @@ public sealed class RivalsCalculatorTests : IDisposable
         var inst = diag.Instruments[0];
         Assert.Equal(12, inst.TotalSongs);
         Assert.True(inst.MeetsMinimum);
-        Assert.Equal(12, inst.RankedSongs); // effectiveRank = ApiRank > 0
-        // Backfill: Rank = 0, ApiRank > 0 → all "ApiRankOnly"
+        Assert.Equal(12, inst.RankedSongs);
         Assert.Equal(0, inst.RankOnly);
-        Assert.Equal(12, inst.ApiRankOnly);
+        Assert.Equal(0, inst.ApiRankOnly);
         Assert.Equal(0, inst.BothZero);
+        Assert.Equal(12, inst.BothSet);
     }
 
     [Fact]
@@ -969,12 +970,9 @@ public sealed class RivalsCalculatorTests : IDisposable
     [Fact]
     public void GetDiagnostics_probe_finds_zero_neighbors_for_backfill_only()
     {
-        // backfill entries have ApiRank set but Rank = 0.
-        // effectiveRank falls back to ApiRank when Rank = 0.
-        // GetNeighborhood queries the Rank column, so if the only entries
-        // in the DB are scrape-based with dense Rank 1-10, the probe at
-        // ApiRank ~500 finds nothing — this is expected for pure-backfill
-        // entries with no scrape coverage.
+        // Current-state diagnostics compute dense ranks for preserved backfill
+        // rows, so the neighborhood probe can use local rank even when ApiRank
+        // is far outside the locally known scrape population.
         var persistence = CreatePersistence();
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
 
@@ -998,11 +996,9 @@ public sealed class RivalsCalculatorTests : IDisposable
 
         var inst = diag.Instruments[0];
         Assert.NotNull(inst.Probe);
-        // effectiveRank = ApiRank (fallback since Rank = 0).
-        // Probe scans Rank ~500 range but entries have dense Rank 1-10 → 0 neighbors.
-        Assert.Equal(0, inst.Probe!.NeighborsFound);
-        Assert.True(inst.Probe.EffectiveRank >= 500,
-            "EffectiveRank should use ApiRank since Rank = 0");
+        Assert.True(inst.Probe!.NeighborsFound > 0);
+        Assert.True(inst.Probe.EffectiveRank < 500,
+            "EffectiveRank should use dense current-state rank when available.");
     }
 
     [Fact]

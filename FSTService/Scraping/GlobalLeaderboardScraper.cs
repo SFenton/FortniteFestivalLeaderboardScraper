@@ -6,6 +6,7 @@ using System.Text.Json;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FSTService.Scraping;
 
@@ -89,6 +90,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
     /// <summary>Exposes the underlying HTTP executor for diagnostics (CDN wire counters).</summary>
     public ResilientHttpExecutor Executor => _executor;
+
+    [ActivatorUtilitiesConstructor]
+    public GlobalLeaderboardScraper(
+        HttpClient http,
+        ScrapeProgressTracker progress,
+        ILogger<GlobalLeaderboardScraper> log,
+        FestivalService? festivalService = null,
+        EpicTrafficCoordinator? trafficCoordinator = null,
+        IProxyHealthReporter? proxyHealth = null)
+        : this(http, progress, log, ResilientHttpExecutor.DefaultMaxRetries, festivalService, trafficCoordinator, proxyHealth) { }
 
     public GlobalLeaderboardScraper(
         HttpClient http,

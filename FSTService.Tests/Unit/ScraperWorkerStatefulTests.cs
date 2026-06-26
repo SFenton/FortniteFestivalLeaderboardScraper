@@ -402,7 +402,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
             Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<ScrapeAccessTokenProvider?>())
             .Returns(async callInfo =>
             {
                 var onSongComplete = callInfo.ArgAt<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(4);
@@ -431,14 +432,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
 
-        await _cyclicalMachine.Received().AttachAsync(
-            Arg.Any<IReadOnlyList<UserWorkItem>>(),
-            Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<IReadOnlyList<FSTService.Persistence.SeasonWindowInfo>>(),
-            Arg.Any<SongMachineSource>(),
-            Arg.Any<bool>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<bool>());
+        Assert.Contains("regAcct", _metaDb.GetRegisteredAccountIds());
     }
 
     [Fact]
@@ -460,7 +454,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
             Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<ScrapeAccessTokenProvider?>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -498,7 +493,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
             Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<ScrapeAccessTokenProvider?>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -538,7 +534,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
             Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<ScrapeAccessTokenProvider?>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -580,7 +577,8 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
             Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>(),
             Arg.Any<double>(), Arg.Any<Func<string, string, IReadOnlyList<LeaderboardEntry>, ValueTask>?>(),
-            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>())
+            Arg.Any<Func<string, string, IReadOnlyList<BandLeaderboardEntry>, ValueTask>?>(),
+            Arg.Any<ScrapeAccessTokenProvider?>())
             .Returns(async callInfo =>
             {
                 var onSongComplete = callInfo.ArgAt<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(4);

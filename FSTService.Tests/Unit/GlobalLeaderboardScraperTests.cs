@@ -23,6 +23,7 @@ public class GlobalLeaderboardScraperTests
         var handler = new MockHttpMessageHandler();
         var http = new HttpClient(handler);
         var scraper = new GlobalLeaderboardScraper(http, _progress, _log, maxLookupRetries: 0, festivalService: festivalService);
+        scraper.Executor.CdnBlockFallbackOverride = (_, _, _) => Task.FromResult<HttpResponseMessage?>(null);
         return (scraper, handler);
     }
 

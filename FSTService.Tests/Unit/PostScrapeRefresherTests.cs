@@ -76,15 +76,9 @@ public class PostScrapeRefresherTests : IDisposable
         var (refresher, handler) = CreateRefresher();
 
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct1" };
-        var seen = new HashSet<(string AccountId, string SongId, string Instrument)>
-        {
-            ("acct1", "songA", "Solo_Guitar"),
-            ("acct1", "songA", "Solo_Bass"),
-            ("acct1", "songA", "Solo_Vocals"),
-            ("acct1", "songA", "Solo_Drums"),
-            ("acct1", "songA", "Solo_PeripheralGuitar"),
-            ("acct1", "songA", "Solo_PeripheralBass"),
-        };
+        var seen = GlobalLeaderboardScraper.AllInstruments
+            .Select(instrument => ("acct1", "songA", instrument))
+            .ToHashSet();
 
         var result = await refresher.RefreshAllAsync(
             registered, seen, ["songA"], "token", "caller", _limiter);

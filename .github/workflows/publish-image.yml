@@ -227,8 +227,7 @@ jobs:
           -c Release --no-build
           --logger trx --results-directory TestResults
           --collect:"XPlat Code Coverage"
-          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
-          DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[FSTService]*"
+          --settings FSTService.Tests/coverage.runsettings
 
       - name: Enforce minimum line coverage for FSTService
         shell: bash

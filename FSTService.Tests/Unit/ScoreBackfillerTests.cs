@@ -54,6 +54,7 @@ public class ScoreBackfillerTests : IDisposable
         var progress = new ScrapeProgressTracker();
         var scraperLog = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
         var scraper = new GlobalLeaderboardScraper(http, progress, scraperLog, maxLookupRetries: 0);
+        scraper.Executor.CdnBlockFallbackOverride = (_, _, _) => Task.FromResult<HttpResponseMessage?>(null);
         var backfiller = new ScoreBackfiller(scraper, _persistence, progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _log);
         return (backfiller, handler);
     }
@@ -189,15 +190,16 @@ public class ScoreBackfillerTests : IDisposable
             AccountId = "acct1", Score = 100, Rank = 1, Percentile = 0.05
         }]);
 
-        // Remaining 5 instruments will need API calls (all empty)
-        for (int i = 0; i < 5; i++)
+        var expectedRequests = GlobalLeaderboardScraper.AllInstruments.Count - 1;
+        // Remaining instruments will need API calls (all empty)
+        for (int i = 0; i < expectedRequests; i++)
             handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
 
         var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool);
 
         Assert.Equal(0, result);
-        // Only 5 HTTP requests (skipped guitar)
-        Assert.Equal(5, handler.Requests.Count);
+        // All instruments except guitar were queried.
+        Assert.Equal(expectedRequests, handler.Requests.Count);
     }
 
     // ─── Backfill cancelled mid-run → saves progress and re-throws ──
@@ -258,13 +260,14 @@ public class ScoreBackfillerTests : IDisposable
         };
         var service = CreateServiceWithSongs(songs);
 
-        // Queue HTTP errors for all 6 instruments (non-retryable JSON 403)
-        for (int i = 0; i < 6; i++)
+        var expectedRequests = GlobalLeaderboardScraper.AllInstruments.Count;
+        // Queue HTTP errors for all instruments (non-retryable JSON 403)
+        for (int i = 0; i < expectedRequests; i++)
             handler.EnqueueJsonResponse(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
 
         var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool);
 
         Assert.Equal(0, result);
-        Assert.Equal(6, handler.Requests.Count);
+        Assert.Equal(expectedRequests, handler.Requests.Count);
     }
 }

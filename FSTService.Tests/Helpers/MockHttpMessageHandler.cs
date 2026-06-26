@@ -99,10 +99,12 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        var capturedRequest = await CloneRequestAsync(request, cancellationToken);
+
         object entry;
         lock (_lock)
         {
-            _requests.Add(request);
+            _requests.Add(capturedRequest);
 
             if (_responses.Count == 0)
                 throw new InvalidOperationException(
@@ -123,5 +125,32 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
             throw new TaskCanceledException("simulated hang cancelled", innerException: null, cancellationToken);
         }
         return (HttpResponseMessage)entry;
+    }
+
+    private static async Task<HttpRequestMessage> CloneRequestAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        var clone = new HttpRequestMessage(request.Method, request.RequestUri)
+        {
+            Version = request.Version,
+            VersionPolicy = request.VersionPolicy,
+        };
+
+        foreach (var header in request.Headers)
+            clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
+
+        if (request.Content is not null)
+        {
+            var body = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+            clone.Content = new ByteArrayContent(body);
+            foreach (var header in request.Content.Headers)
+                clone.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        foreach (var option in request.Options)
+            clone.Options.Set(new HttpRequestOptionsKey<object?>(option.Key), option.Value);
+
+        return clone;
     }
 }

@@ -195,10 +195,9 @@ public class DeepScrapeCoordinatorTests
     {
         var (coordinator, _, handler) = Create();
 
-        // Job starts at page 2, gets 3 consecutive 403s → stops.
-        // FetchPageAsync retries each JSON 403 once (5s delay), so each page
-        // consumes 2 mock responses. We need 3 pages × 2 = 6 JSON 403s.
-        for (int i = 0; i < 6; i++)
+        // Job starts at page 2 and stops after the 403 boundary. Queue enough
+        // responses for already-seeded pages that may have entered the limiter.
+        for (int i = 0; i < 12; i++)
             handler.EnqueueError(System.Net.HttpStatusCode.Forbidden,
                 @"{""errorCode"":""errors.com.epicgames.common.forbidden""}");
 

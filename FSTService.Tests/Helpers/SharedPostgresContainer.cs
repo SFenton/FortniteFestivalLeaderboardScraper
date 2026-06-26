@@ -16,8 +16,13 @@ public static class SharedPostgresContainer
             .WithDatabase("fst_tests")
             .WithUsername("test")
             .WithPassword("test")
-            // Raise max_connections to handle parallel test classes
-            .WithCommand("-c", "max_connections=500")
+            // Raise max_connections for parallel test classes, and keep test
+            // queries off Docker's small default /dev/shm allocation.
+            .WithCommand(
+                "-c", "max_connections=500",
+                "-c", "max_parallel_workers=0",
+                "-c", "max_parallel_workers_per_gather=0",
+                "-c", "dynamic_shared_memory_type=mmap")
             .Build();
         container.StartAsync().GetAwaiter().GetResult();
         return container;
@@ -34,11 +39,14 @@ public static class SharedPostgresContainer
     {
         var connStr = ConnectionString;
         var dbName = $"fst_{Guid.NewGuid():N}";
-        using var conn = new NpgsqlConnection(connStr);
-        conn.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"CREATE DATABASE \"{dbName}\";";
-        cmd.ExecuteNonQuery();
+        ExecuteWithPostgresReadyRetry(() =>
+        {
+            using var conn = new NpgsqlConnection(connStr);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"CREATE DATABASE \"{dbName}\";";
+            cmd.ExecuteNonQuery();
+        });
 
         var builder = new NpgsqlConnectionStringBuilder(connStr)
         {
@@ -49,10 +57,57 @@ public static class SharedPostgresContainer
         };
         var ds = NpgsqlDataSource.Create(builder.ConnectionString);
 
-        // Initialize schema
-        FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(ds)
-            .GetAwaiter().GetResult();
+        // Initialize schema after the freshly-created database accepts connections.
+        try
+        {
+            ExecuteWithPostgresReadyRetry(() =>
+                FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(ds)
+                    .GetAwaiter().GetResult());
+        }
+        catch
+        {
+            ds.Dispose();
+            throw;
+        }
 
         return ds;
+    }
+
+    private static void ExecuteWithPostgresReadyRetry(Action action)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(45);
+        var delay = TimeSpan.FromMilliseconds(100);
+        Exception? lastException = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                action();
+                return;
+            }
+            catch (Exception ex) when (IsPostgresStarting(ex))
+            {
+                lastException = ex;
+                Thread.Sleep(delay);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 1.5, 1000));
+            }
+        }
+
+        throw new TimeoutException("PostgreSQL test container did not become ready in time.", lastException);
+    }
+
+    private static bool IsPostgresStarting(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException postgresException)
+                return postgresException.SqlState == "57P03";
+
+            if (current is NpgsqlException)
+                return true;
+        }
+
+        return false;
     }
 }

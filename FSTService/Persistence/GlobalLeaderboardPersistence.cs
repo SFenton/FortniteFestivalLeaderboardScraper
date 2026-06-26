@@ -1562,6 +1562,85 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return profiles.TryGetValue(accountId, out var scores) ? scores : [];
     }
 
+    public List<PlayerScoreDto> GetCurrentStatePlayerProfileWithFallback(
+        string accountId,
+        string? songId = null,
+        HashSet<string>? instruments = null)
+    {
+        var current = GetCurrentStatePlayerProfile(accountId, songId, instruments);
+        var resolved = GetResolvedCurrentStatePlayerProfile(accountId, songId, instruments);
+        var fallback = MergeCurrentStateProfileWithFallback(resolved, GetPlayerProfile(accountId, songId, instruments));
+        return MergeCurrentStateProfileWithFallback(current, fallback);
+    }
+
+    public Dictionary<string, List<PlayerScoreDto>> GetCurrentStatePlayerProfilesWithFallback(
+        IReadOnlyCollection<string> accountIds,
+        string? songId = null,
+        HashSet<string>? instruments = null)
+    {
+        var currentProfiles = GetCurrentStatePlayerProfiles(accountIds, songId, instruments);
+        var result = new Dictionary<string, List<PlayerScoreDto>>(currentProfiles, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var accountId in accountIds.Where(static id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var current = currentProfiles.TryGetValue(accountId, out var scores) ? scores : [];
+            var resolved = GetResolvedCurrentStatePlayerProfile(accountId, songId, instruments);
+            var fallback = MergeCurrentStateProfileWithFallback(resolved, GetPlayerProfile(accountId, songId, instruments));
+            var merged = MergeCurrentStateProfileWithFallback(current, fallback);
+            if (merged.Count > 0)
+                result[accountId] = merged;
+        }
+
+        return result;
+    }
+
+    private static List<PlayerScoreDto> MergeCurrentStateProfileWithFallback(
+        List<PlayerScoreDto> current,
+        List<PlayerScoreDto> fallback)
+    {
+        if (fallback.Count == 0)
+            return current;
+        if (current.Count == 0)
+            return fallback;
+
+        var seen = new HashSet<(string SongId, string Instrument)>();
+        var merged = new List<PlayerScoreDto>(current.Count + fallback.Count);
+        foreach (var score in current)
+        {
+            if (seen.Add((score.SongId, score.Instrument)))
+                merged.Add(score);
+        }
+
+        foreach (var score in fallback)
+        {
+            if (seen.Add((score.SongId, score.Instrument)))
+                merged.Add(score);
+        }
+
+        return merged;
+    }
+
+    private List<PlayerScoreDto> GetResolvedCurrentStatePlayerProfile(
+        string accountId,
+        string? songId,
+        HashSet<string>? instruments)
+    {
+        var dbs = instruments is null
+            ? _instrumentDbs.Values.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).Select(kv => kv.Value).ToArray();
+
+        var results = new List<PlayerScoreDto>[dbs.Length];
+        Parallel.For(0, dbs.Length, i =>
+        {
+            results[i] = dbs[i].GetCurrentStatePlayerScores(accountId, songId);
+        });
+
+        var allScores = new List<PlayerScoreDto>();
+        foreach (var result in results)
+            allScores.AddRange(result);
+        return allScores;
+    }
+
     /// <summary>
     /// Get current-state player scores for many accounts from the finalized current leaderboard projection.
     /// </summary>

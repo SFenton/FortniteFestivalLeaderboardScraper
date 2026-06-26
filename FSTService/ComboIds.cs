@@ -222,7 +222,11 @@ public static class ComboIds
         if (mask == ProDrumsFamilyMask)
             return ProDrumsFamilyScope;
 
-        return BitCount(mask) == 1 || IsWithinGroupCombo(mask) ? normalized : null;
+        var maxMask = (1 << CanonicalOrder.Count) - 1;
+        if (BitCount(mask) == 1 || IsWithinGroupCombo(mask) || mask == maxMask)
+            return normalized;
+
+        return null;
     }
 
     public static bool IsProDrumsFamilyScope(string? scope) =>

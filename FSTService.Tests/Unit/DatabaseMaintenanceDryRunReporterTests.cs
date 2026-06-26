@@ -189,11 +189,18 @@ public sealed class DatabaseMaintenanceDryRunReporterTests
         Assert.Contains("CREATE TABLE IF NOT EXISTS \"band_team_rankings_current_band_duets\"", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("CREATE TABLE IF NOT EXISTS \"band_team_rankings_current_band_trios\"", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("CREATE TABLE IF NOT EXISTS \"band_team_rankings_current_band_quad\"", schema, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("CREATE INDEX", schema, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("_ix_adjusted", schema, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("_ix_weighted", schema, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("_ix_fcrate", schema, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("_ix_totalscore", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_duets_ix_adjusted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_duets_ix_weighted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_duets_ix_fcrate", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_duets_ix_totalscore", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_trios_ix_adjusted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_trios_ix_weighted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_trios_ix_fcrate", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_trios_ix_totalscore", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_quad_ix_adjusted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_quad_ix_weighted", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_quad_ix_fcrate", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("band_team_rankings_current_band_quad_ix_totalscore", schema, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

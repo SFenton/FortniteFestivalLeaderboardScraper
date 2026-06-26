@@ -192,7 +192,7 @@ public static partial class ApiEndpoints
             var frozenMiss = CacheHelper.ServeUnavailableIfFrozen(httpContext, lbCache);
             if (frozenMiss is not null) return frozenMiss;
 
-            var profilesByAccount = persistence.GetCurrentStatePlayerProfiles(selectedAccountIds, songId, instrumentFilter);
+            var profilesByAccount = persistence.GetCurrentStatePlayerProfilesWithFallback(selectedAccountIds, songId, instrumentFilter);
             var scoreRows = selectedAccountIds
                 .SelectMany(accountId => profilesByAccount.TryGetValue(accountId, out var scores)
                     ? scores.Select(score => (AccountId: accountId, Score: score))
@@ -263,7 +263,12 @@ public static partial class ApiEndpoints
                 var computedRank = rankingsByAccount.TryGetValue(accountId, out var accountRankings)
                     ? accountRankings.GetValueOrDefault(key, 0)
                     : 0;
-                var rank = LeaderboardResponseRanks.Resolve(score.ApiRank, computedRank, score.Rank, maxScoresByInstrument is not null);
+                var rank = LeaderboardResponseRanks.Resolve(
+                    score.ApiRank,
+                    computedRank,
+                    score.Rank,
+                    maxScoresByInstrument is not null,
+                    computedRankOverridesApiRank: true);
                 var totalEntries = unfilteredPopulation.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
 
                 bool? isValid = null;

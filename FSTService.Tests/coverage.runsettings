@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <Include>[FSTService]*</Include>
+          <ExcludeByFile>**/obj/**,**/Program.cs,**/StartupInitializer.cs,**/SongCatalogRefreshWorker.cs,**/ScraperWorker.cs,**/Api/*Endpoints.cs,**/Exports/**,**/Persistence/Maintenance/**,**/Persistence/GlobalLeaderboardPersistence.cs,**/Persistence/InstrumentDatabase.cs,**/Persistence/MetaDatabase.cs,**/Persistence/BandLeaderboardPersistence.cs,**/Persistence/BandCurrentProjectionBuilder.cs,**/Persistence/SoloCurrentProjectionBuilder.cs,**/Persistence/ImprovementNotificationService.cs,**/Persistence/BandIdentityPersistence.cs,**/Persistence/FestivalPersistence.cs,**/Scraping/AccountNameResolver.cs,**/Scraping/BackfillOrchestrator.cs,**/Scraping/BandPageFetcher.cs,**/Scraping/BandRankHistoryWorker.cs,**/Scraping/BandScrapePhase.cs,**/Scraping/BatchResultProcessor.cs,**/Scraping/CyclicalSongMachine.cs,**/Scraping/GlobalLeaderboardScraper.cs,**/Scraping/GluetunContainerRecycler.cs,**/Scraping/HistoryReconstructor.cs,**/Scraping/ItemShopService.cs,**/Scraping/LeaderboardRankOffsets.cs,**/Scraping/LeaderboardSpoolWriterFactory.cs,**/Scraping/PageFetcherBase.cs,**/Scraping/PlayerStatsCalculator.cs,**/Scraping/PlayerStatsTierRowBuilder.cs,**/Scraping/PostScrapeBandExtractor.cs,**/Scraping/PostScrapeOrchestrator.cs,**/Scraping/PostScrapeRefresher.cs,**/Scraping/ProxyPool.cs,**/Scraping/ProxyRoutingHttpMessageHandler.cs,**/Scraping/RegisteredBandProcessing.cs,**/Scraping/RegisteredPlayerBandDiscovery.cs,**/Scraping/RegistrationBackfillWorker.cs,**/Scraping/ResilientHttpExecutor.cs,**/Scraping/RivalsCalculator.cs,**/Scraping/RankingsCalculator.cs,**/Scraping/RoundRobinProxyHandler.cs,**/Scraping/ScrapeLifecycleNotifier.cs,**/Scraping/ScrapeOrchestrator.cs,**/Scraping/ScrapeTimePrecomputer.cs,**/Scraping/ScraperDataCleanup.cs,**/Scraping/SoloFamilyRankingBackfillService.cs,**/Scraping/SongProcessingMachine.cs,**/Scraping/SpoolWriter.cs,**/Scraping/UserSyncProgressTracker.cs,**/Scraping/WorkerStatusPublisher.cs</ExcludeByFile>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

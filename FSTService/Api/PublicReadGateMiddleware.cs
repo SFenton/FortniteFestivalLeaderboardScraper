@@ -39,8 +39,15 @@ public sealed class PublicReadGateMiddleware
         var path = request.Path.Value;
         if (!IsApiRequest(request))
             return false;
+        if (string.IsNullOrEmpty(path))
+            return false;
 
-        return path.EndsWith("/notifications", StringComparison.OrdinalIgnoreCase)
+        return IsRankDerivedNotificationRoute(path)
             || path.StartsWith("/api/leaderboard-population", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsRankDerivedNotificationRoute(string path)
+        => path.EndsWith("/notifications", StringComparison.OrdinalIgnoreCase)
+           && (path.StartsWith("/api/rankings/bands/", StringComparison.OrdinalIgnoreCase)
+               || path.StartsWith("/api/bands/", StringComparison.OrdinalIgnoreCase));
 }

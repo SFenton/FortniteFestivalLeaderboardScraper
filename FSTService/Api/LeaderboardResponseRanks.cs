@@ -8,7 +8,13 @@ internal static class LeaderboardResponseRanks
     public const string LocalFilteredRankSource = "localFiltered";
     public const string StoredRankSource = "stored";
 
-    public static int Resolve(int apiRank, int computedRank, int storedRank, bool preferComputedRank, int? exactRemovedAbove = null)
+    public static int Resolve(
+        int apiRank,
+        int computedRank,
+        int storedRank,
+        bool preferComputedRank,
+        int? exactRemovedAbove = null,
+        bool computedRankOverridesApiRank = false)
     {
         if (preferComputedRank && exactRemovedAbove.HasValue)
         {
@@ -17,6 +23,9 @@ internal static class LeaderboardResponseRanks
             if (computedRank > 0)
                 return computedRank;
         }
+
+        if (computedRankOverridesApiRank && preferComputedRank && computedRank > 0)
+            return computedRank;
 
         if (apiRank > 0)
             return apiRank;
@@ -27,10 +36,19 @@ internal static class LeaderboardResponseRanks
         return computedRank > 0 ? computedRank : storedRank;
     }
 
-    public static string ResolveSource(int apiRank, int computedRank, int storedRank, bool preferComputedRank, int? exactRemovedAbove = null)
+    public static string ResolveSource(
+        int apiRank,
+        int computedRank,
+        int storedRank,
+        bool preferComputedRank,
+        int? exactRemovedAbove = null,
+        bool computedRankOverridesApiRank = false)
     {
         if (preferComputedRank && exactRemovedAbove.HasValue)
             return ChoptExactRankSource;
+
+        if (computedRankOverridesApiRank && preferComputedRank && computedRank > 0)
+            return LocalFilteredRankSource;
 
         if (apiRank > 0)
             return EpicRankSource;

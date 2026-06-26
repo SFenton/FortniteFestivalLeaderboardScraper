@@ -199,7 +199,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task ApiScoreBackedCacheMiss_ReturnsUnavailableWhilePublicationFrozen()
+    public async Task ApiScoreBackedCacheMiss_AllowsPublishedFallbackWhilePublicationFrozen()
     {
         var publicationCache = _factory.Services.GetRequiredKeyedService<ResponseCacheService>("LeaderboardAllCache");
         publicationCache.Freeze();
@@ -208,9 +208,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         {
             var response = await _client.GetAsync("/api/songs/member-score-filter?has=acct_1&instruments=Solo_Guitar");
 
-            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-            Assert.True(response.Headers.TryGetValues("Retry-After", out var retryAfterValues));
-            Assert.Contains("30", retryAfterValues);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
         finally
         {

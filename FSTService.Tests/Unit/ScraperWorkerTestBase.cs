@@ -140,11 +140,15 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
     protected ScraperWorker CreateWorkerWithHttp(ScraperOptions? opts, HttpMessageHandler? httpHandler)
     {
-        var options = Options.Create(opts ?? new ScraperOptions
+        opts ??= new ScraperOptions
         {
             DataDirectory = _tempDir,
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
-        });
+        };
+        opts.EnabledPhases = opts.EnabledPhases == ScrapePhase.None
+            ? ScrapePhase.SoloScrape
+            : opts.EnabledPhases;
+        var options = Options.Create(opts);
 
         var http = httpHandler != null ? new HttpClient(httpHandler) : new HttpClient();
         var pathGenerator = new PathGenerator(
@@ -169,6 +173,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
         var precomputer = new ScrapeTimePrecomputer(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions(), new FeatureOptions());
 
+        var bandPersistence = new BandLeaderboardPersistence(
+            _metaFixture.DataSource,
+            Substitute.For<ILogger<BandLeaderboardPersistence>>());
+
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _refresher,
@@ -178,12 +186,12 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, notifications,
             _tokenManager, _progress, new FSTService.Scraping.UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<FSTService.Scraping.UserSyncProgressTracker>>()), pathDataStore, precomputer,
-            new PostScrapeBandExtractor(null!, pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new PostScrapeBandExtractor(_metaFixture.DataSource, pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
             new BandScrapePhase(
-                _scraper, new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _scraper, bandPersistence,
                 pathDataStore, _pool, _progress, options,
                 Substitute.For<ILogger<BandScrapePhase>>()),
-            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+            bandPersistence,
             options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>(),
             null);
@@ -219,10 +227,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Substitute.For<ILogger<StartupInitializer>>());
         dbInitializer.StartAsync(CancellationToken.None);
         dbInitializer.WaitForReadyAsync().GetAwaiter().GetResult();
-
-        var bandPersistence = new BandLeaderboardPersistence(
-            null!,
-            Substitute.For<ILogger<BandLeaderboardPersistence>>());
 
         var scrapeOrchestrator = new ScrapeOrchestrator(
             _scraper, _persistence, bandPersistence, pathDataStore, _pool, _progress, options,

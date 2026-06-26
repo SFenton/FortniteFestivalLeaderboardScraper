@@ -53,7 +53,7 @@ public static partial class ApiEndpoints
             if (!string.IsNullOrWhiteSpace(instruments))
                 instrumentFilter = new HashSet<string>(instruments.Split(','), StringComparer.OrdinalIgnoreCase);
 
-            var scores = persistence.GetCurrentStatePlayerProfile(accountId, songId, instrumentFilter);
+            var scores = persistence.GetCurrentStatePlayerProfileWithFallback(accountId, songId, instrumentFilter);
             var displayName = metaDb.GetDisplayName(accountId);
 
             // ── Build per-song max-score thresholds when leeway is provided ──
@@ -123,7 +123,12 @@ public static partial class ApiEndpoints
             {
                 var key = (s.SongId, s.Instrument);
                 var computedRank = rankings.GetValueOrDefault(key, 0);
-                var rank = LeaderboardResponseRanks.Resolve(s.ApiRank, computedRank, s.Rank, maxScoresByInstrument is not null);
+                var rank = LeaderboardResponseRanks.Resolve(
+                    s.ApiRank,
+                    computedRank,
+                    s.Rank,
+                    maxScoresByInstrument is not null,
+                    computedRankOverridesApiRank: true);
                 var totalEntries = unfilteredPopulation.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
 
                 // ── Score validity (only when leeway is provided) ──
