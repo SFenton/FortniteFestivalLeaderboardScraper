@@ -213,6 +213,9 @@ services:
       - "127.0.0.1:3001:80"
     environment:
       - API_BACKEND_URL=http://fstservice:8080
+    networks:
+      - default
+      - fst_backend
     # Start independently so the static maintenance UI can render when the API
     # or database is unavailable.
     healthcheck:
@@ -343,3 +346,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+networks:
+  fst_backend:
+    external: true
+    name: festivalservicetracker_default
