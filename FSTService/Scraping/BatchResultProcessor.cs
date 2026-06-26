@@ -26,6 +26,7 @@ public class BatchResultProcessor
     private readonly ConcurrentDictionary<string, ConcurrentBag<ScoreChangeRecord>> _stagedScoreChanges = new(StringComparer.OrdinalIgnoreCase);
     // Population floor raises are metadata-only (not user-visible); buffer and apply on flush.
     private readonly ConcurrentDictionary<string, ConcurrentBag<(string SongId, string Instrument, long MaxRank)>> _stagedPopulation = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConcurrentBag<(string SongId, string Instrument, bool EntryFound)>> _stagedBackfillProgress = new(StringComparer.OrdinalIgnoreCase);
 
     public BatchResultProcessor(
         GlobalLeaderboardPersistence persistence,
@@ -296,7 +297,15 @@ public class BatchResultProcessor
     /// Mark a backfill song/instrument pair as checked for an account.
     /// </summary>
     public void MarkBackfillChecked(string accountId, string songId, string instrument, bool entryFound)
-        => _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound);
+    {
+        if (IsStaged(accountId))
+        {
+            StageBackfillProgress(accountId, songId, instrument, entryFound);
+            return;
+        }
+
+        _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound);
+    }
 
     /// <summary>
     /// Mark a history reconstruction song/instrument pair as processed for an account.
@@ -374,6 +383,18 @@ public class BatchResultProcessor
                 _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, maxRank);
         }
 
+        if (_stagedBackfillProgress.TryRemove(accountId, out var progressBag))
+        {
+            var byPair = new Dictionary<(string SongId, string Instrument), bool>();
+            foreach (var (songId, instrument, entryFound) in progressBag)
+                byPair[(songId, instrument)] = entryFound;
+
+            var checks = byPair
+                .Select(static kvp => (kvp.Key.SongId, kvp.Key.Instrument, kvp.Value))
+                .ToArray();
+            _metaDb.MarkBackfillSongsChecked(accountId, checks);
+        }
+
         _log.LogDebug("Flushed staged data for account {AccountId}.", accountId);
     }
 
@@ -396,5 +417,11 @@ public class BatchResultProcessor
     {
         var bag = _stagedPopulation.GetOrAdd(accountId, _ => []);
         bag.Add((songId, instrument, maxRank));
+    }
+
+    private void StageBackfillProgress(string accountId, string songId, string instrument, bool entryFound)
+    {
+        var bag = _stagedBackfillProgress.GetOrAdd(accountId, _ => []);
+        bag.Add((songId, instrument, entryFound));
     }
 }

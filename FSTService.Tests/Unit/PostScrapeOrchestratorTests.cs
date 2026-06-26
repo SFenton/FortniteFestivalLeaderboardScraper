@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using System.Diagnostics;
 using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
@@ -167,11 +168,24 @@ public class PostScrapeOrchestratorTests : IDisposable
         return mock;
     }
 
+    private static async Task<SongProcessingMachine.MachineResult> WaitUntilCancelledAsync(CancellationToken ct)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        return new SongProcessingMachine.MachineResult();
+    }
+
+    private static async Task<IReadOnlyList<Persistence.SeasonWindowInfo>> WaitUntilCancelledSeasonWindowsAsync(CancellationToken ct)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        return Array.Empty<Persistence.SeasonWindowInfo>();
+    }
+
     private ScrapePassContext CreateContext(
         long scrapeId = 0,
         HashSet<string>? registeredIds = null,
         GlobalLeaderboardPersistence.PipelineAggregates? aggregates = null,
-        IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>? scrapeRequests = null)
+        IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>? scrapeRequests = null,
+        bool leaderboardScrapeCompleted = true)
     {
         return new ScrapePassContext
         {
@@ -182,6 +196,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Aggregates = aggregates ?? new GlobalLeaderboardPersistence.PipelineAggregates(),
             ScrapeRequests = scrapeRequests ?? Array.Empty<GlobalLeaderboardScraper.SongScrapeRequest>(),
             DegreeOfParallelism = 4,
+            LeaderboardScrapeCompleted = leaderboardScrapeCompleted,
         };
     }
 
@@ -306,6 +321,148 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         // Should not throw
         await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RefreshRegisteredUsers_WhenSongMachineTimesOut_Continues()
+    {
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-access-token");
+        _tokenManager.AccountId.Returns("caller-001");
+
+        var stalledMachine = Substitute.For<CyclicalSongMachine>();
+        stalledMachine.AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<SongMachineSource>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<bool>())
+            .Returns(call => WaitUntilCancelledAsync(call.Arg<CancellationToken>()));
+
+        var scraper = Substitute.For<GlobalLeaderboardScraper>(
+            new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null);
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(
+            rivalsCalculator,
+            _persistence,
+            new NotificationService(Substitute.For<ILogger<NotificationService>>()),
+            _progress,
+            new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            new ResponseCacheService(TimeSpan.FromMinutes(5)),
+            Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Options.Create(new FeatureOptions()), Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
+        var sut = new PostScrapeOrchestrator(
+            _persistence, _firstSeenCalculator, _nameResolver,
+            _refresher,
+            Substitute.For<IServiceProvider>(),
+            Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
+            _pool,
+            stalledMachine,
+            rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
+            _tokenManager, _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _pathDataStore,
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new JsonSerializerOptions(), new FeatureOptions()),
+            new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                scraper,
+                new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
+                Substitute.For<ILogger<BandScrapePhase>>()),
+            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+            Options.Create(new ScraperOptions { PostScrapeRefreshTimeout = TimeSpan.FromMilliseconds(50) }), _log, null);
+
+        var ctx = CreateContext(
+            registeredIds: new HashSet<string> { "user-1" },
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song-timeout",
+                    Instruments = ["Solo_Guitar"],
+                    Label = "Song Timeout",
+                },
+            ]);
+
+        var sw = Stopwatch.StartNew();
+        var result = await sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        sw.Stop();
+
+        Assert.Equal(0, result.UsersProcessed);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"Refresh should be bounded but took {sw.Elapsed}.");
+        Assert.Contains(_log.Entries, e => e.Message.Contains("Post-scrape registered-user refresh timed out", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RefreshRegisteredUsers_WhenSeasonDiscoveryTimesOut_Continues()
+    {
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-access-token");
+        _tokenManager.AccountId.Returns("caller-001");
+
+        var scraper = Substitute.For<GlobalLeaderboardScraper>(
+            new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<GlobalLeaderboardScraper>>(), 0, null);
+        var historyReconstructor = Substitute.For<HistoryReconstructor>(
+            scraper,
+            _persistence,
+            new HttpClient(),
+            new ScrapeProgressTracker(),
+            new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            Substitute.For<ILogger<HistoryReconstructor>>());
+        historyReconstructor.DiscoverSeasonWindowsAsync(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<CancellationToken>())
+            .Returns(call => WaitUntilCancelledSeasonWindowsAsync(call.Arg<CancellationToken>()));
+
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(
+            rivalsCalculator,
+            _persistence,
+            new NotificationService(Substitute.For<ILogger<NotificationService>>()),
+            _progress,
+            new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            new ResponseCacheService(TimeSpan.FromMinutes(5)),
+            Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Options.Create(new FeatureOptions()), Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
+        var sut = new PostScrapeOrchestrator(
+            _persistence, _firstSeenCalculator, _nameResolver,
+            _refresher,
+            Substitute.For<IServiceProvider>(),
+            historyReconstructor,
+            _pool,
+            _cyclicalMachine,
+            rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
+            _tokenManager, _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _pathDataStore,
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new JsonSerializerOptions(), new FeatureOptions()),
+            new PostScrapeBandExtractor(null!, _pathDataStore, Substitute.For<ILogger<PostScrapeBandExtractor>>()),
+            new BandScrapePhase(
+                scraper,
+                new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+                _pathDataStore, _pool, _progress, Options.Create(new ScraperOptions()),
+                Substitute.For<ILogger<BandScrapePhase>>()),
+            new BandLeaderboardPersistence(null!, Substitute.For<ILogger<BandLeaderboardPersistence>>()),
+            Options.Create(new ScraperOptions { PostScrapeRefreshTimeout = TimeSpan.FromMilliseconds(50) }), _log, null);
+
+        var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
+
+        var sw = Stopwatch.StartNew();
+        var result = await sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        sw.Stop();
+
+        Assert.Equal(0, result.UsersProcessed);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"Refresh should be bounded but took {sw.Elapsed}.");
+        Assert.Contains(_log.Entries, e => e.Message.Contains("Post-scrape registered-user refresh timed out", StringComparison.Ordinal));
+        await _cyclicalMachine.DidNotReceiveWithAnyArgs().AttachAsync(
+            default!,
+            default!,
+            default!,
+            default,
+            default,
+            default,
+            default);
     }
 
     // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -605,6 +762,38 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_SkipsFullBandMaintenanceWhenLeaderboardScrapeDidNotComplete()
+    {
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var ctx = CreateContext(
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song_incomplete_scrape",
+                    Instruments = ["Solo_Guitar"],
+                    Label = "Incomplete Scrape",
+                },
+            ],
+            leaderboardScrapeCompleted: false);
+
+        await _sut.RunAsync(
+            ctx,
+            service,
+            ScrapePhase.SoloScrape | ScrapePhase.BandScrape | ScrapePhase.BandExtraction | ScrapePhase.SoloRankings,
+            CancellationToken.None);
+
+        Assert.Contains(_log.Entries, e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("Skipping full band maintenance because the leaderboard scrape did not complete", StringComparison.Ordinal));
+        Assert.Contains(_log.Entries, e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("Skipping derived ranking/finalization phases because the leaderboard scrape did not complete", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log.Entries, e => e.Message.Contains("[BandMaintenance]", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log.Entries, e => e.Message.Contains("[ComputeRankings]", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RunAsync_RunsImprovementNotificationsWhenSoloScrapeCoverageIsHealthy()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();
@@ -769,6 +958,31 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Contains(_log.Entries, entry =>
             entry.Level == LogLevel.Warning &&
             entry.Message.Contains("Cleanup solo current projection refresh will run despite low solo scrape coverage", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunPublicationCleanupAsync_WithIncompleteScrape_SkipsPublicationCleanup()
+    {
+        var ctx = CreateContext(
+            scrapeRequests:
+            [
+                new GlobalLeaderboardScraper.SongScrapeRequest
+                {
+                    SongId = "song_cleanup_incomplete",
+                    Instruments = ["Solo_Guitar"],
+                },
+            ],
+            leaderboardScrapeCompleted: false);
+
+        await _sut.RunPublicationCleanupAsync(
+            ctx,
+            ScrapePhase.SoloScrape | ScrapePhase.SoloFinalize | ScrapePhase.SoloPrecompute,
+            CancellationToken.None);
+
+        Assert.Contains(_log.Entries, e =>
+            e.Level == LogLevel.Warning &&
+            e.Message.Contains("Skipping publication cleanup because the leaderboard scrape did not complete", StringComparison.Ordinal));
+        Assert.DoesNotContain(_log.Entries, e => e.Message.Contains("[Cleanup.", StringComparison.Ordinal));
     }
 
     [Fact]

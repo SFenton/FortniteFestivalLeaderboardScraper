@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using System.ComponentModel;
 using System.Net.Http.Headers;
+using System.Text;
 
 namespace FSTService.Scraping;
 
@@ -175,6 +178,8 @@ public sealed class ResilientHttpExecutor
     /// Set to 0 in tests for determinism.</summary>
     internal int MaxJitterMs { get; set; } = 500;
 
+    internal Func<HttpRequestMessage, string?, CancellationToken, Task<HttpResponseMessage?>>? CdnBlockFallbackOverride { get; set; }
+
     private readonly HttpClient _http;
     private readonly ILogger _log;
     private readonly EpicTrafficCoordinator? _trafficCoordinator;
@@ -195,6 +200,206 @@ public sealed class ResilientHttpExecutor
                 list.Add(op.Snapshot());
             list.Sort((a, b) => a.StartedAt.CompareTo(b.StartedAt));
             return list;
+        }
+    }
+
+    internal static class CurlHttpFallback
+    {
+        public static async Task<HttpResponseMessage?> SendAsync(
+            HttpRequestMessage request,
+            string? label,
+            TimeSpan timeout,
+            ILogger log,
+            CancellationToken ct)
+        {
+            if (request.RequestUri is null)
+                return null;
+
+            var requestBodyPath = Path.Combine(Path.GetTempPath(), $"fst-curl-request-{Guid.NewGuid():N}.bin");
+            var responseBodyPath = Path.Combine(Path.GetTempPath(), $"fst-curl-response-{Guid.NewGuid():N}.bin");
+            try
+            {
+                if (request.Content is not null)
+                {
+                    var body = await request.Content.ReadAsByteArrayAsync(ct);
+                    await File.WriteAllBytesAsync(requestBodyPath, body, ct);
+                }
+
+                var config = BuildCurlConfig(request, requestBodyPath, responseBodyPath, timeout);
+                using var process = new Process();
+                process.StartInfo = new ProcessStartInfo
+                {
+                    FileName = "curl",
+                    UseShellExecute = false,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                };
+                process.StartInfo.ArgumentList.Add("--config");
+                process.StartInfo.ArgumentList.Add("-");
+
+                try
+                {
+                    process.Start();
+                }
+                catch (Exception ex) when (ex is Win32Exception or FileNotFoundException)
+                {
+                    log.LogWarning("curl fallback unavailable for {Operation}: {Error}", label ?? "request", ex.Message);
+                    return null;
+                }
+
+                await process.StandardInput.WriteAsync(config);
+                process.StandardInput.Close();
+
+                string stdout;
+                string stderr;
+                try
+                {
+                    var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+                    var stderrTask = process.StandardError.ReadToEndAsync(ct);
+                    await process.WaitForExitAsync(ct);
+                    stdout = await stdoutTask;
+                    stderr = await stderrTask;
+                }
+                catch (OperationCanceledException)
+                {
+                    TryKill(process);
+                    throw;
+                }
+
+                if (process.ExitCode != 0)
+                {
+                    var error = SanitizeCurlError(stderr);
+                    log.LogWarning(
+                        "curl fallback failed for {Operation} with exit code {ExitCode}: {Error}",
+                        label ?? "request",
+                        process.ExitCode,
+                        error);
+                    throw new HttpRequestException($"curl fallback exited {process.ExitCode}: {error}");
+                }
+
+                var lines = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (lines.Length == 0 || !int.TryParse(lines[0], out var statusCode) || statusCode <= 0)
+                {
+                    log.LogWarning("curl fallback returned an invalid status for {Operation}.", label ?? "request");
+                    throw new HttpRequestException("curl fallback returned an invalid status.");
+                }
+
+                var responseBody = File.Exists(responseBodyPath)
+                    ? await File.ReadAllBytesAsync(responseBodyPath, ct)
+                    : [];
+                var response = new HttpResponseMessage((System.Net.HttpStatusCode)statusCode)
+                {
+                    RequestMessage = request,
+                    Content = new ByteArrayContent(responseBody),
+                };
+
+                if (lines.Length > 1 && !string.IsNullOrWhiteSpace(lines[1]))
+                    response.Content.Headers.TryAddWithoutValidation("Content-Type", lines[1]);
+
+                log.LogWarning(
+                    "curl fallback returned {StatusCode} for {Operation} after .NET HTTP was CDN-blocked.",
+                    statusCode,
+                    label ?? "request");
+                return response;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException and not HttpRequestException)
+            {
+                log.LogWarning(ex, "curl fallback failed unexpectedly for {Operation}.", label ?? "request");
+                return null;
+            }
+            finally
+            {
+                TryDelete(requestBodyPath);
+                TryDelete(responseBodyPath);
+            }
+        }
+
+        private static string BuildCurlConfig(
+            HttpRequestMessage request,
+            string requestBodyPath,
+            string responseBodyPath,
+            TimeSpan timeout)
+        {
+            var sb = new StringBuilder();
+            AppendOption(sb, "silent");
+            AppendOption(sb, "show-error");
+            AppendOption(sb, "http1.1");
+            AppendOption(sb, "compressed");
+            AppendOption(sb, "max-time", Math.Max(1, timeout.TotalSeconds).ToString("F0", System.Globalization.CultureInfo.InvariantCulture));
+            AppendOption(sb, "request", request.Method.Method);
+            AppendOption(sb, "url", request.RequestUri!.ToString());
+            AppendOption(sb, "output", responseBodyPath);
+            AppendOption(sb, "write-out", "\n%{http_code}\n%{content_type}\n");
+
+            if (request.Options.TryGetValue(ProxyRequestState.EndpointProxyUri, out var proxyUri))
+                AppendOption(sb, "proxy", proxyUri.ToString());
+
+            foreach (var header in request.Headers)
+                AppendHeader(sb, header.Key, header.Value);
+
+            if (request.Content is not null)
+            {
+                foreach (var header in request.Content.Headers)
+                    AppendHeader(sb, header.Key, header.Value);
+
+                AppendOption(sb, "data-binary", $"@{requestBodyPath}");
+            }
+
+            return sb.ToString();
+        }
+
+        private static void AppendHeader(StringBuilder sb, string name, IEnumerable<string> values)
+        {
+            if (name.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("Accept-Encoding", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            AppendOption(sb, "header", $"{name}: {string.Join(", ", values)}");
+        }
+
+        private static void AppendOption(StringBuilder sb, string name)
+            => sb.Append(name).Append('\n');
+
+        private static void AppendOption(StringBuilder sb, string name, string value)
+            => sb.Append(name).Append(" = \"").Append(EscapeCurlConfig(value)).Append("\"\n");
+
+        private static string EscapeCurlConfig(string value)
+            => value
+                .Replace("\\", "\\\\", StringComparison.Ordinal)
+                .Replace("\"", "\\\"", StringComparison.Ordinal)
+                .Replace("\r", "\\r", StringComparison.Ordinal)
+                .Replace("\n", "\\n", StringComparison.Ordinal)
+                .Replace("\t", "\\t", StringComparison.Ordinal);
+
+        private static string SanitizeCurlError(string error)
+        {
+            error = error.Trim();
+            return error.Length <= 300 ? error : error[..300];
+        }
+
+        private static void TryKill(Process process)
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException) { }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
     }
 
@@ -245,7 +450,7 @@ public sealed class ResilientHttpExecutor
     /// a proxy VPN recycle) from hanging a request indefinitely. On timeout the send
     /// is treated as a transient network error and retried indefinitely — callers see
     /// real service errors or success, never a timeout.</summary>
-    public static readonly TimeSpan DefaultSendWallClockTimeout = TimeSpan.FromSeconds(120);
+    public static readonly TimeSpan DefaultSendWallClockTimeout = TimeSpan.FromSeconds(30);
 
     private readonly TimeSpan _probeSendTimeout;
     private readonly TimeSpan _sendWallClockTimeout;
@@ -409,6 +614,14 @@ public sealed class ResilientHttpExecutor
                     throw new CdnBlockedException(
                         $"CDN block on {label ?? "request"} (network error during CDN block: {ex.Message})");
 
+                var fallbackResponse = await TrySendAfterTransportFailureAsync(sentRequest, label, ct);
+                if (fallbackResponse is not null)
+                {
+                    limiter?.ReportSuccess();
+                    _proxyHealth?.ReportSuccess(sentRequest);
+                    return fallbackResponse;
+                }
+
                 networkErrors++;
                 _log.LogWarning(
                     "HTTP error for {Operation} (networkError {NetErr}, DOP {Dop}): {Error}",
@@ -426,6 +639,14 @@ public sealed class ResilientHttpExecutor
                     throw new CdnBlockedException(
                         $"CDN block on {label ?? "request"} (disposed during CDN block: {ex.Message})");
 
+                var fallbackResponse = await TrySendAfterTransportFailureAsync(sentRequest, label, ct);
+                if (fallbackResponse is not null)
+                {
+                    limiter?.ReportSuccess();
+                    _proxyHealth?.ReportSuccess(sentRequest);
+                    return fallbackResponse;
+                }
+
                 networkErrors++;
                 _log.LogWarning(
                     "Connection disposed for {Operation} (networkError {NetErr}, DOP {Dop}): {Error}",
@@ -439,6 +660,14 @@ public sealed class ResilientHttpExecutor
                 if (IsCdnBlocked)
                     throw new CdnBlockedException(
                         $"CDN block on {label ?? "request"} (timeout during CDN block)");
+
+                var fallbackResponse = await TrySendAfterTransportFailureAsync(sentRequest, label, ct);
+                if (fallbackResponse is not null)
+                {
+                    limiter?.ReportSuccess();
+                    _proxyHealth?.ReportSuccess(sentRequest);
+                    return fallbackResponse;
+                }
 
                 // This covers both the legacy HttpClient.Timeout fire AND our per-attempt
                 // wall-clock deadline (sendCts.CancelAfter). Either way the caller's ct
@@ -461,9 +690,9 @@ public sealed class ResilientHttpExecutor
             var statusCode = (int)res.StatusCode;
 
             // ── CDN block detection (403 with non-JSON body) ──────────
-            // On CDN block: launch a background probe (if not already running)
-            // and throw CdnBlockedException immediately. The caller is responsible
-            // for releasing its DOP slot, waiting for WaitForCdnClearAsync(), and retrying.
+            // On CDN block: try the curl transport fallback first. If that does
+            // not recover, isolate the failure to the selected proxy before ever
+            // entering the legacy global CDN probe.
             if (statusCode == 403)
             {
                 op.SetState(InflightState.ReadingBody);
@@ -472,11 +701,67 @@ public sealed class ResilientHttpExecutor
 
                 if (isCdnBlock)
                 {
+                    try
+                    {
+                        var fallbackResponse = await TrySendCdnBlockedRequestWithFallbackAsync(sentRequest, label, ct);
+                        if (fallbackResponse is not null)
+                        {
+                            if (await IsCdnBlockResponseAsync(fallbackResponse, ct))
+                            {
+                                fallbackResponse.Dispose();
+                            }
+                            else
+                            {
+                                res.Dispose();
+                                limiter?.ReportSuccess();
+                                _proxyHealth?.ReportSuccess(sentRequest);
+                                return fallbackResponse;
+                            }
+                        }
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        res.Dispose();
+                        networkErrors++;
+                        _log.LogWarning(
+                            "curl fallback transport error for {Operation} (networkError {NetErr}, DOP {Dop}): {Error}",
+                            label ?? "request", networkErrors, limiter?.CurrentDop ?? -1, ex.Message);
+                        limiter?.ReportFailure();
+                        _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.Transport);
+                        continue;
+                    }
+
                     Interlocked.Increment(ref _cdnBlocksDetected);
                     res.Dispose();
+
+                    var cdnDecision = ProxyCdnBlockDecision.PauseGlobally;
+                    if (_proxyHealth is IProxyCdnBlockHandler cdnBlockHandler)
+                    {
+                        cdnDecision = cdnBlockHandler.ReportCdnBlock(sentRequest);
+                    }
+                    else
+                    {
+                        _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.CdnBlock);
+                    }
+
+                    if (cdnDecision == ProxyCdnBlockDecision.RetryOnAlternateProxy)
+                    {
+                        _log.LogWarning(
+                            "CDN block for {Operation} was isolated to one proxy; retrying on alternate proxy (wire sends: {TotalSends}, blocks: {Blocks}).",
+                            label ?? "request", TotalHttpSends, CdnBlocksDetected);
+                        continue;
+                    }
+
+                    if (cdnDecision == ProxyCdnBlockDecision.WaitForProxyCooldown)
+                    {
+                        _log.LogWarning(
+                            "CDN block for {Operation} cooled every proxy; waiting for proxy cooldown instead of pausing globally (wire sends: {TotalSends}, blocks: {Blocks}).",
+                            label ?? "request", TotalHttpSends, CdnBlocksDetected);
+                        continue;
+                    }
+
                     limiter?.ReportFailure();
                     limiter?.SlashDop();
-                    _proxyHealth?.ReportFailure(sentRequest, ProxyFailureKind.CdnBlock);
                     LaunchCdnProbe(requestFactory, limiter, label, ct);
                     throw new CdnBlockedException(
                         $"CDN block on {label ?? "request"} (wire sends: {TotalHttpSends}, blocks: {CdnBlocksDetected})");
@@ -664,7 +949,8 @@ public sealed class ResilientHttpExecutor
                 _cdnCooldownUntil = default;
                 _cdnRetryIndex = 0;
                 OnCdnProbeEvent?.Invoke(new CdnProbeEvent(CdnProbeState.Exhausted, MaxCdnRetries, MaxCdnRetries, 0));
-                tcs.TrySetResult(false);
+                tcs.TrySetException(new CdnBlockedException(
+                    $"CDN probe gave up after {MaxCdnRetries} retries."));
             }
             catch (OperationCanceledException)
             {
@@ -689,6 +975,64 @@ public sealed class ResilientHttpExecutor
                 probeCts.Dispose();
             }
         }, probeToken);
+    }
+
+    private async Task<HttpResponseMessage?> TrySendCdnBlockedRequestWithFallbackAsync(
+        HttpRequestMessage request,
+        string? label,
+        CancellationToken ct)
+    {
+        if (!IsEpicEventsRequest(request))
+            return null;
+
+        if (CdnBlockFallbackOverride is not null)
+            return await CdnBlockFallbackOverride(request, label, ct);
+
+        return await CurlHttpFallback.SendAsync(request, label, _sendWallClockTimeout, _log, ct);
+    }
+
+    private async Task<HttpResponseMessage?> TrySendAfterTransportFailureAsync(
+        HttpRequestMessage request,
+        string? label,
+        CancellationToken ct)
+    {
+        try
+        {
+            var fallbackResponse = await TrySendCdnBlockedRequestWithFallbackAsync(request, label, ct);
+            if (fallbackResponse is null)
+                return null;
+
+            if (await IsCdnBlockResponseAsync(fallbackResponse, ct))
+            {
+                fallbackResponse.Dispose();
+                return null;
+            }
+
+            _log.LogWarning(
+                "curl fallback recovered {Operation} after .NET HTTP transport failure.",
+                label ?? "request");
+            return fallbackResponse;
+        }
+        catch (HttpRequestException ex)
+        {
+            _log.LogWarning(
+                "curl fallback also failed for {Operation} after .NET HTTP transport failure: {Error}",
+                label ?? "request",
+                ex.Message);
+            return null;
+        }
+    }
+
+    private static bool IsEpicEventsRequest(HttpRequestMessage request)
+        => request.RequestUri is { Host: "events-public-service-live.ol.epicgames.com" };
+
+    private static async Task<bool> IsCdnBlockResponseAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if ((int)response.StatusCode != 403)
+            return false;
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return !body.TrimStart().StartsWith('{');
     }
 
     /// <summary>
@@ -767,10 +1111,17 @@ public sealed class ResilientHttpExecutor
     {
         // Wait for active probe to resolve
         var resolved = _cdnResolved;
-        if (resolved is not null && !resolved.Task.IsCompleted)
+        if (resolved is not null)
         {
-            using var reg = ct.Register(() => resolved.TrySetCanceled(ct));
-            await resolved.Task.ConfigureAwait(false); // ignores true/false result — just waits
+            if (resolved.Task.IsCompleted)
+            {
+                await resolved.Task.ConfigureAwait(false); // propagate hard CDN exhaustion if already faulted
+            }
+            else
+            {
+                using var reg = ct.Register(() => resolved.TrySetCanceled(ct));
+                await resolved.Task.ConfigureAwait(false); // ignores true/false result — just waits
+            }
         }
 
         // Wait for any remaining cooldown

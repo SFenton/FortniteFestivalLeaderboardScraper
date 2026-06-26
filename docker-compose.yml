@@ -49,6 +49,7 @@ services:
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       - Scraper__SongMachineDop=${SONG_MACHINE_DOP:-10}
+      - Scraper__PostScrapeRefreshTimeout=${POST_SCRAPE_REFRESH_TIMEOUT:-00:05:00}
       - Scraper__DegreeOfParallelism=${SCRAPER_DOP:-64}
       - Scraper__DisableScraperWorker=${SCRAPER_DISABLE_SCRAPER_WORKER:-false}
       - Scraper__RankHistorySnapshotMaxDegreeOfParallelism=${RANK_HISTORY_SNAPSHOT_MAX_DOP:-1}
@@ -91,6 +92,11 @@ services:
       # - Scraper__ContainerNames__1=gluetun-2
       # - Scraper__ContainerNames__2=gluetun-3
       # - Scraper__ContainerNames__3=gluetun-4
+      # ── Docker self-heal for proxy tunnel failures (requires docker.sock + ContainerNames) ──
+      - Scraper__ProxyContainerSelfHealEnabled=${PROXY_CONTAINER_SELF_HEAL_ENABLED:-false}
+      - Scraper__ProxyContainerRestartFailureThreshold=${PROXY_CONTAINER_RESTART_FAILURE_THRESHOLD:-1}
+      - Scraper__ProxyContainerRestartMinIntervalSeconds=${PROXY_CONTAINER_RESTART_MIN_INTERVAL_SECONDS:-300}
+      - Scraper__ProxyContainerRestartCooldownSeconds=${PROXY_CONTAINER_RESTART_COOLDOWN_SECONDS:-90}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
       interval: 30s

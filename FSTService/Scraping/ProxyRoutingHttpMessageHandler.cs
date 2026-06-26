@@ -19,6 +19,7 @@ internal sealed class ProxyRoutingHttpMessageHandler : HttpMessageHandler
 
         request.Options.Set(ProxyRequestState.EndpointIndex, lease.Index);
         request.Options.Set(ProxyRequestState.EndpointName, lease.Name);
+        request.Options.Set(ProxyRequestState.EndpointProxyUri, lease.ProxyUri);
 
         try
         {

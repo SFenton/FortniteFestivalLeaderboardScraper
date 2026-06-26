@@ -1919,7 +1919,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
             metaDb.InsertAccountNames([("trackAcct2", (string?)"TrackPlayer2")]);
             metaDb.RegisterUser("web-tracker", "trackAcct2");
-            metaDb.EnqueueBackfill("trackAcct2", 100);
+            metaDb.EnqueueBackfill("trackAcct2", 100_000);
             metaDb.StartBackfill("trackAcct2");
             metaDb.CompleteBackfill("trackAcct2");
         }
@@ -1929,6 +1929,27 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.False(json.GetProperty("backfillKicked").GetBoolean());
         Assert.Equal("complete", json.GetProperty("backfillStatus").GetString());
+    }
+
+    [Fact]
+    public async Task TrackPlayer_CompletedAgainstSmallerCatalog_QueuesBackfill()
+    {
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames([("trackAcctStale", (string?)"Track Player Stale")]);
+            metaDb.RegisterUser("web-tracker", "trackAcctStale");
+            metaDb.EnqueueBackfill("trackAcctStale", 100);
+            metaDb.StartBackfill("trackAcctStale");
+            metaDb.CompleteBackfill("trackAcctStale");
+        }
+
+        var response = await _authedClient.PostAsync("/api/player/trackAcctStale/track", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("syncDeferred").GetBoolean());
+        Assert.Equal("deferred", json.GetProperty("backfillStatus").GetString());
+        Assert.Equal("worker_backfill_queue", json.GetProperty("deferredReason").GetString());
     }
 
     [Fact]

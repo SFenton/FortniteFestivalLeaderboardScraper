@@ -117,7 +117,7 @@ public sealed class ImprovementNotificationService
         cmd.Parameters.AddWithValue("limit", effectiveLimit);
 
         var items = ReadNotifications(cmd);
-        var source = ReadLatestNotificationSource(conn);
+        var source = ReadLatestNotificationSource(conn, includePlayers: true, includeBands: false);
         return new ImprovementNotificationsEnvelope(DateTime.UtcNow, DefaultLiveHours, source.RunId, source.CompletedAt, items);
     }
 
@@ -206,7 +206,7 @@ public sealed class ImprovementNotificationService
         long? runId = null;
 
         using var conn = _dataSource.OpenConnection();
-        using var tx = execute ? conn.BeginTransaction() : null;
+        NpgsqlTransaction? tx = null;
 
         var report = new ImprovementNotificationPrecomputeReport(
             StartedAtUtc: startedAt,
@@ -242,14 +242,19 @@ public sealed class ImprovementNotificationService
         {
             if (execute)
             {
-                runId = InsertRun(conn, tx, options, mode, registeredOnly, source);
+                runId = InsertRun(conn, null, options, mode, registeredOnly, source);
                 report = report with { RunId = runId };
+                tx = conn.BeginTransaction();
             }
 
             if (options.PruneExpired)
             {
-                var expiredPlayer = PruneExpiredEvents(conn, tx, "player_improvement_events", execute, detectedAt);
-                var expiredBand = PruneExpiredEvents(conn, tx, "band_improvement_events", execute, detectedAt);
+                var expiredPlayer = options.IncludePlayers
+                    ? PruneExpiredEvents(conn, tx, "player_improvement_events", execute, detectedAt)
+                    : 0;
+                var expiredBand = options.IncludeBands
+                    ? PruneExpiredEvents(conn, tx, "band_improvement_events", execute, detectedAt)
+                    : 0;
                 report = report with
                 {
                     ExpiredPlayerEventsDeleted = expiredPlayer,
@@ -344,6 +349,8 @@ public sealed class ImprovementNotificationService
             {
                 UpdateRunSuccess(conn, tx!, runId.Value, report, completedAt);
                 tx!.Commit();
+                tx.Dispose();
+                tx = null;
             }
 
             return report;
@@ -365,7 +372,11 @@ public sealed class ImprovementNotificationService
                 }
             }
 
-            return report with { CompletedAtUtc = DateTime.UtcNow, ErrorMessage = ex.Message };
+            throw;
+        }
+        finally
+        {
+            tx?.Dispose();
         }
     }
 
@@ -490,7 +501,7 @@ public sealed class ImprovementNotificationService
         cmd.Parameters.AddWithValue("limit", effectiveLimit);
 
         var items = ReadNotifications(cmd);
-        var source = ReadLatestNotificationSource(conn);
+        var source = ReadLatestNotificationSource(conn, includePlayers: false, includeBands: true);
         return new ImprovementNotificationsEnvelope(DateTime.UtcNow, DefaultLiveHours, source.RunId, source.CompletedAt, items);
     }
 
@@ -506,16 +517,23 @@ public sealed class ImprovementNotificationService
         });
     }
 
-    private static ImprovementNotificationSourceCursor ReadLatestNotificationSource(NpgsqlConnection conn)
+    private static ImprovementNotificationSourceCursor ReadLatestNotificationSource(
+        NpgsqlConnection conn,
+        bool includePlayers,
+        bool includeBands)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT run_id, completed_at
             FROM improvement_detection_runs
             WHERE status = 'completed'
+              AND (@includePlayers = false OR include_players)
+              AND (@includeBands = false OR include_bands)
             ORDER BY run_id DESC
             LIMIT 1;
             """;
+        cmd.Parameters.AddWithValue("includePlayers", includePlayers);
+        cmd.Parameters.AddWithValue("includeBands", includeBands);
         using var reader = cmd.ExecuteReader();
         return reader.Read()
             ? new ImprovementNotificationSourceCursor(

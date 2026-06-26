@@ -427,9 +427,9 @@ public sealed class ScraperWorker : BackgroundService
                     _log.LogError(ex,
                         "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
                         "Partial data from this pass was already persisted via pipelined writers. " +
-                        "Continuing to post-scrape phases on whatever data was captured.",
+                        "Full-data post-scrape derived work will be skipped unless the scrape returned a completed result.",
                         _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
-                    // Do NOT return — fall through so post-scrape (rankings/rivals/precompute) still runs.
+                    // Do NOT return — fall through so cleanup can unfreeze public reads.
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
@@ -437,16 +437,16 @@ public sealed class ScraperWorker : BackgroundService
                     _log.LogWarning(
                         "Scrape pass was canceled by an internal cancellation source. " +
                         "Partial data from this pass was already persisted. " +
-                        "Continuing to post-scrape phases on whatever data was captured.");
-                    // Do NOT return — fall through so post-scrape still runs.
+                        "Full-data post-scrape derived work will be skipped unless the scrape returned a completed result.");
+                    // Do NOT return — fall through so cleanup can unfreeze public reads.
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     _workerStatus?.FailOperation("scrape.leaderboards", ex);
                     _log.LogError(ex,
                         "Scrape pass failed with a non-CDN exception. Partial data may have been staged. " +
-                        "Continuing to post-scrape phases on whatever data was captured.");
-                    // Do NOT return — fall through so post-scrape still runs.
+                        "Full-data post-scrape derived work will be skipped unless the scrape returned a completed result.");
+                    // Do NOT return — fall through so cleanup can unfreeze public reads.
                 }
             }
             else
@@ -481,24 +481,51 @@ public sealed class ScraperWorker : BackgroundService
                     .ToList(),
                 DegreeOfParallelism = opts.DegreeOfParallelism,
                 EpicReportedOver100Pages = false,
+                LeaderboardScrapeCompleted = !anyScrapePhase,
             };
 
-            // ── Post-pass: enrichment, refresh, rankings, rivals, derived publication ──
-            _lifecycle.ScrapePublishing();
-
-            var postProcessCompleted = false;
-            try
+            var postScrapePhases = resolvedPhases;
+            var skipPostScrapeForIncompleteScrape = anyScrapePhase && result is null;
+            if (skipPostScrapeForIncompleteScrape)
             {
-                _workerStatus?.BeginOperation("scrape.post_process", "Post-processing leaderboard update", phase: "PostScrapeEnrichment");
-                await _postScrapeOrchestrator.RunAsync(ctx, service, resolvedPhases, ct);
-                postProcessCompleted = true;
-                _workerStatus?.CompleteOperation("scrape.post_process");
+                _log.LogWarning(
+                    "Skipping post-scrape derived phases because the leaderboard scrape did not complete. " +
+                    "Public reads will stay on the last published scrape and the full pipeline will retry next pass.");
+                postScrapePhases = ScrapePhase.None;
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
+
+            // ── Post-pass: enrichment, refresh, rankings, rivals, derived publication ──
+            if (skipPostScrapeForIncompleteScrape)
             {
-                _workerStatus?.FailOperation("scrape.post_process", ex);
-                _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
+                _log.LogWarning(
+                    "Skipping scrape publication preparation because no completed scrape result is available. " +
+                    "Current published band rankings will remain unchanged.");
+            }
+            else
+            {
+                _lifecycle.ScrapePublishing();
+            }
+
+            var postProcessCompleted = skipPostScrapeForIncompleteScrape;
+            if (postProcessCompleted)
+            {
+                _log.LogWarning("Post-scrape orchestration skipped because no completed scrape result is available.");
+            }
+            else
+            {
+                try
+                {
+                    _workerStatus?.BeginOperation("scrape.post_process", "Post-processing leaderboard update", phase: "PostScrapeEnrichment");
+                    await _postScrapeOrchestrator.RunAsync(ctx, service, postScrapePhases, ct);
+                    postProcessCompleted = true;
+                    _workerStatus?.CompleteOperation("scrape.post_process");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _workerStatus?.FailOperation("scrape.post_process", ex);
+                    _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
+                }
             }
 
             if (postProcessCompleted)
@@ -506,7 +533,7 @@ public sealed class ScraperWorker : BackgroundService
                 var publicationCleanupCompleted = true;
                 try
                 {
-                    await _postScrapeOrchestrator.RunPublicationCleanupAsync(ctx, resolvedPhases, ct);
+                    await _postScrapeOrchestrator.RunPublicationCleanupAsync(ctx, postScrapePhases, ct);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -526,7 +553,7 @@ public sealed class ScraperWorker : BackgroundService
             {
                 try
                 {
-                    await _postScrapeOrchestrator.RunDeferredRegistrationSyncAsync(ctx, service, resolvedPhases, ct);
+                    await _postScrapeOrchestrator.RunDeferredRegistrationSyncAsync(ctx, service, postScrapePhases, ct);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -540,7 +567,7 @@ public sealed class ScraperWorker : BackgroundService
             {
                 try
                 {
-                    await _postScrapeOrchestrator.RunCleanupAsync(ctx, resolvedPhases, ct);
+                    await _postScrapeOrchestrator.RunCleanupAsync(ctx, postScrapePhases, ct);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)

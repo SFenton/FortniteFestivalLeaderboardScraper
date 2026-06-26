@@ -1,8 +1,14 @@
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Microsoft.Extensions.Logging;
+using System.Net;
 
 namespace FSTService.Scraping;
+
+public interface IProxyContainerRecycler
+{
+    Task<bool> RestartAsync(string containerName);
+}
 
 /// <summary>
 /// Recycles gluetun VPN containers by stopping, removing, and recreating them
@@ -10,7 +16,7 @@ namespace FSTService.Scraping;
 /// Uses the Docker Engine API over the Unix socket — more reliable than the gluetun
 /// control API when gluetun is crash-looping or the WireGuard tunnel is wedged.
 /// </summary>
-public sealed class GluetunContainerRecycler : IDisposable
+public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposable
 {
     private readonly DockerClient _docker;
     private readonly ILogger<GluetunContainerRecycler> _log;
@@ -23,6 +29,46 @@ public sealed class GluetunContainerRecycler : IDisposable
         _log = logger;
         _docker = new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock"))
             .CreateClient();
+    }
+
+    /// <summary>
+    /// Restarts an existing proxy container without changing its configured
+    /// region/server environment. This is the safe self-heal path for static
+    /// proxy pools such as PIA, where the worker should not rewrite provider-
+    /// specific server selectors.
+    /// </summary>
+    public async Task<bool> RestartAsync(string containerName)
+    {
+        try
+        {
+            _log.LogWarning("Restarting proxy container {Container}", containerName);
+
+            try
+            {
+                await _docker.Containers.StopContainerAsync(containerName,
+                    new ContainerStopParameters { WaitBeforeKillSeconds = StopWaitSeconds });
+            }
+            catch (DockerContainerNotFoundException)
+            {
+                _log.LogError("Container {Container} not found — cannot restart", containerName);
+                return false;
+            }
+            catch (DockerApiException ex) when (ex.StatusCode == HttpStatusCode.NotModified)
+            {
+                _log.LogInformation("Proxy container {Container} is already stopped; starting it", containerName);
+            }
+
+            await _docker.Containers.StartContainerAsync(containerName, new ContainerStartParameters());
+
+            _log.LogInformation("Proxy container {Container} restarted", containerName);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogError(ex, "Failed to restart proxy container {Container}: {Error}",
+                containerName, ex.Message);
+            return false;
+        }
     }
 
     /// <summary>

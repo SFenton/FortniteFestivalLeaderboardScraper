@@ -553,6 +553,17 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void DeferredBackfills_include_interrupted_in_progress_for_resume()
+    {
+        Db.DeferBackfill("acct_resume", 200, "worker_backfill_queue");
+        Db.StartBackfill("acct_resume");
+
+        var deferred = Db.GetDeferredBackfills();
+
+        Assert.Contains(deferred, p => p.AccountId == "acct_resume" && p.Status == "in_progress");
+    }
+
+    [Fact]
     public void CompleteBackfill_tracks_and_clears_rankings_pending()
     {
         Db.EnqueueBackfill("acct_1", 100);
@@ -600,16 +611,57 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
-    public void EnqueueBackfill_does_not_reset_completed()
+    public void EnqueueBackfill_does_not_reset_completed_for_same_catalog_size()
     {
         Db.EnqueueBackfill("acct_1", 100);
         Db.StartBackfill("acct_1");
         Db.CompleteBackfill("acct_1");
 
-        // Re-enqueue should not overwrite 'complete' status
-        Db.EnqueueBackfill("acct_1", 200);
+        // Re-enqueue should not overwrite 'complete' status unless the catalog grew.
+        Db.EnqueueBackfill("acct_1", 100);
         var status = Db.GetBackfillStatus("acct_1");
         Assert.Equal("complete", status!.Status);
+    }
+
+    [Fact]
+    public void EnqueueBackfill_reopens_completed_when_catalog_size_grows()
+    {
+        Db.EnqueueBackfill("acct_1", 100);
+        Db.StartBackfill("acct_1");
+        Db.UpdateBackfillProgress("acct_1", 100, 5);
+        Db.CompleteBackfill("acct_1");
+
+        Db.EnqueueBackfill("acct_1", 200);
+        var status = Db.GetBackfillStatus("acct_1");
+
+        Assert.Equal("pending", status!.Status);
+        Assert.Equal(200, status.TotalSongsToCheck);
+        Assert.Equal(0, status.SongsChecked);
+        Assert.Equal(0, status.EntriesFound);
+        Assert.Null(status.StartedAt);
+        Assert.Null(status.CompletedAt);
+        Assert.Null(status.LastResumedAt);
+    }
+
+    [Fact]
+    public void DeferBackfill_reopens_completed_when_catalog_size_grows()
+    {
+        Db.EnqueueBackfill("acct_1", 100);
+        Db.StartBackfill("acct_1");
+        Db.UpdateBackfillProgress("acct_1", 100, 5);
+        Db.CompleteBackfill("acct_1");
+
+        Db.DeferBackfill("acct_1", 200, "worker_backfill_queue");
+        var status = Db.GetBackfillStatus("acct_1");
+
+        Assert.Equal("deferred", status!.Status);
+        Assert.Equal(200, status.TotalSongsToCheck);
+        Assert.Equal(0, status.SongsChecked);
+        Assert.Equal(0, status.EntriesFound);
+        Assert.Equal("worker_backfill_queue", status.DeferredReason);
+        Assert.Null(status.StartedAt);
+        Assert.Null(status.CompletedAt);
+        Assert.Null(status.LastResumedAt);
     }
 
     // ═══ HistoryReconStatus ═════════════════════════════════════

@@ -1994,10 +1994,10 @@ public sealed class MetaDatabase : IMetaDatabase
 
     private const string BackfillStatusColumns = "account_id, status, songs_checked, entries_found, total_songs_to_check, started_at, completed_at, last_resumed_at, error_message, rankings_pending, deferred_reason";
 
-    public void EnqueueBackfill(string accountId, int totalSongsToCheck) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'pending', @total, FALSE, NULL) ON CONFLICT(account_id) DO UPDATE SET status = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.status ELSE 'pending' END, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.rankings_pending ELSE FALSE END, deferred_reason = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.deferred_reason ELSE NULL END WHERE backfill_status.status != 'complete'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.ExecuteNonQuery(); }
-    public void DeferBackfill(string accountId, int totalSongsToCheck, string reason) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'deferred', @total, FALSE, @reason) ON CONFLICT(account_id) DO UPDATE SET status = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.status ELSE 'deferred' END, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.rankings_pending ELSE FALSE END, deferred_reason = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.deferred_reason ELSE EXCLUDED.deferred_reason END WHERE backfill_status.status != 'complete'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.Parameters.AddWithValue("reason", reason); cmd.ExecuteNonQuery(); }
+    public void EnqueueBackfill(string accountId, int totalSongsToCheck) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'pending', @total, FALSE, NULL) ON CONFLICT(account_id) DO UPDATE SET status = 'pending', songs_checked = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.songs_checked END, entries_found = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.entries_found END, started_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.started_at END, completed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.completed_at END, last_resumed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.last_resumed_at END, error_message = NULL, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = FALSE, deferred_reason = NULL WHERE backfill_status.status != 'complete' OR EXCLUDED.total_songs_to_check > backfill_status.total_songs_to_check"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.ExecuteNonQuery(); }
+    public void DeferBackfill(string accountId, int totalSongsToCheck, string reason) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check, rankings_pending, deferred_reason) VALUES (@id, 'deferred', @total, FALSE, @reason) ON CONFLICT(account_id) DO UPDATE SET status = 'deferred', songs_checked = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.songs_checked END, entries_found = CASE WHEN backfill_status.status = 'complete' THEN 0 ELSE backfill_status.entries_found END, started_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.started_at END, completed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.completed_at END, last_resumed_at = CASE WHEN backfill_status.status = 'complete' THEN NULL ELSE backfill_status.last_resumed_at END, error_message = NULL, total_songs_to_check = EXCLUDED.total_songs_to_check, rankings_pending = FALSE, deferred_reason = EXCLUDED.deferred_reason WHERE backfill_status.status != 'complete' OR EXCLUDED.total_songs_to_check > backfill_status.total_songs_to_check"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.Parameters.AddWithValue("reason", reason); cmd.ExecuteNonQuery(); }
     public List<BackfillStatusInfo> GetPendingBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('pending', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
-    public List<BackfillStatusInfo> GetDeferredBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status = 'deferred'"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
+    public List<BackfillStatusInfo> GetDeferredBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE status IN ('deferred', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
     public BackfillStatusInfo? GetBackfillStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT {BackfillStatusColumns} FROM backfill_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadBackfillStatus(r) : null; }
     public void StartBackfill(string accountId) { SimpleUpdate("UPDATE backfill_status SET status = 'in_progress', started_at = COALESCE(started_at, @now), last_resumed_at = @now, deferred_reason = NULL WHERE account_id = @id", accountId); }
     public void CompleteBackfill(string accountId, bool rankingsPending = false) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'complete', completed_at = @now, rankings_pending = @rankingsPending, deferred_reason = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.Parameters.AddWithValue("rankingsPending", rankingsPending); cmd.ExecuteNonQuery(); }
@@ -2005,6 +2005,46 @@ public sealed class MetaDatabase : IMetaDatabase
     public void FailBackfill(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'error', error_message = @err, deferred_reason = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.ExecuteNonQuery(); }
     public void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET songs_checked = @checked, entries_found = @found WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("checked", songsChecked); cmd.Parameters.AddWithValue("found", entriesFound); cmd.ExecuteNonQuery(); }
     public void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_progress (account_id, song_id, instrument, checked, entry_found, checked_at) VALUES (@acct, @song, @inst, 1, @found, @now) ON CONFLICT(account_id, song_id, instrument) DO UPDATE SET checked = 1, entry_found = EXCLUDED.entry_found, checked_at = EXCLUDED.checked_at"; cmd.Parameters.AddWithValue("acct", accountId); cmd.Parameters.AddWithValue("song", songId); cmd.Parameters.AddWithValue("inst", instrument); cmd.Parameters.AddWithValue("found", entryFound ? 1 : 0); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public void MarkBackfillSongsChecked(string accountId, IReadOnlyCollection<(string SongId, string Instrument, bool EntryFound)> checks)
+    {
+        if (checks.Count == 0) return;
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = "CREATE TEMP TABLE _backfill_progress_stage (song_id TEXT, instrument TEXT, entry_found INTEGER) ON COMMIT DROP";
+            c.ExecuteNonQuery();
+        }
+        using (var writer = conn.BeginBinaryImport("COPY _backfill_progress_stage (song_id, instrument, entry_found) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var (songId, instrument, entryFound) in checks)
+            {
+                writer.StartRow();
+                writer.Write(songId, NpgsqlDbType.Text);
+                writer.Write(instrument, NpgsqlDbType.Text);
+                writer.Write(entryFound ? 1 : 0, NpgsqlDbType.Integer);
+            }
+            writer.Complete();
+        }
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO backfill_progress (account_id, song_id, instrument, checked, entry_found, checked_at)
+                SELECT @acct, song_id, instrument, 1, entry_found, @now
+                FROM _backfill_progress_stage
+                ON CONFLICT(account_id, song_id, instrument) DO UPDATE SET
+                    checked = 1,
+                    entry_found = EXCLUDED.entry_found,
+                    checked_at = EXCLUDED.checked_at
+                """;
+            cmd.Parameters.AddWithValue("acct", accountId);
+            cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
     public HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument FROM backfill_progress WHERE account_id = @acct AND checked = 1"; cmd.Parameters.AddWithValue("acct", accountId); var set = new HashSet<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add((r.GetString(0), r.GetString(1))); return set; }
     public BackfillSongProgressInfo? GetBackfillSongProgress(string accountId, int checkedPairs, int totalPairs)
     {

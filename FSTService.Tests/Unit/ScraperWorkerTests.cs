@@ -51,17 +51,22 @@ public class ScraperWorkerTests : IDisposable
     // ─── GetEnabledInstruments ──────────────────────────────────
 
     [Fact]
-    public void GetEnabledInstruments_AllEnabled_Returns6()
+    public void GetEnabledInstruments_AllEnabled_ReturnsAllSoloTypes()
     {
         var opts = new ScraperOptions(); // All default to true
         var result = InvokeGetEnabledInstruments(opts);
-        Assert.Equal(6, result.Count);
-        Assert.Contains("Solo_Guitar", result);
-        Assert.Contains("Solo_Bass", result);
-        Assert.Contains("Solo_Vocals", result);
-        Assert.Contains("Solo_Drums", result);
-        Assert.Contains("Solo_PeripheralGuitar", result);
-        Assert.Contains("Solo_PeripheralBass", result);
+        Assert.Equal(
+        [
+            "Solo_Guitar",
+            "Solo_Bass",
+            "Solo_Vocals",
+            "Solo_Drums",
+            "Solo_PeripheralGuitar",
+            "Solo_PeripheralBass",
+            "Solo_PeripheralVocals",
+            "Solo_PeripheralCymbals",
+            "Solo_PeripheralDrums",
+        ], result);
     }
 
     [Fact]
@@ -75,6 +80,9 @@ public class ScraperWorkerTests : IDisposable
             QueryDrums = false,
             QueryProLead = false,
             QueryProBass = false,
+            QueryProVocals = false,
+            QueryProCymbals = false,
+            QueryProDrums = false,
         };
         var result = InvokeGetEnabledInstruments(opts);
         Assert.Empty(result);
@@ -91,6 +99,9 @@ public class ScraperWorkerTests : IDisposable
             QueryVocals = false,
             QueryProLead = false,
             QueryProBass = false,
+            QueryProVocals = false,
+            QueryProCymbals = false,
+            QueryProDrums = false,
         };
         var result = InvokeGetEnabledInstruments(opts);
         Assert.Equal(2, result.Count);

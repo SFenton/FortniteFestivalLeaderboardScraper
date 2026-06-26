@@ -24,6 +24,12 @@ public sealed class ResilientHttpExecutorTests
     private static HttpRequestMessage MakeRequest()
         => new(HttpMethod.Get, "https://example.com/api/test");
 
+    private static HttpRequestMessage MakeEpicEventsRequest()
+        => new(HttpMethod.Post, "https://events-public-service-live.ol.epicgames.com/api/v2/games/FNFestival/leaderboards/test/alltime/scores?accountId=caller&fromIndex=0&findTeams=false")
+        {
+            Content = new StringContent("""{"teams":[["caller"],["target"]]}""")
+        };
+
     private static async Task<InflightOperationSnapshot> WaitForInflightStateAsync(
         ResilientHttpExecutor executor,
         InflightState state)
@@ -344,6 +350,27 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
+    public async Task SendAsync_EpicCdn403_WhenCurlFallbackSucceeds_ReturnsFallbackResponse()
+    {
+        var (executor, handler) = CreateExecutor();
+        handler.EnqueueHtml403();
+        executor.CdnBlockFallbackOverride = (_, _, _) => Task.FromResult<HttpResponseMessage?>(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"result":"ok"}""")
+            });
+
+        using var response = await executor.SendAsync(() => MakeEpicEventsRequest(), label: "epic-fallback-test");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("""{"result":"ok"}""", body);
+        Assert.False(executor.IsCdnBlocked);
+        Assert.Equal(0, executor.CdnBlocksDetected);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
     public async Task SendAsync_Cdn403_LaunchesProbeAndThrows()
     {
         var handler = new MockHttpMessageHandler();
@@ -397,11 +424,85 @@ public sealed class ResilientHttpExecutorTests
         handler.EnqueueHtml403();
         handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "proxy-cdn-test");
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "proxy-cdn-test"));
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains(ProxyFailureKind.CdnBlock, proxyHealth.Failures);
         Assert.Equal(1, proxyHealth.Successes);
+    }
+
+    [Fact]
+    public async Task SendAsync_Cdn403_WhenProxyPoolHasAlternate_RetriesWithoutGlobalProbe()
+    {
+        var handler = new MockHttpMessageHandler();
+        var http = new HttpClient(handler);
+        var proxyHealth = new LocalCdnBlockReporter(ProxyCdnBlockDecision.RetryOnAlternateProxy);
+        var executor = new ResilientHttpExecutor(http, _log, proxyHealth)
+        {
+            CdnRetryDelaysOverride = new TimeSpan[9],
+        };
+        var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 100, minDop: 1, maxDop: 200,
+            Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
+
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        using var response = await executor.SendAsync(
+            () => MakeRequest(), limiter: limiter, label: "proxy-local-cdn-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(executor.IsCdnBlocked);
+        Assert.Equal(0, executor.CdnProbeAttempts);
+        Assert.Equal(1, limiter.TotalRequests);
+        Assert.Equal(1, proxyHealth.CdnBlocks);
+        Assert.Equal(1, proxyHealth.Successes);
+    }
+
+    [Fact]
+    public async Task SendAsync_Cdn403_WhenProxyPoolAllCooling_WaitsForProxyCooldownWithoutGlobalProbe()
+    {
+        var handler = new MockHttpMessageHandler();
+        var http = new HttpClient(handler);
+        var proxyHealth = new LocalCdnBlockReporter(ProxyCdnBlockDecision.WaitForProxyCooldown);
+        var executor = new ResilientHttpExecutor(http, _log, proxyHealth)
+        {
+            CdnRetryDelaysOverride = new TimeSpan[9],
+        };
+
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        using var response = await executor.SendAsync(() => MakeRequest(), label: "proxy-cooldown-cdn-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(executor.IsCdnBlocked);
+        Assert.Equal(0, executor.CdnProbeAttempts);
+        Assert.Equal(1, proxyHealth.CdnBlocks);
+        Assert.Equal(1, proxyHealth.Successes);
+    }
+
+    [Fact]
+    public async Task SendAsync_Cdn403_WhenProxyDecisionRequiresGlobalPause_UsesGlobalProbe()
+    {
+        var handler = new MockHttpMessageHandler();
+        var http = new HttpClient(handler);
+        var proxyHealth = new LocalCdnBlockReporter(ProxyCdnBlockDecision.PauseGlobally);
+        var executor = new ResilientHttpExecutor(http, _log, proxyHealth)
+        {
+            CdnRetryDelaysOverride = new TimeSpan[9],
+        };
+
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.SendAsync(() => MakeRequest(), label: "proxy-global-cdn-test"));
+        await executor.WaitForCdnClearAsync(CancellationToken.None);
+
+        Assert.Equal(1, proxyHealth.CdnBlocks);
+        Assert.True(executor.CdnProbeAttempts > 0);
     }
 
     [Fact]
@@ -714,15 +815,16 @@ public sealed class ResilientHttpExecutorTests
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
         // Initial CDN 403 + enough for probe to exhaust MaxCdnRetries
-        for (int i = 0; i < ResilientHttpExecutor.MaxCdnRetries + 1; i++)
+        for (int i = 0; i < ResilientHttpExecutor.MaxCdnRetries + 10; i++)
             handler.EnqueueHtml403();
 
         // Caller gets CdnBlockedException immediately
         await Assert.ThrowsAsync<CdnBlockedException>(
             () => executor.SendAsync(() => MakeRequest(), label: "cdn-exhaust-test"));
 
-        // Probe exhausts retries → _cdnResolved signals false
-        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        // Probe exhausts retries → waiters see hard CDN exhaustion.
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.WaitForCdnClearAsync(CancellationToken.None));
     }
 
     [Fact]
@@ -799,7 +901,7 @@ public sealed class ResilientHttpExecutorTests
         handler.EnqueueHtml403();
         handler.EnqueueHtml403();
         // All probe retries: CDN blocked (MaxCdnRetries worth)
-        for (int i = 0; i < ResilientHttpExecutor.MaxCdnRetries; i++)
+        for (int i = 0; i < ResilientHttpExecutor.MaxCdnRetries + 10; i++)
             handler.EnqueueHtml403();
 
         var task1 = executor.SendAsync(() => MakeRequest(), label: "call-1");
@@ -809,8 +911,9 @@ public sealed class ResilientHttpExecutorTests
         await Assert.ThrowsAsync<CdnBlockedException>(() => task1);
         await Assert.ThrowsAsync<CdnBlockedException>(() => task2);
 
-        // Probe exhausts and signals
-        await executor.WaitForCdnClearAsync(CancellationToken.None);
+        // Probe exhausts and reports hard CDN exhaustion to waiters.
+        await Assert.ThrowsAsync<CdnBlockedException>(
+            () => executor.WaitForCdnClearAsync(CancellationToken.None));
     }
 
     // ─── WithCdnResilienceAsync ─────────────────────────────────
@@ -1358,8 +1461,24 @@ public sealed class ResilientHttpExecutorTests
         public List<ProxyFailureKind> Failures { get; } = [];
         public int Successes { get; private set; }
         public void ReportSuccess(HttpRequestMessage request) => Successes++;
+        public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind) => Failures.Add(kind);
+    }
+
+    private sealed class LocalCdnBlockReporter(ProxyCdnBlockDecision decision) : IProxyHealthReporter, IProxyCdnBlockHandler
+    {
+        public int CdnBlocks { get; private set; }
+        public int Successes { get; private set; }
+        public List<ProxyFailureKind> Failures { get; } = [];
+
         public void ReportSuccess(HttpRequestMessage request) => Successes++;
+
         public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind) => Failures.Add(kind);
-        public void ReportFailure(HttpRequestMessage request, ProxyFailureKind kind) => Failures.Add(kind);
+
+        public ProxyCdnBlockDecision ReportCdnBlock(HttpRequestMessage request)
+        {
+            CdnBlocks++;
+            Failures.Add(ProxyFailureKind.CdnBlock);
+            return decision;
+        }
     }
 }

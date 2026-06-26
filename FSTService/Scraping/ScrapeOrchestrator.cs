@@ -266,8 +266,35 @@ public sealed class ScrapeOrchestrator
 
         // Wait for solo only — band runs independently in the background.
         // Solo post-processing (flush, score changes, rankings) proceeds immediately.
-            allResults = await soloTask;
-            _pool.EndHighPriorityPhase();
+            try
+            {
+                allResults = await soloTask;
+            }
+            catch
+            {
+                if (bandTask is not null && !bandTask.IsCompleted)
+                {
+                    _progress.SetSubOperation("cancelling_band_after_solo_failure");
+                    bandTimeoutCts?.Cancel();
+                    _log.LogWarning("Cancelling background band scrape because the solo scrape did not complete.");
+                    await ObserveTimedOutBandTaskAsync(bandTask, passCt);
+                    _globalScraper.ResetCdnState();
+                }
+
+                if (bandSpool is not null)
+                {
+                    await DisposeBandSpoolAsync(bandSpool);
+                    bandSpool = null;
+                }
+
+                bandTimeoutCts?.Dispose();
+                bandTimeoutCts = null;
+                throw;
+            }
+            finally
+            {
+                _pool.EndHighPriorityPhase();
+            }
 
             if (useOnlineSoloWriter)
             {
@@ -398,6 +425,7 @@ public sealed class ScrapeOrchestrator
                                 "Band scrape did not complete within {TimeoutSeconds}s after solo completion; skipping band flush for this pass so solo-derived phases can continue.",
                                 bandAwaitTimeoutSeconds);
                             await ObserveTimedOutBandTaskAsync(bandTask, passCt);
+                            _globalScraper.ResetCdnState();
                         }
                     }
                 }
@@ -450,6 +478,7 @@ public sealed class ScrapeOrchestrator
             ScrapeRequests = scrapeRequests,
             DegreeOfParallelism = opts.DegreeOfParallelism,
             EpicReportedOver100Pages = epicReportedOver100Pages,
+            LeaderboardScrapeCompleted = true,
         };
 
         return new ScrapePassResult

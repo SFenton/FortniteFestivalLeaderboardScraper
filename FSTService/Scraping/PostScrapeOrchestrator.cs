@@ -19,6 +19,8 @@ namespace FSTService.Scraping;
 public sealed class PostScrapeOrchestrator
 {
     private const int PlayerStatsTierAccountChunkSize = 512;
+    private static readonly IReadOnlyDictionary<string, IReadOnlyCollection<string>> EmptyImpactedTeams =
+        new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase);
 
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
@@ -231,12 +233,16 @@ public sealed class PostScrapeOrchestrator
                 _progress.SetSubOperation("registered_player_band_discovery");
                 registeredPlayerBandDiscoveryResult = await RunPhaseAsync(
                     "RegisteredPlayerBandDiscovery",
-                    () => registeredPlayerBandDiscoveryOrchestrator.RunAsync(
-                        chartedSongIds,
-                        seasonWindows,
-                        bandAccessToken,
-                        _tokenManager.AccountId!,
-                        _pool,
+                    () => RunWithPostScrapeNetworkTimeoutAsync(
+                        "registered-player band discovery",
+                        phaseCt => registeredPlayerBandDiscoveryOrchestrator.RunAsync(
+                            chartedSongIds,
+                            seasonWindows,
+                            bandAccessToken,
+                            _tokenManager.AccountId!,
+                            _pool,
+                            phaseCt),
+                        RegisteredPlayerBandDiscoveryResult.Empty,
                         ct),
                     RegisteredPlayerBandDiscoveryResult.Empty);
             }
@@ -264,12 +270,16 @@ public sealed class PostScrapeOrchestrator
                 _progress.SetSubOperation("registered_band_targeted_processing");
                 registeredBandProcessingResult = await RunPhaseAsync(
                     "RegisteredBandTargetedProcessing",
-                    () => registeredBandProcessingOrchestrator.RunAsync(
-                        chartedSongIds,
-                        seasonWindows,
-                        bandAccessToken,
-                        _tokenManager.AccountId!,
-                        _pool,
+                    () => RunWithPostScrapeNetworkTimeoutAsync(
+                        "registered-band targeted processing",
+                        phaseCt => registeredBandProcessingOrchestrator.RunAsync(
+                            chartedSongIds,
+                            seasonWindows,
+                            bandAccessToken,
+                            _tokenManager.AccountId!,
+                            _pool,
+                            phaseCt),
+                        RegisteredBandProcessingResult.Empty,
                         ct),
                     RegisteredBandProcessingResult.Empty);
             }
@@ -279,7 +289,11 @@ public sealed class PostScrapeOrchestrator
             }
         }
 
-        if (ShouldRunBandMaintenance(resolvedPhases)
+        var runFullBandMaintenance = ShouldRunBandMaintenance(resolvedPhases);
+        if (runFullBandMaintenance && ShouldSkipFullBandMaintenanceForIncompleteScrape(ctx, resolvedPhases))
+            runFullBandMaintenance = false;
+
+        if (runFullBandMaintenance
             || registeredPlayerBandDiscoveryResult.ImpactedTeamsByBandType.Count > 0
             || registeredBandProcessingResult.ImpactedTeamsByBandType.Count > 0)
         {
@@ -288,74 +302,78 @@ public sealed class PostScrapeOrchestrator
             var mergedExtractionResult = bandExtractionResult with
             {
                 ImpactedTeamsByBandType = MergeImpactedTeams(
-                    bandExtractionResult.ImpactedTeamsByBandType,
+                    runFullBandMaintenance ? bandExtractionResult.ImpactedTeamsByBandType : EmptyImpactedTeams,
                     registeredPlayerBandDiscoveryResult.ImpactedTeamsByBandType,
                     registeredBandProcessingResult.ImpactedTeamsByBandType),
                 ImpactedCurrentProjectionScopes = MergeCurrentProjectionScopes(
-                    bandExtractionResult.ImpactedCurrentProjectionScopes,
+                    runFullBandMaintenance ? bandExtractionResult.ImpactedCurrentProjectionScopes : [],
                     registeredPlayerBandDiscoveryResult.ImpactedCurrentProjectionScopes,
                     registeredBandProcessingResult.ImpactedCurrentProjectionScopes),
             };
-            await RunPhaseAsync("BandMaintenance", () => RunBandMaintenanceAsync(ctx, mergedExtractionResult, ct));
+            await RunPhaseAsync("BandMaintenance", () => RunBandMaintenanceAsync(ctx, mergedExtractionResult, runFullBandMaintenance, ct));
         }
 
-        // ── Solo rankings ──
         var rankingsSucceeded = false;
-        if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
-            rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
-
-        // ── Solo rivals ──
-        if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
+        var skipDerivedSoloPhases = ShouldSkipDerivedSoloPhasesForIncompleteScrape(ctx, resolvedPhases);
+        if (!skipDerivedSoloPhases)
         {
-            await RunPhaseAsync("Rivals", () => ComputeRivalsAsync(ctx, ct));
-        }
+            // ── Solo rankings ──
+            if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
+                rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
 
-        // ── Solo player stats ──
-        if (resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats))
-        {
-            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
-            await RunPhaseAsync("PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
-        }
-
-        // ── Solo finalize ──
-        if (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
-        {
-            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
-            _progress.RegisterBranches(new[] { "final_checkpoint", "pre_warming_cache" });
-            await RunPhaseAsync("Checkpoint", () => Task.Run(() =>
+            // ── Solo rivals ──
+            if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
             {
-                _progress.StartBranch("final_checkpoint");
-                _progress.SetSubOperation("final_checkpoint");
-                try
-                {
-                    _persistence.CheckpointAll();
-                    _progress.CompleteBranch("final_checkpoint", "complete");
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _progress.CompleteBranch("final_checkpoint", "failed", ex.Message);
-                    throw;
-                }
-            }, ct));
-
-            StartBestEffortCacheWarm(ctx.RegisteredIds);
-
-            if (ctx.ScrapeId > 0)
-            {
-                await RunPhaseAsync("ActivateShadowSnapshots", () =>
-                {
-                    _persistence.FinalizeShadowSnapshots(ctx.ScrapeId, wave: 2, expectedPairs: expectedSnapshotPairs);
-                    return Task.CompletedTask;
-                });
+                await RunPhaseAsync("Rivals", () => ComputeRivalsAsync(ctx, ct));
             }
-        }
 
-        if (rankingsSucceeded && ShouldRunImprovementNotifications(ctx, resolvedPhases))
-        {
-            await RunPhaseAsync(
-                "ImprovementNotifications",
-                () => RunImprovementNotificationDetectionAsync(ctx, registeredUserRefreshResult, ct),
-                rethrowOnFailure: _improvementNotificationOptions.Value.FailScrapeOnError);
+            // ── Solo player stats ──
+            if (resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats))
+            {
+                _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
+                await RunPhaseAsync("PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
+            }
+
+            // ── Solo finalize ──
+            if (resolvedPhases.HasFlag(ScrapePhase.SoloFinalize))
+            {
+                _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
+                _progress.RegisterBranches(new[] { "final_checkpoint", "pre_warming_cache" });
+                await RunPhaseAsync("Checkpoint", () => Task.Run(() =>
+                {
+                    _progress.StartBranch("final_checkpoint");
+                    _progress.SetSubOperation("final_checkpoint");
+                    try
+                    {
+                        _persistence.CheckpointAll();
+                        _progress.CompleteBranch("final_checkpoint", "complete");
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _progress.CompleteBranch("final_checkpoint", "failed", ex.Message);
+                        throw;
+                    }
+                }, ct));
+
+                StartBestEffortCacheWarm(ctx.RegisteredIds);
+
+                if (ctx.ScrapeId > 0)
+                {
+                    await RunPhaseAsync("ActivateShadowSnapshots", () =>
+                    {
+                        _persistence.FinalizeShadowSnapshots(ctx.ScrapeId, wave: 2, expectedPairs: expectedSnapshotPairs);
+                        return Task.CompletedTask;
+                    });
+                }
+            }
+
+            if (rankingsSucceeded && ShouldRunImprovementNotifications(ctx, resolvedPhases))
+            {
+                await RunPhaseAsync(
+                    "ImprovementNotifications",
+                    () => RunImprovementNotificationDetectionAsync(ctx, registeredUserRefreshResult, ct),
+                    rethrowOnFailure: _improvementNotificationOptions.Value.FailScrapeOnError);
+            }
         }
 
         // ── Await background band scrape for exception observation ──
@@ -381,6 +399,9 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     public async Task RunPublicationCleanupAsync(ScrapePassContext ctx, ScrapePhase resolvedPhases, CancellationToken ct)
     {
+        if (ShouldSkipPublicationCleanupForIncompleteScrape(ctx, resolvedPhases))
+            return;
+
         var cleanupItems = 0;
         var refreshSoloCurrentProjection = ShouldRefreshSoloCurrentProjectionDuringCleanup(ctx, resolvedPhases);
         var precomputeApiResponses = ShouldPrecomputeDuringPublicationCleanup(resolvedPhases);
@@ -417,6 +438,9 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     public async Task RunDeferredRegistrationSyncAsync(ScrapePassContext ctx, FestivalService service, ScrapePhase resolvedPhases, CancellationToken ct)
     {
+        if (ShouldSkipDeferredRegistrationSyncForIncompleteScrape(ctx, resolvedPhases))
+            return;
+
         if (!resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
             return;
 
@@ -548,6 +572,9 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     public async Task RunCleanupAsync(ScrapePassContext ctx, ScrapePhase resolvedPhases, CancellationToken ct)
     {
+        if (ShouldSkipBestEffortCleanupForIncompleteScrape(ctx, resolvedPhases))
+            return;
+
         var cleanupItems = 0;
         var cleanupSoloExcessEntries = resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment);
         var cleanupRankHistoryRetention = resolvedPhases.HasFlag(ScrapePhase.SoloRankings);
@@ -888,6 +915,74 @@ public sealed class PostScrapeOrchestrator
         resolvedPhases.HasFlag(ScrapePhase.BandExtraction) ||
         resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment);
 
+    private static bool HasLeaderboardScrapePhase(ScrapePhase resolvedPhases) =>
+        resolvedPhases.HasFlag(ScrapePhase.SoloScrape) ||
+        resolvedPhases.HasFlag(ScrapePhase.BandScrape) ||
+        resolvedPhases.HasFlag(ScrapePhase.BandScrapePhase);
+
+    private bool ShouldSkipIncompleteScrapeWork(
+        ScrapePassContext ctx,
+        ScrapePhase resolvedPhases,
+        bool workRequested,
+        string workDescription)
+    {
+        if (!workRequested || ctx.LeaderboardScrapeCompleted || !HasLeaderboardScrapePhase(resolvedPhases))
+            return false;
+
+        _log.LogWarning(
+            "Skipping {WorkDescription} because the leaderboard scrape did not complete. Work will retry after a successful scrape.",
+            workDescription);
+        return true;
+    }
+
+    private bool ShouldSkipDerivedSoloPhasesForIncompleteScrape(ScrapePassContext ctx, ScrapePhase resolvedPhases) =>
+        ShouldSkipIncompleteScrapeWork(
+            ctx,
+            resolvedPhases,
+            resolvedPhases.HasFlag(ScrapePhase.SoloRankings) ||
+            resolvedPhases.HasFlag(ScrapePhase.SoloRivals) ||
+            resolvedPhases.HasFlag(ScrapePhase.SoloPlayerStats) ||
+            resolvedPhases.HasFlag(ScrapePhase.SoloFinalize),
+            "derived ranking/finalization phases");
+
+    private bool ShouldSkipPublicationCleanupForIncompleteScrape(ScrapePassContext ctx, ScrapePhase resolvedPhases) =>
+        ShouldSkipIncompleteScrapeWork(
+            ctx,
+            resolvedPhases,
+            resolvedPhases.HasFlag(ScrapePhase.SoloFinalize) ||
+            resolvedPhases.HasFlag(ScrapePhase.SoloPrecompute),
+            "publication cleanup");
+
+    private bool ShouldSkipDeferredRegistrationSyncForIncompleteScrape(ScrapePassContext ctx, ScrapePhase resolvedPhases) =>
+        ShouldSkipIncompleteScrapeWork(
+            ctx,
+            resolvedPhases,
+            resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers),
+            "deferred registration sync");
+
+    private bool ShouldSkipBestEffortCleanupForIncompleteScrape(ScrapePassContext ctx, ScrapePhase resolvedPhases) =>
+        ShouldSkipIncompleteScrapeWork(
+            ctx,
+            resolvedPhases,
+            resolvedPhases.HasFlag(ScrapePhase.SoloEnrichment) ||
+            resolvedPhases.HasFlag(ScrapePhase.SoloRankings) ||
+            resolvedPhases.HasFlag(ScrapePhase.SoloFinalize),
+            "post-scrape cleanup");
+
+    private bool ShouldSkipFullBandMaintenanceForIncompleteScrape(ScrapePassContext ctx, ScrapePhase resolvedPhases)
+    {
+        if (ctx.LeaderboardScrapeCompleted)
+            return false;
+
+        if (!HasLeaderboardScrapePhase(resolvedPhases))
+            return false;
+
+        _log.LogWarning(
+            "Skipping full band maintenance because the leaderboard scrape did not complete. " +
+            "Targeted registered-band impacts may still be refreshed; full pruning/projection maintenance will retry after a successful scrape.");
+        return true;
+    }
+
     private bool ShouldRunRegisteredBandProcessing(ScrapePhase resolvedPhases) =>
         _registeredBandProcessingOrchestrator is not null &&
         _options.Value.EnableRegisteredBandTargetedProcessing &&
@@ -958,9 +1053,15 @@ public sealed class PostScrapeOrchestrator
         return coverage >= minimumCoverage;
     }
 
-    private async Task RunBandMaintenanceAsync(ScrapePassContext ctx, BandExtractionResult extractionResult, CancellationToken ct)
+    private async Task RunBandMaintenanceAsync(
+        ScrapePassContext ctx,
+        BandExtractionResult extractionResult,
+        bool runFullMaintenance,
+        CancellationToken ct)
     {
-        var pruneResult = PruneBandEntries(ctx);
+        var pruneResult = runFullMaintenance
+            ? PruneBandEntries(ctx)
+            : BandPruneResult.Empty;
         var impactedTeams = MergeImpactedTeams(
             extractionResult.ImpactedTeamsByBandType,
             pruneResult.AffectedTeamsByBandType);
@@ -1180,6 +1281,12 @@ public sealed class PostScrapeOrchestrator
             _log.LogWarning(ex, "PostScrape phase [{Phase}] failed. Will retry next pass.", phaseName);
             if (rethrowOnFailure)
                 throw;
+            sw.Stop();
+            var heapAfterFailure = GC.GetTotalMemory(false);
+            _log.LogInformation(
+                "PostScrape phase [{Phase}] stopped after failure in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
+                phaseName, sw.Elapsed, heapBefore, heapAfterFailure, heapAfterFailure - heapBefore);
+            return;
         }
         sw.Stop();
         var heapAfter = GC.GetTotalMemory(false);
@@ -1206,6 +1313,12 @@ public sealed class PostScrapeOrchestrator
             _log.LogWarning(ex, "PostScrape phase [{Phase}] failed. Will retry next pass.", phaseName);
             if (rethrowOnFailure)
                 throw;
+            sw.Stop();
+            var heapAfterFailure = GC.GetTotalMemory(false);
+            _log.LogInformation(
+                "PostScrape phase [{Phase}] stopped after failure in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
+                phaseName, sw.Elapsed, heapBefore, heapAfterFailure, heapAfterFailure - heapBefore);
+            return result;
         }
         sw.Stop();
         var heapAfter = GC.GetTotalMemory(false);
@@ -1213,6 +1326,33 @@ public sealed class PostScrapeOrchestrator
             "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
             phaseName, sw.Elapsed, heapBefore, heapAfter, heapAfter - heapBefore);
         return result;
+    }
+
+    private async Task<T> RunWithPostScrapeNetworkTimeoutAsync<T>(
+        string operationName,
+        Func<CancellationToken, Task<T>> operation,
+        T defaultValue,
+        CancellationToken ct)
+    {
+        var timeout = _options.Value.PostScrapeRefreshTimeout;
+        using var timeoutCts = timeout > TimeSpan.Zero
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+            : null;
+        if (timeoutCts is not null)
+            timeoutCts.CancelAfter(timeout);
+
+        try
+        {
+            return await operation(timeoutCts?.Token ?? ct);
+        }
+        catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true && !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "Post-scrape {OperationName} timed out after {Timeout}. Continuing with downstream ranking and notification phases; work will retry next pass.",
+                operationName,
+                timeout);
+            return defaultValue;
+        }
     }
 
     /// <summary>
@@ -1341,10 +1481,18 @@ public sealed class PostScrapeOrchestrator
     internal async Task<SongProcessingMachine.MachineResult> RefreshRegisteredUsersAsync(ScrapePassContext ctx, CancellationToken ct)
     {
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+        var refreshTimeout = _options.Value.PostScrapeRefreshTimeout;
+        using var refreshTimeoutCts = refreshTimeout > TimeSpan.Zero
+            ? CancellationTokenSource.CreateLinkedTokenSource(ct)
+            : null;
+        if (refreshTimeoutCts is not null)
+            refreshTimeoutCts.CancelAfter(refreshTimeout);
+
+        var refreshCt = refreshTimeoutCts?.Token ?? ct;
 
         try
         {
-            var refreshToken = await _tokenManager.GetAccessTokenAsync(ct);
+            var refreshToken = await _tokenManager.GetAccessTokenAsync(refreshCt);
             if (refreshToken is null)
             {
                 _log.LogWarning("No access token for post-scrape refresh. Will retry next pass.");
@@ -1361,7 +1509,7 @@ public sealed class PostScrapeOrchestrator
             try
             {
                 seasonWindows = await _historyReconstructor.DiscoverSeasonWindowsAsync(
-                    refreshToken, callerAccountId, ct);
+                    refreshToken, callerAccountId, refreshCt);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1476,7 +1624,7 @@ public sealed class PostScrapeOrchestrator
                 users, chartedSongIds, seasonWindows,
                 SongMachineSource.PostScrape,
                 isHighPriority: true,
-                ct: ct,
+                ct: refreshCt,
                 preserveProgressPhaseOnIdle: true);
 
             if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
@@ -1522,6 +1670,13 @@ public sealed class PostScrapeOrchestrator
             }
 
             return result;
+        }
+        catch (OperationCanceledException) when (refreshTimeoutCts?.IsCancellationRequested == true && !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "Post-scrape registered-user refresh timed out after {Timeout}. Continuing with downstream ranking and notification phases; refresh will retry next pass.",
+                refreshTimeout);
+            return new SongProcessingMachine.MachineResult();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1595,28 +1750,63 @@ public sealed class PostScrapeOrchestrator
         }
 
         ct.ThrowIfCancellationRequested();
-        var report = await Task.Run(() => service.Precompute(new ImprovementNotificationPrecomputeOptions(
-            Scope: options.Scope,
-            Execute: true,
-            BaselineOnly: false,
-            IncludePlayers: options.IncludePlayers,
-            IncludeBands: options.IncludeBands,
-            IncludeSongEvents: options.IncludeSongEvents,
-            IncludeRankings: options.IncludeRankings,
-            PruneExpired: options.PruneExpired,
-            CommandTimeoutSeconds: options.CommandTimeoutSeconds,
-            Source: "post-scrape")), ct);
+        ImprovementNotificationPrecomputeReport? playerReport = null;
+        ImprovementNotificationPrecomputeReport? bandReport = null;
+
+        if (options.IncludePlayers)
+        {
+            playerReport = await Task.Run(() => service.Precompute(new ImprovementNotificationPrecomputeOptions(
+                Scope: options.Scope,
+                Execute: true,
+                BaselineOnly: false,
+                IncludePlayers: true,
+                IncludeBands: false,
+                IncludeSongEvents: options.IncludeSongEvents,
+                IncludeRankings: options.IncludeRankings,
+                PruneExpired: options.PruneExpired,
+                CommandTimeoutSeconds: options.CommandTimeoutSeconds,
+                Source: "post-scrape-player")), ct);
+
+            _log.LogInformation(
+                "Player improvement notification detection complete: run={RunId}, scope={Scope}, events song={PlayerSongEvents:N0}/rank={PlayerRankEvents:N0}, expired pruned={ExpiredPlayer:N0}.",
+                playerReport.RunId,
+                playerReport.Scope,
+                playerReport.PlayerSongEventsInserted,
+                playerReport.PlayerRankEventsInserted,
+                playerReport.ExpiredPlayerEventsDeleted);
+        }
+
+        if (options.IncludeBands)
+        {
+            bandReport = await Task.Run(() => service.Precompute(new ImprovementNotificationPrecomputeOptions(
+                Scope: options.Scope,
+                Execute: true,
+                BaselineOnly: false,
+                IncludePlayers: false,
+                IncludeBands: true,
+                IncludeSongEvents: options.IncludeSongEvents,
+                IncludeRankings: options.IncludeRankings,
+                PruneExpired: options.PruneExpired,
+                CommandTimeoutSeconds: options.CommandTimeoutSeconds,
+                Source: "post-scrape-band")), ct);
+
+            _log.LogInformation(
+                "Band improvement notification detection complete: run={RunId}, scope={Scope}, events song={BandSongEvents:N0}/rank={BandRankEvents:N0}, expired pruned={ExpiredBand:N0}.",
+                bandReport.RunId,
+                bandReport.Scope,
+                bandReport.BandSongEventsInserted,
+                bandReport.BandRankEventsInserted,
+                bandReport.ExpiredBandEventsDeleted);
+        }
 
         _log.LogInformation(
-            "Improvement notification detection complete: run={RunId}, scope={Scope}, player events song={PlayerSongEvents:N0}/rank={PlayerRankEvents:N0}, band events song={BandSongEvents:N0}/rank={BandRankEvents:N0}, expired pruned player={ExpiredPlayer:N0}/band={ExpiredBand:N0}.",
-            report.RunId,
-            report.Scope,
-            report.PlayerSongEventsInserted,
-            report.PlayerRankEventsInserted,
-            report.BandSongEventsInserted,
-            report.BandRankEventsInserted,
-            report.ExpiredPlayerEventsDeleted,
-            report.ExpiredBandEventsDeleted);
+            "Improvement notification detection complete: player run={PlayerRunId}, band run={BandRunId}, player events song={PlayerSongEvents:N0}/rank={PlayerRankEvents:N0}, band events song={BandSongEvents:N0}/rank={BandRankEvents:N0}.",
+            playerReport?.RunId,
+            bandReport?.RunId,
+            playerReport?.PlayerSongEventsInserted ?? 0,
+            playerReport?.PlayerRankEventsInserted ?? 0,
+            bandReport?.BandSongEventsInserted ?? 0,
+            bandReport?.BandRankEventsInserted ?? 0);
     }
 
     private async Task<IReadOnlyCollection<SoloCurrentProjectionScopeKey>> BuildSoloProjectionScopesForNotificationsAsync(

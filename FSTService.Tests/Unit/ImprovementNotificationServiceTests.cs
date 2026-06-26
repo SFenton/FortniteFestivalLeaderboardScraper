@@ -137,6 +137,44 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetPlayerNotifications_ReportsLatestPlayerSourceRun_WhenBandRunCompletesLater()
+    {
+        InsertCurrentEntry(score: 100000, rank: 100);
+        BaselineCurrentState();
+
+        UpdateCurrentEntry(score: 101000, rank: 90);
+        var playerDetection = DetectPlayerSongEvents();
+
+        InsertCurrentBandEntry(score: 200000, rank: 100);
+        BaselineCurrentBandState();
+
+        var envelope = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+
+        Assert.NotNull(playerDetection.RunId);
+        Assert.Equal(playerDetection.RunId, envelope.SourceRunId);
+        Assert.Single(envelope.Items);
+    }
+
+    [Fact]
+    public void GetBandNotifications_ReportsLatestBandSourceRun_WhenPlayerRunCompletesLater()
+    {
+        InsertCurrentBandEntry(score: 200000, rank: 100);
+        BaselineCurrentBandState();
+
+        UpdateCurrentBandEntry(score: 201000, rank: 90);
+        var bandDetection = DetectBandSongEvents();
+
+        InsertCurrentEntry(score: 100000, rank: 100);
+        BaselineCurrentState();
+
+        var envelope = _sut.GetBandNotificationsByTeamKey(BandType, TeamKey, includeExpired: true);
+
+        Assert.NotNull(bandDetection.RunId);
+        Assert.Equal(bandDetection.RunId, envelope.SourceRunId);
+        Assert.Single(envelope.Items);
+    }
+
+    [Fact]
     public void ServiceNotifications_AreVisibleInPlayerAndBandFeeds()
     {
         var detectedAt = DateTime.UtcNow.AddMinutes(-5);

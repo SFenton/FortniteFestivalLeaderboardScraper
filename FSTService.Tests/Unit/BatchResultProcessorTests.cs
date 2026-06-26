@@ -159,4 +159,28 @@ public class BatchResultProcessorTests : IDisposable
 
         Assert.Equal(1, result);
     }
+
+    [Fact]
+    public void StagedAlltimeResultsAndBackfillProgress_DoNotPersistUntilFlush()
+    {
+        _processor.SetStagingAccounts(["acct1"]);
+
+        var result = _processor.ProcessAlltimeResults(
+            "song1",
+            "Solo_Guitar",
+            [new LeaderboardEntry { AccountId = "acct1", Score = 50000, Rank = 5 }],
+            new HashSet<string>());
+        _processor.MarkBackfillChecked("acct1", "song1", "Solo_Guitar", entryFound: true);
+
+        Assert.Equal(1, result);
+        Assert.Null(_persistence.GetOrCreateInstrumentDb("Solo_Guitar").GetEntry("song1", "acct1"));
+        Assert.DoesNotContain(("song1", "Solo_Guitar"), _metaDb.Db.GetCheckedBackfillPairs("acct1"));
+
+        _processor.FlushStagedData("acct1");
+
+        var entry = _persistence.GetOrCreateInstrumentDb("Solo_Guitar").GetEntry("song1", "acct1");
+        Assert.NotNull(entry);
+        Assert.Equal(50000, entry!.Score);
+        Assert.Contains(("song1", "Solo_Guitar"), _metaDb.Db.GetCheckedBackfillPairs("acct1"));
+    }
 }

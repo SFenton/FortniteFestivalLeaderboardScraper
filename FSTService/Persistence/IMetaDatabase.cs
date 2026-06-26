@@ -106,6 +106,7 @@ public interface IMetaDatabase : IDisposable
     void FailBackfill(string accountId, string errorMessage);
     void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound);
     void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound);
+    void MarkBackfillSongsChecked(string accountId, IReadOnlyCollection<(string SongId, string Instrument, bool EntryFound)> checks);
     HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId);
     BackfillSongProgressInfo? GetBackfillSongProgress(string accountId, int checkedPairs, int totalPairs);
 

@@ -48,6 +48,10 @@ internal sealed class SongMachineApiLookupRunner
                 : await FallbackAcquireAndRunAsync(acquireSlot, work, releaseSlot);
             return new SongMachineLookupResult<T>(true, value);
         }
+        catch (CdnBlockedException) when (trafficKind == EpicTrafficKind.ForegroundRegistration)
+        {
+            throw;
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             onFailure(ex);

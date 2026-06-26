@@ -16,4 +16,5 @@ public sealed class ScrapePassContext
     public required IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest> ScrapeRequests { get; init; }
     public required int DegreeOfParallelism { get; init; }
     public bool EpicReportedOver100Pages { get; init; }
+    public bool LeaderboardScrapeCompleted { get; init; } = true;
 }

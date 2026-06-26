@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.ExceptionServices;
 using FortniteFestival.Core.Services;
 using FSTService.Auth;
 using FSTService.Persistence;
@@ -462,6 +463,9 @@ public class CyclicalSongMachine
         SemaphoreSlim? songGate = maxConcurrentSongs > 0
             ? new SemaphoreSlim(maxConcurrentSongs, maxConcurrentSongs)
             : null;
+        using var passCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var passCt = passCts.Token;
+        ExceptionDispatchInfo? fatalCdnBlock = null;
 
         try
         {
@@ -483,10 +487,10 @@ public class CyclicalSongMachine
 
             var songTasks = songsToProcess.Select(async songEntry =>
             {
-                ct.ThrowIfCancellationRequested();
+                passCt.ThrowIfCancellationRequested();
 
                 if (songGate is not null)
-                    await songGate.WaitAsync(ct);
+                    await songGate.WaitAsync(passCt);
 
                 try
                 {
@@ -503,7 +507,7 @@ public class CyclicalSongMachine
                     var result = await _inner.ProcessSongForUsersAsync(
                         songEntry.SongId, instruments, users, seasonPrefixMap,
                         accessToken, callerAccountId, _pool, highPriority,
-                        opts.LookupBatchSize, work.EpicTrafficKind, ct);
+                        opts.LookupBatchSize, work.EpicTrafficKind, passCt);
 
                     // Check CDN throttle state and surface to each user's sync progress.
                     // Throttle when limiter DOP drops below 25% of max.
@@ -562,6 +566,18 @@ public class CyclicalSongMachine
                     if (OwnsProgress)
                         _progress.ReportPhaseItemComplete();
                 }
+                catch (CdnBlockedException ex)
+                {
+                    if (Interlocked.CompareExchange(
+                            ref fatalCdnBlock,
+                            ExceptionDispatchInfo.Capture(ex),
+                            null) is null)
+                    {
+                        passCts.Cancel();
+                    }
+
+                    throw;
+                }
                 finally
                 {
                     songGate?.Release();
@@ -572,7 +588,14 @@ public class CyclicalSongMachine
 
             }).ToList();
 
-            await Task.WhenAll(songTasks);
+            try
+            {
+                await Task.WhenAll(songTasks);
+            }
+            catch (Exception) when (fatalCdnBlock is not null)
+            {
+                fatalCdnBlock.Throw();
+            }
         }
         finally
         {

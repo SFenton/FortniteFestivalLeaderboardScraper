@@ -237,15 +237,16 @@ public static partial class ApiEndpoints
             metaDb.RegisterUser(webDeviceId, accountId);
             metaDb.RegisterKnownBandsForAccountActivity(accountId);
 
-            // Enqueue for backfill if not already completed
+            // Enqueue for backfill if missing, retryable, or completed against an older/smaller catalog.
             var existingStatus = metaDb.GetBackfillStatus(accountId);
+            var estimatedPairs = Math.Max(festivalService.Songs.Count, 200)
+                * GlobalLeaderboardScraper.AllInstruments.Count;
             bool backfillKicked = false;
             bool syncDeferred = false;
-            if (existingStatus is null || existingStatus.Status is "error" or "deferred")
+            if (existingStatus is null
+                || existingStatus.Status is "error" or "deferred"
+                || (existingStatus.Status == "complete" && existingStatus.TotalSongsToCheck < estimatedPairs))
             {
-                var estimatedPairs = Math.Max(festivalService.Songs.Count, 200)
-                    * GlobalLeaderboardScraper.AllInstruments.Count;
-
                 syncDeferred = true;
                 metaDb.DeferBackfill(accountId, estimatedPairs, "worker_backfill_queue");
                 log.LogInformation("Queued worker-owned low-priority backfill for tracked account {AccountId}.", accountId);

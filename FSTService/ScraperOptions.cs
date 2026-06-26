@@ -92,6 +92,32 @@ public sealed class ScraperOptions
     public int ProxyHttpFailureThreshold { get; set; } = 5;
 
     /// <summary>
+    /// When true, repeated proxy transport failures trigger a Docker restart for
+    /// the aligned <see cref="ContainerNames"/> entry. CDN blocks still only
+    /// cool down/fail over because they do not prove the VPN tunnel is broken.
+    /// </summary>
+    public bool ProxyContainerSelfHealEnabled { get; set; } = false;
+
+    /// <summary>
+    /// Number of cooldown-level transport failures before restarting the proxy
+    /// container. Each cooldown-level failure already honors
+    /// <see cref="ProxyTimeoutFailureThreshold"/>.
+    /// </summary>
+    public int ProxyContainerRestartFailureThreshold { get; set; } = 1;
+
+    /// <summary>
+    /// Minimum seconds between Docker restart attempts for a single proxy
+    /// container.
+    /// </summary>
+    public int ProxyContainerRestartMinIntervalSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// Cooldown to hold a proxy out of rotation after scheduling a container
+    /// restart.
+    /// </summary>
+    public int ProxyContainerRestartCooldownSeconds { get; set; } = 90;
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;
@@ -356,6 +382,13 @@ public sealed class ScraperOptions
     public int SongMachineDop { get; set; } = 32;
 
     /// <summary>
+    /// Maximum time post-scrape registered-user refresh may block downstream
+    /// ranking, notification, and publication phases. Set to <see cref="TimeSpan.Zero"/>
+    /// to wait indefinitely.
+    /// </summary>
+    public TimeSpan PostScrapeRefreshTimeout { get; set; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// Enables low-priority direct V2 lookups for registered bands. This is a
     /// parallel band lifecycle that reuses the song-machine DOP/CDN wrapper.
     /// </summary>
@@ -423,6 +456,12 @@ public sealed class ScraperOptions
     /// registration sync is actively checking scores.
     /// </summary>
     public RegistrationBackfillMode RegistrationBackfillMode { get; set; } = RegistrationBackfillMode.BackgroundLowPriority;
+
+    /// <summary>
+    /// When true, queued registration backfill also reconstructs historical session
+    /// data before the user's staged all-time scores are flushed.
+    /// </summary>
+    public bool RegistrationBackfillIncludeHistoryRecon { get; set; } = true;
 
     /// <summary>
     /// How often the worker checks for API-queued registration backfills.

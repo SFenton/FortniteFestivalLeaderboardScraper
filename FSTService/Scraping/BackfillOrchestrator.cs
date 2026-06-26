@@ -127,7 +127,7 @@ public sealed class BackfillOrchestrator
             seasonWindows = _persistence.Meta.GetSeasonWindows();
 
         var allSeasons = seasonWindows.Select(static window => window.SeasonNumber).ToHashSet();
-        var canRunCompleteHistoryRecon = allSeasons.Count > 0;
+        var canRunCompleteHistoryRecon = opts.RegistrationBackfillIncludeHistoryRecon && allSeasons.Count > 0;
         var accountIds = selectedBackfills
             .Select(static backfill => backfill.AccountId)
             .Distinct(StringComparer.OrdinalIgnoreCase)
