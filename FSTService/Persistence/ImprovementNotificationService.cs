@@ -31,7 +31,11 @@ public sealed class ImprovementNotificationService
         using var conn = _dataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            WITH combined AS (
+            WITH publication AS (
+                SELECT
+                    COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
+                    (SELECT public_reads_frozen_at FROM scrape_publication_state WHERE id = TRUE) AS public_reads_frozen_at
+            ), combined AS (
             SELECT event_id,
                    notification_guid,
                    run_id,
@@ -53,8 +57,14 @@ public sealed class ImprovementNotificationService
                    detected_at,
                    expires_at
             FROM player_improvement_events
+            CROSS JOIN publication
             WHERE account_id = @accountId
               AND (@includeExpired OR expires_at > now())
+              AND (
+                  NOT publication.public_reads_frozen
+                  OR publication.public_reads_frozen_at IS NULL
+                  OR detected_at < publication.public_reads_frozen_at
+              )
               AND (
                   @kind IS NULL
                   OR event_kind = @kind
@@ -398,7 +408,11 @@ public sealed class ImprovementNotificationService
         using var conn = _dataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            WITH combined AS (
+            WITH publication AS (
+                SELECT
+                    COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
+                    (SELECT public_reads_frozen_at FROM scrape_publication_state WHERE id = TRUE) AS public_reads_frozen_at
+            ), combined AS (
             SELECT e.event_id,
                    e.notification_guid,
                    e.run_id,
@@ -421,10 +435,16 @@ public sealed class ImprovementNotificationService
                    e.expires_at
             FROM band_improvement_events e
             JOIN band_improvement_subjects s ON s.band_subject_id = e.band_subject_id
+            CROSS JOIN publication
             WHERE (@bandSubjectId IS NULL OR s.band_subject_id = @bandSubjectId)
               AND (@bandType IS NULL OR s.band_type = @bandType)
               AND (@teamKey IS NULL OR s.team_key = @teamKey)
               AND (@includeExpired OR e.expires_at > now())
+              AND (
+                  NOT publication.public_reads_frozen
+                  OR publication.public_reads_frozen_at IS NULL
+                  OR e.detected_at < publication.public_reads_frozen_at
+              )
               AND (
                   @kind IS NULL
                   OR e.event_kind = @kind

@@ -617,6 +617,16 @@ public sealed class ScraperWorker : BackgroundService
                 // Unfreeze all response caches and invalidate — API consumers now see the published scrape atomically.
                 _lifecycle.ScrapeCompleted();
 
+                try
+                {
+                    await _postScrapeOrchestrator.RunImprovementNotificationsAfterPublicationAsync(ctx, postScrapePhases, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Post-publication improvement notification detection failed. Published scrape remains available; notifications will retry next pass.");
+                }
+
                 // Notify connected clients only after the server can serve the published scrape.
                 await _notifications.NotifyScoresChangedAsync(publishedScrapeId);
 

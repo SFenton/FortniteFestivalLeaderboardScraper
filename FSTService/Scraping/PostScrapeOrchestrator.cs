@@ -137,9 +137,8 @@ public sealed class PostScrapeOrchestrator
             await RunPhaseAsync("Enrichment", () => RunEnrichmentAsync(ctx, service, ct));
 
         // ── Solo refresh registered users ──
-        var registeredUserRefreshResult = new SongProcessingMachine.MachineResult();
         if (resolvedPhases.HasFlag(ScrapePhase.SoloRefreshUsers))
-            registeredUserRefreshResult = await RunPhaseAsync(
+            await RunPhaseAsync(
                 "RefreshRegisteredUsers",
                 () => RefreshRegisteredUsersAsync(ctx, ct),
                 new SongProcessingMachine.MachineResult());
@@ -313,14 +312,14 @@ public sealed class PostScrapeOrchestrator
             await RunPhaseAsync("BandMaintenance", () => RunBandMaintenanceAsync(ctx, mergedExtractionResult, runFullBandMaintenance, ct));
         }
 
-        var rankingsSucceeded = false;
         var skipDerivedSoloPhases = ShouldSkipDerivedSoloPhasesForIncompleteScrape(ctx, resolvedPhases);
         if (!skipDerivedSoloPhases)
         {
             // ── Solo rankings ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
-                rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
-
+            {
+                ctx.RankingsComputedSuccessfully = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ctx.ScrapeId, ct));
+            }
             // ── Solo rivals ──
             if (resolvedPhases.HasFlag(ScrapePhase.SoloRivals))
             {
@@ -367,13 +366,6 @@ public sealed class PostScrapeOrchestrator
                 }
             }
 
-            if (rankingsSucceeded && ShouldRunImprovementNotifications(ctx, resolvedPhases))
-            {
-                await RunPhaseAsync(
-                    "ImprovementNotifications",
-                    () => RunImprovementNotificationDetectionAsync(ctx, registeredUserRefreshResult, ct),
-                    rethrowOnFailure: _improvementNotificationOptions.Value.FailScrapeOnError);
-            }
         }
 
         // ── Await background band scrape for exception observation ──
@@ -563,6 +555,30 @@ public sealed class PostScrapeOrchestrator
                 _log.LogWarning(ex, "Deferred registration post-sync actions failed for {AccountId}.", user.AccountId);
             }
         }
+    }
+
+    /// <summary>
+    /// Detect improvement notifications only after the scrape has been published, so
+    /// rank notifications never advertise a newer snapshot than public leaderboard pages.
+    /// </summary>
+    public async Task RunImprovementNotificationsAfterPublicationAsync(
+        ScrapePassContext ctx,
+        ScrapePhase resolvedPhases,
+        CancellationToken ct)
+    {
+        if (!resolvedPhases.HasFlag(ScrapePhase.SoloRankings))
+            return;
+
+        if (!ctx.RankingsComputedSuccessfully)
+            return;
+
+        if (!ShouldRunImprovementNotifications(ctx, resolvedPhases))
+            return;
+
+        await RunPhaseAsync(
+            "ImprovementNotifications",
+            () => RunImprovementNotificationDetectionAsync(ctx, new SongProcessingMachine.MachineResult(), ct),
+            rethrowOnFailure: _improvementNotificationOptions.Value.FailScrapeOnError);
     }
 
     /// <summary>

@@ -421,6 +421,25 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetPlayerNotifications_HidesImprovementEventsDetectedDuringPublicReadFreeze()
+    {
+        InsertAccountRanking(fcRateRank: 4, fullComboCount: 672);
+        BaselinePlayerRankState();
+        _metaFixture.Db.SetPublicReadFreeze(true, reason: "publish");
+
+        UpdateAccountRanking(fcRateRank: 1, fullComboCount: 674);
+        var report = DetectPlayerRankEvents();
+
+        var frozenNotifications = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+        _metaFixture.Db.SetPublicReadFreeze(false);
+        var publishedNotifications = _sut.GetPlayerNotifications(AccountId, includeExpired: true);
+
+        Assert.Equal(1, report.PlayerRankEventsInserted);
+        Assert.Empty(frozenNotifications.Items);
+        Assert.Single(publishedNotifications.Items);
+    }
+
+    [Fact]
     public void Precompute_CoalescesPlayerAggregateRankImprovements_FromSameInstrumentRun()
     {
         InsertAccountRanking(weightedRank: 100, adjustedSkillRank: 200, totalScoreRank: 300, fcRateRank: 400);
@@ -635,6 +654,25 @@ public sealed class ImprovementNotificationServiceTests : IDisposable
         Assert.Equal(80, liveNotification.NewRank);
         Assert.Equal(2, allNotifications.Items.Count);
         Assert.Contains(allNotifications.Items, item => item.NewRank == 90 && item.ExpiresAt <= DateTime.UtcNow.AddSeconds(1));
+    }
+
+    [Fact]
+    public void GetBandNotifications_HidesImprovementEventsDetectedDuringPublicReadFreeze()
+    {
+        InsertCurrentBandRanking(rankingScope: "overall", comboId: "", weightedRank: 100, totalScore: 200000);
+        BaselineBandRankState();
+        _metaFixture.Db.SetPublicReadFreeze(true, reason: "publish");
+
+        UpdateCurrentBandRanking(rankingScope: "overall", comboId: "", weightedRank: 90, totalScore: 201000);
+        var report = DetectBandRankEvents();
+
+        var frozenNotifications = _sut.GetBandNotificationsByTeamKey(BandType, TeamKey, includeExpired: true);
+        _metaFixture.Db.SetPublicReadFreeze(false);
+        var publishedNotifications = _sut.GetBandNotificationsByTeamKey(BandType, TeamKey, includeExpired: true);
+
+        Assert.Equal(2, report.BandRankEventsInserted);
+        Assert.Empty(frozenNotifications.Items);
+        Assert.Equal(report.BandRankEventsInserted, publishedNotifications.Items.Count);
     }
 
     [Fact]

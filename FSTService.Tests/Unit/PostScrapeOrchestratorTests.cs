@@ -689,7 +689,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_RunsImprovementNotificationsAfterDerivedSoloPhases()
+    public async Task RunImprovementNotificationsAfterPublicationAsync_RunsAfterDerivedSoloPhases()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
@@ -721,18 +721,26 @@ public class PostScrapeOrchestratorTests : IDisposable
         var playerStatsIndex = logs.FindIndex(e => e.Message.Contains("[PlayerStatsTiers]", StringComparison.Ordinal));
         var checkpointIndex = logs.FindIndex(e => e.Message.Contains("[Checkpoint]", StringComparison.Ordinal));
         var activateIndex = logs.FindIndex(e => e.Message.Contains("[ActivateShadowSnapshots]", StringComparison.Ordinal));
-        var notificationsIndex = logs.FindIndex(e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
 
         Assert.True(rankingsIndex >= 0, "Expected rankings to run.");
         Assert.True(rivalsIndex > rankingsIndex, "Expected rivals to run after rankings.");
         Assert.True(playerStatsIndex > rivalsIndex, "Expected player stats to run after rivals.");
         Assert.True(checkpointIndex > playerStatsIndex, "Expected checkpoint to run after player stats.");
         Assert.True(activateIndex > checkpointIndex, "Expected final snapshot activation to run after checkpoint.");
+        Assert.DoesNotContain(logs, e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
+
+        await sut.RunImprovementNotificationsAfterPublicationAsync(
+            ctx,
+            ScrapePhase.SoloRankings | ScrapePhase.SoloRivals | ScrapePhase.SoloPlayerStats | ScrapePhase.SoloFinalize,
+            CancellationToken.None);
+
+        logs = _log.Entries.ToList();
+        var notificationsIndex = logs.FindIndex(e => e.Message.Contains("[ImprovementNotifications]", StringComparison.Ordinal));
         Assert.True(notificationsIndex > activateIndex, "Expected notifications to run after final derived solo phases.");
     }
 
     [Fact]
-    public async Task RunAsync_SkipsImprovementNotificationsWhenSoloScrapeCoverageIsLow()
+    public async Task RunImprovementNotificationsAfterPublicationAsync_SkipsWhenSoloScrapeCoverageIsLow()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
@@ -754,6 +762,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         await sut.RunAsync(
             ctx,
             service,
+            ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
+            CancellationToken.None);
+
+        await sut.RunImprovementNotificationsAfterPublicationAsync(
+            ctx,
             ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
             CancellationToken.None);
 
@@ -794,7 +807,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_RunsImprovementNotificationsWhenSoloScrapeCoverageIsHealthy()
+    public async Task RunImprovementNotificationsAfterPublicationAsync_RunsWhenSoloScrapeCoverageIsHealthy()
     {
         var sut = CreateOrchestratorWithImprovementNotifications();
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
@@ -818,6 +831,11 @@ public class PostScrapeOrchestratorTests : IDisposable
         await sut.RunAsync(
             ctx,
             service,
+            ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
+            CancellationToken.None);
+
+        await sut.RunImprovementNotificationsAfterPublicationAsync(
+            ctx,
             ScrapePhase.SoloScrape | ScrapePhase.SoloRankings,
             CancellationToken.None);
 
