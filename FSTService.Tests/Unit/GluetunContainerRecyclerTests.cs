@@ -30,7 +30,10 @@ public sealed class GluetunContainerRecyclerTests
             },
             HostConfig = new HostConfig
             {
+                Binds = ["/var/run/docker.sock:/var/run/docker.sock"],
                 CapAdd = ["NET_ADMIN"],
+                Init = false,
+                NetworkMode = "festivalservicetracker_default",
                 RestartPolicy = new RestartPolicy { Name = RestartPolicyKind.UnlessStopped },
             },
             NetworkSettings = new NetworkSettings
@@ -64,7 +67,10 @@ public sealed class GluetunContainerRecyclerTests
         Assert.Contains("SERVER_NAMES=Eridanus", create.Env);
         Assert.DoesNotContain("SERVER_CITIES=Los Angeles", create.Env);
         Assert.DoesNotContain("SERVER_NAMES=OldServer", create.Env);
+        Assert.Equal(["/var/run/docker.sock:/var/run/docker.sock"], create.HostConfig.Binds);
         Assert.Equal(["NET_ADMIN"], create.HostConfig.CapAdd);
+        Assert.True(create.HostConfig.Init);
+        Assert.Equal("festivalservicetracker_default", create.HostConfig.NetworkMode);
         Assert.Equal(RestartPolicyKind.UnlessStopped, create.HostConfig.RestartPolicy.Name);
         Assert.NotNull(create.NetworkingConfig);
         var endpoint = Assert.Single(create.NetworkingConfig.EndpointsConfig);

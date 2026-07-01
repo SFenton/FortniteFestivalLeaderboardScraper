@@ -5,9 +5,14 @@
 #   1. Create a GitHub PAT with read:packages scope.
 #   2. echo YOUR_PAT | docker login ghcr.io -u SFenton --password-stdin
 #
-# Usage:
-#   docker compose pull
-#   docker compose up -d
+# Preferred usage:
+#   ./fst-compose.sh pull
+#   ./fst-compose.sh up -d
+#
+# The wrapper honors FST_DEPLOY_COMPOSE_DIR from the environment, repo .env, or
+# deploy/.env. Set it on hosts that keep the live Compose project elsewhere
+# (for example /home/sfenton/Docker/FestivalServiceTracker) so this template
+# does not create a competing Compose project with the same container names.
 
 services:
   postgres:
@@ -239,6 +244,9 @@ services:
     image: qmcgaw/gluetun
     container_name: gluetun-1
     profiles: [vpn]
+    # Reap healthcheck/timeout children so long-running proxy containers do not
+    # accumulate zombies between VPN rotations.
+    init: true
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
     environment:
@@ -267,6 +275,9 @@ services:
     image: qmcgaw/gluetun
     container_name: gluetun-2
     profiles: [vpn]
+    # Reap healthcheck/timeout children so long-running proxy containers do not
+    # accumulate zombies between VPN rotations.
+    init: true
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
     environment:
@@ -295,6 +306,9 @@ services:
     image: qmcgaw/gluetun
     container_name: gluetun-3
     profiles: [vpn]
+    # Reap healthcheck/timeout children so long-running proxy containers do not
+    # accumulate zombies between VPN rotations.
+    init: true
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
     environment:
@@ -323,6 +337,9 @@ services:
     image: qmcgaw/gluetun
     container_name: gluetun-4
     profiles: [vpn]
+    # Reap healthcheck/timeout children so long-running proxy containers do not
+    # accumulate zombies between VPN rotations.
+    init: true
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
     environment:

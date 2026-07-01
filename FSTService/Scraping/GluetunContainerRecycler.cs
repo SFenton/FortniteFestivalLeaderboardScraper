@@ -187,12 +187,7 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
             Labels = inspect.Config.Labels is null
                 ? null
                 : new Dictionary<string, string>(inspect.Config.Labels),
-            HostConfig = new HostConfig
-            {
-                CapAdd = hostConfig.CapAdd,
-                Devices = hostConfig.Devices,
-                RestartPolicy = hostConfig.RestartPolicy,
-            },
+            HostConfig = BuildHostConfig(hostConfig),
             NetworkingConfig = networkName is not null
                 ? new NetworkingConfig
                 {
@@ -206,6 +201,28 @@ public sealed class GluetunContainerRecycler : IProxyContainerRecycler, IDisposa
 
         TryCopyHealthcheck(inspect.Config, createParams);
         return createParams;
+    }
+
+    private static HostConfig BuildHostConfig(HostConfig source)
+    {
+        return new HostConfig
+        {
+            Binds = source.Binds,
+            CapAdd = source.CapAdd,
+            Devices = source.Devices,
+            ExtraHosts = source.ExtraHosts,
+            Init = true,
+            LogConfig = source.LogConfig,
+            Memory = source.Memory,
+            NanoCPUs = source.NanoCPUs,
+            NetworkMode = source.NetworkMode,
+            Privileged = source.Privileged,
+            RestartPolicy = source.RestartPolicy,
+            SecurityOpt = source.SecurityOpt,
+            ShmSize = source.ShmSize,
+            Sysctls = source.Sysctls,
+            Ulimits = source.Ulimits,
+        };
     }
 
     private static void TryCopyHealthcheck(Config sourceConfig, CreateContainerParameters target)

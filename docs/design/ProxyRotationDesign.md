@@ -61,6 +61,8 @@ Add configurable HTTP proxy rotation to the scraper. When a CDN 403 block is det
 
 **Proxy infrastructure:** [Gluetun](https://github.com/qdm12/gluetun) Docker sidecar containers, each tunneling via WireGuard to a different AirVPN server and exposing a built-in HTTP proxy on port 8888.
 
+Run Gluetun sidecars with Docker `init: true`. Their health checks and VPN helper commands can leave short-lived `timeout`/shell children behind when Gluetun is PID 1; Docker init reaps those children so long-lived proxy pools do not accumulate zombie processes. The Docker-based recycler also recreates rotated containers with `HostConfig.Init = true` even when the existing container was created before the Compose template included `init: true`.
+
 ### Why Gluetun + AirVPN (Not Commercial SOCKS5)
 
 | Factor | Gluetun + AirVPN | Commercial SOCKS5 |
