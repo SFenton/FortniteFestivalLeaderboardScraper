@@ -58,6 +58,32 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void ReplaceComboLeaderboard_replaces_rows_via_bulk_staging()
+    {
+        const string comboId = "test-combo";
+        Db.ReplaceComboLeaderboard(comboId,
+        [
+            (AccountId: "player-1", AdjustedRating: 0.10, WeightedRating: 0.20, FcRate: 0.80, TotalScore: 1_000L, MaxScorePercent: 0.95, SongsPlayed: 2, FullComboCount: 1),
+            (AccountId: "player-2", AdjustedRating: 0.30, WeightedRating: 0.40, FcRate: 0.60, TotalScore: 900L, MaxScorePercent: 0.85, SongsPlayed: 2, FullComboCount: 0),
+        ], totalAccounts: 2);
+
+        var (initialEntries, initialTotal) = Db.GetComboLeaderboard(comboId);
+        Assert.Equal(2, initialTotal);
+        Assert.Equal(["player-1", "player-2"], initialEntries.Select(entry => entry.AccountId).ToArray());
+
+        Db.ReplaceComboLeaderboard(comboId,
+        [
+            (AccountId: "player-3", AdjustedRating: 0.05, WeightedRating: 0.10, FcRate: 1.00, TotalScore: 1_500L, MaxScorePercent: 1.00, SongsPlayed: 3, FullComboCount: 3),
+        ], totalAccounts: 1);
+
+        var (replacementEntries, replacementTotal) = Db.GetComboLeaderboard(comboId);
+        var replacement = Assert.Single(replacementEntries);
+        Assert.Equal(1, replacementTotal);
+        Assert.Equal("player-3", replacement.AccountId);
+        Assert.Equal(1, replacement.Rank);
+    }
+
+    [Fact]
     public void GetLastCompletedScrapeRun_returns_null_when_empty()
     {
         var last = Db.GetLastCompletedScrapeRun();

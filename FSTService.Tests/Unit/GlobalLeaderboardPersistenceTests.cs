@@ -152,6 +152,35 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     }
 
     [Fact]
+    public void InstrumentDatabase_bulk_upsert_skips_unchanged_conflicts()
+    {
+        using var glp = CreatePersistence();
+        var db = glp.GetOrCreateInstrumentDb("Solo_Guitar");
+        var entries = Enumerable.Range(1, InstrumentDatabase.BulkThreshold + 10)
+            .Select(index => new LeaderboardEntry
+            {
+                AccountId = $"acct_{index:D3}",
+                Score = 100_000 - index,
+                Accuracy = 95,
+                IsFullCombo = index % 2 == 0,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 90.0,
+                Rank = index,
+                ApiRank = index,
+                Source = "scrape",
+            })
+            .ToList();
+
+        var inserted = db.UpsertEntries("song_bulk", entries);
+        var unchanged = db.UpsertEntries("song_bulk", entries);
+
+        Assert.Equal(entries.Count, inserted);
+        Assert.Equal(0, unchanged);
+    }
+
+    [Fact]
     public void PersistResult_inserts_account_ids_into_meta()
     {
         using var glp = CreatePersistence();

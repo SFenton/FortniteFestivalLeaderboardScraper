@@ -40,6 +40,21 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     internal const int RankHistoryCleanupBatchSize = 5000;
     internal const int RankHistoryCleanupMaxBatches = 1;
 
+    private const string LeaderboardEntryConflictUpdateWhere =
+        " WHERE EXCLUDED.score != leaderboard_entries.score " +
+        "OR (EXCLUDED.rank > 0 AND leaderboard_entries.rank IS DISTINCT FROM EXCLUDED.rank) " +
+        "OR (EXCLUDED.api_rank > 0 AND leaderboard_entries.api_rank IS DISTINCT FROM EXCLUDED.api_rank) " +
+        "OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) " +
+        "OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) " +
+        "OR (EXCLUDED.source = 'scrape' AND leaderboard_entries.source != 'scrape') " +
+        "OR (EXCLUDED.source = 'backfill' AND leaderboard_entries.source NOT IN ('scrape', 'backfill')) " +
+        "OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_entries.band_members_json IS DISTINCT FROM EXCLUDED.band_members_json) " +
+        "OR (EXCLUDED.band_score IS NOT NULL AND leaderboard_entries.band_score IS DISTINCT FROM EXCLUDED.band_score) " +
+        "OR (EXCLUDED.base_score IS NOT NULL AND leaderboard_entries.base_score IS DISTINCT FROM EXCLUDED.base_score) " +
+        "OR (EXCLUDED.instrument_bonus IS NOT NULL AND leaderboard_entries.instrument_bonus IS DISTINCT FROM EXCLUDED.instrument_bonus) " +
+        "OR (EXCLUDED.overdrive_bonus IS NOT NULL AND leaderboard_entries.overdrive_bonus IS DISTINCT FROM EXCLUDED.overdrive_bonus) " +
+        "OR (EXCLUDED.instrument_combo IS NOT NULL AND leaderboard_entries.instrument_combo IS DISTINCT FROM EXCLUDED.instrument_combo)";
+
     /// <summary>Serialize band member stats to compact JSON for storage. Returns null for solo entries.</summary>
     private static string? SerializeBandMembers(LeaderboardEntry e)
     {
@@ -518,7 +533,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
                 "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
                 "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
-                "last_updated_at = EXCLUDED.last_updated_at";
+                "last_updated_at = EXCLUDED.last_updated_at" +
+                LeaderboardEntryConflictUpdateWhere;
             affected = c.ExecuteNonQuery();
         }
 
@@ -629,7 +645,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
                 "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
                 "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
-                "last_updated_at = EXCLUDED.last_updated_at";
+                "last_updated_at = EXCLUDED.last_updated_at" +
+                LeaderboardEntryConflictUpdateWhere;
             affected = c.ExecuteNonQuery();
         }
 
@@ -673,8 +690,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
             "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
             "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
-            "last_updated_at = EXCLUDED.last_updated_at " +
-            "WHERE EXCLUDED.score != leaderboard_entries.score OR (EXCLUDED.rank > 0 AND leaderboard_entries.rank IS DISTINCT FROM EXCLUDED.rank) OR (EXCLUDED.api_rank > 0 AND leaderboard_entries.api_rank IS DISTINCT FROM EXCLUDED.api_rank) OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_entries.band_members_json IS NULL)";
+            "last_updated_at = EXCLUDED.last_updated_at" +
+            LeaderboardEntryConflictUpdateWhere;
         var pSongId = cmd.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var pAccountId = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
@@ -759,8 +776,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             "instrument_bonus = COALESCE(EXCLUDED.instrument_bonus, leaderboard_entries.instrument_bonus), " +
             "overdrive_bonus = COALESCE(EXCLUDED.overdrive_bonus, leaderboard_entries.overdrive_bonus), " +
             "instrument_combo = COALESCE(EXCLUDED.instrument_combo, leaderboard_entries.instrument_combo), " +
-            "last_updated_at = EXCLUDED.last_updated_at " +
-            "WHERE EXCLUDED.score != leaderboard_entries.score OR (EXCLUDED.rank > 0 AND leaderboard_entries.rank IS DISTINCT FROM EXCLUDED.rank) OR (EXCLUDED.api_rank > 0 AND leaderboard_entries.api_rank IS DISTINCT FROM EXCLUDED.api_rank) OR (EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0) OR (EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0) OR (EXCLUDED.band_members_json IS NOT NULL AND leaderboard_entries.band_members_json IS NULL)";
+            "last_updated_at = EXCLUDED.last_updated_at" +
+            LeaderboardEntryConflictUpdateWhere;
         var pSongId = cmd.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         var pAccountId = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);

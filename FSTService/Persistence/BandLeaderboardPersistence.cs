@@ -299,6 +299,13 @@ public sealed class BandLeaderboardPersistence
                             is_full_combo = EXCLUDED.is_full_combo,
                             stars = EXCLUDED.stars,
                             difficulty = EXCLUDED.difficulty
+                        WHERE band_member_stats.account_id IS DISTINCT FROM EXCLUDED.account_id
+                           OR band_member_stats.instrument_id IS DISTINCT FROM EXCLUDED.instrument_id
+                           OR band_member_stats.score IS DISTINCT FROM EXCLUDED.score
+                           OR band_member_stats.accuracy IS DISTINCT FROM EXCLUDED.accuracy
+                           OR band_member_stats.is_full_combo IS DISTINCT FROM EXCLUDED.is_full_combo
+                           OR band_member_stats.stars IS DISTINCT FROM EXCLUDED.stars
+                           OR band_member_stats.difficulty IS DISTINCT FROM EXCLUDED.difficulty
                         """;
                     cmd.ExecuteNonQuery();
                 }
@@ -650,6 +657,13 @@ public sealed class BandLeaderboardPersistence
                         is_full_combo = EXCLUDED.is_full_combo,
                         stars = EXCLUDED.stars,
                         difficulty = EXCLUDED.difficulty
+                    WHERE band_member_stats.account_id IS DISTINCT FROM EXCLUDED.account_id
+                       OR band_member_stats.instrument_id IS DISTINCT FROM EXCLUDED.instrument_id
+                       OR band_member_stats.score IS DISTINCT FROM EXCLUDED.score
+                       OR band_member_stats.accuracy IS DISTINCT FROM EXCLUDED.accuracy
+                       OR band_member_stats.is_full_combo IS DISTINCT FROM EXCLUDED.is_full_combo
+                       OR band_member_stats.stars IS DISTINCT FROM EXCLUDED.stars
+                       OR band_member_stats.difficulty IS DISTINCT FROM EXCLUDED.difficulty
                     """;
                 memberStatsCount = cmd.ExecuteNonQuery();
             }

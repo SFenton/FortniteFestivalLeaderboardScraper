@@ -120,6 +120,10 @@ public sealed class ScrapeTimePrecomputer
     public async Task PrecomputeAllAsync(bool showLeaderboardEntryTotals, CancellationToken ct, bool publishImmediately = true)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        _log.LogInformation(
+            "Scrape-time precomputation starting. publishImmediately={PublishImmediately}, showLeaderboardEntryTotals={ShowLeaderboardEntryTotals}.",
+            publishImmediately,
+            showLeaderboardEntryTotals);
         _metaDb.BulkSetCachedResponsesStaging([]);
         var allMaxScores = _pathStore.GetAllMaxScores();
         var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
@@ -140,7 +144,9 @@ public sealed class ScrapeTimePrecomputer
         _log.LogInformation("Precomputed population tiers for {Count} (song, instrument) pairs and rank offsets for {OffsetCount} pairs in {Elapsed}ms.",
             tiers.Count, leewayMetadata.RankOffsets.Count, sw.ElapsedMilliseconds);
 
+        _log.LogInformation("Building scrape-time band scores cache for player precomputation.");
         var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
+        _log.LogInformation("Built scrape-time band scores cache for {Count:N0} (song, instrument) pair(s).", bandScoresCache.Count);
         _singleUserSharedInputs = new SharedPrecomputeInputs(
             allMaxScores,
             unfilteredPopulation,
@@ -187,14 +193,20 @@ public sealed class ScrapeTimePrecomputer
         }
 
         // ── Signal channel completion and wait for drain to disk ──
+        _log.LogInformation("Scrape-time precomputation phases complete; draining {Count:N0} staged records to disk.", staging.RecordCount);
         staging.Complete();
         await staging.WaitForDrainAsync();
 
         // ── Flush from staging file to PostgreSQL staging table, then atomic swap ──
         _log.LogInformation("All phases complete. {Count:N0} records staged to disk.", staging.RecordCount);
         staging.FlushToPostgres(_metaDb, useStaging: true);
+        _log.LogInformation("Scrape-time precompute cache staging flush complete. publishImmediately={PublishImmediately}.", publishImmediately);
         if (publishImmediately)
+        {
+            _log.LogInformation("Swapping scrape-time precompute cache staging responses into the live cache.");
             _metaDb.SwapCachedResponsesFromStaging();
+            _log.LogInformation("Scrape-time precompute cache staging responses published.");
+        }
         _staging = null;
 
         sw.Stop();
@@ -333,6 +345,7 @@ public sealed class ScrapeTimePrecomputer
         Dictionary<string, SongMaxScores> allMaxScores,
         IReadOnlyList<string> instrumentKeys)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = new ConcurrentDictionary<(string, string), PopulationTierData>();
         var rankOffsets = new ConcurrentBag<LeaderboardRankOffsetData>();
 
@@ -348,6 +361,12 @@ public sealed class ScrapeTimePrecomputer
             }
         }
 
+        _log.LogInformation(
+            "Computing leeway metadata for {Count:N0} (song, instrument) pair(s) with maxDegree={MaxDegree}.",
+            workItems.Count,
+            8);
+        var completed = 0;
+        var lastLogged = 0;
         Parallel.ForEach(workItems, new ParallelOptions { MaxDegreeOfParallelism = 8 }, item =>
         {
             var (songId, instrument, maxScore) = item;
@@ -392,11 +411,29 @@ public sealed class ScrapeTimePrecomputer
                 db.GetCurrentStateRankOffsetCoverage(songId),
                 baseCount,
                 bandScores));
+
+            var current = Interlocked.Increment(ref completed);
+            if (ShouldLogPrecomputeProgress(current, workItems.Count, sw.Elapsed, ref lastLogged))
+            {
+                _log.LogInformation(
+                    "Leeway metadata progress: {Completed:N0}/{Total:N0} pairs ({Percent:P1}) in {Elapsed:n1}s.",
+                    current,
+                    workItems.Count,
+                    current / (double)Math.Max(1, workItems.Count),
+                    sw.Elapsed.TotalSeconds);
+            }
         });
 
         var populationTiers = new Dictionary<(string, string), PopulationTierData>(result);
         var offsets = rankOffsets.ToList();
         var offsetsByKey = offsets.ToDictionary(offset => (offset.SongId, offset.Instrument));
+        _log.LogInformation(
+            "Leeway metadata complete: {Completed:N0}/{Total:N0} pairs, {TierCount:N0} tier entries, {OffsetCount:N0} rank offset entries in {Elapsed:n1}s.",
+            completed,
+            workItems.Count,
+            populationTiers.Count,
+            offsets.Count,
+            sw.Elapsed.TotalSeconds);
         return new LeewayMetadata(populationTiers, offsets, offsetsByKey);
     }
 
@@ -421,6 +458,7 @@ public sealed class ScrapeTimePrecomputer
         Dictionary<string, SongMaxScores> allMaxScores,
         IReadOnlyList<string> instrumentKeys)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var cache = new ConcurrentDictionary<(string, string), int[]>();
         var workItems = new List<(string SongId, string Instrument, int MaxScore)>();
         foreach (var (songId, ms) in allMaxScores)
@@ -430,6 +468,12 @@ public sealed class ScrapeTimePrecomputer
                 if (max.HasValue && max.Value > 0) workItems.Add((songId, inst, max.Value));
             }
 
+        _log.LogInformation(
+            "Building band scores cache for {Count:N0} (song, instrument) pair(s) with maxDegree={MaxDegree}.",
+            workItems.Count,
+            8);
+        var completed = 0;
+        var lastLogged = 0;
         Parallel.ForEach(workItems, new ParallelOptions { MaxDegreeOfParallelism = 8 }, item =>
         {
             var db = _persistence.GetOrCreateInstrumentDb(item.Instrument);
@@ -437,9 +481,39 @@ public sealed class ScrapeTimePrecomputer
             var hi = (int)(item.MaxScore * 1.05);
             var scores = db.GetCurrentStateScoresInBand(item.SongId, lo, hi);
             cache[(item.SongId, item.Instrument)] = scores.ToArray();
+
+            var current = Interlocked.Increment(ref completed);
+            if (ShouldLogPrecomputeProgress(current, workItems.Count, sw.Elapsed, ref lastLogged))
+            {
+                _log.LogInformation(
+                    "Band scores cache progress: {Completed:N0}/{Total:N0} pairs ({Percent:P1}) in {Elapsed:n1}s.",
+                    current,
+                    workItems.Count,
+                    current / (double)Math.Max(1, workItems.Count),
+                    sw.Elapsed.TotalSeconds);
+            }
         });
 
+        _log.LogInformation(
+            "Band scores cache complete: {Completed:N0}/{Total:N0} pairs, {CachedScoreCount:N0} score(s) cached in {Elapsed:n1}s.",
+            completed,
+            workItems.Count,
+            cache.Values.Sum(static scores => scores.Length),
+            sw.Elapsed.TotalSeconds);
         return new Dictionary<(string, string), int[]>(cache);
+    }
+
+    private static bool ShouldLogPrecomputeProgress(int completed, int total, TimeSpan elapsed, ref int lastLogged)
+    {
+        if (completed >= total)
+            return true;
+
+        var logEvery = Math.Max(100, total / 20);
+        if (completed - lastLogged < logEvery)
+            return false;
+
+        var previous = Interlocked.Exchange(ref lastLogged, completed);
+        return completed > previous;
     }
 
     // ═══════════════════════════════════════════════════════════════

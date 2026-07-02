@@ -3025,9 +3025,67 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "SET LOCAL synchronous_commit = off"; c.ExecuteNonQuery(); }
         using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM combo_leaderboard WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); c.ExecuteNonQuery(); }
         var now = DateTime.UtcNow;
-        if (entries.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO combo_leaderboard (combo_id, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at) VALUES (@id, @aid, @adj, @wgt, @fc, @ts, @ms, @songs, @fcc, @now)"; c.Parameters.Add("id", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.Add("adj", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("wgt", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("ts", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("songs", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("fcc", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz); c.Prepare(); foreach (var e in entries) { c.Parameters["id"].Value = comboId; c.Parameters["aid"].Value = e.AccountId; c.Parameters["adj"].Value = e.AdjustedRating; c.Parameters["wgt"].Value = e.WeightedRating; c.Parameters["fc"].Value = e.FcRate; c.Parameters["ts"].Value = (int)e.TotalScore; c.Parameters["ms"].Value = e.MaxScorePercent; c.Parameters["songs"].Value = e.SongsPlayed; c.Parameters["fcc"].Value = e.FullComboCount; c.Parameters["now"].Value = now; c.ExecuteNonQuery(); } }
+        if (entries.Count > 0)
+        {
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandText = """
+                    CREATE TEMP TABLE _combo_leaderboard_staging (
+                        combo_id TEXT,
+                        account_id TEXT,
+                        adjusted_rating DOUBLE PRECISION,
+                        weighted_rating DOUBLE PRECISION,
+                        fc_rate DOUBLE PRECISION,
+                        total_score INTEGER,
+                        max_score_percent DOUBLE PRECISION,
+                        songs_played INTEGER,
+                        full_combo_count INTEGER,
+                        computed_at TIMESTAMPTZ
+                    ) ON COMMIT DROP
+                    """;
+                c.ExecuteNonQuery();
+            }
+
+            using (var writer = conn.BeginBinaryImport(
+                "COPY _combo_leaderboard_staging (combo_id, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var e in entries)
+                {
+                    writer.StartRow();
+                    writer.Write(comboId, NpgsqlDbType.Text);
+                    writer.Write(e.AccountId, NpgsqlDbType.Text);
+                    writer.Write(e.AdjustedRating, NpgsqlDbType.Double);
+                    writer.Write(e.WeightedRating, NpgsqlDbType.Double);
+                    writer.Write(e.FcRate, NpgsqlDbType.Double);
+                    writer.Write((int)e.TotalScore, NpgsqlDbType.Integer);
+                    writer.Write(e.MaxScorePercent, NpgsqlDbType.Double);
+                    writer.Write(e.SongsPlayed, NpgsqlDbType.Integer);
+                    writer.Write(e.FullComboCount, NpgsqlDbType.Integer);
+                    writer.Write(now, NpgsqlDbType.TimestampTz);
+                }
+
+                writer.Complete();
+            }
+
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandText = """
+                    INSERT INTO combo_leaderboard (
+                        combo_id, account_id, adjusted_rating, weighted_rating, fc_rate,
+                        total_score, max_score_percent, songs_played, full_combo_count, computed_at)
+                    SELECT
+                        combo_id, account_id, adjusted_rating, weighted_rating, fc_rate,
+                        total_score, max_score_percent, songs_played, full_combo_count, computed_at
+                    FROM _combo_leaderboard_staging
+                    """;
+                c.ExecuteNonQuery();
+            }
+        }
         using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO combo_stats (combo_id, total_accounts, computed_at) VALUES (@id, @total, @now) ON CONFLICT(combo_id) DO UPDATE SET total_accounts = EXCLUDED.total_accounts, computed_at = EXCLUDED.computed_at"; c.Parameters.AddWithValue("id", comboId); c.Parameters.AddWithValue("total", totalAccounts); c.Parameters.AddWithValue("now", now); c.ExecuteNonQuery(); }
         tx.Commit();
     }
