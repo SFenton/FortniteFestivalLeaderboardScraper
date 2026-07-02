@@ -50,6 +50,13 @@ public sealed class FeatureOptions
     public bool WriteLegacyLiveLeaderboardDuringScrape { get; set; } = true;
 
     /// <summary>
+    /// When true, scrape flushes compute observe-only per-song/instrument content
+    /// fingerprints so future work can skip unchanged physical snapshot writes.
+    /// Existing snapshot/current-state behavior remains authoritative.
+    /// </summary>
+    public bool UseLeaderboardScopeFingerprints { get; set; } = true;
+
+    /// <summary>
     /// Compete page. Always enabled; the flag derivation is retained only for API
     /// shape compatibility and is expected to be removed alongside this property.
     /// </summary>

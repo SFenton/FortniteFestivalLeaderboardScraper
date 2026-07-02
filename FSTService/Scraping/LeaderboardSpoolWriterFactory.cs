@@ -107,6 +107,8 @@ public static class LeaderboardSpoolWriterFactory
                 writer.Complete();
             }
 
+            persistence.ObserveLeaderboardScopeFingerprints(conn, tx, scrapeId, activeInstrument);
+
             if (scrapeId > 0)
             {
                 using var snapshotCmd = conn.CreateCommand();

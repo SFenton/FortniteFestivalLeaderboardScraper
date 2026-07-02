@@ -208,6 +208,31 @@ public static class DatabaseInitializer
             PRIMARY KEY (song_id, instrument)
         );
 
+        CREATE TABLE IF NOT EXISTS leaderboard_scope_fingerprints (
+            song_id              TEXT        NOT NULL,
+            instrument           TEXT        NOT NULL,
+            scope_kind           TEXT        NOT NULL DEFAULT 'alltime',
+            fingerprint_version  INTEGER     NOT NULL,
+            content_fingerprint  TEXT        NOT NULL,
+            coverage_fingerprint TEXT        NOT NULL,
+            entry_count          INTEGER     NOT NULL,
+            reported_total_entries BIGINT,
+            reported_total_pages INTEGER,
+            min_rank             INTEGER,
+            max_rank             INTEGER,
+            source_scrape_id     BIGINT      NOT NULL,
+            published_scrape_id  BIGINT,
+            first_seen_scrape_id BIGINT      NOT NULL,
+            last_changed_scrape_id BIGINT    NOT NULL,
+            last_seen_scrape_id  BIGINT      NOT NULL,
+            changed_at           TIMESTAMPTZ NOT NULL,
+            seen_at              TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (song_id, instrument, scope_kind)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_lsf_last_changed
+            ON leaderboard_scope_fingerprints (last_changed_scrape_id, instrument);
+
         CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay (
             song_id            TEXT        NOT NULL,
             instrument         TEXT        NOT NULL,

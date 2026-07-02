@@ -41,6 +41,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public bool WriteLegacyLiveLeaderboardDuringScrape => _features.WriteLegacyLiveLeaderboardDuringScrape;
 
+    /// <summary>
+    /// True when scrape flushes should compute observe-only scope fingerprints.
+    /// Existing snapshot/current-state rows remain authoritative.
+    /// </summary>
+    public bool UseLeaderboardScopeFingerprints => _features.UseLeaderboardScopeFingerprints;
+
     public GlobalLeaderboardPersistence(IMetaDatabase metaDb,
                                         ILoggerFactory loggerFactory,
                                         ILogger<GlobalLeaderboardPersistence> log,
@@ -993,6 +999,196 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         cmd.Parameters.AddWithValue("expectedSongIds", expectedPairArray.Select(pair => pair.SongId).ToArray());
         cmd.Parameters.AddWithValue("expectedInstruments", expectedPairArray.Select(pair => pair.Instrument).ToArray());
         return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    internal void ObserveLeaderboardScopeFingerprints(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long scrapeId,
+        string instrument)
+    {
+        if (!UseLeaderboardScopeFingerprints || scrapeId <= 0)
+            return;
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = """
+            WITH scope_rows AS (
+                SELECT
+                    song_id,
+                    instrument,
+                    1 AS fingerprint_version,
+                    md5(string_agg(
+                        concat_ws(E'\x1f',
+                            account_id,
+                            score::text,
+                            COALESCE(accuracy::text, ''),
+                            COALESCE(is_full_combo::text, ''),
+                            COALESCE(stars::text, ''),
+                            COALESCE(season::text, ''),
+                            COALESCE(difficulty::text, ''),
+                            COALESCE(percentile::text, ''),
+                            COALESCE(rank::text, ''),
+                            COALESCE(api_rank::text, ''),
+                            COALESCE(end_time, ''),
+                            COALESCE(source, ''),
+                            COALESCE(band_members_json::text, ''),
+                            COALESCE(band_score::text, ''),
+                            COALESCE(base_score::text, ''),
+                            COALESCE(instrument_bonus::text, ''),
+                            COALESCE(overdrive_bonus::text, ''),
+                            COALESCE(instrument_combo, '')
+                        ),
+                        E'\x1e'
+                        ORDER BY account_id
+                    )) AS content_fingerprint,
+                    md5(concat_ws(E'\x1f',
+                        COUNT(*)::text,
+                        COALESCE(MIN(rank)::text, ''),
+                        COALESCE(MAX(rank)::text, ''),
+                        COALESCE(MIN(api_rank)::text, ''),
+                        COALESCE(MAX(api_rank)::text, '')
+                    )) AS coverage_fingerprint,
+                    COUNT(*)::int AS entry_count,
+                    MIN(NULLIF(rank, 0))::int AS min_rank,
+                    MAX(NULLIF(rank, 0))::int AS max_rank
+                FROM _le_staging
+                WHERE instrument = @instrument
+                GROUP BY song_id, instrument
+            ),
+            classified AS (
+                SELECT
+                    scope_rows.*,
+                    existing.first_seen_scrape_id AS existing_first_seen_scrape_id,
+                    existing.last_changed_scrape_id AS existing_last_changed_scrape_id,
+                    existing.changed_at AS existing_changed_at,
+                    CASE
+                        WHEN existing.song_id IS NULL THEN 'new'
+                        WHEN existing.fingerprint_version = scope_rows.fingerprint_version
+                         AND existing.content_fingerprint = scope_rows.content_fingerprint
+                         AND existing.coverage_fingerprint = scope_rows.coverage_fingerprint THEN 'unchanged'
+                        ELSE 'changed'
+                    END AS change_kind
+                FROM scope_rows
+                LEFT JOIN leaderboard_scope_fingerprints existing
+                  ON existing.song_id = scope_rows.song_id
+                 AND existing.instrument = scope_rows.instrument
+                 AND existing.scope_kind = 'alltime'
+            ),
+            upserted AS (
+                INSERT INTO leaderboard_scope_fingerprints (
+                    song_id,
+                    instrument,
+                    scope_kind,
+                    fingerprint_version,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    entry_count,
+                    reported_total_entries,
+                    reported_total_pages,
+                    min_rank,
+                    max_rank,
+                    source_scrape_id,
+                    published_scrape_id,
+                    first_seen_scrape_id,
+                    last_changed_scrape_id,
+                    last_seen_scrape_id,
+                    changed_at,
+                    seen_at)
+                SELECT
+                    song_id,
+                    instrument,
+                    'alltime',
+                    fingerprint_version,
+                    content_fingerprint,
+                    coverage_fingerprint,
+                    entry_count,
+                    NULL,
+                    NULL,
+                    min_rank,
+                    max_rank,
+                    @scrapeId,
+                    NULL,
+                    COALESCE(existing_first_seen_scrape_id, @scrapeId),
+                    CASE WHEN change_kind = 'unchanged'
+                        THEN COALESCE(existing_last_changed_scrape_id, @scrapeId)
+                        ELSE @scrapeId
+                    END,
+                    @scrapeId,
+                    CASE WHEN change_kind = 'unchanged'
+                        THEN COALESCE(existing_changed_at, @now)
+                        ELSE @now
+                    END,
+                    @now
+                FROM classified
+                ON CONFLICT (song_id, instrument, scope_kind) DO UPDATE SET
+                    fingerprint_version = EXCLUDED.fingerprint_version,
+                    content_fingerprint = EXCLUDED.content_fingerprint,
+                    coverage_fingerprint = EXCLUDED.coverage_fingerprint,
+                    entry_count = EXCLUDED.entry_count,
+                    reported_total_entries = EXCLUDED.reported_total_entries,
+                    reported_total_pages = EXCLUDED.reported_total_pages,
+                    min_rank = EXCLUDED.min_rank,
+                    max_rank = EXCLUDED.max_rank,
+                    source_scrape_id = EXCLUDED.source_scrape_id,
+                    last_changed_scrape_id = EXCLUDED.last_changed_scrape_id,
+                    last_seen_scrape_id = EXCLUDED.last_seen_scrape_id,
+                    changed_at = EXCLUDED.changed_at,
+                    seen_at = EXCLUDED.seen_at
+                RETURNING 1
+            ),
+            applied AS (
+                SELECT COUNT(*) FROM upserted
+            )
+            SELECT change_kind, COUNT(*)::int, COALESCE(SUM(entry_count), 0)::bigint
+            FROM classified, applied
+            GROUP BY change_kind
+            """;
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+
+        var newScopes = 0;
+        var changedScopes = 0;
+        var unchangedScopes = 0;
+        long newRows = 0;
+        long changedRows = 0;
+        long unchangedRows = 0;
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var kind = reader.GetString(0);
+            var scopeCount = reader.GetInt32(1);
+            var rowCount = reader.GetInt64(2);
+            switch (kind)
+            {
+                case "new":
+                    newScopes = scopeCount;
+                    newRows = rowCount;
+                    break;
+                case "changed":
+                    changedScopes = scopeCount;
+                    changedRows = rowCount;
+                    break;
+                case "unchanged":
+                    unchangedScopes = scopeCount;
+                    unchangedRows = rowCount;
+                    break;
+            }
+        }
+
+        _log.LogInformation(
+            "Leaderboard scope fingerprints observed for {Instrument} scrape {ScrapeId}: new={NewScopes:N0} ({NewRows:N0} rows), changed={ChangedScopes:N0} ({ChangedRows:N0} rows), unchanged={UnchangedScopes:N0} ({UnchangedRows:N0} rows).",
+            instrument,
+            scrapeId,
+            newScopes,
+            newRows,
+            changedScopes,
+            changedRows,
+            unchangedScopes,
+            unchangedRows);
     }
 
     // ─── Scrape-time index management ──────────────────────────────

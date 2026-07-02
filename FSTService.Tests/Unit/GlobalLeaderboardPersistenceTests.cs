@@ -83,6 +83,28 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
+    private (long FirstSeenScrapeId, long LastChangedScrapeId, long LastSeenScrapeId, int EntryCount)? GetScopeFingerprint(
+        string songId,
+        string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT first_seen_scrape_id, last_changed_scrape_id, last_seen_scrape_id, entry_count
+            FROM leaderboard_scope_fingerprints
+            WHERE song_id = @songId
+              AND instrument = @instrument
+              AND scope_kind = 'alltime'
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return (reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt32(3));
+    }
+
     [Fact]
     public async Task CleanupActiveScrapeWritersAsync_DisposesActiveDiskSpool()
     {
@@ -217,6 +239,82 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         await glp.FlushSpoolAsync();
 
         Assert.Equal(1, GetSnapshotRowCount(42, "song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task FlushSpoolAsync_records_observe_only_scope_fingerprints()
+    {
+        using var glp = CreatePersistence();
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        glp.StartSpoolWriter(43, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        var unchanged = GetScopeFingerprint("song_1", "Solo_Guitar");
+        Assert.NotNull(unchanged);
+        Assert.Equal(42, unchanged.Value.FirstSeenScrapeId);
+        Assert.Equal(42, unchanged.Value.LastChangedScrapeId);
+        Assert.Equal(43, unchanged.Value.LastSeenScrapeId);
+        Assert.Equal(1, unchanged.Value.EntryCount);
+
+        glp.StartSpoolWriter(44, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 101_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        var changed = GetScopeFingerprint("song_1", "Solo_Guitar");
+        Assert.NotNull(changed);
+        Assert.Equal(42, changed.Value.FirstSeenScrapeId);
+        Assert.Equal(44, changed.Value.LastChangedScrapeId);
+        Assert.Equal(44, changed.Value.LastSeenScrapeId);
     }
 
     [Fact]
