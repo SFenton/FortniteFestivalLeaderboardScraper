@@ -58,6 +58,7 @@ public sealed class ValidScoreFallback
     public int? Accuracy { get; init; }
     public bool? IsFullCombo { get; init; }
     public int? Stars { get; init; }
+    public int? Rank { get; init; }
 }
 
 /// <summary>

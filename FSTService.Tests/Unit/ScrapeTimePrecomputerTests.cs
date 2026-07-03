@@ -490,6 +490,27 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
     }
 
     [Fact]
+    public void ComputeRankTiers_UsesPrecomputedScoresAndStoredRankWithoutDatabase()
+    {
+        var tiers = ScrapeTimePrecomputer.ComputeRankTiers(
+            fallbackScore: 94_000,
+            maxScore: 100_000,
+            bandScores: [99_000, 101_000, 103_000],
+            storedRank: 5,
+            populationTierData: new PopulationTierData { BaseCount = 10, Tiers = [] });
+
+        Assert.NotNull(tiers);
+        Assert.Equal(-5.0, tiers![0].Leeway);
+        Assert.Equal(5, tiers[0].Rank);
+        Assert.Equal(-1.0, tiers[1].Leeway);
+        Assert.Equal(6, tiers[1].Rank);
+        Assert.Equal(1.0, tiers[2].Leeway);
+        Assert.Equal(7, tiers[2].Rank);
+        Assert.Equal(3.0, tiers[3].Leeway);
+        Assert.Equal(8, tiers[3].Rank);
+    }
+
+    [Fact]
     public async Task PrecomputeAll_FlushesToPostgreSQLAndClearsRAM()
     {
         RegisterUser("user1");

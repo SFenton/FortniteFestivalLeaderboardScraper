@@ -585,6 +585,10 @@ public sealed class ScrapeTimePrecomputer
         var lastPlayedDates = _metaDb.GetLastPlayedDates(accountId);
 
         var enriched = new List<PrecomputedPlayerScore>(scores.Count);
+        var fallbackVariantCount = 0;
+        var fallbackRankTierCount = 0;
+        var fallbackStoredRankCount = 0;
+        var fallbackMissingRankCount = 0;
         foreach (var s in scores)
         {
             var key = (s.SongId, s.Instrument);
@@ -616,7 +620,12 @@ public sealed class ScrapeTimePrecomputer
                         if (fb.Score == s.Score) continue;
 
                         var fbLeeway = Math.Round(((double)fb.Score / maxVal.Value - 1.0) * 100.0, 1);
-                        var rankTiers = ComputeRankTiers(fb.Score, maxVal.Value, bandScores, key, s.Instrument);
+                        populationTiers.TryGetValue(key, out var populationTierData);
+                        var rankTiers = ComputeRankTiers(fb.Score, maxVal.Value, bandScores, fb.Rank, populationTierData);
+                        fallbackVariantCount++;
+                        fallbackRankTierCount += rankTiers?.Count ?? 0;
+                        if (fb.Rank.HasValue) fallbackStoredRankCount++;
+                        else fallbackMissingRankCount++;
 
                         validScores.Add(new PrecomputedValidScore
                         {
@@ -654,6 +663,18 @@ public sealed class ScrapeTimePrecomputer
             });
         }
 
+        if (fallbackVariantCount > 0)
+        {
+            _log.LogInformation(
+                "[Precompute.PlayerProfileFallbacks] account={AccountId} current_scores={CurrentScores} fallback_variants={FallbackVariants} rank_tiers={RankTiers} stored_rank_variants={StoredRankVariants} missing_rank_variants={MissingRankVariants}",
+                accountId,
+                scores.Count,
+                fallbackVariantCount,
+                fallbackRankTierCount,
+                fallbackStoredRankCount,
+                fallbackMissingRankCount);
+        }
+
         var payload = new
         {
             accountId,
@@ -669,38 +690,41 @@ public sealed class ScrapeTimePrecomputer
 
     /// <summary>
     /// Compute rank tiers (changepoints) for a specific fallback score.
-    /// Uses the pre-fetched band scores to avoid DB queries.
+    /// Uses pre-fetched band scores and stored historical ranks to avoid
+    /// per-fallback current-state DB queries during scrape-time precompute.
     /// </summary>
-    private List<RankTier>? ComputeRankTiers(int fallbackScore, int maxScore,
-        int[]? bandScores, (string SongId, string Instrument) key, string instrument)
+    internal static List<RankTier>? ComputeRankTiers(
+        int fallbackScore,
+        int maxScore,
+        int[]? bandScores,
+        int? storedRank,
+        PopulationTierData? populationTierData = null)
     {
-        if (bandScores is null || bandScores.Length == 0)
+        if (maxScore <= 0)
+            return storedRank.HasValue ? [new RankTier { Leeway = -5.0, Rank = storedRank.Value }] : null;
+
+        var lowerBound = (int)(maxScore * 0.95);
+        var sortedBandScores = bandScores ?? [];
+
+        if (sortedBandScores.Length == 0)
         {
-            // No scores in the threshold band — rank is just basePopulation-based
-            var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var baseRank = db.GetCurrentStateRankForScore(key.SongId, fallbackScore);
-            return [new RankTier { Leeway = -50, Rank = baseRank }];
+            if (storedRank.HasValue)
+                return [new RankTier { Leeway = -5.0, Rank = storedRank.Value }];
+
+            if (populationTierData is not null && fallbackScore <= lowerBound)
+                return [new RankTier { Leeway = -5.0, Rank = Math.Max(1, populationTierData.BaseCount) }];
+
+            return null;
         }
 
-        // The band scores are sorted ascending. We need to compute:
-        // At each leeway threshold T, rank = (entries above fallbackScore with score <= T) + baseRank
-        // baseRank = COUNT(entries with score > fallbackScore AND score <= 0.95*maxScore) + 1
-        var lowerBound = (int)(maxScore * 0.95);
-        var db2 = _persistence.GetOrCreateInstrumentDb(instrument);
-        // Count entries with score > fallbackScore that are always valid (below band)
-        int alwaysAbove;
-        if (fallbackScore <= lowerBound)
-        {
-            // fallbackScore is in the always-valid zone
-            alwaysAbove = db2.GetCurrentStateRankForScore(key.SongId, fallbackScore) - 1;
-        }
-        else
-        {
-            // Count entries above fallbackScore but at or below lowerBound
-            alwaysAbove = db2.GetCurrentStatePopulationAtOrBelow(key.SongId, lowerBound) -
-                          db2.GetCurrentStatePopulationAtOrBelow(key.SongId, fallbackScore);
-            if (alwaysAbove < 0) alwaysAbove = 0;
-        }
+        // The band scores are sorted ascending. Scores below the band are always
+        // valid at -5%. For fallbacks in that always-valid zone, use the stored
+        // historical rank as the initial rank. For fallbacks inside the band,
+        // no below-band score can outrank it, so the initial rank starts at 1.
+        var estimatedAlwaysValidRank = populationTierData is null ? 1 : populationTierData.BaseCount + 1;
+        var alwaysAbove = fallbackScore <= lowerBound
+            ? Math.Max(0, (storedRank ?? estimatedAlwaysValidRank) - 1)
+            : 0;
 
         var tiers = new List<RankTier>();
         int cumAboveFallback = alwaysAbove;
@@ -713,7 +737,7 @@ public sealed class ScrapeTimePrecomputer
         prevRank = baseRankForTier;
         prevLeeway = -5.0;
 
-        foreach (var score in bandScores)
+        foreach (var score in sortedBandScores)
         {
             double leeway = Math.Round(((double)score / maxScore - 1.0) * 100.0, 1);
             if (score > fallbackScore)

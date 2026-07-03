@@ -1016,7 +1016,21 @@ public sealed class MetaDatabase : IMetaDatabase
         }
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "SELECT sh.song_id, sh.instrument, sh.new_score, MAX(sh.accuracy), MAX(CASE WHEN sh.is_full_combo THEN 1 ELSE 0 END)::BOOLEAN, MAX(sh.stars) FROM score_history sh JOIN _tier_thresholds tt ON tt.song_id = sh.song_id AND tt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= tt.max_score GROUP BY sh.song_id, sh.instrument, sh.new_score ORDER BY sh.song_id, sh.instrument, sh.new_score DESC";
+        cmd.CommandText = """
+            SELECT sh.song_id,
+                   sh.instrument,
+                   sh.new_score,
+                   MAX(sh.accuracy),
+                   MAX(CASE WHEN sh.is_full_combo THEN 1 ELSE 0 END)::BOOLEAN,
+                   MAX(sh.stars),
+                   MIN(COALESCE(NULLIF(sh.all_time_rank, 0), NULLIF(sh.season_rank, 0), NULLIF(sh.new_rank, 0))) AS fallback_rank
+            FROM score_history sh
+            JOIN _tier_thresholds tt ON tt.song_id = sh.song_id AND tt.instrument = sh.instrument
+            WHERE sh.account_id = @accountId
+              AND sh.new_score <= tt.max_score
+            GROUP BY sh.song_id, sh.instrument, sh.new_score
+            ORDER BY sh.song_id, sh.instrument, sh.new_score DESC
+            """;
         cmd.Parameters.AddWithValue("accountId", accountId);
         var result = new Dictionary<(string, string), List<ValidScoreFallback>>();
         using (var r = cmd.ExecuteReader())
@@ -1025,7 +1039,14 @@ public sealed class MetaDatabase : IMetaDatabase
             {
                 var key = (r.GetString(0), r.GetString(1));
                 if (!result.TryGetValue(key, out var list)) { list = new List<ValidScoreFallback>(); result[key] = list; }
-                list.Add(new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) });
+                list.Add(new ValidScoreFallback
+                {
+                    Score = r.GetInt32(2),
+                    Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3),
+                    IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4),
+                    Stars = r.IsDBNull(5) ? null : r.GetInt32(5),
+                    Rank = r.IsDBNull(6) ? null : r.GetInt32(6),
+                });
             }
         }
         tx.Commit();
