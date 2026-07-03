@@ -217,6 +217,62 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
     }
 
     [Fact]
+    public void PrecomputePlayerLeaderboardRivals_UsesPersistedRowsWithoutLiveFallback()
+    {
+        _metaDb.ReplaceLeaderboardRivalsData(
+            "user1",
+            "Solo_Guitar",
+            [
+                new LeaderboardRivalRow
+                {
+                    UserId = "user1",
+                    RivalAccountId = "rival1",
+                    Instrument = "Solo_Guitar",
+                    RankMethod = "totalscore",
+                    Direction = "above",
+                    UserRank = 10,
+                    RivalRank = 9,
+                    SharedSongCount = 3,
+                    AheadCount = 1,
+                    BehindCount = 2,
+                    AvgSignedDelta = 1.5,
+                    ComputedAt = DateTime.UtcNow.ToString("o"),
+                },
+            ],
+            []);
+
+        var entries = new List<(string Key, byte[] Json, string ETag)>();
+        _sut.PrecomputePlayerLeaderboardRivals(
+            "user1",
+            ["Solo_Guitar"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            allowLiveFallback: false,
+            storeOverride: entries);
+
+        var entry = Assert.Single(entries);
+        Assert.Equal("lb-rivals:user1:Solo_Guitar:totalscore", entry.Key);
+        var payload = JsonDocument.Parse(entry.Json).RootElement;
+        Assert.Equal(10, payload.GetProperty("userRank").GetInt32());
+        Assert.Single(payload.GetProperty("above").EnumerateArray());
+        Assert.Empty(payload.GetProperty("below").EnumerateArray());
+    }
+
+    [Fact]
+    public void PrecomputePlayerLeaderboardRivals_SkipsMissingPersistedRowsWithoutLiveFallback()
+    {
+        var entries = new List<(string Key, byte[] Json, string ETag)>();
+
+        _sut.PrecomputePlayerLeaderboardRivals(
+            "user1",
+            ["Solo_Guitar"],
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            allowLiveFallback: false,
+            storeOverride: entries);
+
+        Assert.Empty(entries);
+    }
+
+    [Fact]
     public async Task PrecomputeAllAsync_PlayerWithInvalidScore_HasMinLeeway()
     {
         RegisterUser("user1");

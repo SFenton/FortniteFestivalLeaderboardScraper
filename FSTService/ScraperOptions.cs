@@ -253,6 +253,14 @@ public sealed class ScraperOptions
     /// </summary>
     public int PrecomputeLeaderboardInstrumentParallelism { get; set; } = 1;
 
+    /// <summary>
+    /// When true, scrape-time bulk precompute live-computes leaderboard-rivals
+    /// cache entries that are not already persisted. Keep false by default:
+    /// live recompute fans out expensive current-state player-score reads and
+    /// can dominate publication cleanup wall-clock time.
+    /// </summary>
+    public bool PrecomputeLiveLeaderboardRivals { get; set; }
+
     // ─── Phase Selection ───────────────────────────────────────
 
     /// <summary>

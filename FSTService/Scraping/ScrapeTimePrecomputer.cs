@@ -259,7 +259,12 @@ public sealed class ScrapeTimePrecomputer
         MeasurePrecomputeStoreStep(accountId, "player_rivals_all", entries,
             () => PrecomputePlayerRivalsAll(accountId, displayNames, storeOverride: entries));
         MeasurePrecomputeStoreStep(accountId, "player_leaderboard_rivals", entries,
-            () => PrecomputePlayerLeaderboardRivals(accountId, sharedInputs.InstrumentKeys, displayNames, storeOverride: entries));
+            () => PrecomputePlayerLeaderboardRivals(
+                accountId,
+                sharedInputs.InstrumentKeys,
+                displayNames,
+                allowLiveFallback: true,
+                storeOverride: entries));
 
         if (entries.Count > 0)
         {
@@ -1023,7 +1028,11 @@ public sealed class ScrapeTimePrecomputer
                     PrecomputePlayerSyncStatus(accountId);
                     PrecomputePlayerRivalsOverview(accountId);
                     PrecomputePlayerRivalsAll(accountId, displayNames);
-                    PrecomputePlayerLeaderboardRivals(accountId, instrumentKeys, displayNames);
+                    PrecomputePlayerLeaderboardRivals(
+                        accountId,
+                        instrumentKeys,
+                        displayNames,
+                        allowLiveFallback: _scraperOptions.PrecomputeLiveLeaderboardRivals);
                 }
                 catch (Exception ex)
                 {
@@ -1337,20 +1346,38 @@ public sealed class ScrapeTimePrecomputer
         Store($"rivals-all:{accountId}", jsonBytes, storeOverride);
     }
 
-    private void PrecomputePlayerLeaderboardRivals(
+    internal void PrecomputePlayerLeaderboardRivals(
         string accountId,
         IReadOnlyList<string> instrumentKeys,
         Dictionary<string, string> displayNames,
+        bool allowLiveFallback,
         List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
+        var persistedInstruments = 0;
+        var liveFallbackInstruments = 0;
+        var skippedInstruments = 0;
+
         foreach (var instrument in instrumentKeys)
         {
-            var live = _leaderboardRivalsCalculator?.ComputeInstrument(accountId, instrument, "totalscore");
-            var rivals = live is null
-                ? _metaDb.GetLeaderboardRivals(accountId, instrument, "totalscore")
-                : live.Rivals.ToList();
+            LeaderboardInstrumentRivalsResult? live = null;
+            var rivals = _metaDb.GetLeaderboardRivals(accountId, instrument, "totalscore");
+            if (rivals.Count > 0)
+            {
+                persistedInstruments++;
+            }
+            else if (allowLiveFallback && _leaderboardRivalsCalculator is not null)
+            {
+                live = _leaderboardRivalsCalculator.ComputeInstrument(accountId, instrument, "totalscore");
+                rivals = live.Rivals.ToList();
+                liveFallbackInstruments++;
+            }
+            else
+            {
+                skippedInstruments++;
+                continue;
+            }
 
-            if (rivals.Count == 0 && _leaderboardRivalsCalculator is null)
+            if (rivals.Count == 0 && live is null)
                 continue;
 
             var rivalNames = _metaDb.GetDisplayNames(rivals.Select(r => r.RivalAccountId));
@@ -1366,11 +1393,7 @@ public sealed class ScrapeTimePrecomputer
             }
             else
             {
-                userRank = null;
-                var db = _persistence.GetOrCreateInstrumentDb(instrument);
-                var (_, self, _) = db.GetAccountRankingNeighborhood(accountId, 0, "totalscore");
-                if (self is not null)
-                    userRank = InstrumentDatabase.GetRankValue(self, "totalscore");
+                userRank = rivals.Count == 0 ? null : rivals[0].UserRank;
             }
 
             var above = rivals.Where(r => r.Direction == "above").Select(r => MapLbRival(r, rivalNames));
@@ -1386,6 +1409,16 @@ public sealed class ScrapeTimePrecomputer
             };
             var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
             Store($"lb-rivals:{accountId}:{instrument}:totalscore", jsonBytes, storeOverride);
+        }
+
+        if (persistedInstruments > 0 || liveFallbackInstruments > 0 || skippedInstruments > 0)
+        {
+            _log.LogInformation(
+                "[Precompute.LeaderboardRivals] account={AccountId} persisted_instruments={PersistedInstruments} live_fallback_instruments={LiveFallbackInstruments} skipped_instruments={SkippedInstruments}",
+                accountId,
+                persistedInstruments,
+                liveFallbackInstruments,
+                skippedInstruments);
         }
     }
 
