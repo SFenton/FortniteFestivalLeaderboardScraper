@@ -1,4 +1,5 @@
 using FSTService.Persistence;
+using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -67,6 +68,50 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
         Assert.True(builder.AreActiveScopesFreshForInstruments([_fixture.Db.Instrument]));
     }
 
+    [Fact]
+    public async Task RebuildScopeAsync_records_observe_only_diff_metrics()
+    {
+        var builder = new SoloCurrentProjectionBuilder(
+            _fixture.DataSource,
+            Substitute.For<ILogger<SoloCurrentProjectionBuilder>>());
+        await builder.EnsureSchemaAsync();
+        SeedLiveLeaderboard("song_metrics",
+            ("user1", 1000),
+            ("user2", 900));
+
+        await builder.RebuildScopeAsync(new SoloCurrentProjectionScopeKey("song_metrics", _fixture.Db.Instrument));
+        var first = ReadProjectionScopeMetrics("song_metrics");
+        Assert.Equal(0, first.ExistingRows);
+        Assert.Equal(2, first.DesiredRows);
+        Assert.Equal(0, first.UnchangedRows);
+        Assert.Equal(2, first.WouldInsertRows);
+        Assert.Equal(0, first.WouldUpdateRows);
+        Assert.Equal(0, first.WouldDeleteRows);
+
+        await builder.RebuildScopeAsync(new SoloCurrentProjectionScopeKey("song_metrics", _fixture.Db.Instrument));
+        var unchanged = ReadProjectionScopeMetrics("song_metrics");
+        Assert.Equal(2, unchanged.ExistingRows);
+        Assert.Equal(2, unchanged.DesiredRows);
+        Assert.Equal(2, unchanged.UnchangedRows);
+        Assert.Equal(0, unchanged.WouldInsertRows);
+        Assert.Equal(0, unchanged.WouldUpdateRows);
+        Assert.Equal(0, unchanged.WouldDeleteRows);
+
+        SeedLiveLeaderboard("song_metrics",
+            ("user1", 1000),
+            ("user2", 950),
+            ("user3", 925));
+
+        await builder.RebuildScopeAsync(new SoloCurrentProjectionScopeKey("song_metrics", _fixture.Db.Instrument));
+        var changed = ReadProjectionScopeMetrics("song_metrics");
+        Assert.Equal(2, changed.ExistingRows);
+        Assert.Equal(3, changed.DesiredRows);
+        Assert.Equal(1, changed.UnchangedRows);
+        Assert.Equal(1, changed.WouldInsertRows);
+        Assert.Equal(1, changed.WouldUpdateRows);
+        Assert.Equal(0, changed.WouldDeleteRows);
+    }
+
     private void InsertSnapshotState(string songId, long activeSnapshotId)
     {
         using var conn = _fixture.DataSource.OpenConnection();
@@ -86,6 +131,48 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
         cmd.Parameters.AddWithValue("activeSnapshotId", activeSnapshotId);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
+    }
+
+    private void SeedLiveLeaderboard(string songId, params (string AccountId, int Score)[] entries)
+    {
+        _fixture.Db.UpsertEntries(songId, entries.Select(entry => new LeaderboardEntry
+        {
+            AccountId = entry.AccountId,
+            Score = entry.Score,
+            Accuracy = 95,
+            Stars = 5,
+            Season = 1,
+            Source = "test",
+        }).ToList());
+        _fixture.Db.RecomputeRanksForSongs([songId]);
+    }
+
+    private ProjectionScopeMetrics ReadProjectionScopeMetrics(string songId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT existing_row_count,
+                   desired_row_count,
+                   unchanged_row_count,
+                   would_insert_count,
+                   would_update_count,
+                   would_delete_count
+            FROM solo_current_projection_scope
+            WHERE song_id = @songId
+              AND instrument = @instrument
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", _fixture.Db.Instrument);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        return new ProjectionScopeMetrics(
+            reader.GetInt64(0),
+            reader.GetInt64(1),
+            reader.GetInt64(2),
+            reader.GetInt64(3),
+            reader.GetInt64(4),
+            reader.GetInt64(5));
     }
 
     private void InsertProjectionScope(string songId, long? sourceSnapshotId, string status)
@@ -130,4 +217,12 @@ public sealed class SoloCurrentProjectionBuilderTests : IDisposable
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }
+
+    private sealed record ProjectionScopeMetrics(
+        long ExistingRows,
+        long DesiredRows,
+        long UnchangedRows,
+        long WouldInsertRows,
+        long WouldUpdateRows,
+        long WouldDeleteRows);
 }
