@@ -272,6 +272,9 @@ public sealed class ImprovementNotificationService
                 };
             }
 
+            if (options.IncludeBands && registeredOnly)
+                PrepareRegisteredBandWorkingSet(conn, tx, options.CommandTimeoutSeconds);
+
             if (options.IncludePlayers && options.IncludeSongEvents)
             {
                 var rows = ExecuteScalarLong(conn, tx, CountPlayerSongRowsSql(registeredOnly), options.CommandTimeoutSeconds);
@@ -719,6 +722,45 @@ public sealed class ImprovementNotificationService
         return Convert.ToInt64(cmd.ExecuteScalar() ?? 0L);
     }
 
+    private void PrepareRegisteredBandWorkingSet(NpgsqlConnection conn, NpgsqlTransaction? tx, int commandTimeoutSeconds)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = commandTimeoutSeconds <= 0 ? 0 : commandTimeoutSeconds;
+        cmd.CommandText = $$"""
+            CREATE TEMP TABLE _registered_bands ON COMMIT DROP AS
+            SELECT DISTINCT band_type, team_key
+            FROM registered_bands;
+
+            CREATE INDEX ON _registered_bands (band_type, team_key);
+            ANALYZE _registered_bands;
+
+            CREATE TEMP TABLE _registered_band_current ON COMMIT DROP AS
+            SELECT c.*
+            FROM _registered_bands rb
+            JOIN current_band_leaderboard_entries c
+              ON c.band_type = rb.band_type
+             AND c.team_key = rb.team_key;
+
+            CREATE INDEX ON _registered_band_current
+                (song_id, band_type, ranking_scope, scope_combo_id, projection_generation);
+            CREATE INDEX ON _registered_band_current
+                (band_type, team_key);
+            ANALYZE _registered_band_current;
+
+            CREATE TEMP TABLE _registered_band_rank ON COMMIT DROP AS
+            SELECT r.*
+            FROM ({{BandRankUnionSql(registeredOnly: true, usePreparedRegisteredBands: true)}}) r;
+
+            CREATE INDEX ON _registered_band_rank (band_type, team_key);
+            ANALYZE _registered_band_rank;
+            """;
+        cmd.ExecuteNonQuery();
+        sw.Stop();
+        _log.LogInformation("Prepared registered band notification working set in {ElapsedMs:N0}ms.", sw.ElapsedMilliseconds);
+    }
+
     private static string NormalizeSource(string? source) => string.IsNullOrWhiteSpace(source)
         ? "precompute"
         : source.Trim().Length > 64
@@ -733,10 +775,6 @@ public sealed class ImprovementNotificationService
         ? $"WHERE EXISTS (SELECT 1 FROM (SELECT DISTINCT account_id FROM registered_users) ru WHERE ru.account_id = {alias}.account_id)"
         : string.Empty;
 
-    private static string RegisteredBandCurrentFilter(bool registeredOnly, string alias = "c") => registeredOnly
-        ? $"WHERE EXISTS (SELECT 1 FROM registered_bands rb WHERE rb.band_type = {alias}.band_type AND rb.team_key = {alias}.team_key)"
-        : string.Empty;
-
     private static string PublishedBandCurrentJoin(string alias = "c") => $"""
         JOIN band_current_projection_scope {alias}_published_scope
           ON {alias}_published_scope.song_id = {alias}.song_id
@@ -746,26 +784,55 @@ public sealed class ImprovementNotificationService
          AND {alias}_published_scope.published_generation = {alias}.projection_generation
         """;
 
-    private static string RegisteredBandRankFilter(bool registeredOnly, string alias = "r") => registeredOnly
-        ? $"WHERE EXISTS (SELECT 1 FROM registered_bands rb WHERE rb.band_type = {alias}.band_type AND rb.team_key = {alias}.team_key)"
-        : string.Empty;
+    private static string BandCurrentRowsFromSql(bool registeredOnly) => registeredOnly
+        ? $"""
+            FROM _registered_band_current c
+            {PublishedBandCurrentJoin()}
+            """
+        : $"""
+            FROM current_band_leaderboard_entries c
+            {PublishedBandCurrentJoin()}
+            """;
 
-    private static string BandRankUnionSql => """
-        SELECT band_type, ranking_scope, combo_id, team_key, team_members,
-               adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank,
-               total_score, full_combo_count, computed_at
-        FROM band_team_rankings_current_band_duets
+    private static string BandRankUnionSql(bool registeredOnly, bool usePreparedRegisteredBands = false)
+    {
+        if (usePreparedRegisteredBands)
+            return BandRankUnionFromRegisteredBandsSql("_registered_bands");
+
+        if (registeredOnly)
+            return "SELECT * FROM _registered_band_rank";
+
+        return BandRankUnionAllSql(
+            "FROM band_team_rankings_current_band_duets r",
+            "FROM band_team_rankings_current_band_trios r",
+            "FROM band_team_rankings_current_band_quad r");
+    }
+
+    private static string BandRankUnionFromRegisteredBandsSql(string registeredBandsTable)
+        => BandRankUnionAllSql(
+            $"FROM {registeredBandsTable} rb JOIN band_team_rankings_current_band_duets r ON r.band_type = rb.band_type AND r.team_key = rb.team_key",
+            $"FROM {registeredBandsTable} rb JOIN band_team_rankings_current_band_trios r ON r.band_type = rb.band_type AND r.team_key = rb.team_key",
+            $"FROM {registeredBandsTable} rb JOIN band_team_rankings_current_band_quad r ON r.band_type = rb.band_type AND r.team_key = rb.team_key");
+
+    private static string BandRankUnionAllSql(string duetsFrom, string triosFrom, string quadFrom)
+    {
+        return $$"""
+        SELECT r.band_type, r.ranking_scope, r.combo_id, r.team_key, r.team_members,
+               r.adjusted_skill_rank, r.weighted_rank, r.fc_rate_rank, r.total_score_rank,
+               r.total_score, r.full_combo_count, r.computed_at
+        {{duetsFrom}}
         UNION ALL
-        SELECT band_type, ranking_scope, combo_id, team_key, team_members,
-               adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank,
-               total_score, full_combo_count, computed_at
-        FROM band_team_rankings_current_band_trios
+        SELECT r.band_type, r.ranking_scope, r.combo_id, r.team_key, r.team_members,
+               r.adjusted_skill_rank, r.weighted_rank, r.fc_rate_rank, r.total_score_rank,
+               r.total_score, r.full_combo_count, r.computed_at
+        {{triosFrom}}
         UNION ALL
-        SELECT band_type, ranking_scope, combo_id, team_key, team_members,
-               adjusted_skill_rank, weighted_rank, fc_rate_rank, total_score_rank,
-               total_score, full_combo_count, computed_at
-        FROM band_team_rankings_current_band_quad
+        SELECT r.band_type, r.ranking_scope, r.combo_id, r.team_key, r.team_members,
+               r.adjusted_skill_rank, r.weighted_rank, r.fc_rate_rank, r.total_score_rank,
+               r.total_score, r.full_combo_count, r.computed_at
+        {{quadFrom}}
         """;
+    }
 
     private static string CountPlayerSongRowsSql(bool registeredOnly) => $"""
         SELECT COUNT(*)
@@ -781,15 +848,12 @@ public sealed class ImprovementNotificationService
 
     private static string CountBandSongRowsSql(bool registeredOnly) => $"""
         SELECT COUNT(*)
-        FROM current_band_leaderboard_entries c
-        {PublishedBandCurrentJoin()}
-        {RegisteredBandCurrentFilter(registeredOnly)};
+        {BandCurrentRowsFromSql(registeredOnly)};
         """;
 
     private static string CountBandRankRowsSql(bool registeredOnly) => $"""
         WITH current_rows AS (
-            SELECT * FROM ({BandRankUnionSql}) r
-            {RegisteredBandRankFilter(registeredOnly)}
+            SELECT * FROM ({BandRankUnionSql(registeredOnly)}) r
         )
         SELECT COUNT(*) FROM current_rows;
         """;
@@ -797,13 +861,10 @@ public sealed class ImprovementNotificationService
     private static string CountBandSubjectRowsSql(bool registeredOnly) => $"""
         WITH subject_rows AS (
             SELECT DISTINCT c.band_type, c.team_key
-            FROM current_band_leaderboard_entries c
-            {PublishedBandCurrentJoin()}
-            {RegisteredBandCurrentFilter(registeredOnly)}
+            {BandCurrentRowsFromSql(registeredOnly)}
             UNION
             SELECT DISTINCT r.band_type, r.team_key
-            FROM ({BandRankUnionSql}) r
-            {RegisteredBandRankFilter(registeredOnly)}
+            FROM ({BandRankUnionSql(registeredOnly)}) r
         )
         SELECT COUNT(*) FROM subject_rows;
         """;
@@ -1221,14 +1282,11 @@ public sealed class ImprovementNotificationService
     private static string BandSubjectUpsertSql(bool registeredOnly) => $"""
         WITH source_rows AS (
             SELECT c.band_type, c.team_key, c.team_members, MIN(c.first_seen_at) AS first_seen_at, MAX(c.last_updated_at) AS last_seen_at
-            FROM current_band_leaderboard_entries c
-            {PublishedBandCurrentJoin()}
-            {RegisteredBandCurrentFilter(registeredOnly)}
+            {BandCurrentRowsFromSql(registeredOnly)}
             GROUP BY c.band_type, c.team_key, c.team_members
             UNION ALL
             SELECT r.band_type, r.team_key, r.team_members, MIN(r.computed_at) AS first_seen_at, MAX(r.computed_at) AS last_seen_at
-            FROM ({BandRankUnionSql}) r
-            {RegisteredBandRankFilter(registeredOnly)}
+            FROM ({BandRankUnionSql(registeredOnly)}) r
             GROUP BY r.band_type, r.team_key, r.team_members
         ), collapsed AS (
                  SELECT band_type,
@@ -1255,10 +1313,8 @@ public sealed class ImprovementNotificationService
     private static string BandSongEventsSql(bool registeredOnly, bool execute) => $"""
         WITH current_rows AS (
             SELECT c.*, s.band_subject_id, s.team_members AS subject_members
-            FROM current_band_leaderboard_entries c
-            {PublishedBandCurrentJoin()}
+            {BandCurrentRowsFromSql(registeredOnly)}
             JOIN band_improvement_subjects s ON s.band_type = c.band_type AND s.team_key = c.team_key
-            {RegisteredBandCurrentFilter(registeredOnly)}
         ), event_rows AS (
             SELECT c.band_subject_id,
                    v.event_kind,
@@ -1315,10 +1371,8 @@ public sealed class ImprovementNotificationService
     private static string BandSongStateUpsertSql(bool registeredOnly) => $"""
         WITH current_rows AS (
             SELECT c.*, s.band_subject_id
-            FROM current_band_leaderboard_entries c
-            {PublishedBandCurrentJoin()}
+            {BandCurrentRowsFromSql(registeredOnly)}
             JOIN band_improvement_subjects s ON s.band_type = c.band_type AND s.team_key = c.team_key
-            {RegisteredBandCurrentFilter(registeredOnly)}
         ), upserted AS (
             INSERT INTO band_improvement_state (
                 band_subject_id, song_id, ranking_scope, scope_combo_id, entry_combo_id,
@@ -1351,9 +1405,8 @@ public sealed class ImprovementNotificationService
     private static string BandRankEventsSql(bool registeredOnly, bool execute) => $"""
         WITH current_rows AS (
             SELECT r.*, s.band_subject_id, s.team_members AS subject_members
-            FROM ({BandRankUnionSql}) r
+            FROM ({BandRankUnionSql(registeredOnly)}) r
             JOIN band_improvement_subjects s ON s.band_type = r.band_type AND s.team_key = r.team_key
-            {RegisteredBandRankFilter(registeredOnly, "r")}
         ), event_rows AS (
             SELECT c.band_subject_id,
                    v.event_kind,
@@ -1710,9 +1763,8 @@ public sealed class ImprovementNotificationService
     private static string BandRankStateUpsertSql(bool registeredOnly) => $"""
         WITH current_rows AS (
             SELECT r.*, s.band_subject_id
-            FROM ({BandRankUnionSql}) r
+            FROM ({BandRankUnionSql(registeredOnly)}) r
             JOIN band_improvement_subjects s ON s.band_type = r.band_type AND s.team_key = r.team_key
-            {RegisteredBandRankFilter(registeredOnly, "r")}
         ), upserted AS (
             INSERT INTO band_rank_improvement_state (
                 band_subject_id, ranking_scope, combo_id, adjusted_skill_rank, weighted_rank,

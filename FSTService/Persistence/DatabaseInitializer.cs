@@ -2013,6 +2013,29 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_cble_team_song
             ON current_band_leaderboard_entries (band_type, team_key, song_id, ranking_scope, scope_combo_id);
 
+        CREATE INDEX IF NOT EXISTS ix_cble_duets_team_scope_generation
+            ON current_band_leaderboard_entries_duets (band_type, team_key, song_id, ranking_scope, scope_combo_id, projection_generation);
+        CREATE INDEX IF NOT EXISTS ix_cble_trios_team_scope_generation
+            ON current_band_leaderboard_entries_trios (band_type, team_key, song_id, ranking_scope, scope_combo_id, projection_generation);
+        CREATE INDEX IF NOT EXISTS ix_cble_quad_team_scope_generation
+            ON current_band_leaderboard_entries_quad (band_type, team_key, song_id, ranking_scope, scope_combo_id, projection_generation);
+
+        DO $$
+        BEGIN
+            IF to_regclass('band_team_rankings_current_band_duets') IS NOT NULL THEN
+                CREATE INDEX IF NOT EXISTS ix_btr_current_duets_team
+                    ON band_team_rankings_current_band_duets (band_type, team_key);
+            END IF;
+            IF to_regclass('band_team_rankings_current_band_trios') IS NOT NULL THEN
+                CREATE INDEX IF NOT EXISTS ix_btr_current_trios_team
+                    ON band_team_rankings_current_band_trios (band_type, team_key);
+            END IF;
+            IF to_regclass('band_team_rankings_current_band_quad') IS NOT NULL THEN
+                CREATE INDEX IF NOT EXISTS ix_btr_current_quad_team
+                    ON band_team_rankings_current_band_quad (band_type, team_key);
+            END IF;
+        END $$;
+
         CREATE TABLE IF NOT EXISTS band_current_projection_state (
             id                    BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
             current_generation    BIGINT      NOT NULL DEFAULT 0,

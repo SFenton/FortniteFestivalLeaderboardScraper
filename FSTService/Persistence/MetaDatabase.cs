@@ -4251,6 +4251,7 @@ public sealed class MetaDatabase : IMetaDatabase
         var quotedTable = BandRankingStorageNames.QuoteIdentifier(tableName);
         cmd.CommandText = $@"
                 CREATE UNIQUE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_pkey")} ON {quotedTable} (band_type, ranking_scope, combo_id, team_key);
+                CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_team")} ON {quotedTable} (band_type, team_key);
                 CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_adjusted")} ON {quotedTable} (band_type, ranking_scope, combo_id, adjusted_skill_rank);
                 CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_weighted")} ON {quotedTable} (band_type, ranking_scope, combo_id, weighted_rank);
                 CREATE INDEX {BandRankingStorageNames.QuoteIdentifier(tableName + "_ix_fcrate")} ON {quotedTable} (band_type, ranking_scope, combo_id, fc_rate_rank);
