@@ -756,6 +756,7 @@ public sealed class PostScrapeOrchestrator
             if (builder is null)
                 return;
 
+            await builder.EnsureSchemaAsync(ct);
             var staleScopes = await builder.LoadStaleScopesAsync(ct);
             if (staleScopes.Count == 0)
             {
@@ -1739,6 +1740,7 @@ public sealed class PostScrapeOrchestrator
             var scopes = await BuildSoloProjectionScopesForNotificationsAsync(ctx, registeredUserRefreshResult, options, ct);
             if (scopes.Count > 0)
             {
+                await _soloCurrentProjectionBuilder.EnsureSchemaAsync(ct);
                 var refreshResult = await _soloCurrentProjectionBuilder.RefreshScopesAsync(
                     scopes,
                     new SoloCurrentProjectionRebuildOptions
