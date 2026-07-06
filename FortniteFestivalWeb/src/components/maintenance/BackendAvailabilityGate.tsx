@@ -7,12 +7,6 @@ const UNAVAILABLE_RETRY_INTERVAL_MS = 5_000;
 
 type BackendAvailability = 'checking' | 'available' | 'unavailable';
 
-type ServiceInfoResponse = {
-  workerStatus?: {
-    status?: string | null;
-  } | null;
-};
-
 type BackendAvailabilityGateProps = {
   children: ReactNode;
 };
@@ -64,8 +58,8 @@ async function isBackendAvailable(signal: AbortSignal): Promise<boolean> {
 
     if (!response.ok) return false;
 
-    const serviceInfo = await response.json() as ServiceInfoResponse;
-    return serviceInfo.workerStatus?.status?.toLowerCase() === 'online';
+    await response.json();
+    return true;
   } catch {
     return false;
   }
