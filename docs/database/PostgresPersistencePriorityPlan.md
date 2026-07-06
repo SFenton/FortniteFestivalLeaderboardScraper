@@ -69,6 +69,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | History index owner cards | Complete | Read-only owner cards for `band_team_rank_history_*_v2` indexes completed on 2026-07-06; no index or data mutation performed. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
+| Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Continue autonomously through parity gates | Destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed after the live-scrape A/B data-parity gate passes. |
@@ -396,6 +397,43 @@ P1 quarantine decision:
 - Quarantine/drop/truncate/repack/rewrite work is auto-approved after live-scrape A/B data parity passes and rollback/post-action validation are documented.
 - If quarantine passes observation, a later drop may proceed after recording successful observation evidence, rollback/regeneration path, and exact objects/date.
 
+### [x] Phase F: P5 default-off physical snapshot write-skip candidate (2026-07-06T23:27:00Z)
+
+Mode: Implementation / capacity improvement. No production schema, data, runtime configuration, services, workers, indexes, tables, or scrape state were changed.
+
+Live-safety preflight:
+
+| Check | Result | Decision |
+|---|---|---|
+| Production compose | `fstservice`, `festivalweb`, and `fst-postgres` were healthy. | Safe for code/test work and bounded read-only probes. |
+| API readiness | `fstservice` `/readyz` returned `Healthy`; Postgres accepted connections. | Public API remained live. |
+| Public reads | `published_scrape_id=1214`, `public_reads_frozen=true`, `public_reads_frozen_scrape_id=1214`. | Public reads remain pinned to the last published scrape. |
+| Locks/queries | No ungranted locks; only service idle sessions and the diagnostic query were observed. | No blocking database incident. |
+| Disk | `/mnt/docker-storage` remained about 77 GB free and 98% used. | Too little headroom for another full scrape/post-process/publish eval; keep production rollout gated. |
+| Worker | `fstworker` was stopped after exit 137 during band ranking rebuild with `53100: No space left on device`. | Do not restart a full worker scrape until code/deploy readiness and headroom/parity gates are satisfied. |
+
+Implementation:
+
+| Change | Files | Safety gate | Rollback |
+|---|---|---|---|
+| Added `Features:SkipUnchangedPhysicalLeaderboardSnapshots` defaulting to `false`. | `FSTService/FeatureOptions.cs` | Default-off; existing production behavior is unchanged until explicitly enabled. | Set the flag to `false` or remove the override. |
+| Snapshot flush skips physical rows for all-time solo scopes whose scope fingerprint was seen in the current scrape but last changed in an earlier scrape. | `FSTService/Scraping/LeaderboardSpoolWriterFactory.cs` | Requires `UseLeaderboardScopeFingerprints`; unchanged scopes are filtered only after the same transaction updates fingerprint evidence. | Disable the flag; the old full physical snapshot insert path remains intact. |
+| Snapshot finalization keeps skipped unchanged scopes pinned to their previous active physical snapshot instead of advancing `active_snapshot_id` to a scrape with no duplicate rows. | `FSTService/Persistence/GlobalLeaderboardPersistence.cs` | Changed/new scopes with snapshot rows still advance to the current scrape; empty/unfingerprinted expected scopes retain the existing empty-snapshot behavior. | Disable the flag; finalization returns to one active snapshot per finalized scrape scope. |
+| Added unit coverage for default flag behavior and the new/unchanged/changed snapshot-state contract. | `FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs`, `FSTService.Tests/Unit/GlobalLeaderboardPersistenceTests.cs` | Test proves unchanged scrape `43` writes zero duplicate snapshot rows, keeps active state at scrape `42`, and advances to scrape `44` when data changes. | Remove the flag and test if rejected before deployment. |
+
+Validation:
+
+| Command | Result | Evidence |
+|---|---|---|
+| `dotnet test FSTService.Tests/FSTService.Tests.csproj --filter "FullyQualifiedName~GlobalLeaderboardPersistenceTests|FullyQualifiedName~ScraperOptionsAndModelsTests"` | Passed: 88 tests, 0 failed, duration 27 s. | Covers snapshot write-skip behavior, logical metrics, existing snapshot writes, legacy-live disabled behavior, and feature default assertions. |
+
+P5 decision:
+
+- Accepted as a default-off implementation candidate.
+- This is not a production promotion yet: enabling it requires a controlled live-scrape A/B that proves API/current-state/publication parity, projection freshness behavior, and publish/freeze semantics under mixed active snapshot IDs.
+- Expected storage/WAL benefit is bounded by unchanged solo scopes; Phase 7 measured 27,178,074 unchanged rows out of 39,385,606 observed rows (69.01%), but the exact physical snapshot reduction must be measured in a matched scrape after deployment.
+- This implementation does not solve the current disk blocker alone; it reduces future duplicate physical snapshot writes after a safe rollout and leaves destructive reclaim work parity-gated.
+
 ## Prioritization principles
 
 1. Reclaim space first where the surface is likely derived and correctness risk is low.
@@ -603,7 +641,7 @@ Target write paths:
 Candidate design:
 
 - Add scope-level fingerprints before expensive staging/merge where possible.
-- Skip full physical snapshot writes for unchanged scope generations.
+- Skip full physical snapshot writes for unchanged scope generations while keeping `leaderboard_snapshot_state.active_snapshot_id` pinned to the previous physical snapshot for those scopes.
 - Skip row writes when row fingerprint matches logical current state.
 - Keep physical snapshots authoritative until parity is proven.
 - Preserve rollback by feature flag and by retaining old read paths.
@@ -616,6 +654,12 @@ Validation:
 - Measure wall clock, WAL bytes, rows inserted/updated/deleted, temp bytes, CPU, memory, locks, and API parity.
 
 Decision tier: essential future-cost reduction after reclaim headroom.
+
+Current implementation status:
+
+- Default-off candidate implemented as `Features:SkipUnchangedPhysicalLeaderboardSnapshots`.
+- Unit proof accepted for new/unchanged/changed scope behavior.
+- Production enablement remains gated by live-scrape A/B parity, public-read/publish/freeze semantics, and sufficient disk headroom for the evaluation.
 
 ### Priority 6: rank/temp spill and ranking rebuild reduction
 

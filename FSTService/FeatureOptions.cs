@@ -57,6 +57,13 @@ public sealed class FeatureOptions
     public bool UseLeaderboardScopeFingerprints { get; set; } = true;
 
     /// <summary>
+    /// When true, solo snapshot flushes skip physically writing scopes whose
+    /// content fingerprint is unchanged from the prior active snapshot. Snapshot
+    /// state remains pinned to the prior physical snapshot for those scopes.
+    /// </summary>
+    public bool SkipUnchangedPhysicalLeaderboardSnapshots { get; set; }
+
+    /// <summary>
     /// When true, scrape flushes dual-write logical current/version rows for
     /// shadow validation while physical snapshots remain authoritative.
     /// </summary>

@@ -91,6 +91,7 @@ public class ScraperOptionsAndModelsTests
         Assert.True(opts.Compete);
         Assert.False(opts.ExperimentalRanks);
         Assert.False(opts.AppManual);
+        Assert.False(opts.SkipUnchangedPhysicalLeaderboardSnapshots);
     }
 
     [Fact]

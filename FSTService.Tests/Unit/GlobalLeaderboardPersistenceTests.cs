@@ -267,6 +267,9 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         return (reader.GetInt64(0), reader.GetInt64(1), reader.GetBoolean(2));
     }
 
+    private List<LeaderboardEntryDto> GetCurrentState(GlobalLeaderboardPersistence glp, string songId, string instrument)
+        => glp.GetCurrentStateLeaderboard(songId, instrument, top: 10) ?? [];
+
     // ═══ Basic Persistence ══════════════════════════════════════
 
     [Fact]
@@ -544,6 +547,88 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             CurrentUpserts: 1,
             VersionsClosed: 1,
             VersionsOpened: 1), GetLogicalWriteMetrics(44, "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task FlushSpoolAsync_when_physical_snapshot_skip_enabled_pins_unchanged_scope_to_previous_snapshot()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { SkipUnchangedPhysicalLeaderboardSnapshots = true });
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+
+        Assert.Equal(1, GetSnapshotRowCount(42, "song_1", "Solo_Guitar"));
+        Assert.Equal((42, 42, true), GetSnapshotState("song_1", "Solo_Guitar"));
+
+        glp.StartSpoolWriter(43, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(43, expectedPairs: expectedPairs);
+
+        Assert.Equal(0, GetSnapshotRowCount(43, "song_1", "Solo_Guitar"));
+        Assert.Equal((42, 42, true), GetSnapshotState("song_1", "Solo_Guitar"));
+        var unchangedRows = GetCurrentState(glp, "song_1", "Solo_Guitar");
+        var unchangedEntry = Assert.Single(unchangedRows);
+        Assert.Equal(100_000, unchangedEntry.Score);
+
+        glp.StartSpoolWriter(44, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 101_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(44, expectedPairs: expectedPairs);
+
+        Assert.Equal(1, GetSnapshotRowCount(44, "song_1", "Solo_Guitar"));
+        Assert.Equal((44, 44, true), GetSnapshotState("song_1", "Solo_Guitar"));
+        var changedRows = GetCurrentState(glp, "song_1", "Solo_Guitar");
+        var changedEntry = Assert.Single(changedRows);
+        Assert.Equal(101_000, changedEntry.Score);
     }
 
     [Fact]

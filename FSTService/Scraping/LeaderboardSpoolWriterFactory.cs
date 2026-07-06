@@ -26,6 +26,7 @@ public static class LeaderboardSpoolWriterFactory
         var db = (InstrumentDatabase)persistence.GetOrCreateInstrumentDb(instrument);
         var activeInstrument = db.Instrument;
         var writeLegacyLiveRows = persistence.WriteLegacyLiveLeaderboardDuringScrape;
+        var skipUnchangedPhysicalSnapshots = persistence.SkipUnchangedPhysicalLeaderboardSnapshots;
 
         try
         {
@@ -118,6 +119,7 @@ public static class LeaderboardSpoolWriterFactory
                 snapshotCmd.CommandText = BuildSnapshotInsertSql();
                 snapshotCmd.Parameters.AddWithValue("snapshotId", scrapeId);
                 snapshotCmd.Parameters.AddWithValue("instrument", activeInstrument);
+                snapshotCmd.Parameters.AddWithValue("skipUnchangedPhysicalSnapshots", skipUnchangedPhysicalSnapshots);
                 snapshotCmd.ExecuteNonQuery();
             }
 
@@ -176,8 +178,10 @@ public static class LeaderboardSpoolWriterFactory
 
     internal static string BuildSnapshotInsertSql() =>
         "INSERT INTO leaderboard_entries_snapshot (snapshot_id, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, first_seen_at, last_updated_at) " +
-        "SELECT @snapshotId, song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts, ts " +
+        "SELECT @snapshotId, snapshot_rows.song_id, snapshot_rows.instrument, snapshot_rows.account_id, snapshot_rows.score, snapshot_rows.accuracy, snapshot_rows.is_full_combo, snapshot_rows.stars, snapshot_rows.season, snapshot_rows.percentile, snapshot_rows.rank, snapshot_rows.source, snapshot_rows.difficulty, snapshot_rows.api_rank, snapshot_rows.end_time, snapshot_rows.band_members_json, snapshot_rows.band_score, snapshot_rows.base_score, snapshot_rows.instrument_bonus, snapshot_rows.overdrive_bonus, snapshot_rows.instrument_combo, snapshot_rows.ts, snapshot_rows.ts " +
         "FROM (SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, source, api_rank, end_time, band_members_json, band_score, base_score, instrument_bonus, overdrive_bonus, instrument_combo, ts FROM _le_staging WHERE instrument = @instrument ORDER BY song_id, instrument, account_id, score DESC, ts DESC) snapshot_rows " +
+        "LEFT JOIN leaderboard_scope_fingerprints scope_fingerprint ON scope_fingerprint.song_id = snapshot_rows.song_id AND scope_fingerprint.instrument = snapshot_rows.instrument AND scope_fingerprint.scope_kind = 'alltime' " +
+        "WHERE NOT (@skipUnchangedPhysicalSnapshots AND scope_fingerprint.last_seen_scrape_id = @snapshotId AND scope_fingerprint.last_changed_scrape_id < @snapshotId) " +
         "ON CONFLICT (snapshot_id, song_id, instrument, account_id) DO UPDATE SET " +
         "score = EXCLUDED.score, accuracy = EXCLUDED.accuracy, is_full_combo = EXCLUDED.is_full_combo, stars = EXCLUDED.stars, season = EXCLUDED.season, percentile = EXCLUDED.percentile, rank = EXCLUDED.rank, source = EXCLUDED.source, difficulty = EXCLUDED.difficulty, api_rank = EXCLUDED.api_rank, end_time = EXCLUDED.end_time, band_members_json = EXCLUDED.band_members_json, band_score = EXCLUDED.band_score, base_score = EXCLUDED.base_score, instrument_bonus = EXCLUDED.instrument_bonus, overdrive_bonus = EXCLUDED.overdrive_bonus, instrument_combo = EXCLUDED.instrument_combo, last_updated_at = EXCLUDED.last_updated_at";
 

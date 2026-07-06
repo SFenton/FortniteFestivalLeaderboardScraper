@@ -48,6 +48,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     public bool UseLeaderboardScopeFingerprints => _features.UseLeaderboardScopeFingerprints;
 
     /// <summary>
+    /// True when unchanged all-time solo scopes should keep using their previous
+    /// physical snapshot instead of writing duplicate rows for the current scrape.
+    /// Scope fingerprints must remain enabled because they are the correctness gate.
+    /// </summary>
+    public bool SkipUnchangedPhysicalLeaderboardSnapshots =>
+        _features.SkipUnchangedPhysicalLeaderboardSnapshots && UseLeaderboardScopeFingerprints;
+
+    /// <summary>
     /// True when scrape flushes should dual-write logical current/version rows.
     /// Existing snapshot/current-state rows remain authoritative.
     /// </summary>
@@ -971,6 +979,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             ?? [];
 
         var finalizedColumn = wave == 2 ? "wave2_finalized_at" : "wave1_finalized_at";
+        var skipUnchangedPhysicalSnapshots = SkipUnchangedPhysicalLeaderboardSnapshots;
         using var conn = _pgDataSource!.OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -978,18 +987,43 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 SELECT DISTINCT pair.song_id, pair.instrument
                 FROM unnest(@expectedSongIds::text[], @expectedInstruments::text[]) AS pair(song_id, instrument)
             ), snapshot_pairs AS (
-                SELECT DISTINCT song_id, instrument
+                SELECT DISTINCT song_id, instrument, TRUE AS has_snapshot_rows
                 FROM leaderboard_entries_snapshot
                 WHERE snapshot_id = @scrapeId
             ), activation_pairs AS (
-                SELECT song_id, instrument FROM snapshot_pairs
+                SELECT song_id, instrument, has_snapshot_rows FROM snapshot_pairs
                 UNION
-                SELECT song_id, instrument FROM expected_pairs
+                SELECT song_id, instrument, FALSE AS has_snapshot_rows FROM expected_pairs
+            ), activation_scopes AS (
+                SELECT song_id,
+                       instrument,
+                       BOOL_OR(has_snapshot_rows) AS has_snapshot_rows
+                FROM activation_pairs
+                GROUP BY song_id, instrument
+            ), desired_state AS (
+                SELECT activation_scopes.song_id,
+                       activation_scopes.instrument,
+                       CASE
+                           WHEN @skipUnchangedPhysicalSnapshots
+                            AND NOT activation_scopes.has_snapshot_rows
+                            AND scope_fingerprint.last_seen_scrape_id = @scrapeId
+                            AND scope_fingerprint.last_changed_scrape_id < @scrapeId
+                               THEN COALESCE(existing.active_snapshot_id, scope_fingerprint.last_changed_scrape_id)
+                           ELSE @scrapeId
+                       END AS active_snapshot_id
+                FROM activation_scopes
+                LEFT JOIN leaderboard_snapshot_state existing
+                  ON existing.song_id = activation_scopes.song_id
+                 AND existing.instrument = activation_scopes.instrument
+                LEFT JOIN leaderboard_scope_fingerprints scope_fingerprint
+                  ON scope_fingerprint.song_id = activation_scopes.song_id
+                 AND scope_fingerprint.instrument = activation_scopes.instrument
+                 AND scope_fingerprint.scope_kind = 'alltime'
             ), upserted AS (
                 INSERT INTO leaderboard_snapshot_state
                 (song_id, instrument, active_snapshot_id, scrape_id, is_finalized, {finalizedColumn}, updated_at)
-                SELECT song_id, instrument, @scrapeId, @scrapeId, TRUE, @now, @now
-                FROM activation_pairs
+                SELECT song_id, instrument, active_snapshot_id, active_snapshot_id, TRUE, @now, @now
+                FROM desired_state
                 ON CONFLICT (song_id, instrument) DO UPDATE SET
                     active_snapshot_id = EXCLUDED.active_snapshot_id,
                     scrape_id = EXCLUDED.scrape_id,
@@ -1002,6 +1036,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             """;
         cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("skipUnchangedPhysicalSnapshots", skipUnchangedPhysicalSnapshots);
         cmd.Parameters.AddWithValue("expectedSongIds", expectedPairArray.Select(pair => pair.SongId).ToArray());
         cmd.Parameters.AddWithValue("expectedInstruments", expectedPairArray.Select(pair => pair.Instrument).ToArray());
         return Convert.ToInt32(cmd.ExecuteScalar());
