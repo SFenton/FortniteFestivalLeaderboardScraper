@@ -109,10 +109,10 @@ High dead tuple candidates observed:
 
 | Surface | Dead tuple signal | Decision |
 |---|---:|---|
-| `band_members`, `band_member_stats`, `band_search_*_projection`, `band_entries_duets` | about 99% dead tuple ratio in stats | Reclaim only after live-scrape A/B parity-gated maintenance proof; may need vacuum/repack strategy. |
-| `band_team_rank_history_points_v2_trios` | about 44.5% dead tuples | High-value maintenance candidate after history retention/index plan. |
-| `band_team_rank_history_points_v2_duets` | about 24.9% dead tuples | High-value maintenance candidate after history retention/index plan. |
-| Solo/composite rank history partitions | about 14-15% dead tuples on several large partitions | Consider after retention/index review. |
+| `band_members`, `band_member_stats`, `band_search_*_projection`, `band_entries_duets` | Refreshed P7 stats show about 4.93-17.17% dead tuples after bounded `ANALYZE`. | Do not use the earlier stale 99% signal for rewrite/repack decisions; maintenance remains after safer reclaim/headroom. |
+| `band_team_rank_history_points_v2_trios` | Refreshed P7 stats show about 7.68% dead tuples. | Not a rewrite/repack target before history retention/index plan and headroom. |
+| `band_team_rank_history_points_v2_duets` | Refreshed P7 stats show about 10.59% dead tuples. | Not a rewrite/repack target before history retention/index plan and headroom. |
+| Solo/composite rank history partitions | `composite_rank_history` refreshed at about 13.84% dead tuples; `rank_history` is empty. | Consider only after retention/index review and parity/headroom gates. |
 
 ## Autonomous roadmap execution log
 
@@ -583,7 +583,7 @@ P8 decision:
 - Accepted as a low-risk DB write-pressure reduction.
 - This does not change endpoint JSON bodies or frozen cached-read behavior.
 - Persistent public API cache entries should now come from precompute/staging/publish flows, not opportunistic live GETs.
-- Remaining P8 targets, such as `/api/status` counters, `/api/songs` split payloads, and member-score fan-out, can be handled as later safe implementation tasks if needed after deploy/eval evidence.
+- Additional P8 targets, such as `/api/status` counters, `/api/songs` split payloads, and member-score fan-out, are deferred until deploy/eval evidence identifies a measured bottleneck and matched response-parity baseline.
 
 ## Prioritization principles
 
@@ -934,7 +934,7 @@ Decision tier: lower immediate storage reclaim, good operational efficiency.
 | History storage | Band rank-history v2 | 799 GB group | Retention/index redesign | Storage and history job time down | History API parity |
 | Future scrape cost | Unchanged row/scope writes | 69.01% unchanged in P7 | Scope/row write skipping | WAL/rows written down | Full scrape parity |
 | Temp/CPU/I/O | Ranking temp tables | 3,354 GB temp bytes | Reduce temp materialization/rebuilds | Temp bytes and wall clock down | Rank/API parity |
-| Bloat | High-dead derived/history tables | 25-99% dead tuple ratios on candidates | Vacuum/repack/rebuild after headroom | Relation size down | Parity/maintenance gate |
+| Bloat | High-dead derived/history tables | Refreshed P7 stats show about 4.93-17.17% dead tuples on candidates | Vacuum/repack/rebuild after headroom | Relation size down | Parity/maintenance gate |
 | Hot reads | Status/songs/member-score/cache paths | Count scans, fan-out, live cache writes | Maintained counters/projections, batched reads | p95/query count down | Response parity |
 
 ## Required proof package for every reclaim action
