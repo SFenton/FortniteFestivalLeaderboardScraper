@@ -11,8 +11,8 @@
 ## FST live-safety rules
 
 - Production compose ownership is `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator says otherwise.
-- During backend/database/storage work, `fstservice` and `festivalweb` must stay live, healthy, and usable by public users unless the exact task explicitly approves restarting or redeploying one of them.
-- Do not restart `fstworker`, run full scrapes, prune/delete data, drop tables/indexes, move active Postgres data, or run `VACUUM FULL`/`CLUSTER`/`pg_repack` without explicit approval for that action.
+- Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or taken down for maintenance when useful, but redeploy/recover them as soon as possible to preserve the public user experience.
+- Do not prune/delete data, drop tables/indexes, move active Postgres data, or run `VACUUM FULL`/`CLUSTER`/`pg_repack` without explicit approval for that action.
 - Before broad DB probes, scrapes, deploys, or maintenance, check Docker health, Postgres readiness, public-read freeze state, published scrape, locks/long queries, disk headroom, CPU, and memory.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 - Preserve historical leaderboard correctness, Epic/API provenance, publication state, freeze/unfreeze behavior, and replay/parity evidence.
@@ -21,7 +21,7 @@
 
 - Never claim Playwright or any configured MCP tool is unreliable, unavailable, or cannot run from agents/subprocesses. If a tool call fails, report the actual error.
 - Never fabricate measurements. DOM/UI measurements must come from real browser tooling; DB/runtime measurements must come from commands, logs, or database probes.
-- Prefer read-only probes before mutations. Use bounded queries and avoid broad scans during live-sensitive windows unless explicitly approved.
+- Prefer read-only probes before mutations. Use bounded queries and avoid broad scans during live-sensitive windows unless they are part of the maintenance/evaluation work being actively executed.
 - Keep secrets out of logs, docs, artifacts, shell history, e-mail reports, and commits.
 
 ## Dependency license maintenance

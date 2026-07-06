@@ -1,13 +1,12 @@
 # Postgres Persistence Priority Plan
 
-This plan records the approved direction for improving FST Postgres persistence without starting additional database cleanup, migrations, or scrape evaluations automatically.
+This plan records the approved direction for improving FST Postgres persistence while allowing normal scrape/service operation to continue. Destructive database cleanup, irreversible migrations, and reclaim maintenance still require explicit approval.
 
 ## Current production state
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - Active API service: `fstservice` is healthy.
-- `fstservice` and `festivalweb` must remain live and usable during backend database work unless an exact restart/redeploy is explicitly approved.
-- Worker: `fstworker` is intentionally stopped until storage headroom and the next evaluation plan are approved.
+- Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance, but must be redeployed/recovered as soon as possible to preserve the user experience.
 - Current published scrape: `1214`.
 - Public reads: frozen to published scrape `1214` after the Phase B safety correction.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
@@ -55,9 +54,9 @@ Important finding: the logical model indicates most observed rows are unchanged,
 
 ## Immediate blocker
 
-`/mnt/docker-storage` hosts the active Postgres bind mount and remains too full for another full scrape/post-process/publish cycle. The biggest consumers are physical leaderboard snapshots, band rank-history point tables, band read projections, rank/composite history tables, and their indexes.
+`/mnt/docker-storage` hosts the active Postgres bind mount and has limited free space for another full scrape/post-process/publish cycle. The biggest consumers are physical leaderboard snapshots, band rank-history point tables, band read projections, rank/composite history tables, and their indexes.
 
-No destructive retention prune is approved. Do not restart `fstworker`, run another full scrape, or start cleanup/migration work until the next plan is explicitly approved.
+No destructive retention prune is approved. Normal scrapes/service operation may proceed, but destructive cleanup, irreversible migration, drop/truncate/repack/rewrite work, or active Postgres data movement still requires explicit approval.
 
 ## Task status
 
@@ -70,9 +69,9 @@ No destructive retention prune is approved. Do not restart `fstworker`, run anot
 | History index owner cards | Complete | Read-only owner cards for `band_team_rank_history_*_v2` indexes completed on 2026-07-06; no index or data mutation performed. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and approval gates documented on 2026-07-06. |
 | `band_read_*` quarantine approval package | Complete | Reversible, approval-gated quarantine package documented on 2026-07-06; no DDL executed. |
-| Autonomous scrape rollout | Blocked | `fstworker` remains stopped. Do not continue until storage/reclaim plan is approved. |
+| Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Not approved | No deletes, drops, rewrites, repacks, or moves are approved by this document alone. |
-| Next implementation phase | Pending approval | Must have explicit operator approval for any production mutation, destructive maintenance, worker restart, or full scrape/eval. |
+| Next implementation phase | Pending approval for destructive work only | Must have explicit operator approval for destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement. |
 
 ## Architecture evaluation evidence (2026-07-06)
 
@@ -80,7 +79,7 @@ The current storage blocker is not a single table; it is the combined effect of 
 
 | Evidence | Current value | Interpretation |
 |---|---:|---|
-| `/mnt/docker-storage` free space | about 77 GB free, 98% used | Unsafe for another full scrape/post-process/publish eval. |
+| `/mnt/docker-storage` free space | about 77 GB free, 98% used | High risk for scrape/post-process/publish headroom; monitor closely while normal scraping proceeds. |
 | Solo physical snapshots | 1,579 GB total; 681 GB heap; 898 GB index/toast | Largest storage target, but highest correctness risk. |
 | Band rank-history points v2 | 799 GB total; 324 GB heap; 475 GB index/toast | Major storage and write-maintenance surface. |
 | Band read projections | 398 GB total; 254 GB heap; 144 GB index/toast | Large derived surface; repo code did not reference several `band_read_*` names during review. |
@@ -256,9 +255,9 @@ Live-safety preflight:
 | Production compose | `fstservice`, `festivalweb`, and `fst-postgres` were healthy. | Safe for bounded read-only probes. |
 | API readiness | `fstservice` `/readyz` returned `Healthy`; Postgres accepted connections. | Public API remained live. |
 | Public reads | `published_scrape_id=1214`, `public_reads_frozen=true`, `public_reads_frozen_scrape_id=1214`. | Correctly pinned to the published scrape while storage work continues. |
-| Disk | `/mnt/docker-storage` remained about 77 GB free and 98% used. | Still unsafe for full scrape/eval or rewrite maintenance. |
+| Disk | `/mnt/docker-storage` remained about 77 GB free and 98% used. | High scrape/eval/rewrite headroom risk; monitor closely and prioritize reclaim proof. |
 | Locks/queries | No ungranted locks; only short idle/service and diagnostic sessions were observed. | No blocking database incident. |
-| Worker/scrape | Recent `scrape_log` rows showed latest completed scrape `1214`; `scrape_log` has no `status` column. | `fstworker` remains approval-gated/stopped; scrape state probe adjusted to actual schema. |
+| Worker/scrape | Recent `scrape_log` rows showed latest completed scrape `1214`; `scrape_log` has no `status` column. | Scrapes should proceed normally under the updated operating policy; scrape state probe adjusted to actual schema. |
 
 Production band rank-history configuration observed from the live service:
 
@@ -381,7 +380,7 @@ Approval-gated candidate action:
 | Step | Action | Purpose | Live-safety gate | Rollback |
 |---|---|---|---|---|
 | 1 | Re-run live-safety preflight immediately before any DDL. | Confirm `fstservice`, `festivalweb`, Postgres, locks, disk, freeze state, and published scrape are still safe. | Must show healthy service/web/Postgres, no dangerous locks, public reads still frozen to `1214`, and no running scrape. | Abort with no mutation. |
-| 2 | In a maintenance window, acquire short-lock-timeout DDL and rename `band_read_*` tables to an approved quarantine prefix/suffix. | Hide the projection from accidental readers without deleting data. | `fstservice` and `festivalweb` stay live; no worker/full scrape. Use short lock and statement timeouts. | Rename each object back to its original name. |
+| 2 | In a maintenance window, acquire short-lock-timeout DDL and rename `band_read_*` tables to an approved quarantine prefix/suffix. | Hide the projection from accidental readers without deleting data. | Keep downtime short if restart/redeploy is needed; normal scrapes may continue unless the maintenance step intentionally pauses them. Use short lock and statement timeouts. | Rename each object back to its original name. |
 | 3 | Monitor representative public API routes and service logs. | Prove no active app path references quarantined objects. | `/readyz`, web app shell, `/api/songs`, representative solo leaderboard, representative band leaderboard, and band history route stay healthy. | Rename tables back immediately if any query fails because of quarantined names. |
 | 4 | Hold quarantine through an explicit observation window. | Distinguish obsolete projection from rare path dependency. | Continue checking locks, errors, public reads, and disk. | Rename back if errors appear. |
 | 5 | Only after successful observation, request separate explicit drop approval. | Reclaim about 398 GB table/index space. | Drop remains destructive and is not approved by this plan. | Restore from backup/regenerate projection path must be documented before drop. |
@@ -417,9 +416,9 @@ Status and rules:
 - `fstservice` and `fst-postgres` remain healthy.
 - `festivalweb` remains healthy and users can use the app against the last published scrape.
 - Published scrape remains `1214`.
-- Public reads remain unfrozen.
-- `fstworker` remains stopped until explicitly approved.
-- No full scrape, destructive cleanup, `VACUUM FULL`, `pg_repack`, table rewrite, data move, or index drop happens from this plan alone.
+- Public reads remain in the current safe publication state and must be checked before maintenance.
+- Scrapes proceed normally unless a specific maintenance step temporarily pauses worker/service/web.
+- No destructive cleanup, `VACUUM FULL`, `pg_repack`, table rewrite, data move, or index drop happens from this plan alone.
 
 Validation:
 
@@ -746,9 +745,8 @@ Before any approved reclaim action, produce a short proof package:
 
 ## Do-not-do list until explicitly approved
 
-- Do not restart `fstworker`.
-- Do not stop or break `fstservice` or `festivalweb` for backend/database work unless the exact restart/redeploy is explicitly approved.
-- Do not run another full scrape/eval.
+- Do not leave `fstworker`, `fstservice`, or `festivalweb` down after maintenance; redeploy/recover them as soon as possible.
+- Do not intentionally leave normal scrapes disabled as a safety posture; scrapes should proceed unless an active maintenance step temporarily pauses them.
 - Do not delete/prune historical data.
 - Do not drop indexes or tables.
 - Do not run `VACUUM FULL`, `CLUSTER`, `pg_repack`, or broad rewrites.

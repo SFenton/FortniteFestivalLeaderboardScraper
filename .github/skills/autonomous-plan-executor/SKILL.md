@@ -9,7 +9,7 @@ Use this skill when the operator explicitly asks for autonomous execution, names
 
 This skill is an execution orchestrator. It does not replace focused repository skills; it owns plan parsing, task ordering, stop counters, self-unblocking, progress cadence, commit/push boundaries, phase reports, and final recap reports while applying the focused skill for the current domain.
 
-Once invoked, run with day-trader-style persistence: continue through every approved phase/task/priority in order, insert safe derivative work as it is discovered, commit and push accepted progress, and do not stop at reports, completed probes, rejected hypotheses, commits, or approval-gated runtime actions. FST live-safety gates block only the exact unsafe action; they do not end the autonomous queue while safe code, docs, tests, probes, manifests, parity checks, feasibility packages, or readiness work remains.
+Once invoked, run with day-trader-style persistence: continue through every approved phase/task/priority in order, insert safe derivative work as it is discovered, commit and push accepted progress, and do not stop at reports, completed probes, rejected hypotheses, commits, maintenance restarts, deployments, or approval-gated destructive actions. FST live-safety gates block only the exact unsafe/destructive action; they do not end the autonomous queue while safe code, docs, tests, probes, manifests, parity checks, feasibility packages, maintenance, deploy, scrape, or readiness work remains.
 
 ## Input contract
 
@@ -37,14 +37,12 @@ Before executing each phase or task, classify the domain and apply the matching 
 
 Repository rules override general plan text. Preserve historical leaderboard correctness, Epic/API provenance, provider constraints, public-read publication state, Docker resource safety, README/docs accuracy, and dependency-license maintenance even if the input plan omits them.
 
-## Always-live service and web requirement
+## Maintenance and scrape-continuity requirement
 
-- During backend, database, storage, reclaim, scrape-planning, or performance work, `fstservice` and `festivalweb` must stay live, healthy, and usable by public users unless the exact task explicitly approves restarting or redeploying one of them.
-- Backend database work must be planned around live API/web availability. Prefer read-only probes, online/concurrent operations, bounded batches, feature flags, shadow tables, publication gates, and rollback-safe changes that do not interrupt normal app use.
-- If an approved restart/redeploy is required, restart only the named service, keep downtime minimal, verify `/readyz`, `festivalweb` health, and a browser-visible route immediately afterward, then continue.
-- A stale/stopped `fstworker` is not by itself a reason to block the web app. The API and web app should continue serving the last published scrape while backend/database work proceeds.
-- If a proposed action would make the service or web app unavailable outside an explicitly approved restart/redeploy window, classify it as an approval gate and choose a safer live-compatible alternative first.
-- When `fstworker` restart, full scrape/eval, destructive reclaim, index/table drop, rewrite/repack, or publication-state change is not approved, block only that exact action. Continue all safe non-interactive work around it: code/test work, bounded read-only probes, fixture or artifact benchmarks, parity tooling, manifests, rollback plans, approval packages, operational monitors, documentation, and commit/report updates.
+- Scrapes should proceed normally while autonomous work continues. Do not keep `fstworker` stopped as a default safety posture when normal scraping is expected.
+- `fstworker`, `fstservice`, and `festivalweb` may be restarted, redeployed, or temporarily taken down for maintenance when useful. Keep downtime as short as practical, redeploy/recover as soon as possible, and verify worker/service/web health immediately afterward.
+- Backend/database work should preserve the user experience by using prompt redeploys, publication gates, rollback-safe changes, and clear monitoring rather than by avoiding all downtime.
+- Destructive reclaim, index/table drop, table rewrite/repack, active data movement, or irreversible publication-state changes still require explicit approval. Block only that exact unsafe/destructive action and continue all safe non-interactive work around it: code/test work, deploy prep, bounded probes, fixture or artifact benchmarks, parity tooling, manifests, rollback plans, approval packages, operational monitors, documentation, and commit/report updates.
 
 ## Required execution loop
 
@@ -78,7 +76,7 @@ Repository rules override general plan text. Preserve historical leaderboard cor
 
 End-of-queue rule: before declaring the queue complete, sweep all rejected, blocked, and caveated decisions. Prioritize new safe work in this order: correctness/parity, live/public-read safety, data coverage, storage/retention feasibility, performance/resource safety, operational monitoring, documentation/reporting. "Not approved for production mutation/scrape" does not mean "no more work"; continue with readiness work that is safe and useful.
 
-Approval blocker rule: if `fstworker` start, full scrape/eval, destructive reclaim, index/table drop, rewrite/repack, data movement, or public-read unfreeze is blocked, keep processing safe alternatives such as rollback SQL drafts, manifest/checksum tooling, endpoint parity tests, fixture benchmarks, bounded EXPLAIN/probe packages, monitoring scripts, docs/runbooks, and approval packages. Stop only the blocked production action unless every safe derivative path is exhausted.
+Approval blocker rule: if destructive reclaim, index/table drop, rewrite/repack, active data movement, or irreversible publication-state change is blocked, keep processing safe alternatives such as rollback SQL drafts, manifest/checksum tooling, endpoint parity tests, fixture benchmarks, bounded EXPLAIN/probe packages, monitoring scripts, docs/runbooks, deployments, normal scrape readiness, and approval packages. Stop only the blocked destructive action unless every safe derivative path is exhausted.
 
 ## Stop counters
 
@@ -97,9 +95,9 @@ Accepted improvements reset the relevant counter. Rejected hypotheses do not sto
 
 1. Read Docker caps and runtime defaults before heavy work. Production runs under `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator says otherwise.
 2. Before broad evals, scrapes, backfills, DB scans, deploys, or service changes, run live-safety probes: `docker compose ps`, service `/readyz`, Postgres readiness, locks/long queries, `docker stats --no-stream`, disk headroom, public-read freeze state, and published scrape.
-3. Do not restart `fstworker`, run full scrapes, prune/delete data, drop tables/indexes, move active Postgres data, or run `VACUUM FULL`/`CLUSTER`/`pg_repack` without explicit approval for that exact action.
-4. Keep `fstservice` and `festivalweb` available during backend/database work unless an explicit restart/redeploy window is part of the task.
-5. When an eval/scrape/deploy/DDL action is gated, continue with smaller safe substitutes that answer the same question as far as possible: fixture tests, code review, generated rollback DDL, representative read-only query plans, manifest generation, API parity probes, storage math, and approval-package drafts.
+3. Scrapes may proceed normally, and `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance. Redeploy/recover them as soon as possible, then verify worker state, `/readyz`, `festivalweb` health, and representative public routes.
+4. Do not prune/delete data, drop tables/indexes, move active Postgres data, or run `VACUUM FULL`/`CLUSTER`/`pg_repack` without explicit approval for that exact action.
+5. When a destructive DDL/reclaim action is gated, continue with smaller safe substitutes that answer the same question as far as possible: fixture tests, code review, generated rollback DDL, representative read-only query plans, manifest generation, API parity probes, storage math, and approval-package drafts.
 6. Define the real-time or throughput target before accepting performance work. Include wall clock, p50/p95/p99 or phase latency, CPU, memory, WAL, temp bytes, disk read/write, lock waits, and artifact sizes where relevant.
 7. Correctness and publication parity outrank speed. Do not accept a performance win that changes API output, breaks historical correctness, bypasses provider constraints, or weakens public-read safety.
 
