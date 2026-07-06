@@ -11,7 +11,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Public reads: frozen to published scrape `1214` after the Phase B safety correction.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
 - The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
-- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback. `fstworker` was not restarted.
+- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback. A `fstworker` validation start was attempted and rejected because it made `fstservice`/web API routes time out; `fstworker` is stopped again and public API/web health is restored.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Completed persistence phases
@@ -76,6 +76,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | P7 bloat readiness probe | Complete | Repaired stale candidate table stats with bounded `ANALYZE` and refreshed read-only size/dead-tuple estimates; destructive/rewrite maintenance remains blocked by headroom and parity gates. |
 | P8 public cache write-pressure reduction | Complete | Stopped request-time public API middleware writes to `api_response_cache`; cache persistence now stays in precompute/publish paths while frozen reads still serve published cache hits. |
 | API service redeploy | Complete | Built `fstservice:sticky-rank-history-tracking`, recreated `fstservice` only, kept `fstworker` stopped, and verified `/readyz`, `festivalweb`, Postgres, and disk after recovery. |
+| Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Hard-gated by storage/parity readiness | Full worker scrape/eval, destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, and active Postgres data movement remain blocked until storage headroom and live-scrape A/B data-parity gates are satisfied. |
@@ -604,6 +605,31 @@ Deployment decision:
 - Accepted for the API/service portion of the changes.
 - `fstworker` remains stopped after the prior disk-exhaustion failure; a full worker scrape/restart remains gated by storage headroom and live-scrape A/B readiness.
 - Production compose/.env defaults are staged so the next intentional worker recreate uses `ComboBatched` band ranking writes and skips optional band-song projection rebuilds by default.
+
+### [x] Phase L: Worker validation start rejected by public API health gate (2026-07-07T00:40:00Z)
+
+Mode: Promotion readiness / live-safe worker validation. No scrape completed, no schema/data/index/table mutation was accepted, and `fstworker` was stopped to restore public API health.
+
+Validation attempt:
+
+| Step | Result | Decision |
+|---|---|---|
+| Pre-start config check | Active compose resolved `RUN_ONCE=true`, `ENABLED_PHASES=All`, `BandTeamRankings__WriteMode=ComboBatched`, and `BandTeamRankings__RebuildBandSongTeamRankings=false`. | Safe enough to attempt worker validation with close monitoring. |
+| Worker recreate | `docker compose -f docker-compose.yml -f docker-compose.pia-30.yml up -d --no-deps --force-recreate fstworker` started `fstworker`. | Validation started. |
+| Public path monitor | `festivalweb` static shell returned 200, but `fstservice` `/readyz` and `/api/service-info` through `festivalweb` timed out; nginx logged upstream 504s for `/api/service-info`. | Rejected. Static web health alone is insufficient when API-backed routes are timing out. |
+| Recovery action | `docker compose ... stop fstworker` stopped the worker. | Accepted rollback. |
+| Recovery validation | `fstservice` `/readyz` returned `Healthy`; `festivalweb` static shell returned 200; `/api/service-info` through `festivalweb` returned 200; Postgres had no ungranted locks. | Public API/web health restored. |
+
+Observed cause/evidence:
+
+- `fstworker` startup resumed band rank-history background job `456` for `Band_Trios` scrape `1214`.
+- The worker was stopped while `StartupInitializer`/`DatabaseInitializer.EnsureSchemaAsync` was still running, so worker logs ended with `57014: canceling statement due to user request`.
+- During the attempt, `fstservice` became unhealthy/timeouts from the public path, so this worker start path is not acceptable without additional isolation or a safer startup/maintenance plan.
+
+Worker validation decision:
+
+- Rejected/blocked until a safer worker start path can prove `fstservice` and `festivalweb` API routes stay healthy after all expected containers return.
+- The autonomous executor skill now explicitly requires post-restart/redeploy verification of Docker health, `fstservice` `/readyz`, `festivalweb` static shell, and a representative API route through `festivalweb`, and immediate rollback if `fstworker` breaks API/web health.
 
 ## Prioritization principles
 
