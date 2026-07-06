@@ -106,6 +106,64 @@ High dead tuple candidates observed:
 | `band_team_rank_history_points_v2_duets` | about 24.9% dead tuples | High-value maintenance candidate after history retention/index plan. |
 | Solo/composite rank history partitions | about 14-15% dead tuples on several large partitions | Consider after retention/index review. |
 
+## Autonomous roadmap execution log
+
+### [x] Phase A: P0-P2 read-only proof package (2026-07-06T22:36:16Z)
+
+Mode: Current-system probe / retention feasibility. No schema, data, runtime config, service, index, table, worker, or scrape mutations were performed.
+
+| Priority | Decision | Evidence | Remaining gate |
+|---|---|---|---|
+| P0 live safety | Accepted | `fstservice` `/readyz` returned `Healthy`; `festivalweb` was healthy and serving the app shell; Postgres was healthy; public reads were unfrozen; published scrape was `1214`; `fstworker` remained intentionally stopped/stale; no ungranted locks. | Continue checking before every approved phase. |
+| P1 `band_read_*` ownership proof | Accepted for proof; blocked for reclaim | Source search found no active repo references outside this plan; `pg_views` found no view references; `pg_stat_statements` references were only diagnostic queries; representative `/api/songs` and `/api/leaderboard/{songId}/bands/Band_Duets?top=5` returned 200 without `band_read_*` usage. | Any quarantine/drop/repack/truncate requires explicit approval. |
+| P2 low-scan index proof | Accepted for proof; blocked for changes | Read-only index inventory found large low-scan surfaces, including band rank-history points v2, rank/composite history, current/published band ranking projections, band search, and scrape-dirty indexes. Several primary keys have zero scans but are structural constraints and are not safe drop candidates without design review. | Any index drop/replacement requires exact object approval and rollback DDL. |
+
+P1 `band_read_*` inventory:
+
+| Table | Total size | Heap | Index/toast | Estimated rows | Stats scans | Interpretation |
+|---|---:|---:|---:|---:|---:|---|
+| `band_read_hot_window` | 191 GB | 160 GB | 31 GB | 174,369,920 | 0 seq / 0 idx | Derived read projection with no observed usage. |
+| `band_read_subject_row` | 190 GB | 88 GB | 102 GB | 60,946,732 | 0 seq / 0 idx | Derived read projection with no observed usage. |
+| `band_read_rank_anchor` | 12 GB | 4,974 MB | 7,713 MB | 12,570,308 | 0 seq / 0 idx | Derived read projection with no observed usage. |
+| `band_read_scope_state` | 5,459 MB | 1,901 MB | 3,559 MB | 7,615,178 | 0 seq / 0 idx | Derived read projection metadata with no observed usage. |
+| `band_read_generation` | 96 KB | 16 KB | 80 KB | 65 exact rows | 0 seq / 0 idx | Small metadata table. |
+| `band_read_publication_state` | 24 KB | 8 KB | 16 KB | 1 exact row | 0 seq / 0 idx | Small metadata table. |
+
+P1 highest-value `band_read_*` index candidates for approval-gated quarantine/drop:
+
+| Index | Size | Scans | Notes |
+|---|---:|---:|---|
+| `band_read_subject_row_pkey` | 45 GB | 0 | Structural primary key; table-level quarantine is safer than isolated PK drop. |
+| `ix_brsr_generation_subject_scope` | 34 GB | 0 | Non-primary covering index; potential drop candidate if table remains unused. |
+| `band_read_hot_window_pkey` | 31 GB | 0 | Structural primary key; table-level quarantine is safer than isolated PK drop. |
+| `ix_brsr_song_scope_team` | 21 GB | 0 | Non-primary read-path index; potential drop candidate if table remains unused. |
+| `ix_brra_scope_sort` | 5,325 MB | 0 | Non-primary read-path index; potential drop candidate if table remains unused. |
+
+Recommended P1 approval package:
+
+1. Approve a non-destructive quarantine plan for `band_read_*` objects, not immediate deletion.
+2. Rename tables/indexes or otherwise hide the surface in a reversible maintenance window while keeping `fstservice` and `festivalweb` live.
+3. Monitor API routes and logs for failed references.
+4. Drop only after observation, rollback proof, and explicit approval.
+
+P2 low-scan giant index evidence:
+
+| Group | Low-scan index count | Total size | Risk classification |
+|---|---:|---:|---|
+| Other indexes, including snapshot primary keys/current-state primary keys | 58 | 827 GB | Not a blanket drop pool; many are structural constraints despite low scans. |
+| Band rank-history points v2 indexes | 9 | 474 GB | High-value design review target; history API parity required. |
+| Rank/composite history indexes | 17 | 134 GB | Retention/latest-query ownership required before changes. |
+| Band ranking projection indexes | 10 | 22 GB | Check generated build-table naming and current/published query plans. |
+| Band search projection indexes | 4 | 19 GB | Validate search/profile routes before changes. |
+| Band entries indexes | 5 | 6,304 MB | Must preserve scrape/write conflict checks and member lookups. |
+| `scrape_dirty_band_team` indexes | 2 | 6,107 MB | Candidate for table-state proof; do not drop without dirty-workflow validation. |
+
+P2 decision:
+
+- Do not drop all low-scan indexes. Low `idx_scan` is useful evidence, but primary keys and unique constraints may be required for correctness, upserts, table swaps, or future writes.
+- The highest safe next proof is to build per-index owner cards for non-primary, non-unique indexes first: query owner, source reference, endpoint/job dependency, replacement index if any, rollback DDL, and estimated reclaim.
+- Primary-key/unique indexes should be handled through table/source-of-truth decisions, not isolated index drops.
+
 ## Prioritization principles
 
 1. Reclaim space first where the surface is likely derived and correctness risk is low.
