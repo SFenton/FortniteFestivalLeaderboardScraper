@@ -195,6 +195,8 @@ services:
       - BandRankHistory__MaxRetryAttempts=${BAND_RANK_HISTORY_MAX_RETRY_ATTEMPTS:-3}
       - BandRankHistory__RetryDelaySeconds=${BAND_RANK_HISTORY_RETRY_DELAY_SECONDS:-900}
       - BandRankHistory__StaleRunningJobMinutes=${BAND_RANK_HISTORY_STALE_RUNNING_JOB_MINUTES:-15}
+      # Combo-batched band-ranking writes reduce one-shot build-table pressure on tight disks.
+      - BandTeamRankings__WriteMode=${BAND_TEAM_RANKINGS_WRITE_MODE:-ComboBatched}
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00

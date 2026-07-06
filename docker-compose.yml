@@ -102,6 +102,8 @@ services:
       - BandRankHistory__MaxRetryAttempts=${BAND_RANK_HISTORY_MAX_RETRY_ATTEMPTS:-3}
       - BandRankHistory__RetryDelaySeconds=${BAND_RANK_HISTORY_RETRY_DELAY_SECONDS:-900}
       - BandRankHistory__StaleRunningJobMinutes=${BAND_RANK_HISTORY_STALE_RUNNING_JOB_MINUTES:-15}
+      # Combo-batched band-ranking writes reduce one-shot build-table pressure on tight disks.
+      - BandTeamRankings__WriteMode=${BAND_TEAM_RANKINGS_WRITE_MODE:-ComboBatched}
       # ── Feature flags (default: all OFF in production) ──
       - Features__Shop=${FEATURE_SHOP:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}

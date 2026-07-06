@@ -1,4 +1,5 @@
 using FSTService.Auth;
+using FSTService.Persistence;
 
 namespace FSTService.Tests.Unit;
 
@@ -78,6 +79,17 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal(BandRankHistoryApiReadSource.NarrowWithWideFallback, opts.ApiReadSource);
         Assert.Equal(250_000, opts.ChunkSize);
         Assert.True(opts.RangeChunkingEnabled);
+    }
+
+    [Fact]
+    public void BandTeamRankingRebuildOptions_DefaultsUseComboBatchedWrites()
+    {
+        var opts = new BandTeamRankingRebuildOptions();
+
+        Assert.Equal(BandTeamRankingWriteMode.ComboBatched, opts.WriteMode);
+        Assert.Equal(0, opts.CommandTimeoutSeconds);
+        Assert.True(opts.DisableSynchronousCommit);
+        Assert.Equal(1, opts.MaxParallelBandTypes);
     }
 
     // ─── FeatureOptions defaults ──────────────────────

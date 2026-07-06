@@ -13,7 +13,7 @@ public sealed class BandTeamRankingRebuildOptions
 
     public static BandTeamRankingRebuildOptions Default { get; } = new();
 
-    public BandTeamRankingWriteMode WriteMode { get; set; } = BandTeamRankingWriteMode.Monolithic;
+    public BandTeamRankingWriteMode WriteMode { get; set; } = BandTeamRankingWriteMode.ComboBatched;
     public int CommandTimeoutSeconds { get; set; } = 0;
     public bool AnalyzeStagingTable { get; set; } = false;
     public bool DisableSynchronousCommit { get; set; } = true;

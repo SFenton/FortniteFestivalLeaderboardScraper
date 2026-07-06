@@ -11,6 +11,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Public reads: frozen to published scrape `1214` after the Phase B safety correction.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
 - The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
+- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; no worker restart was performed during the code/config update.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Completed persistence phases
@@ -70,6 +71,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
+| Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Continue autonomously through parity gates | Destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed after the live-scrape A/B data-parity gate passes. |
@@ -434,6 +436,41 @@ P5 decision:
 - Expected storage/WAL benefit is bounded by unchanged solo scopes; Phase 7 measured 27,178,074 unchanged rows out of 39,385,606 observed rows (69.01%), but the exact physical snapshot reduction must be measured in a matched scrape after deployment.
 - This implementation does not solve the current disk blocker alone; it reduces future duplicate physical snapshot writes after a safe rollout and leaves destructive reclaim work parity-gated.
 
+### [x] Phase G: P6 combo-batched band ranking write-mode default (2026-07-06T23:35:00Z)
+
+Mode: Performance / capacity improvement. No production services, workers, schema, data, indexes, tables, or scrape state were restarted or mutated.
+
+Reason for the change:
+
+| Evidence | Interpretation | Candidate |
+|---|---|---|
+| Failed `fstworker` logs showed `Band_Trios` failed at `insert_ranking_rows` in `Monolithic` mode with `53100: No space left on device`. | A single giant insert from `_band_rank_results` into the build table is a high-risk write burst under the current 77 GB headroom. | Use the existing `ComboBatched` write mode, which inserts overall rows and then combo rows by combo ID. |
+| `Band_Duets` band-song projection also failed building/indexing an optional projection and falls back when rebuild fails. | P6 still needs deeper optional-projection gating, but the first safe change is to reduce required band-team ranking write burst size. | Keep band-song projection behavior unchanged for this phase and continue with a follow-up gate if needed. |
+| `RebuildBandTeamRankings_AllWriteModesMatch` already compares `Monolithic`, `ComboBatched`, and `Phased` outputs. | The candidate has existing correctness parity coverage across ranking scopes and combos. | Promote `ComboBatched` as the safer default while preserving rollback to `Monolithic`. |
+
+Implementation:
+
+| Change | Files/artifacts | Safety gate | Rollback |
+|---|---|---|---|
+| Changed `BandTeamRankingRebuildOptions.WriteMode` default from `Monolithic` to `ComboBatched`. | `FSTService/Persistence/BandTeamRankingRebuildOptions.cs` | No schema/data mutation; runtime behavior changes only when new code/config is used by a worker. | Set `BandTeamRankings:WriteMode=Monolithic`. |
+| Changed repo appsettings and compose template defaults to `ComboBatched`. | `FSTService/appsettings.json`, `FSTService/appsettings.Development.json`, `docker-compose.yml`, `deploy/docker-compose.yml` | Existing `BAND_TEAM_RANKINGS_WRITE_MODE` env override remains the rollback switch. | Override `BAND_TEAM_RANKINGS_WRITE_MODE=Monolithic`. |
+| Updated active production compose defaults without restarting services. | `/home/sfenton/Docker/FestivalServiceTracker/docker-compose.pia-30.yml`, `/home/sfenton/Docker/FestivalServiceTracker/.env` | No live restart; next worker recreate will use `ComboBatched`. | Revert the same non-secret override to `Monolithic`. |
+| Added a default-options unit assertion. | `FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs` | Guards the intended safer default. | Update/remove assertion if rollback is chosen. |
+
+Validation:
+
+| Command | Result | Evidence |
+|---|---|---|
+| `dotnet test FSTService.Tests/FSTService.Tests.csproj --filter "FullyQualifiedName~ScraperOptionsAndModelsTests|FullyQualifiedName~MetaDatabaseRankingsTests.RebuildBandTeamRankings_AllWriteModesMatch|FullyQualifiedName~RankingsCalculatorTests.ComputeBandRankings_UsesConfiguredBandRankingWriteMode"` | Passed: 23 tests, 0 failed, duration 3 s. | Confirms default option shape, all write-mode parity, and configured write-mode propagation into `RebuildBandTeamRankings`. |
+| `docker compose -f docker-compose.yml -f docker-compose.pia-30.yml config | grep -n "BandTeamRankings__WriteMode"` in `/home/sfenton/Docker/FestivalServiceTracker` | Reported `BandTeamRankings__WriteMode: ComboBatched` for service config entries. | Confirms the active production compose config resolves the safer mode for the next recreate. |
+
+P6 decision:
+
+- Accepted as a low-risk write-pressure reduction.
+- This does not claim a storage-reclaim win: final ranking tables and indexes are the same size, but the required build-table insert is split into smaller statements.
+- The worker remains stopped after the previous disk-exhaustion failure; no full scrape restart was performed in this phase.
+- Remaining P6 safe follow-up: gate optional band-song projection rebuilds or make them pressure-aware, because that optional projection also failed under low disk and has documented fallback behavior.
+
 ## Prioritization principles
 
 1. Reclaim space first where the surface is likely derived and correctness risk is low.
@@ -694,6 +731,12 @@ Validation:
 - Rank parity and API parity.
 
 Decision tier: high database-work priority; not first for free-space blocker.
+
+Current implementation status:
+
+- `ComboBatched` is now the default band team ranking write mode in code, appsettings, repo compose templates, and the active production compose/.env default for the next worker recreate.
+- Unit parity confirms `ComboBatched` produces the same band ranking output as `Monolithic` and `Phased` on the fixture.
+- Optional band-song projection pressure remains open for a later P6 continuation.
 
 ### Priority 7: dead tuple/bloat maintenance after reclaim headroom
 
