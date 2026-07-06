@@ -4,7 +4,7 @@
 
 - Work autonomously through approved repository work. Do not stop at status reports, completed probes, rejected hypotheses, commits, or priority boundaries when safe follow-up work remains in scope.
 - Treat missing diagnostics, stale docs, failed non-destructive validation, slow but safe queries, and incomplete evidence as repairable work. Insert the smallest safe probe/fix and continue.
-- Stop only when the remaining action requires operator input, credentials/secrets, sudo or privileged host access, destructive production maintenance, provider/API terms or budget decisions, ambiguous ownership of user changes, or a live-safety gate that cannot be cleared non-interactively.
+- Stop only when the remaining action requires operator input, credentials/secrets, sudo or privileged host access, provider/API terms or budget decisions, ambiguous ownership of user changes, or a live-safety/parity gate that cannot be cleared non-interactively.
 - Keep the active plan/todo state current. Mark completed work complete, blocked work blocked with the exact hard gate, and newly discovered safe work as a task before reporting it as a next step.
 - Commit and push accepted/project-required changes before moving to a new autonomous phase unless the operator explicitly asks not to commit.
 
@@ -12,7 +12,7 @@
 
 - Production compose ownership is `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator says otherwise.
 - Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or taken down for maintenance when useful, but redeploy/recover them as soon as possible to preserve the public user experience.
-- Do not prune/delete data, drop tables/indexes, move active Postgres data, or run `VACUUM FULL`/`CLUSTER`/`pg_repack` without explicit approval for that action.
+- Destructive data/reclaim actions are auto-approved after live-scrape A/B testing proves the new path has the same data as the old path. Record the parity evidence, rollback path, and exact affected objects before executing.
 - Before broad DB probes, scrapes, deploys, or maintenance, check Docker health, Postgres readiness, public-read freeze state, published scrape, locks/long queries, disk headroom, CPU, and memory.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 - Preserve historical leaderboard correctness, Epic/API provenance, publication state, freeze/unfreeze behavior, and replay/parity evidence.

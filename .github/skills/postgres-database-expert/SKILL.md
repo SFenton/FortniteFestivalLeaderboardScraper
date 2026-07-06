@@ -17,7 +17,7 @@ This skill is fed by OSS PostgreSQL table-design, PostgreSQL operations, SQL opt
 3. Use `EXPLAIN (ANALYZE, BUFFERS)` only when the query is bounded and safe for current load.
 4. Design indexes from observed access paths. Prefer composite, partial, covering, BRIN, GIN, or GiST only when the query shape needs them; include write/maintenance cost.
 5. Keep migrations idempotent and lock-aware. Use short lock/statement timeouts and concurrent index creation for large live tables when appropriate.
-6. Avoid broad table rewrites, `VACUUM FULL`, column drops, non-concurrent large index builds, and destructive pruning outside explicit maintenance approval.
+6. Avoid broad table rewrites, `VACUUM FULL`, column drops, non-concurrent large index builds, and destructive pruning until the live-scrape A/B data-parity gate proves the new path has the same data as the old path; after parity, the destructive action is auto-approved with rollback and post-action validation recorded.
 7. Preserve timestamp and publication semantics: Epic/API timestamps, scrape IDs, derived `computed_at`, publication state, and modeled latency must remain auditable.
 8. Follow existing schema conventions unless there is a clear reason to change; do not blindly import outside defaults such as UUIDs or identity columns into established tables.
 

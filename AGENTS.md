@@ -14,7 +14,7 @@
 ## Core rules
 
 - Work autonomously through approved tasks and priorities. Do not stop at reports, rejected hypotheses, completed probes, commits, or priority boundaries while safe in-scope work remains.
-- Stop only for required operator input, credentials/secrets, privileged access, destructive production maintenance, provider/API terms or budget decisions, ambiguous user-owned changes, or live-safety gates that cannot be cleared non-interactively.
+- Stop only for required operator input, credentials/secrets, privileged access, provider/API terms or budget decisions, ambiguous user-owned changes, or live-safety/parity gates that cannot be cleared non-interactively.
 - Keep todos and docs accurate: completed tasks must be marked complete; blocked tasks must name the hard gate; safe follow-up work should become an active task instead of a handoff note.
 - Commit and push accepted/project-required changes before starting the next autonomous phase unless the operator says not to.
 
@@ -22,7 +22,7 @@
 
 - Production compose ownership is `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator explicitly says otherwise.
 - Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or taken down for maintenance when useful, but redeploy/recover them as soon as possible to preserve the public user experience.
-- Do not prune/delete data, drop tables/indexes, move active Postgres data, or run rewrite/repack maintenance without explicit approval for that action.
+- Destructive data/reclaim actions are auto-approved after live-scrape A/B testing proves the new path has the same data as the old path. Record the parity evidence, rollback path, and exact affected objects before executing.
 - Before broad DB probes, deploys, scrapes, or maintenance, check Docker health, Postgres readiness, public-read freeze state, published scrape, locks/long queries, disk headroom, CPU, and memory.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 - Preserve historical leaderboard correctness, Epic/API provenance, publication state, freeze/unfreeze behavior, and replay/parity evidence.

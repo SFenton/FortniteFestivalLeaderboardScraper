@@ -13,7 +13,7 @@ Required workflow:
 2. Reproduce the issue or write the smallest failing test/invariant when feasible.
 3. Keep changes idempotent, backward-compatible, rollback-aware, and aligned with existing repository helpers.
 4. Use short lock and statement timeouts for migration/startup DDL; keep optional heavy indexes out of default startup paths unless required.
-5. Put destructive changes, table rewrites, pruning, and `VACUUM FULL` behind explicit operator approval.
+5. Put destructive changes, table rewrites, pruning, and `VACUUM FULL` behind the FST live-scrape A/B data-parity gate; once the new path is proven to have the same data as the old path, the destructive action is auto-approved with rollback and post-action validation recorded.
 6. Preserve scrape IDs, Epic/API timestamps, publication state, and provider provenance when moving, compacting, or rehydrating scrape/replay data.
 7. Update README and the relevant database/design/runbook docs in the same patch.
 8. Validate with targeted tests/builds plus DB smoke or parity gates appropriate to the changed surface.

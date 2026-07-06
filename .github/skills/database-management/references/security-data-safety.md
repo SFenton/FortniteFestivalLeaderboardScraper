@@ -23,14 +23,16 @@ Before destructive or irreversible work, identify:
 
 ## Destructive maintenance gates
 
-Require explicit operator approval for:
+FST destructive data/reclaim work is auto-approved after live-scrape A/B testing proves the new path has the same data as the old path. Before executing destructive or irreversible work, record the old-vs-new parity evidence, exact objects/actions, rollback or restore path, resource/disk risk, and post-action validation.
+
+Require a completed live-scrape A/B data-parity gate for:
 
 - Data deletion or pruning.
 - `VACUUM FULL`, table rewrites, column drops on large tables, and large non-concurrent index builds.
 - Switching default read paths to compact/exported data.
 - Retention policy changes.
 - Platform cutovers or source-of-truth changes.
-- Terminating database backends or restarting services during live-sensitive windows.
+- Terminating database backends during live-sensitive windows.
 
 ## Integrity gates
 
@@ -43,7 +45,7 @@ Use the strongest practical gate for the risk:
 | Import | Source manifest validation, row count/range parity, duplicate/idempotency behavior |
 | Compact projection | Count/range parity, typed-field spot checks, query parity, original timestamp gates |
 | Runtime read-path switch | Correctness parity plus scrape/replay parity when behavior can change |
-| Prune/delete | Complete manifest coverage, restore path, maintenance approval, post-prune validation |
+| Prune/delete | Complete manifest coverage, restore path, live-scrape A/B data parity, post-prune validation |
 
 ## Provider and retention constraints
 
@@ -57,6 +59,6 @@ When data comes from external providers, document:
 
 ## Data-safety report
 
-| Operation | Data scope | Approval needed | Integrity gate | Restore path | Residual risk | Decision |
+| Operation | Data scope | Parity gate | Integrity gate | Restore path | Residual risk | Decision |
 |---|---|---|---|---|---|---|
 | `<operation>` | `<tables/range>` | `<yes/no>` | `<gate>` | `<path>` | `<risk>` | `<tier>` |

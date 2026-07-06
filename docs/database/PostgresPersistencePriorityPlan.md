@@ -1,6 +1,6 @@
 # Postgres Persistence Priority Plan
 
-This plan records the approved direction for improving FST Postgres persistence while allowing normal scrape/service operation to continue. Destructive database cleanup, irreversible migrations, and reclaim maintenance still require explicit approval.
+This plan records the approved direction for improving FST Postgres persistence while allowing normal scrape/service operation to continue. Destructive database cleanup, irreversible migrations, and reclaim maintenance are auto-approved after live-scrape A/B testing proves the new path has the same data as the old path.
 
 ## Current production state
 
@@ -56,7 +56,7 @@ Important finding: the logical model indicates most observed rows are unchanged,
 
 `/mnt/docker-storage` hosts the active Postgres bind mount and has limited free space for another full scrape/post-process/publish cycle. The biggest consumers are physical leaderboard snapshots, band rank-history point tables, band read projections, rank/composite history tables, and their indexes.
 
-No destructive retention prune is approved. Normal scrapes/service operation may proceed, but destructive cleanup, irreversible migration, drop/truncate/repack/rewrite work, or active Postgres data movement still requires explicit approval.
+Normal scrapes/service operation may proceed. Destructive cleanup, irreversible migration, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed automatically after a live-scrape A/B proves old-vs-new data parity and the exact objects, rollback path, and post-action validation are documented.
 
 ## Task status
 
@@ -67,11 +67,11 @@ No destructive retention prune is approved. Normal scrapes/service operation may
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
 | History index owner cards | Complete | Read-only owner cards for `band_team_rank_history_*_v2` indexes completed on 2026-07-06; no index or data mutation performed. |
-| Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and approval gates documented on 2026-07-06. |
-| `band_read_*` quarantine approval package | Complete | Reversible, approval-gated quarantine package documented on 2026-07-06; no DDL executed. |
+| Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
+| `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
-| Destructive retention/reclaim | Not approved | No deletes, drops, rewrites, repacks, or moves are approved by this document alone. |
-| Next implementation phase | Pending approval for destructive work only | Must have explicit operator approval for destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement. |
+| Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
+| Next implementation phase | Continue autonomously through parity gates | Destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed after the live-scrape A/B data-parity gate passes. |
 
 ## Architecture evaluation evidence (2026-07-06)
 
@@ -103,7 +103,7 @@ High dead tuple candidates observed:
 
 | Surface | Dead tuple signal | Decision |
 |---|---:|---|
-| `band_members`, `band_member_stats`, `band_search_*_projection`, `band_entries_duets` | about 99% dead tuple ratio in stats | Reclaim only after proof and approved maintenance; may need vacuum/repack strategy. |
+| `band_members`, `band_member_stats`, `band_search_*_projection`, `band_entries_duets` | about 99% dead tuple ratio in stats | Reclaim only after live-scrape A/B parity-gated maintenance proof; may need vacuum/repack strategy. |
 | `band_team_rank_history_points_v2_trios` | about 44.5% dead tuples | High-value maintenance candidate after history retention/index plan. |
 | `band_team_rank_history_points_v2_duets` | about 24.9% dead tuples | High-value maintenance candidate after history retention/index plan. |
 | Solo/composite rank history partitions | about 14-15% dead tuples on several large partitions | Consider after retention/index review. |
@@ -117,8 +117,8 @@ Mode: Current-system probe / retention feasibility. No schema, data, runtime con
 | Priority | Decision | Evidence | Remaining gate |
 |---|---|---|---|
 | P0 live safety | Accepted | `fstservice` `/readyz` returned `Healthy`; `festivalweb` was healthy and serving the app shell; Postgres was healthy; public reads were unfrozen; published scrape was `1214`; `fstworker` remained intentionally stopped/stale; no ungranted locks. | Continue checking before every approved phase. |
-| P1 `band_read_*` ownership proof | Accepted for proof; blocked for reclaim | Source search found no active repo references outside this plan; `pg_views` found no view references; `pg_stat_statements` references were only diagnostic queries; representative `/api/songs` and `/api/leaderboard/{songId}/bands/Band_Duets?top=5` returned 200 without `band_read_*` usage. | Any quarantine/drop/repack/truncate requires explicit approval. |
-| P2 low-scan index proof | Accepted for proof; blocked for changes | Read-only index inventory found large low-scan surfaces, including band rank-history points v2, rank/composite history, current/published band ranking projections, band search, and scrape-dirty indexes. Several primary keys have zero scans but are structural constraints and are not safe drop candidates without design review. | Any index drop/replacement requires exact object approval and rollback DDL. |
+| P1 `band_read_*` ownership proof | Accepted for proof; blocked for reclaim until parity | Source search found no active repo references outside this plan; `pg_views` found no view references; `pg_stat_statements` references were only diagnostic queries; representative `/api/songs` and `/api/leaderboard/{songId}/bands/Band_Duets?top=5` returned 200 without `band_read_*` usage. | Any quarantine/drop/repack/truncate requires live-scrape A/B data parity first. |
+| P2 low-scan index proof | Accepted for proof; blocked for changes until parity | Read-only index inventory found large low-scan surfaces, including band rank-history points v2, rank/composite history, current/published band ranking projections, band search, and scrape-dirty indexes. Several primary keys have zero scans but are structural constraints and are not safe drop candidates without design review. | Any index drop/replacement requires live-scrape A/B data parity, exact object list, and rollback DDL. |
 
 P1 `band_read_*` inventory:
 
@@ -131,7 +131,7 @@ P1 `band_read_*` inventory:
 | `band_read_generation` | 96 KB | 16 KB | 80 KB | 65 exact rows | 0 seq / 0 idx | Small metadata table. |
 | `band_read_publication_state` | 24 KB | 8 KB | 16 KB | 1 exact row | 0 seq / 0 idx | Small metadata table. |
 
-P1 highest-value `band_read_*` index candidates for approval-gated quarantine/drop:
+P1 highest-value `band_read_*` index candidates for parity-gated quarantine/drop:
 
 | Index | Size | Scans | Notes |
 |---|---:|---:|---|
@@ -141,12 +141,12 @@ P1 highest-value `band_read_*` index candidates for approval-gated quarantine/dr
 | `ix_brsr_song_scope_team` | 21 GB | 0 | Non-primary read-path index; potential drop candidate if table remains unused. |
 | `ix_brra_scope_sort` | 5,325 MB | 0 | Non-primary read-path index; potential drop candidate if table remains unused. |
 
-Recommended P1 approval package:
+Recommended P1 parity package:
 
 1. Approve a non-destructive quarantine plan for `band_read_*` objects, not immediate deletion.
 2. Rename tables/indexes or otherwise hide the surface in a reversible maintenance window while keeping `fstservice` and `festivalweb` live.
 3. Monitor API routes and logs for failed references.
-4. Drop only after observation, rollback proof, and explicit approval.
+4. Drop only after observation, rollback proof, and live-scrape A/B data parity.
 
 P2 low-scan giant index evidence:
 
@@ -320,9 +320,9 @@ P4.1 retention policy draft:
 
 | Option | Storage impact | Correctness risk | Decision |
 |---|---|---|---|
-| Keep all v2 history indefinitely | No immediate reclaim; continued growth in points and indexes. | Lowest semantic risk; preserves exact public history and audit trail. | Safe default until an explicit retention approval exists. |
-| Enforce 365-day v2 raw retention | Future old-slice reclaim once data ages past 365 days; no immediate win because current v2 range starts 2026-04-26. | Medium; must preserve endpoint semantics and restore/manifest coverage. | Candidate only after adding v2-aware manifest/parity tooling and explicit prune approval. |
-| Cold archive old v2 slices on the 4 TB FST drive, then prune | Potential reclaim while preserving a restore path. | Medium/high; archive, checksum, and restore latency must be proven before delete. | Candidate only after storage headroom, archive manifest, restore drill, and exact object/date approval. |
+| Keep all v2 history indefinitely | No immediate reclaim; continued growth in points and indexes. | Lowest semantic risk; preserves exact public history and audit trail. | Safe default until live-scrape A/B parity proves a destructive retention path. |
+| Enforce 365-day v2 raw retention | Future old-slice reclaim once data ages past 365 days; no immediate win because current v2 range starts 2026-04-26. | Medium; must preserve endpoint semantics and restore/manifest coverage. | Candidate after adding v2-aware manifest/parity tooling and passing live-scrape A/B prune parity. |
+| Cold archive old v2 slices on the 4 TB FST drive, then prune | Potential reclaim while preserving a restore path. | Medium/high; archive, checksum, and restore latency must be proven before delete. | Candidate after storage headroom, archive manifest, restore drill, exact object/date scope, and live-scrape A/B parity. |
 | Coalesce old history to lower granularity | Potentially large future reclaim. | High; changes visible history density and may hide rank movements. | Rejected for now unless product semantics explicitly approve coarser old history. |
 | Season-scoped raw retention plus summaries | Potentially useful after seasonal boundaries are codified. | High until season boundary, restore, and public-history behavior are specified. | Research-only; not an immediate reclaim action. |
 
@@ -330,14 +330,14 @@ P4.1 decision:
 
 - Accepted as a proof/design phase.
 - Do not drop the large `ix_btrhpv2_team_date` family from low scans alone; it is confirmed on the public read path.
-- Treat `ix_btrhpv2_snapshot` and `ix_btrhlv2_snapshot` as the safest future history-index proof candidates, but only after explicit index-drop approval and rollback DDL.
+- Treat `ix_btrhpv2_snapshot` and `ix_btrhlv2_snapshot` as the safest future history-index proof candidates, but only after live-scrape A/B data parity and rollback DDL.
 - Keep all primary keys and unique constraints.
-- Do not add v2 retention deletion until a manifest, endpoint parity suite, restore path, and exact destructive approval exist.
-- Phase E completed the next safe non-destructive continuation by documenting a reversible `band_read_*` quarantine approval package. Actual quarantine/drop remains approval-gated.
+- Do not add v2 retention deletion until a manifest, endpoint parity suite, restore path, exact object/date scope, and live-scrape A/B data parity exist.
+- Phase E completed the next safe non-destructive continuation by documenting a reversible `band_read_*` quarantine parity package. Actual quarantine/drop remains live-scrape A/B parity-gated.
 
-### [x] Phase E: P1 `band_read_*` quarantine approval package (2026-07-06T22:51:18Z)
+### [x] Phase E: P1 `band_read_*` quarantine parity package (2026-07-06T22:51:18Z)
 
-Mode: Current-system probe / approval-package design. No tables, indexes, rows, services, workers, runtime configuration, or scrape state were changed.
+Mode: Current-system probe / parity-package design. No tables, indexes, rows, services, workers, runtime configuration, or scrape state were changed.
 
 P1 refreshed object inventory:
 
@@ -380,21 +380,21 @@ Approval-gated candidate action:
 | Step | Action | Purpose | Live-safety gate | Rollback |
 |---|---|---|---|---|
 | 1 | Re-run live-safety preflight immediately before any DDL. | Confirm `fstservice`, `festivalweb`, Postgres, locks, disk, freeze state, and published scrape are still safe. | Must show healthy service/web/Postgres, no dangerous locks, public reads still frozen to `1214`, and no running scrape. | Abort with no mutation. |
-| 2 | In a maintenance window, acquire short-lock-timeout DDL and rename `band_read_*` tables to an approved quarantine prefix/suffix. | Hide the projection from accidental readers without deleting data. | Keep downtime short if restart/redeploy is needed; normal scrapes may continue unless the maintenance step intentionally pauses them. Use short lock and statement timeouts. | Rename each object back to its original name. |
+| 2 | In a maintenance window, acquire short-lock-timeout DDL and rename `band_read_*` tables to a quarantine prefix/suffix after live-scrape A/B parity proves the active path no longer needs them. | Hide the projection from accidental readers without deleting data. | Keep downtime short if restart/redeploy is needed; normal scrapes may continue unless the maintenance step intentionally pauses them. Use short lock and statement timeouts. | Rename each object back to its original name. |
 | 3 | Monitor representative public API routes and service logs. | Prove no active app path references quarantined objects. | `/readyz`, web app shell, `/api/songs`, representative solo leaderboard, representative band leaderboard, and band history route stay healthy. | Rename tables back immediately if any query fails because of quarantined names. |
 | 4 | Hold quarantine through an explicit observation window. | Distinguish obsolete projection from rare path dependency. | Continue checking locks, errors, public reads, and disk. | Rename back if errors appear. |
-| 5 | Only after successful observation, request separate explicit drop approval. | Reclaim about 398 GB table/index space. | Drop remains destructive and is not approved by this plan. | Restore from backup/regenerate projection path must be documented before drop. |
+| 5 | Only after successful observation, record final parity evidence and execute/drop under the parity gate. | Reclaim about 398 GB table/index space. | Drop remains destructive and requires the live-scrape A/B parity, rollback, and post-action validation gates. | Restore from backup/regenerate projection path must be documented before drop. |
 
-Exact approval statement needed before Step 2:
+Parity gate needed before Step 2:
 
-> Approve a reversible table-rename quarantine, not deletion, for `band_read_hot_window`, `band_read_subject_row`, `band_read_rank_anchor`, `band_read_scope_state`, `band_read_generation`, and `band_read_publication_state` in production, with `fstservice` and `festivalweb` kept live, `fstworker` not started, short lock/statement timeouts, immediate API/log monitoring, and rename-back rollback.
+> A live-scrape A/B must confirm the new active read/write path has the same data as the old `band_read_*` path for the affected routes/surfaces. Once parity passes, reversible table-rename quarantine is auto-approved for `band_read_hot_window`, `band_read_subject_row`, `band_read_rank_anchor`, `band_read_scope_state`, `band_read_generation`, and `band_read_publication_state`, with short lock/statement timeouts, prompt redeploy/recovery if needed, immediate API/log monitoring, and rename-back rollback.
 
 P1 quarantine decision:
 
-- Accepted as an approval package only.
+- Accepted as a parity-gated reclaim package.
 - The package is the strongest near-term reclaim candidate because the group is about 398 GB and has no observed source/runtime dependencies.
-- No quarantine, drop, truncate, repack, rewrite, or worker action is approved by this document alone.
-- If quarantine is approved and passes observation, a later drop request must include the successful observation evidence, rollback/regeneration path, and exact objects/date.
+- Quarantine/drop/truncate/repack/rewrite work is auto-approved after live-scrape A/B data parity passes and rollback/post-action validation are documented.
+- If quarantine passes observation, a later drop may proceed after recording successful observation evidence, rollback/regeneration path, and exact objects/date.
 
 ## Prioritization principles
 
@@ -422,8 +422,8 @@ Status and rules:
 
 Validation:
 
-- Confirm service health, publication state, public-read freeze state, disk free, and absence of dangerous locks before any approved work.
-- Confirm `fstservice` `/readyz`, `festivalweb` health, and at least one browser-visible app route after any explicitly approved service/web redeploy.
+- Confirm service health, publication state, public-read freeze state, disk free, and absence of dangerous locks before parity-gated work.
+- Confirm `fstservice` `/readyz`, `festivalweb` health, and at least one browser-visible app route after any service/web redeploy.
 
 ### Priority 1: prove and reclaim stale/derived band read projections
 
@@ -451,7 +451,7 @@ Required proof before action:
 - Capture row counts, size by table/index, min/max generation/scrape/date fields, and a manifest.
 - Confirm published API responses do not depend on these tables.
 
-Allowed candidate actions after approval:
+Allowed candidate actions after live-scrape A/B parity:
 
 - Rename quarantine first, then observe API/service behavior.
 - Drop only after a rollback/restore path and observation window.
@@ -489,7 +489,7 @@ Required proof before action:
 - Run plain `EXPLAIN` for representative reads; use `EXPLAIN ANALYZE` only in a safe bounded window.
 - Confirm no maintenance or retention job needs the index.
 
-Allowed candidate actions after approval:
+Allowed candidate actions after live-scrape A/B parity:
 
 - Drop clearly unused noncritical indexes one at a time.
 - Replace broad btree indexes with narrower, partial, or differently ordered indexes only after matched query-plan proof.
@@ -527,9 +527,9 @@ Required proof before action:
 - Prove ranking, rivals/opps, player stats, improvement notifications, band history dependencies, API response cache, and exports remain correct.
 - Build manifest coverage: scrape IDs, row counts, song/instrument counts, checksums/fingerprints, byte sizes, and restore path.
 
-Allowed candidate actions after approval:
+Allowed candidate actions after live-scrape A/B parity:
 
-- Archive old snapshots only to approved locations on the 4 TB FST drive, verify manifest, then prune only after restore proof.
+- Archive old snapshots only to validated locations on the 4 TB FST drive, verify manifest, then prune only after restore proof and live-scrape A/B data parity.
 - Keep latest published and recent safety window on FST drive.
 - Consider time/scrape-range partitioning for future snapshot retention if physical snapshots remain.
 
@@ -539,7 +539,7 @@ Success metrics:
 - Exact API parity for representative and sampled full-scope reads.
 - Restore/rehydration time documented and tested.
 
-Decision tier: high-impact but blocked until parity and approval.
+Decision tier: high-impact but blocked until live-scrape A/B data parity.
 
 ### Priority 4: band rank-history points retention and index redesign
 
@@ -566,7 +566,7 @@ Required proof before action:
 - Verify whether low-scan indexes are unused or only used by rare admin/repair paths.
 - Confirm whether row fingerprints and latest state can avoid same-day duplicate history writes.
 
-Allowed candidate actions after approval:
+Allowed candidate actions after live-scrape A/B parity:
 
 - Drop/replace unused history indexes.
 - Partition by time only for future layout or after a controlled migration.
@@ -672,10 +672,10 @@ Why later:
 - The system currently has too little headroom for risky rewrite work.
 - Some surfaces may be better solved by dropping obsolete derived tables or indexes first.
 
-Allowed candidate actions after approval:
+Allowed candidate actions after live-scrape A/B parity:
 
 - Plain vacuum/analyze where safe.
-- `pg_repack` only with 4 TB FST-drive scratch-space and maintenance-window approval.
+- `pg_repack` only with 4 TB FST-drive scratch-space, live-scrape A/B data parity, and maintenance-window validation.
 - Rebuild derived projections from source if cheaper than repacking.
 
 Validation:
@@ -727,12 +727,12 @@ Decision tier: lower immediate storage reclaim, good operational efficiency.
 | History storage | Band rank-history v2 | 799 GB group | Retention/index redesign | Storage and history job time down | History API parity |
 | Future scrape cost | Unchanged row/scope writes | 69.01% unchanged in P7 | Scope/row write skipping | WAL/rows written down | Full scrape parity |
 | Temp/CPU/I/O | Ranking temp tables | 3,354 GB temp bytes | Reduce temp materialization/rebuilds | Temp bytes and wall clock down | Rank/API parity |
-| Bloat | High-dead derived/history tables | 25-99% dead tuple ratios on candidates | Vacuum/repack/rebuild after headroom | Relation size down | Maintenance approval |
+| Bloat | High-dead derived/history tables | 25-99% dead tuple ratios on candidates | Vacuum/repack/rebuild after headroom | Relation size down | Parity/maintenance gate |
 | Hot reads | Status/songs/member-score/cache paths | Count scans, fan-out, live cache writes | Maintained counters/projections, batched reads | p95/query count down | Response parity |
 
 ## Required proof package for every reclaim action
 
-Before any approved reclaim action, produce a short proof package:
+Before any parity-gated reclaim action, produce a short proof package:
 
 | Required item | Purpose |
 |---|---|
@@ -741,29 +741,29 @@ Before any approved reclaim action, produce a short proof package:
 | Correctness gate | API parity, row count/range/checksum/fingerprint parity, or manifest coverage depending on object type. |
 | Rollback path | Rename-back, recreate index DDL, restore archive, regenerate projection, or read-source flag. |
 | Maintenance risk | Expected locks, 4 TB FST-drive scratch need, WAL/temp impact, service health risk, and worker state. |
-| Approval statement | Exact object/action approved by the operator. |
+| Parity gate statement | Live-scrape A/B evidence proving the new path has the same data as the old path for the exact object/action. |
 
-## Do-not-do list until explicitly approved
+## Do-not-do list until live-scrape A/B parity passes
 
 - Do not leave `fstworker`, `fstservice`, or `festivalweb` down after maintenance; redeploy/recover them as soon as possible.
 - Do not intentionally leave normal scrapes disabled as a safety posture; scrapes should proceed unless an active maintenance step temporarily pauses them.
-- Do not delete/prune historical data.
-- Do not drop indexes or tables.
-- Do not run `VACUUM FULL`, `CLUSTER`, `pg_repack`, or broad rewrites.
-- Do not move active Postgres data off the 4 TB FST drive.
+- Do not delete/prune historical data until live-scrape A/B parity proves the new path has the same data as the old path.
+- Do not drop indexes or tables until live-scrape A/B parity proves the new path has the same data as the old path.
+- Do not run `VACUUM FULL`, `CLUSTER`, `pg_repack`, or broad rewrites until live-scrape A/B parity, rollback, disk/resource, and post-action validation gates are documented.
+- Do not move active Postgres data off the 4 TB FST drive; the 4 TB drive rule still applies to parity-gated destructive work.
 - Do not use alternate-drive space for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Evaluation cadence for future phases
 
-For approved eval phases:
+For eval phases:
 
 1. Confirm `fstservice` and `fst-postgres` health, public-read freeze state, published scrape, disk headroom, and absence of dangerous long queries.
-2. Start or deploy only the approved candidate.
+2. Start or deploy only the selected candidate.
 3. Monitor every 60 seconds with visible status: scrape ID, phase/status, elapsed wall clock, DB locks/long queries, disk free, CPU, memory, and relevant write metrics.
 4. When scrape/post-process/publish gates complete, stop `fstworker` before the next automatic scrape starts.
 5. Wait for post-publish autovacuum or known cleanup to clear when relevant.
-6. Evaluate against the approved wall-clock, I/O, CPU, memory, correctness, and publication gates.
-7. Commit and push passing phases; reject or revert failed phases; then continue to the next approved autonomous task or stop at the exact hard gate.
+6. Evaluate against the target wall-clock, I/O, CPU, memory, correctness, and publication gates.
+7. Commit and push passing phases; reject or revert failed phases; then continue to the next autonomous task or stop at the exact hard gate.
 
 ## Success criteria
 
@@ -784,4 +784,4 @@ Long-term success:
 
 - FST stores leaderboard history in a compact, auditable source-of-truth model.
 - Massive physical snapshots become either unnecessary, bounded, or safely retained as derived/rebuildable artifacts.
-- Database operations have repeatable probes, manifests, rollback paths, and documented approval gates.
+- Database operations have repeatable probes, manifests, rollback paths, and documented parity gates.
