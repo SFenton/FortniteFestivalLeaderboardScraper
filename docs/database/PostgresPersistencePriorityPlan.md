@@ -164,6 +164,48 @@ P2 decision:
 - The highest safe next proof is to build per-index owner cards for non-primary, non-unique indexes first: query owner, source reference, endpoint/job dependency, replacement index if any, rollback DDL, and estimated reclaim.
 - Primary-key/unique indexes should be handled through table/source-of-truth decisions, not isolated index drops.
 
+### [x] Phase B: P3 snapshot publication correctness check (2026-07-06T22:41:14Z)
+
+Mode: Current-system probe / live-safe non-destructive correction. No services were restarted, `fstworker` was not started, and no data was deleted.
+
+Finding:
+
+- `scrape_publication_state.published_scrape_id` was `1214`.
+- `scrape_publication_state.public_reads_frozen` was `false`.
+- `leaderboard_snapshot_state` had all 6,102 scopes finalized and active on snapshot `1218`.
+- `scrape_log` contained `1214` but did not contain `1218`.
+- Current-state read SQL uses `leaderboard_snapshot_state.active_snapshot_id` when public reads are unfrozen, and uses `scrape_publication_state.published_scrape_id` when public reads are frozen.
+
+Live-safe correction applied:
+
+```sql
+UPDATE scrape_publication_state
+SET public_reads_frozen = TRUE,
+    public_reads_frozen_at = now(),
+    public_reads_frozen_scrape_id = published_scrape_id,
+    public_reads_frozen_reason = 'freeze-to-published-1214-after-1218-storage-failure',
+    updated_at = now()
+WHERE id = TRUE
+  AND published_scrape_id = 1214;
+```
+
+Validation:
+
+| Check | Result |
+|---|---|
+| `scrape_publication_state` | `published_scrape_id=1214`, `public_reads_frozen=true`, `public_reads_frozen_scrape_id=1214` |
+| API health | `/readyz` returned `Healthy` after the correction |
+| Web health | `festivalweb` remained healthy and served the app shell |
+| Public solo route | `/api/leaderboard/{songId}/Solo_Guitar?top=3` returned 200 |
+| Public band route | `/api/leaderboard/{songId}/bands/Band_Duets?top=3` returned 200 |
+| Locks | No ungranted locks |
+
+Decision:
+
+- Accepted. Public/current-state reads are pinned back to the published scrape while storage/reclaim work continues.
+- Keep `public_reads_frozen=true` until a later published scrape is safely promoted or a dedicated publication-state repair phase explicitly changes it.
+- Treat any future `leaderboard_snapshot_state.active_snapshot_id` that points at a scrape missing from `scrape_log` as a correctness incident, not just a storage artifact.
+
 ## Prioritization principles
 
 1. Reclaim space first where the surface is likely derived and correctness risk is low.
