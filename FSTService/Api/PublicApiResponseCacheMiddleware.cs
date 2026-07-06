@@ -4,15 +4,12 @@ namespace FSTService.Api;
 
 public sealed class PublicApiResponseCacheMiddleware
 {
-    private const long MaxCacheableBytes = 10 * 1024 * 1024;
-
     private readonly RequestDelegate _next;
-    private readonly ILogger<PublicApiResponseCacheMiddleware> _log;
 
     public PublicApiResponseCacheMiddleware(RequestDelegate next, ILogger<PublicApiResponseCacheMiddleware> log)
     {
         _next = next;
-        _log = log;
+        _ = log;
     }
 
     public async Task InvokeAsync(HttpContext context, IMetaDatabase metaDb, PublicReadGateService gate)
@@ -39,49 +36,7 @@ public sealed class PublicApiResponseCacheMiddleware
             return;
         }
 
-        var originalBody = context.Response.Body;
-        await using var capture = new MemoryStream();
-        context.Response.Body = capture;
-
-        try
-        {
-            await _next(context);
-
-            if (ShouldStoreResponse(context.Response, capture.Length))
-            {
-                var json = capture.ToArray();
-                var etag = context.Response.Headers.ETag.FirstOrDefault();
-                if (string.IsNullOrWhiteSpace(etag))
-                    etag = ResponseCacheService.ComputeETag(json);
-
-                try
-                {
-                    metaDb.BulkSetCachedResponses([(cacheKey, json, etag)]);
-                    context.Response.Headers["X-FST-Public-Cache"] = "store";
-                }
-                catch (Exception ex)
-                {
-                    _log.LogWarning(ex, "Failed to store public API response cache entry for {CacheKey}.", cacheKey);
-                }
-            }
-
-            capture.Position = 0;
-            await capture.CopyToAsync(originalBody, context.RequestAborted);
-        }
-        finally
-        {
-            context.Response.Body = originalBody;
-        }
-    }
-
-    private static bool ShouldStoreResponse(HttpResponse response, long bodyLength)
-    {
-        if (response.StatusCode != StatusCodes.Status200OK)
-            return false;
-        if (bodyLength <= 0 || bodyLength > MaxCacheableBytes)
-            return false;
-
-        return response.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true;
+        await _next(context);
     }
 }
 

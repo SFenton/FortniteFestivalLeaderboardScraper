@@ -74,6 +74,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Optional band-song projection pressure gate | Complete | Defaulted optional band-song projection rebuilds to disabled and made current projection reads fall back when stale relative to current band rankings. |
 | P7 bloat readiness probe | Complete | Repaired stale candidate table stats with bounded `ANALYZE` and refreshed read-only size/dead-tuple estimates; destructive/rewrite maintenance remains blocked by headroom and parity gates. |
+| P8 public cache write-pressure reduction | Complete | Stopped request-time public API middleware writes to `api_response_cache`; cache persistence now stays in precompute/publish paths while frozen reads still serve published cache hits. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Continue autonomously through parity gates | Destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed after the live-scrape A/B data-parity gate passes. |
@@ -552,6 +553,38 @@ P7 decision:
 - Plain `ANALYZE` is accepted as completed evidence repair; plain `VACUUM` remains a possible low-risk future maintenance action, but it does not return filesystem space and should not be treated as solving the storage blocker.
 - Next storage-blocker work should prioritize parity-gated derived-surface reclaim over bloat rewrites because current P7 dead percentages do not justify scratch-heavy rewrite/repack work under 98% disk usage.
 
+### [x] Phase J: P8 public API cache request-time write reduction (2026-07-07T00:02:00Z)
+
+Mode: Performance / capacity improvement. No production services, workers, schema, data rows, indexes, tables, or scrape state were mutated.
+
+Reason for the change:
+
+| Evidence | Interpretation | Candidate |
+|---|---|---|
+| `PublicApiResponseCacheMiddleware` captured every cacheable live GET response and called `BulkSetCachedResponses` when public reads were not frozen. | Live public reads could write `api_response_cache` on cache misses even though publish/precompute paths already populate persisted public responses. | Stop request-time DB cache writes; keep persisted cache reads for frozen/publication mode. |
+| `ScrapeTimePrecomputer`, `DiskStagingWriter`, and publish flow still write/stage/promote `api_response_cache`. | Removing middleware writes does not remove the publication-keyed cache population path. | Preserve precompute/publish cache writes as the primary persistent cache path. |
+| Frozen-mode middleware reads already serve `api_response_cache` hits and continue through endpoint fallback on misses. | Frozen published reads remain available. | Keep frozen cache-hit behavior unchanged. |
+
+Implementation:
+
+| Change | Files/artifacts | Safety gate | Rollback |
+|---|---|---|---|
+| Removed live request-time response capture/store from public API response cache middleware. | `FSTService/Api/PublicApiResponseCacheMiddleware.cs` | Non-frozen requests pass through unchanged; frozen cache hits and misses retain existing behavior. | Reintroduce middleware `BulkSetCachedResponses` if request-time persistent cache warming is needed. |
+| Updated middleware tests to assert no live store and preserved response body. | `FSTService.Tests/Unit/PublicReadGateTests.cs` | Confirms response parity for non-frozen requests and existing frozen cache behavior. | Restore prior store assertion if rollback is chosen. |
+
+Validation:
+
+| Command | Result | Evidence |
+|---|---|---|
+| `dotnet test FSTService.Tests/FSTService.Tests.csproj --filter "FullyQualifiedName~PublicReadGateTests"` | Passed: 48 tests, 0 failed, duration 2 s. | Confirms public-read freeze state behavior, cache-key policy, frozen persisted-cache hits, frozen misses, and non-frozen no-store pass-through. |
+
+P8 decision:
+
+- Accepted as a low-risk DB write-pressure reduction.
+- This does not change endpoint JSON bodies or frozen cached-read behavior.
+- Persistent public API cache entries should now come from precompute/staging/publish flows, not opportunistic live GETs.
+- Remaining P8 targets, such as `/api/status` counters, `/api/songs` split payloads, and member-score fan-out, can be handled as later safe implementation tasks if needed after deploy/eval evidence.
+
 ## Prioritization principles
 
 1. Reclaim space first where the surface is likely derived and correctness risk is low.
@@ -878,7 +911,7 @@ Candidate design:
 - Replace `COUNT(*)` status paths with maintained per-instrument scrape counters.
 - Split `/api/songs` base catalog from stats overlays or precompute publication-keyed payloads.
 - Batch current-state fallback/profile reads.
-- Make public cache publication-keyed and write primarily during publish/precompute, not on every live cacheable GET.
+- Make public cache publication-keyed and write primarily during publish/precompute, not on every live cacheable GET. (Phase J completed the live middleware no-store portion.)
 - Keep selected-player/band overlays outside public static cache unless explicitly keyed.
 
 Validation:

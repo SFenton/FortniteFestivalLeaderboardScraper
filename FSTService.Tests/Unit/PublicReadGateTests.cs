@@ -264,7 +264,7 @@ public class PublicReadGateTests
     }
 
     [Fact]
-    public async Task PublicApiResponseCacheMiddleware_StoresSuccessfulJsonResponseWhenNotFrozen()
+    public async Task PublicApiResponseCacheMiddleware_DoesNotStoreSuccessfulJsonResponseWhenNotFrozen()
     {
         var metaDb = Substitute.For<IMetaDatabase>();
         metaDb.GetPublicReadFreezeState().Returns(PublicReadFreezeState.NotFrozen);
@@ -283,9 +283,11 @@ public class PublicReadGateTests
 
         await middleware.InvokeAsync(context, metaDb, gate);
 
-        metaDb.Received(1).BulkSetCachedResponses(Arg.Is<IEnumerable<(string Key, byte[] Json, string ETag)>>(entries =>
-            entries.Single().Key.StartsWith("public-route:/api/rankings/Solo_Guitar", StringComparison.Ordinal) &&
-            Encoding.UTF8.GetString(entries.Single().Json) == "{\"ok\":true}"));
+        context.Response.Body.Position = 0;
+        using var reader = new StreamReader(context.Response.Body, Encoding.UTF8);
+        Assert.Equal("{\"ok\":true}", await reader.ReadToEndAsync());
+        metaDb.DidNotReceive().BulkSetCachedResponses(Arg.Any<IEnumerable<(string Key, byte[] Json, string ETag)>>());
+        Assert.False(context.Response.Headers.ContainsKey("X-FST-Public-Cache"));
     }
 
     [Fact]
