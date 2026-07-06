@@ -35,6 +35,14 @@ Before executing each phase or task, classify the domain and apply the matching 
 
 Repository rules override general plan text. Preserve historical leaderboard correctness, Epic/API provenance, provider constraints, public-read publication state, Docker resource safety, README/docs accuracy, and dependency-license maintenance even if the input plan omits them.
 
+## Always-live service and web requirement
+
+- During backend, database, storage, reclaim, scrape-planning, or performance work, `fstservice` and `festivalweb` must stay live, healthy, and usable by public users unless the exact task explicitly approves restarting or redeploying one of them.
+- Backend database work must be planned around live API/web availability. Prefer read-only probes, online/concurrent operations, bounded batches, feature flags, shadow tables, publication gates, and rollback-safe changes that do not interrupt normal app use.
+- If an approved restart/redeploy is required, restart only the named service, keep downtime minimal, verify `/readyz`, `festivalweb` health, and a browser-visible route immediately afterward, then continue.
+- A stale/stopped `fstworker` is not by itself a reason to block the web app. The API and web app should continue serving the last published scrape while backend/database work proceeds.
+- If a proposed action would make the service or web app unavailable outside an explicitly approved restart/redeploy window, classify it as an approval gate and choose a safer live-compatible alternative first.
+
 ## Required execution loop
 
 1. **Parse and normalize the plan.** Build a working phase/task list with explicit acceptance gates, evidence requirements, validation commands, performance targets, and known blockers. If a task lacks measurable gates, infer them from repo docs and the prompt before starting.
@@ -85,8 +93,9 @@ Accepted improvements reset the relevant counter. Rejected hypotheses do not sto
 1. Read Docker caps and runtime defaults before heavy work. Production runs under `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator says otherwise.
 2. Before broad evals, scrapes, backfills, DB scans, deploys, or service changes, run live-safety probes: `docker compose ps`, service `/readyz`, Postgres readiness, locks/long queries, `docker stats --no-stream`, disk headroom, public-read freeze state, and published scrape.
 3. Do not restart `fstworker`, run full scrapes, prune/delete data, drop tables/indexes, move active Postgres data, or run `VACUUM FULL`/`CLUSTER`/`pg_repack` without explicit approval for that exact action.
-4. Define the real-time or throughput target before accepting performance work. Include wall clock, p50/p95/p99 or phase latency, CPU, memory, WAL, temp bytes, disk read/write, lock waits, and artifact sizes where relevant.
-5. Correctness and publication parity outrank speed. Do not accept a performance win that changes API output, breaks historical correctness, bypasses provider constraints, or weakens public-read safety.
+4. Keep `fstservice` and `festivalweb` available during backend/database work unless an explicit restart/redeploy window is part of the task.
+5. Define the real-time or throughput target before accepting performance work. Include wall clock, p50/p95/p99 or phase latency, CPU, memory, WAL, temp bytes, disk read/write, lock waits, and artifact sizes where relevant.
+6. Correctness and publication parity outrank speed. Do not accept a performance win that changes API output, breaks historical correctness, bypasses provider constraints, or weakens public-read safety.
 
 ## Progress, console, and e-mail reporting
 

@@ -6,6 +6,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - Active API service: `fstservice` is healthy.
+- `fstservice` and `festivalweb` must remain live and usable during backend database work unless an exact restart/redeploy is explicitly approved.
 - Worker: `fstworker` is intentionally stopped until storage headroom and the next evaluation plan are approved.
 - Current published scrape: `1214`.
 - Public reads: unfrozen.
@@ -123,6 +124,7 @@ Goal: keep production stable while reclaim work is planned.
 Status and rules:
 
 - `fstservice` and `fst-postgres` remain healthy.
+- `festivalweb` remains healthy and users can use the app against the last published scrape.
 - Published scrape remains `1214`.
 - Public reads remain unfrozen.
 - `fstworker` remains stopped until explicitly approved.
@@ -131,6 +133,7 @@ Status and rules:
 Validation:
 
 - Confirm service health, publication state, public-read freeze state, disk free, and absence of dangerous locks before any approved work.
+- Confirm `fstservice` `/readyz`, `festivalweb` health, and at least one browser-visible app route after any explicitly approved service/web redeploy.
 
 ### Priority 1: prove and reclaim stale/derived band read projections
 
@@ -453,6 +456,7 @@ Before any approved reclaim action, produce a short proof package:
 ## Do-not-do list until explicitly approved
 
 - Do not restart `fstworker`.
+- Do not stop or break `fstservice` or `festivalweb` for backend/database work unless the exact restart/redeploy is explicitly approved.
 - Do not run another full scrape/eval.
 - Do not delete/prune historical data.
 - Do not drop indexes or tables.

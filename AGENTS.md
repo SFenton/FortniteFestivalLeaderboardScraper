@@ -21,6 +21,7 @@
 ## Live FST safety
 
 - Production compose ownership is `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator explicitly says otherwise.
+- During backend/database/storage work, `fstservice` and `festivalweb` must stay live, healthy, and usable by public users unless the exact task explicitly approves restarting or redeploying one of them.
 - Do not restart `fstworker`, run full scrapes, prune/delete data, drop tables/indexes, move active Postgres data, or run rewrite/repack maintenance without explicit approval for that action.
 - Before broad DB probes, deploys, scrapes, or maintenance, check Docker health, Postgres readiness, public-read freeze state, published scrape, locks/long queries, disk headroom, CPU, and memory.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
