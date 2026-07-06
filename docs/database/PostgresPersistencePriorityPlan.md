@@ -206,6 +206,42 @@ Decision:
 - Keep `public_reads_frozen=true` until a later published scrape is safely promoted or a dedicated publication-state repair phase explicitly changes it.
 - Treat any future `leaderboard_snapshot_state.active_snapshot_id` that points at a scrape missing from `scrape_log` as a correctness incident, not just a storage artifact.
 
+### [x] Phase C: P4 band rank-history v2 proof (2026-07-06T22:43:00Z)
+
+Mode: Current-system probe / history retention feasibility. No history rows, indexes, tables, workers, services, or configuration were changed.
+
+Evidence:
+
+| Surface | Total size | Heap | Index/toast | Estimated rows | Interpretation |
+|---|---:|---:|---:|---:|---|
+| `band_team_rank_history_points_v2_quad` | 365 GB | 139 GB | 226 GB | 329,537,184 | Largest band-history points partition. |
+| `band_team_rank_history_points_v2_trios` | 288 GB | 118 GB | 170 GB | 323,710,688 | Large history surface with prior dead-tuple pressure. |
+| `band_team_rank_history_points_v2_duets` | 146 GB | 67 GB | 78 GB | 197,216,976 | Smaller but still high-value surface. |
+| `band_team_rank_history_latest_v2_*` | about 17.9 GB combined | about 8.2 GB | about 9.7 GB | about 21.5M combined | Latest-state delta detector; structural, not first reclaim target. |
+| `band_team_rank_history_snapshot_v2` | 14 MB | 5.3 MB | 9.1 MB | 26,239 | Small metadata/freshness table. |
+
+Metadata coverage:
+
+| Band type | Completed snapshots | Date range | Source rows | Changed rows |
+|---|---:|---|---:|---:|
+| `Band_Duets` | 2,419 | 2026-04-26 to 2026-07-05 | 148,713,761 | 139,082,211 |
+| `Band_Trios` | 7,713 | 2026-04-26 to 2026-07-06 | 227,017,957 | 203,548,764 |
+| `Band_Quad` | 17,651 | 2026-04-26 to 2026-07-05 | 240,373,768 | 186,065,121 |
+
+Representative public history route:
+
+- `/api/rankings/bands/Band_Duets/{teamKey}/history` returned 200 with history data.
+- `pg_stat_statements` then showed a `band_team_rank_history_points_v2` read returning 17 rows in about 9.35 ms with 28 shared blocks read.
+- No ungranted locks were observed after the probe.
+
+P4 decision:
+
+- `band_team_rank_history_points_v2` is active user-facing history data, not an obsolete projection.
+- Do not table-quarantine or broadly drop history points or latest-state indexes.
+- Retention/index work must be history-semantics-first: define retention policy, prove endpoint parity, then target only redundant/non-public indexes or old date slices.
+- Primary keys are structural. Low `idx_scan` on primary keys is not enough to drop them.
+- The most promising next safe work is per-index owner cards for non-primary history indexes and a retention-policy design for old history slices.
+
 ## Prioritization principles
 
 1. Reclaim space first where the surface is likely derived and correctness risk is low.
