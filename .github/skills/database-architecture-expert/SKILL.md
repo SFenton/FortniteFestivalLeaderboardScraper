@@ -26,7 +26,7 @@ This skill is fed by OSS database-architect and schema-designer guidance, but re
 - Postgres remains the durable source of truth for FST scrape state, leaderboard snapshots, rankings, publication state, Epic/API-derived records, and schema-owned audit data.
 - DuckDB/Parquet-style paths are candidates for read-heavy artifacts and scrape/replay slices, not live source-of-truth replacement, unless a later promotion explicitly changes that.
 - Columnar/time-series platforms such as ClickHouse or TimescaleDB require a workload-specific research and benchmark gate before implementation.
-- Long-term active Postgres data belongs on the FST drive. Temporary alternate-drive workspace is allowed only for approved scratch, migration, or repack operations.
+- All FST database/storage/reclaim work belongs on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Report template
 

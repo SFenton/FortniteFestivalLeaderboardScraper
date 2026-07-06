@@ -18,7 +18,7 @@ Like `ml-implementation-review`, this skill is seeded by permissively licensed O
 2. Use read-only probes first. Do not mutate schema, data, runtime config, indexes, retention state, or Docker services until the current state and risk are understood.
 3. Treat destructive or locking work as operator-approved maintenance. Data deletion, table rewrites, `VACUUM FULL`, non-concurrent large index builds, retention pruning, export/import cutovers, and platform migrations require an explicit approval path, rollback/restore plan, and a live-safety window.
 4. Preserve historical leaderboard correctness semantics. Scrape, publication, ranking, and notification behavior must only use data valid for the published or in-progress scrape being evaluated.
-5. Keep long-term active FST Postgres data on the FST drive. Temporary use of another drive is allowed only as approved scratch/migration/repack workspace, never as the permanent home for FST data.
+5. Keep all FST database/storage/reclaim work on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 6. Codify Epic/API feeds, entitlements, rates, quotas, request pacing, storage, retention, and cleanup before adding or widening data-source automation or platform-managed ingestion.
 7. Prefer the smallest reproducible benchmark or probe that answers the question. Compare against matched baselines with identical data ranges, query shapes, concurrency, cache state, resource caps, and correctness checks.
 8. Keep secrets out of logs, docs, artifacts, shell history, and committed files. Redact connection strings and provider credentials.

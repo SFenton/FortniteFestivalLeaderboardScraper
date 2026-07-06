@@ -12,4 +12,4 @@ When touching Postgres, schema, persistence, DB initialization, repository-style
 - If the change affects scrape/post-process/rankings data shape, also review the relevant design documents under `docs/design/`.
 - Keep docs explicit about historical leaderboard correctness, published-scrape read safety, public-read freeze/unfreeze behavior, storage retention, locks, long queries, and maintenance windows.
 - The active production compose project is `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator explicitly says otherwise.
-- Temporary use of another drive is allowed only for scratch/migration/repack workspace when approved. Long-term FST data must remain on the FST drive.
+- All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.

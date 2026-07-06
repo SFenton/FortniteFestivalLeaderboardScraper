@@ -11,7 +11,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Public reads: unfrozen.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
 - The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
-- Long-term FST data must remain on the FST drive. Temporary alternate-drive use is allowed only as approved scratch/migration/repack workspace.
+- All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Completed persistence phases
 
@@ -112,7 +112,7 @@ High dead tuple candidates observed:
 3. Do not trade permanent storage correctness for temporary free space.
 4. Prefer read-only proof, manifests, parity checks, and reversible config/index changes before destructive work.
 5. Separate "immediate free space" work from "future scrape cost" work; both matter, but the disk blocker must be cleared first.
-6. Long-term FST data must remain on the FST drive. Alternate-drive use is scratch-only when approved.
+6. All work must remain on the 4 TB FST drive. Alternate-drive data, scratch, migration, export, or repack workspace is prohibited unless SFenton explicitly overrides this rule later.
 
 ## Risk-adjusted priority order
 
@@ -236,7 +236,7 @@ Required proof before action:
 
 Allowed candidate actions after approval:
 
-- Archive old snapshots to scratch/export, verify manifest, then prune only after restore proof.
+- Archive old snapshots only to approved locations on the 4 TB FST drive, verify manifest, then prune only after restore proof.
 - Keep latest published and recent safety window on FST drive.
 - Consider time/scrape-range partitioning for future snapshot retention if physical snapshots remain.
 
@@ -278,7 +278,7 @@ Allowed candidate actions after approval:
 - Drop/replace unused history indexes.
 - Partition by time only for future layout or after a controlled migration.
 - Archive old points by date/scope only with manifest and restore proof.
-- Repack/vacuum only after sufficient scratch space exists.
+- Repack/vacuum only after sufficient scratch space exists on the 4 TB FST drive.
 
 Success metrics:
 
@@ -375,14 +375,14 @@ Target candidates:
 
 Why later:
 
-- `VACUUM FULL`, repack, or table rewrites can need locks and scratch space.
+- `VACUUM FULL`, repack, or table rewrites can need locks and scratch space; this scratch space must be on the 4 TB FST drive unless SFenton explicitly overrides this rule later.
 - The system currently has too little headroom for risky rewrite work.
 - Some surfaces may be better solved by dropping obsolete derived tables or indexes first.
 
 Allowed candidate actions after approval:
 
 - Plain vacuum/analyze where safe.
-- `pg_repack` only with scratch-space and maintenance-window approval.
+- `pg_repack` only with 4 TB FST-drive scratch-space and maintenance-window approval.
 - Rebuild derived projections from source if cheaper than repacking.
 
 Validation:
@@ -447,7 +447,7 @@ Before any approved reclaim action, produce a short proof package:
 | Access evidence | `pg_stat_user_indexes`, `pg_stat_statements`, source references, endpoint/job ownership, and representative query plans. |
 | Correctness gate | API parity, row count/range/checksum/fingerprint parity, or manifest coverage depending on object type. |
 | Rollback path | Rename-back, recreate index DDL, restore archive, regenerate projection, or read-source flag. |
-| Maintenance risk | Expected locks, disk scratch need, WAL/temp impact, service health risk, and worker state. |
+| Maintenance risk | Expected locks, 4 TB FST-drive scratch need, WAL/temp impact, service health risk, and worker state. |
 | Approval statement | Exact object/action approved by the operator. |
 
 ## Do-not-do list until explicitly approved
@@ -457,8 +457,8 @@ Before any approved reclaim action, produce a short proof package:
 - Do not delete/prune historical data.
 - Do not drop indexes or tables.
 - Do not run `VACUUM FULL`, `CLUSTER`, `pg_repack`, or broad rewrites.
-- Do not move active Postgres data off the FST drive.
-- Do not use alternate-drive space except as approved temporary scratch/migration/repack workspace.
+- Do not move active Postgres data off the 4 TB FST drive.
+- Do not use alternate-drive space for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Evaluation cadence for future phases
 
