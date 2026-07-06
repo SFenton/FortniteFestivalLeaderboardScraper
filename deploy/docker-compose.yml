@@ -197,6 +197,8 @@ services:
       - BandRankHistory__StaleRunningJobMinutes=${BAND_RANK_HISTORY_STALE_RUNNING_JOB_MINUTES:-15}
       # Combo-batched band-ranking writes reduce one-shot build-table pressure on tight disks.
       - BandTeamRankings__WriteMode=${BAND_TEAM_RANKINGS_WRITE_MODE:-ComboBatched}
+      # Optional band-song projection rebuild is expensive and has live/current fallbacks.
+      - BandTeamRankings__RebuildBandSongTeamRankings=${BAND_TEAM_RANKINGS_REBUILD_BAND_SONG_TEAM_RANKINGS:-false}
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00

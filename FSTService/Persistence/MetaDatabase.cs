@@ -7860,6 +7860,9 @@ public sealed class MetaDatabase : IMetaDatabase
         if (!TableExists(conn, null, tableName))
             return false;
 
+        if (!IsBandSongRankingTableFreshForCurrentRankings(conn, tableName, bandType))
+            return false;
+
         var quotedTable = BandRankingStorageNames.QuoteIdentifier(tableName);
 
         using (var scopeCmd = conn.CreateCommand())
@@ -8051,6 +8054,9 @@ public sealed class MetaDatabase : IMetaDatabase
         if (!TableExists(conn, null, tableName))
             return false;
 
+        if (!IsBandSongRankingTableFreshForCurrentRankings(conn, tableName, bandType))
+            return false;
+
         var quotedTable = BandRankingStorageNames.QuoteIdentifier(tableName);
 
         using (var scopeCmd = conn.CreateCommand())
@@ -8162,6 +8168,30 @@ public sealed class MetaDatabase : IMetaDatabase
         }
 
         return true;
+    }
+
+    private bool IsBandSongRankingTableFreshForCurrentRankings(NpgsqlConnection conn, string tableName, string bandType)
+    {
+        var currentBandSongTable = BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType);
+        if (!string.Equals(tableName, currentBandSongTable, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var currentRankingTable = BandRankingStorageNames.GetCurrentRankingTable(bandType);
+        if (!TableExists(conn, null, currentRankingTable))
+            return true;
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $@"
+            WITH freshness AS (
+                SELECT
+                    (SELECT MAX(computed_at) FROM {BandRankingStorageNames.QuoteIdentifier(currentBandSongTable)} WHERE band_type = @bandType) AS song_computed_at,
+                    (SELECT MAX(computed_at) FROM {BandRankingStorageNames.QuoteIdentifier(currentRankingTable)} WHERE band_type = @bandType) AS ranking_computed_at
+            )
+            SELECT ranking_computed_at IS NULL
+                OR (song_computed_at IS NOT NULL AND song_computed_at >= ranking_computed_at)
+            FROM freshness;";
+        cmd.Parameters.AddWithValue("bandType", bandType);
+        return Convert.ToBoolean(cmd.ExecuteScalar());
     }
 
     private (List<BandSongPerformanceDto> Best, List<BandSongPerformanceDto> Worst) GetBandSongPerformanceExtremesLive(string bandType, string teamKey, string? comboId = null, int limit = 5)

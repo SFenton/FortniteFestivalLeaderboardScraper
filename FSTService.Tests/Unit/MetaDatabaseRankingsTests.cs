@@ -1356,6 +1356,22 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     [Fact]
+    public void GetBandSongPerformances_IgnoresStaleCurrentProjectionAfterCurrentRankingsAdvance()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandSongTeamRankings("Band_Duets");
+        MakeCurrentBandSongRankingRowsStale("Band_Duets", "p1:p2", bogusScore: 999_999);
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+
+        var performances = Db.GetBandSongPerformances("Band_Duets", "p1:p2");
+
+        Assert.Equal(["song_0", "song_1"], performances.Select(p => p.SongId).ToArray());
+        Assert.DoesNotContain(performances, performance => performance.Score == 999_999);
+        Assert.Contains(performances, performance => performance.SongId == "song_0" && performance.Score == 1100);
+        Assert.Contains(performances, performance => performance.SongId == "song_1" && performance.Score == 1200);
+    }
+
+    [Fact]
     public void GetBandSongPerformances_ReadsDerivedDuplicateInstrumentComboProjection()
     {
         SeedDuplicateTriosBandRankingsSource();
@@ -1502,6 +1518,20 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         var (comboBest, comboWorst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", "Solo_Guitar+Solo_Bass", limit: 1);
         Assert.Equal("song_1", Assert.Single(comboBest).SongId);
         Assert.Equal("song_0", Assert.Single(comboWorst).SongId);
+    }
+
+    [Fact]
+    public void GetBandSongPerformanceExtremes_IgnoresStaleCurrentProjectionAfterCurrentRankingsAdvance()
+    {
+        SeedBandRankingsSource();
+        Db.RebuildBandSongTeamRankings("Band_Duets");
+        MakeCurrentBandSongRankingRowsStale("Band_Duets", "p1:p2", bogusScore: 999_999);
+        Db.RebuildBandTeamRankings("Band_Duets", totalChartedSongs: 2);
+
+        var (best, worst) = Db.GetBandSongPerformanceExtremes("Band_Duets", "p1:p2", limit: 1);
+
+        Assert.NotEqual(999_999, Assert.Single(best).Score);
+        Assert.NotEqual(999_999, Assert.Single(worst).Score);
     }
 
     [Fact]
@@ -2300,6 +2330,23 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("rankingScope", rankingScope);
         cmd.Parameters.AddWithValue("scopeComboId", scopeComboId);
+        cmd.Parameters.AddWithValue("teamKey", teamKey);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void MakeCurrentBandSongRankingRowsStale(string bandType, string teamKey, int bogusScore)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            UPDATE {BandRankingStorageNames.QuoteIdentifier(BandRankingStorageNames.GetCurrentBandSongRankingTable(bandType))}
+            SET score = @bogusScore,
+                computed_at = TIMESTAMPTZ '2000-01-01 00:00:00+00'
+            WHERE band_type = @bandType
+              AND team_key = @teamKey;
+            """;
+        cmd.Parameters.AddWithValue("bogusScore", bogusScore);
+        cmd.Parameters.AddWithValue("bandType", bandType);
         cmd.Parameters.AddWithValue("teamKey", teamKey);
         cmd.ExecuteNonQuery();
     }

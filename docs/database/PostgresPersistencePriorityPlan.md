@@ -11,7 +11,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Public reads: frozen to published scrape `1214` after the Phase B safety correction.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
 - The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
-- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; no worker restart was performed during the code/config update.
+- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback; no worker restart was performed during the code/config update.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Completed persistence phases
@@ -72,6 +72,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
+| Optional band-song projection pressure gate | Complete | Defaulted optional band-song projection rebuilds to disabled and made current projection reads fall back when stale relative to current band rankings. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Continue autonomously through parity gates | Destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed after the live-scrape A/B data-parity gate passes. |
@@ -469,7 +470,42 @@ P6 decision:
 - Accepted as a low-risk write-pressure reduction.
 - This does not claim a storage-reclaim win: final ranking tables and indexes are the same size, but the required build-table insert is split into smaller statements.
 - The worker remains stopped after the previous disk-exhaustion failure; no full scrape restart was performed in this phase.
-- Remaining P6 safe follow-up: gate optional band-song projection rebuilds or make them pressure-aware, because that optional projection also failed under low disk and has documented fallback behavior.
+- Phase H completed the safe follow-up for optional band-song projection pressure.
+
+### [x] Phase H: P6 optional band-song projection pressure gate (2026-07-06T23:45:00Z)
+
+Mode: Performance / capacity improvement. No production services, workers, schema, data, indexes, tables, or scrape state were restarted or mutated.
+
+Reason for the change:
+
+| Evidence | Interpretation | Candidate |
+|---|---|---|
+| Failed `fstworker` logs showed `BandSongRankings` for `Band_Duets` failed during build/index work with `53100: No space left on device`. | The band-song projection is a large optional derived surface that can consume disk during already tight post-scrape ranking work. | Do not rebuild it by default while disk headroom is constrained. |
+| `RankingsCalculator` already treats band-song projection rebuild failure as non-fatal. | Band rankings and scrape continuation do not require this projection to succeed. | Preserve scrape/ranking progress by skipping the optional rebuild unless explicitly enabled. |
+| Band-song endpoint reads have live/current-projection fallbacks, but stale current derived tables could otherwise be read after skipping a rebuild. | Correctness requires stale derived rows to be rejected once current band rankings advance. | Add a freshness check that falls back when `band_song_team_rankings_current_*` is older than `band_team_rankings_current_*`. |
+
+Implementation:
+
+| Change | Files/artifacts | Safety gate | Rollback |
+|---|---|---|---|
+| Added `BandTeamRankings:RebuildBandSongTeamRankings`, default `false`. | `FSTService/Persistence/BandTeamRankingRebuildOptions.cs`, `FSTService/appsettings.json`, `FSTService/appsettings.Development.json`, `docker-compose.yml`, `deploy/docker-compose.yml` | Optional projection rebuild is skipped by default; band team rankings, history queuing, and live fallbacks continue. | Set `BandTeamRankings:RebuildBandSongTeamRankings=true` or `BAND_TEAM_RANKINGS_REBUILD_BAND_SONG_TEAM_RANKINGS=true`. |
+| Skipped optional band-song projection rebuilds in `RankingsCalculator` unless explicitly enabled. | `FSTService/Scraping/RankingsCalculator.cs` | Logs a skipped phase and preserves current band-ranking success flow. | Re-enable the option. |
+| Added stale current band-song projection detection. | `FSTService/Persistence/MetaDatabase.cs` | Current band-song projection reads now require projection `computed_at >=` current band-team ranking `computed_at`; otherwise the existing legacy/current-projection/live fallbacks are used. | Re-enable rebuilds or remove the freshness gate if a dedicated generation model replaces it. |
+| Updated active production compose defaults without restarting services. | `/home/sfenton/Docker/FestivalServiceTracker/docker-compose.pia-30.yml`, `/home/sfenton/Docker/FestivalServiceTracker/.env` | No live restart; next worker recreate will skip optional band-song projection rebuilds by default. | Revert the same non-secret override to `true` if the optional projection is needed. |
+
+Validation:
+
+| Command | Result | Evidence |
+|---|---|---|
+| `dotnet test FSTService.Tests/FSTService.Tests.csproj --filter "FullyQualifiedName~ScraperOptionsAndModelsTests|FullyQualifiedName~RankingsCalculatorTests.ComputeBandRankings_SkipsBandSongProjectionByDefault|FullyQualifiedName~RankingsCalculatorTests.ComputeBandRankings_RebuildsBandSongProjectionWhenEnabled|FullyQualifiedName~RankingsCalculatorTests.ComputeBandRankings_UsesConfiguredBandRankingWriteMode|FullyQualifiedName~MetaDatabaseRankingsTests.GetBandSongPerformances_|FullyQualifiedName~MetaDatabaseRankingsTests.GetBandSongPerformanceExtremes_|FullyQualifiedName~MetaDatabaseRankingsTests.RebuildBandSongTeamRankings_PopulatesOverallAndComboProjectionRows"` | Passed: 34 tests, 0 failed, duration 5 s. | Confirms default skip, explicit enable, stale current projection fallback for normal and extremes reads, existing derived projection reads, and rebuild metrics. |
+| `docker compose -f docker-compose.yml -f docker-compose.pia-30.yml config | grep -n "BandTeamRankings__RebuildBandSongTeamRankings\\|BandTeamRankings__WriteMode"` in `/home/sfenton/Docker/FestivalServiceTracker` | Reported `BandTeamRankings__RebuildBandSongTeamRankings: "false"` and `BandTeamRankings__WriteMode: ComboBatched`. | Confirms the active production compose config resolves the safer optional-projection gate for the next recreate. |
+
+P6.1 decision:
+
+- Accepted as a low-risk optional-work reduction.
+- This preserves ranking correctness by falling back instead of serving stale current band-song projection rows after current band rankings advance.
+- This does not reclaim existing projection storage; it prevents future optional rebuild pressure during post-scrape ranking work.
+- The worker remains stopped after the previous disk-exhaustion failure; no full scrape restart was performed in this phase.
 
 ## Prioritization principles
 
@@ -736,7 +772,7 @@ Current implementation status:
 
 - `ComboBatched` is now the default band team ranking write mode in code, appsettings, repo compose templates, and the active production compose/.env default for the next worker recreate.
 - Unit parity confirms `ComboBatched` produces the same band ranking output as `Monolithic` and `Phased` on the fixture.
-- Optional band-song projection pressure remains open for a later P6 continuation.
+- Optional band-song projection rebuilds are now disabled by default and stale current projection rows fall back to current projection/live computation when current band rankings are newer.
 
 ### Priority 7: dead tuple/bloat maintenance after reclaim headroom
 

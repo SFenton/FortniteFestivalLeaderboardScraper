@@ -724,20 +724,30 @@ public sealed class RankingsCalculator
                     PopulationMedian,
                     _bandTeamRankingOptions);
 
-                var songRankingSw = System.Diagnostics.Stopwatch.StartNew();
-                try
+                if (_bandTeamRankingOptions.RebuildBandSongTeamRankings)
                 {
-                    _metaDb.RebuildBandSongTeamRankings(bandType, _bandTeamRankingOptions);
-                    songRankingSw.Stop();
-                    LogPhase("band_song_rankings.per_type", bandType, songRankingSw.Elapsed);
+                    var songRankingSw = System.Diagnostics.Stopwatch.StartNew();
+                    try
+                    {
+                        _metaDb.RebuildBandSongTeamRankings(bandType, _bandTeamRankingOptions);
+                        songRankingSw.Stop();
+                        LogPhase("band_song_rankings.per_type", bandType, songRankingSw.Elapsed);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        songRankingSw.Stop();
+                        _log.LogWarning(ex,
+                            "Band song team ranking projection rebuild failed for {BandType}. Band song endpoints will fall back to live computation until the projection is rebuilt.",
+                            bandType);
+                        LogPhase("band_song_rankings.per_type.failed", bandType, songRankingSw.Elapsed);
+                    }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                else
                 {
-                    songRankingSw.Stop();
-                    _log.LogWarning(ex,
-                        "Band song team ranking projection rebuild failed for {BandType}. Band song endpoints will fall back to live computation until the projection is rebuilt.",
+                    _log.LogInformation(
+                        "Band song team ranking projection rebuild skipped for {BandType}; endpoints will use fresh projection rows when available and otherwise fall back to current projection/live computation.",
                         bandType);
-                    LogPhase("band_song_rankings.per_type.failed", bandType, songRankingSw.Elapsed);
+                    LogPhase("band_song_rankings.per_type.skipped", bandType, TimeSpan.Zero);
                 }
 
                 perBandSw.Stop();

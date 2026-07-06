@@ -18,6 +18,7 @@ public sealed class BandTeamRankingRebuildOptions
     public bool AnalyzeStagingTable { get; set; } = false;
     public bool DisableSynchronousCommit { get; set; } = true;
     public int MaxParallelBandTypes { get; set; } = 1;
+    public bool RebuildBandSongTeamRankings { get; set; } = false;
 
     /// <summary>
     /// Run standard rank-history snapshots concurrently with band ranking rebuilds, then await both
