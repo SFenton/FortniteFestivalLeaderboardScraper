@@ -5,13 +5,13 @@ This plan records the approved direction for improving FST Postgres persistence 
 ## Current production state
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
-- Active API service: `fstservice` is healthy.
+- Active API service: `fstservice` is healthy and was redeployed from local image `fstservice:sticky-rank-history-tracking` after Phase J.
 - Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance, but must be redeployed/recovered as soon as possible to preserve the user experience.
 - Current published scrape: `1214`.
 - Public reads: frozen to published scrape `1214` after the Phase B safety correction.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
 - The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
-- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback; no worker restart was performed during the code/config update.
+- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback. `fstworker` was not restarted.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Completed persistence phases
@@ -75,6 +75,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | Optional band-song projection pressure gate | Complete | Defaulted optional band-song projection rebuilds to disabled and made current projection reads fall back when stale relative to current band rankings. |
 | P7 bloat readiness probe | Complete | Repaired stale candidate table stats with bounded `ANALYZE` and refreshed read-only size/dead-tuple estimates; destructive/rewrite maintenance remains blocked by headroom and parity gates. |
 | P8 public cache write-pressure reduction | Complete | Stopped request-time public API middleware writes to `api_response_cache`; cache persistence now stays in precompute/publish paths while frozen reads still serve published cache hits. |
+| API service redeploy | Complete | Built `fstservice:sticky-rank-history-tracking`, recreated `fstservice` only, kept `fstworker` stopped, and verified `/readyz`, `festivalweb`, Postgres, and disk after recovery. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Continue autonomously through parity gates | Destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed after the live-scrape A/B data-parity gate passes. |
@@ -584,6 +585,25 @@ P8 decision:
 - This does not change endpoint JSON bodies or frozen cached-read behavior.
 - Persistent public API cache entries should now come from precompute/staging/publish flows, not opportunistic live GETs.
 - Additional P8 targets, such as `/api/status` counters, `/api/songs` split payloads, and member-score fan-out, are deferred until deploy/eval evidence identifies a measured bottleneck and matched response-parity baseline.
+
+### [x] Phase K: API service redeploy and recovery check (2026-07-07T00:08:00Z)
+
+Mode: Promotion readiness / live-safe deployment. No database schema, data rows, indexes, tables, scrapes, or worker state were mutated.
+
+Deployment evidence:
+
+| Step | Result | Decision |
+|---|---|---|
+| Build | `docker build -f FSTService/Dockerfile -t fstservice:sticky-rank-history-tracking .` completed successfully. | Accepted; image includes Phase F-J service changes. |
+| Service recreate | `/home/sfenton/Docker/FestivalServiceTracker` `docker compose up -d --no-deps fstservice` recreated only `fstservice`. | Accepted; `fstworker` was not started. |
+| Recovery | `fstservice` `/readyz` returned `Healthy`; `festivalweb` remained healthy and served the app shell; `fst-postgres` stayed healthy. | Accepted. |
+| Disk | `/mnt/docker-storage` remained about 77 GB free and 98% used after build/redeploy. | Still insufficient for full scrape/rewrite/repack work. |
+
+Deployment decision:
+
+- Accepted for the API/service portion of the changes.
+- `fstworker` remains stopped after the prior disk-exhaustion failure; a full worker scrape/restart remains gated by storage headroom and live-scrape A/B readiness.
+- Production compose/.env defaults are staged so the next intentional worker recreate uses `ComboBatched` band ranking writes and skips optional band-song projection rebuilds by default.
 
 ## Prioritization principles
 
