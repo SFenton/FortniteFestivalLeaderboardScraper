@@ -9,6 +9,8 @@ Use this skill when the operator explicitly asks for autonomous execution, names
 
 This skill is an execution orchestrator. It does not replace focused repository skills; it owns plan parsing, task ordering, stop counters, self-unblocking, progress cadence, commit/push boundaries, phase reports, and final recap reports while applying the focused skill for the current domain.
 
+Once invoked, run with day-trader-style persistence: continue through every approved phase/task/priority in order, insert safe derivative work as it is discovered, commit and push accepted progress, and do not stop at reports, completed probes, rejected hypotheses, commits, or approval-gated runtime actions. FST live-safety gates block only the exact unsafe action; they do not end the autonomous queue while safe code, docs, tests, probes, manifests, parity checks, feasibility packages, or readiness work remains.
+
 ## Input contract
 
 Accept any combination of:
@@ -42,25 +44,26 @@ Repository rules override general plan text. Preserve historical leaderboard cor
 - If an approved restart/redeploy is required, restart only the named service, keep downtime minimal, verify `/readyz`, `festivalweb` health, and a browser-visible route immediately afterward, then continue.
 - A stale/stopped `fstworker` is not by itself a reason to block the web app. The API and web app should continue serving the last published scrape while backend/database work proceeds.
 - If a proposed action would make the service or web app unavailable outside an explicitly approved restart/redeploy window, classify it as an approval gate and choose a safer live-compatible alternative first.
+- When `fstworker` restart, full scrape/eval, destructive reclaim, index/table drop, rewrite/repack, or publication-state change is not approved, block only that exact action. Continue all safe non-interactive work around it: code/test work, bounded read-only probes, fixture or artifact benchmarks, parity tooling, manifests, rollback plans, approval packages, operational monitors, documentation, and commit/report updates.
 
 ## Required execution loop
 
 1. **Parse and normalize the plan.** Build a working phase/task list with explicit acceptance gates, evidence requirements, validation commands, performance targets, and known blockers. If a task lacks measurable gates, infer them from repo docs and the prompt before starting.
 2. **Run prerequisites first.** Check current branch/worktree, relevant instruction files, live-safety risk, Docker health/resource pressure when runtime is affected, and existing artifacts. Do not overwrite unrelated user changes.
-3. **Skip already completed work.** When the plan/checkpoint/Markdown marks work complete, accepted, rejected with evidence, or hard-blocked with no safe alternative, treat it as processed and advance. Skipped completed work should not generate catch-up e-mails.
+3. **Skip already completed work.** When the plan/checkpoint/Markdown marks work complete, accepted, rejected with evidence, or hard-blocked with no safe alternative, treat it as processed and advance unless the operator explicitly asks for a refresh or fresh evidence proves the artifact stale/contradicted. Skipped completed work should not generate catch-up e-mails.
 4. **Execute phases in order.** Do not start a later phase until every task in the current phase is accepted, rejected with evidence, skipped as already processed, or blocked by a hard safety/credential/approval gate with no safe alternative.
 5. **Execute tasks in order.** A task is not complete until implementation, docs, tests/evals/benchmarks, performance checks, output validation, cleanup, and commit handling required by that task are complete.
 6. **Diagnose before changing.** For failures, regressions, or missing evidence, identify the root cause and choose the next smallest safe hypothesis before editing again.
-7. **Iterate autonomously.** A report, failed command, rejected A/B, completed smoke, commit/revert, or phase boundary is not a stopping point. Continue into the next safe repair, A/B, benchmark, or task until stop criteria are reached.
-8. **Insert discovered work into the active plan.** When a task reveals prerequisite work, residual risk, missing data, performance bottlenecks, or validation gaps, insert the new task at the earliest safe point.
+7. **Iterate autonomously.** A report, failed command, rejected A/B, completed smoke, commit/revert, approval package, or phase boundary is not a stopping point. Continue into the next safe repair, A/B, benchmark, proof package, implementation task, or readiness task until stop criteria are reached.
+8. **Insert discovered work into the active plan.** When a task reveals prerequisite work, residual risk, missing data, performance bottlenecks, validation gaps, or an approval-gated action, insert new work at the earliest safe point: immediately before dependent work if it blocks correctness, later in the same phase if it strengthens evidence, or into a future phase if it is promotion/readiness work. Do not leave actionable safe work as narrative-only "next steps."
 9. **Unblock repairable blockers autonomously.** Treat missing diagnostics, stale manifests, data-quality gaps, slow-but-safe query paths, absent coverage, and failed non-destructive validation as work items, not hard blockers.
-10. **Run residual-blocker sweeps.** Before reports, phase completion, and finalization, classify rejected/blocked/caveated decisions, insert safe derivative work, and execute it before claiming no useful work remains.
+10. **Run residual-blocker sweeps.** Before reports, phase completion, finalization, and whenever an inserted-work queue appears empty, classify rejected/blocked/caveated decisions, insert safe derivative work, and execute it before claiming no useful work remains.
 11. **Convert next steps into tasks before reporting.** Any actionable safe next step named in a report must already exist in todo/plan state with an accepted, rejected, done, in-progress, or hard-blocked decision.
 12. **Keep phase completion strict.** Do not mark a phase complete while it has open inserted tasks, unvalidated outputs, pending commits/reverts, unresolved next steps, or unclassified rejected work.
 13. **Commit and push accepted work before starting new work.** Commit accepted/project-required file changes before moving to the next autonomous task/phase. Revert rejected experiments that should not remain. Do not commit artifacts, secrets, noisy logs, or unrelated user changes.
 14. **Triage dirty files at every task boundary.** Classify dirty/untracked paths as accepted work to commit, project-required supporting work, rejected experiment to revert, generated artifact/log to leave out, or unrelated user work to preserve/ask about.
 15. **Push before continuing.** After each accepted commit, push and verify success before starting the next risky autonomous task. If push fails, record the commit SHA and block continuation when persistence risk matters.
-16. **Finish with no leftover approved work.** The final report must not hand back safe in-scope next steps for the operator. It may list rejected or hard-blocked scope only after exhausting safe non-interactive alternatives and committing/pushing accepted changes.
+16. **Finish with no leftover approved work.** The final report must not hand back safe in-scope next steps for the operator. It may list rejected or hard-blocked scope only after exhausting safe non-interactive alternatives, inserting/processing every actionable follow-up within approved scope, and committing/pushing accepted changes. Fail the final report if any actionable safe follow-up lacks a processed task.
 
 ## Autonomous blocker triage
 
@@ -70,10 +73,12 @@ Repository rules override general plan text. Preserve historical leaderboard cor
 | Diagnosable rejection | A benchmark, eval, or implementation attempt is rejected, but evidence isolates a divergence, regression, bottleneck, or weak slice. | Insert a root-cause repair task before dependent promotion/default work. |
 | Evidence generation | Progress is blocked by missing manifests, parity evidence, coverage, fixtures, artifacts, or benchmark baselines. | Insert safe artifact generation, read-only probes, bounded backfills, or evaluation tasks. |
 | Time/data accrual | The gate needs future live scrape observations, future Epic/API responses, or non-overlapping windows that cannot be fabricated now. | Build or verify safe accrual machinery, persistence, monitors, and readiness reports; block only the final claim. |
-| Provider or approval gate | Remaining work requires credentials, provider/API terms, budget, destructive maintenance, privileged host access, or explicit operator approval. | Do not proceed with the gated action. Process all safe feasibility/proof work, then mark only the gated action blocked. |
+| Provider or approval gate | Remaining work requires credentials, provider/API terms, budget, destructive maintenance, privileged host access, or explicit operator approval. | Do not perform the gated action. Insert and execute all safe feasibility/proof/readiness work around it, then mark only the exact gated action blocked. |
 | Rejected with no safe hypothesis | All safe non-interactive repair paths have been attempted or rejected and no useful narrowing remains. | Record attempts, evidence, and why additional work would violate safety/approval boundaries or repeat exhausted hypotheses. |
 
-End-of-queue rule: before declaring the queue complete, sweep all rejected, blocked, and caveated decisions. Prioritize new safe work in this order: correctness/parity, live/public-read safety, data coverage, storage/retention feasibility, performance/resource safety, operational monitoring, documentation/reporting.
+End-of-queue rule: before declaring the queue complete, sweep all rejected, blocked, and caveated decisions. Prioritize new safe work in this order: correctness/parity, live/public-read safety, data coverage, storage/retention feasibility, performance/resource safety, operational monitoring, documentation/reporting. "Not approved for production mutation/scrape" does not mean "no more work"; continue with readiness work that is safe and useful.
+
+Approval blocker rule: if `fstworker` start, full scrape/eval, destructive reclaim, index/table drop, rewrite/repack, data movement, or public-read unfreeze is blocked, keep processing safe alternatives such as rollback SQL drafts, manifest/checksum tooling, endpoint parity tests, fixture benchmarks, bounded EXPLAIN/probe packages, monitoring scripts, docs/runbooks, and approval packages. Stop only the blocked production action unless every safe derivative path is exhausted.
 
 ## Stop counters
 
@@ -94,8 +99,9 @@ Accepted improvements reset the relevant counter. Rejected hypotheses do not sto
 2. Before broad evals, scrapes, backfills, DB scans, deploys, or service changes, run live-safety probes: `docker compose ps`, service `/readyz`, Postgres readiness, locks/long queries, `docker stats --no-stream`, disk headroom, public-read freeze state, and published scrape.
 3. Do not restart `fstworker`, run full scrapes, prune/delete data, drop tables/indexes, move active Postgres data, or run `VACUUM FULL`/`CLUSTER`/`pg_repack` without explicit approval for that exact action.
 4. Keep `fstservice` and `festivalweb` available during backend/database work unless an explicit restart/redeploy window is part of the task.
-5. Define the real-time or throughput target before accepting performance work. Include wall clock, p50/p95/p99 or phase latency, CPU, memory, WAL, temp bytes, disk read/write, lock waits, and artifact sizes where relevant.
-6. Correctness and publication parity outrank speed. Do not accept a performance win that changes API output, breaks historical correctness, bypasses provider constraints, or weakens public-read safety.
+5. When an eval/scrape/deploy/DDL action is gated, continue with smaller safe substitutes that answer the same question as far as possible: fixture tests, code review, generated rollback DDL, representative read-only query plans, manifest generation, API parity probes, storage math, and approval-package drafts.
+6. Define the real-time or throughput target before accepting performance work. Include wall clock, p50/p95/p99 or phase latency, CPU, memory, WAL, temp bytes, disk read/write, lock waits, and artifact sizes where relevant.
+7. Correctness and publication parity outrank speed. Do not accept a performance win that changes API output, breaks historical correctness, bypasses provider constraints, or weakens public-read safety.
 
 ## Progress, console, and e-mail reporting
 
@@ -110,7 +116,7 @@ Accepted improvements reset the relevant counter. Rejected hypotheses do not sto
 
 1. Prefer project scripts and user-space installs. Add dependencies only when necessary for the task and update license manifests when dependency manifests change.
 2. Never prompt for `sudo`. Find a non-privileged path: existing Docker service, user-local install, `npx`/`npm exec` where available, session artifact, or reduced benchmark that answers the same question.
-3. Do not wait for credentials, destructive DB approval, or privileged host access. If a hard boundary blocks a task, mark that scope blocked with evidence, then process all safe alternatives and dependent plan updates.
+3. Do not wait for credentials, destructive DB approval, or privileged host access. If a hard boundary blocks a task, mark only that scope blocked with evidence, then process all safe alternatives and dependent plan updates. Missing diagnostics, parity coverage, manifests, benchmarks, docs, and non-destructive validation are not external-access boundaries; repair them autonomously with existing repo tooling.
 4. Keep secrets out of commands, logs, reports, artifacts, commits, and e-mail bodies.
 
 ## Output templates

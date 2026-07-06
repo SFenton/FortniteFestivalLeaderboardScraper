@@ -45,7 +45,7 @@ Please file a bug report or feature request! I'll be watching!
 
 ## Autonomous repository operations
 
-Repository-local autonomous execution guidance lives in `.github/skills/autonomous-plan-executor/SKILL.md`. It is tailored for FST production safety: keep `fstworker` stopped unless explicitly approved, preserve published-scrape/public-read correctness, probe before destructive database work, and commit/push accepted changes before advancing to the next autonomous phase.
+Repository-local autonomous execution guidance lives in `.github/skills/autonomous-plan-executor/SKILL.md`. It is tailored for FST production safety while preserving autonomous progress: keep `fstworker` stopped unless explicitly approved, preserve published-scrape/public-read correctness, probe before destructive database work, commit/push accepted changes before advancing, and keep inserting safe code, proof, parity, manifest, monitoring, documentation, and approval-package work when a production scrape, DDL, or reclaim action is gated.
 
 Autonomous phase and recap e-mails are rendered with:
 
