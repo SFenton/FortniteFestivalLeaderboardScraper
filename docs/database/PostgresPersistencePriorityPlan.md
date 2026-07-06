@@ -9,7 +9,7 @@ This plan records the approved direction for improving FST Postgres persistence 
 - `fstservice` and `festivalweb` must remain live and usable during backend database work unless an exact restart/redeploy is explicitly approved.
 - Worker: `fstworker` is intentionally stopped until storage headroom and the next evaluation plan are approved.
 - Current published scrape: `1214`.
-- Public reads: unfrozen.
+- Public reads: frozen to published scrape `1214` after the Phase B safety correction.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
 - The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
@@ -67,6 +67,9 @@ No destructive retention prune is approved. Do not restart `fstworker`, run anot
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
+| History index owner cards | Complete | Read-only owner cards for `band_team_rank_history_*_v2` indexes completed on 2026-07-06; no index or data mutation performed. |
+| Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and approval gates documented on 2026-07-06. |
+| `band_read_*` quarantine approval package | Complete | Reversible, approval-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Autonomous scrape rollout | Blocked | `fstworker` remains stopped. Do not continue until storage/reclaim plan is approved. |
 | Destructive retention/reclaim | Not approved | No deletes, drops, rewrites, repacks, or moves are approved by this document alone. |
 | Next implementation phase | Pending approval | Must have explicit operator approval for any production mutation, destructive maintenance, worker restart, or full scrape/eval. |
@@ -240,7 +243,159 @@ P4 decision:
 - Do not table-quarantine or broadly drop history points or latest-state indexes.
 - Retention/index work must be history-semantics-first: define retention policy, prove endpoint parity, then target only redundant/non-public indexes or old date slices.
 - Primary keys are structural. Low `idx_scan` on primary keys is not enough to drop them.
-- The most promising next safe work is per-index owner cards for non-primary history indexes and a retention-policy design for old history slices.
+- Phase D completed the next safe read-only work: per-index owner cards for non-primary history indexes and a retention-policy draft for old history slices.
+
+### [x] Phase D: P4.1 band rank-history v2 index owner cards and retention policy draft (2026-07-06T22:50:04Z)
+
+Mode: Current-system probe / history retention feasibility. No history rows, indexes, tables, workers, services, runtime configuration, or scrape state were changed.
+
+Live-safety preflight:
+
+| Check | Result | Decision |
+|---|---|---|
+| Production compose | `fstservice`, `festivalweb`, and `fst-postgres` were healthy. | Safe for bounded read-only probes. |
+| API readiness | `fstservice` `/readyz` returned `Healthy`; Postgres accepted connections. | Public API remained live. |
+| Public reads | `published_scrape_id=1214`, `public_reads_frozen=true`, `public_reads_frozen_scrape_id=1214`. | Correctly pinned to the published scrape while storage work continues. |
+| Disk | `/mnt/docker-storage` remained about 77 GB free and 98% used. | Still unsafe for full scrape/eval or rewrite maintenance. |
+| Locks/queries | No ungranted locks; only short idle/service and diagnostic sessions were observed. | No blocking database incident. |
+| Worker/scrape | Recent `scrape_log` rows showed latest completed scrape `1214`; `scrape_log` has no `status` column. | `fstworker` remains approval-gated/stopped; scrape state probe adjusted to actual schema. |
+
+Production band rank-history configuration observed from the live service:
+
+| Setting | Live value | Interpretation |
+|---|---|---|
+| `BandRankHistory__Mode` | `Background` | History maintenance is best-effort/background, not scrape-critical. |
+| `BandRankHistory__WriteMode` | `V2Only` | New band history writes target v2 tables. |
+| `BandRankHistory__ApiReadSource` | `V2NarrowOnly` | Public band history reads use `band_team_rank_history_points_v2` directly. |
+| `BandRankHistory__UseWideHistoryCompatibilityWrite` | `false` | Legacy wide compatibility writes are disabled in production config. |
+
+P4.1 access evidence:
+
+| Evidence | Result | Interpretation |
+|---|---|---|
+| Source owner | `FSTService/Api/RankingsEndpoints.cs` calls `MetaDatabase.GetBandRankHistory`; `MetaDatabase.GetBandRankHistoryFromPointsTable` reads `band_team_rank_history_points_v2` when v2 API reads are enabled. | `ix_btrhpv2_team_date` is a public history endpoint read-path index. |
+| Writer owner | `BandRankHistoryWorker` calls `SnapshotBandRankHistoryChunked`; `SnapshotBandRankHistoryChunk` inserts v2 points and upserts latest-state rows. | Primary keys and latest-state indexes support write conflict checks and delta detection. |
+| Retention owner | `CleanupBandRankHistoryRetention` currently deletes only legacy `band_team_rank_history_points`, `band_team_rank_history`, and `band_team_ranking_stats_history`; it does not delete v2 points/snapshot/latest tables. | v2 retention is not currently enforced by the existing cleanup path. |
+| DB dependencies | No `pg_views` or regular `pg_proc` functions referenced `band_team_rank_history_points_v2`, `band_team_rank_history_snapshot_v2`, or `band_team_rank_history_latest_v2`. | Active dependencies are application SQL and indexes, not database views/functions. |
+| Statement stats | `pg_stat_statements` showed v2 history endpoint reads, snapshot freshness reads, and diagnostic queries only. | Query ownership is narrow and auditable. |
+
+Bounded query-plan evidence:
+
+| Query | Plan/result | Decision |
+|---|---|---|
+| Public v2 band history read for one `Band_Duets` team over 30 days | `EXPLAIN (ANALYZE, BUFFERS)` returned 17 rows in 7.359 ms, using `band_team_rank_history_points_band_type_ranking_scope_combo_idx` on `band_team_rank_history_points_v2_duets`; 8 shared hits, 26 shared reads, no temp spill. | The large team/date index is active for the public read path. Do not drop without replacement/parity proof. |
+| Snapshot freshness `max(snapshot_date)` for `Band_Duets` overall | `EXPLAIN (ANALYZE, BUFFERS)` returned in 0.073 ms using `band_team_rank_history_snapsh_band_type_ranking_scope_combo_key`; 4 shared hits. | Keep the small unique snapshot index; it supports freshness/status reads. |
+
+P4.1 non-primary index owner cards:
+
+| Index group | Size/scans | Owner and access path | Candidate decision | Rollback/proof gate |
+|---|---:|---|---|---|
+| `ix_btrhpv2_team_date` partition indexes (`band_team_rank_history_points_band_type_ranking_scope_combo_idx*`) | Duets 41 GB / 3 scans; Trios 89 GB / 0; Quad 114 GB / 0 | Public history endpoint filter: `band_type`, `ranking_scope`, `combo_id`, `team_key`, `snapshot_date >= cutoff`, ordered by `snapshot_date DESC`. | Keep for now. It is endpoint-owned even when `idx_scan` is low; Trios/Quad low scans likely reflect recent traffic, not proof of disuse. | Any replacement/drop needs sampled API parity for all band types, matched p50/p95/p99, and rollback DDL to recreate the partitioned indexes. |
+| `ix_btrhpv2_snapshot` partition indexes (`*_snapshot_id_band_type_idx`) | Duets 2,004 MB / 0; Trios 3,164 MB / 0; Quad 3,284 MB / 0 | No current source read path with `WHERE snapshot_id`; v2 parity code reads by `band_type`/`snapshot_date`, and writers store `snapshot_id` from snapshot metadata. | Candidate low-priority drop/replacement proof after endpoint indexes; possible reclaim about 8.4 GB. | Must first prove no restore/manifest/admin path needs snapshot-id lookups and capture exact `CREATE INDEX CONCURRENTLY` rollback DDL. |
+| `ix_btrhlv2_snapshot` partition indexes on latest v2 | Duets 714 MB / 0; Trios 1,140 MB / 0; Quad 1,271 MB / 0 | Latest-state table is a structural delta detector keyed by primary key; no current source read path with `WHERE snapshot_id`. | Candidate low-priority drop proof; possible reclaim about 3.1 GB. | Must preserve latest-state parity checks and write/update conflict behavior; recreate concurrently if needed. |
+| `ix_btrhsv2_generation` on snapshot metadata | 4,392 kB / 0 | Small generation lookup index on 26,239-row metadata table. | Not a meaningful space target. Leave until a generation-owner review. | Recreate with `CREATE INDEX CONCURRENTLY` if ever dropped. |
+
+P4.1 structural index decisions:
+
+| Structural index | Size/scans | Decision |
+|---|---:|---|
+| `band_team_rank_history_points_v2_*_pkey` | Duets 35 GB / 0; Trios 78 GB / 0; Quad 110 GB / 0 | Keep. These enforce point uniqueness and `ON CONFLICT` behavior; low scan count does not make them safe reclaim targets. |
+| `band_team_rank_history_latest_v2_*_pkey` | Duets 1,073 MB / 0; Trios 2,254 MB / 0; Quad 3,253 MB / 0 | Keep. These enforce latest-state uniqueness and writer conflict checks. |
+| `band_team_rank_history_snapshot_v2_pkey` and unique snapshot key | 720 kB and 4,136 kB | Keep. The unique snapshot key is actively used by freshness reads; both are too small to matter for reclaim. |
+
+P4.1 coverage evidence:
+
+| Band type / scope | Completed snapshots | Date range | Source rows | Changed rows |
+|---|---:|---|---:|---:|
+| `Band_Duets` all scopes | 2,419 | 2026-04-26 to 2026-07-05 | 148,713,761 | 139,082,211 |
+| `Band_Duets` combo | 2,365 | 2026-04-26 to 2026-07-05 | 115,965,807 | 107,095,590 |
+| `Band_Duets` overall | 54 | 2026-04-26 to 2026-07-05 | 32,747,954 | 31,986,621 |
+| `Band_Trios` all scopes | 7,713 | 2026-04-26 to 2026-07-06 | 227,017,957 | 203,548,764 |
+| `Band_Trios` combo | 7,666 | 2026-04-26 to 2026-07-06 | 179,012,672 | 157,294,031 |
+| `Band_Trios` overall | 47 | 2026-04-26 to 2026-07-05 | 48,005,285 | 46,254,733 |
+| `Band_Quad` all scopes | 17,651 | 2026-04-26 to 2026-07-05 | 240,373,768 | 186,065,121 |
+| `Band_Quad` combo | 17,609 | 2026-04-26 to 2026-07-05 | 207,168,338 | 155,859,795 |
+| `Band_Quad` overall | 42 | 2026-04-27 to 2026-07-05 | 33,205,430 | 30,205,326 |
+
+P4.1 retention policy draft:
+
+| Option | Storage impact | Correctness risk | Decision |
+|---|---|---|---|
+| Keep all v2 history indefinitely | No immediate reclaim; continued growth in points and indexes. | Lowest semantic risk; preserves exact public history and audit trail. | Safe default until an explicit retention approval exists. |
+| Enforce 365-day v2 raw retention | Future old-slice reclaim once data ages past 365 days; no immediate win because current v2 range starts 2026-04-26. | Medium; must preserve endpoint semantics and restore/manifest coverage. | Candidate only after adding v2-aware manifest/parity tooling and explicit prune approval. |
+| Cold archive old v2 slices on the 4 TB FST drive, then prune | Potential reclaim while preserving a restore path. | Medium/high; archive, checksum, and restore latency must be proven before delete. | Candidate only after storage headroom, archive manifest, restore drill, and exact object/date approval. |
+| Coalesce old history to lower granularity | Potentially large future reclaim. | High; changes visible history density and may hide rank movements. | Rejected for now unless product semantics explicitly approve coarser old history. |
+| Season-scoped raw retention plus summaries | Potentially useful after seasonal boundaries are codified. | High until season boundary, restore, and public-history behavior are specified. | Research-only; not an immediate reclaim action. |
+
+P4.1 decision:
+
+- Accepted as a proof/design phase.
+- Do not drop the large `ix_btrhpv2_team_date` family from low scans alone; it is confirmed on the public read path.
+- Treat `ix_btrhpv2_snapshot` and `ix_btrhlv2_snapshot` as the safest future history-index proof candidates, but only after explicit index-drop approval and rollback DDL.
+- Keep all primary keys and unique constraints.
+- Do not add v2 retention deletion until a manifest, endpoint parity suite, restore path, and exact destructive approval exist.
+- Phase E completed the next safe non-destructive continuation by documenting a reversible `band_read_*` quarantine approval package. Actual quarantine/drop remains approval-gated.
+
+### [x] Phase E: P1 `band_read_*` quarantine approval package (2026-07-06T22:51:18Z)
+
+Mode: Current-system probe / approval-package design. No tables, indexes, rows, services, workers, runtime configuration, or scrape state were changed.
+
+P1 refreshed object inventory:
+
+| Object | Total size | Heap | Estimated rows | Role |
+|---|---:|---:|---:|---|
+| `band_read_hot_window` | 191 GB | 160 GB | 174,369,920 | Derived hot-window read projection. |
+| `band_read_subject_row` | 190 GB | 88 GB | 60,946,732 | Derived subject/team read projection. |
+| `band_read_rank_anchor` | 12 GB | 4,974 MB | 12,570,308 | Derived rank-anchor projection. |
+| `band_read_scope_state` | 5,459 MB | 1,901 MB | 7,615,178 | Derived scope/generation state. |
+| `band_read_generation` | 96 KB | 16 KB | not estimated | Small generation metadata. |
+| `band_read_publication_state` | 24 KB | 8 KB | not estimated | Small publication metadata. |
+
+P1 refreshed index inventory:
+
+| Index | Size | Scans | Quarantine relevance |
+|---|---:|---:|---|
+| `band_read_subject_row_pkey` | 45 GB | 0 | Structural if table remains; table-level quarantine is safer than isolated PK changes. |
+| `ix_brsr_generation_subject_scope` | 34 GB | 0 | Non-primary projection index; possible reclaim if table remains unused. |
+| `band_read_hot_window_pkey` | 31 GB | 0 | Structural if table remains; table-level quarantine is safer than isolated PK changes. |
+| `ix_brsr_song_scope_team` | 21 GB | 0 | Non-primary projection index; possible reclaim if table remains unused. |
+| `ix_brra_scope_sort` | 5,325 MB | 0 | Non-primary projection index; possible reclaim if table remains unused. |
+| `band_read_rank_anchor_pkey` | 2,387 MB | 0 | Structural if table remains. |
+| `band_read_scope_state_pkey` | 1,761 MB | 0 | Structural if table remains. |
+| `ix_brss_scope_generation` | 1,703 MB | 0 | Non-primary projection index; possible reclaim if table remains unused. |
+| `ix_brsr_subject` | 1,622 MB | 0 | Non-primary projection index; possible reclaim if table remains unused. |
+| `ix_brss_generation_scope` | 94 MB | 0 | Small non-primary projection index. |
+
+P1 dependency evidence:
+
+| Evidence source | Result | Interpretation |
+|---|---|---|
+| Repository source search | No `*.cs` references to `band_read_hot_window`, `band_read_subject_row`, `band_read_rank_anchor`, `band_read_scope_state`, `band_read_generation`, `band_read_publication_state`, or `BandReadIndex`. | Current repo code does not own active reads/writes for these objects. |
+| `pg_views` | No view definitions referenced `band_read_*`. | No view dependency blocks quarantine. |
+| `pg_proc` | No regular functions referenced `band_read_*`. | No stored function dependency blocks quarantine. |
+| `pg_stat_statements` | Only one diagnostic count over the two tiny metadata tables was observed; no production read-path statements referenced large `band_read_*` objects. | Runtime evidence supports unused/obsolete projection classification. |
+| Constraints | Only primary keys/check constraints were found; no foreign keys were observed. | Table-level quarantine remains reversible and lower-risk than partial index surgery. |
+
+Approval-gated candidate action:
+
+| Step | Action | Purpose | Live-safety gate | Rollback |
+|---|---|---|---|---|
+| 1 | Re-run live-safety preflight immediately before any DDL. | Confirm `fstservice`, `festivalweb`, Postgres, locks, disk, freeze state, and published scrape are still safe. | Must show healthy service/web/Postgres, no dangerous locks, public reads still frozen to `1214`, and no running scrape. | Abort with no mutation. |
+| 2 | In a maintenance window, acquire short-lock-timeout DDL and rename `band_read_*` tables to an approved quarantine prefix/suffix. | Hide the projection from accidental readers without deleting data. | `fstservice` and `festivalweb` stay live; no worker/full scrape. Use short lock and statement timeouts. | Rename each object back to its original name. |
+| 3 | Monitor representative public API routes and service logs. | Prove no active app path references quarantined objects. | `/readyz`, web app shell, `/api/songs`, representative solo leaderboard, representative band leaderboard, and band history route stay healthy. | Rename tables back immediately if any query fails because of quarantined names. |
+| 4 | Hold quarantine through an explicit observation window. | Distinguish obsolete projection from rare path dependency. | Continue checking locks, errors, public reads, and disk. | Rename back if errors appear. |
+| 5 | Only after successful observation, request separate explicit drop approval. | Reclaim about 398 GB table/index space. | Drop remains destructive and is not approved by this plan. | Restore from backup/regenerate projection path must be documented before drop. |
+
+Exact approval statement needed before Step 2:
+
+> Approve a reversible table-rename quarantine, not deletion, for `band_read_hot_window`, `band_read_subject_row`, `band_read_rank_anchor`, `band_read_scope_state`, `band_read_generation`, and `band_read_publication_state` in production, with `fstservice` and `festivalweb` kept live, `fstworker` not started, short lock/statement timeouts, immediate API/log monitoring, and rename-back rollback.
+
+P1 quarantine decision:
+
+- Accepted as an approval package only.
+- The package is the strongest near-term reclaim candidate because the group is about 398 GB and has no observed source/runtime dependencies.
+- No quarantine, drop, truncate, repack, rewrite, or worker action is approved by this document alone.
+- If quarantine is approved and passes observation, a later drop request must include the successful observation evidence, rollback/regeneration path, and exact objects/date.
 
 ## Prioritization principles
 
