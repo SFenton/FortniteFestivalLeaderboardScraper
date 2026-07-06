@@ -1441,16 +1441,36 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         cmd.Parameters.AddWithValue("scrapeId", scrapeId);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
 
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read())
-            return;
+        long newRows;
+        long changedRows;
+        long unchangedRows;
+        long currentUpserts;
+        long versionsClosed;
+        long versionsOpened;
+        using (var reader = cmd.ExecuteReader())
+        {
+            if (!reader.Read())
+                return;
 
-        var newRows = reader.GetInt64(0);
-        var changedRows = reader.GetInt64(1);
-        var unchangedRows = reader.GetInt64(2);
-        var currentUpserts = reader.GetInt64(3);
-        var versionsClosed = reader.GetInt64(4);
-        var versionsOpened = reader.GetInt64(5);
+            newRows = reader.GetInt64(0);
+            changedRows = reader.GetInt64(1);
+            unchangedRows = reader.GetInt64(2);
+            currentUpserts = reader.GetInt64(3);
+            versionsClosed = reader.GetInt64(4);
+            versionsOpened = reader.GetInt64(5);
+        }
+
+        RecordLogicalLeaderboardWriteMetrics(
+            conn,
+            tx,
+            scrapeId,
+            instrument,
+            newRows,
+            changedRows,
+            unchangedRows,
+            currentUpserts,
+            versionsClosed,
+            versionsOpened);
 
         _log.LogInformation(
             "Logical leaderboard versions dual-write for {Instrument} scrape {ScrapeId}: new={NewRows:N0}, changed={ChangedRows:N0}, unchanged={UnchangedRows:N0}, current_upserts={CurrentUpserts:N0}, versions_closed={VersionsClosed:N0}, versions_opened={VersionsOpened:N0}.",
@@ -1462,6 +1482,71 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             currentUpserts,
             versionsClosed,
             versionsOpened);
+    }
+
+    private static void RecordLogicalLeaderboardWriteMetrics(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long scrapeId,
+        string instrument,
+        long newRows,
+        long changedRows,
+        long unchangedRows,
+        long currentUpserts,
+        long versionsClosed,
+        long versionsOpened)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO leaderboard_logical_write_metrics (
+                scrape_id,
+                instrument,
+                flush_count,
+                observed_rows,
+                new_rows,
+                changed_rows,
+                unchanged_rows,
+                current_upserts,
+                versions_closed,
+                versions_opened,
+                first_observed_at,
+                last_observed_at)
+            VALUES (
+                @scrapeId,
+                @instrument,
+                1,
+                @observedRows,
+                @newRows,
+                @changedRows,
+                @unchangedRows,
+                @currentUpserts,
+                @versionsClosed,
+                @versionsOpened,
+                @now,
+                @now)
+            ON CONFLICT (scrape_id, instrument) DO UPDATE SET
+                flush_count = leaderboard_logical_write_metrics.flush_count + EXCLUDED.flush_count,
+                observed_rows = leaderboard_logical_write_metrics.observed_rows + EXCLUDED.observed_rows,
+                new_rows = leaderboard_logical_write_metrics.new_rows + EXCLUDED.new_rows,
+                changed_rows = leaderboard_logical_write_metrics.changed_rows + EXCLUDED.changed_rows,
+                unchanged_rows = leaderboard_logical_write_metrics.unchanged_rows + EXCLUDED.unchanged_rows,
+                current_upserts = leaderboard_logical_write_metrics.current_upserts + EXCLUDED.current_upserts,
+                versions_closed = leaderboard_logical_write_metrics.versions_closed + EXCLUDED.versions_closed,
+                versions_opened = leaderboard_logical_write_metrics.versions_opened + EXCLUDED.versions_opened,
+                last_observed_at = EXCLUDED.last_observed_at
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("observedRows", newRows + changedRows + unchangedRows);
+        cmd.Parameters.AddWithValue("newRows", newRows);
+        cmd.Parameters.AddWithValue("changedRows", changedRows);
+        cmd.Parameters.AddWithValue("unchangedRows", unchangedRows);
+        cmd.Parameters.AddWithValue("currentUpserts", currentUpserts);
+        cmd.Parameters.AddWithValue("versionsClosed", versionsClosed);
+        cmd.Parameters.AddWithValue("versionsOpened", versionsOpened);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
     }
 
     internal void RollbackIncompleteLogicalLeaderboardScrapes(long currentScrapeId)
@@ -1501,6 +1586,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     UNION
                     SELECT last_seen_scrape_id
                     FROM leaderboard_current_entries
+                    UNION
+                    SELECT scrape_id
+                    FROM leaderboard_logical_write_metrics
                 ),
                 rollback_scrapes AS (
                     SELECT id::bigint AS scrape_id
@@ -1569,6 +1657,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         UNION
                         SELECT last_seen_scrape_id
                         FROM leaderboard_current_entries
+                        UNION
+                        SELECT scrape_id
+                        FROM leaderboard_logical_write_metrics
                     ) logical_scrape_ids
                     WHERE NOT EXISTS (
                         SELECT 1
@@ -1585,7 +1676,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             {
                 cmd.Transaction = tx;
                 cmd.CommandTimeout = 0;
-                cmd.CommandText = "TRUNCATE TABLE leaderboard_current_entries, leaderboard_entry_versions";
+                cmd.CommandText = "TRUNCATE TABLE leaderboard_current_entries, leaderboard_entry_versions, leaderboard_logical_write_metrics";
                 cmd.ExecuteNonQuery();
             }
 
@@ -1664,6 +1755,19 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 WHERE versions.valid_from_scrape_id = scrape_ids.scrape_id
                 """;
             deletedVersions = cmd.ExecuteNonQuery();
+        }
+
+        var deletedMetricRows = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                DELETE FROM leaderboard_logical_write_metrics metrics
+                USING _logical_rollback_scrapes scrape_ids
+                WHERE metrics.scrape_id = scrape_ids.scrape_id
+                """;
+            deletedMetricRows = cmd.ExecuteNonQuery();
         }
 
         var deletedCurrentRows = 0;
@@ -1757,12 +1861,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         tx.Commit();
 
         _log.LogWarning(
-            "Rolled back logical leaderboard artifacts for incomplete scrape(s) {ScrapeIds} before scrape {CurrentScrapeId}: affected_keys={AffectedKeys:N0}, reopened_versions={ReopenedVersions:N0}, deleted_versions={DeletedVersions:N0}, deleted_current_rows={DeletedCurrentRows:N0}, rebuilt_current_rows={RebuiltCurrentRows:N0}.",
+            "Rolled back logical leaderboard artifacts for incomplete scrape(s) {ScrapeIds} before scrape {CurrentScrapeId}: affected_keys={AffectedKeys:N0}, reopened_versions={ReopenedVersions:N0}, deleted_versions={DeletedVersions:N0}, deleted_metric_rows={DeletedMetricRows:N0}, deleted_current_rows={DeletedCurrentRows:N0}, rebuilt_current_rows={RebuiltCurrentRows:N0}.",
             scrapeIds,
             currentScrapeId,
             affectedKeys,
             reopenedVersions,
             deletedVersions,
+            deletedMetricRows,
             deletedCurrentRows,
             rebuiltCurrentRows);
     }

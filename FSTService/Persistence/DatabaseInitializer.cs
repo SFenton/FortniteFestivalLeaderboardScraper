@@ -326,6 +326,25 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_lev_from_scrape
             ON leaderboard_entry_versions (valid_from_scrape_id, instrument);
 
+        CREATE TABLE IF NOT EXISTS leaderboard_logical_write_metrics (
+            scrape_id          BIGINT      NOT NULL,
+            instrument         TEXT        NOT NULL,
+            flush_count        INTEGER     NOT NULL DEFAULT 0,
+            observed_rows      BIGINT      NOT NULL DEFAULT 0,
+            new_rows           BIGINT      NOT NULL DEFAULT 0,
+            changed_rows       BIGINT      NOT NULL DEFAULT 0,
+            unchanged_rows     BIGINT      NOT NULL DEFAULT 0,
+            current_upserts    BIGINT      NOT NULL DEFAULT 0,
+            versions_closed    BIGINT      NOT NULL DEFAULT 0,
+            versions_opened    BIGINT      NOT NULL DEFAULT 0,
+            first_observed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            last_observed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (scrape_id, instrument)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_llwm_scrape
+            ON leaderboard_logical_write_metrics (scrape_id);
+
         CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay (
             song_id            TEXT        NOT NULL,
             instrument         TEXT        NOT NULL,

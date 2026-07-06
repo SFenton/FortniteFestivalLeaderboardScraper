@@ -179,6 +179,50 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         return (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2));
     }
 
+    private sealed record LogicalWriteMetrics(
+        int FlushCount,
+        long ObservedRows,
+        long NewRows,
+        long ChangedRows,
+        long UnchangedRows,
+        long CurrentUpserts,
+        long VersionsClosed,
+        long VersionsOpened);
+
+    private LogicalWriteMetrics? GetLogicalWriteMetrics(long scrapeId, string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT flush_count,
+                   observed_rows,
+                   new_rows,
+                   changed_rows,
+                   unchanged_rows,
+                   current_upserts,
+                   versions_closed,
+                   versions_opened
+            FROM leaderboard_logical_write_metrics
+            WHERE scrape_id = @scrapeId
+              AND instrument = @instrument
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new LogicalWriteMetrics(
+            reader.GetInt32(0),
+            reader.GetInt64(1),
+            reader.GetInt64(2),
+            reader.GetInt64(3),
+            reader.GetInt64(4),
+            reader.GetInt64(5),
+            reader.GetInt64(6),
+            reader.GetInt64(7));
+    }
+
     [Fact]
     public async Task CleanupActiveScrapeWritersAsync_DisposesActiveDiskSpool()
     {
@@ -421,6 +465,15 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.Equal(42, firstCurrent.Value.FirstSeenScrapeId);
         Assert.Equal(42, firstCurrent.Value.LastChangedScrapeId);
         Assert.Equal((Total: 1, Open: 1, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+        Assert.Equal(new LogicalWriteMetrics(
+            FlushCount: 1,
+            ObservedRows: 1,
+            NewRows: 1,
+            ChangedRows: 0,
+            UnchangedRows: 0,
+            CurrentUpserts: 1,
+            VersionsClosed: 0,
+            VersionsOpened: 1), GetLogicalWriteMetrics(42, "Solo_Guitar"));
 
         glp.StartSpoolWriter(43, _dataDir);
         glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
@@ -447,6 +500,15 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.Equal(42, unchangedCurrent.Value.FirstSeenScrapeId);
         Assert.Equal(42, unchangedCurrent.Value.LastChangedScrapeId);
         Assert.Equal((Total: 1, Open: 1, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+        Assert.Equal(new LogicalWriteMetrics(
+            FlushCount: 1,
+            ObservedRows: 1,
+            NewRows: 0,
+            ChangedRows: 0,
+            UnchangedRows: 1,
+            CurrentUpserts: 0,
+            VersionsClosed: 0,
+            VersionsOpened: 0), GetLogicalWriteMetrics(43, "Solo_Guitar"));
 
         glp.StartSpoolWriter(44, _dataDir);
         glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
@@ -473,6 +535,15 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.Equal(42, changedCurrent.Value.FirstSeenScrapeId);
         Assert.Equal(44, changedCurrent.Value.LastChangedScrapeId);
         Assert.Equal((Total: 2, Open: 1, Closed: 1), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+        Assert.Equal(new LogicalWriteMetrics(
+            FlushCount: 1,
+            ObservedRows: 1,
+            NewRows: 0,
+            ChangedRows: 1,
+            UnchangedRows: 0,
+            CurrentUpserts: 1,
+            VersionsClosed: 1,
+            VersionsOpened: 1), GetLogicalWriteMetrics(44, "Solo_Guitar"));
     }
 
     [Fact]
@@ -539,6 +610,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.Equal(101_000, partialCurrent.Value.Score);
         Assert.Equal((Total: 2, Open: 1, Closed: 1), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
         Assert.NotNull(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_partial"));
+        Assert.NotNull(GetLogicalWriteMetrics(43, "Solo_Guitar"));
 
         DeleteScrapeLog(43);
         glp.RollbackIncompleteLogicalLeaderboardScrapes(44);
@@ -551,6 +623,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.Equal((Total: 1, Open: 1, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
         Assert.Null(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_partial"));
         Assert.Equal((Total: 0, Open: 0, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_partial"));
+        Assert.Null(GetLogicalWriteMetrics(43, "Solo_Guitar"));
     }
 
     [Fact]
@@ -581,11 +654,13 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         DeleteScrapeLog(43);
 
         Assert.NotNull(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_partial"));
+        Assert.NotNull(GetLogicalWriteMetrics(43, "Solo_Guitar"));
 
         glp.RollbackIncompleteLogicalLeaderboardScrapes(44);
 
         Assert.Null(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_partial"));
         Assert.Equal((Total: 0, Open: 0, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_partial"));
+        Assert.Null(GetLogicalWriteMetrics(43, "Solo_Guitar"));
     }
 
     [Fact]
