@@ -47,6 +47,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public bool UseLeaderboardScopeFingerprints => _features.UseLeaderboardScopeFingerprints;
 
+    /// <summary>
+    /// True when scrape flushes should dual-write logical current/version rows.
+    /// Existing snapshot/current-state rows remain authoritative.
+    /// </summary>
+    public bool WriteLogicalLeaderboardVersions => _features.WriteLogicalLeaderboardVersions;
+
     public GlobalLeaderboardPersistence(IMetaDatabase metaDb,
                                         ILoggerFactory loggerFactory,
                                         ILogger<GlobalLeaderboardPersistence> log,
@@ -1189,6 +1195,576 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             changedRows,
             unchangedScopes,
             unchangedRows);
+    }
+
+    internal void WriteLogicalLeaderboardVersionsFromStaging(
+        NpgsqlConnection conn,
+        NpgsqlTransaction tx,
+        long scrapeId,
+        string instrument)
+    {
+        if (!WriteLogicalLeaderboardVersions || scrapeId <= 0)
+            return;
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandTimeout = 0;
+        cmd.CommandText = """
+            WITH desired AS (
+                SELECT DISTINCT ON (song_id, instrument, account_id)
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    percentile,
+                    rank,
+                    COALESCE(source, 'scrape') AS source,
+                    difficulty,
+                    api_rank,
+                    end_time,
+                    band_members_json,
+                    band_score,
+                    base_score,
+                    instrument_bonus,
+                    overdrive_bonus,
+                    instrument_combo,
+                    ts,
+                    md5(concat_ws(E'\x1f',
+                        score::text,
+                        COALESCE(accuracy::text, ''),
+                        COALESCE(is_full_combo::text, ''),
+                        COALESCE(stars::text, ''),
+                        COALESCE(season::text, ''),
+                        COALESCE(difficulty::text, ''),
+                        COALESCE(percentile::text, ''),
+                        COALESCE(rank::text, ''),
+                        COALESCE(api_rank::text, ''),
+                        COALESCE(end_time, ''),
+                        COALESCE(source, ''),
+                        COALESCE(band_members_json::text, ''),
+                        COALESCE(band_score::text, ''),
+                        COALESCE(base_score::text, ''),
+                        COALESCE(instrument_bonus::text, ''),
+                        COALESCE(overdrive_bonus::text, ''),
+                        COALESCE(instrument_combo, '')
+                    )) AS row_fingerprint
+                FROM _le_staging
+                WHERE instrument = @instrument
+                ORDER BY song_id, instrument, account_id, score DESC, ts DESC
+            ),
+            classified AS (
+                SELECT
+                    desired.*,
+                    current.row_fingerprint AS current_row_fingerprint,
+                    current.first_seen_scrape_id AS current_first_seen_scrape_id,
+                    current.first_seen_at AS current_first_seen_at,
+                    CASE
+                        WHEN current.song_id IS NULL THEN 'new'
+                        WHEN current.row_fingerprint = desired.row_fingerprint THEN 'unchanged'
+                        ELSE 'changed'
+                    END AS change_kind
+                FROM desired
+                LEFT JOIN leaderboard_current_entries current
+                  ON current.song_id = desired.song_id
+                 AND current.instrument = desired.instrument
+                 AND current.account_id = desired.account_id
+            ),
+            closed_versions AS (
+                UPDATE leaderboard_entry_versions versions
+                SET valid_to_scrape_id = @scrapeId,
+                    closed_at = @now
+                FROM classified
+                WHERE classified.change_kind = 'changed'
+                  AND versions.song_id = classified.song_id
+                  AND versions.instrument = classified.instrument
+                  AND versions.account_id = classified.account_id
+                  AND versions.valid_to_scrape_id IS NULL
+                RETURNING 1
+            ),
+            current_upserts AS (
+                INSERT INTO leaderboard_current_entries (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    percentile,
+                    rank,
+                    source,
+                    difficulty,
+                    api_rank,
+                    end_time,
+                    band_members_json,
+                    band_score,
+                    base_score,
+                    instrument_bonus,
+                    overdrive_bonus,
+                    instrument_combo,
+                    row_fingerprint,
+                    first_seen_scrape_id,
+                    last_changed_scrape_id,
+                    last_seen_scrape_id,
+                    first_seen_at,
+                    last_changed_at,
+                    last_seen_at)
+                SELECT
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    percentile,
+                    rank,
+                    source,
+                    difficulty,
+                    api_rank,
+                    end_time,
+                    band_members_json,
+                    band_score,
+                    base_score,
+                    instrument_bonus,
+                    overdrive_bonus,
+                    instrument_combo,
+                    row_fingerprint,
+                    COALESCE(current_first_seen_scrape_id, @scrapeId),
+                    @scrapeId,
+                    @scrapeId,
+                    COALESCE(current_first_seen_at, @now),
+                    @now,
+                    @now
+                FROM classified
+                WHERE change_kind IN ('new', 'changed')
+                ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+                    score = EXCLUDED.score,
+                    accuracy = EXCLUDED.accuracy,
+                    is_full_combo = EXCLUDED.is_full_combo,
+                    stars = EXCLUDED.stars,
+                    season = EXCLUDED.season,
+                    percentile = EXCLUDED.percentile,
+                    rank = EXCLUDED.rank,
+                    source = EXCLUDED.source,
+                    difficulty = EXCLUDED.difficulty,
+                    api_rank = EXCLUDED.api_rank,
+                    end_time = EXCLUDED.end_time,
+                    band_members_json = EXCLUDED.band_members_json,
+                    band_score = EXCLUDED.band_score,
+                    base_score = EXCLUDED.base_score,
+                    instrument_bonus = EXCLUDED.instrument_bonus,
+                    overdrive_bonus = EXCLUDED.overdrive_bonus,
+                    instrument_combo = EXCLUDED.instrument_combo,
+                    row_fingerprint = EXCLUDED.row_fingerprint,
+                    last_changed_scrape_id = EXCLUDED.last_changed_scrape_id,
+                    last_seen_scrape_id = EXCLUDED.last_seen_scrape_id,
+                    last_changed_at = EXCLUDED.last_changed_at,
+                    last_seen_at = EXCLUDED.last_seen_at
+                WHERE leaderboard_current_entries.row_fingerprint IS DISTINCT FROM EXCLUDED.row_fingerprint
+                RETURNING 1
+            ),
+            inserted_versions AS (
+                INSERT INTO leaderboard_entry_versions (
+                    song_id,
+                    instrument,
+                    account_id,
+                    valid_from_scrape_id,
+                    valid_to_scrape_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    percentile,
+                    rank,
+                    source,
+                    difficulty,
+                    api_rank,
+                    end_time,
+                    band_members_json,
+                    band_score,
+                    base_score,
+                    instrument_bonus,
+                    overdrive_bonus,
+                    instrument_combo,
+                    row_fingerprint,
+                    opened_at,
+                    closed_at)
+                SELECT
+                    song_id,
+                    instrument,
+                    account_id,
+                    @scrapeId,
+                    NULL,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    percentile,
+                    rank,
+                    source,
+                    difficulty,
+                    api_rank,
+                    end_time,
+                    band_members_json,
+                    band_score,
+                    base_score,
+                    instrument_bonus,
+                    overdrive_bonus,
+                    instrument_combo,
+                    row_fingerprint,
+                    @now,
+                    NULL
+                FROM classified
+                WHERE change_kind IN ('new', 'changed')
+                ON CONFLICT (song_id, instrument, account_id, valid_from_scrape_id) DO NOTHING
+                RETURNING 1
+            )
+            SELECT
+                COALESCE(COUNT(*) FILTER (WHERE change_kind = 'new'), 0)::bigint AS new_rows,
+                COALESCE(COUNT(*) FILTER (WHERE change_kind = 'changed'), 0)::bigint AS changed_rows,
+                COALESCE(COUNT(*) FILTER (WHERE change_kind = 'unchanged'), 0)::bigint AS unchanged_rows,
+                (SELECT COUNT(*) FROM current_upserts)::bigint AS current_upserts,
+                (SELECT COUNT(*) FROM closed_versions)::bigint AS versions_closed,
+                (SELECT COUNT(*) FROM inserted_versions)::bigint AS versions_opened
+            FROM classified
+            """;
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("scrapeId", scrapeId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return;
+
+        var newRows = reader.GetInt64(0);
+        var changedRows = reader.GetInt64(1);
+        var unchangedRows = reader.GetInt64(2);
+        var currentUpserts = reader.GetInt64(3);
+        var versionsClosed = reader.GetInt64(4);
+        var versionsOpened = reader.GetInt64(5);
+
+        _log.LogInformation(
+            "Logical leaderboard versions dual-write for {Instrument} scrape {ScrapeId}: new={NewRows:N0}, changed={ChangedRows:N0}, unchanged={UnchangedRows:N0}, current_upserts={CurrentUpserts:N0}, versions_closed={VersionsClosed:N0}, versions_opened={VersionsOpened:N0}.",
+            instrument,
+            scrapeId,
+            newRows,
+            changedRows,
+            unchangedRows,
+            currentUpserts,
+            versionsClosed,
+            versionsOpened);
+    }
+
+    internal void RollbackIncompleteLogicalLeaderboardScrapes(long currentScrapeId)
+    {
+        if (!WriteLogicalLeaderboardVersions || currentScrapeId <= 0)
+            return;
+
+        using var conn = _pgDataSource.OpenConnection();
+        using var tx = conn.BeginTransaction();
+
+        using (var sync = conn.CreateCommand())
+        {
+            sync.Transaction = tx;
+            sync.CommandText = "SET LOCAL synchronous_commit = off";
+            sync.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                CREATE TEMP TABLE _logical_rollback_scrapes ON COMMIT DROP AS
+                WITH logical_scrape_ids AS (
+                    SELECT valid_from_scrape_id AS scrape_id
+                    FROM leaderboard_entry_versions
+                    UNION
+                    SELECT valid_to_scrape_id
+                    FROM leaderboard_entry_versions
+                    WHERE valid_to_scrape_id IS NOT NULL
+                    UNION
+                    SELECT first_seen_scrape_id
+                    FROM leaderboard_current_entries
+                    UNION
+                    SELECT last_changed_scrape_id
+                    FROM leaderboard_current_entries
+                    UNION
+                    SELECT last_seen_scrape_id
+                    FROM leaderboard_current_entries
+                ),
+                rollback_scrapes AS (
+                    SELECT id::bigint AS scrape_id
+                    FROM scrape_log
+                    WHERE completed_at IS NULL
+                      AND id < @currentScrapeId
+                    UNION
+                    SELECT logical_scrape_ids.scrape_id
+                    FROM logical_scrape_ids
+                    WHERE logical_scrape_ids.scrape_id < @currentScrapeId
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM scrape_log completed_scrapes
+                          WHERE completed_scrapes.id = logical_scrape_ids.scrape_id
+                            AND completed_scrapes.completed_at IS NOT NULL)
+                )
+                SELECT DISTINCT scrape_id
+                FROM rollback_scrapes
+                """;
+            cmd.Parameters.AddWithValue("currentScrapeId", currentScrapeId);
+            cmd.ExecuteNonQuery();
+        }
+
+        long incompleteScrapes;
+        string scrapeIds;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                SELECT COUNT(*)::bigint, COALESCE(string_agg(scrape_id::text, ', ' ORDER BY scrape_id), '')
+                FROM _logical_rollback_scrapes
+                """;
+            using var reader = cmd.ExecuteReader();
+            reader.Read();
+            incompleteScrapes = reader.GetInt64(0);
+            scrapeIds = reader.GetString(1);
+        }
+
+        if (incompleteScrapes == 0)
+        {
+            tx.Commit();
+            return;
+        }
+
+        bool allLogicalArtifactsAreInvalid;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                SELECT NOT EXISTS (
+                    SELECT 1
+                    FROM (
+                        SELECT valid_from_scrape_id AS scrape_id
+                        FROM leaderboard_entry_versions
+                        UNION
+                        SELECT valid_to_scrape_id
+                        FROM leaderboard_entry_versions
+                        WHERE valid_to_scrape_id IS NOT NULL
+                        UNION
+                        SELECT first_seen_scrape_id
+                        FROM leaderboard_current_entries
+                        UNION
+                        SELECT last_changed_scrape_id
+                        FROM leaderboard_current_entries
+                        UNION
+                        SELECT last_seen_scrape_id
+                        FROM leaderboard_current_entries
+                    ) logical_scrape_ids
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM _logical_rollback_scrapes rollback_scrapes
+                        WHERE rollback_scrapes.scrape_id = logical_scrape_ids.scrape_id)
+                )
+                """;
+            allLogicalArtifactsAreInvalid = Convert.ToBoolean(cmd.ExecuteScalar());
+        }
+
+        if (allLogicalArtifactsAreInvalid)
+        {
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandTimeout = 0;
+                cmd.CommandText = "TRUNCATE TABLE leaderboard_current_entries, leaderboard_entry_versions";
+                cmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+
+            _log.LogWarning(
+                "Fast-rolled back all logical leaderboard artifacts for incomplete scrape(s) {ScrapeIds} before scrape {CurrentScrapeId}; no completed logical baseline existed.",
+                scrapeIds,
+                currentScrapeId);
+            return;
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                CREATE TEMP TABLE _logical_rollback_keys ON COMMIT DROP AS
+                SELECT DISTINCT song_id, instrument, account_id
+                FROM (
+                    SELECT current_entries.song_id, current_entries.instrument, current_entries.account_id
+                    FROM leaderboard_current_entries current_entries
+                    JOIN _logical_rollback_scrapes scrape_ids
+                      ON current_entries.first_seen_scrape_id = scrape_ids.scrape_id
+                      OR current_entries.last_changed_scrape_id = scrape_ids.scrape_id
+                      OR current_entries.last_seen_scrape_id = scrape_ids.scrape_id
+                    UNION ALL
+                    SELECT versions.song_id, versions.instrument, versions.account_id
+                    FROM leaderboard_entry_versions versions
+                    JOIN _logical_rollback_scrapes scrape_ids
+                      ON versions.valid_from_scrape_id = scrape_ids.scrape_id
+                      OR versions.valid_to_scrape_id = scrape_ids.scrape_id
+                ) affected_keys
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "CREATE INDEX ON _logical_rollback_keys (song_id, instrument, account_id)";
+            cmd.ExecuteNonQuery();
+        }
+
+        long affectedKeys;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "SELECT COUNT(*)::bigint FROM _logical_rollback_keys";
+            affectedKeys = Convert.ToInt64(cmd.ExecuteScalar());
+        }
+
+        var reopenedVersions = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                UPDATE leaderboard_entry_versions versions
+                SET valid_to_scrape_id = NULL,
+                    closed_at = NULL
+                FROM _logical_rollback_scrapes scrape_ids
+                WHERE versions.valid_to_scrape_id = scrape_ids.scrape_id
+                """;
+            reopenedVersions = cmd.ExecuteNonQuery();
+        }
+
+        var deletedVersions = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                DELETE FROM leaderboard_entry_versions versions
+                USING _logical_rollback_scrapes scrape_ids
+                WHERE versions.valid_from_scrape_id = scrape_ids.scrape_id
+                """;
+            deletedVersions = cmd.ExecuteNonQuery();
+        }
+
+        var deletedCurrentRows = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                DELETE FROM leaderboard_current_entries current_entries
+                USING _logical_rollback_keys affected_keys
+                WHERE current_entries.song_id = affected_keys.song_id
+                  AND current_entries.instrument = affected_keys.instrument
+                  AND current_entries.account_id = affected_keys.account_id
+                """;
+            deletedCurrentRows = cmd.ExecuteNonQuery();
+        }
+
+        var rebuiltCurrentRows = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandTimeout = 0;
+            cmd.CommandText = """
+                INSERT INTO leaderboard_current_entries (
+                    song_id,
+                    instrument,
+                    account_id,
+                    score,
+                    accuracy,
+                    is_full_combo,
+                    stars,
+                    season,
+                    percentile,
+                    rank,
+                    source,
+                    difficulty,
+                    api_rank,
+                    end_time,
+                    band_members_json,
+                    band_score,
+                    base_score,
+                    instrument_bonus,
+                    overdrive_bonus,
+                    instrument_combo,
+                    row_fingerprint,
+                    first_seen_scrape_id,
+                    last_changed_scrape_id,
+                    last_seen_scrape_id,
+                    first_seen_at,
+                    last_changed_at,
+                    last_seen_at)
+                SELECT DISTINCT ON (versions.song_id, versions.instrument, versions.account_id)
+                    versions.song_id,
+                    versions.instrument,
+                    versions.account_id,
+                    versions.score,
+                    versions.accuracy,
+                    versions.is_full_combo,
+                    versions.stars,
+                    versions.season,
+                    versions.percentile,
+                    versions.rank,
+                    versions.source,
+                    versions.difficulty,
+                    versions.api_rank,
+                    versions.end_time,
+                    versions.band_members_json,
+                    versions.band_score,
+                    versions.base_score,
+                    versions.instrument_bonus,
+                    versions.overdrive_bonus,
+                    versions.instrument_combo,
+                    versions.row_fingerprint,
+                    versions.valid_from_scrape_id,
+                    versions.valid_from_scrape_id,
+                    versions.valid_from_scrape_id,
+                    versions.opened_at,
+                    versions.opened_at,
+                    versions.opened_at
+                FROM leaderboard_entry_versions versions
+                JOIN _logical_rollback_keys affected_keys
+                  ON affected_keys.song_id = versions.song_id
+                 AND affected_keys.instrument = versions.instrument
+                 AND affected_keys.account_id = versions.account_id
+                WHERE versions.valid_to_scrape_id IS NULL
+                ORDER BY versions.song_id, versions.instrument, versions.account_id, versions.valid_from_scrape_id DESC, versions.opened_at DESC
+                """;
+            rebuiltCurrentRows = cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+
+        _log.LogWarning(
+            "Rolled back logical leaderboard artifacts for incomplete scrape(s) {ScrapeIds} before scrape {CurrentScrapeId}: affected_keys={AffectedKeys:N0}, reopened_versions={ReopenedVersions:N0}, deleted_versions={DeletedVersions:N0}, deleted_current_rows={DeletedCurrentRows:N0}, rebuilt_current_rows={RebuiltCurrentRows:N0}.",
+            scrapeIds,
+            currentScrapeId,
+            affectedKeys,
+            reopenedVersions,
+            deletedVersions,
+            deletedCurrentRows,
+            rebuiltCurrentRows);
     }
 
     // ─── Scrape-time index management ──────────────────────────────

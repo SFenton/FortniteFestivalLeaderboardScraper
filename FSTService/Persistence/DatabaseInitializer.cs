@@ -233,6 +233,99 @@ public static class DatabaseInitializer
         CREATE INDEX IF NOT EXISTS ix_lsf_last_changed
             ON leaderboard_scope_fingerprints (last_changed_scrape_id, instrument);
 
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries (
+            song_id                 TEXT        NOT NULL,
+            instrument              TEXT        NOT NULL,
+            account_id              TEXT        NOT NULL,
+            score                   INTEGER     NOT NULL,
+            accuracy                INTEGER,
+            is_full_combo           BOOLEAN,
+            stars                   INTEGER,
+            season                  INTEGER,
+            percentile              REAL,
+            rank                    INTEGER     DEFAULT 0,
+            source                  TEXT        NOT NULL DEFAULT 'scrape',
+            difficulty              INTEGER     DEFAULT -1,
+            api_rank                INTEGER,
+            end_time                TEXT,
+            band_members_json       JSONB,
+            band_score              INTEGER,
+            base_score              INTEGER,
+            instrument_bonus        INTEGER,
+            overdrive_bonus         INTEGER,
+            instrument_combo        TEXT,
+            row_fingerprint         TEXT        NOT NULL,
+            first_seen_scrape_id    BIGINT      NOT NULL,
+            last_changed_scrape_id  BIGINT      NOT NULL,
+            last_seen_scrape_id     BIGINT      NOT NULL,
+            first_seen_at           TIMESTAMPTZ NOT NULL,
+            last_changed_at         TIMESTAMPTZ NOT NULL,
+            last_seen_at            TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (song_id, instrument, account_id)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_solo_guitar PARTITION OF leaderboard_current_entries FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_solo_bass PARTITION OF leaderboard_current_entries FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_solo_drums PARTITION OF leaderboard_current_entries FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_solo_vocals PARTITION OF leaderboard_current_entries FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_bass PARTITION OF leaderboard_current_entries FOR VALUES IN ('Bass');
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_guitar PARTITION OF leaderboard_current_entries FOR VALUES IN ('Guitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_drums PARTITION OF leaderboard_current_entries FOR VALUES IN ('Drums');
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_vocals PARTITION OF leaderboard_current_entries FOR VALUES IN ('Vocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_current_entries_default PARTITION OF leaderboard_current_entries DEFAULT;
+
+        CREATE INDEX IF NOT EXISTS ix_lce_scope_rank
+            ON leaderboard_current_entries (song_id, instrument, rank);
+
+        CREATE INDEX IF NOT EXISTS ix_lce_last_changed
+            ON leaderboard_current_entries (last_changed_scrape_id, instrument);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions (
+            song_id                 TEXT        NOT NULL,
+            instrument              TEXT        NOT NULL,
+            account_id              TEXT        NOT NULL,
+            valid_from_scrape_id    BIGINT      NOT NULL,
+            valid_to_scrape_id      BIGINT,
+            score                   INTEGER     NOT NULL,
+            accuracy                INTEGER,
+            is_full_combo           BOOLEAN,
+            stars                   INTEGER,
+            season                  INTEGER,
+            percentile              REAL,
+            rank                    INTEGER     DEFAULT 0,
+            source                  TEXT        NOT NULL DEFAULT 'scrape',
+            difficulty              INTEGER     DEFAULT -1,
+            api_rank                INTEGER,
+            end_time                TEXT,
+            band_members_json       JSONB,
+            band_score              INTEGER,
+            base_score              INTEGER,
+            instrument_bonus        INTEGER,
+            overdrive_bonus         INTEGER,
+            instrument_combo        TEXT,
+            row_fingerprint         TEXT        NOT NULL,
+            opened_at               TIMESTAMPTZ NOT NULL,
+            closed_at               TIMESTAMPTZ,
+            PRIMARY KEY (song_id, instrument, account_id, valid_from_scrape_id)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_solo_guitar PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_solo_bass PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_solo_drums PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_solo_vocals PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_bass PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Bass');
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_guitar PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Guitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_drums PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Drums');
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_vocals PARTITION OF leaderboard_entry_versions FOR VALUES IN ('Vocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entry_versions_default PARTITION OF leaderboard_entry_versions DEFAULT;
+
+        CREATE INDEX IF NOT EXISTS ix_lev_open_versions
+            ON leaderboard_entry_versions (song_id, instrument, account_id)
+            WHERE valid_to_scrape_id IS NULL;
+
+        CREATE INDEX IF NOT EXISTS ix_lev_from_scrape
+            ON leaderboard_entry_versions (valid_from_scrape_id, instrument);
+
         CREATE TABLE IF NOT EXISTS leaderboard_entries_overlay (
             song_id            TEXT        NOT NULL,
             instrument         TEXT        NOT NULL,

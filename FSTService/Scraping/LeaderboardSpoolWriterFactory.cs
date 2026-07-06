@@ -108,6 +108,7 @@ public static class LeaderboardSpoolWriterFactory
             }
 
             persistence.ObserveLeaderboardScopeFingerprints(conn, tx, scrapeId, activeInstrument);
+            persistence.WriteLogicalLeaderboardVersionsFromStaging(conn, tx, scrapeId, activeInstrument);
 
             if (scrapeId > 0)
             {

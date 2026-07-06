@@ -77,6 +77,7 @@ public sealed class ScrapeOrchestrator
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun();
         _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
+        _persistence.RollbackIncompleteLogicalLeaderboardScrapes(scrapeId);
         _persistence.CleanupAbandonedStaging(scrapeId);
 
         // Load registered account IDs for change detection

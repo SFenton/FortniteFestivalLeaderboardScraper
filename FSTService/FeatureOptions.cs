@@ -57,6 +57,12 @@ public sealed class FeatureOptions
     public bool UseLeaderboardScopeFingerprints { get; set; } = true;
 
     /// <summary>
+    /// When true, scrape flushes dual-write logical current/version rows for
+    /// shadow validation while physical snapshots remain authoritative.
+    /// </summary>
+    public bool WriteLogicalLeaderboardVersions { get; set; } = true;
+
+    /// <summary>
     /// Compete page. Always enabled; the flag derivation is retained only for API
     /// shape compatibility and is expected to be removed alongside this property.
     /// </summary>

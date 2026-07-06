@@ -305,13 +305,33 @@ public sealed class ResilientHttpExecutor
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not HttpRequestException)
             {
-                log.LogWarning(ex, "curl fallback failed unexpectedly for {Operation}.", label ?? "request");
+                SafeLogCurlFallbackUnexpected(log, label, ex);
                 return null;
             }
             finally
             {
                 TryDelete(requestBodyPath);
                 TryDelete(responseBodyPath);
+            }
+        }
+
+        private static void SafeLogCurlFallbackUnexpected(ILogger log, string? label, Exception ex)
+        {
+            try
+            {
+                var message = ex.Message;
+                if (message.Length > 300)
+                    message = string.Concat(message.AsSpan(0, 300), "...");
+
+                log.LogWarning(
+                    "curl fallback failed unexpectedly for {Operation}: {ExceptionType}: {Error}",
+                    label ?? "request",
+                    ex.GetType().Name,
+                    message);
+            }
+            catch (OutOfMemoryException)
+            {
+                // Avoid turning best-effort fallback logging into the scrape-failing exception.
             }
         }
 

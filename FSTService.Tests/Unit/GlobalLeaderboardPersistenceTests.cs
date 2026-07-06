@@ -105,6 +105,80 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         return (reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt32(3));
     }
 
+    private void InsertScrapeLog(long scrapeId, bool completed)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO scrape_log (id, started_at, completed_at)
+            VALUES (@scrapeId, now(), CASE WHEN @completed THEN now() ELSE NULL END)
+            ON CONFLICT (id) DO UPDATE SET
+                completed_at = EXCLUDED.completed_at
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("completed", completed);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void DeleteScrapeLog(long scrapeId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM scrape_log WHERE id = @scrapeId";
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private (int Score, long FirstSeenScrapeId, long LastChangedScrapeId)? GetLogicalCurrentRow(
+        string songId,
+        string instrument,
+        string accountId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT score, first_seen_scrape_id, last_changed_scrape_id
+            FROM leaderboard_current_entries
+            WHERE song_id = @songId
+              AND instrument = @instrument
+              AND account_id = @accountId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return (reader.GetInt32(0), reader.GetInt64(1), reader.GetInt64(2));
+    }
+
+    private (int Total, int Open, int Closed) GetLogicalVersionCounts(
+        string songId,
+        string instrument,
+        string accountId)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                COUNT(*)::int,
+                COUNT(*) FILTER (WHERE valid_to_scrape_id IS NULL)::int,
+                COUNT(*) FILTER (WHERE valid_to_scrape_id IS NOT NULL)::int
+            FROM leaderboard_entry_versions
+            WHERE song_id = @songId
+              AND instrument = @instrument
+              AND account_id = @accountId
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+
+        return (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2));
+    }
+
     [Fact]
     public async Task CleanupActiveScrapeWritersAsync_DisposesActiveDiskSpool()
     {
@@ -315,6 +389,203 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.Equal(42, changed.Value.FirstSeenScrapeId);
         Assert.Equal(44, changed.Value.LastChangedScrapeId);
         Assert.Equal(44, changed.Value.LastSeenScrapeId);
+    }
+
+    [Fact]
+    public async Task FlushSpoolAsync_dual_writes_logical_current_and_versions()
+    {
+        using var glp = CreatePersistence();
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        var firstCurrent = GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_1");
+        Assert.NotNull(firstCurrent);
+        Assert.Equal(100_000, firstCurrent.Value.Score);
+        Assert.Equal(42, firstCurrent.Value.FirstSeenScrapeId);
+        Assert.Equal(42, firstCurrent.Value.LastChangedScrapeId);
+        Assert.Equal((Total: 1, Open: 1, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+
+        glp.StartSpoolWriter(43, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        var unchangedCurrent = GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_1");
+        Assert.NotNull(unchangedCurrent);
+        Assert.Equal(100_000, unchangedCurrent.Value.Score);
+        Assert.Equal(42, unchangedCurrent.Value.FirstSeenScrapeId);
+        Assert.Equal(42, unchangedCurrent.Value.LastChangedScrapeId);
+        Assert.Equal((Total: 1, Open: 1, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+
+        glp.StartSpoolWriter(44, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 101_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        var changedCurrent = GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_1");
+        Assert.NotNull(changedCurrent);
+        Assert.Equal(101_000, changedCurrent.Value.Score);
+        Assert.Equal(42, changedCurrent.Value.FirstSeenScrapeId);
+        Assert.Equal(44, changedCurrent.Value.LastChangedScrapeId);
+        Assert.Equal((Total: 2, Open: 1, Closed: 1), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+    }
+
+    [Fact]
+    public async Task RollbackIncompleteLogicalLeaderboardScrapes_removes_partial_or_orphaned_current_and_versions()
+    {
+        using var glp = CreatePersistence();
+        InsertScrapeLog(42, completed: true);
+        InsertScrapeLog(43, completed: false);
+        InsertScrapeLog(44, completed: false);
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        glp.StartSpoolWriter(43, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 101_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+            new LeaderboardEntry
+            {
+                AccountId = "acct_partial",
+                Score = 50_000,
+                Accuracy = 90,
+                Stars = 4,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 80.0,
+                Rank = 2,
+                ApiRank = 2,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+
+        var partialCurrent = GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_1");
+        Assert.NotNull(partialCurrent);
+        Assert.Equal(101_000, partialCurrent.Value.Score);
+        Assert.Equal((Total: 2, Open: 1, Closed: 1), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+        Assert.NotNull(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_partial"));
+
+        DeleteScrapeLog(43);
+        glp.RollbackIncompleteLogicalLeaderboardScrapes(44);
+
+        var restoredCurrent = GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_1");
+        Assert.NotNull(restoredCurrent);
+        Assert.Equal(100_000, restoredCurrent.Value.Score);
+        Assert.Equal(42, restoredCurrent.Value.FirstSeenScrapeId);
+        Assert.Equal(42, restoredCurrent.Value.LastChangedScrapeId);
+        Assert.Equal((Total: 1, Open: 1, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_1"));
+        Assert.Null(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_partial"));
+        Assert.Equal((Total: 0, Open: 0, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_partial"));
+    }
+
+    [Fact]
+    public async Task RollbackIncompleteLogicalLeaderboardScrapes_truncates_when_all_logical_artifacts_are_invalid()
+    {
+        using var glp = CreatePersistence();
+        InsertScrapeLog(43, completed: false);
+        InsertScrapeLog(44, completed: false);
+
+        glp.StartSpoolWriter(43, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_partial",
+                Score = 50_000,
+                Accuracy = 90,
+                Stars = 4,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 80.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        DeleteScrapeLog(43);
+
+        Assert.NotNull(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_partial"));
+
+        glp.RollbackIncompleteLogicalLeaderboardScrapes(44);
+
+        Assert.Null(GetLogicalCurrentRow("song_1", "Solo_Guitar", "acct_partial"));
+        Assert.Equal((Total: 0, Open: 0, Closed: 0), GetLogicalVersionCounts("song_1", "Solo_Guitar", "acct_partial"));
     }
 
     [Fact]

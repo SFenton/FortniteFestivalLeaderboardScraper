@@ -14,8 +14,44 @@
 # (for example /home/sfenton/Docker/FestivalServiceTracker) so this template
 # does not create a competing Compose project with the same container names.
 
+x-fst-postgres-resources: &fst-postgres-resources
+  # Persistent HA-safe guardrails for future recreates; do not reserve memory.
+  mem_limit: ${FST_POSTGRES_MEM_LIMIT:-16g}
+  memswap_limit: ${FST_POSTGRES_MEMSWAP_LIMIT:-20g}
+  cpus: ${FST_POSTGRES_CPUS:-6.0}
+  cpu_shares: 768
+
+x-fst-api-resources: &fst-api-resources
+  mem_limit: ${FST_API_MEM_LIMIT:-2g}
+  memswap_limit: ${FST_API_MEMSWAP_LIMIT:-3g}
+  cpus: ${FST_API_CPUS:-1.5}
+  cpu_shares: 256
+  pids_limit: 192
+
+x-fst-worker-resources: &fst-worker-resources
+  mem_limit: ${FST_WORKER_MEM_LIMIT:-12g}
+  memswap_limit: ${FST_WORKER_MEMSWAP_LIMIT:-14g}
+  cpus: ${FST_WORKER_CPUS:-6.0}
+  cpu_shares: 512
+  pids_limit: 512
+
+x-fst-web-resources: &fst-web-resources
+  mem_limit: ${FST_WEB_MEM_LIMIT:-512m}
+  memswap_limit: ${FST_WEB_MEMSWAP_LIMIT:-768m}
+  cpus: ${FST_WEB_CPUS:-0.5}
+  cpu_shares: 128
+  pids_limit: 128
+
+x-fst-proxy-resources: &fst-proxy-resources
+  mem_limit: ${FST_PROXY_MEM_LIMIT:-256m}
+  memswap_limit: ${FST_PROXY_MEMSWAP_LIMIT:-384m}
+  cpus: ${FST_PROXY_CPUS:-0.25}
+  cpu_shares: 128
+  pids_limit: 128
+
 services:
   postgres:
+    <<: *fst-postgres-resources
     # Custom image: postgres:17-alpine + pg_repack built from source.
     # Build with: docker build -f deploy/postgres.Dockerfile -t fst-postgres:17-repack deploy
     image: fst-postgres:17-repack
@@ -79,9 +115,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: ${FST_POSTGRES_MEM_LIMIT:-16G}
+          cpus: ${FST_POSTGRES_CPUS:-6.0}
 
   fstservice:
+    <<: *fst-api-resources
     image: &fstservice_image ghcr.io/sfenton/fstservice:latest
     container_name: fstservice
     restart: unless-stopped
@@ -193,6 +231,7 @@ services:
       retries: 3
       start_period: 30s
   fstworker:
+    <<: *fst-worker-resources
     image: *fstservice_image
     container_name: fstworker
     restart: unless-stopped
@@ -211,6 +250,7 @@ services:
       retries: 3
       start_period: 30s
   festivalweb:
+    <<: *fst-web-resources
     image: ghcr.io/sfenton/fstfestivalweb:latest
     container_name: festivalweb
     restart: unless-stopped
@@ -241,6 +281,7 @@ services:
   #   AIRVPN_WG_PUBLIC_KEY (default provided below)
 
   gluetun-1:
+    <<: *fst-proxy-resources
     image: qmcgaw/gluetun
     container_name: gluetun-1
     profiles: [vpn]
@@ -272,6 +313,7 @@ services:
       start_period: 30s
 
   gluetun-2:
+    <<: *fst-proxy-resources
     image: qmcgaw/gluetun
     container_name: gluetun-2
     profiles: [vpn]
@@ -303,6 +345,7 @@ services:
       start_period: 30s
 
   gluetun-3:
+    <<: *fst-proxy-resources
     image: qmcgaw/gluetun
     container_name: gluetun-3
     profiles: [vpn]
@@ -334,6 +377,7 @@ services:
       start_period: 30s
 
   gluetun-4:
+    <<: *fst-proxy-resources
     image: qmcgaw/gluetun
     container_name: gluetun-4
     profiles: [vpn]

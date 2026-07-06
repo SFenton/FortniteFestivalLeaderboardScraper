@@ -1,5 +1,42 @@
+x-fst-postgres-resources: &fst-postgres-resources
+  # Persistent HA-safe guardrails for future recreates; do not reserve memory.
+  mem_limit: ${FST_POSTGRES_MEM_LIMIT:-4g}
+  memswap_limit: ${FST_POSTGRES_MEMSWAP_LIMIT:-5g}
+  cpus: ${FST_POSTGRES_CPUS:-2.0}
+  cpu_shares: 512
+  pids_limit: 256
+
+x-fst-api-resources: &fst-api-resources
+  mem_limit: ${FST_API_MEM_LIMIT:-2g}
+  memswap_limit: ${FST_API_MEMSWAP_LIMIT:-3g}
+  cpus: ${FST_API_CPUS:-1.5}
+  cpu_shares: 256
+  pids_limit: 192
+
+x-fst-worker-resources: &fst-worker-resources
+  mem_limit: ${FST_WORKER_MEM_LIMIT:-8g}
+  memswap_limit: ${FST_WORKER_MEMSWAP_LIMIT:-10g}
+  cpus: ${FST_WORKER_CPUS:-4.0}
+  cpu_shares: 512
+  pids_limit: 512
+
+x-fst-web-resources: &fst-web-resources
+  mem_limit: ${FST_WEB_MEM_LIMIT:-512m}
+  memswap_limit: ${FST_WEB_MEMSWAP_LIMIT:-768m}
+  cpus: ${FST_WEB_CPUS:-0.5}
+  cpu_shares: 128
+  pids_limit: 128
+
+x-fst-proxy-resources: &fst-proxy-resources
+  mem_limit: ${FST_PROXY_MEM_LIMIT:-256m}
+  memswap_limit: ${FST_PROXY_MEMSWAP_LIMIT:-384m}
+  cpus: ${FST_PROXY_CPUS:-0.25}
+  cpu_shares: 128
+  pids_limit: 128
+
 services:
   postgres:
+    <<: *fst-postgres-resources
     image: fst-postgres:17-repack
     build:
       context: ./deploy
@@ -20,6 +57,7 @@ services:
       start_period: 10s
 
   fstservice:
+    <<: *fst-api-resources
     build: &fstservice_build
       context: .
       dockerfile: FSTService/Dockerfile
@@ -105,6 +143,7 @@ services:
       start_period: 30s
 
   fstworker:
+    <<: *fst-worker-resources
     build: *fstservice_build
     container_name: fstworker
     restart: unless-stopped
@@ -123,6 +162,7 @@ services:
       start_period: 30s
 
   festivalweb:
+    <<: *fst-web-resources
     build:
       context: .
       dockerfile: FortniteFestivalWeb/Dockerfile
