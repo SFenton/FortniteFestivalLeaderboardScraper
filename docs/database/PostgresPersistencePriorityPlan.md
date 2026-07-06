@@ -78,7 +78,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | API service redeploy | Complete | Built `fstservice:sticky-rank-history-tracking`, recreated `fstservice` only, kept `fstworker` stopped, and verified `/readyz`, `festivalweb`, Postgres, and disk after recovery. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Continue autonomously through parity gates | Destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed after the live-scrape A/B data-parity gate passes. |
+| Next implementation phase | Hard-gated by storage/parity readiness | Full worker scrape/eval, destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, and active Postgres data movement remain blocked until storage headroom and live-scrape A/B data-parity gates are satisfied. |
 
 ## Architecture evaluation evidence (2026-07-06)
 
@@ -449,7 +449,7 @@ Reason for the change:
 | Evidence | Interpretation | Candidate |
 |---|---|---|
 | Failed `fstworker` logs showed `Band_Trios` failed at `insert_ranking_rows` in `Monolithic` mode with `53100: No space left on device`. | A single giant insert from `_band_rank_results` into the build table is a high-risk write burst under the current 77 GB headroom. | Use the existing `ComboBatched` write mode, which inserts overall rows and then combo rows by combo ID. |
-| `Band_Duets` band-song projection also failed building/indexing an optional projection and falls back when rebuild fails. | P6 still needs deeper optional-projection gating, but the first safe change is to reduce required band-team ranking write burst size. | Keep band-song projection behavior unchanged for this phase and continue with a follow-up gate if needed. |
+| `Band_Duets` band-song projection also failed building/indexing an optional projection and falls back when rebuild fails. | Phase G reduced required band-team ranking write burst size first; Phase H later completed optional-projection gating. | Keep Phase H's default-disabled optional projection gate unless a measured deployment eval proves it should be re-enabled. |
 | `RebuildBandTeamRankings_AllWriteModesMatch` already compares `Monolithic`, `ComboBatched`, and `Phased` outputs. | The candidate has existing correctness parity coverage across ranking scopes and combos. | Promote `ComboBatched` as the safer default while preserving rollback to `Monolithic`. |
 
 Implementation:
