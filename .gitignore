@@ -316,3 +316,6 @@ FortniteFestivalWeb/coverage
 
 harness-output/
 noop.txt
+
+# Local autonomous e-mail dry-run renders
+.outbox/

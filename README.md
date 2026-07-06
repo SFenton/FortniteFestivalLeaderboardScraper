@@ -43,6 +43,18 @@ In theory this is possible, but I haven't figured it out yet. The good news is, 
 
 Please file a bug report or feature request! I'll be watching!
 
+## Autonomous repository operations
+
+Repository-local autonomous execution guidance lives in `.github/skills/autonomous-plan-executor/SKILL.md`. It is tailored for FST production safety: keep `fstworker` stopped unless explicitly approved, preserve published-scrape/public-read correctness, probe before destructive database work, and commit/push accepted changes before advancing to the next autonomous phase.
+
+Autonomous phase and recap e-mails are rendered with:
+
+```bash
+node tools/agent-report-email.mjs --subject "FST Autonomous Agent: Recap - <Workflow> · <Status>" --input-md <report.md>
+```
+
+By default this creates dry-run HTML/JSON output under `.outbox/fst-autonomous-agent/`. Real sends require explicit `--send` plus `FST_AUTONOMOUS_EMAIL_ENABLED=true`, `FST_AUTONOMOUS_EMAIL_DRY_RUN=false`, `FST_AUTONOMOUS_EMAIL_TO`, and SMTP settings (`FST_AUTONOMOUS_EMAIL_SMTP_HOST`, `FST_AUTONOMOUS_EMAIL_SMTP_PORT`, `FST_AUTONOMOUS_EMAIL_SMTP_USER`, `FST_AUTONOMOUS_EMAIL_SMTP_PASSWORD`).
+
 # How to run the app
 
 Log in to Epic Games on your web browser of choice. Then, in the app, click "Generate Exchange Code" and that link will open in your browser. Copy the "code" value over to the app, and then click Run. You will see the console output with all the information that the app is querying. The app will run, and drop a file called "FortniteFestivalScores.xlsx" in the executing directory. These are all your scores- including scores on songs you don't own!

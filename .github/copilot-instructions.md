@@ -1,59 +1,44 @@
 # Workspace Instructions — FortniteFestivalLeaderboardScraper
 
-## Tool Availability Rules
+## Operating mode
 
-- **NEVER** claim Playwright or any configured MCP tool is unreliable, unavailable, or cannot be run from subagents. If a tool call fails, report the actual error — do not fabricate a reason to skip it.
-- **NEVER** skip the Plan→Confirm→Act workflow. All implementation requires user approval.
-- **NEVER** fabricate measurement data. All DOM measurements must come from actual Playwright tool calls (via `web-playwright-runner` subagent).
-- **NEVER** use Playwright in the Plan phase. Design reviews during planning are code-analysis only.
+- Work autonomously through approved repository work. Do not stop at status reports, completed probes, rejected hypotheses, commits, or priority boundaries when safe follow-up work remains in scope.
+- Treat missing diagnostics, stale docs, failed non-destructive validation, slow but safe queries, and incomplete evidence as repairable work. Insert the smallest safe probe/fix and continue.
+- Stop only when the remaining action requires operator input, credentials/secrets, sudo or privileged host access, destructive production maintenance, provider/API terms or budget decisions, ambiguous ownership of user changes, or a live-safety gate that cannot be cleared non-interactively.
+- Keep the active plan/todo state current. Mark completed work complete, blocked work blocked with the exact hard gate, and newly discovered safe work as a task before reporting it as a next step.
+- Commit and push accepted/project-required changes before moving to a new autonomous phase unless the operator explicitly asks not to commit.
 
-## Plan → Confirm → Act Workflow
+## FST live-safety rules
 
-ALL implementation requests follow a mandatory two-phase flow:
+- Production compose ownership is `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator says otherwise.
+- Do not restart `fstworker`, run full scrapes, prune/delete data, drop tables/indexes, move active Postgres data, or run `VACUUM FULL`/`CLUSTER`/`pg_repack` without explicit approval for that action.
+- Before broad DB probes, scrapes, deploys, or maintenance, check Docker health, Postgres readiness, public-read freeze state, published scrape, locks/long queries, disk headroom, CPU, and memory.
+- Long-term FST data must stay on the FST drive. Temporary alternate-drive use is allowed only as approved scratch/migration/repack workspace.
+- Preserve historical leaderboard correctness, Epic/API provenance, publication state, freeze/unfreeze behavior, and replay/parity evidence.
 
-### Plan Phase (max 3 agent chains, no tools/Playwright)
+## Tool and evidence rules
 
-1. Coordinator gathers user context (player, FRE, settings, filter/sort, page, behavior)
-2. Developer researches → proposes fix → designer reviews via code analysis → test team proposes test cases
-3. Full negotiation written to `/memories/session/plan-negotiation.md`
-4. Coordinator presents ENTIRE negotiation to user transparently
-5. **MANDATORY user approval** before proceeding to Act
+- Never claim Playwright or any configured MCP tool is unreliable, unavailable, or cannot run from agents/subprocesses. If a tool call fails, report the actual error.
+- Never fabricate measurements. DOM/UI measurements must come from real browser tooling; DB/runtime measurements must come from commands, logs, or database probes.
+- Prefer read-only probes before mutations. Use bounded queries and avoid broad scans during live-sensitive windows unless explicitly approved.
+- Keep secrets out of logs, docs, artifacts, shell history, e-mail reports, and commits.
 
-### Act Phase (max 3 agent chains, tools + Playwright enabled)
-
-1. Developer implements → designer validates with Playwright + `web-state/*` bootstrap → test team runs tests
-2. Outcomes written to `/memories/session/act-log.md`
-3. Coordinator presents summary to user
-
-### Key Rules
-
-- Feature agents report "implemented, pending design review" — never "complete"
-- Design reviews in Act phase without Playwright measurements are INVALID
-- Design agents delegate ALL Playwright to `web-playwright-runner`
-- `web-state/*` MCP tools generate JS snippets for browser state bootstrap (player, sort, instrument, etc.)
-- **Coordinator MUST invoke `runSubagent("web-design-{page}")` for Act chain 2** — math verification, code review, or terminal checks by the coordinator are NOT a substitute for Playwright DOM measurement
-- Chain depth limit: 3 per phase. Escalate to user after limit.
-
-## Session Memory
-
-Always use the `memory` tool (create, str_replace, insert) to write to `/memories/session/` files. **NEVER** use terminal commands (`Set-Content`, `echo`, `cat >`) to write session memory — these cause encoding corruption.
-
-## Dependency License Maintenance
+## Dependency license maintenance
 
 - When adding, removing, or changing any third-party npm, NuGet, or manually bundled package, update the license manifest workflow in code as part of the same change.
 - Run `cd FortniteFestivalWeb && npm run licenses:generate` after dependency changes, then run `npm run licenses:check` to verify `FortniteFestivalWeb/src/generated/licenseManifest.ts` is current.
-- If a package's license metadata cannot be inferred from installed metadata, lockfiles, or NuGet cache, add an explicit entry to `tools/license-overrides.json` rather than leaving the package unclassified.
+- If package license metadata cannot be inferred from installed metadata, lockfiles, or NuGet cache, add an explicit entry to `tools/license-overrides.json`.
 
-### Session Memory Files
-- `task-context.md` — Triage context + user context
-- `plan-negotiation.md` — Full agent negotiation during plan phase
-- `plan-proposal.md` — Approved plan after user confirmation
-- `act-log.md` — Implementation outcomes during act phase
+## Autonomous reports
 
-## Agent Hierarchy
+- Use `.github/skills/autonomous-plan-executor/SKILL.md` when the operator asks for autonomous execution or explicitly invokes the skill.
+- Phase and recap e-mails use `node tools/agent-report-email.mjs`.
+- If SMTP is configured and explicitly enabled, send the report. Otherwise render to `.outbox/fst-autonomous-agent/` and continue; missing e-mail infrastructure is a reporting degradation, not a workflow blocker.
 
-See `AGENTS.md` for full organization. Key routing:
-- Visual issues → Plan→Confirm→Act with designer validation in Act phase
-- Known page bugs → direct to `web-feat-{page}` leaf agent via Plan→Act
-- Cross-repo features → `fst-head` first (service-first dependency ordering)
-- Architecture questions → relevant principal via `runSubagent`
+## Key routing
+
+- Database/storage/query/retention/platform work: use `database-management` plus focused database advisor skills.
+- Postgres-specific operations: use `postgres-database-expert`.
+- DuckDB/Parquet artifact analytics: use `duckdb-analytics-expert`.
+- Web/UI work: validate through the smallest relevant web tests and real browser measurements when visual behavior matters.
+- API contract changes must keep `FSTService/Api/ApiEndpoints.cs` and `FortniteFestivalWeb/src/api/client.ts` aligned.

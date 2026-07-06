@@ -21,7 +21,7 @@ This database-management skill is a repository-local synthesis of open-source da
 | Docker documentation | Docker documentation terms | General container health/resource-check concepts |
 | Agent Skills specification, `agentskills.io/specification` | Public specification | `SKILL.md` structure, progressive disclosure, references/templates pattern |
 | Microsoft Learn Agent Skills docs | Microsoft documentation | Confirmation that `.github/skills/<name>/SKILL.md` is an accepted project skill path for GitHub Copilot-compatible environments |
-| Existing FortniteFestivalLeaderboardScraper skills and instructions | Repository-local | Plan->Confirm->Act workflow, advisor routing, report tables, and live-safety/historical correctness overrides |
+| Existing FortniteFestivalLeaderboardScraper skills and instructions | Repository-local | Autonomous execution workflow, advisor routing, report tables, and live-safety/historical correctness overrides |
 
 ## Maintenance rules
 

@@ -1,121 +1,66 @@
 # Fortnite Festival Score Tracker — Project Guidelines
 
-## Project Overview
+## Project overview
 
-**Fortnite Festival Score Tracker (FST)** tracks Fortnite Festival leaderboard scores across all seasons, instruments, and songs. The leaderboards reset every season, so this system continuously scrapes Epic's APIs to build a persistent historical record.
+**Fortnite Festival Score Tracker (FST)** tracks Fortnite Festival leaderboard scores across seasons, instruments, and songs. Leaderboards reset every season, so the service continuously scrapes Epic APIs and persists a historical record.
 
 | Component | Path | Stack |
 |---|---|---|
-| **FSTService** | `FSTService/` | .NET 9.0 / C# — ASP.NET Core + BackgroundService |
-| **FortniteFestivalWeb** | `FortniteFestivalWeb/` | React 19 + TypeScript + Vite |
-| **FortniteFestival.Core** | `FortniteFestival.Core/` | .NET shared library (net472 + net9.0) |
-| **Shared TS packages** | `packages/` | `@festival/core`, `@festival/theme`, `@festival/ui-utils`, `@festival/auth` |
+| FSTService | `FSTService/` | .NET / C# — ASP.NET Core + BackgroundService |
+| FortniteFestivalWeb | `FortniteFestivalWeb/` | React + TypeScript + Vite |
+| FortniteFestival.Core | `FortniteFestival.Core/` | Shared .NET library |
+| Shared TS packages | `packages/` | `@festival/core`, `@festival/theme`, `@festival/ui-utils`, `@festival/auth` |
 
-## Architecture Summary
+## Core rules
 
-- **FSTService**: Self-hosted ASP.NET Core — HTTP API + background scraper. PostgreSQL for persistence. 9-phase scrape pipeline, rivals calculation, rankings aggregation.
-- **FortniteFestivalWeb**: React 19 SPA with React Router, React Query, CSS modules. 9 feature areas (songs, rivals, shop, player, leaderboards, suggestions, compete, settings, shell).
-- **FortniteFestival.Core**: Shared .NET library — song models, calendar API client, instrument enums.
-- **packages/**: Shared TypeScript — API client, theme, UI utilities, auth.
+- Work autonomously through approved tasks and priorities. Do not stop at reports, rejected hypotheses, completed probes, commits, or priority boundaries while safe in-scope work remains.
+- Stop only for required operator input, credentials/secrets, privileged access, destructive production maintenance, provider/API terms or budget decisions, ambiguous user-owned changes, or live-safety gates that cannot be cleared non-interactively.
+- Keep todos and docs accurate: completed tasks must be marked complete; blocked tasks must name the hard gate; safe follow-up work should become an active task instead of a handoff note.
+- Commit and push accepted/project-required changes before starting the next autonomous phase unless the operator says not to.
 
-## Build & Test
+## Live FST safety
+
+- Production compose ownership is `/home/sfenton/Docker/FestivalServiceTracker`; repo compose files are templates unless the operator explicitly says otherwise.
+- Do not restart `fstworker`, run full scrapes, prune/delete data, drop tables/indexes, move active Postgres data, or run rewrite/repack maintenance without explicit approval for that action.
+- Before broad DB probes, deploys, scrapes, or maintenance, check Docker health, Postgres readiness, public-read freeze state, published scrape, locks/long queries, disk headroom, CPU, and memory.
+- Long-term FST data must stay on the FST drive. Temporary alternate-drive use is allowed only as approved scratch/migration/repack workspace.
+- Preserve historical leaderboard correctness, Epic/API provenance, publication state, freeze/unfreeze behavior, and replay/parity evidence.
+
+## Build and test
 
 ```bash
 # Service
-dotnet test FSTService.Tests\FSTService.Tests.csproj    # 94% coverage gate
-dotnet build FSTService\FSTService.csproj -c Release
+dotnet test FSTService.Tests/FSTService.Tests.csproj
+dotnet build FSTService/FSTService.csproj -c Release
 
 # Web
-cd FortniteFestivalWeb && npm test                       # Vitest
-cd FortniteFestivalWeb && npx playwright test             # E2E (4 viewports)
+cd FortniteFestivalWeb && npm test
+cd FortniteFestivalWeb && npx playwright test
 ```
 
-## Cross-Repo Conventions
+Use the smallest targeted validation that covers changed behavior. Documentation-only changes do not require build/test unless they alter generated docs or tooling.
 
-- **API contract**: `FSTService/Api/ApiEndpoints.cs` defines routes; `FortniteFestivalWeb/src/api/client.ts` consumes them. Changes to one MUST be reflected in the other.
-- **Feature flags**: `FSTService/FeatureOptions.cs` ↔ `FortniteFestivalWeb/src/contexts/FeatureFlagsContext.tsx`. Both sides must agree on flag names and defaults.
-- **Shared types**: Instrument enums, song models — defined in `FortniteFestival.Core/Config/InstrumentType.cs` and `packages/core/src/`.
-- **Dependency licenses**: Any npm, NuGet, or other third-party package add/remove/change MUST update the generated license manifest. Run `cd FortniteFestivalWeb && npm run licenses:generate && npm run licenses:check`; add missing metadata to `tools/license-overrides.json`.
+## Cross-repo conventions
 
-## Design Documents
+- API contract changes must keep `FSTService/Api/ApiEndpoints.cs` and `FortniteFestivalWeb/src/api/client.ts` aligned.
+- Feature flag changes must keep `FSTService/FeatureOptions.cs` and `FortniteFestivalWeb/src/contexts/FeatureFlagsContext.tsx` aligned.
+- Shared instrument/song types live in `FortniteFestival.Core/Config/InstrumentType.cs` and `packages/core/src/`.
+- Any third-party package add/remove/change must update generated license manifests and pass `cd FortniteFestivalWeb && npm run licenses:generate && npm run licenses:check`.
 
-Detailed designs in `docs/`. These are source of truth for feature architecture:
+## Autonomous execution and reporting
+
+- Use `.github/skills/autonomous-plan-executor/SKILL.md` when the operator requests autonomous execution.
+- Send or render phase and final recap reports through `node tools/agent-report-email.mjs`.
+- Missing SMTP configuration is a reporting degradation. Render to `.outbox/fst-autonomous-agent/` and continue.
+- E-mail reports must include accepted, rejected, blocked, and skipped-with-evidence work; commits; validation; performance; artifacts; and the next autonomous starting point when work remains but is hard-gated.
+
+## Design documents
+
+Detailed designs live in `docs/`. Keep relevant docs current when behavior changes.
 
 | Document | Topic |
 |---|---|
-| `docs/database/FSTServiceDatabaseDesign.md` | Database architecture, schemas, data flow |
-| `docs/design/EpicLoginDesign.md` | Epic OAuth flow |
-| `docs/design/UserRegistrationBackfillDesign.md` | Backfill pipeline, history reconstruction |
-| `docs/design/OverallRankingsDesign.md` | Rankings calculation |
-| `docs/design/OppsFeatureDesign.md` | Rivals/opps feature |
-| `docs/refactor/PLAN.md` | Web app refactoring roadmap (18 phases) |
-
-## Agent Coordination Rules
-
-This repository uses a hierarchical agent organization. All agents follow these rules:
-
-### Model Tiers
-
-| Tier | Model | Agents | Purpose |
-|---|---|---|---|
-| Research/Coordination | GPT-5.5 | festival-score-tracker | Deep reasoning, architecture, triage |
-| Implementation | Claude Opus 4.7 | All other agents (45) — heads, principals, design, feat, test, cross-cutting, runner | Design review, code gen, measurement, mechanical tasks |
-
-Only the `festival-score-tracker` coordinator is user-invocable. All other agents are called internally via `runSubagent`.
-
-### Memory Protocol
-- **Read broadly, write narrowly** — Any agent reads any memory file. Write only to your designated area.
-- **Update on completion** — After plan mode: write findings + plan. After execute mode: write outcomes + lessons.
-- **Check memory FIRST** — Before researching, read relevant memory files. Previous work may already be documented.
-- **Structured format** — Use `## {Topic} ({date})` headers, bullets for facts, `> Lesson:` callouts.
-
-### Consistency Enforcement
-- New patterns (endpoints, phases, pages, components) MUST be reviewed by the relevant principal agent.
-- Principals maintain living consistency registries in `/memories/repo/architecture/` and `/memories/repo/design/`.
-- Sub-agents read registries before planning and follow canonical patterns.
-
-### Testing Coordination
-- Code changes hand off to testing agents with context written to `/memories/session/task-context.md`.
-- Test failures are classified: TEST BUG (test agent fixes), CODE BUG (area owner fixes), ARCHITECTURE ISSUE (principal reviews).
-
-### Plan → Confirm → Act Workflow
-
-ALL implementation requests follow a mandatory two-phase flow with user approval between phases.
-
-#### Plan Phase (max 3 agent chains, no Playwright)
-
-1. **Triage** — Coordinator classifies issue, gathers user context (player, sort, instrument, FRE, settings, page, behavior)
-2. **Developer research** — Developer agent researches root cause, proposes fix (no implementation)
-3. **Design review** — Designer reviews proposal via code analysis only (no Playwright), approves or counter-proposes
-4. **Test planning** — Test team proposes test cases
-5. **Negotiation** — Full dev↔design↔test exchange written to `/memories/session/plan-negotiation.md`
-6. **User gate** — Coordinator presents ENTIRE negotiation transparently. User approves, modifies, or rejects.
-
-#### Act Phase (max 3 agent chains, Playwright enabled)
-
-1. **Implementation** — Developer implements the approved plan
-2. **Design validation** — Designer validates with Playwright via `web-playwright-runner` + `web-state/*` MCP tools for browser state bootstrap → BLOCK/ADVISORY/PASS
-3. **Test execution** — Test team writes and runs tests
-4. **Outcomes** — Written to `/memories/session/act-log.md`, presented to user
-
-#### Rules
-- **MANDATORY user approval** between Plan and Act phases. No auto-execution.
-- Feature agents report "implemented, pending design review" — never "complete"
-- Design reviews in Act phase without Playwright measurements are INVALID
-- Design agents delegate ALL Playwright to `web-playwright-runner`
-- `web-state/*` MCP tools bootstrap browser state (player, sort, instrument, FRE) via JS snippets passed to `playwright/evaluate`
-- Chain depth limit: 3 per phase. Escalate to user after limit.
-
-#### Session Memory Files
-- `/memories/session/task-context.md` — Triage context + user context
-- `/memories/session/plan-negotiation.md` — Full agent negotiation during plan phase
-- `/memories/session/plan-proposal.md` — Approved plan after user confirmation
-- `/memories/session/act-log.md` — Implementation outcomes during act phase
-
-## Registered Test Accounts
-
-| Username | Account ID |
-|---|---|
-| SFentonX | `195e93ef108143b2975ee46662d4d0e1` |
-| captainparticles | `cb8ebb19b32c40d1a736d7f8efec17ac` |
-| kahnyri | `4c2a1300df4c49a9b9d2b352d704bdf0` |
+| `docs/database/PostgresPersistencePriorityPlan.md` | PostgreSQL persistence, reclaim, and throughput roadmap |
+| `docs/design/BandRankHistoryVNextDesign.md` | Band rank-history vNext design |
+| `docs/design/PhaseSelectiveScraping.md` | Scrape phase-selective execution |
+| `docs/design/ProxyRotationDesign.md` | Proxy rotation design |
