@@ -73,6 +73,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
 | Rank/temp spill write-mode reduction | Accepted config/code default | Switched band team ranking rebuild default from `Monolithic` to `ComboBatched` to reduce one-shot build-table insert pressure; all write modes already have parity coverage. |
 | Optional band-song projection pressure gate | Complete | Defaulted optional band-song projection rebuilds to disabled and made current projection reads fall back when stale relative to current band rankings. |
+| P7 bloat readiness probe | Complete | Repaired stale candidate table stats with bounded `ANALYZE` and refreshed read-only size/dead-tuple estimates; destructive/rewrite maintenance remains blocked by headroom and parity gates. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Continue autonomously through parity gates | Destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, or active Postgres data movement may proceed after the live-scrape A/B data-parity gate passes. |
@@ -507,6 +508,50 @@ P6.1 decision:
 - This does not reclaim existing projection storage; it prevents future optional rebuild pressure during post-scrape ranking work.
 - The worker remains stopped after the previous disk-exhaustion failure; no full scrape restart was performed in this phase.
 
+### [x] Phase I: P7 bloat maintenance readiness probe (2026-07-06T23:53:00Z)
+
+Mode: Current-system probe / maintenance readiness. No production services, workers, schema, data rows, indexes, tables, rewrites, repacks, `VACUUM FULL`, drops, deletes, or scrape state were mutated.
+
+Live-safety preflight:
+
+| Check | Result | Decision |
+|---|---|---|
+| Production compose | `fstservice`, `festivalweb`, and `fst-postgres` were healthy. | Safe for bounded read-only probes and statistics refresh. |
+| API readiness | `fstservice` `/readyz` returned `Healthy`; Postgres accepted connections. | Public API remained live. |
+| Public reads | `published_scrape_id=1214`, `public_reads_frozen=true`, `public_reads_frozen_scrape_id=1214`. | Public reads remain pinned to the last published scrape. |
+| Locks | No ungranted locks. | No blocking database incident. |
+| Disk | `/mnt/docker-storage` remained about 77 GB free and 98% used. | Insufficient headroom for rewrite/repack/`VACUUM FULL` maintenance. |
+
+Probe sequence:
+
+| Step | Command/evidence | Decision |
+|---|---|---|
+| Initial P7 stats read | Candidate `pg_stat_user_tables` rows all reported `n_live_tup=0` and `n_dead_tup=0`, despite large relation sizes. | Stats were stale/missing and could not support a bloat decision. |
+| Bounded stats repair | `SET statement_timeout = '5min'; ANALYZE ...` over documented P7 candidates completed successfully. | Accepted as safe non-destructive evidence generation. |
+| Refreshed P7 stats read | Read-only stats after `ANALYZE` produced live/dead estimates and current `last_analyze` timestamps. | Accepted as the current P7 readiness baseline. |
+
+Refreshed P7 candidate evidence:
+
+| Table | Total size | Heap | Indexes | Live rows | Dead rows | Dead % |
+|---|---:|---:|---:|---:|---:|---:|
+| `band_team_rank_history_points_v2_trios` | 288 GB | 118 GB | 170 GB | 343,402,243 | 28,547,988 | 7.68% |
+| `band_team_rank_history_points_v2_duets` | 146 GB | 67 GB | 78 GB | 215,553,885 | 25,527,803 | 10.59% |
+| `composite_rank_history` | 79 GB | 22 GB | 56 GB | 241,030,651 | 38,726,954 | 13.84% |
+| `band_member_stats` | 56 GB | 17 GB | 39 GB | 55,325,103 | 11,467,093 | 17.17% |
+| `band_members` | 41 GB | 15 GB | 27 GB | 55,431,207 | 10,807,064 | 16.32% |
+| `band_search_member_projection` | 31 GB | 13 GB | 18 GB | 26,582,525 | 1,669,111 | 5.91% |
+| `band_search_team_projection` | 13 GB | 9,242 MB | 4,370 MB | 8,491,681 | 440,349 | 4.93% |
+| `band_entries_duets` | 6,918 MB | 3,548 MB | 3,369 MB | 6,503,259 | 381,715 | 5.54% |
+| `rank_history` | 0 bytes | 0 bytes | 0 bytes | 0 | 0 | 0.00% |
+
+P7 decision:
+
+- Accepted as a readiness/evidence phase.
+- The prior "about 99%" dead-tuple signal for several candidates was stale; refreshed estimates are materially lower, with the highest current candidate at 17.17%.
+- Do not run `VACUUM FULL`, `CLUSTER`, `pg_repack`, table rewrites, drops, deletes, or prune maintenance while the FST drive has only about 77 GB free and live-scrape A/B parity/rollback evidence is incomplete.
+- Plain `ANALYZE` is accepted as completed evidence repair; plain `VACUUM` remains a possible low-risk future maintenance action, but it does not return filesystem space and should not be treated as solving the storage blocker.
+- Next storage-blocker work should prioritize parity-gated derived-surface reclaim over bloat rewrites because current P7 dead percentages do not justify scratch-heavy rewrite/repack work under 98% disk usage.
+
 ## Prioritization principles
 
 1. Reclaim space first where the surface is likely derived and correctness risk is low.
@@ -788,6 +833,12 @@ Target candidates:
 - `band_team_rank_history_points_v2_trios`
 - `band_team_rank_history_points_v2_duets`
 - selected rank-history partitions
+
+Current readiness evidence:
+
+- P7 repaired stale stats with bounded `ANALYZE` on 2026-07-06.
+- Current dead-tuple estimates are about 16-17% for `band_members` / `band_member_stats`, 13.84% for `composite_rank_history`, 5-11% for `band_search_*`, `band_entries_duets`, and v2 band-history candidates, and 0 for empty `rank_history`.
+- The old "about 99%" dead-tuple signal should not be used for maintenance approval without fresh corroborating evidence.
 
 Why later:
 
