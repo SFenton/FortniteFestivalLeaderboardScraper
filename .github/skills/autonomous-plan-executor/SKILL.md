@@ -64,6 +64,15 @@ Repository rules override general plan text. Preserve historical leaderboard cor
 15. **Push before continuing.** After each accepted commit, push and verify success before starting the next risky autonomous task. If push fails, record the commit SHA and block continuation when persistence risk matters.
 16. **Finish with no leftover approved work.** The final report must not hand back safe in-scope next steps for the operator. It may list rejected or hard-blocked scope only after exhausting safe non-interactive alternatives, inserting/processing every actionable follow-up within approved scope, and committing/pushing accepted changes. Fail the final report if any actionable safe follow-up lacks a processed task.
 
+## Anti-stop and active-work rules
+
+- Treat an active scrape, live A/B, deploy verification, recovery monitor, or time/data-accrual window as active work, not as a background detail. Do not send a final recap or declare the queue complete while `fstworker` is running for the active phase, while post-process/publish validation is pending, or while a candidate A/B has not reached an accepted/rejected/blocked decision.
+- A status response, probe output, phase e-mail, recap draft, pushed commit, fixed health check, or restored service is not a stopping point. After reporting it, immediately continue to the next ready task, monitor tick, repair, A/B comparison, rollback, or hard-gate classification.
+- If the remaining exact action is hard-gated, process every safe alternative first: readiness package, rollback package, monitor, fixture parity, endpoint parity, manifest/checksum tooling, bounded read-only probe, docs/runbook update, deployment prep, or report artifact. Only then mark that exact action blocked.
+- If all implementation tasks are accepted/rejected/blocked but a live scrape/eval is still running, continue the 60-second CLI monitor and keep the active todo in progress until the live run completes, fails, is stopped by a safety gate, or reaches the phase decision point.
+- If a worker/service/web restart or scrape start is attempted and then rolled back for public-path health, continue into a safer repair path before finalizing. A rollback restores service but does not complete the task unless no safe repair remains.
+- Stop counters do not apply while new evidence is accruing from live scrape progress, monitor ticks, resource readings, logs, or parity artifacts. Count only iterations with no accepted improvement, no new evidence, no useful narrowing, and no validated plan progress.
+
 ## Autonomous blocker triage
 
 | Class | Meaning | Required autonomous action |
