@@ -6,12 +6,14 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - Active API service: `fstservice` is healthy and was redeployed from local image `fstservice:sticky-rank-history-tracking` after Phase J.
-- Active worker: `fstworker` is healthy and scraping run `1219` after adding worker-only startup schema-init skip and starting under the full public-path watchdog.
+- Active worker: `fstworker` is healthy and scraping run `1222` after emergency reclaim restored headroom.
 - Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance, but must be redeployed/recovered as soon as possible to preserve the user experience.
 - Current published scrape: `1214`.
 - Public reads: frozen to published scrape `1214` after the Phase B safety correction.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
 - The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
+- The failed/incomplete eval scrape `1221` filled the FST drive during post-scrape work and remains unpublished/incomplete; the worker was stopped before emergency reclaim and restarted afterward as scrape `1222`.
+- The unused derived `band_read_*` projection tables were quarantined, public-route validated, then dropped in the emergency reclaim, restoring `/mnt/docker-storage` from 44 MB free / 100% used to about 435 GB free / 89% used.
 - Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback. Worker runtime now skips startup schema initialization because `fstservice` owns schema initialization.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
@@ -79,6 +81,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | API service redeploy | Complete | Built `fstservice:sticky-rank-history-tracking`, recreated `fstservice` only, kept `fstworker` stopped, and verified `/readyz`, `festivalweb`, Postgres, and disk after recovery. |
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
 | Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
+| Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Hard-gated by storage/parity readiness | Full worker scrape/eval, destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, and active Postgres data movement remain blocked until storage headroom and live-scrape A/B data-parity gates are satisfied. |
@@ -667,6 +670,36 @@ Worker heal decision:
 - Accepted. `fstworker` is running and scraping while `fstservice` and `festivalweb` remain healthy through the full public path.
 - Continue the 60-second public-path monitor while scrape `1219` progresses.
 - Storage remains tight; if the worker enters DB-heavy post-processing and public-path health degrades, stop/rollback the worker immediately and record the exact phase.
+
+### [x] Phase N: Emergency `band_read_*` reclaim after scrape 1221 filled disk (2026-07-07T15:27:00Z)
+
+Mode: Emergency storage reclaim / live-safe recovery. This phase executed a destructive drop only for the previously proven unused derived `band_read_*` projection group, after quarantine and public-route validation.
+
+Incident trigger:
+
+| Signal | Evidence | Immediate action |
+|---|---|---|
+| FST drive full | `/mnt/docker-storage` and Postgres data mount reached 44 MB free / 100% used while `fstworker` was running. | Stopped `fstworker` to prevent more DB writes. |
+| Public path still recoverable | `festivalweb` shell, `/api/service-info` through `festivalweb`, and `fstservice` `/readyz` returned 200/Healthy after worker stop. | Kept API/web live. |
+| Scrape state | Scrape `1221` was incomplete/unpublished; `published_scrape_id` remained `1214`. | Froze public reads back to published scrape `1214`. |
+| Docker cache check | `docker builder prune` reclaimed root-Docker cache but did not change `/mnt/docker-storage`; FST pressure was Postgres data. | Proceeded to DB object inventory. |
+
+Reclaim actions:
+
+| Step | Result | Safety evidence |
+|---|---|---|
+| Logical shadow cleanup | `TRUNCATE leaderboard_current_entries, leaderboard_entry_versions, leaderboard_logical_write_metrics` recovered about 37 GB. | These are rollback/experimental logical artifacts, not authoritative public reads. |
+| `band_read_*` inventory | `band_read_hot_window` 191 GB, `band_read_subject_row` 190 GB, `band_read_rank_anchor` 12 GB, `band_read_scope_state` 5,459 MB, plus tiny metadata tables. | Prior phases found no source/view/proc/runtime route owners; constraints were local PK/check only. |
+| Quarantine | Renamed all six `band_read_*` tables to `quarantine_band_read_*_20260707`. | Public shell, `/api/service-info`, `/api/songs`, representative band leaderboard, and `/readyz` all returned healthy/200. |
+| Drop | Dropped only the quarantined `band_read_*` tables. | Post-drop public shell, service-info, representative band route, and `/readyz` all returned healthy/200. |
+| Headroom | `/mnt/docker-storage` recovered to about 435 GB free / 89% used. | Enough to restart worker under watchdog. |
+| Worker recovery | Restarted `fstworker`; scrape `1222` began; 18-tick public-path watchdog passed with `web_shell=200`, `web_api=200`, `api_ready=Healthy`, no ungranted locks. | Public path stayed healthy and `band_read_remaining=0`. |
+
+Emergency reclaim decision:
+
+- Accepted. The `band_read_*` group was derived, previously unused by current code/routes, and validated through quarantine before drop.
+- Rollback after drop would require regeneration/restore of obsolete derived projection data, but no active route or worker path referenced it before or after quarantine.
+- Continue monitoring scrape `1222`; if disk again approaches critical levels during post-processing, stop worker and record the exact phase before further reclaim.
 
 ## Prioritization principles
 
