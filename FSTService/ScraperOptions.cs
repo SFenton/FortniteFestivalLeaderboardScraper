@@ -179,6 +179,14 @@ public sealed class ScraperOptions
     /// Set via <c>--api-only</c> CLI argument or <c>Scraper__ApiOnly=true</c> env var.
     /// </summary>
     public bool ApiOnly { get; set; }
+
+    /// <summary>
+    /// When true, startup skips the global schema initializer and relies on an
+    /// already-initialized database. Intended for worker containers started after
+    /// the API service has completed schema initialization.
+    /// </summary>
+    public bool SkipStartupSchemaInitialization { get; set; }
+
     /// <summary>
     /// When true, run as the API frontend: register HTTP/API services and
     /// lightweight catalog/path refresh, but do not register scrape or mutation

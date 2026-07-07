@@ -162,6 +162,7 @@ services:
       # ── Global scraper concurrency cap. Keep lower than appsettings default on shared API/DB hosts. ──
       - Scraper__DegreeOfParallelism=${SCRAPER_DOP:-64}
       - Scraper__DisableScraperWorker=${SCRAPER_DISABLE_SCRAPER_WORKER:-false}
+      - Scraper__SkipStartupSchemaInitialization=${SKIP_STARTUP_SCHEMA_INITIALIZATION:-false}
       # ── Hard cap on API requests per second, 0 = unlimited (default: 0) ──
       - Scraper__MaxRequestsPerSecond=${MAX_REQUESTS_PER_SECOND:-0}
       # ── Rank-history snapshots are WAL-heavy; keep this low unless worker has a dedicated DB. ──

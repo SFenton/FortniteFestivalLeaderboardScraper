@@ -60,9 +60,12 @@ public sealed class StartupInitializer : IHostedService, IHealthCheck
         {
             _log.LogInformation("Initializing databases and song catalog...");
 
-            if (_scraperOptions.ApiOnly)
+            if (_scraperOptions.ApiOnly || _scraperOptions.SkipStartupSchemaInitialization)
             {
-                _log.LogInformation("API-only mode: skipping startup schema initialization; relying on existing database schema.");
+                _log.LogInformation(
+                    "Skipping startup schema initialization; ApiOnly={ApiOnly}, SkipStartupSchemaInitialization={SkipStartupSchemaInitialization}. Relying on existing database schema.",
+                    _scraperOptions.ApiOnly,
+                    _scraperOptions.SkipStartupSchemaInitialization);
             }
             else
             {

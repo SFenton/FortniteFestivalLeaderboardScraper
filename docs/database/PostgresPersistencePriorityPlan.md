@@ -6,12 +6,13 @@ This plan records the approved direction for improving FST Postgres persistence 
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
 - Active API service: `fstservice` is healthy and was redeployed from local image `fstservice:sticky-rank-history-tracking` after Phase J.
+- Active worker: `fstworker` is healthy and scraping run `1219` after adding worker-only startup schema-init skip and starting under the full public-path watchdog.
 - Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance, but must be redeployed/recovered as soon as possible to preserve the user experience.
 - Current published scrape: `1214`.
 - Public reads: frozen to published scrape `1214` after the Phase B safety correction.
 - Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
 - The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
-- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback. A `fstworker` validation start was attempted and rejected because it made `fstservice`/web API routes time out; `fstworker` is stopped again and public API/web health is restored.
+- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback. Worker runtime now skips startup schema initialization because `fstservice` owns schema initialization.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Completed persistence phases
@@ -77,6 +78,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | P8 public cache write-pressure reduction | Complete | Stopped request-time public API middleware writes to `api_response_cache`; cache persistence now stays in precompute/publish paths while frozen reads still serve published cache hits. |
 | API service redeploy | Complete | Built `fstservice:sticky-rank-history-tracking`, recreated `fstservice` only, kept `fstworker` stopped, and verified `/readyz`, `festivalweb`, Postgres, and disk after recovery. |
 | Worker validation start | Rejected / blocked | Starting `fstworker` with safer defaults caused `fstservice` and `/api/service-info` through `festivalweb` to time out; `fstworker` was stopped immediately and public API/web health recovered. |
+| Worker scraping heal | Complete | Added worker-only startup schema-init skip, rebuilt the image, started `fstworker`, and held a 10-minute full-public-path watchdog while scrape `1219` began. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
 | Next implementation phase | Hard-gated by storage/parity readiness | Full worker scrape/eval, destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, and active Postgres data movement remain blocked until storage headroom and live-scrape A/B data-parity gates are satisfied. |
@@ -630,6 +632,41 @@ Worker validation decision:
 
 - Rejected/blocked until a safer worker start path can prove `fstservice` and `festivalweb` API routes stay healthy after all expected containers return.
 - The autonomous executor skill now explicitly requires post-restart/redeploy verification of Docker health, `fstservice` `/readyz`, `festivalweb` static shell, and a representative API route through `festivalweb`, and immediate rollback if `fstworker` breaks API/web health.
+
+### [x] Phase M: Worker scraping healed with schema-init skip (2026-07-07T04:52:00Z)
+
+Mode: Implementation / live-safe worker recovery. No destructive database action was performed.
+
+Root cause:
+
+| Finding | Evidence | Decision |
+|---|---|---|
+| `fstworker` startup ran global schema initialization even though `fstservice` had already initialized the database. | The rejected worker attempt made `fstservice` and `/api/service-info` through `festivalweb` time out while worker logs showed `StartupInitializer` / `DatabaseInitializer.EnsureSchemaAsync`. | Make schema initialization skippable for worker containers that start after the API service. |
+
+Implementation:
+
+| Change | Files/artifacts | Safety gate | Rollback |
+|---|---|---|---|
+| Added `Scraper:SkipStartupSchemaInitialization`, default `false`. | `FSTService/ScraperOptions.cs`, `FSTService/StartupInitializer.cs`, `FSTService.Tests/Unit/ScraperOptionsAndModelsTests.cs` | API/frontend defaults still run schema init; worker can opt out. | Set the option to `false`. |
+| Added compose template env passthrough. | `docker-compose.yml`, `deploy/docker-compose.yml` | Defaults to `false` in repo templates. | Remove or leave unset. |
+| Set active worker runtime override. | `/home/sfenton/Docker/FestivalServiceTracker/docker-compose.pia-30.yml`, `/home/sfenton/Docker/FestivalServiceTracker/.env` | Active worker uses `SKIP_STARTUP_SCHEMA_INITIALIZATION=true`; API service does not depend on this override. | Set `SKIP_STARTUP_SCHEMA_INITIALIZATION=false` after verifying worker/API behavior. |
+
+Validation:
+
+| Check | Result |
+|---|---|
+| Targeted test | `dotnet test FSTService.Tests/FSTService.Tests.csproj --filter "FullyQualifiedName~ScraperOptionsAndModelsTests"` passed 21 tests. |
+| Build | `docker build -f FSTService/Dockerfile -t fstservice:sticky-rank-history-tracking .` completed successfully. |
+| Worker start | `fstworker` started and became healthy. |
+| Public-path watchdog | 60 ticks over about 10 minutes all returned `web_shell=200`, `web_api=200`, and `api_ready=Healthy`; no ungranted Postgres locks were observed. |
+| Scrape state | `service_worker_status` showed `running/Worker ready` with current operation `scrape.leaderboards`; `scrape_log` created run `1219` at `2026-07-07 04:42:37Z`. |
+| Disk | `/mnt/docker-storage` stayed about 83-87 GB free, 98% used during the watchdog window. |
+
+Worker heal decision:
+
+- Accepted. `fstworker` is running and scraping while `fstservice` and `festivalweb` remain healthy through the full public path.
+- Continue the 60-second public-path monitor while scrape `1219` progresses.
+- Storage remains tight; if the worker enters DB-heavy post-processing and public-path health degrades, stop/rollback the worker immediately and record the exact phase.
 
 ## Prioritization principles
 

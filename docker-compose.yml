@@ -90,6 +90,7 @@ services:
       - Scraper__PostScrapeRefreshTimeout=${POST_SCRAPE_REFRESH_TIMEOUT:-00:05:00}
       - Scraper__DegreeOfParallelism=${SCRAPER_DOP:-64}
       - Scraper__DisableScraperWorker=${SCRAPER_DISABLE_SCRAPER_WORKER:-false}
+      - Scraper__SkipStartupSchemaInitialization=${SKIP_STARTUP_SCHEMA_INITIALIZATION:-false}
       - Scraper__RankHistorySnapshotMaxDegreeOfParallelism=${RANK_HISTORY_SNAPSHOT_MAX_DOP:-1}
       - Scraper__WebRegistrationRetentionDays=${WEB_REGISTRATION_RETENTION_DAYS:-7}
       - BandRankHistory__Mode=${BAND_RANK_HISTORY_MODE:-Background}

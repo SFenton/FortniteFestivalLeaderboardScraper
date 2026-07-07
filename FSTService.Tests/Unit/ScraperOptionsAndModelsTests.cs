@@ -24,6 +24,7 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal("data", opts.DataDirectory);
         Assert.Equal("data/device-auth.json", opts.DeviceAuthPath);
         Assert.False(opts.ApiOnly);
+        Assert.False(opts.SkipStartupSchemaInitialization);
         Assert.False(opts.DisableScraperWorker);
         Assert.False(opts.RegistrationSyncWorkerOnly);
         Assert.False(opts.SetupOnly);
