@@ -485,6 +485,14 @@ public sealed class ScraperOptions
     public TimeSpan RegistrationBackfillPollInterval { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// Progress-based liveness guard for the cyclical song machine. When a cycle
+    /// is active with pending attachments, has no active song workers, and has
+    /// made no observable progress for this many seconds, the stale cycle is
+    /// cancelled and the retained attachments are restarted in a fresh cycle.
+    /// </summary>
+    public int SongMachineStaleCycleSeconds { get; set; } = 180;
+
+    /// <summary>
     /// Initial DOP when the pool is created or reset between passes.
     /// The AIMD limiter starts at this value and ramps up toward
     /// <see cref="DegreeOfParallelism"/> via slow-start (multiplicative ×1.333

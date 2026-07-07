@@ -43,6 +43,10 @@ public class CyclicalSongMachine
     /// <summary>CTS for the current cycle (shutdown).</summary>
     private CancellationTokenSource? _cycleCts;
 
+    private long _cycleGeneration;
+    private int _activeSongWorkers;
+    private long _lastCycleProgressTicks = DateTime.UtcNow.Ticks;
+
     /// <summary>Global CTS for machine lifetime (disposed on shutdown).</summary>
     private CancellationTokenSource? _lifetimeCts;
 
@@ -150,6 +154,7 @@ public class CyclicalSongMachine
             "Attachment {CallerId} added: {Users} users, {Songs} songs, priority={Priority}.",
             callerId, users.Count, songIds.Count, isHighPriority ? "high" : "low");
 
+        MarkCycleProgress();
         EnsureCycleRunning();
 
         // When the caller's CT fires, we don't remove the attachment (the cycle handles it)
@@ -214,20 +219,77 @@ public class CyclicalSongMachine
         lock (_lock)
         {
             if (_currentCycleTask is not null && !_currentCycleTask.IsCompleted)
-                return; // Already running — new attachment will be picked up
+            {
+                if (!TryRecoverStaleCycleLocked())
+                    return; // Already running — new attachment will be picked up
+            }
 
             var cts = CancellationTokenSource.CreateLinkedTokenSource(
                 _lifetimeCts?.Token ?? CancellationToken.None);
             _cycleCts = cts;
+            var generation = ++_cycleGeneration;
+            MarkCycleProgress();
 
-            _currentCycleTask = Task.Run(() => RunCycleLoopAsync(cts.Token));
+            _currentCycleTask = Task.Run(() => RunCycleLoopAsync(generation, cts.Token));
         }
     }
+
+    internal static bool ShouldRestartStaleCycle(
+        bool hasActiveCycle,
+        bool hasPendingAttachments,
+        int activeSongWorkers,
+        DateTime lastProgressUtc,
+        DateTime nowUtc,
+        int staleSeconds)
+    {
+        if (!hasActiveCycle || !hasPendingAttachments || activeSongWorkers > 0 || staleSeconds <= 0)
+            return false;
+
+        return nowUtc - lastProgressUtc >= TimeSpan.FromSeconds(staleSeconds);
+    }
+
+    private bool TryRecoverStaleCycleLocked()
+    {
+        var now = DateTime.UtcNow;
+        var staleSeconds = _options?.Value.SongMachineStaleCycleSeconds ?? 180;
+        var hasPendingAttachments = _attachments.Values.Any(static attachment => !attachment.IsCompleted);
+        var lastProgressUtc = new DateTime(Interlocked.Read(ref _lastCycleProgressTicks), DateTimeKind.Utc);
+        if (!ShouldRestartStaleCycle(
+                hasActiveCycle: true,
+                hasPendingAttachments,
+                Volatile.Read(ref _activeSongWorkers),
+                lastProgressUtc,
+                now,
+                staleSeconds))
+        {
+            return false;
+        }
+
+        _log.LogWarning(
+            "Restarting stale CyclicalSongMachine cycle: pendingAttachments={PendingAttachments}, activeSongWorkers={ActiveSongWorkers}, lastProgressUtc={LastProgressUtc:o}, staleSeconds={StaleSeconds}.",
+            _attachments.Count,
+            Volatile.Read(ref _activeSongWorkers),
+            lastProgressUtc,
+            staleSeconds);
+
+        _cycleCts?.Cancel();
+        _cycleCts?.Dispose();
+        _cycleCts = null;
+        _currentCycleTask = null;
+        _cycleSongIndex = -1;
+        _cycleSongList = null;
+        _cycleSeasonWindows = null;
+        Interlocked.Exchange(ref _activeSongWorkers, 0);
+        return true;
+    }
+
+    private void MarkCycleProgress()
+        => Interlocked.Exchange(ref _lastCycleProgressTicks, DateTime.UtcNow.Ticks);
 
     /// <summary>
     /// The main cycle loop. Runs until all attachments are satisfied and no new ones arrive.
     /// </summary>
-    private async Task RunCycleLoopAsync(CancellationToken ct)
+    private async Task RunCycleLoopAsync(long generation, CancellationToken ct)
     {
         Exception? cycleFailure = null;
         var cycleCancelled = false;
@@ -237,6 +299,7 @@ public class CyclicalSongMachine
             while (!ct.IsCancellationRequested && _attachments.Count > 0)
             {
                 await RunOneCycleAsync(ct);
+                MarkCycleProgress();
 
                 // After a cycle, check if any attachments still need loop-back.
                 // Attachments that joined mid-cycle need songs 0..joinIndex-1.
@@ -274,24 +337,40 @@ public class CyclicalSongMachine
         }
         finally
         {
-            var clearProgressWhenIdle = ShouldClearProgressWhenIdle(_progress.Phase, _attachments.Values);
+            var staleGeneration = false;
+            lock (_lock)
+            {
+                if (generation != _cycleGeneration)
+                {
+                    _log.LogInformation(
+                        "Ignoring stale CyclicalSongMachine cycle finalizer for generation {Generation}; current generation is {CurrentGeneration}.",
+                        generation,
+                        _cycleGeneration);
+                    staleGeneration = true;
+                }
+            }
 
-            _cycleSongIndex = -1;
-            _cycleSongList = null;
-            _cycleSeasonWindows = null;
+            if (!staleGeneration)
+            {
+                var clearProgressWhenIdle = ShouldClearProgressWhenIdle(_progress.Phase, _attachments.Values);
 
-            if (cycleFailure is not null)
-                FaultRemainingAttachments(cycleFailure);
-            else if (cycleCancelled)
-                CancelRemainingAttachments();
-            else
-                CompleteFinishedAttachments();
+                _cycleSongIndex = -1;
+                _cycleSongList = null;
+                _cycleSeasonWindows = null;
 
-            if (clearProgressWhenIdle && OwnsProgress)
-                _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Idle);
+                if (cycleFailure is not null)
+                    FaultRemainingAttachments(cycleFailure);
+                else if (cycleCancelled)
+                    CancelRemainingAttachments();
+                else
+                    CompleteFinishedAttachments();
 
-            _log.LogInformation("CyclicalSongMachine going idle. {Remaining} attachments remain.",
-                _attachments.Count);
+                if (clearProgressWhenIdle && OwnsProgress)
+                    _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Idle);
+
+                _log.LogInformation("CyclicalSongMachine going idle. {Remaining} attachments remain.",
+                    _attachments.Count);
+            }
         }
     }
 
@@ -323,6 +402,7 @@ public class CyclicalSongMachine
             _cycleSongList = songList;
             _cycleSeasonWindows = seasonWindows;
         }
+        MarkCycleProgress();
 
         // ── Stamp join index on attachments that haven't been stamped yet ──
         StampJoinIndices(startIndex: 0);
@@ -372,6 +452,7 @@ public class CyclicalSongMachine
             coreSongs, instruments,
             songId => GatherCoreUsersForSong(songId, currentSeason),
             coreSeasonPrefixMap, accessToken, callerAccountId, opts, ct);
+        MarkCycleProgress();
 
         // Flush backfill summary counters so API shows progress mid-cycle
         FlushBackfillSummaryCounters();
@@ -424,6 +505,7 @@ public class CyclicalSongMachine
                 historicalSongs, instruments,
                 songId => GatherHistoricalUsersForSong(songId, currentSeason),
                 historicalSeasonPrefixMap, accessToken, callerAccountId, opts, ct);
+            MarkCycleProgress();
 
             foreach (var (_, att) in _attachments)
             {
@@ -494,6 +576,8 @@ public class CyclicalSongMachine
 
                 try
                 {
+                    Interlocked.Increment(ref _activeSongWorkers);
+                    MarkCycleProgress();
                     var work = gatherUsers(songEntry.SongId);
                     var users = work.Users;
                     var highPriority = work.HighPriority;
@@ -565,6 +649,8 @@ public class CyclicalSongMachine
 
                     if (OwnsProgress)
                         _progress.ReportPhaseItemComplete();
+
+                    MarkCycleProgress();
                 }
                 catch (CdnBlockedException ex)
                 {
@@ -580,11 +666,13 @@ public class CyclicalSongMachine
                 }
                 finally
                 {
+                    Interlocked.Decrement(ref _activeSongWorkers);
                     songGate?.Release();
                 }
 
                 Interlocked.Exchange(ref _cycleSongIndex, songEntry.GlobalIndex);
                 StampJoinIndices(startIndex: songEntry.GlobalIndex + 1);
+                MarkCycleProgress();
 
             }).ToList();
 

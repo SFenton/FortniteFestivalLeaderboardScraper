@@ -200,6 +200,44 @@ public class CyclicalSongMachineTests
             [normal]));
     }
 
+    [Fact]
+    public void ShouldRestartStaleCycle_RestartsOnlyWhenPendingIdleAndPastProgressThreshold()
+    {
+        var now = DateTime.UtcNow;
+
+        Assert.True(CyclicalSongMachine.ShouldRestartStaleCycle(
+            hasActiveCycle: true,
+            hasPendingAttachments: true,
+            activeSongWorkers: 0,
+            lastProgressUtc: now - TimeSpan.FromMinutes(4),
+            nowUtc: now,
+            staleSeconds: 180));
+
+        Assert.False(CyclicalSongMachine.ShouldRestartStaleCycle(
+            hasActiveCycle: true,
+            hasPendingAttachments: true,
+            activeSongWorkers: 1,
+            lastProgressUtc: now - TimeSpan.FromMinutes(4),
+            nowUtc: now,
+            staleSeconds: 180));
+
+        Assert.False(CyclicalSongMachine.ShouldRestartStaleCycle(
+            hasActiveCycle: true,
+            hasPendingAttachments: true,
+            activeSongWorkers: 0,
+            lastProgressUtc: now - TimeSpan.FromSeconds(30),
+            nowUtc: now,
+            staleSeconds: 180));
+
+        Assert.False(CyclicalSongMachine.ShouldRestartStaleCycle(
+            hasActiveCycle: true,
+            hasPendingAttachments: false,
+            activeSongWorkers: 0,
+            lastProgressUtc: now - TimeSpan.FromMinutes(4),
+            nowUtc: now,
+            staleSeconds: 180));
+    }
+
     // ── Helper: invoke private static DeduplicateUsers via reflection ──
 
     private static CyclicalSongMachine.MachineAttachment CreateAttachment(
