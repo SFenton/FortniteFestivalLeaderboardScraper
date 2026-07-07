@@ -592,6 +592,165 @@ P8 decision:
 - Persistent public API cache entries should now come from precompute/staging/publish flows, not opportunistic live GETs.
 - Additional P8 targets, such as `/api/status` counters, `/api/songs` split payloads, and member-score fan-out, are deferred until deploy/eval evidence identifies a measured bottleneck and matched response-parity baseline.
 
+## Autonomous DB size-reduction execution plan
+
+This plan is the next autonomous starting point for reducing Postgres storage while avoiding substantial processing, memory, WAL, temp, or API read-cost regressions. The autonomous executor should run it phase-by-phase using the live A/B execution contract in `.github/skills/autonomous-plan-executor/SKILL.md`.
+
+Global execution rules for every phase:
+
+- Keep the existing 60-second public-path monitor running and print visible CLI progress every 60 seconds during deploy, scrape, post-process, publication, and maintenance windows.
+- Before each phase, capture public-path health, Docker caps, disk, Postgres locks/long queries, active scrape/publication state, relation/index sizes, WAL/temp counters, representative route responses, and rollback.
+- Deploy one candidate at a time. Do not bundle unrelated storage optimizations into the same A/B scrape.
+- Validate correctness before speed or space: old-vs-new row counts, ranges, fingerprints/checksums, active/public scrape selection, representative API JSON parity, and route health.
+- Reject/revert any candidate that changes public output, weakens historical correctness, makes `fstservice` or `festivalweb` unhealthy, or adds material sustained CPU/memory/WAL/temp/IO/API latency cost without explicit acceptance.
+- Stop `fstworker` after each scrape/post-process/publish decision point unless the current phase explicitly requires continued scraping and public path remains healthy.
+- Commit and push accepted code/config/docs before moving to the next phase. Revert rejected experiments before continuing.
+
+### Phase S0: storage baseline, monitor, and safety harness
+
+Goal: establish a trustworthy baseline and make the executor ready to run later phases without guessing.
+
+| Task | Action | Acceptance gate | Rejection / blocker |
+|---|---|---|---|
+| S0.1 Live-safety baseline | Capture `docker compose ps`, `/readyz`, `festivalweb` shell, `/api/service-info`, Postgres readiness, locks, long queries, disk, Docker stats, publication state, active scrape, and worker status. | Public path healthy, no ungranted locks, disk headroom known. | Block DB-heavy work if public path is degraded or disk headroom is too low to run the phase safely. |
+| S0.2 Storage inventory | Capture top table/index sizes, top low-scan indexes, column widths, TOAST share, WAL/temp counters, and current largest relation owners. | Baseline artifact saved in session `files/` and summarized in the phase report. | Repair stale stats with bounded `ANALYZE` where safe; otherwise mark measurements caveated. |
+| S0.3 A/B harness | Verify scripts/commands for representative route JSON capture, count/range/fingerprint SQL, and monitor logging. | Reusable commands exist before candidate phases start. | Insert harness repair work before any live A/B phase. |
+
+Decision: accepted readiness only; no storage mutation.
+
+### Phase S1: physical snapshot write-skip A/B and promotion
+
+Goal: reduce future physical snapshot growth without changing public reads or historical correctness.
+
+Starting candidate: `Features:SkipUnchangedPhysicalLeaderboardSnapshots`, currently implemented but default-off.
+
+| Task | Action | Acceptance gate | Rollback |
+|---|---|---|---|
+| S1.1 Fixture parity | Run targeted tests proving unchanged scope rows are skipped and `leaderboard_snapshot_state` stays pinned to the prior physical snapshot. | Tests pass and docs list exact read/write semantics. | Keep flag off; revert code if fixture parity fails. |
+| S1.2 Live A/B setup | Deploy flag off as baseline, capture a full scrape baseline for snapshot row counts, disk growth, WAL/temp, public routes, and active snapshot state. | Baseline complete and public path healthy. | Block until baseline scrape completes or safe equivalent exists. |
+| S1.3 Candidate scrape | Enable the flag only for the candidate scrape, run `fstworker` under 60-second monitor, and compare changed/new/unchanged scope manifests, active snapshot mapping, API JSON, counts, disk growth, WAL/temp, CPU, memory, and phase timings. | Exact output parity for representative solo routes and count/fingerprint parity for changed scopes; unchanged scopes safely pinned; meaningful reduction in physical snapshot rows/disk growth; no material resource regression. | Disable flag, revert if needed, document failed predicate. |
+| S1.4 Promote or reject | If accepted, commit/push docs/config and leave flag enabled; if rejected, flag off and revert candidate changes. | Decision and rollback evidence recorded. | N/A |
+
+Decision tier: high-value future-growth reduction; requires full live A/B before production default.
+
+### Phase S2: low-scan non-structural index reclaim
+
+Goal: drop or replace indexes that burn storage/write cost without owning active read/write paths.
+
+Initial candidate families:
+
+- `band_team_rank_history_points_v2_*_snapshot_id_band_type_idx` (~8.4 GB, zero scans in probes).
+- `band_team_rank_history_latest_v2_*_snapshot_id_band_type_idx` (~3.1 GB, zero scans in prior probes).
+- Current/published build-name indexes with zero scans only after owner review.
+- Never treat primary keys or unique constraints as drop candidates without table/source-of-truth design approval.
+
+| Task | Action | Acceptance gate | Rollback |
+|---|---|---|---|
+| S2.1 Owner cards | For each candidate index: table, size, scans, source references, query texts, endpoint/job owner, replacement coverage, write cost, and exact `CREATE INDEX CONCURRENTLY` rollback DDL. | Owner card proves non-structural index has no active read/write path or has a better replacement. | Mark index rejected/keep. |
+| S2.2 Read-path plans | Run bounded `EXPLAIN` or safe `EXPLAIN (ANALYZE, BUFFERS)` for representative history/status/admin queries. | Plans do not require candidate index, or replacement path is equal/better. | Keep index. |
+| S2.3 One-index-at-a-time drop | Drop one accepted non-structural index, validate public/API routes, logs, locks, disk, and fallback/recreate DDL. | Disk decreases by expected size; no API/job regression; rollback DDL tested syntactically. | Recreate index concurrently, document rejection. |
+| S2.4 Batch only after proof | Repeat for next index only after prior decision is accepted/rejected and committed. | No unprocessed index decisions. | Stop if public path or DB load degrades. |
+
+Decision tier: low-to-medium storage win, low data-risk, but must be one-object-at-a-time.
+
+### Phase S3: physical snapshot retention/source-of-truth package
+
+Goal: unlock the largest storage surface by proving what physical snapshots must retain.
+
+Do not prune yet. Build the proof package first.
+
+| Task | Action | Acceptance gate | Rollback |
+|---|---|---|---|
+| S3.1 Source-of-truth classification | Classify each `leaderboard_entries_snapshot_*` generation as canonical, reconstructable from logical/current/version rows, required safety window, or disposable after publication. | Written matrix covers rankings, rivals/opps, player stats, notifications, exports, public-read freeze, and restore. | Block pruning until all consumers are classified. |
+| S3.2 Manifest tooling | Produce per-scrape/instrument row counts, song counts, account counts, min/max ranks, checksums/fingerprints, size estimates, and restore/regeneration path. | Manifest generated for published scrape and at least one candidate old scrape. | Build tooling before prune. |
+| S3.3 Logical/read parity | A/B representative leaderboard reads from physical snapshot vs logical/current compact source. | API JSON parity and rank/count parity. | Keep physical authoritative. |
+| S3.4 Retention A/B | On live scrape, prove keeping latest published + safety window and pruning/archive candidates preserves public reads and rollback. | Live-scrape A/B data parity, restore path, exact object list, post-action validation. | Reject/keep physical snapshots. |
+
+Decision tier: highest potential storage win; destructive prune auto-approved only after live-scrape A/B parity.
+
+### Phase S4: band rank-history v2 compact schema and retention
+
+Goal: reduce large band-history tables without losing user-visible history.
+
+Design candidates:
+
+- Future compact table with normalized `team_id` / `team_key` dictionary instead of repeated 97-132 byte `team_key`.
+- Store `row_fingerprint` as 16-byte binary/uuid or generated compact hash instead of 33-byte text.
+- Review whether `snapshot_id` lookup indexes are redundant.
+- Retention policy for raw v2 slices after manifest/restore proof.
+
+| Task | Action | Acceptance gate | Rollback |
+|---|---|---|---|
+| S4.1 Schema design | Draft compact schema, dictionary ownership, indexes, and write/update semantics. | Design preserves endpoint history semantics and latest-state delta detection. | Keep current v2 tables. |
+| S4.2 Artifact/fixture A/B | Populate compact candidate for bounded band type/date/team sample on the FST drive. | Count/range/fingerprint/API parity for sample; measured storage per row lower; query latency not materially worse. | Drop candidate tables. |
+| S4.3 Live shadow write | Feature-flag dual-write compact history for one band type/scope while current v2 remains authoritative. | No public output change; writer overhead acceptable; monitor WAL/temp/CPU/mem. | Disable flag/drop shadow. |
+| S4.4 Promotion/retention | Promote compact reads or prune old v2 only after live A/B parity, restore, and rollback docs. | History route parity, storage win, no material processing cost. | Keep old reads/tables. |
+
+Decision tier: high future win; must be semantics-first.
+
+### Phase S5: current band projection compact layout
+
+Goal: reduce current band projection footprint while preserving hot band leaderboard routes.
+
+Largest repeated data today includes `team_members`, `member_account_ids`, `team_key`, and per-member arrays.
+
+| Task | Action | Acceptance gate | Rollback |
+|---|---|---|---|
+| S5.1 Access-path inventory | Identify API routes/jobs using `current_band_leaderboard_entries_*`, required columns, ordering, selected-band overlays, and fallback paths. | Owner card complete. | No schema change. |
+| S5.2 Narrow projection candidate | Design a narrow current projection with normalized band/team identity and only route-critical columns. | Query shapes and indexes defined from observed access paths. | Keep current projection. |
+| S5.3 Shadow build | Build candidate for one band type/scope, compare route JSON and timings. | JSON parity; p95/CPU/IO not materially worse; storage per row lower. | Drop shadow. |
+| S5.4 Live A/B | Feature-flag read source to compact projection for representative routes. | Public route parity and lower storage/write pressure. | Disable flag. |
+
+Decision tier: medium/high derived-cache win; good candidate after S1/S2.
+
+### Phase S6: rank/composite history index and retention review
+
+Goal: reduce history/index storage without losing visible rank-history behavior.
+
+| Task | Action | Acceptance gate | Rollback |
+|---|---|---|---|
+| S6.1 Owner/index review | For `rank_history_*` and `composite_rank_history`, map latest/history/retention/API owners and index usage. | Keep/drop/replacement decision per index. | Recreate DDL. |
+| S6.2 Retention semantics | Define how old rank history should behave: exact raw, season-scoped, summarized, or archived. | Product/history semantics documented. | Keep all raw. |
+| S6.3 Bounded retention A/B | Manifest/checksum old slices and test route parity before any prune. | Live-scrape A/B parity and restore path. | Reject prune. |
+
+Decision tier: medium storage win; semantics-gated.
+
+### Phase S7: cache/precompute and optional derived projection policy
+
+Goal: keep API pressure low without rebuilding huge optional projections when disk/headroom is unsafe.
+
+| Task | Action | Acceptance gate | Rollback |
+|---|---|---|---|
+| S7.1 Band-song projection policy | Make optional band-song projection rebuild pressure-aware: rebuild only when disk/WAL/temp budget allows; otherwise serve stale-safe fallback. | Route parity, no stale current projection reads, measurable API impact understood. | Keep default-disabled rebuild. |
+| S7.2 Public cache ownership | Keep `api_response_cache` writes in precompute/staging/publish paths, not live GET misses. | Public cache hits/freeze behavior intact. | Re-enable live writes only with measured need. |
+| S7.3 Hot routes | Only after measured evidence, consider `/api/status` counters, `/api/songs` split payloads, and member-score batching. | Response parity and lower DB/API pressure. | Revert route optimization. |
+
+Decision tier: operational/API pressure win, not primary storage reclaim.
+
+### Phase S8: bloat maintenance only after safer reclaim
+
+Goal: reclaim bloat without creating scratch-space or lock risk.
+
+Current evidence after refreshed `ANALYZE`: candidate dead-tuple estimates are roughly 4.93-17.17%, not the stale 99% signal.
+
+| Task | Action | Acceptance gate | Rollback |
+|---|---|---|---|
+| S8.1 Plain maintenance | Run bounded `ANALYZE` and consider plain `VACUUM` only when it helps stats/dead tuple reuse. | No public impact; no claim of filesystem reclaim. | Stop if load degrades. |
+| S8.2 Repack/rewrite readiness | Only after S1/S2/S3 headroom and live parity, choose exact table, scratch needs, locks, and rollback. | 4 TB FST-drive scratch available; API health plan; parity. | Do not run. |
+| S8.3 Repack/rewrite execution | Execute one object at a time in a maintenance window with 60-second monitor. | Relation size down, route parity, lock duration acceptable. | Restore/rebuild if needed. |
+
+Decision tier: later maintenance; not current first-line storage strategy.
+
+### Phase S9: promotion, reports, and next-loop insertion
+
+Goal: ensure accepted changes are persistent and rejected work is not left dirty.
+
+| Task | Action | Acceptance gate |
+|---|---|---|
+| S9.1 Commit/push accepted changes | Commit code/config/docs/DDL scripts for accepted candidates with evidence. | Push succeeds; working tree clean except unrelated preserved work. |
+| S9.2 Render reports | Use `node tools/agent-report-email.mjs` for each phase and final recap. | Outbox/send artifact exists. |
+| S9.3 Residual sweep | Classify every rejected/blocked/caveated item and insert safe derivative work. | No safe unprocessed follow-up remains. |
+
 ### [x] Phase K: API service redeploy and recovery check (2026-07-07T00:08:00Z)
 
 Mode: Promotion readiness / live-safe deployment. No database schema, data rows, indexes, tables, scrapes, or worker state were mutated.

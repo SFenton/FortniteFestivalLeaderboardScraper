@@ -102,6 +102,24 @@ Accepted improvements reset the relevant counter. Rejected hypotheses do not sto
 6. Define the real-time or throughput target before accepting performance work. Include wall clock, p50/p95/p99 or phase latency, CPU, memory, WAL, temp bytes, disk read/write, lock waits, and artifact sizes where relevant.
 7. Correctness and publication parity outrank speed. Do not accept a performance win that changes API output, breaks historical correctness, bypasses provider constraints, or weakens public-read safety.
 
+## DB size-reduction live A/B execution contract
+
+Use this contract for Postgres storage, compression, retention, index, projection, and write-skip roadmap phases.
+
+1. Start each phase from a named candidate and rollback switch: feature flag, config value, SQL rollback DDL, table rename-back, index recreate DDL, restore/regeneration path, or git revert. Do not run an unbounded "optimize DB" phase without an exact surface and rollback.
+2. Capture the baseline before candidate deploy: current commit/image, compose overrides, published/frozen scrape, active scrape ID, Docker caps, disk free, relation/index sizes, WAL/temp counters, locks/long queries, representative endpoint responses, and any phase-specific row counts/checksums.
+3. Keep a visible CLI monitor running during deploy, scrape, post-process, and publication. At least every 60 seconds print or append: timestamp, active phase/task, current command or scrape phase, `fstworker`/`fstservice`/`festivalweb`/Postgres health, `/readyz`, `festivalweb` static route, `/api/service-info` through `festivalweb`, disk free/% used, CPU, memory, locks/long queries, scrape ID/status, WAL/temp deltas when relevant, and artifact/report paths. The monitor log must live in the session `files/` directory or another non-committed artifact path.
+4. Implement candidates behind rollback-safe flags or isolated DDL first. For code/config candidates, deploy only the candidate being evaluated; do not combine unrelated optimizations in one live A/B window.
+5. Run fixture/unit/integration checks before live deployment. Then run live A/B against the same scrape/publication window where possible: old path vs new path counts, ranges, fingerprints/checksums, representative API JSON parity, status/publication parity, route latency, phase timings, WAL/temp bytes, disk growth, CPU, and memory.
+6. When a live scrape is needed, start/recreate `fstworker` only after public path preflight passes. Keep `fstworker` running while it is healthy and scraping; if it breaks `fstservice` or `festivalweb` API routes, stop or roll it back immediately and classify the candidate as rejected/blocked unless a smaller safe repair exists.
+7. When the scrape/post-process/publish/eval window reaches its decision point, stop `fstworker` before an unwanted next automatic scrape starts unless the current plan explicitly requires continuous scraping and public health remains good.
+8. Decide every candidate explicitly:
+   - **Accepted/promote**: correctness parity passed, public path stayed healthy, resource cost is acceptable, rollback is known, docs are updated, accepted file changes are committed and pushed, and production config is left in the accepted state.
+   - **Rejected/revert**: correctness parity failed, API/public health regressed, storage win is too small for the cost, or CPU/memory/WAL/temp/IO cost is materially worse. Revert code/config/DDL, restore/rename-back objects when applicable, validate rollback, document evidence, and continue to the next safe candidate.
+   - **Blocked**: remaining action requires live-scrape A/B time/data, credentials, provider/budget approval, insufficient disk/headroom, or another hard gate. Execute all safe readiness work before marking the exact action blocked.
+9. Do not promote a storage win that substantially increases processing, memory, WAL, temp, or API read cost unless the plan explicitly accepts that tradeoff with measured evidence. Treat >10% sustained p95/API latency, phase wall-clock, CPU, memory, WAL, temp bytes, or disk IO regression as a rejection trigger unless correctness/public-safety needs override it.
+10. After every accepted/rejected/blocked phase, update the roadmap, render/send the phase report, commit/push accepted docs/code/config, and insert any discovered safe follow-up work before moving on.
+
 ## Progress, console, and e-mail reporting
 
 1. Keep the terminal visibly updated every 60 seconds while autonomous workflow work is executing. For long commands, report current phase/task, elapsed time, command, artifact paths, resource readings, and blocker/ETA state.
