@@ -1,0 +1,87 @@
+{
+  "bundle": {
+    "entryJsRawMaxBytes": 1060000,
+    "entryJsGzipMaxBytes": 310000,
+    "entryJsBrotliMaxBytes": 275000,
+    "largestChunkGzipMaxBytes": 120000
+  },
+  "routes": {
+    "Songs": {
+      "domElementsMax": 2000,
+      "loadedImagesMax": 220,
+      "hiddenLoadedImagesMax": 80,
+      "requestCountMax": 100,
+      "transferBytesMax": 5000000,
+      "usedJsHeapBytesMax": 268435456,
+      "longTaskCountMax": 20,
+      "consoleErrorCountMax": 0,
+      "serverErrorCountMax": 0
+    },
+    "Song Details": {
+      "domElementsMax": 4800,
+      "loadedImagesMax": 805,
+      "hiddenLoadedImagesMax": 790,
+      "requestCountMax": 140,
+      "transferBytesMax": 9000000,
+      "usedJsHeapBytesMax": 335544320,
+      "longTaskCountMax": 30,
+      "consoleErrorCountMax": 0,
+      "serverErrorCountMax": 0
+    },
+    "Leaderboards": {
+      "domElementsMax": 2700,
+      "loadedImagesMax": 590,
+      "hiddenLoadedImagesMax": 570,
+      "requestCountMax": 120,
+      "transferBytesMax": 7000000,
+      "usedJsHeapBytesMax": 268435456,
+      "longTaskCountMax": 25,
+      "consoleErrorCountMax": 0,
+      "serverErrorCountMax": 0
+    },
+    "Rivals": {
+      "domElementsMax": 2800,
+      "loadedImagesMax": 180,
+      "hiddenLoadedImagesMax": 120,
+      "requestCountMax": 140,
+      "transferBytesMax": 8000000,
+      "usedJsHeapBytesMax": 268435456,
+      "longTaskCountMax": 30,
+      "consoleErrorCountMax": 3,
+      "serverErrorCountMax": 0
+    },
+    "Suggestions": {
+      "domElementsMax": 2600,
+      "loadedImagesMax": 180,
+      "hiddenLoadedImagesMax": 120,
+      "requestCountMax": 140,
+      "transferBytesMax": 8000000,
+      "usedJsHeapBytesMax": 268435456,
+      "longTaskCountMax": 30,
+      "consoleErrorCountMax": 35,
+      "serverErrorCountMax": 0
+    },
+    "Settings": {
+      "domElementsMax": 2200,
+      "loadedImagesMax": 80,
+      "hiddenLoadedImagesMax": 40,
+      "requestCountMax": 100,
+      "transferBytesMax": 5000000,
+      "usedJsHeapBytesMax": 268435456,
+      "longTaskCountMax": 20,
+      "consoleErrorCountMax": 0,
+      "serverErrorCountMax": 0
+    },
+    "Manual": {
+      "domElementsMax": 3200,
+      "loadedImagesMax": 300,
+      "hiddenLoadedImagesMax": 280,
+      "requestCountMax": 180,
+      "transferBytesMax": 34000000,
+      "usedJsHeapBytesMax": 335544320,
+      "longTaskCountMax": 35,
+      "consoleErrorCountMax": 0,
+      "serverErrorCountMax": 0
+    }
+  }
+}

@@ -1,0 +1,66 @@
+name: Web performance budgets
+
+on:
+  pull_request:
+    paths:
+      - "FortniteFestivalWeb/**"
+      - "packages/**"
+      - ".github/workflows/web-performance.yml"
+  workflow_dispatch:
+    inputs:
+      browser_base_url:
+        description: Deployed web base URL for route baselines
+        required: false
+        default: "https://festivalscoretracker.com"
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: corepack enable
+      - name: Install web dependencies
+        working-directory: FortniteFestivalWeb
+        run: yarn install --immutable
+      - name: Build web
+        working-directory: FortniteFestivalWeb
+        run: yarn build
+      - name: Check bundle budgets
+        working-directory: FortniteFestivalWeb
+        run: node scripts/check-performance-budgets.mjs --out performance-artifacts/bundle.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle-performance
+          path: FortniteFestivalWeb/performance-artifacts/bundle.json
+
+  browser:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: corepack enable
+      - name: Install web dependencies
+        working-directory: FortniteFestivalWeb
+        run: yarn install --immutable
+      - name: Install Chromium
+        working-directory: FortniteFestivalWeb
+        run: yarn playwright install --with-deps chromium
+      - name: Capture route budgets
+        working-directory: FortniteFestivalWeb
+        run: >
+          node scripts/capture-route-performance.mjs
+          --base-url "${{ inputs.browser_base_url }}"
+          --out performance-artifacts/routes.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-route-performance
+          path: FortniteFestivalWeb/performance-artifacts/routes.json

@@ -88,6 +88,31 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.3/`
 
+### WEB-0.4 persisted performance budgets
+
+**Decision:** Accepted.
+
+- Added checked raw/gzip/Brotli metrics for every JS/CSS chunk and hard budgets
+  for the entry bundle and largest lazy chunk.
+- Added Chromium route capture for Songs, Song Details, Leaderboards, Rivals,
+  Suggestions, Settings, and Manual at desktop and mobile widths. Captures
+  include DOM/image counts, hidden loaded images, requests, transferred and
+  decoded bytes, JS heap, long tasks, console/server errors, and navigation
+  timings.
+- Added CI bundle enforcement/artifacts on pull requests and a dispatchable
+  deployed-route browser budget job with uploaded JSON evidence.
+- Current entry bundle is 1,033,730 raw bytes, 304,468 gzip bytes, and 252,786
+  Brotli bytes. The largest non-entry chunk is 113,108 gzip bytes; all bundle
+  budgets pass.
+- Fourteen settled live route captures pass their baseline budgets. The
+  intentionally visible debt includes desktop Song Details at 4,374 elements,
+  639 loaded images, and 625 hidden loaded images; these budgets protect against
+  further regression while WEB-1 implements the much lower promotion targets.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.4/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
