@@ -38,7 +38,6 @@ import { computeRankWidth, formatBayesianRatingDisplay, formatRankingValueDispla
 import { coerceBandRankingMetric, formatBandTeamName, getBandBayesianRatingForMetric, getBandRankForMetric, getBandRatingForMetric, getBandSongsLabel, getEnabledBandRankingMetrics } from './helpers/bandRankingHelpers';
 import BandRankingPlayerCard from './components/BandRankingPlayerCard';
 import { RankingEntry } from './components/RankingEntry';
-import { Routes } from '../../routes';
 import { getBandProfileRoute } from '../../utils/profileNavigation';
 
 const COMBO_CATALOG_STALE_TIME_MS = 10 * 60_000;

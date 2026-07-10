@@ -72,7 +72,7 @@ export const playerPageStyles = {
   quickLinkButton: {
     ...flexRow,
     alignItems: Align.center,
-    justifyContent: Justify.flexStart,
+    justifyContent: Justify.start,
     flexShrink: 0,
     gap: Gap.lg,
     width: '100%',
@@ -97,7 +97,7 @@ export const playerPageStyles = {
     ...purpleGlass,
     ...flexRow,
     alignItems: Align.center,
-    justifyContent: Justify.flexStart,
+    justifyContent: Justify.start,
     flexShrink: 0,
     gap: Gap.lg,
     width: '100%',

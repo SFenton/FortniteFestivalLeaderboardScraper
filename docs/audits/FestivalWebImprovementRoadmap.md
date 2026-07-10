@@ -5,6 +5,31 @@
 **Mode:** Read-only best-practices, performance, correctness, and consolidation audit  
 **Implementation status:** No web application changes were made during this audit.
 
+## Autonomous execution update — 2026-07-10
+
+### WEB-0.1 source and package type errors
+
+**Decision:** Accepted and deployed.
+
+- Reduced the baseline from 133 TypeScript errors across 43 files to zero
+  without `any` suppression or disabling strict checks.
+- Repaired all-nine-instrument mappings, compact API helpers, theme token/key
+  drift, null/undefined handling, browser timer/event types, selected-member
+  score preservation, and stale test fixtures.
+- `npx tsc -b --pretty false` and the normal `npm run build` pass.
+- Eighteen affected test files passed 422 tests; the explicit adapter/ranking
+  fixture passed another 13 tests and covers all nine instruments.
+- Deployed `festivalweb` only while scrape 1229 continued. Five monitor samples
+  kept service, web, worker, and PostgreSQL healthy.
+- A fresh real-browser Songs navigation rendered 281 DOM elements, fetched
+  `/api/service-info` with HTTP 200, and produced zero console errors. Shell p95
+  changed from 0.347 ms to 0.371 ms (+6.9%); proxied service-info p95 improved
+  from 1.659 ms to 1.477 ms.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.1/`
+
 ## Executive decision
 
 FestivalWeb has strong modern foundations, especially route splitting, list

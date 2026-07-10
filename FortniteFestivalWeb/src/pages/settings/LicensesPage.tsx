@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'reac
 import { useTranslation } from 'react-i18next';
 import { useSetPageReady } from '../../contexts/PageReadyContext';
 import { IoChevronForward } from 'react-icons/io5';
-import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, flexColumn, flexBetween, padding } from '@festival/theme';
+import { Colors, Font, Gap, Weight, Radius, Layout, Size, Overflow, CssValue, LineHeight, TextAlign, flexColumn, flexBetween, padding } from '@festival/theme';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import { FrostedCard } from '../../components/common/FrostedCard';

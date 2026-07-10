@@ -130,7 +130,7 @@ describe('buildPlayerBandsItems', () => {
 
   it('uses lookup links for older stats payloads without bandId', () => {
     const bands = makeBands();
-    bands.duos.entries[0] = { ...bands.duos.entries[0], bandId: undefined };
+    bands.duos.entries[0] = { ...bands.duos.entries[0]!, bandId: undefined };
     const items = buildPlayerBandsItems(t, 'TestPlayer', bands, 'p1');
     const bandCard = items.find(item => item.key === 'bands-entry-duos-p1:p2-0');
 
@@ -142,7 +142,7 @@ describe('buildPlayerBandsItems', () => {
   it('falls back to account id prefixes when building friendly names', () => {
     const bands = makeBands();
     bands.duos.entries[0] = {
-      ...bands.duos.entries[0],
+      ...bands.duos.entries[0]!,
       members: [
         { accountId: 'p1abcdefghi', displayName: 'TestPlayer', instruments: ['Solo_Guitar'] },
         { accountId: 'p2abcdefghi', displayName: '', instruments: ['Solo_Bass'] },

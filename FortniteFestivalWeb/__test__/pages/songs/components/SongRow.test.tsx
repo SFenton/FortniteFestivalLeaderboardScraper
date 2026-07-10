@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import type { ComponentProps } from 'react';
 import { SongRow, compareByMode } from '../../../../src/pages/songs/components/SongRow';
 import { resolvePillFitsTopRow } from '../../../../src/pages/songs/layoutMode';
 import anim from '../../../../src/styles/animations.module.css';
@@ -97,7 +98,7 @@ const allEnabledInstruments = [
   'Solo_PeripheralDrums',
 ] as InstrumentKey[];
 
-const defaultProps = {
+const defaultProps: ComponentProps<typeof SongRow> = {
   song: baseSong,
   score: baseScore,
   instrument: 'Solo_Guitar' as InstrumentKey,
@@ -110,7 +111,7 @@ const defaultProps = {
   isMobile: false,
 };
 
-function renderSongRow(overrides: Partial<typeof defaultProps> = {}) {
+function renderSongRow(overrides: Partial<ComponentProps<typeof SongRow>> = {}) {
   return render(
     <MemoryRouter>
       <SongRow {...defaultProps} {...overrides} />

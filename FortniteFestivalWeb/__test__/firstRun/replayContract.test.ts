@@ -34,7 +34,7 @@ const LEGACY_RIVALS_REPLAY = 'Legacy replay contract from the initial rivals rol
 const LEGACY_RIVALS_RESPONSIVE_REPLAY = 'Legacy replay contract from responsive/layout revisions before the replay-policy guardrail.';
 const LEGACY_SHOP_REPLAY = 'Legacy replay contract from the shop rollout before the replay-policy guardrail.';
 
-const EXPECTED_REGISTERED_FIRST_RUN_REPLAY_CONTRACT = {
+const EXPECTED_REGISTERED_FIRST_RUN_REPLAY_CONTRACT: Record<string, ReplayContractEntry> = {
   'compete-hub': { pageKey: 'compete', version: 2, replayReason: LEGACY_COMPETE_REPLAY },
   'compete-leaderboards': { pageKey: 'compete', version: 2, replayReason: LEGACY_COMPETE_REPLAY },
   'compete-rivals': { pageKey: 'compete', version: 2, replayReason: LEGACY_COMPETE_REPLAY },

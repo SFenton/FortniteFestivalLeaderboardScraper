@@ -6,7 +6,7 @@
  * useShopState layers settings on top.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type { ShopSong } from '@festival/core/api/serverTypes';
 

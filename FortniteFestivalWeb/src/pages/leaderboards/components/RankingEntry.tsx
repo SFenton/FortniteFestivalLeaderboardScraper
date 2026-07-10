@@ -32,9 +32,9 @@ export interface RankingEntryProps {
   /** Background color for the Bayesian value pill. */
   bayesianRankColor?: string;
   /** Shared min width for percentile value pills. */
-  percentileValueMinWidth?: number;
+  percentileValueMinWidth?: string | number;
   /** Shared min width for Bayesian value pills. */
-  bayesianRankMinWidth?: number;
+  bayesianRankMinWidth?: string | number;
   /** On compact percentile rows, place songs + percentile + Bayesian value on a second row. */
   twoRowPercentileMetadata?: boolean;
   /** Alignment for standalone compact metadata rows. */
@@ -270,11 +270,11 @@ function renderPercentileMetadata({
   songsLabelPrimary?: boolean;
   songsLabelGoldPrefix?: boolean;
   percentileValueDisplay?: string;
-  percentileValueMinWidth?: number;
+  percentileValueMinWidth?: string | number;
   bayesianRankLabel: string;
   bayesianRankDisplay?: string;
   bayesianRankColor?: string;
-  bayesianRankMinWidth?: number;
+  bayesianRankMinWidth?: string | number;
   isPlayer?: boolean;
   s: ReturnType<typeof useStyles>;
 }) {
@@ -301,7 +301,7 @@ function renderPercentilePrimaryMetadata({
   songsLabelPrimary?: boolean;
   songsLabelGoldPrefix?: boolean;
   percentileValueDisplay?: string;
-  percentileValueMinWidth?: number;
+  percentileValueMinWidth?: string | number;
   isPlayer?: boolean;
   s: ReturnType<typeof useStyles>;
 }) {
@@ -324,7 +324,7 @@ function renderBayesianMetadata({
   bayesianRankLabel: string;
   bayesianRankDisplay?: string;
   bayesianRankColor?: string;
-  bayesianRankMinWidth?: number;
+  bayesianRankMinWidth?: string | number;
   isPlayer?: boolean;
   s: ReturnType<typeof useStyles>;
 }) {

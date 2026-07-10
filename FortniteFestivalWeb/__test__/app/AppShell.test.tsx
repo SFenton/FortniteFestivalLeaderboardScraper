@@ -19,6 +19,7 @@ const mockApi = vi.hoisted(() => {
   };
 });
 import App from '../../src/App';
+import type { SelectedBandProfile } from '../../src/hooks/data/useSelectedProfile';
 
 vi.mock('../../src/api/client', () => ({ api: mockApi }));
 
@@ -236,7 +237,7 @@ import { getProfileClickDestination, getStatisticsNavigationPath } from '../../s
 
 describe('getProfileClickDestination', () => {
   const playerProfile = { accountId: 'p1', displayName: 'Player' };
-  const bandProfile = {
+  const bandProfile: SelectedBandProfile = {
     type: 'band' as const,
     bandId: 'band-123',
     bandType: 'Band_Duets',
@@ -288,7 +289,7 @@ describe('getProfileClickDestination', () => {
 
 describe('getStatisticsNavigationPath', () => {
   const playerProfile = { accountId: 'p1', displayName: 'Player' };
-  const bandProfile = {
+  const bandProfile: SelectedBandProfile = {
     type: 'band' as const,
     bandId: 'band-123',
     bandType: 'Band_Duets',

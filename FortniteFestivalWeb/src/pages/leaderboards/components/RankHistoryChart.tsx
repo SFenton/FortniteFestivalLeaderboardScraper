@@ -332,7 +332,7 @@ export default memo(function RankHistoryChart({
             : <span style={{ color: Colors.textPrimary, ...(valueWidth ? { width: valueWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>{formatDetailValue(point.value, metric)}</span>}
       </>
     );
-  }, [bayesianValueWidth, metric, percentileValueWidth, rankWidth, showMobilePercentileDetails, st.mobileHistoryLayout, st.mobileHistoryMetadata, st.mobileHistoryPrimary, totalAccounts, usePercentile, valueWidth]);
+  }, [bayesianValueWidth, metric, percentileValueWidth, rankWidth, showMobilePercentileDetails, st.mobileHistoryLayout, st.mobileHistoryPrimary, totalAccounts, usePercentile, valueWidth]);
 
   const renderListItem = useCallback((point: RankHistoryChartPoint, i: number, phase: 'idle' | 'in' | 'out') => {
     let animStyle: React.CSSProperties = {};
@@ -385,7 +385,7 @@ export default memo(function RankHistoryChart({
             : <span style={{ color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined), ...(valueWidth ? { width: valueWidth, flexShrink: 0, fontVariantNumeric: FontVariant.tabularNums, textAlign: 'right' as const } : {}) }}>{formatDetailValue(point.value, metric)}</span>}
       </div>
     );
-  }, [bayesianValueWidth, metric, percentileValueWidth, rankWidth, showMobilePercentileDetails, st.mobileHistoryListCard, st.mobileHistoryMetadata, st.mobileHistoryPrimary, totalAccounts, usePercentile, valueWidth]);
+  }, [bayesianValueWidth, metric, percentileValueWidth, rankWidth, showMobilePercentileDetails, st.mobileHistoryListCard, st.mobileHistoryPrimary, totalAccounts, usePercentile, valueWidth]);
 
   if (!accountId) return null;
 

@@ -41,6 +41,35 @@ describe('serverSongToCore', () => {
     expect(core.track.in?.gr).toBe(3);
     expect(core.track.in?.ds).toBe(4);
   });
+
+  it('maps max scores for all nine instruments', () => {
+    const core = serverSongToCore({
+      ...mockSong,
+      maxScores: {
+        Solo_Guitar: 1,
+        Solo_Bass: 2,
+        Solo_Drums: 3,
+        Solo_Vocals: 4,
+        Solo_PeripheralGuitar: 5,
+        Solo_PeripheralBass: 6,
+        Solo_PeripheralVocals: 7,
+        Solo_PeripheralCymbals: 8,
+        Solo_PeripheralDrums: 9,
+      },
+    });
+
+    expect(core.maxScores).toEqual({
+      guitar: 1,
+      bass: 2,
+      drums: 3,
+      vocals: 4,
+      pro_guitar: 5,
+      pro_bass: 6,
+      peripheral_vocals: 7,
+      peripheral_cymbals: 8,
+      peripheral_drums: 9,
+    });
+  });
 });
 
 describe('buildScoresIndex', () => {

@@ -99,7 +99,7 @@ describe('useAppWebSocket lifecycle', () => {
   it('creates exactly one WebSocket on first consumer mount', () => {
     renderHook(() => useAppWebSocket());
     expect(wsInstances).toHaveLength(1);
-    expect(wsInstances[0].url).toContain('/api/ws');
+    expect(wsInstances[0]!.url).toContain('/api/ws');
   });
 
   it('shares the same WebSocket across multiple consumers', () => {
@@ -112,7 +112,7 @@ describe('useAppWebSocket lifecycle', () => {
     const { result } = renderHook(() => useAppWebSocket());
     expect(result.current.connected).toBe(false);
 
-    act(() => { wsInstances[0].simulateOpen(); });
+    act(() => { wsInstances[0]!.simulateOpen(); });
     // connected state is polled every 1s
     act(() => { vi.advanceTimersByTime(1_100); });
     expect(result.current.connected).toBe(true);
@@ -122,7 +122,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('does not call ws.close() when socket is still CONNECTING during destroy', () => {
     const { unmount } = renderHook(() => useAppWebSocket());
-    const ws = wsInstances[0];
+    const ws = wsInstances[0]!;
     expect(ws.readyState).toBe(MockWebSocket.CONNECTING);
 
     unmount();
@@ -135,7 +135,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('closes socket normally when it is OPEN during destroy', () => {
     const { unmount } = renderHook(() => useAppWebSocket());
-    const ws = wsInstances[0];
+    const ws = wsInstances[0]!;
     act(() => { ws.simulateOpen(); });
     expect(ws.readyState).toBe(MockWebSocket.OPEN);
 
@@ -147,7 +147,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('stale onopen after destroy closes the socket and does not reconnect', () => {
     const { unmount } = renderHook(() => useAppWebSocket());
-    const ws = wsInstances[0];
+    const ws = wsInstances[0]!;
 
     unmount();
     act(() => { vi.advanceTimersByTime(500); });
@@ -165,7 +165,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('only has one reconnect timer after repeated close events', () => {
     renderHook(() => useAppWebSocket());
-    const ws = wsInstances[0];
+    const ws = wsInstances[0]!;
     act(() => { ws.simulateOpen(); });
 
     // First close triggers reconnect timer
@@ -187,7 +187,7 @@ describe('useAppWebSocket lifecycle', () => {
   it('does not create a second socket while one is CONNECTING', () => {
     renderHook(() => useAppWebSocket());
     expect(wsInstances).toHaveLength(1);
-    expect(wsInstances[0].readyState).toBe(MockWebSocket.CONNECTING);
+    expect(wsInstances[0]!.readyState).toBe(MockWebSocket.CONNECTING);
 
     // Mount another consumer — should not create a new socket
     renderHook(() => useAppWebSocket());
@@ -198,7 +198,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('cancels destroy when a new consumer mounts during the grace window', () => {
     const hook1 = renderHook(() => useAppWebSocket());
-    const ws = wsInstances[0];
+    const ws = wsInstances[0]!;
     act(() => { ws.simulateOpen(); });
 
     // Unmount the only consumer
@@ -218,7 +218,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('destroys after grace window when no consumer remounts', () => {
     const { unmount } = renderHook(() => useAppWebSocket());
-    const ws = wsInstances[0];
+    const ws = wsInstances[0]!;
     act(() => { ws.simulateOpen(); });
 
     unmount();
@@ -231,7 +231,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('reconnects with exponential backoff after repeated failures', () => {
     renderHook(() => useAppWebSocket());
-    const ws1 = wsInstances[0];
+    const ws1 = wsInstances[0]!;
     act(() => { ws1.simulateOpen(); });
 
     // Server closes the connection
@@ -243,7 +243,7 @@ describe('useAppWebSocket lifecycle', () => {
     expect(wsInstances).toHaveLength(2);
 
     // ws2 fails without opening — delay should double to 2s
-    const ws2 = wsInstances[1];
+    const ws2 = wsInstances[1]!;
     act(() => { ws2.simulateClose(); });
 
     // Only 1s elapsed — should NOT have reconnected yet
@@ -257,13 +257,13 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('resets backoff delay on successful open', () => {
     renderHook(() => useAppWebSocket());
-    const ws1 = wsInstances[0];
+    const ws1 = wsInstances[0]!;
     act(() => { ws1.simulateOpen(); });
     act(() => { ws1.simulateClose(); });
 
     // Reconnect at 1s
     act(() => { vi.advanceTimersByTime(1_100); });
-    const ws2 = wsInstances[1];
+    const ws2 = wsInstances[1]!;
     act(() => { ws2.simulateOpen(); }); // resets delay to 1s
     act(() => { ws2.simulateClose(); });
 
@@ -274,7 +274,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('restarts the socket after returning from a long hidden period', () => {
     renderHook(() => useAppWebSocket());
-    const ws1 = wsInstances[0];
+    const ws1 = wsInstances[0]!;
     act(() => { ws1.simulateOpen(); });
 
     act(() => {
@@ -291,7 +291,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('does not restart the socket after a brief hidden period', () => {
     renderHook(() => useAppWebSocket());
-    const ws1 = wsInstances[0];
+    const ws1 = wsInstances[0]!;
     act(() => { ws1.simulateOpen(); });
 
     act(() => {
@@ -310,7 +310,7 @@ describe('useAppWebSocket lifecycle', () => {
 
   it('calls close on error (which triggers reconnect via onclose)', () => {
     renderHook(() => useAppWebSocket());
-    const ws = wsInstances[0];
+    const ws = wsInstances[0]!;
     act(() => { ws.simulateOpen(); });
 
     act(() => { ws.simulateError(); });

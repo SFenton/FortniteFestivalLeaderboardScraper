@@ -15,6 +15,9 @@ const SERVER_TO_CORE_INSTRUMENT: Record<ServerInstrumentKey, InstrumentKey> = {
   Solo_Vocals: 'vocals',
   Solo_PeripheralGuitar: 'pro_guitar',
   Solo_PeripheralBass: 'pro_bass',
+  Solo_PeripheralVocals: 'peripheral_vocals',
+  Solo_PeripheralCymbals: 'peripheral_cymbals',
+  Solo_PeripheralDrums: 'peripheral_drums',
 };
 
 export function serverSongToCore(s: ServerSong): CoreSong {

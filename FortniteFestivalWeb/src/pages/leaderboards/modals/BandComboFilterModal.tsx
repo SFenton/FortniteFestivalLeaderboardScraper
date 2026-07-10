@@ -71,7 +71,11 @@ export default function BandComboFilterModal({
       onClearCombo();
       return;
     }
-    const selected = draft.filter((instrument): instrument is ServerInstrumentKey => !!instrument);
+    const selected: ServerInstrumentKey[] = [];
+    for (const instrument of draft) {
+      if (!instrument) return;
+      selected.push(instrument);
+    }
     if (selected.length !== slotCount) return;
     onApplyCombo(bandComboIdFromInstruments(selected));
   }, [applyDisabled, draft, draftClearsAppliedFilter, onApplyCombo, onClearCombo, slotCount]);

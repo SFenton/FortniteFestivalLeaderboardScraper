@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
-import { useMemo, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { Display, Justify, Align, PointerEvents } from '@festival/theme';
 import FadeIn from '../../../../components/page/FadeIn';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';

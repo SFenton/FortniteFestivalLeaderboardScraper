@@ -41,18 +41,22 @@ const allVisible = () => ({
 
 const baseDraft = (): SuggestionsFilterDraft => defaultSuggestionsFilterDraft();
 
-const defaultProps = (): ComponentProps<typeof SuggestionsFilterModal> => ({
+type SuggestionsFilterModalTestProps = Omit<ComponentProps<typeof SuggestionsFilterModal>, 'onChange'> & {
+  onChange: ReturnType<typeof vi.fn<(draft: SuggestionsFilterDraft) => void>>;
+};
+
+const defaultProps = (): SuggestionsFilterModalTestProps => ({
   visible: true,
   draft: baseDraft(),
   savedDraft: baseDraft(),
   instrumentVisibility: allVisible(),
-  onChange: vi.fn(),
+  onChange: vi.fn<(draft: SuggestionsFilterDraft) => void>(),
   onCancel: vi.fn(),
   onReset: vi.fn(),
   onApply: vi.fn(),
 });
 
-function renderModal(overrides: Partial<ComponentProps<typeof SuggestionsFilterModal>> = {}) {
+function renderModal(overrides: Partial<SuggestionsFilterModalTestProps> = {}) {
   const props = { ...defaultProps(), ...overrides };
   return { ...render(<TestProviders><SuggestionsFilterModal {...props} /></TestProviders>), props };
 }
@@ -90,6 +94,8 @@ function instrumentSelectionScale(title: string, index = 0) {
 
 async function clickCurrentCompactInstrument(alt: string, index = 0) {
   const instrument = (await screen.findAllByAltText(alt))[index];
+  expect(instrument).toBeDefined();
+  if (!instrument) return;
   fireEvent.click(instrument.closest('button') ?? instrument);
 }
 

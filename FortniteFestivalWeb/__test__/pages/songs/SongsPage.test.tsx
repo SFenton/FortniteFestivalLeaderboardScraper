@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent, act, within, cleanup } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
-import { Colors, Gap, Layout, FADE_DURATION } from '@festival/theme';
+import { Colors, Layout, FADE_DURATION } from '@festival/theme';
 import SongsPage from '../../../src/pages/songs/SongsPage';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { HEADER_PORTAL_HEIGHT_VAR } from '../../../src/contexts/ScrollContainerContext';

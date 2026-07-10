@@ -5,7 +5,7 @@ export interface MarqueeTextProps {
   /** The text to display (and scroll when it overflows). */
   text: string;
   /** Semantic HTML element to wrap the text. */
-  as?: 'h1' | 'p' | 'span';
+  as?: 'h1' | 'h2' | 'p' | 'span';
   /** Extra class name forwarded to the container (or plain element when not scrolling). */
   className?: string;
   /** Extra inline styles forwarded to the container (or plain element when not scrolling). */
@@ -66,7 +66,12 @@ export default function MarqueeText({
     const check = () => {
       const measure = measureRef.current;
       if (!measure) return;
-      const isTrackRender = container.firstElementChild instanceof HTMLElement && container.firstElementChild.classList.contains(cls.track);
+      const trackClass = cls.track;
+      const isTrackRender = Boolean(
+        trackClass
+        && container.firstElementChild instanceof HTMLElement
+        && container.firstElementChild.classList.contains(trackClass),
+      );
       const renderedTextWidth = isTrackRender ? 0 : container.scrollWidth;
       const measuredTextWidth = getTextWidth(measure);
       const tw = Math.max(measuredTextWidth, renderedTextWidth);

@@ -40,7 +40,7 @@ describe('PageHeaderActionsTransition', () => {
     if (scrollWidthDescriptor) {
       Object.defineProperty(HTMLElement.prototype, 'scrollWidth', scrollWidthDescriptor);
     } else {
-      delete (HTMLElement.prototype as Partial<HTMLElement>).scrollWidth;
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth');
     }
   });
 

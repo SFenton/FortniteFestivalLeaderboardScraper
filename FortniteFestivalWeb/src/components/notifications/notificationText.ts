@@ -207,8 +207,10 @@ function formatAggregateRankTitle(t: TFunction, input: NotificationTextInput, in
 
   const rankEvent = rankEvents[0];
   if (!rankEvent) return null;
+  const rankKey = AGGREGATE_RANK_TITLE_KEYS[rankEvent.eventKind];
+  if (!rankKey) return null;
   return translate(t, 'notifications.titles.rankImproved', {
-    rank: translate(t, AGGREGATE_RANK_TITLE_KEYS[rankEvent.eventKind]),
+    rank: translate(t, rankKey),
   });
 }
 
@@ -222,7 +224,9 @@ function formatInstrumentAggregateTitle(t: TFunction, input: NotificationTextInp
 
 function formatProgressTitle(t: TFunction, events: NotificationTextEvent[]) {
   const progressEvent = events.find(event => PROGRESS_TITLE_KEYS[event.eventKind]);
-  return progressEvent ? translate(t, PROGRESS_TITLE_KEYS[progressEvent.eventKind]) : null;
+  if (!progressEvent) return null;
+  const progressKey = PROGRESS_TITLE_KEYS[progressEvent.eventKind];
+  return progressKey ? translate(t, progressKey) : null;
 }
 
 function getDisplayEvents(input: NotificationTextInput): NotificationTextEvent[] {
@@ -699,7 +703,7 @@ function emphasizeText(text: string, terms: string[]): NotificationMessagePart[]
       continue;
     }
 
-    appendMessagePart(parts, text[index], false);
+    appendMessagePart(parts, text.charAt(index), false);
     index += 1;
   }
 
@@ -752,7 +756,7 @@ function filterEmphasisTerms(terms: Array<string | null | undefined>) {
   return Array.from(new Set(
     terms
       .map(term => term?.trim())
-      .filter((term): term is string => Boolean(term) && !FALLBACK_EMPHASIS_TERMS.has(term)),
+      .filter((term): term is string => term != null && term.length > 0 && !FALLBACK_EMPHASIS_TERMS.has(term)),
   )).sort((left, right) => right.length - left.length);
 }
 

@@ -9,7 +9,7 @@ import ConfirmAlert from '../../../components/modals/ConfirmAlert';
 import { usePressAction } from '../../../hooks/ui/usePressAction';
 import anim from '../../../styles/animations.module.css';
 
-const INSTRUMENT_I18N_KEY: Record<string, string> = {
+const INSTRUMENT_I18N_KEY: Record<InstrumentKey, string> = {
   Solo_Guitar: 'instruments.lead',
   Solo_Bass: 'instruments.bass',
   Solo_Drums: 'instruments.drums',
@@ -84,7 +84,7 @@ export default function InvalidScoreIcon({
     const names = instruments.map(i => i.name);
     const instNames = names.length <= 2
       ? names.join(' and ')
-      : `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+      : `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1] ?? ''}`;
     const isChipsView = instrumentFilter == null;
 
     // All over-threshold: different header + no footer
@@ -103,7 +103,10 @@ export default function InvalidScoreIcon({
       if (!isChipsView) {
         detailParts.push(t('songs.invalidScoreHasFallback'));
       } else if (fallbackInsts.length === 1) {
-        detailParts.push(t('songs.invalidScoreHasFallbackChip', { instrument: fallbackInsts[0].name }));
+        const fallbackInstrument = fallbackInsts[0];
+        if (fallbackInstrument) {
+          detailParts.push(t('songs.invalidScoreHasFallbackChip', { instrument: fallbackInstrument.name }));
+        }
       } else {
         detailParts.push(t('songs.invalidScoreHasFallbackChipPlural'));
       }

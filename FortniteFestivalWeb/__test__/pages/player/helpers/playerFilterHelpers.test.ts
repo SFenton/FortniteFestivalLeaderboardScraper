@@ -25,6 +25,11 @@ function baseSongSettings(): SongSettings {
       hasScores: { Solo_Guitar: true, Solo_Bass: false },
       hasFCs: { Solo_Guitar: false, Solo_Bass: true },
       overThreshold: {},
+      selectedBandHasScore: false,
+      selectedBandMissingScore: false,
+      individualBandMemberScoreFilters: {},
+      shopInShop: false,
+      shopLeavingTomorrow: false,
     },
   };
 }

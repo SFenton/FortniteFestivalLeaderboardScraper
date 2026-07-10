@@ -4,7 +4,7 @@ import { Route, Routes, useLocation } from 'react-router-dom';
 import type { QueryClient } from '@tanstack/react-query';
 import { ACCURACY_SCALE } from '@festival/core';
 import { Colors, GridTemplate } from '@festival/theme';
-import { DEFAULT_INSTRUMENT, type BandDetailResponse } from '@festival/core/api/serverTypes';
+import { DEFAULT_INSTRUMENT, type BandConfiguration, type BandDetailResponse } from '@festival/core/api/serverTypes';
 import { queryKeys } from '../../../src/api/queryKeys';
 import { createTestQueryClient, TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';
@@ -32,7 +32,7 @@ vi.mock('../../../src/hooks/ui/useIsMobile', async (importOriginal) => {
 
 const SELECTED_PROFILE_STORAGE_KEY = 'fst:selectedProfile';
 const SELECT_BAND_PROFILE_SHADOW_GUTTER = 20;
-const DEFAULT_CONFIGURATIONS = [
+const DEFAULT_CONFIGURATIONS: BandConfiguration[] = [
   {
     rawInstrumentCombo: '0:1',
     comboId: 'Solo_Guitar+Solo_Bass',
@@ -1005,7 +1005,7 @@ describe('BandPage', () => {
     expect(mockApi.getBandRanking).toHaveBeenCalledWith('Band_Duets', 'p1:p2');
     expect(mockApi.getBandDetail).not.toHaveBeenCalled();
     expect(cached?.band.bandId).toBe('band-guid-1');
-    expect(cached?.ranking.bandId).toBe('band-guid-1');
+    expect(cached?.ranking?.bandId).toBe('band-guid-1');
     expect(cached?.configurations).toEqual(DEFAULT_CONFIGURATIONS);
   });
 

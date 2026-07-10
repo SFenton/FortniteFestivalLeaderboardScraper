@@ -11,7 +11,7 @@ type CompatibilityClickSuppression = {
 
 let pendingCompatibilityClickSuppression: CompatibilityClickSuppression | null = null;
 let compatibilityClickSuppressorInstalled = false;
-let compatibilityClickSuppressorTimeout: ReturnType<typeof window.setTimeout> | null = null;
+let compatibilityClickSuppressorTimeout: number | null = null;
 
 function eventTime(event: { timeStamp: number }) {
   if (event.timeStamp) return event.timeStamp;

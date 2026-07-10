@@ -1430,9 +1430,10 @@ export type CompositeNeighborhoodResponse = {
 function instrumentFromHex(hex: string): ServerInstrumentKey {
   const mask = parseInt(hex, 16);
   for (let bit = 0; bit < SERVER_INSTRUMENT_KEYS.length; bit++) {
-    if (mask & (1 << bit)) return SERVER_INSTRUMENT_KEYS[bit];
+    const instrument = SERVER_INSTRUMENT_KEYS[bit];
+    if (instrument && mask & (1 << bit)) return instrument;
   }
-  return SERVER_INSTRUMENT_KEYS[0]; // fallback
+  return DEFAULT_INSTRUMENT;
 }
 
 // ─── Player wire types ───────────────────────────────────────
@@ -1647,7 +1648,8 @@ function expandPercentileDist(arr: number[] | null | undefined): string | null {
   if (!arr || arr.length === 0) return null;
   const obj: Record<string, number> = {};
   for (let i = 0; i < PERCENTILE_BUCKETS.length && i < arr.length; i++) {
-    obj[String(PERCENTILE_BUCKETS[i])] = arr[i];
+    const value = arr[i];
+    if (value !== undefined) obj[String(PERCENTILE_BUCKETS[i])] = value;
   }
   return JSON.stringify(obj);
 }

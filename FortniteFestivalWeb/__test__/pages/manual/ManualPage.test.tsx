@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
-import { Colors } from '@festival/theme';
 import ManualPage, { MANUAL_SECTIONS } from '../../../src/pages/manual/ManualPage';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubElementDimensions, stubMatchMedia, stubResizeObserver, stubScrollTo } from '../../helpers/browserStubs';

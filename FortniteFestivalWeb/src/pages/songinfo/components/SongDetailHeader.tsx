@@ -10,7 +10,7 @@ import { IoFlash, IoBagHandle } from 'react-icons/io5';
 import {
   Align, AlbumArtSize, Colors, CssProp, CssValue, Cursor, Display, Font, Gap,
   IconSize, Isolation, Justify, Layout, ObjectFit, Position, Radius,
-  TRANSITION_MS, EASE_SMOOTH, Weight, BoxSizing, Overflow, flexCenter, flexRow, opaqueGlass, padding, purpleGlass, transition,
+  TRANSITION_MS, EASE_SMOOTH, Weight, BoxSizing, Overflow, flexRow, opaqueGlass, padding, purpleGlass, transition,
 } from '@festival/theme';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useShopState } from '../../../hooks/data/useShopState';

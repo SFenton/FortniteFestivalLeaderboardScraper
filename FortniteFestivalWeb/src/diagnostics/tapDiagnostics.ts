@@ -230,9 +230,9 @@ export function createTapDiagnostics(
     if ('clientX' in event && typeof event.clientX === 'number') {
       return { clientX: event.clientX, clientY: 'clientY' in event && typeof event.clientY === 'number' ? event.clientY : null };
     }
-    const TouchEventCtor = windowRef.TouchEvent;
-    if (typeof TouchEventCtor === 'function' && event instanceof TouchEventCtor) {
-      const touch = event.changedTouches[0] ?? event.touches[0];
+    if ('changedTouches' in event && 'touches' in event) {
+      const touchEvent = event as TouchEvent;
+      const touch = touchEvent.changedTouches[0] ?? touchEvent.touches[0];
       return touch ? { clientX: touch.clientX, clientY: touch.clientY } : { clientX: null, clientY: null };
     }
     return { clientX: null, clientY: null };

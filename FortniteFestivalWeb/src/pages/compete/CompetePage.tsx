@@ -384,7 +384,7 @@ export default function CompetePage() {
                         />
                       </div>
                     )}
-                    {section.leaderboardError && (
+                    {section.leaderboardError != null && (
                       <div style={{ ...s.emptyCard, ...stagger() }} onAnimationEnd={clearAnim}>
                         <EmptyState
                           title={parseApiError(String(section.leaderboardError)).title}
@@ -489,7 +489,7 @@ function CompeteSectionActionHeader({
   style,
 }: {
   children: ReactNode;
-  className: string;
+  className?: string;
   disabledStyle: CSSProperties;
   enabled: boolean;
   onAnimationEnd?: AnimationEventHandler<HTMLDivElement>;

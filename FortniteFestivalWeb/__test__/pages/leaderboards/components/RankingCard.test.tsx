@@ -4,7 +4,7 @@ import type { AccountRankingDto, AccountRankingEntry, RankingMetric, ServerInstr
 import RankingCard from '../../../../src/pages/leaderboards/components/RankingCard';
 import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { TestProviders } from '../../../helpers/TestProviders';
-import { Colors, Gap } from '@festival/theme';
+import { Colors } from '@festival/theme';
 import { stubMatchMedia, stubResizeObserver } from '../../../helpers/browserStubs';
 
 const mockNavigate = vi.hoisted(() => vi.fn());

@@ -23,20 +23,24 @@ function baseDraft(): FilterDraft {
   return { ...defaultSongFilters(), instrumentFilter: null };
 }
 
-const defaultProps = (): ComponentProps<typeof FilterModal> => ({
+type FilterModalTestProps = Omit<ComponentProps<typeof FilterModal>, 'onChange'> & {
+  onChange: ReturnType<typeof vi.fn<(draft: FilterDraft) => void>>;
+};
+
+const defaultProps = (): FilterModalTestProps => ({
   visible: true,
   draft: baseDraft(),
   savedDraft: baseDraft(),
   availableSeasons: [1, 2, 3],
   selectedBandMode: false,
   selectedBandName: undefined as string | undefined,
-  onChange: vi.fn(),
+  onChange: vi.fn<(draft: FilterDraft) => void>(),
   onCancel: vi.fn(),
   onReset: vi.fn(),
   onApply: vi.fn(),
 });
 
-function renderModal(overrides: Partial<ComponentProps<typeof FilterModal>> = {}) {
+function renderModal(overrides: Partial<FilterModalTestProps> = {}) {
   const props = { ...defaultProps(), ...overrides };
   return { ...render(<TestProviders><FilterModal {...props} /></TestProviders>), props };
 }
@@ -70,6 +74,8 @@ function bandComboFilter(overrides: Partial<NonNullable<ComponentProps<typeof Fi
 
 async function clickCurrentCompactInstrument(alt: string, index = 0) {
   const instrument = (await screen.findAllByAltText(alt))[index];
+  expect(instrument).toBeDefined();
+  if (!instrument) return;
   fireEvent.click(instrument.closest('button') ?? instrument);
 }
 

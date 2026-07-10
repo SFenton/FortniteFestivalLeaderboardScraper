@@ -8,13 +8,11 @@ import { formatAccuracyText } from '../../../utils/formatters';
 export interface AccuracyDisplayProps {
   accuracy: number | null | undefined;
   isFullCombo?: boolean;
-  fallback?: string;
 }
 
 const AccuracyDisplay = memo(function AccuracyDisplay({
   accuracy,
   isFullCombo,
-  fallback = '\u2014',
 }: AccuracyDisplayProps) {
   const s = useStyles();
   const pct = (accuracy != null && accuracy > 0) ? accuracy / ACCURACY_SCALE : 0;

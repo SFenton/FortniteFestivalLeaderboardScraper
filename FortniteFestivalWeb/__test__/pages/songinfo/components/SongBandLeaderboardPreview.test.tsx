@@ -226,8 +226,8 @@ describe('SongBandLeaderboardPreview', () => {
   });
 
   it('shows only member score before instrument icons on mobile preview rows', () => {
-    const selectedPlayerEntry = {
-      ...data.entries[1],
+    const selectedPlayerEntry: NonNullable<SongBandData['selectedPlayerEntry']> = {
+      ...data.entries[1]!,
       bandId: 'band-selected',
       teamKey: 'acct-player:acct-z',
       score: 9_999_999,
@@ -277,8 +277,8 @@ describe('SongBandLeaderboardPreview', () => {
   });
 
   it('renders a selected player band score when it is outside the preview entries', () => {
-    const selectedPlayerEntry = {
-      ...data.entries[1],
+    const selectedPlayerEntry: NonNullable<SongBandData['selectedPlayerEntry']> = {
+      ...data.entries[1]!,
       bandId: 'band-selected',
       teamKey: 'acct-player:acct-z',
       score: 9_999_999,
@@ -310,8 +310,8 @@ describe('SongBandLeaderboardPreview', () => {
   });
 
   it('renders a selected band score when the selected profile is a band', () => {
-    const selectedBandEntry = {
-      ...data.entries[1],
+    const selectedBandEntry: NonNullable<SongBandData['selectedBandEntry']> = {
+      ...data.entries[1]!,
       bandId: 'band-selected-band',
       teamKey: 'acct-band-a:acct-band-b',
       score: 8_888_888,

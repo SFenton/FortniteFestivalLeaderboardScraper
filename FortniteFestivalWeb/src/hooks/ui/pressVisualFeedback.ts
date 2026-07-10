@@ -2,7 +2,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 
 const PRESS_PULSE_DURATION_MS = 420;
 const PRESS_PULSE_ATTRIBUTE = 'data-press-pulse';
-const pressPulseTimeouts = new WeakMap<HTMLElement, ReturnType<typeof window.setTimeout>>();
+const pressPulseTimeouts = new WeakMap<HTMLElement, number>();
 
 function finishPressPulse(target: HTMLElement) {
   target.removeAttribute(PRESS_PULSE_ATTRIBUTE);

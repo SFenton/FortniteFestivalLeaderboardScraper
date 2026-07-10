@@ -385,7 +385,10 @@ export default function SongDetailPage() {
   }, [playerScores, filterPlayerScores]);
 
   const filteredSelectedMemberScores = useMemo(() => {
-    return filterPlayerScores(selectedMemberScores);
+    return selectedMemberScores.flatMap((score) => {
+      const filtered = filterPlayerScores([score])[0];
+      return filtered ? [{ ...score, ...filtered }] : [];
+    });
   }, [filterPlayerScores, selectedMemberScores]);
 
   const selectedMemberScoresByInstrument = useMemo(() => {

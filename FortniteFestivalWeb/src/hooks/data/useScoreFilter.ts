@@ -11,8 +11,10 @@ function findTier<T extends { leeway: number }>(tiers: T[], targetLeeway: number
   let lo = 0, hi = tiers.length - 1, result: T | undefined;
   while (lo <= hi) {
     const mid = (lo + hi) >>> 1;
-    if (tiers[mid].leeway <= targetLeeway) {
-      result = tiers[mid];
+    const tier = tiers[mid];
+    if (!tier) break;
+    if (tier.leeway <= targetLeeway) {
+      result = tier;
       lo = mid + 1;
     } else {
       hi = mid - 1;

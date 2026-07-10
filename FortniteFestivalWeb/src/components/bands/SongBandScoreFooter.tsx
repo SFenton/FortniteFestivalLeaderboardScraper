@@ -97,7 +97,7 @@ export function SongBandMemberMetadata({ member, scoreWidth, showDifficulty = tr
       {showAccuracy && (
         <span data-testid="song-band-member-accuracy-container" style={styles.memberAccuracy}>
           {member.accuracy != null
-            ? <AccuracyDisplay accuracy={member.accuracy} isFullCombo={member.isFullCombo} />
+            ? <AccuracyDisplay accuracy={member.accuracy} isFullCombo={member.isFullCombo ?? undefined} />
             : '-'}
         </span>
       )}
