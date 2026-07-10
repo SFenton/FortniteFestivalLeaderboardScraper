@@ -89,6 +89,17 @@ recorded with the outbox artifact paths.
 - **P7:** expanded route-level accessibility coverage, PWA decision, tests, and
   documentation.
 
+## Autonomous execution windows
+
+| Phase/task family | Execution class | Worker scrape gate |
+|---|---|---|
+| WEB-0 through WEB-7 web-only code/style/test work | `continuous-safe` | Implement, test, deploy, and browser A/B without stopping `fstworker`; verify the public shell and representative API route after deploy |
+| Shared API DTO/client contract changes | `scrape-boundary-deploy` with the matching service task | Wait for the active scrape/post-process/publication boundary before coordinated service/client deployment |
+| Web changes that alter publication/freeze interpretation | `full-scrape-ab` with SERVICE-0 and PG-1 | Run the coordinated published-source live scrape parity window |
+
+The autonomous executor owns the exact wait-stop-deploy-run-stop-decide cycle.
+Web-only tasks do not consume a full scrape unnecessarily.
+
 ## Phase WEB-0: Restore trustworthy gates
 
 **Decision:** Accepted  

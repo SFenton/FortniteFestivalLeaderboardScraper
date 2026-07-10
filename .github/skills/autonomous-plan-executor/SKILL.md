@@ -45,9 +45,73 @@ Repository rules override general plan text. Preserve historical leaderboard cor
 - Backend/database work should preserve the user experience by using prompt redeploys, publication gates, rollback-safe changes, and clear monitoring rather than by avoiding all downtime.
 - Destructive reclaim, index/table drop, table rewrite/repack, active data movement, or irreversible publication-state changes are auto-approved after live-scrape A/B testing proves the new path has the same data as the old path. Until that parity gate passes, continue all safe non-interactive work around it: code/test work, deploy prep, bounded probes, fixture or artifact benchmarks, parity tooling, manifests, rollback plans, parity packages, operational monitors, documentation, and commit/report updates.
 
+## Scrape-boundary execution classes
+
+During plan normalization, assign every runtime-affecting task one execution
+class. Use the stricter class when ownership is unclear.
+
+| Class | Work allowed while the current scrape runs | Production gate |
+|---|---|---|
+| `continuous-safe` | Code, tests, docs, read-only probes, isolated artifacts, and deploy preparation | May deploy without stopping `fstworker` only when the change cannot affect worker/database/publication behavior; still verify the full public path |
+| `scrape-boundary-deploy` | Prepare and validate the candidate without mutating production | Wait for the active scrape, post-process, publication, and unfreeze decision; stop `fstworker` before the next scrape; then deploy |
+| `full-scrape-ab` | Prepare code, fixtures, rollback, baseline tooling, and isolated canaries | Use the full scrape-boundary candidate loop below and do not decide before one complete candidate scrape/post-process/publish window |
+| `parity-gated-maintenance` | All safe readiness, manifests, rollback DDL, archive/restore drills, and fixture/live-shadow parity work | Execute destructive/irreversible maintenance only after the full live-scrape parity gate passes |
+
+Web-only work is normally `continuous-safe`. Worker changes, schema changes,
+publication/read-source changes, scrape persistence changes, proxy/rate/retry
+changes, ranking/post-process changes, and DB write-path changes default to
+`full-scrape-ab`. A task may be split so implementation/tests continue during a
+scrape while only the production mutation waits for the boundary.
+
+## Scrape-boundary candidate loop
+
+Use this loop for every `scrape-boundary-deploy` or `full-scrape-ab` candidate:
+
+1. **Accrue the current baseline.** Keep the current healthy scrape running.
+   Continue safe code/tests/docs and prepare the candidate, rollback, monitor,
+   and comparison artifacts, but do not mutate the worker-affecting production
+   path.
+2. **Wait for a terminal boundary.** Monitor through network scrape,
+   post-process, publication, and public-read unfreeze or an explicit failed
+   decision. A failed/incomplete scrape is incident evidence, not a valid
+   performance baseline.
+3. **Hold the next scrape.** Stop `fstworker` or disable only its scheduler
+   before the next automatic scrape starts. Confirm no worker-owned scrape,
+   rank, post-process, publication, or maintenance query remains active.
+4. **Capture the final baseline.** Record commit/image/config, scrape and
+   published IDs, route fingerprints, counts/checksums, phase timings, disk,
+   WAL/temp, CPU, memory, locks, proxy metrics, and candidate-specific metrics.
+5. **Deploy exactly one candidate.** Finalize any runtime-coupled
+   implementation or migration while the worker is held, run targeted
+   validation, deploy behind the rollback switch, and verify Postgres,
+   `fstservice`, `festivalweb`, static shell, and representative API health.
+6. **Run the candidate window.** Start `fstworker`, verify it does not degrade
+   the public path, and keep the 60-second monitor active through one complete
+   scrape, post-process, publication, and parity/evaluation window.
+7. **Hold before another scrape.** At the candidate decision point, stop
+   `fstworker` before an unwanted next automatic scrape begins. Do not let a
+   second scrape contaminate the single-candidate comparison unless the plan
+   explicitly requires multiple observations.
+8. **Compare and decide.**
+   - **Iterate:** keep the worker held, insert the next smallest hypothesis,
+     change only that candidate, redeploy, verify health, and run the next
+     complete candidate window.
+   - **Accept/promote:** require correctness/publication parity, acceptable
+     resource cost, and target improvement; update docs/config, commit and
+     push accepted changes, then restore normal worker scheduling.
+   - **Reject/revert:** revert code/config/DDL, redeploy the baseline, validate
+     rollback and public health, record evidence, then restore normal worker
+     scheduling or continue immediately with the next safe hypothesis.
+   - **Block:** execute all safe readiness work, restore the accepted baseline
+     and normal scrape continuity, and block only the exact hard-gated action.
+9. **Close the task boundary.** Send/render the phase report, update todo/plan
+   state, verify the accepted commit/push or validated revert, and confirm the
+   worker/public path is in the intended normal state before moving to the next
+   task.
+
 ## Required execution loop
 
-1. **Parse and normalize the plan.** Build a working phase/task list with explicit acceptance gates, evidence requirements, validation commands, performance targets, and known blockers. If a task lacks measurable gates, infer them from repo docs and the prompt before starting.
+1. **Parse and normalize the plan.** Build a working phase/task list with explicit acceptance gates, evidence requirements, validation commands, performance targets, execution class, and known blockers. If a task lacks measurable gates, infer them from repo docs and the prompt before starting.
 2. **Run prerequisites first.** Check current branch/worktree, relevant instruction files, live-safety risk, Docker health/resource pressure when runtime is affected, and existing artifacts. Do not overwrite unrelated user changes.
 3. **Skip already completed work.** When the plan/checkpoint/Markdown marks work complete, accepted, rejected with evidence, or hard-blocked with no safe alternative, treat it as processed and advance unless the operator explicitly asks for a refresh or fresh evidence proves the artifact stale/contradicted. Skipped completed work should not generate catch-up e-mails.
 4. **Execute phases in order.** Do not start a later phase until every task in the current phase is accepted, rejected with evidence, skipped as already processed, or blocked by a hard safety/credential/approval gate with no safe alternative.
@@ -114,6 +178,8 @@ Accepted improvements reset the relevant counter. Rejected hypotheses do not sto
 ## DB size-reduction live A/B execution contract
 
 Use this contract for Postgres storage, compression, retention, index, projection, and write-skip roadmap phases.
+It inherits the shared scrape-boundary candidate loop above; when both apply,
+follow the stricter gate.
 
 1. Start each phase from a named candidate and rollback switch: feature flag, config value, SQL rollback DDL, table rename-back, index recreate DDL, restore/regeneration path, or git revert. Do not run an unbounded "optimize DB" phase without an exact surface and rollback.
 2. Capture the baseline before candidate deploy: current commit/image, compose overrides, published/frozen scrape, active scrape ID, Docker caps, disk free, relation/index sizes, WAL/temp counters, locks/long queries, representative endpoint responses, and any phase-specific row counts/checksums.

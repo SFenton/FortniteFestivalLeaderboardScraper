@@ -47,6 +47,23 @@ Publication correctness is promoted in this exact order:
    parity.
 5. Only then may physical snapshot skipping or old-resolver removal proceed.
 
+## Autonomous execution windows
+
+| Phase/task family | Execution class | Decision window |
+|---|---|---|
+| PG-0 read-only evidence, manifests, bounded restore | `continuous-safe` | Continue while scrapes run when probes are bounded and live preflight is healthy |
+| PG-1 published-source schema/population/read cutover | `full-scrape-ab` | Wait for current publish/unfreeze, hold worker, deploy one coordinated candidate, run one complete scrape, hold and compare parity |
+| PG-2 query A/Bs | `continuous-safe` for bounded EXPLAIN/fixture work; `scrape-boundary-deploy` or `full-scrape-ab` for runtime query changes | Use a full scrape when ranking/post-process/WAL/temp/publication can change |
+| PG-3 owner cards | `continuous-safe`; proven index drop is `parity-gated-maintenance` | Drop one index only at a clean boundary after parity/recreate proof, then run the owning route/job/scrape validation |
+| PG-4 write amplification | `full-scrape-ab` | Exactly one write-path candidate per complete scrape and publication window |
+| PG-5 artifact pilots | `continuous-safe` when bounded/read-only; archive/prune is `parity-gated-maintenance` | No source deletion until live parity and rehydration pass |
+| PG-6 migration/vacuum/WAL/runtime settings | `full-scrape-ab` for production changes | Worker held for migration/config deploy; compare a complete scrape and recovery window |
+| PG-7 archive/destructive reclaim | `parity-gated-maintenance` | Execute only after the accepted full-scrape A/B, then validate and restore normal scraping |
+
+The autonomous skill provides the shared wait-stop-deploy-run-stop-decision
+loop. This roadmap supplies the candidate-specific correctness, performance,
+headroom, rollback, and maintenance gates.
+
 ## Database management classification
 
 | Surface | Mode | Live-safety risk | Data/timing risk | Evidence | Change/proof plan | Rollback | Decision |

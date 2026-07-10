@@ -39,6 +39,24 @@ Worker publication changes follow this order:
 4. Service resolver/exports switch behind a rollback flag.
 5. Forced frozen cold-miss and live-scrape parity approve cutover.
 
+## Autonomous execution windows
+
+| Phase/task family | Execution class | Decision window |
+|---|---|---|
+| WORKER-0 completeness/publication correctness | `full-scrape-ab` | Wait for current terminal publish, stop worker, deploy one gate, run a complete scrape/post-process/publish, stop and compare manifests/parity |
+| WORKER-1 retry/cancellation/curl behavior | `full-scrape-ab` | One network candidate per complete scrape with identical scope and global Epic budget |
+| WORKER-2 bounded canaries | `continuous-safe` isolated artifacts first, then `full-scrape-ab` for promotion | Canaries cannot publish or mutate shared state; accepted routing then gets one complete scrape window |
+| WORKER-3 queues/memory/CHOpt | `full-scrape-ab` | Compare peak RSS/GC/queue depth plus full publication parity |
+| WORKER-4 ranking/post-process | `full-scrape-ab` | Compare one complete post-process/publish window and stop before the next scrape |
+| WORKER-5 queue/health/token ownership | `full-scrape-ab` when deployed | Fault/restart plus one complete scrape window |
+| WORKER-6 code-only reachability cleanup | `continuous-safe`; stricter owner class for runtime removal | No worker hold for static proof; production removals use the owning phase gate |
+
+For each full-scrape candidate, safe implementation and tests may proceed while
+the current scrape runs, but production mutation waits for completion. The
+worker is then held, one candidate is deployed, one complete scrape is
+monitored, and the worker is held again for iterate/reject/accept and
+commit/revert handling.
+
 ## Current live baseline
 
 | Surface | Evidence | Assessment |
