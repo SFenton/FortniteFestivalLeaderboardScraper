@@ -17,6 +17,36 @@ This plan records the approved direction for improving FST Postgres persistence 
 - Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback. Worker runtime now skips startup schema initialization because `fstservice` owns schema initialization.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
+## Capacity preflight guard
+
+Run the read-only guard before every broad scrape, post-process, optional
+shadow/history build, or maintenance/rewrite action:
+
+```bash
+tools/postgres-capacity-guard.sh \
+  --action-class observation \
+  --output .outbox/fst-autonomous-agent/<session>/capacity-preflight.json
+```
+
+Use `--action-class scrape` or `post-process` for critical pipeline work,
+`optional-build` for work that must defer below the seven-day threshold, and
+`maintenance` or `rewrite` with `--required-scratch-bytes` for actions that
+must fail closed without exact scratch. The guard:
+
+- verifies the active Postgres data mount is under `/mnt/docker-storage`;
+- records filesystem free/used bytes, database size, WAL-directory size,
+  transient/scratch estimates, scrape/publication/freeze state, locks, and
+  active vacuum/index/rewrite work;
+- defaults to measured roadmap assumptions of 14 GiB growth per full scrape,
+  two full scrapes per day, and a seven-day alert/defer threshold;
+- blocks optional builds or rewrites that cannot preserve that headroom and
+  blocks critical scrape/post-process work below one full-scrape growth window.
+
+Override growth/rate thresholds only with measured evidence. A successful
+observation with a capacity alert is evidence, not permission for an optional
+build or rewrite; rerun the guard using the exact action class and scratch
+estimate.
+
 ## Completed persistence phases
 
 ### [x] Phase 6: logical leaderboard version persistence
