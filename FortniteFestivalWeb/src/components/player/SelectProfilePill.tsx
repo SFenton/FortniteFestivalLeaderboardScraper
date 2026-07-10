@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Purple branded "Select Player Profile" pill with scale/opacity animation.
  * On mobile, renders as a dark opaque pill with IoPersonAdd icon.

@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { forwardRef, useEffect, useRef, useState, useMemo, type AnimationEventHandler, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';

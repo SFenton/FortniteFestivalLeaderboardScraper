@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useState, useEffect, useRef, useMemo, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';

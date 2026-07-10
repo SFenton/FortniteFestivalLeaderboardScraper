@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- chart render props use inline styles */
 import { memo, useCallback, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import {

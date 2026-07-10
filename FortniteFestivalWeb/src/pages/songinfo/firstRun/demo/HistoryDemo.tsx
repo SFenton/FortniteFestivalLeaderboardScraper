@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo, type CSSProperties } from 'react';
 import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Display, Align, CssValue, PointerEvents, Layout, flexColumn, padding } from '@festival/theme';
 import { useFestival } from '../../../../contexts/FestivalContext';

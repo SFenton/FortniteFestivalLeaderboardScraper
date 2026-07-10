@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { forwardRef, useRef, useImperativeHandle, useLayoutEffect, useMemo, type KeyboardEventHandler, type MouseEventHandler, type PointerEventHandler, type ReactNode, type TouchEventHandler } from 'react';
 import { IoSearch } from 'react-icons/io5';
 import { IconSize, Colors, Font, Gap, Display, Align, Cursor, CssValue } from '@festival/theme';

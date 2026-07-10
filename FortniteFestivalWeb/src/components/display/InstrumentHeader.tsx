@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo } from 'react';
 import { InstrumentHeaderSize } from '@festival/core';
 import { serverInstrumentLabel as instrumentLabel, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';

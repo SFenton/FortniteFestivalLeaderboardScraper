@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigationType } from 'react-router-dom';

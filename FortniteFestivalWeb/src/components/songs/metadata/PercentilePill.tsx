@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo, type CSSProperties } from 'react';
 import { Colors, MetadataSize, Weight, goldOutline, goldOutlineSkew, Display, TextAlign, BoxSizing, CssValue, border, padding } from '@festival/theme';
 import { Border, Gap, Radius } from '@festival/theme';

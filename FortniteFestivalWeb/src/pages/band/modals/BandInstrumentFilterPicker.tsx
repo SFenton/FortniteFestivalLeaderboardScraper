@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- modal row layout uses inline style objects */
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';

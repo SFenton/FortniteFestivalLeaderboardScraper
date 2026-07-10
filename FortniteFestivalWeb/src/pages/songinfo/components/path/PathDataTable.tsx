@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { memo, useMemo, useCallback, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import {

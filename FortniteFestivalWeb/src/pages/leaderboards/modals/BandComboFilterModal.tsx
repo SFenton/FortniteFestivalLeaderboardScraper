@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- notice uses inline modal style object */
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SERVER_INSTRUMENT_KEYS, type PlayerBandType, type ServerInstrumentKey } from '@festival/core/api/serverTypes';

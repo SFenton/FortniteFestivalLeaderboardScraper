@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Mini leaderboard with the player's rank highlighted
  * and a "View all rankings" button at the bottom.

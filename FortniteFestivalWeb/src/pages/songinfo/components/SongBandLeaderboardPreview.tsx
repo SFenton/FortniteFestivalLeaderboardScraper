@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- song detail cards use inline theme styles */
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { PlayerBandType, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';

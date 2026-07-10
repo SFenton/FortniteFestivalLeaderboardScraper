@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Per-instrument rival sections with periodic row swaps.
  * Falls back to a single visible rival card per instrument when space is tight.

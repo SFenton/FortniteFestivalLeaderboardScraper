@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Reusable pill button with icon + label.
  * Used for sort/filter actions in toolbar headers.

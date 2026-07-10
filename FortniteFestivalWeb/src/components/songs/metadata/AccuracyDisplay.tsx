@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo, type CSSProperties } from 'react';
 import { accuracyBgColor, ACCURACY_SCALE } from '@festival/core';
 import { Colors, MetadataSize, Weight, goldOutlineSkew, Display, TextAlign, BoxSizing, CssValue, border, padding } from '@festival/theme';

@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * Shared metric-info FRE slide component.
  * Renders body paragraphs, optional callout, rank-card comparisons,

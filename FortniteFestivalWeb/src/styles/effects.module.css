@@ -5,14 +5,14 @@
 
 /* ── BottomNav frosted glass ── */
 .navFrosted {
-  background-color: rgba(11,3,24,0.40);
+  background-color: rgb(11 3 24 / 40%);
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
 }
 
 /* ── PageHeader frosted glass (content scrolls behind sticky header) ── */
 .headerFrosted {
-  background-color: rgba(11,3,24,0.85);
+  background-color: rgb(11 3 24 / 85%);
   backdrop-filter: blur(16px) saturate(1.2);
   -webkit-backdrop-filter: blur(16px) saturate(1.2);
 }
@@ -35,19 +35,19 @@
   padding-bottom: var(--gap-xl);
 }
 
-@media (min-width: 600px) {
+@media (width >= 600px) {
   .shopGrid {
     grid-template-columns: repeat(3, 1fr);
   }
 }
 
-@media (min-width: 860px) {
+@media (width >= 860px) {
   .shopGrid {
     grid-template-columns: repeat(4, 1fr);
   }
 }
 
-@media (min-width: 1100px) {
+@media (width >= 1100px) {
   .shopGrid {
     grid-template-columns: repeat(5, 1fr);
   }
@@ -61,7 +61,7 @@
   width: 100%;
 }
 
-@media (max-width: 420px) {
+@media (width <= 420px) {
   .diffGrid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -120,9 +120,9 @@
 :global([style*="--frosted-card"]) {
   position: relative;
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.06),
-    inset 0 0 30px rgba(255,255,255,0.02),
-    inset 0 0 0 100vmax rgba(255, 255, 255, calc(0.03 * var(--glow-hover, 0)));
+    inset 0 1px 0 rgb(255 255 255 / 6%),
+    inset 0 0 30px rgb(255 255 255 / 2%),
+    inset 0 0 0 100vmax rgb(255 255 255 / calc(0.03 * var(--glow-hover, 0)));
   transition: box-shadow 200ms ease;
 }
 
@@ -145,9 +145,10 @@
 @media (hover: none) {
   :global([style*="--frosted-card"]) {
     box-shadow:
-      inset 0 1px 0 rgba(255,255,255,0.06),
-      inset 0 0 30px rgba(255,255,255,0.02);
+      inset 0 1px 0 rgb(255 255 255 / 6%),
+      inset 0 0 30px rgb(255 255 255 / 2%);
   }
+
   :global([style*="--frosted-card"])::before {
     display: none;
   }

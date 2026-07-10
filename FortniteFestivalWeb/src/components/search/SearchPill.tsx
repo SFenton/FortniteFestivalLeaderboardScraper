@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo, type CSSProperties } from 'react';
 import { IoSearch } from 'react-icons/io5';
 import {

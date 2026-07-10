@@ -1,4 +1,3 @@
-﻿/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * First-run demo: song rows with real instrument status chips.
  * Auto-fits rows, rotates one every 5 s with fade-out/in.

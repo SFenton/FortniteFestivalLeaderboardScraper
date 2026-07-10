@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Brief "Sync complete" banner that auto-dismisses after 3 seconds.
  * Shown after backfill/history/rivals sync finishes so the user always

@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * Suggestion category and song row components extracted from SuggestionsPage.
  */

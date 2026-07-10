@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * FC Rate "How it works" demo: multiple frosted stat cards showing
  * randomised FC records that follow the Bayesian formula.

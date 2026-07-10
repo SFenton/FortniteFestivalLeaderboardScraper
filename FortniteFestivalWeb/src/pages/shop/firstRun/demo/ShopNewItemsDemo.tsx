@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo, type CSSProperties } from 'react';
 import AlbumArt from '../../../../components/songs/metadata/AlbumArt';
 import MarqueeText from '../../../../components/common/MarqueeText';

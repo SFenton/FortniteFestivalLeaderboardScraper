@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- stagger animation requires inline style */
 import { useMemo, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import SongInfo from '../../../../components/songs/metadata/SongInfo';

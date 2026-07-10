@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- shared card footer uses inline theme styles */
 import { useMemo, type CSSProperties } from 'react';
 import { ACCURACY_SCALE } from '@festival/core';
 import type { PlayerBandMember, SongBandLeaderboardEntry } from '@festival/core/api/serverTypes';

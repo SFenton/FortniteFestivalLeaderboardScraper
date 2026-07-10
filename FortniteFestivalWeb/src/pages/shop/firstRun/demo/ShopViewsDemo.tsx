@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Cycles between grid and list view of shop songs
  * every 5 seconds to demonstrate the view toggle feature.

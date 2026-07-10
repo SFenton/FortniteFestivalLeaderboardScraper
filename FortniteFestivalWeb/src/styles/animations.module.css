@@ -12,7 +12,7 @@
 .spinner {
   border-style: solid;
   border-width: 2px;
-  border-color: rgba(255, 255, 255, 0.10);
+  border-color: rgb(255 255 255 / 10%);
   border-top-color: var(--spinner-color, var(--color-accent-purple));
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -102,13 +102,13 @@
 /* ── Shop breathe (SongDetailHeader + ShopButtonDemo) ── */
 
 @keyframes shopBreathe {
-  0%, 100% { background-color: var(--shop-pulse-base, rgba(18,24,38,0.96)); }
+  0%, 100% { background-color: var(--shop-pulse-base, rgb(18 24 38 / 96%)); }
   50% { background-color: var(--shop-pulse-target, var(--color-status-green-stroke, #1E7F46)); }
 }
 
 .shopBreathe,
 .shopCircleBreathe {
-  --shop-pulse-base: rgba(18,24,38,0.96);
+  --shop-pulse-base: rgb(18 24 38 / 96%);
   --shop-pulse-target: var(--color-status-green-stroke, #1E7F46);
 
   position: relative;
@@ -117,13 +117,13 @@
 }
 
 @keyframes shopBreatheGold {
-  0%, 100% { background-color: var(--shop-pulse-base, rgba(18,24,38,0.96)); }
+  0%, 100% { background-color: var(--shop-pulse-base, rgb(18 24 38 / 96%)); }
   50% { background-color: var(--shop-pulse-target, var(--color-gold-stroke, #CFA500)); }
 }
 
 .shopBreatheGold,
 .shopCircleBreatheGold {
-  --shop-pulse-base: rgba(18,24,38,0.96);
+  --shop-pulse-base: rgb(18 24 38 / 96%);
   --shop-pulse-target: var(--color-gold-stroke, #CFA500);
 
   position: relative;
@@ -134,12 +134,12 @@
 /* ── Purple breathe (SelectProfilePill mobile pill) ── */
 
 @keyframes profile-breathe {
-  0%, 100% { background-color: var(--profile-pulse-base, rgba(18,24,38,0.96)); }
+  0%, 100% { background-color: var(--profile-pulse-base, rgb(18 24 38 / 96%)); }
   50% { background-color: var(--profile-pulse-target, var(--color-accent-purple)); }
 }
 
 .profilePillBreathe {
-  --profile-pulse-base: rgba(18,24,38,0.96);
+  --profile-pulse-base: rgb(18 24 38 / 96%);
   --profile-pulse-target: var(--color-accent-purple);
 
   position: relative;
@@ -200,13 +200,13 @@
 }
 
 @keyframes shopBreatheRed {
-  0%, 100% { background-color: var(--shop-pulse-base, rgba(18,24,38,0.96)); }
+  0%, 100% { background-color: var(--shop-pulse-base, rgb(18 24 38 / 96%)); }
   50% { background-color: var(--shop-pulse-target, var(--color-leaving-red, #ef4444)); }
 }
 
 .shopBreatheRed,
 .shopCircleBreatheRed {
-  --shop-pulse-base: rgba(18,24,38,0.96);
+  --shop-pulse-base: rgb(18 24 38 / 96%);
   --shop-pulse-target: var(--color-leaving-red, #ef4444);
 
   position: relative;
@@ -217,11 +217,11 @@
 .leavingTomorrowPill {
   composes: shopBreatheRed;
   padding: 4px 10px;
-  border-radius: 9999px;
-  font-size: 16px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-lg);
   font-weight: 600;
   line-height: 20px;
-  color: #fff;
+  color: var(--color-text-primary);
   white-space: nowrap;
   pointer-events: none;
 }
@@ -236,7 +236,7 @@
   display: none;
 }
 
-@media (max-width: 599px) {
+@media (width <= 599px) {
   .leavingPillDesktop {
     display: none;
   }

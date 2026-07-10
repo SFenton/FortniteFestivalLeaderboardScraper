@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- page uses inline theme style objects */
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSetPageReady } from '../../contexts/PageReadyContext';

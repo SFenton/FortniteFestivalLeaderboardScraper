@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * Demo wrapper that provides real songs from useDemoSongs to MetricInfoSlide.
  * Used by "How {Metric} Works" slides to show song rows with album art.

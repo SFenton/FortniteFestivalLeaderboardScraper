@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- page-level dynamic styles use inline style objects */
 import { useCallback, useEffect, useMemo, useState, type AnimationEvent, type CSSProperties } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';

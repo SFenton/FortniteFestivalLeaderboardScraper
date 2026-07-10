@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Sync progress banner displayed on PlayerPage when backfill/history/rivals sync is running.
  * Shows a unified progress bar, step indicator, numeric counts, and current song name.

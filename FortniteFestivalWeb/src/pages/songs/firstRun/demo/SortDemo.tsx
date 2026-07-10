@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RadioRow } from '../../../../components/common/RadioRow';

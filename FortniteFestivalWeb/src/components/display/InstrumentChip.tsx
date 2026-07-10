@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo } from 'react';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentSize, Gap, CssValue, Display, Align, Justify, BorderStyle } from '@festival/theme';

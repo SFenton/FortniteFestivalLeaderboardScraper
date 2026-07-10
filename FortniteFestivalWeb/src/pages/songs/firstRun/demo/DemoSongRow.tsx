@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Shared wrapper for demo song rows in the first-run carousel.
  * Handles the frostedCard container, fade-in animation, and fade-out/in

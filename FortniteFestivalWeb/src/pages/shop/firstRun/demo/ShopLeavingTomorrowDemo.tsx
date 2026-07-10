@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Song rows showing the "leaving tomorrow" red pulse contrast.
  * Alternates between red-pulsing (leaving), green-pulsing (shop), and no highlight.

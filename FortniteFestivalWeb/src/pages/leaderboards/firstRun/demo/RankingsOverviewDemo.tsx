@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Single instrument header with ranking entry rows below.
  */

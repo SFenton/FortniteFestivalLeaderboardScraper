@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Head-to-head song comparison rows using real songs.
  * Cycles through rivalry category headers and swaps song rows.

@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useState, useCallback, memo, useMemo, type CSSProperties } from 'react';
 import { Colors, Opacity, TRANSITION_MS, fixedFill, Display, PointerEvents, transition } from '@festival/theme';
 import { SAFE_AREA_TOP_RAW_VAR } from '../../utils/safeAreaStyles';

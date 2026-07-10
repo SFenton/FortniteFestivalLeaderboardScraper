@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo } from 'react';
 import { Colors, Font, Gap, Weight, LineHeight } from '@festival/theme';
 

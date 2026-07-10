@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- fixed footer uses shared inline shell styles */
 import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Gap, Layout } from '@festival/theme';

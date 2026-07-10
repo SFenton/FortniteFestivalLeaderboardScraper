@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- press state is expressed through inline theme styles */
 import { type AnimationEventHandler, type CSSProperties, type ReactNode } from 'react';
 import { useCardPressAction } from '../../hooks/ui/usePressAction';
 

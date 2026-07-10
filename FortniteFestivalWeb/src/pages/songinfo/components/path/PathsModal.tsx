@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { IoClose, IoChevronDown, IoImage, IoReaderOutline } from 'react-icons/io5';

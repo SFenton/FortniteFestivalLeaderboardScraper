@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Image loader with spinner/fade transition state machine.
  * Extracted from PathsModal for independent testability.

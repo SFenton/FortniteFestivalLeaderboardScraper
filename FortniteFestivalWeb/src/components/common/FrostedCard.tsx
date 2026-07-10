@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { forwardRef, type CSSProperties, type ReactNode } from 'react';
 import { frostedCard } from '@festival/theme';
 

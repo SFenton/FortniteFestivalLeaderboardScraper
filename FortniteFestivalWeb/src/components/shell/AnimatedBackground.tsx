@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { Colors, Overflow, PointerEvents, fixedFill, absoluteFill } from '@festival/theme';
 import { type ServerSong as Song } from '@festival/core/api/serverTypes';

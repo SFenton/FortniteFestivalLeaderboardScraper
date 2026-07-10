@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo, type ReactNode, type CSSProperties } from 'react';
 import { Colors, Font, Gap, Weight, Align, Justify, TextAlign, Layout, flexColumn, padding } from '@festival/theme';
 

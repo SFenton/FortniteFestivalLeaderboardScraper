@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * A single row's column content (rank/label, name, season, score, accuracy, stars).
  * Used by LeaderboardPage, InstrumentCard, and PlayerHistoryPage.

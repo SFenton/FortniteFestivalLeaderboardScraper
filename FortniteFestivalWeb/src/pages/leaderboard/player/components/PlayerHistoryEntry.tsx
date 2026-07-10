@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * A single row in the player score history list.
  * Extracted for testability and reuse.

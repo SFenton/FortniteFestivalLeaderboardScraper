@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Modal-style metric selector that auto-cycles through
  * ranking metrics, matching the real Rank By modal layout with RadioRow.

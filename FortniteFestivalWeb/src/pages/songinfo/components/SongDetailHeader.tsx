@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * Song detail page header — album art, title/artist, and "View Paths" button.
  * Supports collapsed/expanded sizing for scroll-driven transitions.

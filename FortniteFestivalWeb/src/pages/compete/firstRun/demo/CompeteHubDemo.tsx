@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Alternates between a leaderboard layout and a rivals layout.
  * No stagger animation — each layout fades in/out as a whole.

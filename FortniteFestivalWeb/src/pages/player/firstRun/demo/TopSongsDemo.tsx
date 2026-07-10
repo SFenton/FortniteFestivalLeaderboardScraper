@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * First-run demo: Top songs list using production PlayerSongRow components.
  * Pulls real songs from the catalog via useDemoSongs and assigns static percentiles.

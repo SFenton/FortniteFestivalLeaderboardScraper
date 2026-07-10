@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Modal-style metric selector that auto-cycles through
  * only the experimental ranking metrics (excludes Total Score).

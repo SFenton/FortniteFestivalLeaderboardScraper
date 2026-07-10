@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo, type CSSProperties } from 'react';
 import { Colors, SpinnerSize, Spinner } from '@festival/theme';
 

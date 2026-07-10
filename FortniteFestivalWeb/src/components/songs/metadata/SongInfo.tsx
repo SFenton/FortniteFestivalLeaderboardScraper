@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * Shared song info block: album art thumbnail + title + artist · year.
  * Used across song rows, player song rows, and suggestion cards.

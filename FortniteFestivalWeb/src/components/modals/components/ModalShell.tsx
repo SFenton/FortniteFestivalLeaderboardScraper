@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Lightweight modal shell: overlay + panel + header + close + escape + lifecycle.
  * Modal variants compose from this to avoid reimplementing the same infrastructure.

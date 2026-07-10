@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Pinch-to-zoom image component with double-click and ctrl+wheel support.
  * Extracted from PathsModal for independent testability.

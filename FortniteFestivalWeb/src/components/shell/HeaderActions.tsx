@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoNotifications, IoNotificationsOffOutline, IoPeople, IoPerson, IoPersonAdd, IoSearch } from 'react-icons/io5';

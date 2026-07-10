@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Song rows with pulsing album art to show shop highlighting.
  * Alternates highlighted and non-highlighted rows to demonstrate the contrast.

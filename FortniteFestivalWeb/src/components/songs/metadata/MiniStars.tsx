@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo } from 'react';
 import { Colors, IconSize, StarSize, Border, flexCenter, Display, Align, Justify, ObjectFit, Overflow, CssValue, border } from '@festival/theme';
 

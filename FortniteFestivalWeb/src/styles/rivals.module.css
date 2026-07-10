@@ -15,11 +15,11 @@
 }
 
 .rivalRowWinning::after {
-  background: linear-gradient(to right, rgba(76, 175, 80, 0.30) 0%, transparent 50%);
+  background: linear-gradient(to right, rgb(76 175 80 / 30%) 0%, transparent 50%);
 }
 
 .rivalRowLosing::after {
-  background: linear-gradient(to left, rgba(244, 67, 54, 0.30) 0%, transparent 50%);
+  background: linear-gradient(to left, rgb(244 67 54 / 30%) 0%, transparent 50%);
 }
 
 @container (min-width: 620px) {
@@ -101,11 +101,11 @@
 }
 
 .rivalSongWinning::after {
-  background: linear-gradient(to right, rgba(76, 175, 80, 0.30) 0%, transparent 50%);
+  background: linear-gradient(to right, rgb(76 175 80 / 30%) 0%, transparent 50%);
 }
 
 .rivalSongLosing::after {
-  background: linear-gradient(to left, rgba(244, 67, 54, 0.30) 0%, transparent 50%);
+  background: linear-gradient(to left, rgb(244 67 54 / 30%) 0%, transparent 50%);
 }
 
 .rivalSongCompareRow {

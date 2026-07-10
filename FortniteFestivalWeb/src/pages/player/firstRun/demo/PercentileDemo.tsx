@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * First-run demo: Percentile table using production PlayerPercentileHeader/Row.
  * Shows a static percentile distribution for one instrument.

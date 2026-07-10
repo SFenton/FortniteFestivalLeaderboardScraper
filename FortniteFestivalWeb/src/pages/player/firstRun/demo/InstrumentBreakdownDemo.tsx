@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * First-run demo: Per-instrument stat cards in the production 2-column grid.
  * Renders a single instrument's stats via buildInstrumentStatsItems() with static data.

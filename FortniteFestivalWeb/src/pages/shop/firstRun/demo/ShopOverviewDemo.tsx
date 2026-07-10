@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Grid of ShopCards showing real item shop album art.
  * Measures the container width to compute actual card size (aspect-ratio 1:1),

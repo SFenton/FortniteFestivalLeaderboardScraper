@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * A single row in a rankings leaderboard.
  * Displays rank, player name, rating value, and songs played.

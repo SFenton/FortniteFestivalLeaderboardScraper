@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useState, useCallback, memo, useMemo, type CSSProperties } from 'react';
 import { Colors, Radius, Position, Overflow, Display, Align, Justify, PointerEvents, ObjectFit, transition, TRANSITION_MS, IconSize } from '@festival/theme';
 import anim from '../../../styles/animations.module.css';

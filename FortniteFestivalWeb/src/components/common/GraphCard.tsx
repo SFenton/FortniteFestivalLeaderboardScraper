@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * GraphCard — reusable chart shell with instrument selector, pagination,
  * animated detail card, animated list, and "view all" button.

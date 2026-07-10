@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo } from 'react';
 import { Radius, frostedCard, Colors, Gap, Layout, Position, Overflow, PointerEvents, CssValue, GridTemplate, STAGGER_ENTRY_OFFSET } from '@festival/theme';
 import StatBox from '../../../../components/player/StatBox';

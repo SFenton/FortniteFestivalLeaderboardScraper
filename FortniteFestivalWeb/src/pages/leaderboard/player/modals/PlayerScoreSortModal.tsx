@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 
 import { useTranslation } from 'react-i18next';
 import Modal from '../../../../components/modals/Modal';

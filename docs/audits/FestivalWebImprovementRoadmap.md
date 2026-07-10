@@ -62,6 +62,32 @@ Evidence:
   reload marker, completed with live content and zero console errors, and did
   not trigger a second reload inside the guard window.
 
+### WEB-0.3 stylelint scope and policy
+
+**Decision:** Accepted and deployed.
+
+- Chose the documented mixed endpoint: CSS Modules for larger static rule sets,
+  typed inline objects for small/runtime-dependent styles.
+- Configured stylelint for CSS Modules `composes` and `:global`, intentional
+  WebKit compatibility properties, and existing camel-case module keyframes.
+- Applied semantic-preserving modern color/media syntax and moved the remaining
+  strict pill literals to theme variables.
+- Stylelint improved from 109 errors to zero. ESLint now reports zero
+  rules-of-hooks errors and zero contradictory `react/forbid-dom-props`
+  findings; 150 obsolete file-level disables were removed and total warnings
+  fell from 434 to 200.
+- TypeScript, production build, and 67 focused UI tests pass. A real browser
+  rendered 592 elements with zero console errors; the frosted surface retained
+  `rgba(18, 24, 38, 0.78)` and `blur(18px)`.
+- The default full Vitest run exhausted its 4 GB worker heap. An 8 GB,
+  two-worker retry progressed further but stalled a worker. Both attempts were
+  stopped and preserved as evidence; deterministic full-suite resource work is
+  taskized as `WEB-7.4-D1` while all affected focused tests remain green.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.3/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`

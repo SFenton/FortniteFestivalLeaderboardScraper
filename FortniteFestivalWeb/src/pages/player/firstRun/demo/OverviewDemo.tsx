@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * First-run demo: Overall summary stat boxes in the production 2-column grid.
  * Renders real StatBox components via buildOverallSummaryItems() with static data.

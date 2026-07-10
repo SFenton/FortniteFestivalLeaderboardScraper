@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * First-run demo: Rivals above and below sections.
  * Alternates between swapping all "Above You" and all "Below You" rows.

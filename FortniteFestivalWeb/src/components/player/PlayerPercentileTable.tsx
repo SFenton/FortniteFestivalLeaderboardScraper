@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo } from 'react';
 import { Colors, Font, Gap, Weight, Border, Display, Justify, Align, TextAlign, TextTransform, Cursor, CssValue, QUICK_FADE_MS, padding, border, transition } from '@festival/theme';
 import { useCardPressAction } from '../../hooks/ui/usePressAction';

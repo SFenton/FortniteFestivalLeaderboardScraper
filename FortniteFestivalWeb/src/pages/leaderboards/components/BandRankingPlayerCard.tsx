@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- shared card footer uses inline theme styles */
 import { type AnimationEventHandler, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { BandConfiguration, BandRankingEntry, BandRankingMetric, BandType, PlayerBandEntry, ServerInstrumentKey } from '@festival/core/api/serverTypes';

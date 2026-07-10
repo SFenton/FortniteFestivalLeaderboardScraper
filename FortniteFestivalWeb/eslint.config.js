@@ -31,8 +31,9 @@ export default tseslint.config(
       // Disabled: standard patterns (contexts, mixed exports) trigger false positives
       'react-refresh/only-export-components': 'off',
 
-      // ── No inline styles on DOM elements ──
-      'react/forbid-dom-props': ['warn', { forbid: ['style'] }],
+      // Static styles with three or more declarations belong in CSS Modules;
+      // small or runtime-dependent style objects remain an accepted pattern.
+      'react/forbid-dom-props': 'off',
 
       // ── No magic numbers (warn only — too strict at error level) ──
       // ignore covers: basics (0/1/-1/2), small ints (3-10, 100),

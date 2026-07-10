@@ -4,7 +4,6 @@
  *
  * Used in: DesktopNav header, Sidebar, and anywhere a player name search is needed.
  */
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useState, useMemo, useCallback, useEffect, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAccountSearch } from '../../hooks/data/useAccountSearch';

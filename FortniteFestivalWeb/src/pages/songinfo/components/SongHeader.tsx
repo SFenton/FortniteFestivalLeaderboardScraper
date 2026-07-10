@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoFlash } from 'react-icons/io5';

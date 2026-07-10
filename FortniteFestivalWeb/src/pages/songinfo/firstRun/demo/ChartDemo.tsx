@@ -1,4 +1,3 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles required for Recharts custom elements */
 import { useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
