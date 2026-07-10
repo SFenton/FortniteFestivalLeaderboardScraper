@@ -63,6 +63,13 @@ Add configurable HTTP proxy rotation to the scraper. When a CDN 403 block is det
 
 Run Gluetun sidecars with Docker `init: true`. Their health checks and VPN helper commands can leave short-lived `timeout`/shell children behind when Gluetun is PID 1; Docker init reaps those children so long-lived proxy pools do not accumulate zombie processes. The Docker-based recycler also recreates rotated containers with `HostConfig.Init = true` even when the existing container was created before the Compose template included `init: true`.
 
+Docker host control is worker-only. `fstservice` has neither
+`/var/run/docker.sock` nor the Docker group and resolves
+`IProxyContainerRecycler` to a rejecting implementation. `fstworker` alone
+mounts the socket, receives the Docker group, and resolves the real recycler.
+This prevents the public API process from controlling the host even though the
+service and worker still share one binary.
+
 ### Why Gluetun + AirVPN (Not Commercial SOCKS5)
 
 | Factor | Gluetun + AirVPN | Commercial SOCKS5 |
@@ -87,10 +94,10 @@ Gluetun supports two connection modes:
 
 | Traffic | Path |
 |---|---|
-| FSTService → PostgreSQL | Direct Docker network (unchanged) |
-| FSTService → clients (API responses) | Direct port 8080 (unchanged) |
-| FSTService → Epic API (normal) | Direct internet (no proxy) |
-| FSTService → Epic API (CDN blocked) | Through `gluetun-{region}:8888` → VPN → internet |
+| `fstservice` / `fstworker` → PostgreSQL | Direct Docker network (unchanged) |
+| `fstservice` → clients (API responses) | Direct port 8080 (unchanged) |
+| `fstworker` → Epic API (normal) | Direct internet (no proxy) |
+| `fstworker` → Epic API (CDN blocked) | Through `gluetun-{region}:8888` → VPN → internet |
 | PostgreSQL, festivalweb, etc. | Completely unaware of gluetun |
 
 ---
@@ -286,6 +293,9 @@ gluetun-asia:
   container_name: gluetun-asia
   # ... same structure, SERVER_COUNTRIES=Japan
 ```
+
+Mount `/var/run/docker.sock` and add the host Docker group only on
+`fstworker`. Never inherit that volume or group onto `fstservice`.
 
 FSTService env vars:
 ```yaml

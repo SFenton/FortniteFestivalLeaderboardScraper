@@ -10,6 +10,24 @@ public interface IProxyContainerRecycler
     Task<bool> RestartAsync(string containerName);
 }
 
+public sealed class DisabledProxyContainerRecycler : IProxyContainerRecycler
+{
+    private readonly ILogger<DisabledProxyContainerRecycler> _log;
+
+    public DisabledProxyContainerRecycler(ILogger<DisabledProxyContainerRecycler> log)
+    {
+        _log = log;
+    }
+
+    public Task<bool> RestartAsync(string containerName)
+    {
+        _log.LogWarning(
+            "Proxy container restart for {Container} was rejected because this host role has no Docker control capability.",
+            containerName);
+        return Task.FromResult(false);
+    }
+}
+
 /// <summary>
 /// Recycles gluetun VPN containers by stopping, removing, and recreating them
 /// with updated <c>SERVER_CITIES</c> and <c>SERVER_NAMES</c> environment variables.

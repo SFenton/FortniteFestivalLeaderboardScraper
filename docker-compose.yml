@@ -157,7 +157,11 @@ services:
         condition: service_healthy
       fstservice:
         condition: service_healthy
-    volumes: *fstservice_volumes
+    volumes:
+      - ${FST_DATA_DIR:-./fst-data}:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
     environment: *fstservice_environment
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]

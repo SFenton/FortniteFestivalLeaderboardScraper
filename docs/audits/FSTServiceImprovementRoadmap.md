@@ -32,6 +32,27 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/service-0.3/`
 
+### SERVICE-0.4 Docker host control
+
+**Decision:** Accepted and deployed.
+
+- Production and repository compose definitions now mount
+  `/var/run/docker.sock` and add the Docker group only on `fstworker`.
+- API/frontend-only roles resolve a rejecting `DisabledProxyContainerRecycler`;
+  worker roles retain `GluetunContainerRecycler`.
+- Rendered production compose has only the FST data bind on `fstservice`, with
+  no supplemental group. `docker inspect` and an in-container filesystem check
+  confirm the socket is absent.
+- `fstworker` retained the socket and group 984. A read-only Docker Engine
+  `/_ping` from inside the worker returned `OK`, proving the narrow control path
+  remained usable without restarting a proxy during active scrape 1229.
+- The service-only deployment preserved healthy service, web, worker, and
+  PostgreSQL containers plus `/readyz`, the web shell, and `/api/service-info`.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/service-0.4/`
+
 ## Executive decision
 
 The service has good low-level PostgreSQL primitives and excellent cached local

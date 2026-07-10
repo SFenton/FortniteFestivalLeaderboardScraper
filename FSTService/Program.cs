@@ -101,7 +101,10 @@ builder.Services.Configure<DatabaseMaintenanceOptions>(
     builder.Configuration.GetSection(DatabaseMaintenanceOptions.Section));
 builder.Services.Configure<ApiSettings>(
     builder.Configuration.GetSection(ApiSettings.Section));
-builder.Services.AddSingleton<IProxyContainerRecycler, GluetunContainerRecycler>();
+if (hostedWorkerMode is HostedWorkerMode.ApiOnly or HostedWorkerMode.FrontendOnly)
+    builder.Services.AddSingleton<IProxyContainerRecycler, DisabledProxyContainerRecycler>();
+else
+    builder.Services.AddSingleton<IProxyContainerRecycler, GluetunContainerRecycler>();
 builder.Services.AddSingleton<ProxyPool>();
 builder.Services.AddSingleton<IProxyHealthReporter>(sp => sp.GetRequiredService<ProxyPool>());
 

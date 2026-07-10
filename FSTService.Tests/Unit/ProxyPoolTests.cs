@@ -9,6 +9,17 @@ public sealed class ProxyPoolTests
     private readonly ILogger<ProxyPool> _log = NullLogger<ProxyPool>.Instance;
 
     [Fact]
+    public async Task DisabledRecycler_RejectsContainerRestart()
+    {
+        var recycler = new DisabledProxyContainerRecycler(
+            NullLogger<DisabledProxyContainerRecycler>.Instance);
+
+        var restarted = await recycler.RestartAsync("gluetun-1");
+
+        Assert.False(restarted);
+    }
+
+    [Fact]
     public async Task AcquireAsync_LeastLoadedMode_DistributesAcrossAvailableEndpoints()
     {
         using var pool = new ProxyPool(CreateOptions(activeStandby: false), _log);

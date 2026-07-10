@@ -128,13 +128,6 @@ services:
         condition: service_healthy
     volumes: &fstservice_volumes
       - ${FST_DATA_DIR:-./fst-data}:/app/data
-      # Docker socket for container recycling — allows FSTService to recreate
-      # gluetun containers on CDN blocks instead of using the gluetun control API.
-      - /var/run/docker.sock:/var/run/docker.sock
-    # Grant the non-root 'ubuntu' user access to the Docker socket.
-    # Set DOCKER_GID to your host's docker group ID (run: getent group docker | cut -d: -f3).
-    group_add: &fstservice_group_add
-      - "${DOCKER_GID:-999}"
     command: ["--no-scraper-worker"]
     # API frontend only: serves requests plus lightweight song/path refresh.
     # Scrape, ranking, and band-history mutation workers belong to fstworker.
@@ -245,8 +238,12 @@ services:
         condition: service_healthy
       fstservice:
         condition: service_healthy
-    volumes: *fstservice_volumes
-    group_add: *fstservice_group_add
+    volumes:
+      - ${FST_DATA_DIR:-./fst-data}:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Docker control is worker-only. Set DOCKER_GID to the host docker group ID.
+    group_add:
+      - "${DOCKER_GID:-999}"
     environment: *fstservice_environment
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
