@@ -25,7 +25,7 @@ shadow/history build, or maintenance/rewrite action:
 ```bash
 tools/postgres-capacity-guard.sh \
   --action-class observation \
-  --output .outbox/fst-autonomous-agent/<session>/capacity-preflight.json
+  --output /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/<session>/capacity-preflight.json
 ```
 
 Use `--action-class scrape` or `post-process` for critical pipeline work,

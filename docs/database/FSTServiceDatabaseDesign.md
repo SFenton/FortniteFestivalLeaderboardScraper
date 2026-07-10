@@ -315,7 +315,7 @@ Before broad work:
 ```bash
 tools/postgres-capacity-guard.sh \
   --action-class observation \
-  --output .outbox/fst-autonomous-agent/<session>/capacity-preflight.json
+  --output /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/<session>/capacity-preflight.json
 ```
 
 Then verify:
@@ -331,6 +331,22 @@ Then verify:
 
 After any worker/service/web restart, all expected containers and the full
 public path must be healthy before unrelated work continues.
+
+For a durable per-scrape evidence pack:
+
+```bash
+tools/postgres-scrape-evidence.sh \
+  --scrape-id <id> \
+  --label baseline \
+  --out-dir /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/<session>/scrape-<id>-baseline
+```
+
+The pack contains publication state, complete scope fingerprint metadata,
+logical write metrics, relation/index sizes, WAL/temp/checkpoint counters,
+phase timings, locks/active queries, projection summaries, Docker resources,
+representative public route bodies and hashes, and a checksummed manifest.
+Pass `--compare-to <baseline-dir>` on a later capture to persist route,
+scope-total, and relation-size deltas for an A/B decision.
 
 ## Known design work
 
