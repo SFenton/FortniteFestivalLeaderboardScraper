@@ -4,10 +4,12 @@ import App from './App';
 import PwaIconCapture from './components/icons/PwaIconCapture';
 import BackendAvailabilityGate from './components/maintenance/BackendAvailabilityGate';
 import { applyScrollFadeTestMode } from './diagnostics/scrollFadeTestMode';
+import { installStaleChunkRecovery } from './utils/staleChunkRecovery';
 import './i18n';
 import './index.css';
 
 applyScrollFadeTestMode();
+installStaleChunkRecovery();
 
 const searchParams = new URLSearchParams(window.location.search);
 const Root = searchParams.has('pwaIconCapture') ? PwaIconCapture : App;

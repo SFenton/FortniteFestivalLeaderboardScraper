@@ -48,6 +48,20 @@ Evidence:
   festivalweb replacement. That public-recovery gap is taskized as
   `WEB-0.2-D1` and is not being left as a handoff note.
 
+#### WEB-0.2-D1 stale dynamic chunk recovery
+
+**Decision:** Accepted and deployed.
+
+- Added a guarded `vite:preloadError` recovery that reloads once and leaves a
+  second failure to the normal error boundary instead of creating a loop.
+- Added `no-cache`/`no-store` entry-document headers while retaining immutable
+  hashed asset caching.
+- Three focused tests prove first recovery, loop prevention, and later-window
+  recovery. TypeScript, lint-errors-only, and production build pass.
+- Real browser dispatch set `defaultPrevented`, reloaded the page, preserved the
+  reload marker, completed with live content and zero console errors, and did
+  not trigger a second reload inside the guard window.
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
