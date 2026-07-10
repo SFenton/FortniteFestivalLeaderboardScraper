@@ -1,0 +1,480 @@
+# FSTWorker Improvement Roadmap
+
+**Audit date:** 2026-07-10  
+**Container:** `fstworker`  
+**Mode:** Read-only scrape, proxy-fleet, persistence, post-process, and
+reliability audit  
+**Implementation status:** No worker, proxy, Epic request, data, or deployment
+changes were made during this audit.
+
+## Executive decision
+
+The worker has sophisticated adaptive concurrency, proxy isolation, staging,
+COPY, publication, ranking, and replay foundations. It is currently vulnerable
+to publishing incomplete data because several failure paths are swallowed or
+treated as successful. The active 30-node PIA fleet also spends substantial
+effort on retries, curl fallback, tarpits, restarts, and duplicate/unhealthy
+egress capacity.
+
+Correctness gates come before speed. Proxy and concurrency tuning must keep the
+same global Epic request budget and identical scrape scope while measuring
+useful rows per wire send.
+
+## Audit report delivery
+
+This roadmap and the service roadmap are accompanied by:
+
+`FST Autonomous Agent: Recap - Service and Worker Deep Audit · Needs Attention`
+
+Delivery requires rendered HTML/text plus SMTP acceptance, or a recorded SMTP
+blocker and exact outbox artifact paths.
+
+## Cross-container publication rollout
+
+Worker publication changes follow this order:
+
+1. PostgreSQL adds backward-compatible per-scope published-source schema.
+2. Worker dual-writes and validates source mappings.
+3. Worker atomically promotes mapping, generation, cache, and scrape pointer.
+4. Service resolver/exports switch behind a rollback flag.
+5. Forced frozen cold-miss and live-scrape parity approve cutover.
+
+## Current live baseline
+
+| Surface | Evidence | Assessment |
+|---|---|---|
+| Active proxy config | 30 PIA proxy URLs/container names; active-standby false; DOP 120; initial DOP 90; learned max 360; global RPS 480; page concurrency 30 | All-node mode is active |
+| Proxy metadata | Active container lacks provider and control URL arrays; logs label proxies `unknown` | Poor diagnostics/config completeness |
+| Egress health | 27 control probes succeeded, 3 failed; only 26 unique egress hashes; one duplicate egress assignment | Effective pool is below 30 |
+| Docker health | `pia-gluetun-20` unhealthy during audit | Active health degradation |
+| Eight-hour worker log occurrences | 12,056 timeout lines; 38,809 CDN-block lines; 6,275 HTTP-error lines; 48,161 tarpit lines; 142 scheduled restarts; 22,840 `503` lines; 496,741 curl-fallback mentions | Severe retry/fallback amplification |
+| Latest cumulative log counter | 2,825,080 wire sends and 234,472 blocks | About 8.3% block ratio in that counter window |
+| Current scrape | Scrape 1228 started 08:54 UTC; network/post-process transition at 12:23; post-process took 3:01:39; scrape remained incomplete after post-process | End-to-end finalization is long |
+| Rankings | 1:52:52 total; rank-history snapshots 1:16:45; band rankings 15:17 | Ranking/history persistence dominates post-process |
+| Recent completed scrape duration | 6:18-6:57 for scrapes 1224-1227 versus 4:44-5:06 for selected July 3-6 scrapes | Material regression |
+| Useful scrape result | About 39.5M entries and about 398k logical requests per completed scrape | Stable useful scope |
+
+Log counts are occurrences, not guaranteed unique requests. They are still
+sufficient to show the failure path is dominating the operational signal.
+
+## Great / good / okay / poor / bad
+
+| Rating | Areas |
+|---|---|
+| Great | Full-scope scrape coverage; binary COPY/staging; real PostgreSQL tests; rich phase logs; adaptive concurrency concepts |
+| Good | Per-proxy cooldown/restart mechanics; publication ledger concept; resumable band-history jobs |
+| Okay | Thirty-exit pool as an experimental capacity tool |
+| Poor | Proxy health quality; retry accounting; task allocation; status freshness; role isolation; registration claims |
+| Bad | Deep-scrape rows discarded; writer failures swallowed; critical post-process failures publish; malformed/missing pages accepted |
+
+## Phase WORKER-0: Make incomplete data unpublishable
+
+**Decision:** Accepted correctness blocker  
+**Dependencies:** None  
+**Rollback:** Preserve the last published scrape; keep old path behind flags only
+until replay and live shadow parity pass.
+
+### WORKER-0.1 - Persist coordinated deep-scrape results
+
+**Evidence**
+
+- `DeepScrapeCoordinator.cs:191-222,357-373` does not populate
+  `EntriesCount`.
+- `GlobalLeaderboardScraper.cs:1813-1825` and
+  `ScrapeOrchestrator.cs:179-215` skip zero-count results.
+
+**Acceptance**
+
+- A fixture with over-threshold top pages fetches deeper rows and those exact
+  rows reach staging, snapshot, projection, and publication.
+
+### WORKER-0.2 - Propagate every writer failure
+
+**Evidence**
+
+- Solo, band, and online bounded writers catch persistence failures and allow
+  the scrape to continue.
+
+**Work**
+
+1. Return a durable per-scope writer result.
+2. Mark failed/dropped rows and stop publication.
+3. Keep enough spool/artifact state for replay.
+
+**Acceptance**
+
+- Fault injection in each writer leaves the prior published scrape active,
+  records the exact failed scope/rows, and permits deterministic replay.
+
+**Rollback/blocked condition**
+
+- Dual-run the strict result contract before enforcing it. Do not promote if a
+  failed scope cannot be retained or replayed.
+
+### WORKER-0.3 - Classify post-process phases by publication criticality
+
+**Evidence**
+
+- `PostScrapeOrchestrator.RunPhaseAsync` suppresses failures for snapshot
+  activation, rankings, projections, rivals, stats, and precompute.
+
+**Work**
+
+1. Critical before publication: snapshot activation, current projections,
+   ranking generation, band generation, response generation required by
+   published routes.
+2. Best effort after publication: cleanup, optional notifications, and
+   non-contract analytics.
+3. Persist phase outcome and publication decision.
+
+**Acceptance**
+
+- Fault each critical phase independently and prove no publish occurs.
+- Fault each declared best-effort phase and prove publication remains correct
+  while the failure is visible.
+
+**Rollback**
+
+- Reclassify only a specifically proven non-contract phase; never globally
+  restore exception swallowing.
+
+### WORKER-0.4 - Add per-scope page completeness manifests
+
+**Evidence**
+
+- Parse failures become empty/failed page results but do not block scope
+  completion.
+- Fingerprints have no reported total entries/pages.
+- 42 active Pro Vocals scopes had no scope fingerprint during the live scrape.
+
+**Manifest**
+
+- expected page range;
+- received pages;
+- terminal Epic boundary;
+- parse status;
+- retry exhaustion;
+- total reported entries/pages;
+- deep-scrape extension range;
+- content/coverage fingerprint.
+
+**Acceptance**
+
+- Every expected song/instrument scope has one complete manifest.
+- Unexplained page gaps, parse failures, or missing fingerprints reject that
+  scrape's publication.
+
+**Rollback/blocked condition**
+
+- Dual-write manifests without gating first. Publication gating remains blocked
+  until replay proves all legitimate Epic terminal conditions are classified.
+
+### WORKER-0.5 - Separate solo and band completion
+
+A band timeout must not mark `LeaderboardScrapeCompleted=true`. A task still
+writing after spool disposal is a failed band pass, not a successful scrape.
+
+**Acceptance**
+
+- Timeout/cancellation tests leave the prior band generation published and no
+  task writes after spool disposal.
+
+**Rollback**
+
+- Retain the prior published band generation; do not restore partial publish.
+
+### WORKER-0.6 - Add all nine instruments to score-validity support
+
+Pro Vocals, Pro Cymbals, and Pro Drums require max-score/CHOpt fixtures,
+deep-scrape thresholds, leeway validation, and ranking metrics.
+
+**Acceptance**
+
+- Nine-instrument fixtures cover valid, over-threshold, and missing-chart
+  cases; replay output matches Epic/source evidence.
+
+**Blocked condition**
+
+- If chart provenance is unavailable, keep the instrument explicitly
+  unsupported for threshold-based decisions rather than treating unknown as
+  valid.
+
+## Phase WORKER-1: Bound retries and wire amplification
+
+**Decision:** Accepted  
+**Dependencies:** WORKER-0
+
+### WORKER-1.1 - Add pass deadlines and per-operation retry budgets
+
+**Evidence**
+
+- Transport retries are unbounded.
+- `ScrapePassTimeoutMinutes` is compatibility-only.
+
+**Work**
+
+1. Global pass deadline.
+2. Per-song/instrument/page retry budget.
+3. Durable retry/resume state.
+4. Preserve old published data on exhaustion.
+
+### WORKER-1.2 - Isolate cancellation
+
+One cancelled CDN waiter must not cancel shared CDN recovery. Use per-waiter
+`WaitAsync(ct)` semantics rather than cancelling the shared completion source.
+
+### WORKER-1.3 - Remove or strictly contain curl fallback
+
+**Evidence**
+
+- Curl fallback creates processes/files, bypasses the normal rate token and
+  request counter, and can alter HTTP classification.
+
+**Candidate**
+
+1. Prefer fixing .NET transport behavior and disable fallback.
+2. If retained, cap global fallback concurrency, consume a rate token, count
+   every send, preserve status semantics, use FST-drive scratch, and kill/clean
+   on cancellation.
+
+**Promotion target**
+
+- At least 80% fewer actual fallback invocations/processes.
+- Every fallback consumes a rate token and increments wire-send accounting.
+- Useful rows per wire send improves with identical scrape parity and no
+  increase in 429/5xx.
+
+### WORKER-1.4 - Classify failure ownership
+
+| Signal | Ownership/action |
+|---|---|
+| Tunnel/connect/transport | Node quarantine and bounded restart |
+| Public egress duplicate/flap | Capacity removal until healthy/unique |
+| Non-JSON 403/CDN block | Egress cooldown and alternate sticky node |
+| 429 | Global/account pacing, not node punishment |
+| Epic 5xx | Backend circuit/retry budget |
+| JSON 401/403 | Token/entitlement path |
+
+## Phase WORKER-2: Run a matched 30-proxy evaluation
+
+**Decision:** Experimental until matched evidence  
+**Dependencies:** WORKER-0 and WORKER-1  
+**Provider rule:** Do not increase global Epic rate or widen entitlement use.
+
+### WORKER-2.1 - Build real proxy health and capacity metrics
+
+1. Configure provider and control URL for every node.
+2. Probe gluetun health, public egress, egress uniqueness, RTT, and HTTP proxy
+   readiness before assigning Epic work.
+3. Export per-node in-flight, success, timeout, block, 429, 5xx, restart,
+   cooldown, useful bytes, and useful rows.
+4. Keep actual public IP out of logs; use a stable redacted hash.
+
+### WORKER-2.2 - Use weighted least-outstanding with stickiness
+
+1. Per-node concurrency cap.
+2. EWMA latency/error weight.
+3. Song/instrument/page-range stickiness for connection reuse.
+4. Half-open probes before returning a node.
+5. Remove duplicate egresses from effective capacity.
+
+### WORKER-2.3 - Run bounded pool-size and DOP canaries
+
+Do not run a full Cartesian matrix and do not send 480 RPS through one exit.
+Canaries run beside normal production only when the combined production plus
+canary budget remains at or below the configured global limit.
+
+| Matrix | Values |
+|---|---|
+| Healthy unique exits | 1, 4, 8, 16, 26, then 30 only if actually unique/healthy |
+| Global DOP | 60, 90, 120, 180 |
+| Aggregate RPS | Start at no more than 16 RPS per healthy unique exit and never exceed 480 |
+| Assignment | current least-in-flight vs weighted sticky |
+
+**Execution sequence**
+
+1. Preflight Docker/Postgres/publication/freeze, proxy health, egress
+   uniqueness, and current production request rate.
+2. Reserve the normal production request budget first; canaries may use only
+   unallocated capacity and must not displace production work.
+3. Run a small fixed song/instrument/page slice with publication disabled,
+   isolated result artifacts, and no shared snapshot/projection/cache mutation.
+4. Evaluate one pool/DOP combination at a time.
+5. Compare pool sizes at a matched aggregate RPS supported safely by both
+   configurations.
+6. Stop immediately on publication lag, service degradation, 429 increase,
+   error-budget breach, proxy flapping, or correctness mismatch.
+7. Run a full live shadow scrape only after bounded canaries pass; the shadow
+   remains publication-disabled until full parity is complete.
+
+**Correctness**
+
+- Same songs, instruments, page ranges, deep-scrape result, row counts,
+  fingerprints, and published API responses.
+
+**Metrics**
+
+- wall clock;
+- useful rows/wire send;
+- bytes/wire send;
+- retries;
+- timeout/block/403/429/5xx;
+- per-node p50/p95;
+- RSS/GC;
+- connection reuse;
+- post-process start time.
+
+**Promotion target**
+
+- At least 30% fewer wire sends per useful row.
+- At least 20% lower network wall clock.
+- No correctness, 429, entitlement, or publication regression.
+
+## Phase WORKER-3: Bound task and memory growth
+
+**Decision:** Accepted after correctness gates
+
+### WORKER-3.1 - Replace task-per-song/instrument/page fan-out
+
+Use bounded channels for:
+
+- song work;
+- leaderboard/page work;
+- retries;
+- persistence batches.
+
+The DOP limiter should bound queued state, not only active network sends.
+
+### WORKER-3.2 - Stream page ownership to the writer
+
+1. Parse once.
+2. Hand immutable page batches to one bounded persistence pipeline.
+3. Record durable scope coverage.
+4. Avoid parallel legacy/result/page/online writer implementations.
+
+### WORKER-3.3 - Measure real allocation pressure
+
+Record:
+
+- total allocated bytes;
+- allocation rate;
+- peak RSS;
+- Gen 0/1/2 and LOH collections;
+- GC pause;
+- queue depth;
+- task count;
+- child process count.
+
+### WORKER-3.4 - Make CHOpt cancellation safe
+
+Read stdout/stderr concurrently, kill the process tree on cancellation, and use
+the configured FST data directory for scratch.
+
+## Phase WORKER-4: Reduce post-process and ranking time
+
+**Decision:** Accepted A/B program  
+**Dependencies:** PostgreSQL query phases and WORKER-0
+
+### WORKER-4.1 - Attack rank-history snapshot cost first
+
+**Evidence**
+
+- Current ranking total: 6,771,576 ms.
+- Rank-history snapshots: 4,605,489 ms (68% of ranking time).
+- Composite snapshot alone: 1,078,184 ms.
+- Recent ranking total rose from about 3.87-4.57M ms to 6.77M ms.
+
+**Candidates**
+
+1. Latest-state tables maintained incrementally rather than rebuilding from
+   full history.
+2. Changed-account snapshot inserts.
+3. Partition/date-aware history access.
+4. Remove unused rank-history indexes only after read-owner proof.
+
+**Promotion target**
+
+- Rank-history snapshot time below 45 minutes initially, then below 30 minutes,
+  with exact rank/history parity.
+
+### WORKER-4.2 - Make band ranking failure fail the required phase
+
+Band Duets failed during the audited scrape while remaining band types
+continued. Record whether the failed type remained on the prior generation and
+prevent a success-shaped final result unless that is an explicit partial
+publication contract.
+
+### WORKER-4.3 - Remove duplicate band publication
+
+Promote band current/published generations once in the final publication
+transaction, not before and after post-process.
+
+**Dependencies**
+
+- PostgreSQL PG-1 published-source schema and SERVICE-0 resolver contract.
+
+**Acceptance**
+
+- Mapping, band generation, cache generation, and scrape pointer promote in one
+  transaction.
+- Cancellation before commit leaves all public pointers on the prior scrape.
+
+### WORKER-4.4 - Drive downstream work from changed scopes
+
+Do not rebuild projections, precompute, and ranking inputs for unchanged scopes
+unless a global algorithm proves it needs them.
+
+## Phase WORKER-5: Make queues and worker health durable
+
+**Decision:** Accepted
+
+### WORKER-5.1 - Use one registration claimant
+
+Replace competing registration consumers with a lease/`SKIP LOCKED` claim,
+bounded work per poll, lease expiry, and idempotent completion.
+
+### WORKER-5.2 - Add required-loop health
+
+Readiness must fail when scraper scheduling, registration backfill, catalog
+dependency consumption, or durable event publishing exits or becomes stale.
+
+### WORKER-5.3 - Make credential refresh single-owner
+
+Use one token owner or an atomic, locked, permission-restricted shared store.
+
+## Phase WORKER-6: Consolidate dead and duplicate paths
+
+**Decision:** Accepted after reachability proof
+
+Candidates:
+
+- `RoundRobinProxyHandler` and stale proxy diagnostics.
+- Duplicate path generation in worker and catalog refresh.
+- Duplicate registration consumers.
+- Legacy result/page writer APIs used only by tests.
+- `BackfillQueue` if no production enqueuer exists.
+- Dead options such as compatibility timeout/write batch/background job fields.
+- Disabled circuit-breaker code.
+- Stale compose feature keys.
+
+## Projected outcomes
+
+| Outcome | Promotion target |
+|---|---|
+| Data correctness | Writer/page/post-process failure cannot publish |
+| Network efficiency | >=30% fewer wire sends per useful row; >=80% fewer fallback occurrences |
+| Proxy capacity | Every active node healthy, unique, measured, and provider-labeled |
+| Scrape duration | First target <=5.5 hours end-to-end on the same 681-song scope |
+| Post-process | First target <2 hours |
+| Ranking | First target <90 minutes; rank-history snapshots <45 minutes |
+| Memory | Bounded queues and measured peak RSS/GC under the 12 GiB cap |
+| Reliability | Finite retries, resumable failures, required-loop health |
+
+## Explicitly rejected shortcuts
+
+- Do not increase Epic RPS because more VPN exits exist.
+- Do not punish nodes for global/account 429s.
+- Do not publish partial data to improve wall clock.
+- Do not retain curl fallback as an unmetered second transport.
+- Do not declare 30-node capacity when health/egress uniqueness proves only 26.
+- Do not tune DOP without identical data scope and correctness fingerprints.
