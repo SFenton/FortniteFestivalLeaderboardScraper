@@ -22,9 +22,6 @@ namespace FSTService.Auth;
 /// </summary>
 public class EpicAuthService
 {
-    private const string DefaultClientId = "98f7e42c2e3a4f86a74eb43fbb41ed39";
-    private const string DefaultClientSecret = "0a2449a2-001a-451e-afec-3e812901c4d7";
-
     private const string AccountBase = "https://account-public-service-prod.ol.epicgames.com";
 
     private readonly HttpClient _http;
@@ -32,13 +29,35 @@ public class EpicAuthService
     private readonly string _basicAuth;
 
     public EpicAuthService(HttpClient http, ILogger<EpicAuthService> log)
+        : this(
+            http,
+            log,
+            GetRequiredEnvironmentVariable("EPIC_CLIENT_ID"),
+            GetRequiredEnvironmentVariable("EPIC_CLIENT_SECRET"))
     {
+    }
+
+    public EpicAuthService(
+        HttpClient http,
+        ILogger<EpicAuthService> log,
+        string clientId,
+        string clientSecret)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(clientSecret);
+
         _http = http;
         _log = log;
-
-        var clientId = Environment.GetEnvironmentVariable("EPIC_CLIENT_ID") ?? DefaultClientId;
-        var clientSecret = Environment.GetEnvironmentVariable("EPIC_CLIENT_SECRET") ?? DefaultClientSecret;
         _basicAuth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+    }
+
+    private static string GetRequiredEnvironmentVariable(string name)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException($"{name} must be configured.");
+
+        return value;
     }
 
     // ──────────────────────────────────────────────

@@ -99,8 +99,11 @@ builder.Services.Configure<BackgroundJobOptions>(
     builder.Configuration.GetSection(BackgroundJobOptions.Section));
 builder.Services.Configure<DatabaseMaintenanceOptions>(
     builder.Configuration.GetSection(DatabaseMaintenanceOptions.Section));
-builder.Services.Configure<ApiSettings>(
-    builder.Configuration.GetSection(ApiSettings.Section));
+builder.Services.AddOptions<ApiSettings>()
+    .Bind(builder.Configuration.GetSection(ApiSettings.Section))
+    .Validate(settings => !string.IsNullOrWhiteSpace(settings.ApiKey),
+        "Api:ApiKey must be configured.")
+    .ValidateOnStart();
 if (hostedWorkerMode is HostedWorkerMode.ApiOnly or HostedWorkerMode.FrontendOnly)
     builder.Services.AddSingleton<IProxyContainerRecycler, DisabledProxyContainerRecycler>();
 else

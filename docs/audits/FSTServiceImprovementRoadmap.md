@@ -53,6 +53,30 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/service-0.4/`
 
+### SERVICE-0.5 tracked credential defaults
+
+**Decision:** Mixed — code/config cleanup accepted and deployed; Epic client
+credential rotation is hard-blocked by operator/provider access.
+
+- Removed the tracked API-key default and PostgreSQL password default.
+- Removed the tracked Epic client ID/secret fallback. `EpicAuthService` now
+  requires `EPIC_CLIENT_ID` and `EPIC_CLIENT_SECRET`; API options validate a
+  non-empty `Api:ApiKey` at startup.
+- Compose/example files now use empty placeholders or fail-closed required
+  interpolation, including `PG_PASSWORD` and `WEBAPP_PASSWORD`.
+- Added a value-redacting repository scanner, focused tests, and a dedicated
+  pull-request/push workflow. The scanner passes on tracked and candidate files.
+- Production already supplies every required value. The service-only
+  deployment started successfully and preserved all public/container health.
+- The production API key does not match the removed tracked default. The
+  production Epic client ID and secret do match the removed defaults, so their
+  provider-side rotation cannot be completed without operator-owned Epic
+  credential access. Values were not logged, copied, or written to artifacts.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/service-0.5/`
+
 ## Executive decision
 
 The service has good low-level PostgreSQL primitives and excellent cached local
