@@ -126,13 +126,7 @@ export default function RivalDetailPage() {
 
   const styles = useRivalsSharedStyles();
 
-  /* v8 ignore start -- guard and display state */
-  if (!accountId || !rivalId) {
-    return <div style={styles.center}>{t('rivals.detail.noSongs')}</div>;
-  }
-
   const PREVIEW_COUNT = 5;
-  /* v8 ignore stop */
 
   const quickLinkItems = useMemo<RivalDetailQuickLink[]>(() => {
     if (!isMobile || phase !== LoadPhase.ContentIn || categories.length === 0) return [];
@@ -180,6 +174,11 @@ export default function RivalDetailPage() {
       testIdPrefix: 'rival-detail',
     };
   }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, isMobile, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
+
+  /* v8 ignore start -- guard and display state */
+  if (!accountId || !rivalId) {
+    return <div style={styles.center}>{t('rivals.detail.noSongs')}</div>;
+  }
 
   const staggerInterval = STAGGER_INTERVAL;
   const displayName = rivalName ?? '\u2026';

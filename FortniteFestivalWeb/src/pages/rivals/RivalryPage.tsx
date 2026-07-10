@@ -136,12 +136,6 @@ export default function RivalryPage() {
 
   const styles = useRivalsSharedStyles();
 
-  /* v8 ignore start -- guard */
-  if (!accountId || !rivalId) {
-    return <div style={styles.center}>{t('rivals.detail.noSongs')}</div>;
-  }
-  /* v8 ignore stop */
-
   /* v8 ignore start -- render-time helpers */
   const staggerInterval = STAGGER_INTERVAL;
   let staggerIdx = 0;
@@ -198,6 +192,11 @@ export default function RivalryPage() {
       testIdPrefix: 'rivalry',
     };
   }, [activeItemId, closeQuickLinks, handleModalQuickLinkSelect, isMobile, openQuickLinks, phase, quickLinkItems, quickLinksOpen, t]);
+
+  if (!accountId || !rivalId) {
+    return <div style={styles.center}>{t('rivals.detail.noSongs')}</div>;
+  }
+
   /* v8 ignore stop */
 
   /* v8 ignore start -- JSX render tree */

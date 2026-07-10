@@ -303,12 +303,6 @@ export default function RivalsPage() {
     ...shared,
   }), [shared]);
 
-  /* v8 ignore start -- guard + computed state */
-  if (!accountId) {
-    return <div style={styles.center}>{t('rivals.noPlayer')}</div>;
-  }
-  /* v8 ignore stop */
-
   /* v8 ignore start -- render-time helpers */
   /** Compute CSS variable for min name width based on longest name in a rival list. */
   const nameWidthVar = (rivals: RivalSummary[]): React.CSSProperties => {
@@ -486,6 +480,12 @@ export default function RivalsPage() {
 
   /* v8 ignore start -- JSX render tree */
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
+
+  /* v8 ignore start -- guard + computed state */
+  if (!accountId) {
+    return <div style={styles.center}>{t('rivals.noPlayer')}</div>;
+  }
+  /* v8 ignore stop */
 
   return (
     <Page

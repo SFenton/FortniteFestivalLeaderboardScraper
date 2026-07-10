@@ -30,6 +30,28 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.1/`
 
+### WEB-0.2 hooks correctness
+
+**Decision:** Accepted and deployed.
+
+- Moved all Rival Detail, Rivalry, and Rivals hooks above missing-player/route
+  guards and promoted `react-hooks/rules-of-hooks` from warning to error.
+- Added rerender coverage for missing-to-valid player and route transitions.
+- Full source lint has zero errors and zero rules-of-hooks findings; the
+  remaining 434 warnings belong to later exhaustive-deps/style/backlog tasks.
+- Rival page coverage passes 43 tests, TypeScript passes, and the production
+  build succeeds.
+- A real cache-busted Rivals navigation rendered live content with 450 DOM
+  elements and HTTP 200 service status while all production containers stayed
+  healthy through five monitor samples.
+- Browser validation also exposed an old-open-tab hashed-chunk failure across
+  festivalweb replacement. That public-recovery gap is taskized as
+  `WEB-0.2-D1` and is not being left as a handoff note.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`
+
 ## Executive decision
 
 FestivalWeb has strong modern foundations, especially route splitting, list

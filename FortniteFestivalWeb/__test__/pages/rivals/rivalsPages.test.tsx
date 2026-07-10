@@ -8,11 +8,12 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { render, act, fireEvent, screen, within } from '@testing-library/react';
 import { useEffect } from 'react';
-import { Route, Routes, useLocation } from 'react-router-dom';
+import { Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
 import { usePageQuickLinksController } from '../../../src/contexts/PageQuickLinksContext';
 import { useSettings, type AppSettings } from '../../../src/contexts/SettingsContext';
+import { useTrackedPlayer } from '../../../src/hooks/data/useTrackedPlayer';
 import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse, LeaderboardRivalsListResponse } from '@festival/core/api/serverTypes';
 
 /* ── API mock ── */
@@ -218,6 +219,28 @@ function LocationProbe() {
   return <div data-testid="route-probe" data-combo-scope={state?.comboScope ?? ''} data-live-fallback={state?.allowLiveFallback ? 'true' : 'false'}>{location.pathname}{location.search}</div>;
 }
 
+function RivalTransitionControls({
+  player,
+  to,
+}: {
+  player: { accountId: string; displayName: string } | null;
+  to?: string;
+}) {
+  const navigate = useNavigate();
+  const { setPlayer, clearPlayer } = useTrackedPlayer();
+
+  useEffect(() => {
+    if (player) setPlayer(player);
+    else clearPlayer();
+  }, [clearPlayer, player, setPlayer]);
+
+  useEffect(() => {
+    if (to) navigate(to);
+  }, [navigate, to]);
+
+  return null;
+}
+
 function SettingsUpdater({ settings }: { settings?: Partial<AppSettings> }) {
   const { updateSettings } = useSettings();
 
@@ -267,6 +290,30 @@ async function advancePastSpinner() {
 /* ── RivalsPage ── */
 
 describe('RivalsPage', () => {
+  it('keeps hook order stable when a player becomes available', async () => {
+    localStorage.removeItem('fst:selectedProfile');
+    localStorage.removeItem('fst:trackedPlayer');
+
+    const renderTree = (player: { accountId: string; displayName: string } | null) => (
+      <TestProviders route="/rivals">
+        <RivalTransitionControls player={player} />
+        <Routes>
+          <Route path="/rivals" element={<RivalsPage />} />
+        </Routes>
+      </TestProviders>
+    );
+
+    const view = render(renderTree(null));
+    expect(screen.getByText('Track a player to see their rivals.')).toBeTruthy();
+
+    await act(async () => {
+      view.rerender(renderTree({ accountId: 'test-1', displayName: 'TestPlayer' }));
+      await Promise.resolve();
+    });
+
+    expect(mockApi.getRivalsList).toHaveBeenCalled();
+  });
+
   it('keeps experimental leaderboard rankBy values available', async () => {
     renderPage('/rivals?tab=leaderboard&rankBy=adjusted', <RivalsPage />, '/rivals');
     await advancePastSpinner();
@@ -619,6 +666,36 @@ describe('RivalsPage quick links', () => {
 /* ── RivalDetailPage ── */
 
 describe('RivalDetailPage', () => {
+  it('keeps hook order stable when route and player parameters become valid', async () => {
+    localStorage.removeItem('fst:selectedProfile');
+    localStorage.removeItem('fst:trackedPlayer');
+
+    const renderTree = (
+      player: { accountId: string; displayName: string } | null,
+      to?: string,
+    ) => (
+      <TestProviders route="/rivals">
+        <RivalTransitionControls player={player} to={to} />
+        <Routes>
+          <Route path="/rivals/:rivalId?" element={<RivalDetailPage />} />
+        </Routes>
+      </TestProviders>
+    );
+
+    const view = render(renderTree(null));
+    expect(screen.getByText('No song data for this rival.')).toBeTruthy();
+
+    await act(async () => {
+      view.rerender(renderTree(
+        { accountId: 'test-1', displayName: 'TestPlayer' },
+        '/rivals/rival-1?name=TestRival',
+      ));
+      await Promise.resolve();
+    });
+
+    expect(mockApi.getRivalDetail).toHaveBeenCalled();
+  });
+
   it('renders the page', async () => {
     const { container } = renderPage('/rivals/rival-1?name=TestRival', <RivalDetailPage />, '/rivals/:rivalId');
     await advancePastSpinner();
@@ -779,6 +856,36 @@ describe('RivalDetailPage', () => {
 /* ── RivalryPage ── */
 
 describe('RivalryPage', () => {
+  it('keeps hook order stable when a missing rival route becomes valid', async () => {
+    localStorage.removeItem('fst:selectedProfile');
+    localStorage.removeItem('fst:trackedPlayer');
+
+    const renderTree = (
+      player: { accountId: string; displayName: string } | null,
+      to?: string,
+    ) => (
+      <TestProviders route="/rivals/rivalry">
+        <RivalTransitionControls player={player} to={to} />
+        <Routes>
+          <Route path="/rivals/:rivalId?/rivalry" element={<RivalryPage />} />
+        </Routes>
+      </TestProviders>
+    );
+
+    const view = render(renderTree(null));
+    expect(screen.getByText('No song data for this rival.')).toBeTruthy();
+
+    await act(async () => {
+      view.rerender(renderTree(
+        { accountId: 'test-1', displayName: 'TestPlayer' },
+        '/rivals/rival-1/rivalry?mode=closest_battles',
+      ));
+      await Promise.resolve();
+    });
+
+    expect(mockApi.getRivalDetail).toHaveBeenCalled();
+  });
+
   it('renders the page', async () => {
     const { container } = renderPage('/rivals/rival-1/rivalry?mode=closest_battles', <RivalryPage />, '/rivals/:rivalId/rivalry');
     await advancePastSpinner();

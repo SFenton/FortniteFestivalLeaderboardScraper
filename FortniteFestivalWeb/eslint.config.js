@@ -24,10 +24,7 @@ export default tseslint.config(
     },
     rules: {
       // ── React hooks ──
-      // Note: rules-of-hooks is warn (not error) because several pre-existing
-      // components call hooks conditionally after early returns. These should
-      // be refactored but are not blockers.
-      'react-hooks/rules-of-hooks': 'warn',
+      'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
 
       // ── React refresh (HMR) ──
