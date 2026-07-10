@@ -57,11 +57,34 @@ class. Use the stricter class when ownership is unclear.
 | `full-scrape-ab` | Prepare code, fixtures, rollback, baseline tooling, and isolated canaries | Use the full scrape-boundary candidate loop below and do not decide before one complete candidate scrape/post-process/publish window |
 | `parity-gated-maintenance` | All safe readiness, manifests, rollback DDL, archive/restore drills, and fixture/live-shadow parity work | Execute destructive/irreversible maintenance only after the full live-scrape parity gate passes |
 
-Web-only work is normally `continuous-safe`. Worker changes, schema changes,
+Web-only and service-only work are normally `continuous-safe`. They may be
+implemented, tested, deployed, restarted, and A/B evaluated without waiting for
+`fstworker` when they do not depend on a completed scrape or alter worker,
+database, publication, or active A/B behavior. Worker changes, schema changes,
 publication/read-source changes, scrape persistence changes, proxy/rate/retry
 changes, ranking/post-process changes, and DB write-path changes default to
 `full-scrape-ab`. A task may be split so implementation/tests continue during a
 scrape while only the production mutation waits for the boundary.
+
+## Independent work while scrape evidence accrues
+
+- Waiting for a scrape boundary is not permission to idle. Keep the active
+  scrape monitor running and execute every ready `continuous-safe` task whose
+  inputs and acceptance gates do not depend on the pending scrape decision.
+- Independent service/web implementation, tests, browser/API A/Bs, and
+  container-only deploys may proceed while `fstworker` scrapes. Stop/recreate
+  only the affected service/web container for deployment, keep downtime short,
+  and verify the full public path immediately.
+- A service/web task waits for the scrape only when it explicitly needs
+  post-publish data, a publication/freeze transition, worker-emitted events,
+  worker/service cache convergence, a shared schema/API contract, or a matched
+  DB/worker resource baseline.
+- Do not overlap an unrelated production deployment with an active candidate
+  A/B if it would contaminate that candidate's declared correctness,
+  performance, resource, or public-health metrics. Continue its code/tests and
+  schedule only the production deploy after the candidate decision.
+- Preserve dependency order within each lane, but a time-accrual task in one
+  container lane does not block independent ready work in another lane.
 
 ## Scrape-boundary candidate loop
 
@@ -69,8 +92,9 @@ Use this loop for every `scrape-boundary-deploy` or `full-scrape-ab` candidate:
 
 1. **Accrue the current baseline.** Keep the current healthy scrape running.
    Continue safe code/tests/docs and prepare the candidate, rollback, monitor,
-   and comparison artifacts, but do not mutate the worker-affecting production
-   path.
+   and comparison artifacts. Execute independent service/web tasks when their
+   acceptance evidence is not coupled to this scrape, but do not mutate the
+   worker-affecting production path or contaminate the candidate baseline.
 2. **Wait for a terminal boundary.** Monitor through network scrape,
    post-process, publication, and public-read unfreeze or an explicit failed
    decision. A failed/incomplete scrape is incident evidence, not a valid

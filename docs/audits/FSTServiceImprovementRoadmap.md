@@ -47,14 +47,17 @@ deployed and populated.
 | Phase/task family | Execution class | Decision window |
 |---|---|---|
 | SERVICE-0.1/0.2 published-source and status semantics | `full-scrape-ab` | Wait for current publish/unfreeze, stop worker, deploy PG/worker/service contract, run one complete scrape, stop, compare cold-miss/export/status parity |
-| SERVICE-0.3 through 0.5 security boundaries | `scrape-boundary-deploy` | Prepare/tests anytime; recreate/deploy service at a clean scrape boundary and verify the full public path |
+| SERVICE-0.3 through 0.5 security boundaries | `continuous-safe` by default | Implement/test immediately; recreate only `fstservice` and verify the full public path without waiting for worker unless shared proxy/control behavior creates an explicit dependency |
 | SERVICE-1 role isolation/events/catalog ownership | `full-scrape-ab` | One complete two-process scrape/event/cache/publication window before accept/reject |
-| SERVICE-2 query batching/async and SERVICE-3 caches | `scrape-boundary-deploy` by default | Deploy one candidate at a clean boundary; require a full scrape only when publication or worker DB load can change |
+| SERVICE-2 query batching/async and SERVICE-3 caches | `continuous-safe` by default | Deploy/recreate only `fstservice` and run API A/B immediately; require a scrape boundary only when publication, shared DB load, or worker/cache behavior can change |
 | SERVICE-4 migrations/startup | `full-scrape-ab` | Worker held for migration/deploy, then one complete scrape and restart/recovery proof |
 | SERVICE-5 observability/rate reporting and code-only SERVICE-6 cleanup | `continuous-safe` unless runtime behavior changes | No worker hold for additive metrics/docs/tests; runtime removal follows the stricter owning task |
 
 Every boundary/full-scrape task follows the autonomous skill's
 wait-stop-deploy-run-stop-iterate/accept/reject loop.
+Independent service tasks continue while scrape evidence accrues. A service
+container is stopped only for the shortest practical deploy/recreate window,
+not for the full implementation period.
 
 ## Current evidence
 

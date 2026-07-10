@@ -98,7 +98,10 @@ recorded with the outbox artifact paths.
 | Web changes that alter publication/freeze interpretation | `full-scrape-ab` with SERVICE-0 and PG-1 | Run the coordinated published-source live scrape parity window |
 
 The autonomous executor owns the exact wait-stop-deploy-run-stop-decide cycle.
-Web-only tasks do not consume a full scrape unnecessarily.
+Web-only tasks do not consume a full scrape unnecessarily. They may be
+implemented, deployed by recreating only `festivalweb`, and browser A/B tested
+while `fstworker` continues unless the task explicitly depends on post-publish
+data or would contaminate an active worker/database A/B.
 
 ## Phase WEB-0: Restore trustworthy gates
 
