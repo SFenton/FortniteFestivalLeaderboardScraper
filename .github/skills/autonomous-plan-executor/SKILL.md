@@ -11,6 +11,30 @@ This skill is an execution orchestrator. It does not replace focused repository 
 
 Once invoked, run with day-trader-style persistence: continue through every approved phase/task/priority in order, insert safe derivative work as it is discovered, commit and push accepted progress, and do not stop at reports, completed probes, rejected hypotheses, commits, maintenance restarts, deployments, or parity-gated destructive actions. FST live-safety gates block only the exact unsafe/destructive action until the live-scrape A/B data-parity gate is met; they do not end the autonomous queue while safe code, docs, tests, probes, manifests, parity checks, feasibility packages, maintenance, deploy, scrape, or readiness work remains.
 
+## Required model and reasoning contract
+
+Autonomous plan ownership and implementation under this skill must use:
+
+- model: `gpt-5.6-sol`;
+- reasoning effort: `max`;
+- context tier: `long_context`.
+
+Before parsing or executing the plan, record the active model ID, reasoning
+effort, and context tier in the working plan and first progress report. If the
+runtime cannot confirm or provide all three requirements, fail closed on
+autonomous implementation: do not silently continue with a different model,
+lower effort, or shorter context. Safe read-only inspection may identify the
+exact runtime blocker, but code, deployment, scrape A/B, database mutation, and
+maintenance execution remain blocked until the required runtime is active.
+
+Every delegated agent that owns analysis, design, implementation, review, or a
+promotion/rejection decision must be launched explicitly with
+`model: "gpt-5.6-sol"`, `reasoning_effort: "max"`, and
+`context_tier: "long_context"`. A mechanical command runner may execute a
+fully specified command without owning a decision, but its output must be
+interpreted by the required plan-owning model. Never downgrade automatically
+because another model is faster or cheaper.
+
 ## Input contract
 
 Accept any combination of:
