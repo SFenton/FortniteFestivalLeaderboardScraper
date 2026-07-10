@@ -6,6 +6,32 @@
 **Implementation status:** No service, database, configuration, or deployment
 changes were made during this audit.
 
+## Autonomous execution update — 2026-07-10
+
+### SERVICE-0.3 token-backed diagnostics
+
+**Decision:** Accepted and deployed.
+
+- Removed `/api/diag/events` and `/api/diag/leaderboard`; neither anonymous nor
+  authenticated callers can trigger an Epic request through the service token.
+- Protected `/api/diag/inflight` with API-key authorization and the protected
+  rate policy.
+- Added an explicit `/api/{**path}` 404 fallback so retired/misspelled API
+  routes cannot be masked by the embedded SPA shell with HTTP 200.
+- Targeted endpoint-metadata coverage passes, and the production service/web
+  paths return 404 for both removed routes and 401 for anonymous inflight
+  diagnostics.
+- `fstservice`, `festivalweb`, `fstworker`, and `fst-postgres` remained healthy
+  through the service-only deployment while scrape 1229 continued.
+- A paced 100-request `/api/service-info` sample completed entirely with HTTP
+  200 at 1.596 ms p50, 1.861 ms p95, and 1.942 ms p99. An intentionally rejected
+  unpaced 200-request probe hit the existing 100-request/second policy; the
+  policy was not widened.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/service-0.3/`
+
 ## Executive decision
 
 The service has good low-level PostgreSQL primitives and excellent cached local

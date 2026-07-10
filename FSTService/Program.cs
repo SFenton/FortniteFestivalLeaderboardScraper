@@ -683,7 +683,11 @@ if (hasEmbeddedWebApp)
 {
     app.MapStaticAssets();
 
-    // Fallback: serve index.html for any non-API GET request (SPA support)
+    // Keep retired or misspelled API routes as real 404s instead of returning
+    // the embedded SPA shell with a misleading 200 response.
+    app.MapFallback("/api/{**path}", () => Results.NotFound());
+
+    // Fallback: serve index.html for non-API routes (SPA support).
     app.MapFallbackToFile("index.html");
 }
 

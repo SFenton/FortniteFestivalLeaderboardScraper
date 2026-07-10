@@ -1187,46 +1187,38 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     // ─── Diagnostic endpoints ───────────────────────────────────
 
     [Fact]
-    public async Task DiagEvents_ReturnsResponse()
+    public async Task DiagEvents_IsNotMapped()
     {
-        // TokenManager returns a valid token → the endpoint makes an HTTP request
-        // The HttpMessageHandler_NoOp returns 200 for all requests
         var response = await _client.GetAsync("/api/diag/events");
-        // Should get the proxied response from the mock handler
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task DiagLeaderboard_V1_ReturnsResponse()
+    public async Task DiagLeaderboard_V1_IsNotMapped()
     {
         var response = await _client.GetAsync("/api/diag/leaderboard?eventId=test&windowId=alltime");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("_url", body);
-        Assert.Contains("_status", body);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task DiagLeaderboard_V2_ReturnsResponse()
+    public async Task DiagLeaderboard_V2_IsNotMapped()
     {
         var response = await _client.GetAsync("/api/diag/leaderboard?eventId=test&windowId=alltime&version=2");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("_url", body);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task DiagLeaderboard_V2_WithParams_ReturnsResponse()
+    public async Task DiagLeaderboard_V2_WithParams_IsNotMapped()
     {
         var response = await _client.GetAsync("/api/diag/leaderboard?eventId=test&windowId=alltime&version=2&findTeams=true&teamAccountIds=abc123");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task DiagLeaderboard_V1_WithParams_ReturnsResponse()
+    public async Task DiagLeaderboard_V1_WithParams_IsNotMapped()
     {
         var response = await _client.GetAsync("/api/diag/leaderboard?eventId=test&windowId=alltime&page=0&rank=1&teamAccountIds=abc123");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
 
@@ -1689,44 +1681,21 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    // ─── Diagnostic endpoints: no access token → Problem ───
+    // ─── Token-backed diagnostic endpoints are intentionally absent ───
 
     [Fact]
-    public async Task DiagEvents_NoAccessToken_ReturnsProblem()
+    public async Task DiagEvents_NoAccessToken_IsNotMapped()
     {
-        // Temporarily mock TokenManager to return null
-        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
-        tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-            .Returns((string?)null);
-        try
-        {
-            var response = await _client.GetAsync("/api/diag/events");
-            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
-        }
-        finally
-        {
-            tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-                .Returns("mock_access_token_for_testing");
-        }
+        var response = await _client.GetAsync("/api/diag/events");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task DiagLeaderboard_NoAccessToken_ReturnsProblem()
+    public async Task DiagLeaderboard_NoAccessToken_IsNotMapped()
     {
-        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
-        tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-            .Returns((string?)null);
-        try
-        {
-            var response = await _client.GetAsync(
-                "/api/diag/leaderboard?eventId=test&windowId=test");
-            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
-        }
-        finally
-        {
-            tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-                .Returns("mock_access_token_for_testing");
-        }
+        var response = await _client.GetAsync(
+            "/api/diag/leaderboard?eventId=test&windowId=test");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
@@ -4752,25 +4721,24 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     // ═══════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Diag_Events_Returns_WhenPublic()
+    public async Task Diag_Events_IsNotMapped()
     {
-        // Diag endpoints are public — should return OK or some status (not 401)
         var response = await _client.GetAsync("/api/diag/events?eventId=test");
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task Diag_Leaderboard_Returns_WhenPublic()
+    public async Task Diag_Leaderboard_IsNotMapped()
     {
         var response = await _client.GetAsync("/api/diag/leaderboard?song=testSong1&instrument=Solo_Guitar");
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
-    public async Task Diag_Leaderboard_V2_Returns()
+    public async Task Diag_Leaderboard_V2_IsNotMapped()
     {
         var response = await _client.GetAsync("/api/diag/leaderboard?song=testSong1&instrument=Solo_Guitar&version=v2");
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     // ═══════════════════════════════════════════════════════════════
