@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { sendAgentReportEmail } from "./agentReportEmail.mjs";
-import { testEmailSubjectPrefix } from "./email.mjs";
+import { loadEmailEnvironmentFallback, testEmailSubjectPrefix } from "./email.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 
 try {
+  const fallbackEnvFile =
+    args.values["fallback-env-file"] ?? process.env.FST_AUTONOMOUS_EMAIL_FALLBACK_ENV_FILE;
+  if (fallbackEnvFile) {
+    await loadEmailEnvironmentFallback(fallbackEnvFile);
+  }
+
   const subject = requiredValue(args.values.subject, "Missing --subject <subject>");
   const markdown = args.values["input-md"] ? await readFile(args.values["input-md"], "utf8") : args.values["body-md"];
   const html = args.values["input-html"] ? await readFile(args.values["input-html"], "utf8") : args.values["body-html"];
@@ -31,7 +37,9 @@ try {
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
-  console.error("Usage: node tools/agent-report-email.mjs --subject <subject> --input-md <report.md> [--send] [--test] [--outbox-dir <dir>]");
+  console.error(
+    "Usage: node tools/agent-report-email.mjs --subject <subject> --input-md <report.md> [--send] [--test] [--outbox-dir <dir>] [--fallback-env-file <path>]"
+  );
   process.exitCode = 64;
 }
 

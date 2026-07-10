@@ -53,7 +53,7 @@ Autonomous phase and recap e-mails are rendered with:
 node tools/agent-report-email.mjs --subject "FST Autonomous Agent: Recap - <Workflow> · <Status>" --input-md <report.md>
 ```
 
-By default this creates dry-run HTML/JSON output under `.outbox/fst-autonomous-agent/`. Real sends require explicit `--send` plus `FST_AUTONOMOUS_EMAIL_ENABLED=true`, `FST_AUTONOMOUS_EMAIL_DRY_RUN=false`, `FST_AUTONOMOUS_EMAIL_TO`, and SMTP settings (`FST_AUTONOMOUS_EMAIL_SMTP_HOST`, `FST_AUTONOMOUS_EMAIL_SMTP_PORT`, `FST_AUTONOMOUS_EMAIL_SMTP_USER`, `FST_AUTONOMOUS_EMAIL_SMTP_PASSWORD`).
+By default this creates dry-run HTML/JSON output under `.outbox/fst-autonomous-agent/`. Real sends require explicit `--send` plus `FST_AUTONOMOUS_EMAIL_ENABLED=true`, `FST_AUTONOMOUS_EMAIL_DRY_RUN=false`, `FST_AUTONOMOUS_EMAIL_TO`, and SMTP settings (`FST_AUTONOMOUS_EMAIL_SMTP_HOST`, `FST_AUTONOMOUS_EMAIL_SMTP_PORT`, `FST_AUTONOMOUS_EMAIL_SMTP_USER`, `FST_AUTONOMOUS_EMAIL_SMTP_PASSWORD`). When an operator identifies a trusted dotenv file that already contains equivalent `DAY_TRADER_EMAIL_*` settings, pass `--fallback-env-file <path>` to map only the allowlisted e-mail settings in process without executing or copying the dotenv file; explicit FST variables retain precedence.
 
 # How to run the app
 

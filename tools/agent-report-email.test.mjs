@@ -1,9 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderAgentReportEmailMessage, sendAgentReportEmail } from "./agentReportEmail.mjs";
+import { applyEmailEnvironmentFallback } from "./email.mjs";
 
 describe("agent report email", () => {
   it("renders markdown phase reports as readable human-friendly HTML", () => {
@@ -37,7 +37,13 @@ describe("agent report email", () => {
   });
 
   it("writes dry-run phase reports through the shared email sender", async () => {
-    const outbox = await mkdtemp(path.join(tmpdir(), "fst-agent-report-email-"));
+    const outbox = path.join(
+      process.cwd(),
+      ".outbox",
+      "agent-report-email-tests",
+      `${process.pid}-${Date.now()}`
+    );
+    await mkdir(outbox, { recursive: true });
     try {
       const result = await sendAgentReportEmail(
         {
@@ -55,5 +61,28 @@ describe("agent report email", () => {
     } finally {
       await rm(outbox, { recursive: true, force: true });
     }
+  });
+
+  it("maps only missing FST email settings from the day-trader fallback", () => {
+    const environment = {
+      FST_AUTONOMOUS_EMAIL_TO: "fst-operator@example.test"
+    };
+
+    applyEmailEnvironmentFallback(
+      [
+        "DAY_TRADER_EMAIL_TO=day-trader@example.test",
+        "DAY_TRADER_EMAIL_SMTP_HOST=smtp.example.test",
+        "DAY_TRADER_EMAIL_SMTP_PORT=465",
+        "DAY_TRADER_EMAIL_SMTP_PASSWORD='test-only-password'",
+        "DAY_TRADER_EMAIL_ACCOUNT_IDS=ignored"
+      ].join("\n"),
+      environment
+    );
+
+    assert.equal(environment.FST_AUTONOMOUS_EMAIL_TO, "fst-operator@example.test");
+    assert.equal(environment.FST_AUTONOMOUS_EMAIL_SMTP_HOST, "smtp.example.test");
+    assert.equal(environment.FST_AUTONOMOUS_EMAIL_SMTP_PORT, "465");
+    assert.equal(environment.FST_AUTONOMOUS_EMAIL_SMTP_PASSWORD, "test-only-password");
+    assert.equal(environment.FST_AUTONOMOUS_EMAIL_ACCOUNT_IDS, undefined);
   });
 });

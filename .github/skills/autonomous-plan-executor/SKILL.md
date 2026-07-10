@@ -252,6 +252,14 @@ follow the stricter gate.
 5. If SMTP is unavailable, render the phase e-mail to `.outbox/fst-autonomous-agent/` and continue. Missing e-mail infrastructure is a reporting degradation, not a workflow blocker.
 6. At workflow completion or a hard approved-scope blocker, send/render a cumulative recap and follow `.github/instructions/autonomous-recap-email.instructions.md`.
 
+### Secure SMTP fallback
+
+- FST-native `FST_AUTONOMOUS_EMAIL_*` variables always take precedence.
+- When those variables are unavailable and the operator identifies an existing trusted dotenv file with `DAY_TRADER_EMAIL_*` SMTP settings, pass it only to the report process with `--fallback-env-file <path>`. The renderer maps the explicit enabled, dry-run, sender, recipient, SMTP host/port/secure/user/password allowlist in memory; it does not execute the dotenv file, print values, write mapped values to artifacts, or persist them in the repository.
+- Use `--send` for mandatory real delivery. Example:
+  `node tools/agent-report-email.mjs --subject "<subject>" --input-md <report.md> --send --fallback-env-file /home/sfenton/repos/day-trader-agent/.env`
+- Never copy the fallback dotenv file, include its values in a command, source it into a broad shell environment, attach it to a report, or commit it. If real delivery still fails, record only the non-secret error and render the same report to `.outbox/fst-autonomous-agent/`.
+
 ## Tooling and non-interactive constraints
 
 1. Prefer project scripts and user-space installs. Add dependencies only when necessary for the task and update license manifests when dependency manifests change.

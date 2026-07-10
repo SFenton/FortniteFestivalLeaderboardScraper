@@ -1,14 +1,62 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import net from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import tls from "node:tls";
 
 const defaultSender = "fst-autonomous-agent@example.invalid";
 const defaultRecipient = "operator@example.invalid";
+const fallbackEmailEnvironmentMap = new Map([
+  ["DAY_TRADER_EMAIL_ENABLED", "FST_AUTONOMOUS_EMAIL_ENABLED"],
+  ["DAY_TRADER_EMAIL_DRY_RUN", "FST_AUTONOMOUS_EMAIL_DRY_RUN"],
+  ["DAY_TRADER_EMAIL_FROM", "FST_AUTONOMOUS_EMAIL_FROM"],
+  ["DAY_TRADER_EMAIL_TO", "FST_AUTONOMOUS_EMAIL_TO"],
+  ["DAY_TRADER_EMAIL_SMTP_HOST", "FST_AUTONOMOUS_EMAIL_SMTP_HOST"],
+  ["DAY_TRADER_EMAIL_SMTP_PORT", "FST_AUTONOMOUS_EMAIL_SMTP_PORT"],
+  ["DAY_TRADER_EMAIL_SMTP_SECURE", "FST_AUTONOMOUS_EMAIL_SMTP_SECURE"],
+  ["DAY_TRADER_EMAIL_SMTP_USER", "FST_AUTONOMOUS_EMAIL_SMTP_USER"],
+  ["DAY_TRADER_EMAIL_SMTP_PASSWORD", "FST_AUTONOMOUS_EMAIL_SMTP_PASSWORD"]
+]);
 
 export function testEmailSubjectPrefix(asOf = new Date()) {
   return `[TEST] ${asOf.toISOString()}`;
+}
+
+export async function loadEmailEnvironmentFallback(filePath, environment = process.env) {
+  const contents = await readFile(filePath, "utf8");
+  applyEmailEnvironmentFallback(contents, environment);
+}
+
+export function applyEmailEnvironmentFallback(contents, environment = process.env) {
+  for (const line of contents.replace(/\r\n/g, "\n").split("\n")) {
+    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line.trim());
+    if (!match) {
+      continue;
+    }
+
+    const targetName = fallbackEmailEnvironmentMap.get(match[1]);
+    if (!targetName || environment[targetName]) {
+      continue;
+    }
+
+    environment[targetName] = parseDotEnvValue(match[2]);
+  }
+}
+
+function parseDotEnvValue(rawValue) {
+  const value = rawValue.trim();
+  if (value.length >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+    return value
+      .slice(1, -1)
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, "\"")
+      .replace(/\\\\/g, "\\");
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1);
+  }
+  return value.replace(/\s+#.*$/, "").trim();
 }
 
 export async function sendEmailMessage(message, options = {}) {
