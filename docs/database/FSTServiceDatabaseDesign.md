@@ -294,7 +294,34 @@ PG-0 uses this non-destructive interim path:
    fingerprints/checksums, and representative API fixtures.
 6. Drop the isolated target after evidence is persisted.
 
-PG-0.4 adds the repository commands and measured bytes/time for this drill.
+Run the implemented drill with:
+
+```bash
+tools/postgres-bounded-restore-drill.sh \
+  --scrape-id <published-id> \
+  --out-dir /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/<session>/bounded-restore-<id>
+```
+
+The command retains the isolated target PGDATA as evidence and removes the
+container. Delete that exact retained target only after its manifest/report is
+accepted and another restore is not using it.
+
+The 2026-07-10 scrape-1228 drill restored 32 datasets with exact CSV parity and
+matched selected fields from both solo and band public API fixtures. The
+backup was 21,620,913 bytes, the restored database was 65,812,147 bytes, and
+restore time was 9.970 seconds after 76.918 seconds of bounded export work.
+The retained isolated PGDATA was 173,083,028 bytes.
+
+The same live measurements proved a full duplicate restore cannot fit:
+
+- streaming restore additional requirement: 3,934,382,812,204 bytes;
+- current free bytes: 314,856,988,672;
+- streaming shortfall: 3,619,525,823,532 bytes;
+- durable full backup plus duplicate restore requirement:
+  7,502,187,283,167 additional bytes.
+
+Full restore remains blocked until source size and same-drive headroom satisfy
+the measured formula. The bounded drill is accepted evidence, not a waiver.
 
 ### Restore behavior by class
 

@@ -6,6 +6,30 @@
 **Implementation status:** All production probes were read-only. No schema,
 data, index, configuration, vacuum, retention, or container changes were made.
 
+## Autonomous execution update — 2026-07-10
+
+PG-0 is implemented and accepted without production data/schema mutation:
+
+| Task | Decision | Evidence |
+|---|---|---|
+| PG-0.1 capacity guardrails | Accepted | `tools/postgres-capacity-guard.sh`; commit `8fb707e6`; live 10.47-day projected headroom and verified optional/rewrite refusal paths |
+| PG-0.2 authoritative design | Accepted | `docs/database/FSTServiceDatabaseDesign.md`; commit `71c95396`; 269 tables/partitions, 735 indexes, and 273 constraints inventoried |
+| PG-0.3 scrape evidence pack | Accepted | `tools/postgres-scrape-evidence.sh`; commit `774d58f5`; checksummed same-drive capture/comparison with route, fingerprint, WAL/temp/checkpoint, phase, and growth evidence |
+| PG-0.4 bounded restore drill | Accepted | 32 exact dataset restores plus solo/band API fixture parity; 21,620,913-byte backup; 65,812,147-byte target DB; 9.970-second restore |
+
+The accepted restore artifact is:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/bounded-restore-1228/`
+
+Two repair iterations were retained as rejected tooling attempts. The first
+used incorrect singleton projection-state order keys. The second completed all
+data/API parity but failed final PGDATA-size reporting because of shell
+positional-parameter expansion. The third run passed end to end.
+
+Full duplicate restore remains blocked by measured same-drive capacity:
+3,934,382,812,204 additional bytes are required for the streaming target/WAL/
+safety model versus 314,856,988,672 free at the drill start.
+
 ## Executive decision
 
 PostgreSQL remains the correct durable source of truth. The urgent issue is
