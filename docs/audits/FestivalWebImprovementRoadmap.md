@@ -113,6 +113,32 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.4/`
 
+### WEB-0.5 baseline accessibility safety
+
+**Decision:** Accepted and deployed.
+
+- Removed viewport zoom suppression.
+- Shared `ModalShell` now moves initial focus into the dialog, traps Tab and
+  Shift+Tab, handles Escape only on the top modal, restores launcher focus,
+  inerts/aria-hides the background, inerts underlying nested dialogs, and locks
+  body scrolling with reference-counted cleanup.
+- Added a deterministic modal accessibility fixture plus keyboard-only
+  Playwright coverage and an axe-core serious/critical gate.
+- The deployed fixture passed the same Playwright/axe test on festivalweb:
+  initial focus was Close, Shift+Tab wrapped to the last action, Escape closed
+  the dialog, launcher focus returned, root inert/aria-hidden and body overflow
+  were restored, and serious/critical violations were zero.
+- Modal unit coverage passes 26 tests; related modal/search/filter regressions,
+  TypeScript, lint, stylelint, production build, bundle budget, and generated
+  license manifest checks pass.
+- Added `axe-core` 4.12.1 (MPL-2.0) for test-only accessibility analysis and
+  updated the license generator to embed package-provided license text for
+  valid SPDX types that are not built into its shared text catalog.
+
+Evidence:
+
+`/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.5/`
+
 Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/web-0.2/`

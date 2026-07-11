@@ -43,6 +43,7 @@
     "@types/react-test-renderer": "MIT",
     "@vitejs/plugin-react": "MIT",
     "@vitest/coverage-v8": "MIT",
+    "axe-core": "MPL-2.0",
     "eslint": "MIT",
     "eslint-plugin-react": "MIT",
     "eslint-plugin-react-hooks": "MIT",

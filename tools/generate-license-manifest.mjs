@@ -401,9 +401,18 @@ function parseExactVersionSpec(versionSpec) {
 
 function readNpmPackageMetadata(repoRoot, workspaceRoot, packageName) {
   const packagePathParts = packageName.split('/');
-  const packageJsonPath = path.join(repoRoot, workspaceRoot, 'node_modules', ...packagePathParts, 'package.json');
+  const packageRoot = path.join(repoRoot, workspaceRoot, 'node_modules', ...packagePathParts);
+  const packageJsonPath = path.join(packageRoot, 'package.json');
   if (!fs.existsSync(packageJsonPath)) return null;
-  return readJson(packageJsonPath);
+  const metadata = readJson(packageJsonPath);
+  const licenseFile = fs.readdirSync(packageRoot, { withFileTypes: true })
+    .find((entry) => entry.isFile() && /^licen[cs]e(?:[.-].*)?$/i.test(entry.name));
+  return {
+    ...metadata,
+    licenseText: licenseFile
+      ? fs.readFileSync(path.join(packageRoot, licenseFile.name), 'utf8').trim()
+      : null,
+  };
 }
 
 function readNugetPackageMetadata(packageName, version) {
@@ -483,9 +492,13 @@ export function buildLicenseManifest(options = {}) {
     }
 
     const packageMetadata = readNpmPackageMetadata(repoRoot, reference.workspaceRoot, reference.name);
-    const licenseType = normalizeLicenseType(overrides.npm?.[reference.name])
-      ?? normalizeLicenseType(packageMetadata?.license);
-    const licenseText = licenseType ? LICENSE_TEXTS[licenseType] : null;
+    const declaredLicenseType = overrides.npm?.[reference.name] ?? packageMetadata?.license;
+    const normalizedLicenseType = normalizeLicenseType(declaredLicenseType);
+    const licenseType = normalizedLicenseType
+      ?? (declaredLicenseType && packageMetadata?.licenseText ? String(declaredLicenseType).trim() : null);
+    const licenseText = normalizedLicenseType
+      ? LICENSE_TEXTS[normalizedLicenseType]
+      : packageMetadata?.licenseText;
     if (!licenseType || !licenseText) {
       errors.push(`Missing supported license metadata for npm package ${reference.name}@${reference.version}. Add it to ${OVERRIDES_PATH}.`);
       continue;

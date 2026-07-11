@@ -53,6 +53,20 @@ function ModalRetargetHarness({ onUnderlyingPress }: { onUnderlyingPress: () => 
   );
 }
 
+function ModalAccessibilityHarness() {
+  const [visible, setVisible] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setVisible(true)}>Launch modal</button>
+      <button type="button">Outside action</button>
+      <ModalShell visible={visible} title="Accessible modal" onClose={() => setVisible(false)}>
+        <button type="button">First action</button>
+        <button type="button">Last action</button>
+      </ModalShell>
+    </>
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsMobile.mockReturnValue(false);
@@ -122,6 +136,53 @@ describe('ModalShell', () => {
     );
     const closeBtn = screen.getByRole('button', { name: /close/i });
     expect(closeBtn).toBeTruthy();
+  });
+
+  it('moves initial focus into the dialog', () => {
+    render(
+      <ModalShell visible title="Focus Test" onClose={vi.fn()}>
+        <button type="button">Content action</button>
+      </ModalShell>,
+    );
+
+    expect(screen.getByRole('button', { name: /close/i })).toHaveFocus();
+  });
+
+  it('traps forward and backward keyboard focus inside the dialog', () => {
+    render(<ModalAccessibilityHarness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Launch modal' }));
+
+    const closeButton = screen.getByRole('button', { name: /close/i });
+    const lastAction = screen.getByRole('button', { name: 'Last action' });
+    lastAction.focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(closeButton).toHaveFocus();
+
+    closeButton.focus();
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(lastAction).toHaveFocus();
+
+    screen.getByRole('button', { name: 'Outside action', hidden: true }).focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(closeButton).toHaveFocus();
+  });
+
+  it('inerts the background, locks scrolling, and restores launcher focus', () => {
+    const { container } = render(<ModalAccessibilityHarness />);
+    const launcher = screen.getByRole('button', { name: 'Launch modal' });
+    launcher.focus();
+    fireEvent.click(launcher);
+
+    expect(container.inert).toBe(true);
+    expect(container.getAttribute('aria-hidden')).toBe('true');
+    expect(document.body.style.overflow).toBe('hidden');
+
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+
+    expect(container.inert).toBe(false);
+    expect(container.getAttribute('aria-hidden')).toBeNull();
+    expect(document.body.style.overflow).toBe('');
+    expect(launcher).toHaveFocus();
   });
 
   /* ── Escape key ── */

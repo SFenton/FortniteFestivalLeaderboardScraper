@@ -12,6 +12,72 @@ import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../ho
 import { modalStyles as css } from '../modalStyles';
 
 const DEFAULT_TRANSITION_MS = 300;
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+type ActiveModal = {
+  token: symbol;
+  panel: HTMLElement;
+};
+
+const activeModals: ActiveModal[] = [];
+let backgroundLockCount = 0;
+let backgroundSnapshots: Array<{ element: HTMLElement; inert: boolean; ariaHidden: string | null }> = [];
+let previousBodyOverflow = '';
+
+function getFocusableElements(panel: HTMLElement): HTMLElement[] {
+  return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+    .filter((element) => !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+}
+
+function syncModalInertState() {
+  activeModals.forEach(({ panel }, index) => {
+    const isTopModal = index === activeModals.length - 1;
+    panel.inert = !isTopModal;
+    if (isTopModal) panel.removeAttribute('aria-hidden');
+    else panel.setAttribute('aria-hidden', 'true');
+  });
+}
+
+function acquireBackgroundLock() {
+  backgroundLockCount += 1;
+  if (backgroundLockCount !== 1) return;
+
+  backgroundSnapshots = Array.from(document.body.children)
+    .filter((element): element is HTMLElement =>
+      element instanceof HTMLElement && !element.hasAttribute('data-modal-root'))
+    .map((element) => ({
+      element,
+      inert: Boolean(element.inert),
+      ariaHidden: element.getAttribute('aria-hidden'),
+    }));
+  for (const snapshot of backgroundSnapshots) {
+    snapshot.element.inert = true;
+    snapshot.element.setAttribute('aria-hidden', 'true');
+  }
+
+  previousBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+}
+
+function releaseBackgroundLock() {
+  backgroundLockCount = Math.max(0, backgroundLockCount - 1);
+  if (backgroundLockCount !== 0) return;
+
+  for (const snapshot of backgroundSnapshots) {
+    snapshot.element.inert = snapshot.inert;
+    if (snapshot.ariaHidden === null) snapshot.element.removeAttribute('aria-hidden');
+    else snapshot.element.setAttribute('aria-hidden', snapshot.ariaHidden);
+  }
+  backgroundSnapshots = [];
+  document.body.style.overflow = previousBodyOverflow;
+}
 
 export interface ModalShellProps {
   visible: boolean;
@@ -57,6 +123,10 @@ export default function ModalShell({
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const modalTokenRef = useRef(Symbol('modal'));
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const mobilePanelTopRef = useRef<number | null>(null);
   const rendered = visible || mounted;
   const overlayPressHandlers = usePressAction<HTMLDivElement>({ onPress: onClose, disabled: !visible });
@@ -102,11 +172,61 @@ export default function ModalShell({
   }, [mounted, visible, transitionMs, onCloseComplete]);
 
   useEffect(() => {
-    if (!rendered) return;
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    if (!visible) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const token = modalTokenRef.current;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    activeModals.push({ token, panel });
+    acquireBackgroundLock();
+    syncModalInertState();
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      const [firstFocusable] = getFocusableElements(panel);
+      (firstFocusable ?? panel).focus();
+    });
+    const handleKey = (event: KeyboardEvent) => {
+      if (activeModals[activeModals.length - 1]?.token !== token) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const focusable = getFocusableElements(panel);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (event.shiftKey && (activeElement === first || !panel.contains(activeElement))) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && (activeElement === last || !panel.contains(activeElement))) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
     document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [rendered, onClose]);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', handleKey);
+      const index = activeModals.findIndex((entry) => entry.token === token);
+      if (index >= 0) activeModals.splice(index, 1);
+      panel.inert = false;
+      panel.removeAttribute('aria-hidden');
+      syncModalInertState();
+      releaseBackgroundLock();
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
+  }, [visible]);
 
   if (!rendered) return null;
 
@@ -129,7 +249,7 @@ export default function ModalShell({
       : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, pointerEvents: modalPointerEvents, ...desktopStyle };
 
   return createPortal(
-    <>
+    <div data-modal-root="">
       <div
         style={{ ...css.overlay, transition: overlayTransition, opacity: animIn ? 1 : 0, pointerEvents: modalPointerEvents }}
         {...overlayPressHandlers}
@@ -140,6 +260,7 @@ export default function ModalShell({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
         className={useDesktopPanel ? desktopClassName : undefined}
         data-testid={panelTestId}
         data-modal-placement={useDesktopPanel ? desktopPlacement : 'mobileSheet'}
@@ -153,7 +274,7 @@ export default function ModalShell({
         {children}
       </div>
       {afterPanel}
-    </>,
+    </div>,
     document.body,
   );
 }
