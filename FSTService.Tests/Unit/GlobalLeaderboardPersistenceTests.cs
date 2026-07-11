@@ -105,6 +105,31 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         return (reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt32(3));
     }
 
+    private (long? PublishedScrapeId, long? ReportedTotalEntries, int? ReportedTotalPages, bool IsComplete)?
+        GetScopeCoverage(string songId, string instrument)
+    {
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT published_scrape_id, reported_total_entries, reported_total_pages, is_complete
+            FROM leaderboard_scope_fingerprints
+            WHERE song_id = @songId
+              AND instrument = @instrument
+              AND scope_kind = 'alltime'
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return (
+            reader.IsDBNull(0) ? null : reader.GetInt64(0),
+            reader.IsDBNull(1) ? null : reader.GetInt64(1),
+            reader.IsDBNull(2) ? null : reader.GetInt32(2),
+            reader.GetBoolean(3));
+    }
+
     private void InsertScrapeLog(long scrapeId, bool completed)
     {
         using var conn = _metaFixture.DataSource.OpenConnection();
@@ -630,6 +655,294 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         var changedEntry = Assert.Single(changedRows);
         Assert.Equal(101_000, changedEntry.Score);
     }
+
+    [Fact]
+    public async Task Published_scope_source_candidate_maps_changed_unchanged_and_empty_scopes()
+    {
+        using var glp = CreatePersistence(new FeatureOptions
+        {
+            SkipUnchangedPhysicalLeaderboardSnapshots = true,
+            WritePublishedScopeSources = true,
+        });
+        InsertScrapeLog(42, completed: true);
+        InsertScrapeLog(43, completed: false);
+        var expectedPairs = new[]
+        {
+            ("song_changed", "Solo_Guitar"),
+            ("song_unchanged", "Solo_Guitar"),
+            ("song_empty", "Solo_Guitar"),
+        };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_unchanged", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_old",
+                Score = 90_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(42, expectedPairs: [("song_unchanged", "Solo_Guitar")]);
+
+        glp.StartSpoolWriter(43, _dataDir);
+        glp.EnqueueSpoolPage("song_changed", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_new",
+                Score = 110_000,
+                Accuracy = 98,
+                Stars = 6,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+            new LeaderboardEntry
+            {
+                AccountId = "acct_new",
+                Score = 100_000,
+                Accuracy = 90,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 98.0,
+                Rank = 2,
+                ApiRank = 2,
+                Source = "scrape",
+            },
+        ]);
+        glp.EnqueueSpoolPage("song_unchanged", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_old",
+                Score = 90_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(43, expectedPairs: expectedPairs);
+
+        var coverage = glp.RecordLeaderboardScopeCoverage(
+            43,
+            [
+                CoverageResult("song_changed", "Solo_Guitar", entries: 2),
+                CoverageResult("song_unchanged", "Solo_Guitar", entries: 1),
+                CoverageResult("song_empty", "Solo_Guitar", entries: 0, reportedPages: 0),
+            ],
+            expectedPairs);
+        var build = glp.BuildPublishedScopeSourceCandidate(43, expectedPairs);
+        var sources = glp.GetPublishedScopeSources(43).ToDictionary(source => source.SongId);
+
+        Assert.True(coverage.IsComplete);
+        Assert.True(build.IsComplete);
+        Assert.Equal(43, sources["song_changed"].SourceSnapshotId);
+        Assert.Equal(1, sources["song_changed"].RowCount);
+        Assert.Equal(42, sources["song_unchanged"].SourceSnapshotId);
+        Assert.Equal("empty", sources["song_empty"].SourceKind);
+        Assert.Null(sources["song_empty"].SourceSnapshotId);
+        Assert.Equal(0, sources["song_empty"].RowCount);
+        Assert.Equal((null, 0, 0, true), GetScopeCoverage("song_empty", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task Published_scope_source_candidate_is_all_or_nothing_when_physical_rows_do_not_match()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WritePublishedScopeSources = true });
+        InsertScrapeLog(42, completed: false);
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+        Assert.True(glp.RecordLeaderboardScopeCoverage(
+            42,
+            [CoverageResult("song_1", "Solo_Guitar", entries: 1)],
+            expectedPairs).IsComplete);
+
+        using (var conn = _metaFixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                DELETE FROM leaderboard_entries_snapshot
+                WHERE snapshot_id = 42
+                  AND song_id = 'song_1'
+                  AND instrument = 'Solo_Guitar'
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        var build = glp.BuildPublishedScopeSourceCandidate(42, expectedPairs);
+
+        Assert.False(build.IsComplete);
+        Assert.Equal(0, build.ValidatedScopeCount);
+        Assert.Equal(0, build.MappedScopeCount);
+        Assert.Equal(1, build.MissingScopeCount);
+        Assert.Empty(glp.GetPublishedScopeSources(42));
+    }
+
+    [Fact]
+    public void Scope_coverage_marks_failed_page_zero_as_incomplete()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WritePublishedScopeSources = true });
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+
+        var coverage = glp.RecordLeaderboardScopeCoverage(
+            42,
+            [CoverageResult(
+                "song_1",
+                "Solo_Guitar",
+                entries: 0,
+                reportedPages: 0,
+                pagesScraped: 0,
+                requests: 1)],
+            expectedPairs);
+
+        Assert.False(coverage.IsComplete);
+        Assert.Equal(1, coverage.IncompleteScopeCount);
+        Assert.Equal((null, 0, 0, false), GetScopeCoverage("song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task Publishing_scope_sources_promotes_mapping_and_fingerprint_atomically()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WritePublishedScopeSources = true });
+        InsertScrapeLog(42, completed: false);
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Accuracy = 95,
+                Stars = 5,
+                Season = 3,
+                Difficulty = 3,
+                Percentile = 99.0,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+        Assert.True(glp.RecordLeaderboardScopeCoverage(
+            42,
+            [CoverageResult("song_1", "Solo_Guitar", entries: 1)],
+            expectedPairs).IsComplete);
+        var build = glp.BuildPublishedScopeSourceCandidate(42, expectedPairs);
+        Assert.True(build.IsComplete);
+
+        _metaFixture.Db.CompleteScrapeRun(42, 1, 1, 1, 100);
+        _metaFixture.Db.PublishScrapeRun(
+            42,
+            promoteCachedResponses: false,
+            expectedPublishedScopeCount: build.ExpectedScopeCount);
+
+        Assert.Equal(42, _metaFixture.Db.GetPublishedScrapeRun()?.Id);
+        Assert.Equal((42, 1, 1, true), GetScopeCoverage("song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task Startup_backfill_maps_current_published_snapshot_and_empty_scope()
+    {
+        InsertScrapeLog(42, completed: false);
+        var expectedPairs = new[]
+        {
+            ("song_1", "Solo_Guitar"),
+            ("song_empty", "Solo_Guitar"),
+        };
+        using (var seed = CreatePersistence())
+        {
+            seed.StartSpoolWriter(42, _dataDir);
+            seed.EnqueueSpoolPage("song_1", "Solo_Guitar",
+            [
+                new LeaderboardEntry
+                {
+                    AccountId = "acct_1",
+                    Score = 100_000,
+                    Accuracy = 95,
+                    Stars = 5,
+                    Season = 3,
+                    Difficulty = 3,
+                    Percentile = 99.0,
+                    Rank = 1,
+                    ApiRank = 1,
+                    Source = "scrape",
+                },
+            ]);
+            await seed.FlushSpoolAsync();
+            seed.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+        }
+        _metaFixture.Db.UpsertLeaderboardPopulation([("song_1", "Solo_Guitar", 1)]);
+        _metaFixture.Db.CompleteScrapeRun(42, 1, 1, 1, 100);
+        _metaFixture.Db.PublishScrapeRun(42, promoteCachedResponses: false);
+
+        using var rollout = CreatePersistence(new FeatureOptions { WritePublishedScopeSources = true });
+        var sources = rollout.GetPublishedScopeSources(42).ToDictionary(source => source.SongId);
+
+        Assert.Equal(2, sources.Count);
+        Assert.Equal("snapshot", sources["song_1"].SourceKind);
+        Assert.Equal(42, sources["song_1"].SourceSnapshotId);
+        Assert.Equal("empty", sources["song_empty"].SourceKind);
+        Assert.Equal((42, 0, 0, true), GetScopeCoverage("song_empty", "Solo_Guitar"));
+    }
+
+    private static GlobalLeaderboardResult CoverageResult(
+        string songId,
+        string instrument,
+        int entries,
+        int reportedPages = 1,
+        int? pagesScraped = null,
+        int requests = 1) =>
+        new()
+        {
+            SongId = songId,
+            Instrument = instrument,
+            EntriesCount = entries,
+            TotalPages = reportedPages,
+            ReportedTotalPages = reportedPages,
+            PagesScraped = pagesScraped ?? Math.Max(1, reportedPages),
+            Requests = requests,
+        };
 
     [Fact]
     public async Task RollbackIncompleteLogicalLeaderboardScrapes_removes_partial_or_orphaned_current_and_versions()

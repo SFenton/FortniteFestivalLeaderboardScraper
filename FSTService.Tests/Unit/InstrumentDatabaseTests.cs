@@ -28,6 +28,103 @@ public sealed class InstrumentDatabaseTests : IDisposable
             EndTime = "2025-01-15T12:00:00Z",
         };
 
+    private void InsertScrape(long scrapeId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO scrape_log (id, started_at, completed_at)
+            VALUES (@scrapeId, now(), now())
+            ON CONFLICT (id) DO NOTHING
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertSnapshot(long snapshotId, string songId, string accountId, int score)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_entries_snapshot (
+                snapshot_id, song_id, instrument, account_id, score, rank, source,
+                first_seen_at, last_updated_at)
+            VALUES (@snapshotId, @songId, 'Solo_Guitar', @accountId, @score, 1, 'scrape', now(), now())
+            """;
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SetActiveSnapshot(string songId, long snapshotId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_snapshot_state (
+                song_id, instrument, active_snapshot_id, scrape_id, is_finalized, updated_at)
+            VALUES (@songId, 'Solo_Guitar', @snapshotId, @snapshotId, TRUE, now())
+            ON CONFLICT (song_id, instrument) DO UPDATE SET
+                active_snapshot_id = EXCLUDED.active_snapshot_id,
+                scrape_id = EXCLUDED.scrape_id,
+                is_finalized = TRUE,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("snapshotId", snapshotId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void SetPublishedScrape(long scrapeId)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO scrape_publication_state (id, published_scrape_id, published_at, updated_at)
+            VALUES (TRUE, @scrapeId, now(), now())
+            ON CONFLICT (id) DO UPDATE SET
+                published_scrape_id = EXCLUDED.published_scrape_id,
+                published_at = EXCLUDED.published_at,
+                updated_at = EXCLUDED.updated_at
+            """;
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    private void InsertPublishedSource(
+        long publishedScrapeId,
+        string songId,
+        string sourceKind,
+        long? sourceSnapshotId,
+        long sourceScrapeId,
+        long rowCount)
+    {
+        using var conn = _fixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO leaderboard_published_scope_source (
+                published_scrape_id, song_id, instrument, scope_kind, source_kind,
+                source_snapshot_id, source_scrape_id, row_count, content_fingerprint,
+                coverage_fingerprint, reported_total_entries, reported_total_pages,
+                is_complete, created_at, validated_at)
+            VALUES (
+                @publishedScrapeId, @songId, 'Solo_Guitar', 'alltime', @sourceKind,
+                @sourceSnapshotId, @sourceScrapeId, @rowCount, md5(@songId),
+                md5(@songId || ':coverage'), @rowCount,
+                CASE WHEN @rowCount = 0 THEN 0 ELSE 1 END,
+                TRUE, now(), now())
+            """;
+        cmd.Parameters.AddWithValue("publishedScrapeId", publishedScrapeId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("sourceKind", sourceKind);
+        cmd.Parameters.AddWithValue("sourceSnapshotId", sourceSnapshotId is null ? DBNull.Value : sourceSnapshotId.Value);
+        cmd.Parameters.AddWithValue("sourceScrapeId", sourceScrapeId);
+        cmd.Parameters.AddWithValue("rowCount", rowCount);
+        cmd.ExecuteNonQuery();
+    }
+
     // ═══ UpsertEntries ══════════════════════════════════════════
 
     [Fact]
@@ -180,6 +277,96 @@ public sealed class InstrumentDatabaseTests : IDisposable
     {
         var board = Db.GetLeaderboard("nonexistent");
         Assert.Empty(board);
+    }
+
+    [Fact]
+    public void Current_state_reads_use_mixed_published_sources_and_preserve_empty_overlay_semantics()
+    {
+        foreach (var scrapeId in new long[] { 40, 41, 42 })
+            InsertScrape(scrapeId);
+
+        InsertSnapshot(40, "song_old", "acct_player", 100_000);
+        InsertSnapshot(41, "song_old", "acct_player", 200_000);
+        InsertSnapshot(41, "song_new", "acct_player", 300_000);
+        SetActiveSnapshot("song_old", 41);
+        SetActiveSnapshot("song_new", 41);
+        SetActiveSnapshot("song_empty", 42);
+        Db.UpsertEntries("song_empty", [MakeEntry("acct_legacy", 999_000)]);
+
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO leaderboard_entries_overlay (
+                    song_id, instrument, account_id, score, rank, source,
+                    first_seen_at, last_updated_at, source_priority, overlay_reason)
+                VALUES (
+                    'song_empty', 'Solo_Guitar', 'acct_overlay', 50_000, 1, 'backfill',
+                    now(), now(), 100, 'test')
+                ;
+
+                INSERT INTO solo_current_projection_scope (
+                    song_id, instrument, projection_generation, row_count, source_snapshot_id,
+                    status, updated_at)
+                VALUES ('song_old', 'Solo_Guitar', 1, 1, 41, 'ready', now());
+
+                INSERT INTO current_leaderboard_entries (
+                    song_id, instrument, account_id, score, rank, source,
+                    first_seen_at, last_updated_at, projection_generation, computed_at)
+                VALUES (
+                    'song_old', 'Solo_Guitar', 'acct_player', 250000, 1, 'projection',
+                    now(), now(), 1, now())
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        SetPublishedScrape(42);
+        InsertPublishedSource(42, "song_old", "snapshot", 40, 40, 1);
+        InsertPublishedSource(42, "song_new", "snapshot", 41, 41, 1);
+        InsertPublishedSource(42, "song_empty", "empty", null, 42, 0);
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = TRUE,
+                    public_reads_frozen_scrape_id = 42,
+                    public_reads_frozen_reason = 'test-freeze',
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        Db.UsePublishedScopeSources = true;
+
+        var scores = Db.GetCurrentStatePlayerScores("acct_player");
+        var publishedBoard = Db.GetCurrentStateLeaderboard("song_old");
+        var emptyBoard = Db.GetCurrentStateLeaderboard("song_empty");
+
+        Assert.Equal(2, scores.Count);
+        Assert.Equal(100_000, scores.Single(score => score.SongId == "song_old").Score);
+        Assert.Equal(300_000, scores.Single(score => score.SongId == "song_new").Score);
+        Assert.Equal(100_000, Assert.Single(publishedBoard).Score);
+        var overlay = Assert.Single(emptyBoard);
+        Assert.Equal("acct_overlay", overlay.AccountId);
+        Assert.DoesNotContain(emptyBoard, entry => entry.AccountId == "acct_legacy");
+
+        using (var conn = _fixture.DataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                UPDATE scrape_publication_state
+                SET public_reads_frozen = FALSE,
+                    public_reads_frozen_scrape_id = NULL,
+                    public_reads_frozen_reason = NULL,
+                    updated_at = now()
+                WHERE id = TRUE
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        Db.UsePublishedScopeSources = false;
+        var activeBoard = Db.GetCurrentStateLeaderboard("song_old");
+        Assert.Equal(250_000, Assert.Single(activeBoard).Score);
     }
 
     [Fact]

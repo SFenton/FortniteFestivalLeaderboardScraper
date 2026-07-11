@@ -111,12 +111,14 @@ public sealed class MetaDatabase : IMetaDatabase
                 }
     }
 
-    public void PublishScrapeRun(long scrapeId, bool promoteCachedResponses = true)
+    public void PublishScrapeRun(
+        long scrapeId,
+        bool promoteCachedResponses = true,
+        int? expectedPublishedScopeCount = null)
     {
         using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
-
-        EnsureScrapePublicationStateTable(conn, tx);
 
         using (var verify = conn.CreateCommand())
         {
@@ -125,6 +127,68 @@ public sealed class MetaDatabase : IMetaDatabase
             verify.Parameters.AddWithValue("id", (int)scrapeId);
             if (verify.ExecuteScalar() is not bool isCompleted || !isCompleted)
                 throw new InvalidOperationException($"Scrape run {scrapeId} cannot be published before it is completed.");
+        }
+
+        if (expectedPublishedScopeCount.HasValue)
+        {
+            if (expectedPublishedScopeCount.Value <= 0)
+                throw new InvalidOperationException("A published scope-source promotion requires at least one expected scope.");
+
+            using (var lockSources = conn.CreateCommand())
+            {
+                lockSources.Transaction = tx;
+                lockSources.CommandText = """
+                    SELECT 1
+                    FROM leaderboard_published_scope_source
+                    WHERE published_scrape_id = @scrapeId
+                    FOR UPDATE
+                    """;
+                lockSources.Parameters.AddWithValue("scrapeId", scrapeId);
+                using var lockReader = lockSources.ExecuteReader();
+                while (lockReader.Read())
+                {
+                }
+            }
+
+            using var verifySources = conn.CreateCommand();
+            verifySources.Transaction = tx;
+            verifySources.CommandText = """
+                SELECT
+                    COUNT(*)::int AS mapped_count,
+                    COUNT(*) FILTER (
+                        WHERE NOT source.is_complete
+                           OR source.source_scrape_id <= 0
+                           OR source.source_scrape_id > source.published_scrape_id
+                           OR fingerprint.song_id IS NULL
+                           OR fingerprint.last_seen_scrape_id <> source.published_scrape_id
+                           OR NOT fingerprint.is_complete
+                           OR fingerprint.entry_count::bigint <> source.row_count
+                           OR fingerprint.content_fingerprint IS DISTINCT FROM source.content_fingerprint
+                           OR fingerprint.coverage_fingerprint IS DISTINCT FROM source.coverage_fingerprint
+                           OR fingerprint.reported_total_entries IS DISTINCT FROM source.reported_total_entries
+                           OR fingerprint.reported_total_pages IS DISTINCT FROM source.reported_total_pages
+                    )::int AS invalid_count
+                FROM leaderboard_published_scope_source source
+                LEFT JOIN leaderboard_scope_fingerprints fingerprint
+                  ON fingerprint.song_id = source.song_id
+                 AND fingerprint.instrument = source.instrument
+                 AND fingerprint.scope_kind = source.scope_kind
+                WHERE source.published_scrape_id = @scrapeId
+                """;
+            verifySources.Parameters.AddWithValue("scrapeId", scrapeId);
+            using var sourceReader = verifySources.ExecuteReader();
+            if (!sourceReader.Read())
+                throw new InvalidOperationException($"Published scope-source validation for scrape {scrapeId} returned no result.");
+
+            var mappedCount = sourceReader.GetInt32(0);
+            var invalidCount = sourceReader.GetInt32(1);
+            sourceReader.Close();
+            if (mappedCount != expectedPublishedScopeCount.Value || invalidCount != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Scrape {scrapeId} cannot be published because its per-scope source mapping is invalid " +
+                    $"(expected={expectedPublishedScopeCount.Value}, mapped={mappedCount}, invalid={invalidCount}).");
+            }
         }
 
         if (promoteCachedResponses)
@@ -141,6 +205,31 @@ public sealed class MetaDatabase : IMetaDatabase
         }
 
         PublishCurrentBandTeamRankings(conn, tx);
+
+        if (expectedPublishedScopeCount.HasValue)
+        {
+            using var publishFingerprints = conn.CreateCommand();
+            publishFingerprints.Transaction = tx;
+            publishFingerprints.CommandText = """
+                UPDATE leaderboard_scope_fingerprints fingerprint
+                SET published_scrape_id = @scrapeId
+                FROM leaderboard_published_scope_source source
+                WHERE source.published_scrape_id = @scrapeId
+                  AND fingerprint.song_id = source.song_id
+                  AND fingerprint.instrument = source.instrument
+                  AND fingerprint.scope_kind = source.scope_kind
+                  AND fingerprint.last_seen_scrape_id = @scrapeId
+                  AND fingerprint.is_complete
+                """;
+            publishFingerprints.Parameters.AddWithValue("scrapeId", scrapeId);
+            var publishedFingerprintCount = publishFingerprints.ExecuteNonQuery();
+            if (publishedFingerprintCount != expectedPublishedScopeCount.Value)
+            {
+                throw new InvalidOperationException(
+                    $"Scrape {scrapeId} published {publishedFingerprintCount} fingerprint rows; " +
+                    $"{expectedPublishedScopeCount.Value} were required.");
+            }
+        }
 
         using (var publish = conn.CreateCommand())
         {
@@ -168,8 +257,8 @@ public sealed class MetaDatabase : IMetaDatabase
     public void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null)
     {
         using var conn = _ds.OpenConnection();
+        EnsureScrapePublicationStateTable(conn);
         using var tx = conn.BeginTransaction();
-        EnsureScrapePublicationStateTable(conn, tx);
 
         using (var cmd = conn.CreateCommand())
         {
@@ -229,8 +318,36 @@ public sealed class MetaDatabase : IMetaDatabase
         }
     }
 
-    private static void EnsureScrapePublicationStateTable(NpgsqlConnection conn, NpgsqlTransaction tx)
+    private static void EnsureScrapePublicationStateTable(NpgsqlConnection conn)
     {
+        using (var probe = conn.CreateCommand())
+        {
+            probe.CommandText = """
+                SELECT to_regclass('public.scrape_publication_state') IS NOT NULL
+                   AND (
+                       SELECT COUNT(*) = 4
+                       FROM information_schema.columns
+                       WHERE table_schema = 'public'
+                         AND table_name = 'scrape_publication_state'
+                         AND column_name IN (
+                             'public_reads_frozen',
+                             'public_reads_frozen_at',
+                             'public_reads_frozen_scrape_id',
+                             'public_reads_frozen_reason')
+                   )
+                """;
+            if (Convert.ToBoolean(probe.ExecuteScalar()))
+                return;
+        }
+
+        using var tx = conn.BeginTransaction();
+        using (var timeout = conn.CreateCommand())
+        {
+            timeout.Transaction = tx;
+            timeout.CommandText = "SET LOCAL lock_timeout = '5s'";
+            timeout.ExecuteNonQuery();
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
@@ -256,6 +373,7 @@ public sealed class MetaDatabase : IMetaDatabase
             ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_reason TEXT;
             """;
         alter.ExecuteNonQuery();
+        tx.Commit();
     }
 
     private static ScrapeRunInfo? ReadScrapeRunInfo(NpgsqlDataReader r)

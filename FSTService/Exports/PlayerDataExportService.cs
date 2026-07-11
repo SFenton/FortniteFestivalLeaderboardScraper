@@ -354,27 +354,56 @@ public sealed class PlayerDataExportService
         return rows;
     }
 
-    private List<PlayerScoreDto> LoadPublishedSoloScores(string accountId)
+    internal List<PlayerScoreDto> LoadPublishedSoloScores(string accountId)
     {
         using var conn = _dataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            WITH base_rows AS (
-                SELECT snapshot.song_id, snapshot.instrument, snapshot.account_id, snapshot.score, snapshot.accuracy,
-                       snapshot.is_full_combo, snapshot.stars, snapshot.season, snapshot.difficulty, snapshot.percentile::DOUBLE PRECISION,
-                       snapshot.end_time, snapshot.rank, snapshot.api_rank, 1 AS origin_precedence, 0 AS source_priority
-                FROM leaderboard_entries_snapshot snapshot
+        var sourceJoin = _persistence.UsePublishedScopeSources
+            ? """
+                JOIN leaderboard_published_scope_source source
+                  ON source.song_id = snapshot.song_id
+                 AND source.instrument = snapshot.instrument
+                 AND source.scope_kind = 'alltime'
+                 AND source.source_kind = 'snapshot'
+                 AND source.source_snapshot_id = snapshot.snapshot_id
+                 AND source.is_complete
+                JOIN scrape_publication_state publication
+                  ON publication.id = TRUE
+                 AND publication.published_scrape_id = source.published_scrape_id
+                """
+            : """
                 JOIN leaderboard_snapshot_state state
                   ON state.song_id = snapshot.song_id
                  AND state.instrument = snapshot.instrument
                  AND state.active_snapshot_id = snapshot.snapshot_id
                  AND state.is_finalized = TRUE
+                """;
+        var overlayJoin = _persistence.UsePublishedScopeSources
+            ? """
+                 JOIN leaderboard_published_scope_source source
+                   ON source.song_id = overlay.song_id
+                  AND source.instrument = overlay.instrument
+                  AND source.scope_kind = 'alltime'
+                  AND source.is_complete
+                 JOIN scrape_publication_state publication
+                   ON publication.id = TRUE
+                  AND publication.published_scrape_id = source.published_scrape_id
+                 """
+            : string.Empty;
+        cmd.CommandText = $"""
+            WITH base_rows AS (
+                SELECT snapshot.song_id, snapshot.instrument, snapshot.account_id, snapshot.score, snapshot.accuracy,
+                       snapshot.is_full_combo, snapshot.stars, snapshot.season, snapshot.difficulty, snapshot.percentile::DOUBLE PRECISION,
+                       snapshot.end_time, snapshot.rank, snapshot.api_rank, 1 AS origin_precedence, 0 AS source_priority
+                FROM leaderboard_entries_snapshot snapshot
+                {sourceJoin}
                 WHERE snapshot.account_id = @accountId
                 UNION ALL
                 SELECT overlay.song_id, overlay.instrument, overlay.account_id, overlay.score, overlay.accuracy,
                        overlay.is_full_combo, overlay.stars, overlay.season, overlay.difficulty, overlay.percentile::DOUBLE PRECISION,
                        overlay.end_time, overlay.rank, overlay.api_rank, 0 AS origin_precedence, overlay.source_priority
                 FROM leaderboard_entries_overlay overlay
+                {overlayJoin}
                 WHERE overlay.account_id = @accountId
             ), resolved_rows AS (
                 SELECT DISTINCT ON (song_id, instrument, account_id)

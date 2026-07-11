@@ -216,6 +216,45 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("\"new\"", cachedAfterPublish.Value.ETag);
     }
 
+    [Fact]
+    public void PublishScrapeRun_rejects_missing_scope_mapping_and_retains_previous_publication()
+    {
+        var oldId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(oldId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(oldId, promoteCachedResponses: false);
+
+        var nextId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(nextId, 1, 10, 1, 100);
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            Db.PublishScrapeRun(
+                nextId,
+                promoteCachedResponses: false,
+                expectedPublishedScopeCount: 1));
+
+        Assert.Contains("per-scope source mapping is invalid", exception.Message);
+        Assert.Equal(oldId, Db.GetPublishedScrapeRun()?.Id);
+    }
+
+    [Fact]
+    public async Task SetPublicReadFreeze_skips_ddl_lock_when_publication_schema_is_complete()
+    {
+        await using var blockerConnection = await DataSource.OpenConnectionAsync();
+        await using var blockerTransaction = await blockerConnection.BeginTransactionAsync();
+        await using (var blocker = blockerConnection.CreateCommand())
+        {
+            blocker.Transaction = blockerTransaction;
+            blocker.CommandText = "SELECT COUNT(*) FROM scrape_publication_state";
+            await blocker.ExecuteScalarAsync();
+        }
+
+        var freezeTask = Task.Run(() => Db.SetPublicReadFreeze(true, reason: "lock-safety-test"));
+        await freezeTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(Db.GetPublicReadFreezeState().IsFrozen);
+        await blockerTransaction.RollbackAsync();
+    }
+
     // ═══ AccountNames ═══════════════════════════════════════════
 
     [Fact]

@@ -252,7 +252,7 @@ public static partial class ApiEndpoints
             var filteredPopulation = maxScoresByInstrument is not null
                 ? persistence.GetCurrentStateFilteredPopulation(maxScoresByInstrument, instrumentFilter)
                 : null;
-            var unfilteredPopulation = metaDb.GetAllLeaderboardPopulation();
+            var unfilteredPopulation = persistence.GetCurrentStateLeaderboardPopulation();
             var names = metaDb.GetDisplayNames(selectedAccountIds);
 
             var responseScores = scoreRows.Select(row =>
@@ -489,7 +489,7 @@ public static partial class ApiEndpoints
 
             // ── Build response ───────────────────────────────────
             var instrumentKeys = persistence.GetInstrumentKeys();
-            var population = metaDb.GetAllLeaderboardPopulation();
+            var population = persistence.GetCurrentStateLeaderboardPopulation();
             var showLeaderboardEntryTotals = metaDb.ShouldShowLeaderboardEntryTotals();
 
             Dictionary<string, SongMaxScores>? maxScoresMap = leeway.HasValue

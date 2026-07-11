@@ -3,8 +3,9 @@
 **Audit date:** 2026-07-10  
 **Container:** `fst-postgres`  
 **Mode:** Current-system probe plus best-practices/performance/capacity roadmap  
-**Implementation status:** All production probes were read-only. No schema,
-data, index, configuration, vacuum, retention, or container changes were made.
+**Implementation status:** The original audit probes were read-only. PG-0 and
+PG-1 execution updates below now record accepted tooling, additive schema,
+role-specific configuration, container deployment, and live-scrape evidence.
 
 ## Autonomous execution update — 2026-07-10
 
@@ -332,6 +333,76 @@ Cover:
 
 - Fixture and integration suites prove row/order/rank/export parity and failure
   retention before any resolver cutover.
+
+### PG-1 execution evidence - accepted 2026-07-11
+
+**Decision:** Accepted and promoted behind role-specific rollback flags.
+**Candidate image:** `sha256:8ca8001d420f6886a759d0c2bd674335fa3921fd2cb3addf9bbeaa224f08a8ac`
+**Baseline / candidate:** published scrapes `1229` / `1230`
+
+- Added the backward-compatible `leaderboard_published_scope_source` table and
+  fingerprint completeness fields. The table uses only its publication-first
+  primary key; no startup secondary-index build or table rewrite was added.
+- The worker records expected-scope coverage, deduplicates API rows with the
+  same highest-score-per-account rule as physical snapshots, validates exact
+  physical counts, builds the mapping all-or-nothing, and promotes mapping,
+  fingerprint publication IDs, band tables, cache rows, and the global scrape
+  pointer in one transaction.
+- Initial backfill was rejected at `1,811/6,129` scopes because old
+  fingerprints counted duplicate API account rows. The repaired physical
+  fingerprint backfill completed in `00:30:36.664`: `6,129` mapped scopes,
+  `6,087` snapshot scopes, `42` explicit empty scopes, `39,505,439` physical
+  rows, zero count/metadata mismatches, and zero incomplete rows.
+- Service reads use matching current projections and fall back only mismatched
+  scopes to the mapped snapshot plus overlay. A rejected all-scope fallback
+  took `14.47s` warm; the accepted partial fallback returned the matched export
+  in `0.470s` versus `0.698s` on the old resolver with byte-normalized workbook
+  parity.
+- During scrape `1230`, all `6,129` active snapshot scopes advanced while the
+  public pointer remained on mapped scrape `1229`. After a service restart, a
+  forced cold leaderboard query returned `23/23` account, score, and rank rows
+  exactly equal to direct mapped-source SQL in `0.176s`.
+- Candidate publication produced `6,129/6,129` validated mappings in
+  `00:03:27.318`. The final map contains `6,087` snapshot sources on `1230`,
+  `42` empty sources, `39,525,359` physical rows, and zero fingerprint,
+  coverage, source-count, or publication-ID mismatches.
+- The pre-PG-1 baseline held schema DDL locks through its `501.6s` publication
+  transaction, timing out `/readyz` and `/api/service-info`. PG-1 now uses a
+  read-only schema probe and a separate five-second-lock-timeout repair
+  transaction. Candidate publication took `548.0s`; all nine 60-second publish
+  monitor ticks kept `/readyz`, the festivalweb shell, and
+  `/api/service-info` healthy. Across the complete candidate window, all `525`
+  monitor ticks were healthy.
+- Matched recorded phase time was `17,363,306ms -> 18,987,286ms` (`+9.35%`);
+  rank snapshots were `+3.74%`, composite snapshot `+6.11%`, and publication
+  `+9.24%`. Candidate resource evidence recorded `494.9GB` WAL, `172.5GB`
+  temp, peak worker `8.38GiB/12GiB`, peak Postgres `15.80GiB/16GiB`, and
+  minimum free space `220.3GB`. The map itself is `4.63MB`.
+- End-to-end wall time was `6:17:51 -> 7:58:31`; the network slice was not a
+  matched performance baseline because scrape `1229` ran in the stale
+  long-lived 30-node proxy container while the current production compose
+  recreated `1230` with four proxy endpoints. Requests and bytes remained
+  comparable (`399,152/57.75GB -> 398,260/57.58GB`), and PG-1 database/public
+  phases stayed within the 10% gate.
+- Validation: `418` targeted PostgreSQL/Testcontainers tests passed; the
+  CI-equivalent FSTService line rate is `94.22%`. The full diagnostic had
+  `1,939/1,941` passing in the coverage run; the two failures are stale,
+  pre-existing default/removed-route fixtures outside PG-1.
+
+**Production flags**
+
+- `fstworker`: `Features__WritePublishedScopeSources=true`,
+  `Features__UsePublishedScopeSources=false`.
+- `fstservice`: `Features__WritePublishedScopeSources=false`,
+  `Features__UsePublishedScopeSources=true`.
+- Rollback sets both flags false and restores the prior service/worker images;
+  the additive table and fingerprint fields may remain.
+
+**Artifacts:** `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/pg1-published-source-20260711T0103Z`
+
+**Next integrated task:** SERVICE-0.2 / WORKER-0 durable status and failure
+propagation, followed by PG-2 published-resolver query A/Bs. PG-4 physical
+snapshot write skipping was not enabled or combined with this phase.
 
 ## Phase PG-2: Run matched query A/Bs
 

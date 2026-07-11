@@ -592,6 +592,41 @@ public sealed class ScraperWorker : BackgroundService
             {
                 if (postProcessCompleted)
                 {
+                    int? expectedPublishedScopeCount = null;
+                    if (_persistence.WritePublishedScopeSources)
+                    {
+                        if (!resolvedPhases.HasFlag(ScrapePhase.SoloScrape))
+                        {
+                            throw new InvalidOperationException(
+                                "Published scope-source promotion requires the solo scrape phase.");
+                        }
+
+                        var expectedPairs =
+                            ScrapeOrchestrator.BuildExpectedSoloLeaderboardPairs(result.Context.ScrapeRequests);
+                        var sourceBuildStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                        var sourceBuild = _persistence.BuildPublishedScopeSourceCandidate(
+                            result.ScrapeId,
+                            expectedPairs);
+                        sourceBuildStopwatch.Stop();
+                        _log.LogInformation(
+                            "Built published scope-source candidate for scrape {ScrapeId}: expected={Expected:N0}, validated={Validated:N0}, mapped={Mapped:N0}, missing={Missing:N0}, elapsed={Elapsed}.",
+                            result.ScrapeId,
+                            sourceBuild.ExpectedScopeCount,
+                            sourceBuild.ValidatedScopeCount,
+                            sourceBuild.MappedScopeCount,
+                            sourceBuild.MissingScopeCount,
+                            sourceBuildStopwatch.Elapsed);
+                        if (!sourceBuild.IsComplete)
+                        {
+                            throw new InvalidOperationException(
+                                $"Scrape {result.ScrapeId} published scope-source candidate is incomplete: " +
+                                $"expected={sourceBuild.ExpectedScopeCount}, validated={sourceBuild.ValidatedScopeCount}, " +
+                                $"mapped={sourceBuild.MappedScopeCount}, missing={sourceBuild.MissingScopeCount}.");
+                        }
+
+                        expectedPublishedScopeCount = sourceBuild.ExpectedScopeCount;
+                    }
+
                     _persistence.Meta.CompleteScrapeRun(
                         result.ScrapeId,
                         result.SongsScraped,
@@ -599,7 +634,9 @@ public sealed class ScraperWorker : BackgroundService
                         result.TotalRequests,
                         result.TotalBytes,
                         result.EpicReportedOver100Pages);
-                    _persistence.Meta.PublishScrapeRun(result.ScrapeId);
+                    _persistence.Meta.PublishScrapeRun(
+                        result.ScrapeId,
+                        expectedPublishedScopeCount: expectedPublishedScopeCount);
                     publicStateReady = true;
                 }
                 else

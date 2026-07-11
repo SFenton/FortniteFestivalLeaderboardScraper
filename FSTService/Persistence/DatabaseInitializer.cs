@@ -218,6 +218,7 @@ public static class DatabaseInitializer
             entry_count          INTEGER     NOT NULL,
             reported_total_entries BIGINT,
             reported_total_pages INTEGER,
+            is_complete          BOOLEAN     NOT NULL DEFAULT FALSE,
             min_rank             INTEGER,
             max_rank             INTEGER,
             source_scrape_id     BIGINT      NOT NULL,
@@ -229,6 +230,9 @@ public static class DatabaseInitializer
             seen_at              TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (song_id, instrument, scope_kind)
         );
+
+        ALTER TABLE leaderboard_scope_fingerprints
+            ADD COLUMN IF NOT EXISTS is_complete BOOLEAN NOT NULL DEFAULT FALSE;
 
         CREATE INDEX IF NOT EXISTS ix_lsf_last_changed
             ON leaderboard_scope_fingerprints (last_changed_scrape_id, instrument);
@@ -650,6 +654,39 @@ public static class DatabaseInitializer
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_at TIMESTAMPTZ;
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_scrape_id INTEGER REFERENCES scrape_log(id);
         ALTER TABLE scrape_publication_state ADD COLUMN IF NOT EXISTS public_reads_frozen_reason TEXT;
+
+        CREATE TABLE IF NOT EXISTS leaderboard_published_scope_source (
+            published_scrape_id    BIGINT      NOT NULL REFERENCES scrape_log(id) ON DELETE CASCADE,
+            song_id                TEXT        NOT NULL,
+            instrument             TEXT        NOT NULL,
+            scope_kind             TEXT        NOT NULL DEFAULT 'alltime',
+            source_kind            TEXT        NOT NULL,
+            source_snapshot_id     BIGINT,
+            source_scrape_id       BIGINT      NOT NULL,
+            row_count              BIGINT      NOT NULL,
+            content_fingerprint    TEXT        NOT NULL,
+            coverage_fingerprint   TEXT        NOT NULL,
+            reported_total_entries BIGINT      NOT NULL,
+            reported_total_pages   INTEGER     NOT NULL,
+            is_complete            BOOLEAN     NOT NULL,
+            created_at             TIMESTAMPTZ NOT NULL,
+            validated_at           TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (published_scrape_id, instrument, song_id, scope_kind),
+            CHECK (source_kind IN ('snapshot', 'empty')),
+            CHECK (source_scrape_id > 0 AND source_scrape_id <= published_scrape_id),
+            CHECK (row_count >= 0),
+            CHECK (reported_total_entries >= row_count),
+            CHECK (reported_total_pages >= 0),
+            CHECK (
+                (source_kind = 'snapshot' AND source_snapshot_id IS NOT NULL
+                    AND source_snapshot_id = source_scrape_id AND row_count > 0
+                    AND reported_total_pages > 0)
+                OR
+                (source_kind = 'empty' AND source_snapshot_id IS NULL
+                    AND row_count = 0 AND reported_total_entries = 0
+                    AND reported_total_pages = 0)
+            )
+        );
 
         CREATE TABLE IF NOT EXISTS service_worker_status (
             worker_key             TEXT        PRIMARY KEY,

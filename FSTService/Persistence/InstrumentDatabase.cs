@@ -18,6 +18,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     private readonly Lazy<bool> _rankHistoryHasPrimaryKey;
     private const string LeaderboardEntriesSnapshotTable = "leaderboard_entries_snapshot";
     private const string LeaderboardSnapshotStateTable = "leaderboard_snapshot_state";
+    private const string LeaderboardPublishedScopeSourceTable = "leaderboard_published_scope_source";
     private const string LeaderboardEntriesOverlayTable = "leaderboard_entries_overlay";
     private const string SoloCurrentProjectionTable = "current_leaderboard_entries";
     private const string SoloCurrentProjectionScopeTable = "solo_current_projection_scope";
@@ -30,6 +31,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     /// <summary>When true, leeway reads resolve from interval tiers instead of dense deltas.</summary>
     public bool UseTiers { get; set; }
+
+    /// <summary>
+    /// When true, current-state reads resolve from the source map selected by
+    /// scrape_publication_state instead of the worker's active snapshot state.
+    /// </summary>
+    public bool UsePublishedScopeSources { get; set; }
 
     /// <summary>Exposes the data source for batched writer transactions.</summary>
     internal NpgsqlDataSource DataSource => _ds;
@@ -176,10 +183,14 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                SELECT song_id, LEAST(row_count, @maxInt)::INT
-                FROM {SoloCurrentProjectionScopeTable}
-                WHERE instrument = @instrument
-                  AND status = 'ready'
+                WITH {BuildProjectionSourceCtes(filterSong: false)}
+                SELECT scope.song_id, LEAST(scope.row_count, @maxInt)::INT
+                FROM {SoloCurrentProjectionScopeTable} scope
+                JOIN selected_sources source
+                  ON source.song_id = scope.song_id
+                 AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                WHERE scope.instrument = @instrument
+                  AND scope.status = 'ready'
                 """;
             cmd.Parameters.AddWithValue("instrument", Instrument);
             cmd.Parameters.AddWithValue("maxInt", int.MaxValue);
@@ -201,29 +212,16 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                                WITH publication AS (
-                                    SELECT COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
-                                           (SELECT published_scrape_id FROM scrape_publication_state WHERE id = TRUE) AS published_scrape_id
-                                )
+                                WITH {BuildProjectionSourceCtes(filterSong: true)}
                                 SELECT scope.row_count
                                 FROM {SoloCurrentProjectionScopeTable} scope
-                                LEFT JOIN {LeaderboardSnapshotStateTable} state
-                                    ON state.song_id = scope.song_id
-                                 AND state.instrument = scope.instrument
-                                 AND state.is_finalized = TRUE
-                                 AND state.active_snapshot_id IS NOT NULL
-                                CROSS JOIN publication
+                                JOIN selected_sources source
+                                  ON source.song_id = scope.song_id
                                 WHERE scope.song_id = @songId
                                     AND scope.instrument = @instrument
                                     AND scope.status = 'ready'
-                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM
-                                        CASE
-                                            WHEN state.active_snapshot_id IS NOT NULL
-                                             AND publication.public_reads_frozen
-                                             AND publication.published_scrape_id IS NOT NULL
-                                                THEN publication.published_scrape_id
-                                            ELSE state.active_snapshot_id
-                                        END
+                                    AND source.source_kind IN ('snapshot', 'empty')
+                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
                 LIMIT 1
                 """;
             cmd.Parameters.AddWithValue("songId", songId);
@@ -243,38 +241,23 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = $"""
-                WITH publication AS (
-                    SELECT COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
-                           (SELECT published_scrape_id FROM scrape_publication_state WHERE id = TRUE) AS published_scrape_id
-                )
+                WITH {BuildProjectionSourceCtes(filterSong: false)}
                 SELECT EXISTS (
                     SELECT 1
-                    FROM {SoloCurrentProjectionScopeTable}
-                    WHERE instrument = @instrument
-                      AND status = 'ready'
+                    FROM selected_sources
                 )
                 AND NOT EXISTS (
                     SELECT 1
-                    FROM {LeaderboardSnapshotStateTable} state
+                    FROM selected_sources source
                     LEFT JOIN {SoloCurrentProjectionScopeTable} scope
-                      ON scope.song_id = state.song_id
-                     AND scope.instrument = state.instrument
-                    WHERE state.instrument = @instrument
-                      AND state.is_finalized = TRUE
-                      AND state.active_snapshot_id IS NOT NULL
-                      AND (
+                      ON scope.song_id = source.song_id
+                     AND scope.instrument = @instrument
+                    WHERE (
                           scope.song_id IS NULL
                           OR scope.status <> 'ready'
-                          OR scope.source_snapshot_id IS DISTINCT FROM
-                              CASE
-                                  WHEN publication.public_reads_frozen
-                                   AND publication.published_scrape_id IS NOT NULL
-                                      THEN publication.published_scrape_id
-                                  ELSE state.active_snapshot_id
-                              END
+                          OR scope.source_snapshot_id IS DISTINCT FROM source.source_snapshot_id
                       )
                 )
-                FROM publication
                 """;
             cmd.Parameters.AddWithValue("instrument", Instrument);
             return Convert.ToBoolean(cmd.ExecuteScalar());
@@ -300,30 +283,17 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             cmd.CommandText = $"""
                         WITH requested AS (
                                         SELECT unnest(@songIds::text[]) AS song_id
-                        ), publication AS (
-                            SELECT COALESCE((SELECT public_reads_frozen FROM scrape_publication_state WHERE id = TRUE), FALSE) AS public_reads_frozen,
-                                   (SELECT published_scrape_id FROM scrape_publication_state WHERE id = TRUE) AS published_scrape_id
-                                )
+                        ), {BuildProjectionSourceCtes(filterSong: false)}
                                 SELECT COUNT(*)
                                 FROM requested
+                                JOIN selected_sources source
+                                    ON source.song_id = requested.song_id
                                 JOIN {SoloCurrentProjectionScopeTable} scope
                                     ON scope.song_id = requested.song_id
                                  AND scope.instrument = @instrument
-                                LEFT JOIN {LeaderboardSnapshotStateTable} state
-                                    ON state.song_id = scope.song_id
-                                 AND state.instrument = scope.instrument
-                                 AND state.is_finalized = TRUE
-                                 AND state.active_snapshot_id IS NOT NULL
-                                CROSS JOIN publication
                                 WHERE scope.status = 'ready'
-                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM
-                                        CASE
-                                            WHEN state.active_snapshot_id IS NOT NULL
-                                             AND publication.public_reads_frozen
-                                             AND publication.published_scrape_id IS NOT NULL
-                                                THEN publication.published_scrape_id
-                                            ELSE state.active_snapshot_id
-                                        END
+                                    AND source.source_kind IN ('snapshot', 'empty')
+                                    AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
                 """;
             cmd.Parameters.AddWithValue("instrument", Instrument);
             cmd.Parameters.AddWithValue("songIds", distinctSongIds);
@@ -995,8 +965,11 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         int rankRadius,
         string excludeAccountId)
     {
-        if (!TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        var rowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
+        if (!rowCount.HasValue)
             return null;
+        if (rowCount.Value == 0)
+            return [];
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
@@ -1050,11 +1023,20 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
-                SELECT song_id
-                FROM {SoloCurrentProjectionTable}
-                WHERE account_id = @accountId
-                  AND instrument = @instrument
-                ORDER BY song_id
+                WITH {BuildProjectionSourceCtes(filterSong: false)}
+                SELECT projection.song_id
+                FROM {SoloCurrentProjectionTable} projection
+                JOIN {SoloCurrentProjectionScopeTable} scope
+                  ON scope.song_id = projection.song_id
+                 AND scope.instrument = projection.instrument
+                 AND scope.status = 'ready'
+                  AND scope.row_count > 0
+                JOIN selected_sources source
+                  ON source.song_id = scope.song_id
+                 AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                WHERE projection.account_id = @accountId
+                  AND projection.instrument = @instrument
+                ORDER BY projection.song_id
                 """;
             projectedCmd.Parameters.AddWithValue("accountId", accountId);
             projectedCmd.Parameters.AddWithValue("instrument", Instrument);
@@ -1159,14 +1141,25 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         IReadOnlyCollection<string>? songIds)
     {
         using var cmd = conn.CreateCommand();
-        var songFilter = songIds is { Count: > 0 } ? "AND song_id = ANY(@songIds)" : string.Empty;
+        var songFilter = songIds is { Count: > 0 } ? "AND projection.song_id = ANY(@songIds)" : string.Empty;
         cmd.CommandText = $"""
-            SELECT song_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, rank, api_rank
-            FROM {SoloCurrentProjectionTable}
-            WHERE account_id = @accountId
-              AND instrument = @instrument
+            WITH {BuildProjectionSourceCtes(filterSong: false)}
+            SELECT projection.song_id, projection.score, projection.accuracy, projection.is_full_combo,
+                   projection.stars, projection.season, projection.difficulty, projection.percentile,
+                   projection.end_time, projection.rank, projection.api_rank
+            FROM {SoloCurrentProjectionTable} projection
+            JOIN {SoloCurrentProjectionScopeTable} scope
+              ON scope.song_id = projection.song_id
+             AND scope.instrument = projection.instrument
+             AND scope.status = 'ready'
+             AND scope.row_count > 0
+            JOIN selected_sources source
+              ON source.song_id = scope.song_id
+             AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+            WHERE projection.account_id = @accountId
+              AND projection.instrument = @instrument
               {songFilter}
-            ORDER BY song_id
+            ORDER BY projection.song_id
             """;
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
@@ -1198,12 +1191,21 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         if (songId is null ? HasAnyReadyCurrentProjectionScope(conn) : TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
         {
             using var projectedCmd = conn.CreateCommand();
-            var projectedSongFilter = songId is not null ? "AND song_id = @songId" : string.Empty;
+            var projectedSongFilter = songId is not null ? "AND projection.song_id = @songId" : string.Empty;
             projectedCmd.CommandText = $"""
-                SELECT song_id, rank
-                FROM {SoloCurrentProjectionTable}
-                WHERE account_id = @accountId
-                  AND instrument = @instrument
+                WITH {BuildProjectionSourceCtes(filterSong: false)}
+                SELECT projection.song_id, projection.rank
+                FROM {SoloCurrentProjectionTable} projection
+                JOIN {SoloCurrentProjectionScopeTable} scope
+                  ON scope.song_id = projection.song_id
+                 AND scope.instrument = projection.instrument
+                 AND scope.status = 'ready'
+                 AND scope.row_count > 0
+                JOIN selected_sources source
+                  ON source.song_id = scope.song_id
+                 AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                WHERE projection.account_id = @accountId
+                  AND projection.instrument = @instrument
                   {projectedSongFilter}
                 """;
             projectedCmd.Parameters.AddWithValue("accountId", accountId);
@@ -1363,19 +1365,36 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        var songFilter = songId is not null ? "AND song_id = @songId" : string.Empty;
+        var songFilter = songId is not null ? "AND projection.song_id = @songId" : string.Empty;
         cmd.CommandText = $"""
-            WITH player_songs AS (
-                SELECT song_id
-                FROM {SoloCurrentProjectionTable}
-                WHERE account_id = @accountId
-                  AND instrument = @instrument
+            WITH {BuildProjectionSourceCtes(filterSong: false)},
+            player_songs AS (
+                SELECT projection.song_id
+                FROM {SoloCurrentProjectionTable} projection
+                JOIN {SoloCurrentProjectionScopeTable} scope
+                  ON scope.song_id = projection.song_id
+                 AND scope.instrument = projection.instrument
+                 AND scope.status = 'ready'
+                 AND scope.row_count > 0
+                JOIN selected_sources source
+                  ON source.song_id = scope.song_id
+                 AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                WHERE projection.account_id = @accountId
+                  AND projection.instrument = @instrument
                   {songFilter}
             ),
             ranked AS (
                 SELECT projection.account_id, projection.song_id,
                        ROW_NUMBER() OVER (PARTITION BY projection.song_id ORDER BY projection.score DESC, COALESCE(projection.end_time, projection.first_seen_at::TEXT) ASC) AS rank
                 FROM {SoloCurrentProjectionTable} projection
+                JOIN {SoloCurrentProjectionScopeTable} scope
+                  ON scope.song_id = projection.song_id
+                 AND scope.instrument = projection.instrument
+                 AND scope.status = 'ready'
+                 AND scope.row_count > 0
+                JOIN selected_sources source
+                  ON source.song_id = scope.song_id
+                 AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
                 LEFT JOIN _max_thresholds_projected_current_state mt ON mt.song_id = projection.song_id
                 WHERE projection.instrument = @instrument
                   AND projection.song_id IN (SELECT song_id FROM player_songs)
@@ -1402,8 +1421,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int GetCurrentStateRankForScore(string songId, int score, int? maxScore = null)
     {
         using var conn = _ds.OpenConnection();
-        if (TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        var projectedRowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
+        if (projectedRowCount.HasValue)
         {
+            if (projectedRowCount.Value == 0)
+                return 1;
+
             using var projectedCmd = conn.CreateCommand();
             var projectedScoreFilter = maxScore.HasValue ? "AND score <= @maxScore" : string.Empty;
             projectedCmd.CommandText = $"""
@@ -1447,8 +1470,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
 
-        if (TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        var projectedRowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
+        if (projectedRowCount.HasValue)
         {
+            if (projectedRowCount.Value == 0)
+                return (0, null, null);
+
             cmd.CommandText = $"""
                 SELECT COUNT(*)::INT,
                        MAX(score)::INT,
@@ -1559,8 +1586,17 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
+            WITH {BuildProjectionSourceCtes(filterSong: false)}
             SELECT projection.song_id, COUNT(*)::INT
             FROM {SoloCurrentProjectionTable} projection
+            JOIN {SoloCurrentProjectionScopeTable} scope
+              ON scope.song_id = projection.song_id
+             AND scope.instrument = projection.instrument
+             AND scope.status = 'ready'
+             AND scope.row_count > 0
+            JOIN selected_sources source
+              ON source.song_id = scope.song_id
+             AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
             LEFT JOIN _max_thresholds_projected_current_state_counts mt ON mt.song_id = projection.song_id
             WHERE projection.instrument = @instrument
               AND projection.score <= COALESCE(mt.max_score, projection.score + 1)
@@ -1689,8 +1725,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<int> GetCurrentStateScoresInBand(string songId, int lowerBound, int upperBound)
     {
         using var conn = _ds.OpenConnection();
-        if (TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        var projectedRowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
+        if (projectedRowCount.HasValue)
         {
+            if (projectedRowCount.Value == 0)
+                return [];
+
             using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
                 SELECT score
@@ -1748,8 +1788,12 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int GetCurrentStatePopulationAtOrBelow(string songId, int threshold)
     {
         using var conn = _ds.OpenConnection();
-        if (TryGetReadyCurrentProjectionRowCount(conn, songId).HasValue)
+        var projectedRowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
+        if (projectedRowCount.HasValue)
         {
+            if (projectedRowCount.Value == 0)
+                return 0;
+
             using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
                 SELECT COUNT(*)
@@ -2575,6 +2619,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         var rowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
         if (!rowCount.HasValue)
             return null;
+        if (rowCount.Value == 0)
+            return ([], 0);
 
         using var cmd = conn.CreateCommand();
         var limitClause = top.HasValue ? $"LIMIT {top.Value} OFFSET {offset}" : string.Empty;
@@ -2631,33 +2677,140 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         return (list, total);
     }
 
-    private static string BuildCurrentStateLeaderboardSql(bool includeTotalCount, bool hasMaxScore, string limitClause)
+    private string BuildSelectedSourceCtes(bool filterSong)
+    {
+        var usePublishedSources = UsePublishedScopeSources ? "TRUE" : "FALSE";
+        var publishedSongFilter = filterSong ? "AND source.song_id = @songId" : string.Empty;
+        var activeSongFilter = filterSong ? "AND state.song_id = @songId" : string.Empty;
+        return $"""
+            publication AS (
+                SELECT published_scrape_id
+                FROM scrape_publication_state
+                WHERE id = TRUE
+            ),
+            published_sources AS (
+                SELECT source.song_id, source.source_kind, source.source_snapshot_id
+                FROM {LeaderboardPublishedScopeSourceTable} source
+                JOIN publication
+                  ON publication.published_scrape_id = source.published_scrape_id
+                WHERE {usePublishedSources}
+                  AND source.instrument = @instrument
+                  AND source.scope_kind = 'alltime'
+                  AND source.is_complete
+                  {publishedSongFilter}
+            ),
+            selected_sources AS (
+                SELECT song_id, source_kind, source_snapshot_id
+                FROM published_sources
+                UNION ALL
+                SELECT state.song_id, 'snapshot'::text, state.active_snapshot_id
+                FROM {LeaderboardSnapshotStateTable} state
+                WHERE NOT {usePublishedSources}
+                  AND state.instrument = @instrument
+                  AND state.is_finalized = TRUE
+                  AND state.active_snapshot_id IS NOT NULL
+                  {activeSongFilter}
+            )
+            """;
+    }
+
+    private string BuildProjectionSourceCtes(bool filterSong)
+    {
+        if (UsePublishedScopeSources)
+        {
+            var publishedSongFilter = filterSong ? "AND source.song_id = @songId" : string.Empty;
+            return $"""
+                publication AS (
+                    SELECT published_scrape_id
+                    FROM scrape_publication_state
+                    WHERE id = TRUE
+                ),
+                selected_sources AS (
+                    SELECT
+                        source.song_id,
+                        source.source_kind,
+                        COALESCE(source.source_snapshot_id, source.source_scrape_id) AS source_snapshot_id
+                    FROM {LeaderboardPublishedScopeSourceTable} source
+                    JOIN publication
+                      ON publication.published_scrape_id = source.published_scrape_id
+                    WHERE source.instrument = @instrument
+                      AND source.scope_kind = 'alltime'
+                      AND source.is_complete
+                      {publishedSongFilter}
+                )
+                """;
+        }
+
+        var activeSongFilter = filterSong ? "AND state.song_id = @songId" : string.Empty;
+        var projectionSongFilter = filterSong ? "AND scope.song_id = @songId" : string.Empty;
+        return $"""
+            publication AS (
+                SELECT
+                    COALESCE(public_reads_frozen, FALSE) AS public_reads_frozen,
+                    published_scrape_id
+                FROM scrape_publication_state
+                WHERE id = TRUE
+            ),
+            active_sources AS (
+                SELECT state.song_id, state.active_snapshot_id
+                FROM {LeaderboardSnapshotStateTable} state
+                WHERE state.instrument = @instrument
+                  AND state.is_finalized = TRUE
+                  AND state.active_snapshot_id IS NOT NULL
+                  {activeSongFilter}
+            ),
+            projection_scopes AS (
+                SELECT scope.song_id
+                FROM {SoloCurrentProjectionScopeTable} scope
+                WHERE scope.instrument = @instrument
+                  AND scope.status = 'ready'
+                  {projectionSongFilter}
+            ),
+            selected_sources AS (
+                SELECT
+                    COALESCE(active.song_id, scope.song_id) AS song_id,
+                    'snapshot'::text AS source_kind,
+                    CASE
+                        WHEN active.active_snapshot_id IS NOT NULL
+                         AND publication.public_reads_frozen
+                         AND publication.published_scrape_id IS NOT NULL
+                            THEN publication.published_scrape_id::bigint
+                        ELSE active.active_snapshot_id
+                    END AS source_snapshot_id
+                FROM active_sources active
+                FULL JOIN projection_scopes scope ON scope.song_id = active.song_id
+                LEFT JOIN publication ON TRUE
+            )
+            """;
+    }
+
+    private string BuildCurrentStateLeaderboardSql(bool includeTotalCount, bool hasMaxScore, string limitClause)
     {
         var totalProjection = includeTotalCount ? "total_count" : "0";
         var totalComputation = includeTotalCount ? ", COUNT(*) OVER ()::INT AS total_count" : string.Empty;
         var scoreFilter = hasMaxScore ? "WHERE score <= @maxScore" : string.Empty;
+        var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
 
         return $"""
-            WITH active_snapshot AS (
-                SELECT active_snapshot_id
-                FROM {LeaderboardSnapshotStateTable}
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND is_finalized = TRUE
-                  AND active_snapshot_id IS NOT NULL
-            ),
+            WITH {BuildSelectedSourceCtes(filterSong: true)},
             base_rows AS (
                 SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, api_rank, source, first_seen_at
                 FROM leaderboard_entries
                 WHERE song_id = @songId
                   AND instrument = @instrument
-                  AND NOT EXISTS (SELECT 1 FROM active_snapshot)
+                  AND {allowLegacyRows}
+                  AND NOT EXISTS (SELECT 1 FROM selected_sources)
                 UNION ALL
-                SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, api_rank, source, first_seen_at
-                FROM {LeaderboardEntriesSnapshotTable}
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND snapshot_id = (SELECT active_snapshot_id FROM active_snapshot)
+                SELECT snapshot.account_id, snapshot.score, snapshot.accuracy, snapshot.is_full_combo, snapshot.stars,
+                       snapshot.season, snapshot.difficulty, snapshot.percentile, snapshot.end_time, snapshot.api_rank,
+                       snapshot.source, snapshot.first_seen_at
+                FROM {LeaderboardEntriesSnapshotTable} snapshot
+                JOIN selected_sources selected
+                  ON selected.song_id = snapshot.song_id
+                 AND selected.source_kind = 'snapshot'
+                 AND selected.source_snapshot_id = snapshot.snapshot_id
+                WHERE snapshot.song_id = @songId
+                  AND snapshot.instrument = @instrument
             ),
             candidate_rows AS (
                 SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time, api_rank, source, first_seen_at,
@@ -2671,6 +2824,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 FROM {LeaderboardEntriesOverlayTable}
                 WHERE song_id = @songId
                   AND instrument = @instrument
+                  AND ({allowLegacyRows} OR EXISTS (SELECT 1 FROM selected_sources))
             ),
             resolved_rows AS (
                 SELECT DISTINCT ON (account_id)
@@ -2697,7 +2851,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             """;
     }
 
-    private static string BuildCurrentStateNeighborhoodSql() =>
+    private string BuildCurrentStateNeighborhoodSql() =>
         $"""
             WITH current_state AS (
                 SELECT account_id, score, rank
@@ -2710,32 +2864,33 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             ORDER BY rank
             """;
 
-    private static string BuildCurrentStateSongIdsForAccountSql() =>
+    private string BuildCurrentStateSongIdsForAccountSql()
+    {
+        var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
+        return
         $"""
-            WITH active_snapshots AS (
-                SELECT song_id, active_snapshot_id
-                FROM {LeaderboardSnapshotStateTable}
-                WHERE instrument = @instrument
-                  AND is_finalized = TRUE
-                  AND active_snapshot_id IS NOT NULL
-            ),
+            WITH {BuildSelectedSourceCtes(filterSong: false)},
             base_rows AS (
                 SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, le.season, le.difficulty, le.percentile, le.end_time, le.rank, le.api_rank, le.source, le.first_seen_at,
                        1 AS origin_precedence,
                        0 AS source_priority
                 FROM leaderboard_entries le
                 WHERE le.instrument = @instrument
+                  AND {allowLegacyRows}
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM active_snapshots snapshot
-                      WHERE snapshot.song_id = le.song_id
+                      FROM selected_sources selected
+                      WHERE selected.song_id = le.song_id
                   )
                 UNION ALL
                 SELECT snapshot.song_id, snapshot.account_id, snapshot.score, snapshot.accuracy, snapshot.is_full_combo, snapshot.stars, snapshot.season, snapshot.difficulty, snapshot.percentile, snapshot.end_time, snapshot.rank, snapshot.api_rank, snapshot.source, snapshot.first_seen_at,
                        1 AS origin_precedence,
                        0 AS source_priority
                 FROM {LeaderboardEntriesSnapshotTable} snapshot
-                JOIN active_snapshots active ON active.song_id = snapshot.song_id AND active.active_snapshot_id = snapshot.snapshot_id
+                JOIN selected_sources selected
+                  ON selected.song_id = snapshot.song_id
+                 AND selected.source_kind = 'snapshot'
+                 AND selected.source_snapshot_id = snapshot.snapshot_id
                 WHERE snapshot.instrument = @instrument
                 UNION ALL
                 SELECT overlay.song_id, overlay.account_id, overlay.score, overlay.accuracy, overlay.is_full_combo, overlay.stars, overlay.season, overlay.difficulty, overlay.percentile, overlay.end_time, overlay.rank, overlay.api_rank, overlay.source, overlay.first_seen_at,
@@ -2743,6 +2898,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                        overlay.source_priority
                 FROM {LeaderboardEntriesOverlayTable} overlay
                 WHERE overlay.instrument = @instrument
+                  AND (
+                      {allowLegacyRows}
+                      OR EXISTS (
+                          SELECT 1 FROM selected_sources selected
+                          WHERE selected.song_id = overlay.song_id
+                      )
+                  )
             ),
             resolved_rows AS (
                 SELECT DISTINCT ON (song_id, account_id)
@@ -2755,23 +2917,21 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             WHERE account_id = @accountId
             ORDER BY song_id
             """;
+    }
 
-    private static string BuildCurrentStateAllSongCountsSql() =>
+    private string BuildCurrentStateAllSongCountsSql() =>
         $"""
             SELECT song_id, COUNT(*)::INT
             FROM ({BuildCurrentStateResolvedEntriesSql()}) resolved_rows
             GROUP BY song_id
             """;
 
-    private static string BuildCurrentStateResolvedEntriesSql() =>
+    private string BuildCurrentStateResolvedEntriesSql()
+    {
+        var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
+        return
         $"""
-            WITH active_snapshots AS (
-                SELECT song_id, active_snapshot_id
-                FROM {LeaderboardSnapshotStateTable}
-                WHERE instrument = @instrument
-                  AND is_finalized = TRUE
-                  AND active_snapshot_id IS NOT NULL
-            ),
+            WITH {BuildSelectedSourceCtes(filterSong: false)},
             base_rows AS (
                 SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars,
                        le.rank, le.api_rank, le.first_seen_at, le.end_time,
@@ -2779,10 +2939,11 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                        0 AS source_priority
                 FROM leaderboard_entries le
                 WHERE le.instrument = @instrument
+                  AND {allowLegacyRows}
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM active_snapshots snapshot
-                      WHERE snapshot.song_id = le.song_id
+                      FROM selected_sources selected
+                      WHERE selected.song_id = le.song_id
                   )
                 UNION ALL
                 SELECT snapshot.song_id, snapshot.account_id, snapshot.score, snapshot.accuracy, snapshot.is_full_combo, snapshot.stars,
@@ -2790,7 +2951,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                        1 AS origin_precedence,
                        0 AS source_priority
                 FROM {LeaderboardEntriesSnapshotTable} snapshot
-                JOIN active_snapshots active ON active.song_id = snapshot.song_id AND active.active_snapshot_id = snapshot.snapshot_id
+                JOIN selected_sources selected
+                  ON selected.song_id = snapshot.song_id
+                 AND selected.source_kind = 'snapshot'
+                 AND selected.source_snapshot_id = snapshot.snapshot_id
                 WHERE snapshot.instrument = @instrument
                 UNION ALL
                 SELECT overlay.song_id, overlay.account_id, overlay.score, overlay.accuracy, overlay.is_full_combo, overlay.stars,
@@ -2799,6 +2963,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                        overlay.source_priority
                 FROM {LeaderboardEntriesOverlayTable} overlay
                 WHERE overlay.instrument = @instrument
+                  AND (
+                      {allowLegacyRows}
+                      OR EXISTS (
+                          SELECT 1 FROM selected_sources selected
+                          WHERE selected.song_id = overlay.song_id
+                      )
+                  )
             ),
             resolved_rows AS (
                 SELECT DISTINCT ON (song_id, account_id)
@@ -2809,35 +2980,35 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             SELECT song_id, account_id, score, accuracy, is_full_combo, stars, rank, api_rank, first_seen_at, end_time
             FROM resolved_rows
             """;
+    }
 
-    private static string BuildCurrentStatePlayerScoresSql(bool hasSongIdFilter)
+    private string BuildCurrentStatePlayerScoresSql(bool hasSongIdFilter)
     {
         var songFilter = hasSongIdFilter ? "AND song_id = @songId" : string.Empty;
+        var allowLegacyRows = UsePublishedScopeSources ? "FALSE" : "TRUE";
         return $"""
-            WITH active_snapshots AS (
-                SELECT song_id, active_snapshot_id
-                FROM {LeaderboardSnapshotStateTable}
-                WHERE instrument = @instrument
-                  AND is_finalized = TRUE
-                  AND active_snapshot_id IS NOT NULL
-            ),
+            WITH {BuildSelectedSourceCtes(filterSong: false)},
             base_rows AS (
                 SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, le.season, le.difficulty, le.percentile, le.end_time, le.rank, le.api_rank, le.source, le.first_seen_at,
                        1 AS origin_precedence,
                        0 AS source_priority
                 FROM leaderboard_entries le
                 WHERE le.instrument = @instrument
+                  AND {allowLegacyRows}
                   AND NOT EXISTS (
                       SELECT 1
-                      FROM active_snapshots snapshot
-                      WHERE snapshot.song_id = le.song_id
+                      FROM selected_sources selected
+                      WHERE selected.song_id = le.song_id
                   )
                 UNION ALL
                 SELECT snapshot.song_id, snapshot.account_id, snapshot.score, snapshot.accuracy, snapshot.is_full_combo, snapshot.stars, snapshot.season, snapshot.difficulty, snapshot.percentile, snapshot.end_time, snapshot.rank, snapshot.api_rank, snapshot.source, snapshot.first_seen_at,
                        1 AS origin_precedence,
                        0 AS source_priority
                 FROM {LeaderboardEntriesSnapshotTable} snapshot
-                JOIN active_snapshots active ON active.song_id = snapshot.song_id AND active.active_snapshot_id = snapshot.snapshot_id
+                JOIN selected_sources selected
+                  ON selected.song_id = snapshot.song_id
+                 AND selected.source_kind = 'snapshot'
+                 AND selected.source_snapshot_id = snapshot.snapshot_id
                 WHERE snapshot.instrument = @instrument
                 UNION ALL
                 SELECT overlay.song_id, overlay.account_id, overlay.score, overlay.accuracy, overlay.is_full_combo, overlay.stars, overlay.season, overlay.difficulty, overlay.percentile, overlay.end_time, overlay.rank, overlay.api_rank, overlay.source, overlay.first_seen_at,
@@ -2845,6 +3016,13 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                        overlay.source_priority
                 FROM {LeaderboardEntriesOverlayTable} overlay
                 WHERE overlay.instrument = @instrument
+                  AND (
+                      {allowLegacyRows}
+                      OR EXISTS (
+                          SELECT 1 FROM selected_sources selected
+                          WHERE selected.song_id = overlay.song_id
+                      )
+                  )
             ),
             resolved_rows AS (
                 SELECT DISTINCT ON (song_id, account_id)
@@ -2865,7 +3043,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             """;
     }
 
-    private static string BuildCurrentStatePlayerScoresForSongsSql(int songIdCount)
+    private string BuildCurrentStatePlayerScoresForSongsSql(int songIdCount)
     {
         var parameterNames = Enumerable.Range(0, songIdCount).Select(i => $"@s{i}");
         return BuildCurrentStatePlayerScoresSql(hasSongIdFilter: false)

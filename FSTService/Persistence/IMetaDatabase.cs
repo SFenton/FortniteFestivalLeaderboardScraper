@@ -14,7 +14,10 @@ public interface IMetaDatabase : IDisposable
     void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes, bool epicReportedOver100Pages = false);
     ScrapeRunInfo? GetLastCompletedScrapeRun();
     ScrapeRunInfo? GetPublishedScrapeRun();
-    void PublishScrapeRun(long scrapeId, bool promoteCachedResponses = true);
+    void PublishScrapeRun(
+        long scrapeId,
+        bool promoteCachedResponses = true,
+        int? expectedPublishedScopeCount = null);
     void SetPublicReadFreeze(bool frozen, long? scrapeId = null, string? reason = null);
     PublicReadFreezeState GetPublicReadFreezeState();
     bool ShouldShowLeaderboardEntryTotals();

@@ -95,7 +95,7 @@ public static partial class ApiEndpoints
             var population = maxScoresByInstrument is not null
                 ? persistence.GetCurrentStateFilteredPopulation(maxScoresByInstrument, instrumentFilter)
                 : null;
-            var unfilteredPopulation = metaDb.GetAllLeaderboardPopulation();
+            var unfilteredPopulation = persistence.GetCurrentStateLeaderboardPopulation();
 
             // ── Find best valid scores for invalid entries (from ScoreHistory) ──
             Dictionary<(string SongId, string Instrument), ValidScoreFallback>? validFallbacks = null;
@@ -705,7 +705,7 @@ public static partial class ApiEndpoints
         var allMaxScores = pathStore.GetAllMaxScores();
         var instrumentKeys = persistence.GetInstrumentKeys();
         int totalSongs = persistence.GetTotalSongCount();
-        var population = metaDb.GetAllLeaderboardPopulation();
+        var population = persistence.GetCurrentStateLeaderboardPopulation();
 
         Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null;
         var maxThresholds = PlayerStatsTierRowBuilder.BuildAboveMaxThresholds(allScores, allMaxScores);

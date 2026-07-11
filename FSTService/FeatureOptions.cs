@@ -64,6 +64,19 @@ public sealed class FeatureOptions
     public bool SkipUnchangedPhysicalLeaderboardSnapshots { get; set; }
 
     /// <summary>
+    /// When true, the worker records, validates, and atomically promotes a
+    /// per-scope physical source for each published solo leaderboard.
+    /// </summary>
+    public bool WritePublishedScopeSources { get; set; }
+
+    /// <summary>
+    /// When true, service-side current leaderboard reads and published exports
+    /// resolve through the per-scope published source map. Keep disabled on the
+    /// worker so post-process calculations continue to use the active candidate.
+    /// </summary>
+    public bool UsePublishedScopeSources { get; set; }
+
+    /// <summary>
     /// When true, scrape flushes dual-write logical current/version rows for
     /// shadow validation while physical snapshots remain authoritative.
     /// </summary>

@@ -399,6 +399,34 @@ public sealed class ScrapeOrchestrator
                 populationItems.Count);
         }
 
+        if (doSoloScrape && _persistence.WritePublishedScopeSources)
+        {
+            var expectedPairs = BuildExpectedSoloLeaderboardPairs(scrapeRequests);
+            var coverageStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var coverage = _persistence.RecordLeaderboardScopeCoverage(
+                scrapeId,
+                allResults.Values.SelectMany(static results => results),
+                expectedPairs);
+            coverageStopwatch.Stop();
+            _log.LogInformation(
+                "Recorded published-source coverage for scrape {ScrapeId}: expected={Expected:N0}, observed={Observed:N0}, persisted={Persisted:N0}, missing={Missing:N0}, incomplete={Incomplete:N0}, elapsed={Elapsed}.",
+                scrapeId,
+                coverage.ExpectedScopeCount,
+                coverage.ObservedScopeCount,
+                coverage.PersistedScopeCount,
+                coverage.MissingScopeCount,
+                coverage.IncompleteScopeCount,
+                coverageStopwatch.Elapsed);
+            if (!coverage.IsComplete)
+            {
+                throw new InvalidOperationException(
+                    $"Scrape {scrapeId} published-source coverage is incomplete: " +
+                    $"expected={coverage.ExpectedScopeCount}, observed={coverage.ObservedScopeCount}, " +
+                    $"persisted={coverage.PersistedScopeCount}, missing={coverage.MissingScopeCount}, " +
+                    $"incomplete={coverage.IncompleteScopeCount}.");
+            }
+        }
+
         // ── Band: await completion and flush (runs in background during solo post-processing) ──
         if (bandTask is not null && bandSpool is not null)
         {
@@ -533,6 +561,27 @@ public sealed class ScrapeOrchestrator
         // Band types are scraped via BandPageFetcher (flat parallel) — not
         // included here to avoid double-scraping through ScrapeManySongsAsync.
         return instruments;
+    }
+
+    internal static IReadOnlyList<(string SongId, string Instrument)> BuildExpectedSoloLeaderboardPairs(
+        IEnumerable<GlobalLeaderboardScraper.SongScrapeRequest> requests)
+    {
+        var pairs = new HashSet<(string SongId, string Instrument)>();
+        foreach (var request in requests)
+        {
+            if (string.IsNullOrWhiteSpace(request.SongId))
+                continue;
+
+            foreach (var instrument in request.Instruments)
+            {
+                if (string.IsNullOrWhiteSpace(instrument) || IsBandInstrument(instrument))
+                    continue;
+
+                pairs.Add((request.SongId, instrument));
+            }
+        }
+
+        return pairs.ToArray();
     }
 
     private void ReportBandSpoolFlushProgress(SpoolWriter<BandLeaderboardEntry>.FlushProgress flushProgress)

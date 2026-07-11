@@ -1260,25 +1260,7 @@ public sealed class PostScrapeOrchestrator
     }
 
     private static IReadOnlyList<(string SongId, string Instrument)> BuildExpectedSnapshotPairs(ScrapePassContext ctx)
-    {
-        var pairs = new HashSet<(string SongId, string Instrument)>();
-
-        foreach (var request in ctx.ScrapeRequests)
-        {
-            if (string.IsNullOrWhiteSpace(request.SongId))
-                continue;
-
-            foreach (var instrument in request.Instruments)
-            {
-                if (string.IsNullOrWhiteSpace(instrument) || ScrapeOrchestrator.IsBandInstrument(instrument))
-                    continue;
-
-                pairs.Add((request.SongId, instrument));
-            }
-        }
-
-        return pairs.ToArray();
-    }
+        => ScrapeOrchestrator.BuildExpectedSoloLeaderboardPairs(ctx.ScrapeRequests);
 
     /// <summary>
     /// Run a post-scrape phase with timing and heap telemetry.

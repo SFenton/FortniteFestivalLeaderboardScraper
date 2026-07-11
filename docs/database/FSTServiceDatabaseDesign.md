@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-10 21:18 UTC
+**Last live inventory:** 2026-07-11 13:55 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -18,9 +18,10 @@ changes that boundary.
 2. Public reads must resolve only data belonging to the published generation.
    An in-progress or failed scrape must not become visible through a cold cache
    miss, export, projection, ranking, or fallback query.
-3. `scrape_publication_state` is the global publication ledger. Per-scope
-   physical-source ownership is not yet complete; PG-1 adds that mapping before
-   physical snapshot reuse or resolver cutover.
+3. `scrape_publication_state` is the global publication ledger.
+   `leaderboard_published_scope_source` records the validated physical source
+   for every published solo scope; the global pointer and per-scope rows are
+   consumed as one publication contract.
 4. Staging, build, dirty, queue, and cache tables are never authoritative
    substitutes for a completed and published source.
 5. All database data, backup, restore, archive, export, migration, repack, and
@@ -36,7 +37,7 @@ changes that boundary.
 | Responsibility | Current owner | Primary code |
 |---|---|---|
 | PostgreSQL connection pool | Shared service/worker process | `FSTService/Program.cs` |
-| Startup schema creation | `fstservice` in production | `Persistence/DatabaseInitializer.cs`, `Persistence/StartupInitializer.cs` |
+| Startup schema creation | Explicit one-off initializer before a schema-changing deploy | `Persistence/DatabaseInitializer.cs`, `Persistence/StartupInitializer.cs` |
 | Legacy/localized schema checks | Shared persistence classes; migration debt | `MetaDatabase`, `InstrumentDatabase`, projection/history builders |
 | Scrape ledger and publication | Worker through `MetaDatabase` | `ScraperWorker`, `MetaDatabase` |
 | Solo network/staging/snapshot writes | Worker | `ScrapeOrchestrator`, `LeaderboardSpoolWriterFactory`, `GlobalLeaderboardPersistence` |
@@ -48,10 +49,12 @@ changes that boundary.
 | Durable notifications/improvement state | Shared persistence; service delivers publicly | `ImprovementNotificationService` |
 | Retention planning and bounded cleanup | Service maintenance runner | `DatabaseMaintenanceDryRunReporter`, `DatabaseRetentionMaintenanceService` |
 
-Production currently sets the worker to skip startup schema initialization
-after `fstservice` initializes the schema. PG-6/SERVICE-4 replace monolithic and
-localized `Ensure*Schema` calls with a versioned migration ledger, advisory
-lock, and bounded lock/statement timeouts.
+Production API-only and worker containers both skip routine startup schema
+initialization. Schema-changing releases run an explicit one-off initializer
+while the worker is held, then deploy the role containers. PG-6/SERVICE-4
+replace this monolithic path and localized `Ensure*Schema` calls with a
+versioned migration ledger, advisory lock, and bounded lock/statement
+timeouts.
 
 ## Live shape snapshot
 
@@ -77,9 +80,9 @@ limits.
 | Band rank-history v2 latest partitions | 18.80 GB |
 | `player_score_observations` | 11.69 GB |
 
-The same sample had 314.7 GB free on `/mnt/docker-storage`, scrape 1229 active,
-published scrape 1228, public reads frozen for the scrape, and no ungranted
-locks or active vacuum/index/rewrite operation.
+The PG-1 decision sample had `247.2GB` free on `/mnt/docker-storage`, published
+scrape `1230`, public reads unfrozen, `6,129` complete published-source rows,
+and no ungranted locks. The per-scope map occupied `4.63MB`.
 
 ## Data ownership and restore class
 
@@ -100,17 +103,25 @@ locks or active vacuum/index/rewrite operation.
 |---|---|---|---|---|
 | `scrape_log` | Durable source | Worker via `MetaDatabase` | Service status, maintenance, evidence tooling | One row per scrape; incomplete rows are not publishable |
 | `scrape_publication_state` | Publication ledger | Worker publish/freeze transaction | Public read resolvers, service status, notifications | Single row; preserve through every restore |
+| `leaderboard_published_scope_source` | Durable per-scope publication ledger | Worker coverage/build/publish path | Service current-state readers and solo exports behind rollback flag | One validated snapshot or explicit empty source per published `(song_id, instrument, scope_kind)` |
 | `scrape_phase_timings` | Audit/artifact | Worker | Evidence and maintenance tooling | Bounded metadata retention |
 | `service_worker_status` | Durable operational state | Worker heartbeat/operation publisher | Service status/readiness | Keep current/last operation; stale state must be visible |
 | `instrument_scrape_state` | Durable work state | Worker | Resume/status logic | Retain latest per instrument |
 | `data_version` | Schema metadata | Startup initializer | Startup/schema logic | Replaced by versioned migration ledger in PG-6 |
 | `api_request_telemetry` | Audit/artifact | API instrumentation where enabled | Diagnostics | Bounded retention; no secrets or unbounded cardinality |
 
-Current publication is global: `PublishScrapeRun` verifies `scrape_log` is
-complete, swaps staged API cache rows, publishes current band ranking tables,
-updates `scrape_publication_state.published_scrape_id`, and clears the public
-read freeze in one transaction. This does not yet identify the published
-physical source for each unchanged `(song_id, instrument, scope_kind)`.
+When `Features:WritePublishedScopeSources` is enabled, the worker records
+reported coverage for every expected solo scope, validates exact physical row
+counts, and builds the complete per-scope candidate before marking the scrape
+complete. `PublishScrapeRun` then validates the expected mapping count, marks
+matching fingerprints published, swaps staged API cache rows, publishes current
+band ranking tables, advances `scrape_publication_state.published_scrape_id`,
+and clears the public-read freeze in one transaction.
+
+| Rollout switch | Container | Default | Effect | Rollback |
+|---|---|---:|---|---|
+| `Features__WritePublishedScopeSources` | `fstworker` | `false` | Backfills the current clean publication when needed, records scope coverage, builds the next mapping, and requires it in publication | Set `false`; incomplete candidates never move the global pointer |
+| `Features__UsePublishedScopeSources` | `fstservice` | `false` | Resolves solo current reads, projection readiness, totals, member filters, and published solo exports from the current mapping | Set `false`; active-state/legacy resolver remains available |
 
 ### Song, account, registration, and authentication metadata
 
@@ -138,9 +149,10 @@ All instrument-partitioned families use these nine keys:
 |---|---|---|---|
 | `leaderboard_staging`, `leaderboard_staging_meta`, `leaderboard_staging_v2` | Work state | Bounded/COPY writer | Never public; truncate/replay only after operation proof |
 | `leaderboard_entries` | Legacy mutable durable rollback source | Optional scrape dual-write | Legacy fallback only; not the preferred published model |
-| `leaderboard_entries_snapshot` partitions | Durable physical source | Worker snapshot writer | Current public reads/exports resolve through snapshot state today |
+| `leaderboard_entries_snapshot` partitions | Durable physical source | Worker snapshot writer | Worker candidate reads use active state; service/exports use the mapped published snapshot after PG-1 cutover |
 | `leaderboard_snapshot_state` | Source-selection metadata | Worker finalization | Active source, not automatically a published source |
-| `leaderboard_scope_fingerprints` | Correctness/audit metadata | Worker observe/dual-write | Must include complete content and coverage before write skipping |
+| `leaderboard_scope_fingerprints` | Correctness/audit metadata | Worker observe/coverage dual-write | Content, reported entries/pages, completeness, source scrape, and published scrape must validate before publication |
+| `leaderboard_published_scope_source` | Durable published source selection | Worker candidate build and publication transaction | Service and export resolver when `Features:UsePublishedScopeSources=true`; supports physical snapshot and explicit empty sources |
 | `leaderboard_population`, `song_stats` | Durable derived metadata | Worker/post-process | Ranking totals/statistics; generation must match source |
 | `leaderboard_entries_overlay` | Durable corrective overlay | Controlled writes | Merged with selected base source; precedence is explicit |
 | `leaderboard_current_entries` | Experimental logical current source | Worker logical dual-write | Shadow until PG-4 parity promotes a read owner |
@@ -149,10 +161,29 @@ All instrument-partitioned families use these nine keys:
 | `current_leaderboard_entries`, `solo_current_projection_scope`, `solo_current_projection_state` | Derived published/current projection | `SoloCurrentProjectionBuilder` | Preferred bounded current reads when scope state is ready |
 | `valid_score_overrides` | Durable operator/source metadata | Controlled writes | Threshold exception source; retain provenance |
 
-`leaderboard_snapshot_state.active_snapshot_id` may advance before publication.
-Until PG-1 is promoted, frozen cold-miss fallback and exports remain a known
-correctness risk because a single global published scrape ID cannot represent
-unchanged scopes pinned to older physical snapshots.
+`leaderboard_snapshot_state.active_snapshot_id` may advance before publication
+and remains the worker's candidate source. Service containers enable
+`Features:UsePublishedScopeSources` only after the current published scrape has
+a complete mapping. Worker containers keep that read flag disabled while
+enabling `Features:WritePublishedScopeSources`, so post-process calculations
+use the active candidate and public reads stay on the mapped published source.
+Rollback disables the two flags; the additive table and fingerprint fields may
+remain for diagnosis.
+
+PG-1 does not enable physical snapshot write skipping or change max-page,
+deep-scrape, retry, or Epic request policy. Scope completeness means the
+expected result was observed, page zero did not fail, every page in the
+configured captured range completed, reported totals/pages were recorded, and
+the selected physical row count exactly matches the fingerprint. Fingerprints
+use the same highest-score-per-account deduplication as the snapshot primary
+key, so duplicate API rows cannot make a valid physical source appear
+incomplete. WORKER-0 continues the stricter request/failure-propagation work.
+
+Mapped service reads use `current_leaderboard_entries` only for scopes whose
+projection ledger matches the mapped physical/empty source. Mismatched or
+failed scopes fall back individually to the mapped snapshot plus overlay, so a
+single stale projection cannot force an all-instrument slow path or leak the
+active candidate.
 
 ### Score, player, and solo ranking history
 
@@ -245,14 +276,21 @@ named owner and bounded retention before cleanup. Zero current rows or zero
 2. Network, staging, physical/logical writes, fingerprints, and scope coverage
    accrue without changing the public generation.
 3. Required post-process projections/rankings/caches complete.
-4. The publication transaction promotes all required public pointers and cache
-   generation, records the published scrape, and unfreezes public reads.
+4. The publication transaction validates and promotes the complete per-scope
+   mapping and fingerprint publication IDs together with all required public
+   pointers and cache generation, records the published scrape, and unfreezes
+   public reads.
 5. Any failed network, writer, manifest, required post-process, or publication
    step leaves the prior published generation active.
 
-The current implementation does not yet satisfy step 4 per scope. PG-1 adds a
-backward-compatible `(song_id, instrument, scope_kind)` published-source map;
-the worker dual-writes and validates it before service/export cutover.
+The PG-1 schema is additive and creates no startup secondary-index build. The
+primary key is ordered for current-publication instrument reads. Initial
+backfill runs only at a clean unfrozen boundary with no newer scrape or active
+snapshot, validates all physical row counts, and fails closed on a partial or
+ambiguous mapping. Runtime freeze/publish calls first use a read-only schema
+probe; missing legacy columns are repaired in a separate short transaction
+with a five-second lock timeout, so schema DDL locks are not retained through
+cache and band-ranking publication work.
 
 ## Retention and maintenance
 
@@ -377,9 +415,9 @@ scope-total, and relation-size deltas for an A/B decision.
 
 ## Known design work
 
-- **PG-1 / SERVICE-0 / WORKER-0:** per-scope published source, complete coverage
-  manifests, failure propagation, frozen cold-miss/export parity, and durable
-  status.
+- **PG-1 / SERVICE-0 / WORKER-0:** complete live-scrape promotion evidence for
+  the per-scope source resolver, then continue worker failure propagation and
+  durable service-status semantics.
 - **PG-2 / SERVICE-2:** bounded published reads, set-based API queries, and
   asynchronous cancellation-aware repositories.
 - **PG-3:** index/table owner cards, member fact ownership, observation-table

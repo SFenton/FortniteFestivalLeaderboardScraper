@@ -214,6 +214,25 @@ and old cache artifacts.
   account, rank, score, or total.
 - Published and frozen API fingerprints remain stable until one atomic promote.
 
+**Execution evidence - accepted 2026-07-11**
+
+- `Features__UsePublishedScopeSources=true` is enabled only on `fstservice`;
+  worker post-process reads remain on active candidate state.
+- Current leaderboard rows, player profiles, population totals, member filters,
+  projection readiness, overlays/empty scopes, and solo exports now resolve
+  from the current per-scope mapping. Matching projections stay on the fast
+  path; only stale/failed scopes fall back to mapped physical rows.
+- With all `6,129` active scopes on scrape `1230`, publication frozen, and the
+  mapped pointer still on `1229`, a service restart plus unique cold miss
+  returned `23/23` rows exactly equal to direct mapped-source SQL.
+- The mapped export returned byte-normalized workbook parity and improved the
+  matched warm sample from `0.698s` to `0.470s`.
+- All `525` one-minute candidate monitor ticks kept service readiness,
+  festivalweb shell, and `/api/service-info` healthy. This includes all nine
+  ticks between scrape completion and atomic publication.
+- Rollback is `Features__UsePublishedScopeSources=false`; schema and mappings
+  remain diagnostic-only.
+
 ### SERVICE-0.2 - Correct service status semantics
 
 **Evidence**

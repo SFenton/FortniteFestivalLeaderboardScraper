@@ -119,6 +119,25 @@ fi
 
 docker exec "$PG_CONTAINER" pg_isready -U "$PG_USER" -d "$PG_DB" >/dev/null
 
+has_scope_complete="$(
+    psql_scalar "
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'leaderboard_scope_fingerprints'
+              AND column_name = 'is_complete'
+        );
+    "
+)"
+if [[ "$has_scope_complete" == "t" ]]; then
+    scope_complete_select="is_complete"
+    scope_incomplete_predicate="NOT is_complete"
+else
+    scope_complete_select="FALSE AS is_complete"
+    scope_incomplete_predicate="TRUE"
+fi
+
 "$SCRIPT_DIR/postgres-capacity-guard.sh" \
     --action-class observation \
     --pg-container "$PG_CONTAINER" \
@@ -179,6 +198,7 @@ psql_csv "
         entry_count,
         reported_total_entries,
         reported_total_pages,
+        $scope_complete_select,
         min_rank,
         max_rank,
         source_scrape_id,
@@ -203,6 +223,7 @@ psql_csv "
         COUNT(*) FILTER (WHERE published_scrape_id IS NULL) AS missing_published_scrape_id,
         COUNT(*) FILTER (WHERE reported_total_entries IS NULL) AS missing_reported_entries,
         COUNT(*) FILTER (WHERE reported_total_pages IS NULL) AS missing_reported_pages,
+        COUNT(*) FILTER (WHERE $scope_incomplete_predicate) AS incomplete_scopes,
         COUNT(*) FILTER (WHERE source_scrape_id = $SCRAPE_ID) AS source_scope_count,
         COUNT(*) FILTER (WHERE last_seen_scrape_id = $SCRAPE_ID) AS seen_scope_count,
         COUNT(*) FILTER (WHERE last_changed_scrape_id = $SCRAPE_ID) AS changed_scope_count
@@ -210,6 +231,34 @@ psql_csv "
     GROUP BY instrument, scope_kind
     ORDER BY instrument, scope_kind
 " "$OUT_DIR/scope-summary.csv"
+
+if [[ "$(psql_scalar "SELECT to_regclass('public.leaderboard_published_scope_source') IS NOT NULL;")" == "t" ]]; then
+    psql_csv "
+        SELECT
+            published_scrape_id,
+            song_id,
+            instrument,
+            scope_kind,
+            source_kind,
+            source_snapshot_id,
+            source_scrape_id,
+            row_count,
+            content_fingerprint,
+            coverage_fingerprint,
+            reported_total_entries,
+            reported_total_pages,
+            is_complete,
+            created_at,
+            validated_at
+        FROM leaderboard_published_scope_source
+        WHERE published_scrape_id = $SCRAPE_ID
+        ORDER BY instrument, song_id, scope_kind
+    " "$OUT_DIR/published-scope-sources.csv"
+else
+    printf '%s\n' \
+        'published_scrape_id,song_id,instrument,scope_kind,source_kind,source_snapshot_id,source_scrape_id,row_count,content_fingerprint,coverage_fingerprint,reported_total_entries,reported_total_pages,is_complete,created_at,validated_at' \
+        > "$OUT_DIR/published-scope-sources.csv"
+fi
 
 psql_csv "
     SELECT *
@@ -443,6 +492,7 @@ def keyed(name, key, root=out_dir):
 scrape = first_row("scrape-publication.csv")
 capacity = json.loads((out_dir / "capacity.json").read_text(encoding="utf-8"))
 scope_rows = rows("scope-summary.csv")
+published_source_rows = rows("published-scope-sources.csv")
 logical_rows = rows("logical-write-metrics.csv")
 phase_rows = rows("phase-timings.csv")
 
@@ -459,9 +509,19 @@ summary = {
         "missingPublishedScrapeId": sum(int(row["missing_published_scrape_id"]) for row in scope_rows),
         "missingReportedEntries": sum(int(row["missing_reported_entries"]) for row in scope_rows),
         "missingReportedPages": sum(int(row["missing_reported_pages"]) for row in scope_rows),
+        "incompleteScopes": sum(int(row["incomplete_scopes"]) for row in scope_rows),
         "targetSourceScopes": sum(int(row["source_scope_count"]) for row in scope_rows),
         "targetSeenScopes": sum(int(row["seen_scope_count"]) for row in scope_rows),
         "targetChangedScopes": sum(int(row["changed_scope_count"]) for row in scope_rows),
+    },
+    "publishedSources": {
+        "scopes": len(published_source_rows),
+        "snapshotScopes": sum(row["source_kind"] == "snapshot" for row in published_source_rows),
+        "emptyScopes": sum(row["source_kind"] == "empty" for row in published_source_rows),
+        "rows": sum(int(row["row_count"] or 0) for row in published_source_rows),
+        "incompleteScopes": sum(row["is_complete"].lower() not in {"t", "true", "1"} for row in published_source_rows),
+        "minSourceScrapeId": min((int(row["source_scrape_id"]) for row in published_source_rows), default=None),
+        "maxSourceScrapeId": max((int(row["source_scrape_id"]) for row in published_source_rows), default=None),
     },
     "logicalWrites": {
         column: sum(int(row[column] or 0) for row in logical_rows)
@@ -548,8 +608,11 @@ report = [
     f"- Fingerprint entry total: `{summary['scopeTotals']['entries']}`",
     f"- Missing published IDs: `{summary['scopeTotals']['missingPublishedScrapeId']}`",
     f"- Missing reported entry/page fields: `{summary['scopeTotals']['missingReportedEntries']}` / `{summary['scopeTotals']['missingReportedPages']}`",
+    f"- Incomplete fingerprint scopes: `{summary['scopeTotals']['incompleteScopes']}`",
     f"- Fingerprint rows last seen in target scrape: `{summary['scopeTotals']['targetSeenScopes']}` / `{summary['scopeTotals']['scopes']}`",
     f"- Fingerprint snapshot complete for target: `{summary['scopeTotals']['fingerprintSnapshotCompleteForTarget']}`",
+    f"- Published source scopes (snapshot/empty/incomplete): `{summary['publishedSources']['scopes']}` / `{summary['publishedSources']['snapshotScopes']}` / `{summary['publishedSources']['emptyScopes']}` / `{summary['publishedSources']['incompleteScopes']}`",
+    f"- Published source row total and source scrape range: `{summary['publishedSources']['rows']}` / `{summary['publishedSources']['minSourceScrapeId']}`-`{summary['publishedSources']['maxSourceScrapeId']}`",
     f"- Logical observed/changed/unchanged rows: `{summary['logicalWrites']['observed_rows']}` / `{summary['logicalWrites']['changed_rows']}` / `{summary['logicalWrites']['unchanged_rows']}`",
     f"- Phase timing rows/failures: `{summary['phaseTimings']['rows']}` / `{summary['phaseTimings']['failed']}`",
     "",

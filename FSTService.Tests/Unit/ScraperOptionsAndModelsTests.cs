@@ -106,6 +106,8 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.ExperimentalRanks);
         Assert.False(opts.AppManual);
         Assert.False(opts.SkipUnchangedPhysicalLeaderboardSnapshots);
+        Assert.False(opts.WritePublishedScopeSources);
+        Assert.False(opts.UsePublishedScopeSources);
     }
 
     [Fact]

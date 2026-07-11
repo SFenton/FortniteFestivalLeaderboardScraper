@@ -39,6 +39,22 @@ Worker publication changes follow this order:
 4. Service resolver/exports switch behind a rollback flag.
 5. Forced frozen cold-miss and live-scrape parity approve cutover.
 
+**PG-1 rollout completed 2026-07-11**
+
+- Worker coverage and source-candidate writes are enabled with
+  `Features__WritePublishedScopeSources=true`; worker reads keep
+  `Features__UsePublishedScopeSources=false`.
+- Scrape `1230` recorded complete coverage for all `6,129` expected scopes,
+  built and validated all `6,129` mappings in `00:03:27.318`, then atomically
+  promoted mapping, fingerprint publication IDs, band/cache state, and the
+  global scrape pointer.
+- Cancellation/failure fixtures retain the prior pointer, and the live
+  `1229 -> 1230` window completed with zero missing/incomplete mappings and
+  continuous public health.
+- Runtime schema probes no longer retain publication-ledger DDL locks through
+  band publication. WORKER-4.3's broader duplicate band publication cleanup
+  remains separate and was not combined with PG-1.
+
 ## Autonomous execution windows
 
 | Phase/task family | Execution class | Decision window |
