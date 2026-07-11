@@ -77,6 +77,32 @@ Evidence:
 
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/roadmap-20260710T2105Z/service-0.5/`
 
+#### Epic client credential rotation runbook
+
+The remaining provider action is prepared but must be executed by an operator
+with Epic client-management access:
+
+1. Create replacement client credentials with the same required grants and
+   entitlement. Do not paste values into chat, shell arguments, reports, or
+   tracked files.
+2. Wait for the active scrape, post-process, publication, and unfreeze boundary;
+   hold `fstworker` before the next scrape.
+3. Update only `EPIC_CLIENT_ID` and `EPIC_CLIENT_SECRET` in the ignored
+   production `.env`. Keep a non-logged rollback copy in operator-controlled
+   secret storage.
+4. Recreate `fstservice` first. Verify all expected containers, `/readyz`, the
+   festivalweb shell, `/api/service-info`, catalog freshness, and zero auth
+   failures.
+5. Recreate/start `fstworker`; immediately roll back if API/web health or Epic
+   authentication regresses.
+6. Run one complete scrape/publication window at the unchanged global request
+   budget and verify normal scope/count/fingerprint/publication evidence.
+7. Revoke the old Epic client credentials only after the candidate scrape and
+   rollback proof pass.
+
+The repository and production environment are ready for this sequence. The
+provider credential creation/revocation itself remains the exact hard gate.
+
 ## Executive decision
 
 The service has good low-level PostgreSQL primitives and excellent cached local
