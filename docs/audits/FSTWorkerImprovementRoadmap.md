@@ -172,6 +172,11 @@ Evidence:
   candidates proved why both controls are required: slow 30-second requests
   accumulated up to 19 in flight on one proxy, then stalled at `65/6,138`
   leaderboards despite the start-rate cap.
+- The one-in-flight retry proved connection reuse was the remaining transport
+  difference from the valid curl canaries: it held every proxy to one active
+  request but still accumulated `1,532` timeouts. The next candidate disables
+  proxy connection reuse so each .NET Epic request uses the same fresh-
+  connection posture as the `125/125` canary rounds.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A

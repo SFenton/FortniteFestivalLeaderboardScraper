@@ -112,6 +112,12 @@ public sealed class ScraperOptions
     public int ProxyMaxConcurrentRequestsPerEndpoint { get; set; }
 
     /// <summary>
+    /// When true, proxy-routed Epic requests use a fresh upstream connection
+    /// instead of reusing a pooled connection through the VPN exit.
+    /// </summary>
+    public bool ProxyDisableConnectionReuse { get; set; }
+
+    /// <summary>
     /// When true, repeated proxy transport failures trigger a Docker restart for
     /// the aligned <see cref="ContainerNames"/> entry. CDN blocks still only
     /// cool down/fail over because they do not prove the VPN tunnel is broken.

@@ -79,6 +79,19 @@ public sealed class ProxyPoolTests
     }
 
     [Fact]
+    public void PrepareRequest_WhenConnectionReuseDisabled_AddsConnectionClose()
+    {
+        var options = CreateOptions(activeStandby: false);
+        options.ProxyDisableConnectionReuse = true;
+        using var pool = new ProxyPool(options, _log);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/");
+
+        pool.PrepareRequest(request);
+
+        Assert.True(request.Headers.ConnectionClose);
+    }
+
+    [Fact]
     public async Task CdnBlock_CoolsEndpoint_AndRoutesToAnotherProxy()
     {
         using var pool = new ProxyPool(CreateOptions(activeStandby: true), _log);

@@ -204,6 +204,7 @@ services:
       - Scraper__ExpectedProxyEndpointCount=4
       - Scraper__ProxyMaxRequestsPerSecondPerEndpoint=${PROXY_MAX_REQUESTS_PER_SECOND_PER_ENDPOINT:-0}
       - Scraper__ProxyMaxConcurrentRequestsPerEndpoint=${PROXY_MAX_CONCURRENT_REQUESTS_PER_ENDPOINT:-0}
+      - Scraper__ProxyDisableConnectionReuse=${PROXY_DISABLE_CONNECTION_REUSE:-false}
       - Scraper__ProxyUrls__0=http://gluetun-1:8888
       - Scraper__ProxyUrls__1=http://gluetun-2:8888
       - Scraper__ProxyUrls__2=http://gluetun-3:8888

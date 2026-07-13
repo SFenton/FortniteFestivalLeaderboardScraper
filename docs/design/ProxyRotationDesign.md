@@ -58,6 +58,12 @@ simultaneous request: a 1-RPS candidate without that concurrency bound allowed
 slow 30-second requests to accumulate up to 19 in flight on one exit and
 stalled after 65 leaderboards.
 
+Proxy-routed Epic requests also disable upstream connection reuse. The matched
+curl canaries opened a fresh connection for every request and remained valid,
+while the bounded .NET candidate still stalled with one request in flight per
+exit after reusing its proxy connections. `Connection: close` plus zero pooled
+connection lifetime makes the production transport match the qualified path.
+
 ### Fail-closed worker deployment
 
 `Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,

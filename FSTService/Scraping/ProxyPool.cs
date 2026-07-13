@@ -59,6 +59,7 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     private readonly int _httpFailureThreshold;
     private readonly int _perEndpointMaxRequestsPerSecond;
     private readonly int _perEndpointMaxConcurrentRequests;
+    private readonly bool _disableConnectionReuse;
     private readonly object _lock = new();
     private int _activeIndex;
     private int _nextRoundRobinIndex;
@@ -92,18 +93,20 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         _httpFailureThreshold = Math.Max(1, options.ProxyHttpFailureThreshold);
         _perEndpointMaxRequestsPerSecond = options.ProxyMaxRequestsPerSecondPerEndpoint;
         _perEndpointMaxConcurrentRequests = options.ProxyMaxConcurrentRequestsPerEndpoint;
+        _disableConnectionReuse = options.ProxyDisableConnectionReuse;
 
         _endpoints = BuildEndpoints(options).ToList();
         if (_endpoints.Count > 0)
         {
             _log.LogInformation(
-                "Epic proxy pool enabled with {Count} endpoint(s); mode={Mode}, cooldown={CooldownSeconds}s, rotation={RotationSeconds}s, perEndpointRps={PerEndpointRps}, perEndpointConcurrency={PerEndpointConcurrency}.",
+                "Epic proxy pool enabled with {Count} endpoint(s); mode={Mode}, cooldown={CooldownSeconds}s, rotation={RotationSeconds}s, perEndpointRps={PerEndpointRps}, perEndpointConcurrency={PerEndpointConcurrency}, connectionReuse={ConnectionReuse}.",
                 _endpoints.Count,
                 _activeStandby ? "active-standby" : "least-in-flight",
                 _baseCooldown.TotalSeconds,
                 _activeRotationInterval.TotalSeconds,
                 _perEndpointMaxRequestsPerSecond,
-                _perEndpointMaxConcurrentRequests);
+                _perEndpointMaxConcurrentRequests,
+                _disableConnectionReuse ? "disabled" : "enabled");
 
             if (_containerSelfHealEnabled)
             {
@@ -136,6 +139,12 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     internal int EndpointCount => _endpoints.Count;
 
     internal IReadOnlyList<string> EndpointNames => _endpoints.Select(e => e.Name).ToList();
+
+    internal void PrepareRequest(HttpRequestMessage request)
+    {
+        if (_disableConnectionReuse)
+            request.Headers.ConnectionClose = true;
+    }
 
     internal async ValueTask<ProxyLease?> AcquireAsync(CancellationToken ct)
     {
@@ -549,7 +558,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
                 provider: string.IsNullOrWhiteSpace(provider) ? "unknown" : provider,
                 controlUrl: controlUrl,
                 containerName: containerName,
-                maxRequestsPerSecond: options.ProxyMaxRequestsPerSecondPerEndpoint);
+                maxRequestsPerSecond: options.ProxyMaxRequestsPerSecondPerEndpoint,
+                disableConnectionReuse: options.ProxyDisableConnectionReuse);
         }
     }
 
@@ -680,7 +690,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
             string provider,
             string controlUrl,
             string containerName,
-            int maxRequestsPerSecond)
+            int maxRequestsPerSecond,
+            bool disableConnectionReuse)
         {
             Index = index;
             ProxyUri = proxyUri;
@@ -688,7 +699,10 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
             Provider = provider;
             ControlUrl = controlUrl;
             ContainerName = containerName;
-            Invoker = new HttpMessageInvoker(CreateHandler(proxyUri), disposeHandler: true);
+            DisableConnectionReuse = disableConnectionReuse;
+            Invoker = new HttpMessageInvoker(
+                CreateHandler(proxyUri, disableConnectionReuse),
+                disposeHandler: true);
             if (maxRequestsPerSecond > 0)
             {
                 RateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
@@ -709,6 +723,7 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         public string Provider { get; }
         public string ControlUrl { get; }
         public string ContainerName { get; }
+        public bool DisableConnectionReuse { get; }
         public HttpMessageInvoker Invoker { get; private set; }
         public TokenBucketRateLimiter? RateLimiter { get; }
         public int InFlight { get; set; }
@@ -734,18 +749,24 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         public HttpMessageInvoker ResetInvoker()
         {
             var old = Invoker;
-            Invoker = new HttpMessageInvoker(CreateHandler(ProxyUri), disposeHandler: true);
+            Invoker = new HttpMessageInvoker(
+                CreateHandler(ProxyUri, DisableConnectionReuse),
+                disposeHandler: true);
             return old;
         }
 
-        private static SocketsHttpHandler CreateHandler(Uri proxyUri)
+        private static SocketsHttpHandler CreateHandler(Uri proxyUri, bool disableConnectionReuse)
             => new()
             {
                 Proxy = new WebProxy(proxyUri),
                 UseProxy = true,
-                MaxConnectionsPerServer = 2048,
-                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
-                PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+                MaxConnectionsPerServer = disableConnectionReuse ? 1 : 2048,
+                PooledConnectionIdleTimeout = disableConnectionReuse
+                    ? TimeSpan.Zero
+                    : TimeSpan.FromMinutes(2),
+                PooledConnectionLifetime = disableConnectionReuse
+                    ? TimeSpan.Zero
+                    : TimeSpan.FromMinutes(2),
                 EnableMultipleHttp2Connections = true,
                 AutomaticDecompression = DecompressionMethods.All,
             };

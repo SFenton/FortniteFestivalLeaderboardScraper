@@ -97,6 +97,12 @@ def integer(name):
         raise SystemExit(f"ERROR: {name} must be greater than zero")
     return value
 
+def boolean(name):
+    value = str(environment.get(name, "")).strip().casefold()
+    if value not in {"true", "false"}:
+        raise SystemExit(f"ERROR: {name} must be true or false")
+    return value == "true"
+
 def indexed(prefix):
     values = []
     for key, value in environment.items():
@@ -117,6 +123,7 @@ canonical = integer("Scraper__CanonicalProxyServiceCount")
 max_rps = integer("Scraper__MaxRequestsPerSecond")
 per_endpoint_rps = integer("Scraper__ProxyMaxRequestsPerSecondPerEndpoint")
 per_endpoint_concurrency = integer("Scraper__ProxyMaxConcurrentRequestsPerEndpoint")
+disable_connection_reuse = boolean("Scraper__ProxyDisableConnectionReuse")
 if canonical != 30:
     raise SystemExit(f"ERROR: canonical PIA service count must be 30, found {canonical}")
 if expected > canonical:
@@ -178,15 +185,17 @@ if per_endpoint_rps > 16:
 if per_endpoint_concurrency > 4:
     raise SystemExit(
         f"ERROR: per-endpoint concurrency {per_endpoint_concurrency} exceeds the qualified ceiling of 4")
+if not disable_connection_reuse:
+    raise SystemExit("ERROR: canonical PIA worker must disable proxy connection reuse")
 
-print(f"SUMMARY|{expected}|{canonical}|{max_rps}|{per_endpoint_rps}|{per_endpoint_concurrency}")
+print(f"SUMMARY|{expected}|{canonical}|{max_rps}|{per_endpoint_rps}|{per_endpoint_concurrency}|true")
 for container in containers:
     print(f"NODE|{container}")
 ' <<< "$compose_json"
 )"
 
 summary="$(head -n 1 <<< "$validation")"
-IFS='|' read -r _ expected_count canonical_count max_rps per_endpoint_rps per_endpoint_concurrency <<< "$summary"
+IFS='|' read -r _ expected_count canonical_count max_rps per_endpoint_rps per_endpoint_concurrency connection_reuse_disabled <<< "$summary"
 mapfile -t effective_nodes < <(sed -n 's/^NODE|//p' <<< "$validation")
 
 if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
@@ -194,7 +203,7 @@ if [[ "${#effective_nodes[@]}" -ne "$expected_count" ]]; then
     exit 1
 fi
 
-printf 'compose_guard config=ok overlay=%s effective=%s canonical=%s max_rps=%s per_endpoint_rps=%s per_endpoint_concurrency=%s\n' \
+printf 'compose_guard config=ok overlay=%s effective=%s canonical=%s max_rps=%s per_endpoint_rps=%s per_endpoint_concurrency=%s connection_reuse=disabled\n' \
     "$(basename "$pia_overlay")" "$expected_count" "$canonical_count" "$max_rps" "$per_endpoint_rps" "$per_endpoint_concurrency"
 
 if $RUNTIME_PROBES; then
