@@ -51,42 +51,96 @@ public static partial class ApiEndpoints
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1";
 
+            var nowUtc = DateTime.UtcNow;
             var progress = tracker.GetProgressResponse();
-            var current = progress.Current;
-            var isUpdating = current is not null;
-            var lastCompletedUpdate = metaDb.GetPublishedScrapeRun() ?? metaDb.GetLastCompletedScrapeRun();
-            string? nextScheduledUpdateAt = null;
-            var workerStatus = BuildWorkerStatus(
-                metaDb.GetWorkerStatus(WorkerStatusPublisher.ScraperWorkerKey),
-                DateTime.UtcNow);
+            var localCurrent = progress.Current;
+            var runtime = metaDb.GetServiceRuntimeState(WorkerStatusPublisher.ScraperWorkerKey);
+            var storedWorker = runtime.WorkerStatus;
+            var effectiveWorkerStatus = storedWorker is null
+                ? "unknown"
+                : GetEffectiveWorkerStatus(storedWorker, nowUtc);
+            var durableCurrent = storedWorker?.CurrentOperation is { Status: var operationStatus } operation
+                && string.Equals(operationStatus, "running", StringComparison.OrdinalIgnoreCase)
+                    ? operation
+                    : null;
+            var lastFailedOperation = IsFailedScrapeOperation(storedWorker?.LastOperation)
+                ? storedWorker!.LastOperation
+                : null;
+            var publishedScrape = runtime.PublishedScrape;
+            var latestScrape = runtime.LatestScrape;
+            var candidateScrape = latestScrape is not null && latestScrape.Id != publishedScrape?.Id
+                ? latestScrape
+                : null;
+            var activeScrape = candidateScrape
+                ?? (IsScrapeOperation(durableCurrent) ? latestScrape : null);
+            var workerUnavailable = effectiveWorkerStatus is "offline" or "stale" or "stopping" or "unknown";
 
-            if (!isUpdating
-                && lastCompletedUpdate?.CompletedAt is not null
-                && DateTimeOffset.TryParse(lastCompletedUpdate.CompletedAt, out var completedAtUtc))
-            {
-                nextScheduledUpdateAt = completedAtUtc
-                    .ToUniversalTime()
-                    .Add(scraperOptions.Value.ScrapeInterval)
-                    .ToString("o");
-            }
+            var currentStatus = durableCurrent is not null || localCurrent is not null
+                ? "updating"
+                : candidateScrape is not null && lastFailedOperation is not null
+                    ? "failed"
+                    : runtime.PublicReadFreeze.IsFrozen || candidateScrape is not null
+                        ? workerUnavailable ? "stalled" : "updating"
+                        : "idle";
+
+            var currentPhase = durableCurrent?.Phase
+                ?? localCurrent?.Operation
+                ?? (currentStatus == "failed" ? lastFailedOperation?.Phase : null)
+                ?? GetFreezePhase(runtime.PublicReadFreeze.Reason)
+                ?? (candidateScrape?.CompletedAt is not null ? "Publishing" : candidateScrape is not null ? "Scraping" : null);
+            var currentSubOperation = durableCurrent?.SubOperation
+                ?? localCurrent?.SubOperation
+                ?? (currentStatus == "failed" ? "failed" : runtime.PublicReadFreeze.Reason);
+            var currentStartedAt = activeScrape?.StartedAt
+                ?? FormatUtc(durableCurrent?.StartedAtUtc)
+                ?? localCurrent?.StartedAtUtc?.ToUniversalTime().ToString("o");
+            var currentElapsedSeconds = durableCurrent?.ElapsedSeconds
+                ?? (durableCurrent is null
+                    ? (double?)null
+                    : Math.Max(0, (nowUtc - durableCurrent.StartedAtUtc).TotalSeconds))
+                ?? localCurrent?.ElapsedSeconds;
+            var nextScheduledUpdateAt = GetNextScheduledUpdateAt(
+                runtime,
+                currentStatus,
+                effectiveWorkerStatus,
+                scraperOptions.Value.ScrapeInterval,
+                nowUtc);
+            var workerStatus = BuildWorkerStatus(storedWorker, nowUtc);
 
             return Results.Ok(new
             {
-                lastCompletedUpdate = lastCompletedUpdate is null ? null : new
+                lastCompletedUpdate = publishedScrape is null ? null : new
                 {
-                    startedAt = lastCompletedUpdate.StartedAt,
-                    completedAt = lastCompletedUpdate.CompletedAt,
+                    scrapeId = publishedScrape.Id,
+                    startedAt = publishedScrape.StartedAt,
+                    completedAt = publishedScrape.CompletedAt,
+                    publishedAt = FormatUtc(runtime.PublishedAtUtc),
                 },
                 currentUpdate = new
                 {
-                    status = isUpdating ? "updating" : "idle",
-                    startedAt = current?.StartedAtUtc,
-                    phase = current?.Operation,
-                    subOperation = current?.SubOperation,
-                    progressPercent = current?.ProgressPercent,
-                    elapsedSeconds = current?.ElapsedSeconds,
-                    estimatedRemainingSeconds = current?.EstimatedRemainingSeconds,
-                    branches = current?.Branches,
+                    status = currentStatus,
+                    scrapeId = activeScrape?.Id,
+                    startedAt = currentStartedAt,
+                    phase = currentPhase,
+                    subOperation = currentSubOperation,
+                    detail = durableCurrent?.Detail ?? lastFailedOperation?.Detail,
+                    updatedAt = FormatUtc(durableCurrent?.UpdatedAtUtc),
+                    endedAt = currentStatus == "failed" ? FormatUtc(lastFailedOperation?.EndedAtUtc) : null,
+                    progressPercent = durableCurrent?.ProgressPercent ?? localCurrent?.ProgressPercent,
+                    elapsedSeconds = currentElapsedSeconds,
+                    estimatedRemainingSeconds = durableCurrent?.EstimatedRemainingSeconds ?? localCurrent?.EstimatedRemainingSeconds,
+                    branches = localCurrent?.Branches,
+                },
+                activeScrapeId = activeScrape?.Id,
+                publishedScrapeId = publishedScrape?.Id,
+                publication = new
+                {
+                    publishedScrapeId = publishedScrape?.Id,
+                    publishedAt = FormatUtc(runtime.PublishedAtUtc),
+                    publicReadsFrozen = runtime.PublicReadFreeze.IsFrozen,
+                    frozenAt = FormatUtc(runtime.PublicReadFreeze.FrozenAt),
+                    frozenScrapeId = runtime.PublicReadFreeze.ScrapeId,
+                    freezeReason = runtime.PublicReadFreeze.Reason,
                 },
                 workerStatus,
                 nextScheduledUpdateAt,
@@ -152,6 +206,58 @@ public static partial class ApiEndpoints
         return nowUtc - stored.LastHeartbeatAtUtc.Value > TimeSpan.FromSeconds(90)
             ? "stale"
             : "online";
+    }
+
+    private static bool IsFailedScrapeOperation(WorkerOperationInfo? operation)
+        => operation is not null
+           && string.Equals(operation.Status, "failed", StringComparison.OrdinalIgnoreCase)
+           && IsScrapeOperation(operation);
+
+    private static bool IsScrapeOperation(WorkerOperationInfo? operation)
+        => operation?.OperationKey.StartsWith("scrape.", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static string? GetFreezePhase(string? reason)
+        => reason?.Trim().ToLowerInvariant() switch
+        {
+            "scrape" => "Scraping",
+            "post-process" => "PostScrapeEnrichment",
+            "publish" => "Publishing",
+            _ => null,
+        };
+
+    private static string? GetNextScheduledUpdateAt(
+        ServiceRuntimeState runtime,
+        string currentStatus,
+        string effectiveWorkerStatus,
+        TimeSpan scrapeInterval,
+        DateTime nowUtc)
+    {
+        if (currentStatus is "updating" or "stalled" || runtime.PublicReadFreeze.IsFrozen)
+            return null;
+        if (effectiveWorkerStatus is "offline" or "stale" or "stopping")
+            return null;
+
+        DateTime? scheduleBaseUtc = null;
+        if (currentStatus == "failed" && IsFailedScrapeOperation(runtime.WorkerStatus?.LastOperation))
+        {
+            scheduleBaseUtc = runtime.WorkerStatus!.LastOperation!.EndedAtUtc
+                ?? runtime.WorkerStatus.LastOperation.UpdatedAtUtc;
+        }
+        else if (runtime.PublishedAtUtc is not null)
+        {
+            scheduleBaseUtc = runtime.PublishedAtUtc;
+        }
+        else if (runtime.PublishedScrape?.CompletedAt is not null
+                 && DateTimeOffset.TryParse(runtime.PublishedScrape.CompletedAt, out var completedAt))
+        {
+            scheduleBaseUtc = completedAt.UtcDateTime;
+        }
+
+        if (scheduleBaseUtc is null)
+            return null;
+
+        var next = scheduleBaseUtc.Value.ToUniversalTime().Add(scrapeInterval);
+        return next > nowUtc ? next.ToString("o") : null;
     }
 
     private static object? FormatWorkerOperation(WorkerOperationInfo? operation)

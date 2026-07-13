@@ -960,6 +960,18 @@ public sealed class WorkerStatusInfo
 }
 
 /// <summary>
+/// Atomic database snapshot used to derive public service update and publication status.
+/// </summary>
+public sealed class ServiceRuntimeState
+{
+    public ScrapeRunInfo? LatestScrape { get; init; }
+    public ScrapeRunInfo? PublishedScrape { get; init; }
+    public DateTime? PublishedAtUtc { get; init; }
+    public PublicReadFreezeState PublicReadFreeze { get; init; } = PublicReadFreezeState.NotFrozen;
+    public WorkerStatusInfo? WorkerStatus { get; init; }
+}
+
+/// <summary>
 /// Max attainable scores for a song, one per instrument.
 /// </summary>
 public sealed class SongMaxScores

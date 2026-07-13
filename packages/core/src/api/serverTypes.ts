@@ -563,14 +563,20 @@ export type BandSyncStatusResponse = {
 
 export type ServiceInfoResponse = {
   lastCompletedUpdate: {
+    scrapeId?: number;
     startedAt: string;
     completedAt: string | null;
+    publishedAt?: string | null;
   } | null;
   currentUpdate: {
-    status: 'idle' | 'updating';
+    status: 'idle' | 'updating' | 'failed' | 'stalled';
+    scrapeId?: number | null;
     startedAt: string | null;
     phase: string | null;
     subOperation: string | null;
+    detail?: string | null;
+    updatedAt?: string | null;
+    endedAt?: string | null;
     progressPercent?: number | null;
     elapsedSeconds?: number | null;
     estimatedRemainingSeconds?: number | null;
@@ -583,6 +589,16 @@ export type ServiceInfoResponse = {
       total?: number | null;
       message?: string | null;
     }> | null;
+  };
+  activeScrapeId?: number | null;
+  publishedScrapeId?: number | null;
+  publication?: {
+    publishedScrapeId: number | null;
+    publishedAt: string | null;
+    publicReadsFrozen: boolean;
+    frozenAt: string | null;
+    frozenScrapeId: number | null;
+    freezeReason: string | null;
   };
   workerStatus: {
     workerKey: string;

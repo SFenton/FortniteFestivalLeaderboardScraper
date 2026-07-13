@@ -18,7 +18,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     private readonly Lazy<bool> _rankHistoryHasPrimaryKey;
     private const string LeaderboardEntriesSnapshotTable = "leaderboard_entries_snapshot";
     private const string LeaderboardSnapshotStateTable = "leaderboard_snapshot_state";
-    private const string LeaderboardPublishedScopeSourceTable = "leaderboard_published_scope_source";
     private const string LeaderboardEntriesOverlayTable = "leaderboard_entries_overlay";
     private const string SoloCurrentProjectionTable = "current_leaderboard_entries";
     private const string SoloCurrentProjectionScopeTable = "solo_current_projection_scope";
@@ -211,6 +210,20 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         try
         {
             using var cmd = conn.CreateCommand();
+            var projectionGenerationGuard = UsePublishedScopeSources
+                ? $"""
+                    AND (
+                        scope.row_count = 0
+                        OR EXISTS (
+                            SELECT 1
+                            FROM {SoloCurrentProjectionTable} projection
+                            WHERE projection.song_id = scope.song_id
+                              AND projection.instrument = scope.instrument
+                              AND projection.projection_generation = scope.projection_generation
+                        )
+                    )
+                    """
+                : string.Empty;
             cmd.CommandText = $"""
                                 WITH {BuildProjectionSourceCtes(filterSong: true)}
                                 SELECT scope.row_count
@@ -222,6 +235,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                                     AND scope.status = 'ready'
                                     AND source.source_kind IN ('snapshot', 'empty')
                                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                                    {projectionGenerationGuard}
                 LIMIT 1
                 """;
             cmd.Parameters.AddWithValue("songId", songId);
@@ -240,6 +254,20 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         try
         {
             using var cmd = conn.CreateCommand();
+            var projectionGenerationGuard = UsePublishedScopeSources
+                ? $"""
+                    OR (
+                        scope.row_count > 0
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM {SoloCurrentProjectionTable} projection
+                            WHERE projection.song_id = scope.song_id
+                              AND projection.instrument = scope.instrument
+                              AND projection.projection_generation = scope.projection_generation
+                        )
+                    )
+                    """
+                : string.Empty;
             cmd.CommandText = $"""
                 WITH {BuildProjectionSourceCtes(filterSong: false)}
                 SELECT EXISTS (
@@ -256,6 +284,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                           scope.song_id IS NULL
                           OR scope.status <> 'ready'
                           OR scope.source_snapshot_id IS DISTINCT FROM source.source_snapshot_id
+                          {projectionGenerationGuard}
                       )
                 )
                 """;
@@ -280,6 +309,20 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         try
         {
             using var cmd = conn.CreateCommand();
+            var projectionGenerationGuard = UsePublishedScopeSources
+                ? $"""
+                    AND (
+                        scope.row_count = 0
+                        OR EXISTS (
+                            SELECT 1
+                            FROM {SoloCurrentProjectionTable} projection
+                            WHERE projection.song_id = scope.song_id
+                              AND projection.instrument = scope.instrument
+                              AND projection.projection_generation = scope.projection_generation
+                        )
+                    )
+                    """
+                : string.Empty;
             cmd.CommandText = $"""
                         WITH requested AS (
                                         SELECT unnest(@songIds::text[]) AS song_id
@@ -294,6 +337,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                                 WHERE scope.status = 'ready'
                                     AND source.source_kind IN ('snapshot', 'empty')
                                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                                    {projectionGenerationGuard}
                 """;
             cmd.Parameters.AddWithValue("instrument", Instrument);
             cmd.Parameters.AddWithValue("songIds", distinctSongIds);
@@ -973,12 +1017,22 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
+            WITH {BuildProjectionSourceCtes(filterSong: true)}
             SELECT account_id, rank, score
-            FROM {SoloCurrentProjectionTable}
-            WHERE song_id = @songId
-              AND instrument = @instrument
-              AND rank BETWEEN @lo AND @hi
-              AND account_id != @exclude
+            FROM {SoloCurrentProjectionTable} projection
+            JOIN {SoloCurrentProjectionScopeTable} scope
+              ON scope.song_id = projection.song_id
+             AND scope.instrument = projection.instrument
+             AND scope.projection_generation = projection.projection_generation
+             AND scope.status = 'ready'
+            JOIN selected_sources source
+              ON source.song_id = scope.song_id
+             AND source.source_kind IN ('snapshot', 'empty')
+             AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+            WHERE projection.song_id = @songId
+              AND projection.instrument = @instrument
+              AND projection.rank BETWEEN @lo AND @hi
+              AND projection.account_id != @exclude
             ORDER BY rank
             """;
         cmd.Parameters.AddWithValue("songId", songId);
@@ -990,6 +1044,9 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             list.Add((reader.GetString(0), reader.GetInt32(1), reader.GetInt32(2)));
+        reader.Close();
+        if (list.Count == 0 && TryGetReadyCurrentProjectionRowCount(conn, songId) is null)
+            return null;
         return list;
     }
 
@@ -1029,6 +1086,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 JOIN {SoloCurrentProjectionScopeTable} scope
                   ON scope.song_id = projection.song_id
                  AND scope.instrument = projection.instrument
+                 AND scope.projection_generation = projection.projection_generation
                  AND scope.status = 'ready'
                   AND scope.row_count > 0
                 JOIN selected_sources source
@@ -1151,6 +1209,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             JOIN {SoloCurrentProjectionScopeTable} scope
               ON scope.song_id = projection.song_id
              AND scope.instrument = projection.instrument
+             AND scope.projection_generation = projection.projection_generation
              AND scope.status = 'ready'
              AND scope.row_count > 0
             JOIN selected_sources source
@@ -1199,6 +1258,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 JOIN {SoloCurrentProjectionScopeTable} scope
                   ON scope.song_id = projection.song_id
                  AND scope.instrument = projection.instrument
+                 AND scope.projection_generation = projection.projection_generation
                  AND scope.status = 'ready'
                  AND scope.row_count > 0
                 JOIN selected_sources source
@@ -1374,6 +1434,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 JOIN {SoloCurrentProjectionScopeTable} scope
                   ON scope.song_id = projection.song_id
                  AND scope.instrument = projection.instrument
+                 AND scope.projection_generation = projection.projection_generation
                  AND scope.status = 'ready'
                  AND scope.row_count > 0
                 JOIN selected_sources source
@@ -1390,6 +1451,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 JOIN {SoloCurrentProjectionScopeTable} scope
                   ON scope.song_id = projection.song_id
                  AND scope.instrument = projection.instrument
+                 AND scope.projection_generation = projection.projection_generation
                  AND scope.status = 'ready'
                  AND scope.row_count > 0
                 JOIN selected_sources source
@@ -1421,28 +1483,45 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int GetCurrentStateRankForScore(string songId, int score, int? maxScore = null)
     {
         using var conn = _ds.OpenConnection();
-        var projectedRowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
-        if (projectedRowCount.HasValue)
+        using (var projectedCmd = conn.CreateCommand())
         {
-            if (projectedRowCount.Value == 0)
-                return 1;
-
-            using var projectedCmd = conn.CreateCommand();
             var projectedScoreFilter = maxScore.HasValue ? "AND score <= @maxScore" : string.Empty;
             projectedCmd.CommandText = $"""
-                SELECT COUNT(*) + 1
-                FROM {SoloCurrentProjectionTable}
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND score > @score
-                  {projectedScoreFilter}
+                WITH {BuildProjectionSourceCtes(filterSong: true)},
+                ready_scope AS (
+                    SELECT scope.song_id, scope.instrument, scope.projection_generation
+                    FROM {SoloCurrentProjectionScopeTable} scope
+                    JOIN selected_sources source
+                      ON source.song_id = scope.song_id
+                     AND source.source_kind IN ('snapshot', 'empty')
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                    WHERE scope.song_id = @songId
+                      AND scope.instrument = @instrument
+                      AND scope.status = 'ready'
+                )
+                SELECT CASE
+                    WHEN EXISTS (SELECT 1 FROM ready_scope)
+                    THEN (
+                        SELECT COUNT(*) + 1
+                        FROM {SoloCurrentProjectionTable} projection
+                        JOIN ready_scope scope
+                          ON scope.song_id = projection.song_id
+                         AND scope.instrument = projection.instrument
+                         AND scope.projection_generation = projection.projection_generation
+                        WHERE projection.score > @score
+                          {projectedScoreFilter}
+                    )
+                    ELSE NULL
+                END
                 """;
             projectedCmd.Parameters.AddWithValue("songId", songId);
             projectedCmd.Parameters.AddWithValue("instrument", Instrument);
             projectedCmd.Parameters.AddWithValue("score", score);
             if (maxScore.HasValue)
                 projectedCmd.Parameters.AddWithValue("maxScore", maxScore.Value);
-            return Convert.ToInt32(projectedCmd.ExecuteScalar());
+            var projected = projectedCmd.ExecuteScalar();
+            if (projected is not null and not DBNull)
+                return Convert.ToInt32(projected);
         }
 
         using var cmd = conn.CreateCommand();
@@ -1468,33 +1547,51 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public (int TotalCount, int? MaxScore, int? MinScrapeScore) GetCurrentStateRankOffsetCoverage(string songId)
     {
         using var conn = _ds.OpenConnection();
+        using (var projectedCmd = conn.CreateCommand())
+        {
+            projectedCmd.CommandText = $"""
+                WITH {BuildProjectionSourceCtes(filterSong: true)},
+                ready_scope AS (
+                    SELECT scope.song_id, scope.instrument, scope.projection_generation, scope.row_count
+                    FROM {SoloCurrentProjectionScopeTable} scope
+                    JOIN selected_sources source
+                      ON source.song_id = scope.song_id
+                     AND source.source_kind IN ('snapshot', 'empty')
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                    WHERE scope.song_id = @songId
+                      AND scope.instrument = @instrument
+                      AND scope.status = 'ready'
+                )
+                SELECT LEAST(scope.row_count, @maxInt)::INT,
+                       MAX(projection.score)::INT,
+                       MIN(projection.score) FILTER (WHERE projection.source = 'scrape')::INT
+                FROM ready_scope scope
+                LEFT JOIN {SoloCurrentProjectionTable} projection
+                  ON projection.song_id = scope.song_id
+                 AND projection.instrument = scope.instrument
+                 AND projection.projection_generation = scope.projection_generation
+                GROUP BY scope.row_count
+                """;
+            projectedCmd.Parameters.AddWithValue("songId", songId);
+            projectedCmd.Parameters.AddWithValue("instrument", Instrument);
+            projectedCmd.Parameters.AddWithValue("maxInt", int.MaxValue);
+            using var projectedReader = projectedCmd.ExecuteReader();
+            if (projectedReader.Read())
+            {
+                return (
+                    projectedReader.GetInt32(0),
+                    projectedReader.IsDBNull(1) ? null : projectedReader.GetInt32(1),
+                    projectedReader.IsDBNull(2) ? null : projectedReader.GetInt32(2));
+            }
+        }
+
         using var cmd = conn.CreateCommand();
-
-        var projectedRowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
-        if (projectedRowCount.HasValue)
-        {
-            if (projectedRowCount.Value == 0)
-                return (0, null, null);
-
-            cmd.CommandText = $"""
-                SELECT COUNT(*)::INT,
-                       MAX(score)::INT,
-                       MIN(score) FILTER (WHERE source = 'scrape')::INT
-                FROM {SoloCurrentProjectionTable}
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                """;
-        }
-        else
-        {
-            cmd.CommandText = $"""
-                SELECT COUNT(*)::INT,
-                       MAX(score)::INT,
-                       MIN(score) FILTER (WHERE source = 'scrape')::INT
-                FROM ({BuildCurrentStateLeaderboardSql(includeTotalCount: false, hasMaxScore: false, limitClause: string.Empty)}) current_rows
-                """;
-        }
-
+        cmd.CommandText = $"""
+            SELECT COUNT(*)::INT,
+                   MAX(score)::INT,
+                   MIN(score) FILTER (WHERE source = 'scrape')::INT
+            FROM ({BuildCurrentStateLeaderboardSql(includeTotalCount: false, hasMaxScore: false, limitClause: string.Empty)}) current_rows
+            """;
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         using var reader = cmd.ExecuteReader();
@@ -1592,6 +1689,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             JOIN {SoloCurrentProjectionScopeTable} scope
               ON scope.song_id = projection.song_id
              AND scope.instrument = projection.instrument
+             AND scope.projection_generation = projection.projection_generation
              AND scope.status = 'ready'
              AND scope.row_count > 0
             JOIN selected_sources source
@@ -1725,21 +1823,33 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public List<int> GetCurrentStateScoresInBand(string songId, int lowerBound, int upperBound)
     {
         using var conn = _ds.OpenConnection();
-        var projectedRowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
-        if (projectedRowCount.HasValue)
+        using (var projectedCmd = conn.CreateCommand())
         {
-            if (projectedRowCount.Value == 0)
-                return [];
-
-            using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
-                SELECT score
-                FROM {SoloCurrentProjectionTable}
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND score > @lo
-                  AND score <= @hi
-                ORDER BY score ASC
+                WITH {BuildProjectionSourceCtes(filterSong: true)},
+                ready_scope AS (
+                    SELECT scope.song_id, scope.instrument, scope.projection_generation
+                    FROM {SoloCurrentProjectionScopeTable} scope
+                    JOIN selected_sources source
+                      ON source.song_id = scope.song_id
+                     AND source.source_kind IN ('snapshot', 'empty')
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                    WHERE scope.song_id = @songId
+                      AND scope.instrument = @instrument
+                      AND scope.status = 'ready'
+                )
+                SELECT NULL::INTEGER AS score, TRUE AS readiness_marker
+                FROM ready_scope
+                UNION ALL
+                SELECT projection.score, FALSE
+                FROM {SoloCurrentProjectionTable} projection
+                JOIN ready_scope scope
+                  ON scope.song_id = projection.song_id
+                 AND scope.instrument = projection.instrument
+                 AND scope.projection_generation = projection.projection_generation
+                WHERE projection.score > @lo
+                  AND projection.score <= @hi
+                ORDER BY readiness_marker DESC, score ASC
                 """;
             projectedCmd.Parameters.AddWithValue("songId", songId);
             projectedCmd.Parameters.AddWithValue("instrument", Instrument);
@@ -1747,9 +1857,16 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             projectedCmd.Parameters.AddWithValue("hi", upperBound);
             var projectedList = new List<int>();
             using var projectedReader = projectedCmd.ExecuteReader();
+            var ready = false;
             while (projectedReader.Read())
-                projectedList.Add(projectedReader.GetInt32(0));
-            return projectedList;
+            {
+                if (projectedReader.GetBoolean(1))
+                    ready = true;
+                else
+                    projectedList.Add(projectedReader.GetInt32(0));
+            }
+            if (ready)
+                return projectedList;
         }
 
         using var cmd = conn.CreateCommand();
@@ -1788,24 +1905,41 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     public int GetCurrentStatePopulationAtOrBelow(string songId, int threshold)
     {
         using var conn = _ds.OpenConnection();
-        var projectedRowCount = TryGetReadyCurrentProjectionRowCount(conn, songId);
-        if (projectedRowCount.HasValue)
+        using (var projectedCmd = conn.CreateCommand())
         {
-            if (projectedRowCount.Value == 0)
-                return 0;
-
-            using var projectedCmd = conn.CreateCommand();
             projectedCmd.CommandText = $"""
-                SELECT COUNT(*)
-                FROM {SoloCurrentProjectionTable}
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                  AND score <= @threshold
+                WITH {BuildProjectionSourceCtes(filterSong: true)},
+                ready_scope AS (
+                    SELECT scope.song_id, scope.instrument, scope.projection_generation
+                    FROM {SoloCurrentProjectionScopeTable} scope
+                    JOIN selected_sources source
+                      ON source.song_id = scope.song_id
+                     AND source.source_kind IN ('snapshot', 'empty')
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM source.source_snapshot_id
+                    WHERE scope.song_id = @songId
+                      AND scope.instrument = @instrument
+                      AND scope.status = 'ready'
+                )
+                SELECT CASE
+                    WHEN EXISTS (SELECT 1 FROM ready_scope)
+                    THEN (
+                        SELECT COUNT(*)
+                        FROM {SoloCurrentProjectionTable} projection
+                        JOIN ready_scope scope
+                          ON scope.song_id = projection.song_id
+                         AND scope.instrument = projection.instrument
+                         AND scope.projection_generation = projection.projection_generation
+                        WHERE projection.score <= @threshold
+                    )
+                    ELSE NULL
+                END
                 """;
             projectedCmd.Parameters.AddWithValue("songId", songId);
             projectedCmd.Parameters.AddWithValue("instrument", Instrument);
             projectedCmd.Parameters.AddWithValue("threshold", threshold);
-            return Convert.ToInt32(projectedCmd.ExecuteScalar());
+            var projected = projectedCmd.ExecuteScalar();
+            if (projected is not null and not DBNull)
+                return Convert.ToInt32(projected);
         }
 
         using var cmd = conn.CreateCommand();
@@ -2627,16 +2761,27 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         if (maxScore.HasValue)
         {
             cmd.CommandText = $"""
-                WITH ranked_rows AS (
-                    SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
+                WITH {BuildProjectionSourceCtes(filterSong: true)},
+                ranked_rows AS (
+                    SELECT projection.account_id, projection.score, projection.accuracy, projection.is_full_combo,
+                           projection.stars, projection.season, projection.difficulty, projection.percentile, projection.end_time,
                            ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rank,
                            COUNT(*) OVER ()::INT AS total_count,
-                           api_rank,
-                           source
-                    FROM {SoloCurrentProjectionTable}
-                    WHERE song_id = @songId
-                      AND instrument = @instrument
-                      AND score <= @maxScore
+                           projection.api_rank,
+                           projection.source
+                    FROM {SoloCurrentProjectionTable} projection
+                    JOIN {SoloCurrentProjectionScopeTable} scope
+                      ON scope.song_id = projection.song_id
+                     AND scope.instrument = projection.instrument
+                     AND scope.projection_generation = projection.projection_generation
+                     AND scope.status = 'ready'
+                    JOIN selected_sources selected
+                      ON selected.song_id = scope.song_id
+                     AND selected.source_kind IN ('snapshot', 'empty')
+                     AND scope.source_snapshot_id IS NOT DISTINCT FROM selected.source_snapshot_id
+                    WHERE projection.song_id = @songId
+                      AND projection.instrument = @instrument
+                      AND projection.score <= @maxScore
                 )
                 SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
                        rank, total_count, api_rank, source
@@ -2650,12 +2795,24 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             var totalCount = includeTotalCount ? (int)Math.Min(rowCount.Value, int.MaxValue) : 0;
             cmd.CommandText = $"""
-                SELECT account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, end_time,
-                       rank::BIGINT AS rank, @totalCount::INT AS total_count, api_rank, source
-                FROM {SoloCurrentProjectionTable}
-                WHERE song_id = @songId
-                  AND instrument = @instrument
-                ORDER BY rank
+                WITH {BuildProjectionSourceCtes(filterSong: true)}
+                SELECT projection.account_id, projection.score, projection.accuracy, projection.is_full_combo,
+                       projection.stars, projection.season, projection.difficulty, projection.percentile, projection.end_time,
+                       projection.rank::BIGINT AS rank, @totalCount::INT AS total_count,
+                       projection.api_rank, projection.source
+                FROM {SoloCurrentProjectionTable} projection
+                JOIN {SoloCurrentProjectionScopeTable} scope
+                  ON scope.song_id = projection.song_id
+                 AND scope.instrument = projection.instrument
+                 AND scope.projection_generation = projection.projection_generation
+                 AND scope.status = 'ready'
+                JOIN selected_sources selected
+                  ON selected.song_id = scope.song_id
+                 AND selected.source_kind IN ('snapshot', 'empty')
+                 AND scope.source_snapshot_id IS NOT DISTINCT FROM selected.source_snapshot_id
+                WHERE projection.song_id = @songId
+                  AND projection.instrument = @instrument
+                ORDER BY projection.rank
                 {limitClause}
                 """;
             cmd.Parameters.AddWithValue("totalCount", totalCount);
@@ -2673,40 +2830,36 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
             if (includeTotalCount && total == 0)
                 total = reader.GetInt32(10);
         }
+        reader.Close();
+
+        if (list.Count == 0 && TryGetReadyCurrentProjectionRowCount(conn, songId) is null)
+            return null;
 
         return (list, total);
     }
 
     private string BuildSelectedSourceCtes(bool filterSong)
     {
-        var usePublishedSources = UsePublishedScopeSources ? "TRUE" : "FALSE";
-        var publishedSongFilter = filterSong ? "AND source.song_id = @songId" : string.Empty;
+        if (UsePublishedScopeSources)
+        {
+            var songFilter = filterSong ? "AND source.song_id = @songId" : string.Empty;
+            return $"""
+                {PublishedSoloScopeSql.CurrentSourcesCte},
+                selected_sources AS (
+                    SELECT source.song_id, source.source_kind, source.source_snapshot_id
+                    FROM published_sources source
+                    WHERE source.instrument = @instrument
+                      {songFilter}
+                )
+                """;
+        }
+
         var activeSongFilter = filterSong ? "AND state.song_id = @songId" : string.Empty;
         return $"""
-            publication AS (
-                SELECT published_scrape_id
-                FROM scrape_publication_state
-                WHERE id = TRUE
-            ),
-            published_sources AS (
-                SELECT source.song_id, source.source_kind, source.source_snapshot_id
-                FROM {LeaderboardPublishedScopeSourceTable} source
-                JOIN publication
-                  ON publication.published_scrape_id = source.published_scrape_id
-                WHERE {usePublishedSources}
-                  AND source.instrument = @instrument
-                  AND source.scope_kind = 'alltime'
-                  AND source.is_complete
-                  {publishedSongFilter}
-            ),
             selected_sources AS (
-                SELECT song_id, source_kind, source_snapshot_id
-                FROM published_sources
-                UNION ALL
-                SELECT state.song_id, 'snapshot'::text, state.active_snapshot_id
+                SELECT state.song_id, 'snapshot'::text AS source_kind, state.active_snapshot_id AS source_snapshot_id
                 FROM {LeaderboardSnapshotStateTable} state
-                WHERE NOT {usePublishedSources}
-                  AND state.instrument = @instrument
+                WHERE state.instrument = @instrument
                   AND state.is_finalized = TRUE
                   AND state.active_snapshot_id IS NOT NULL
                   {activeSongFilter}
@@ -2720,22 +2873,14 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         {
             var publishedSongFilter = filterSong ? "AND source.song_id = @songId" : string.Empty;
             return $"""
-                publication AS (
-                    SELECT published_scrape_id
-                    FROM scrape_publication_state
-                    WHERE id = TRUE
-                ),
+                {PublishedSoloScopeSql.CurrentSourcesCte},
                 selected_sources AS (
                     SELECT
                         source.song_id,
                         source.source_kind,
-                        COALESCE(source.source_snapshot_id, source.source_scrape_id) AS source_snapshot_id
-                    FROM {LeaderboardPublishedScopeSourceTable} source
-                    JOIN publication
-                      ON publication.published_scrape_id = source.published_scrape_id
+                        source.projection_source_snapshot_id AS source_snapshot_id
+                    FROM published_sources source
                     WHERE source.instrument = @instrument
-                      AND source.scope_kind = 'alltime'
-                      AND source.is_complete
                       {publishedSongFilter}
                 )
                 """;

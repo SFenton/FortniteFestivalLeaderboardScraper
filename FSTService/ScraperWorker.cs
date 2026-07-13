@@ -363,6 +363,10 @@ public sealed class ScraperWorker : BackgroundService
         var processMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
         _log.LogInformation("Starting scrape pass... (Process memory: {MemoryMB} MB)", processMemMb);
         _workerStatus?.BeginOperation("scrape.pass", "Running leaderboard update", phase: "Scraping", subOperation: "scrape_pass");
+        var passStatus = "failed";
+        string? passDetail = "Scrape pass exited before a publication decision.";
+        var publicReadsFrozen = false;
+        var publicReadsReleased = false;
         _backgroundWork.RequestPauseForScrape();
         try
         {
@@ -381,7 +385,7 @@ public sealed class ScraperWorker : BackgroundService
             if (accessToken is null)
             {
                 _log.LogError("Cannot obtain access token. Skipping this pass.");
-                _workerStatus?.FailOperation("scrape.pass", detail: "Access token unavailable");
+                passDetail = "Access token unavailable";
                 return;
             }
 
@@ -398,6 +402,7 @@ public sealed class ScraperWorker : BackgroundService
             // Freeze all response caches so API consumers see consistent (stale) data
             // throughout the scrape + post-scrape enrichment + precomputation cycle.
             _lifecycle.ScrapeStarting();
+            publicReadsFrozen = true;
 
             bool anyScrapePhase = resolvedPhases.HasFlag(ScrapePhase.SoloScrape)
                                || resolvedPhases.HasFlag(ScrapePhase.BandScrape);
@@ -457,7 +462,9 @@ public sealed class ScraperWorker : BackgroundService
             if (authFailureAborted)
             {
                 _progress.EndPass();
-                _lifecycle.ScrapeCompleted();
+                _lifecycle.ScrapeFailed();
+                publicReadsReleased = true;
+                passDetail = "Leaderboard scrape failed authentication.";
                 return;
             }
 
@@ -503,27 +510,31 @@ public sealed class ScraperWorker : BackgroundService
             }
             else
             {
-                _lifecycle.ScrapePublishing();
+                _lifecycle.ScrapePostProcessing();
             }
 
             var postProcessCompleted = skipPostScrapeForIncompleteScrape;
+            var postProcessOperationActive = false;
             if (postProcessCompleted)
             {
                 _log.LogWarning("Post-scrape orchestration skipped because no completed scrape result is available.");
+                passDetail = "Leaderboard scrape did not complete; post-processing and publication were skipped.";
             }
             else
             {
                 try
                 {
                     _workerStatus?.BeginOperation("scrape.post_process", "Post-processing leaderboard update", phase: "PostScrapeEnrichment");
+                    postProcessOperationActive = true;
                     await _postScrapeOrchestrator.RunAsync(ctx, service, postScrapePhases, ct);
                     postProcessCompleted = true;
-                    _workerStatus?.CompleteOperation("scrape.post_process");
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
                     _workerStatus?.FailOperation("scrape.post_process", ex);
+                    postProcessOperationActive = false;
+                    passDetail = $"Post-processing failed: {ex.Message}";
                     _log.LogError(ex, "Post-scrape orchestration failed. Finalizing pass with stale data.");
                 }
             }
@@ -539,6 +550,7 @@ public sealed class ScraperWorker : BackgroundService
                 catch (Exception ex)
                 {
                     publicationCleanupCompleted = false;
+                    passDetail = $"Publication cleanup failed: {ex.Message}";
                     _log.LogError(ex, "Publication cleanup failed. Published scrape will remain unchanged to avoid live-read fallback.");
                 }
 
@@ -572,6 +584,7 @@ public sealed class ScraperWorker : BackgroundService
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
+                    passDetail = $"Post-scrape cleanup failed: {ex.Message}";
                     _log.LogWarning(ex, "Post-scrape cleanup failed. Will retry next pass.");
                 }
             }
@@ -580,80 +593,138 @@ public sealed class ScraperWorker : BackgroundService
                 _log.LogWarning("Skipping post-scrape cleanup because post-process orchestration did not complete cleanly.");
             }
 
+            if (postProcessOperationActive)
+            {
+                if (postProcessCompleted)
+                    _workerStatus?.CompleteOperation("scrape.post_process");
+                else
+                    _workerStatus?.FailOperation("scrape.post_process", detail: passDetail);
+                postProcessOperationActive = false;
+            }
+
             var endMemMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024);
             _log.LogInformation("Scrape pass complete. (Process memory: {MemoryMB} MB)", endMemMb);
 
             _progress.EndPass();
 
-            var publishedScrapeId = result?.ScrapeId;
-            var publicStateReady = result is null;
+            long? publishedScrapeId = null;
+            var publishedNewState = false;
 
             if (result is not null)
             {
                 if (postProcessCompleted)
                 {
-                    int? expectedPublishedScopeCount = null;
-                    if (_persistence.WritePublishedScopeSources)
+                    _workerStatus?.BeginOperation(
+                        "scrape.publication",
+                        "Publishing leaderboard update",
+                        phase: "Publishing",
+                        subOperation: "preparing_publication");
+                    try
                     {
-                        if (!resolvedPhases.HasFlag(ScrapePhase.SoloScrape))
+                        _lifecycle.ScrapePublishing();
+
+                        int? expectedPublishedScopeCount = null;
+                        if (_persistence.WritePublishedScopeSources)
                         {
-                            throw new InvalidOperationException(
-                                "Published scope-source promotion requires the solo scrape phase.");
+                            if (!resolvedPhases.HasFlag(ScrapePhase.SoloScrape))
+                            {
+                                throw new InvalidOperationException(
+                                    "Published scope-source promotion requires the solo scrape phase.");
+                            }
+
+                            _workerStatus?.UpdateOperation(
+                                "scrape.publication",
+                                subOperation: "building_published_scope_sources");
+                            var expectedPairs =
+                                ScrapeOrchestrator.BuildExpectedSoloLeaderboardPairs(result.Context.ScrapeRequests);
+                            var sourceBuildStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                            var sourceBuild = _persistence.BuildPublishedScopeSourceCandidate(
+                                result.ScrapeId,
+                                expectedPairs);
+                            sourceBuildStopwatch.Stop();
+                            _log.LogInformation(
+                                "Built published scope-source candidate for scrape {ScrapeId}: expected={Expected:N0}, validated={Validated:N0}, mapped={Mapped:N0}, missing={Missing:N0}, elapsed={Elapsed}.",
+                                result.ScrapeId,
+                                sourceBuild.ExpectedScopeCount,
+                                sourceBuild.ValidatedScopeCount,
+                                sourceBuild.MappedScopeCount,
+                                sourceBuild.MissingScopeCount,
+                                sourceBuildStopwatch.Elapsed);
+                            if (!sourceBuild.IsComplete)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Scrape {result.ScrapeId} published scope-source candidate is incomplete: " +
+                                    $"expected={sourceBuild.ExpectedScopeCount}, validated={sourceBuild.ValidatedScopeCount}, " +
+                                    $"mapped={sourceBuild.MappedScopeCount}, missing={sourceBuild.MissingScopeCount}.");
+                            }
+
+                            expectedPublishedScopeCount = sourceBuild.ExpectedScopeCount;
                         }
 
-                        var expectedPairs =
-                            ScrapeOrchestrator.BuildExpectedSoloLeaderboardPairs(result.Context.ScrapeRequests);
-                        var sourceBuildStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                        var sourceBuild = _persistence.BuildPublishedScopeSourceCandidate(
+                        _workerStatus?.UpdateOperation(
+                            "scrape.publication",
+                            subOperation: "committing_publication");
+                        _persistence.Meta.CompleteScrapeRun(
                             result.ScrapeId,
-                            expectedPairs);
-                        sourceBuildStopwatch.Stop();
-                        _log.LogInformation(
-                            "Built published scope-source candidate for scrape {ScrapeId}: expected={Expected:N0}, validated={Validated:N0}, mapped={Mapped:N0}, missing={Missing:N0}, elapsed={Elapsed}.",
+                            result.SongsScraped,
+                            result.TotalEntries,
+                            result.TotalRequests,
+                            result.TotalBytes,
+                            result.EpicReportedOver100Pages);
+                        _persistence.Meta.PublishScrapeRun(
                             result.ScrapeId,
-                            sourceBuild.ExpectedScopeCount,
-                            sourceBuild.ValidatedScopeCount,
-                            sourceBuild.MappedScopeCount,
-                            sourceBuild.MissingScopeCount,
-                            sourceBuildStopwatch.Elapsed);
-                        if (!sourceBuild.IsComplete)
-                        {
-                            throw new InvalidOperationException(
-                                $"Scrape {result.ScrapeId} published scope-source candidate is incomplete: " +
-                                $"expected={sourceBuild.ExpectedScopeCount}, validated={sourceBuild.ValidatedScopeCount}, " +
-                                $"mapped={sourceBuild.MappedScopeCount}, missing={sourceBuild.MissingScopeCount}.");
-                        }
-
-                        expectedPublishedScopeCount = sourceBuild.ExpectedScopeCount;
+                            expectedPublishedScopeCount: expectedPublishedScopeCount);
+                        publishedScrapeId = result.ScrapeId;
+                        publishedNewState = true;
+                        passStatus = "completed";
+                        passDetail = null;
+                        _workerStatus?.CompleteOperation("scrape.publication");
+                        _workerStatus?.UpdateOperation(
+                            "scrape.pass",
+                            phase: "Finalizing",
+                            subOperation: "post_publication");
                     }
-
-                    _persistence.Meta.CompleteScrapeRun(
-                        result.ScrapeId,
-                        result.SongsScraped,
-                        result.TotalEntries,
-                        result.TotalRequests,
-                        result.TotalBytes,
-                        result.EpicReportedOver100Pages);
-                    _persistence.Meta.PublishScrapeRun(
-                        result.ScrapeId,
-                        expectedPublishedScopeCount: expectedPublishedScopeCount);
-                    publicStateReady = true;
+                    catch (OperationCanceledException)
+                    {
+                        _workerStatus?.CompleteOperation("scrape.publication", "cancelled");
+                        passDetail = "Publication was cancelled.";
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _workerStatus?.FailOperation("scrape.publication", ex);
+                        passDetail = $"Publication failed: {ex.Message}";
+                        throw;
+                    }
                 }
                 else
                 {
+                    passDetail ??= $"Scrape {result.ScrapeId} post-processing did not complete.";
                     _log.LogWarning(
                         "Scrape {ScrapeId} was not marked complete or published because post-process orchestration did not complete cleanly.",
                         result.ScrapeId);
                 }
             }
-
-            if (publicStateReady)
+            else if (!anyScrapePhase && postProcessCompleted)
             {
-                PrimeSongsCache();
+                passStatus = "completed";
+                passDetail = null;
+            }
 
-                // Unfreeze all response caches and invalidate — API consumers now see the published scrape atomically.
-                _lifecycle.ScrapeCompleted();
+            if (publicReadsFrozen)
+            {
+                if (publishedNewState)
+                    PrimeSongsCache();
 
+                if (passStatus == "completed")
+                    _lifecycle.ScrapeCompleted();
+                else
+                    _lifecycle.ScrapeFailed();
+                publicReadsReleased = true;
+            }
+
+            if (publishedNewState)
+            {
                 try
                 {
                     await _postScrapeOrchestrator.RunImprovementNotificationsAfterPublicationAsync(ctx, postScrapePhases, ct);
@@ -668,15 +739,24 @@ public sealed class ScraperWorker : BackgroundService
                 await _notifications.NotifyScoresChangedAsync(publishedScrapeId);
 
                 _deferredRetentionMaintenance?.ScheduleAfterPublication(
-                    $"scrape {publishedScrapeId?.ToString() ?? "api-only"} published",
+                    $"scrape {publishedScrapeId} published",
                     ct);
             }
         }
         finally
         {
+            if (publicReadsFrozen && !publicReadsReleased)
+            {
+                if (passStatus == "completed")
+                    _lifecycle.ScrapeCompleted();
+                else
+                    _lifecycle.ScrapeFailed();
+                publicReadsReleased = true;
+            }
+
             await CleanupActiveScrapeResourcesAsync("scrape pass exit", CancellationToken.None);
             _backgroundWork.ResumeAfterScrape();
-            _workerStatus?.CompleteOperation("scrape.pass");
+            _workerStatus?.CompleteOperation("scrape.pass", passStatus, passDetail);
         }
     }
 

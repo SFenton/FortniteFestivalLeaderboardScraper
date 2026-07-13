@@ -100,6 +100,40 @@ public sealed class PlayerDataExportPublishedSourceTests : IDisposable
                     42, 'song_empty', 'Solo_Guitar', 'alltime', 'empty',
                     NULL, 42, 0, md5('empty'), md5('empty-coverage'), 0, 0,
                     TRUE, now(), now());
+
+                INSERT INTO band_identity (
+                    band_id, band_type, team_key, member_account_ids, appearance_count,
+                    first_seen_at, last_seen_at, updated_at, source)
+                VALUES (
+                    'band-test', 'Band_Duets', 'acct_1:acct_2', ARRAY['acct_1','acct_2'], 1,
+                    now(), now(), now(), 'test');
+
+                INSERT INTO band_members (account_id, song_id, band_type, team_key, instrument_combo)
+                VALUES
+                    ('acct_1', 'song_1', 'Band_Duets', 'acct_1:acct_2', '12'),
+                    ('acct_2', 'song_1', 'Band_Duets', 'acct_1:acct_2', '12');
+
+                INSERT INTO band_current_projection_scope (
+                    song_id, band_type, ranking_scope, scope_combo_id, projection_generation,
+                    published_generation, row_count, published_row_count, status, updated_at)
+                VALUES (
+                    'song_1', 'Band_Duets', 'overall', '', 7,
+                    7, 1, 1, 'ready', now());
+
+                INSERT INTO current_band_leaderboard_entries (
+                    song_id, band_type, ranking_scope, scope_combo_id, team_key,
+                    entry_combo_id, entry_instrument_combo, team_members,
+                    member_account_ids, member_instrument_ids, member_scores,
+                    member_accuracies, member_full_combos, member_stars,
+                    member_difficulties, score, rank, first_seen_at, last_updated_at,
+                    projection_generation, computed_at)
+                VALUES (
+                    'song_1', 'Band_Duets', 'overall', '', 'acct_1:acct_2',
+                    '12', '12', ARRAY['acct_1','acct_2'],
+                    ARRAY['acct_1','acct_2'], ARRAY[0,1], ARRAY[60000,40000],
+                    ARRAY[95,90], ARRAY[1,0], ARRAY[5,5],
+                    ARRAY[3,2], 100000, 1, now(), now(),
+                    7, now());
                 """;
             cmd.ExecuteNonQuery();
         }
@@ -122,6 +156,20 @@ public sealed class PlayerDataExportPublishedSourceTests : IDisposable
         Assert.Empty(leakedLegacyProfile);
         Assert.Equal(1, population[("song_1", "Solo_Guitar")]);
         Assert.Equal(0, population[("song_empty", "Solo_Guitar")]);
+        Assert.Equal(1, _persistence.GetCurrentStateLeaderboardPopulation("song_1", "Solo_Guitar"));
+        Assert.Equal(0, _persistence.GetCurrentStateLeaderboardPopulation("song_empty", "Solo_Guitar"));
         Assert.Equal(["song_1"], memberSongs);
+        Assert.NotEmpty(export.BuildPlayerArchive("acct_1", usePublishedSnapshot: true).Content);
+
+        using var rollbackPersistence = new GlobalLeaderboardPersistence(
+            _fixture.Db,
+            NullLoggerFactory.Instance,
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _fixture.DataSource,
+            Options.Create(new FeatureOptions { UsePublishedScopeSources = false }));
+        rollbackPersistence.Initialize();
+        var rollbackExport = new PlayerDataExportService(rollbackPersistence, _fixture.Db, _fixture.DataSource);
+
+        Assert.Equal(200_000, Assert.Single(rollbackExport.LoadPublishedSoloScores("acct_1")).Score);
     }
 }

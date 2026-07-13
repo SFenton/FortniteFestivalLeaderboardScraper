@@ -170,6 +170,24 @@ use the active candidate and public reads stay on the mapped published source.
 Rollback disables the two flags; the additive table and fingerprint fields may
 remain for diagnosis.
 
+`PublishedSoloScopeSql` is the shared current-publication selector used by
+service-side solo readers. When the service flag is enabled, generated reader
+SQL contains no active-snapshot branch. Projection fast paths additionally
+require the mapped source ID, ready scope state, and matching projection
+generation in the same query that reads projection rows; a mismatch falls back
+to the mapped physical snapshot plus overlay rather than active state.
+`PlayerDataExportService` delegates published solo scores to this same
+resolver. Published mapping rows also snapshot the clean-boundary
+`leaderboard_population` floor so route totals do not consume a later active
+scrape update. Existing complete mappings repair this metadata only when
+unfrozen with no newer scrape or active snapshot. The old active-snapshot
+export/query path remains only behind the disabled rollback flag.
+
+Published full-player exports prefilter published band-projection rows through
+the indexed durable `band_members` membership set before applying the
+published-generation join. This preserves solo and band export contents while
+avoiding an unbounded cold scan of `current_band_leaderboard_entries`.
+
 PG-1 does not enable physical snapshot write skipping or change max-page,
 deep-scrape, retry, or Epic request policy. Scope completeness means the
 expected result was observed, page zero did not fail, every page in the
@@ -275,13 +293,25 @@ named owner and bounded retention before cleanup. Zero current rows or zero
 1. Worker starts `scrape_log` and freezes public reads.
 2. Network, staging, physical/logical writes, fingerprints, and scope coverage
    accrue without changing the public generation.
-3. Required post-process projections/rankings/caches complete.
-4. The publication transaction validates and promotes the complete per-scope
+3. The freeze reason transitions from `scrape` to `post-process`; required
+   projections, rankings, caches, and cleanup complete while the frozen scrape
+   ID remains pinned to the current published scrape and the original freeze
+   timestamp remains stable.
+4. The freeze reason transitions to `publish`. The publication transaction
+   validates and promotes the complete per-scope
    mapping and fingerprint publication IDs together with all required public
    pointers and cache generation, records the published scrape, and unfreezes
    public reads.
 5. Any failed network, writer, manifest, required post-process, or publication
-   step leaves the prior published generation active.
+   step leaves the prior published generation active and explicitly unfreezes
+   it after the failed pass is finalized.
+
+`/api/service-info` reads latest scrape, published scrape, publication/freeze,
+and worker operation state in one PostgreSQL statement. It exposes active and
+published scrape IDs, freeze reason/ID, network/post-process/publication
+phases, failed or stalled states, and only a future scheduler timestamp.
+Worker heartbeats refresh the active operation timestamp and elapsed time
+during long phases.
 
 The PG-1 schema is additive and creates no startup secondary-index build. The
 primary key is ordered for current-publication instrument reads. Initial

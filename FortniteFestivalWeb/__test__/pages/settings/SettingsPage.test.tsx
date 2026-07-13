@@ -1020,6 +1020,45 @@ describe('SettingsPage', () => {
     expect(within(stepRow).queryByTestId('arc-spinner')).toBeNull();
   });
 
+  it('shows failed durable update status without reporting idle', async () => {
+    const failedServiceInfo = {
+      ...defaultServiceInfo,
+      currentUpdate: {
+        ...defaultServiceInfo.currentUpdate,
+        status: 'failed',
+        startedAt: '2026-04-20T12:45:00Z',
+        phase: 'Scraping',
+        subOperation: 'failed',
+        detail: 'candidate failed',
+      },
+    };
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('/api/version')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+      }
+      if (typeof url === 'string' && url.includes('/api/service-info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(failedServiceInfo) });
+      }
+      if (typeof url === 'string' && url.includes('/sync-status')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(defaultSyncStatus) });
+      }
+      return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+    }) as unknown as typeof fetch;
+
+    renderSettings();
+
+    const statusRow = await screen.findByTestId('settings-service-info-row-update-status');
+    const stepRow = await screen.findByTestId('settings-service-info-row-update-sub-status');
+    await waitFor(() => {
+      expect(within(statusRow).getByText('Failed')).toBeDefined();
+      expect(within(stepRow).getByText('The last update failed; published leaderboard data remains available')).toBeDefined();
+    });
+    expect(within(statusRow).queryByText('Idle')).toBeNull();
+    expect(within(statusRow).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(stepRow).queryByTestId('arc-spinner')).toBeNull();
+    expect(within(screen.getByTestId('settings-service-info-row-current-update-start')).getByText(new Date(failedServiceInfo.currentUpdate.startedAt).toLocaleString())).toBeDefined();
+  });
+
   it('shows stale worker activity without treating leaderboard update as active', async () => {
     const staleServiceInfo = {
       ...defaultServiceInfo,

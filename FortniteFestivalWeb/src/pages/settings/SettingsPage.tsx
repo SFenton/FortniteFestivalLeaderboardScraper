@@ -316,6 +316,12 @@ function describeServiceSubStatus(t: TFunction, serviceInfo: ServiceInfoResponse
   if (serviceInfo.currentUpdate.status === 'idle') {
     return t('settings.serviceInfo.subStatusIdle');
   }
+  if (serviceInfo.currentUpdate.status === 'failed') {
+    return t('settings.serviceInfo.subStatusFailed');
+  }
+  if (serviceInfo.currentUpdate.status === 'stalled') {
+    return t('settings.serviceInfo.subStatusStalled');
+  }
 
   const phase = serviceInfo.currentUpdate.phase;
   const subOperation = serviceInfo.currentUpdate.subOperation;
@@ -627,7 +633,7 @@ export default function SettingsPage() {
     serviceInfoFallback,
   );
   const currentLeaderboardUpdateStart = formatLocalDateTime(
-    serviceInfo?.currentUpdate.status === 'updating'
+    serviceInfo && serviceInfo.currentUpdate.status !== 'idle'
       ? serviceInfo.currentUpdate.startedAt
       : null,
     serviceInfo ? t('settings.serviceInfo.notApplicable') : serviceInfoFallback,
@@ -635,7 +641,11 @@ export default function SettingsPage() {
   const leaderboardUpdateStatus = serviceInfo
     ? serviceInfo.currentUpdate.status === 'updating'
       ? t('settings.serviceInfo.statusUpdating')
-      : t('settings.serviceInfo.statusIdle')
+      : serviceInfo.currentUpdate.status === 'failed'
+        ? t('settings.serviceInfo.statusFailed')
+        : serviceInfo.currentUpdate.status === 'stalled'
+          ? t('settings.serviceInfo.statusStalled')
+          : t('settings.serviceInfo.statusIdle')
     : serviceInfoFallback;
   const leaderboardUpdateSubStatus = serviceInfo
     ? describeServiceSubStatus(t, serviceInfo)
@@ -666,7 +676,7 @@ export default function SettingsPage() {
   const nextLeaderboardScheduledUpdate = serviceInfo
     ? serviceInfo.nextScheduledUpdateAt
       ? formatLocalDateTime(serviceInfo.nextScheduledUpdateAt, serviceInfoFallback)
-      : serviceInfo.currentUpdate.status === 'updating'
+      : serviceInfo.currentUpdate.status === 'updating' || serviceInfo.currentUpdate.status === 'stalled'
         ? t('settings.serviceInfo.afterCurrentUpdate')
         : t('settings.serviceInfo.awaitingFirstUpdate')
     : serviceInfoFallback;

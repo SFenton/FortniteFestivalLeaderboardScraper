@@ -25,11 +25,13 @@ public interface IMetaDatabase : IDisposable
 
     // ── Worker status ────────────────────────────────────────────────
     void UpsertWorkerHeartbeat(string workerKey, string status, string mode, string instanceId,
-        DateTime startedAtUtc, DateTime heartbeatAtUtc, string? message = null);
+        DateTime startedAtUtc, DateTime heartbeatAtUtc, string? message = null,
+        WorkerOperationInfo? currentOperation = null);
     void UpdateWorkerActivity(string workerKey, WorkerOperationInfo? currentOperation,
         WorkerOperationInfo? lastOperation = null, string? status = null, string? message = null,
         DateTime? updatedAtUtc = null);
     WorkerStatusInfo? GetWorkerStatus(string workerKey);
+    ServiceRuntimeState GetServiceRuntimeState(string workerKey);
 
     // ── Score history ────────────────────────────────────────────────
     void InsertScoreChange(string songId, string instrument, string accountId,

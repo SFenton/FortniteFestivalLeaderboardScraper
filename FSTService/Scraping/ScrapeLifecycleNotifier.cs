@@ -53,6 +53,21 @@ public sealed class ScrapeLifecycleNotifier
             cache.Freeze();
     }
 
+    public void ScrapePostProcessing()
+    {
+        _log.LogInformation("Leaderboard scrape completed — public reads remain frozen on the published scrape during post-processing.");
+        try
+        {
+            _metaDb.SetPublicReadFreeze(true, reason: "post-process");
+            _publicReadGate.Invalidate();
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed to persist public-read post-process freeze state.");
+            throw;
+        }
+    }
+
     /// <summary>
     /// Marks the public-read freeze as publishing before public read models are
     /// updated for the next published scrape.
@@ -62,7 +77,6 @@ public sealed class ScrapeLifecycleNotifier
         _log.LogInformation("Scrape publication starting — public reads will prefer persisted published responses and compute cold misses from stable read models.");
         try
         {
-            _metaDb.PublishCurrentBandTeamRankings();
             _metaDb.SetPublicReadFreeze(true, reason: "publish");
             _publicReadGate.Invalidate();
         }
@@ -81,6 +95,17 @@ public sealed class ScrapeLifecycleNotifier
     public void ScrapeCompleted()
     {
         _log.LogInformation("Scrape completed — unfreezing public reads and invalidating {Count} response caches.", _caches.Length);
+        ReleasePublicReads();
+    }
+
+    public void ScrapeFailed()
+    {
+        _log.LogWarning("Scrape failed — retaining the prior published generation, unfreezing public reads, and invalidating {Count} response caches.", _caches.Length);
+        ReleasePublicReads();
+    }
+
+    private void ReleasePublicReads()
+    {
         try
         {
             _metaDb.SetPublicReadFreeze(false);

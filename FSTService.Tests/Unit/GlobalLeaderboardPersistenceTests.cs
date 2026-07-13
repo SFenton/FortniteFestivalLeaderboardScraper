@@ -750,6 +750,8 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
                 CoverageResult("song_empty", "Solo_Guitar", entries: 0, reportedPages: 0),
             ],
             expectedPairs);
+        _metaFixture.Db.UpsertLeaderboardPopulation(
+            [("song_changed", "Solo_Guitar", 500)]);
         var build = glp.BuildPublishedScopeSourceCandidate(43, expectedPairs);
         var sources = glp.GetPublishedScopeSources(43).ToDictionary(source => source.SongId);
 
@@ -757,6 +759,7 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.True(build.IsComplete);
         Assert.Equal(43, sources["song_changed"].SourceSnapshotId);
         Assert.Equal(1, sources["song_changed"].RowCount);
+        Assert.Equal(500, sources["song_changed"].ReportedTotalEntries);
         Assert.Equal(42, sources["song_unchanged"].SourceSnapshotId);
         Assert.Equal("empty", sources["song_empty"].SourceKind);
         Assert.Null(sources["song_empty"].SourceSnapshotId);
@@ -868,6 +871,8 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             42,
             [CoverageResult("song_1", "Solo_Guitar", entries: 1)],
             expectedPairs).IsComplete);
+        _metaFixture.Db.UpsertLeaderboardPopulation(
+            [("song_1", "Solo_Guitar", 500)]);
         var build = glp.BuildPublishedScopeSourceCandidate(42, expectedPairs);
         Assert.True(build.IsComplete);
 
@@ -878,7 +883,110 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             expectedPublishedScopeCount: build.ExpectedScopeCount);
 
         Assert.Equal(42, _metaFixture.Db.GetPublishedScrapeRun()?.Id);
+        Assert.Equal(
+            500,
+            Assert.Single(glp.GetPublishedScopeSources(42)).ReportedTotalEntries);
         Assert.Equal((42, 1, 1, true), GetScopeCoverage("song_1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public async Task Existing_published_mapping_repairs_population_floor_at_clean_boundary()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WritePublishedScopeSources = true });
+        InsertScrapeLog(42, completed: false);
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+        Assert.True(glp.RecordLeaderboardScopeCoverage(
+            42,
+            [CoverageResult("song_1", "Solo_Guitar", entries: 1)],
+            expectedPairs).IsComplete);
+        Assert.True(glp.BuildPublishedScopeSourceCandidate(42, expectedPairs).IsComplete);
+        _metaFixture.Db.CompleteScrapeRun(42, 1, 1, 1, 100);
+        _metaFixture.Db.PublishScrapeRun(
+            42,
+            promoteCachedResponses: false,
+            expectedPublishedScopeCount: 1);
+        _metaFixture.Db.UpsertLeaderboardPopulation(
+            [("song_1", "Solo_Guitar", 750)]);
+
+        var repair = glp.BackfillCurrentPublishedScopeSources();
+
+        Assert.True(repair.Applied);
+        Assert.Contains("population-repaired:1", repair.Status);
+        Assert.Equal(
+            750,
+            Assert.Single(glp.GetPublishedScopeSources(42)).ReportedTotalEntries);
+    }
+
+    [Fact]
+    public async Task Existing_published_mapping_does_not_repair_population_during_newer_in_progress_scrape()
+    {
+        using var glp = CreatePersistence(new FeatureOptions { WritePublishedScopeSources = true });
+        InsertScrapeLog(42, completed: false);
+        var expectedPairs = new[] { ("song_1", "Solo_Guitar") };
+
+        glp.StartSpoolWriter(42, _dataDir);
+        glp.EnqueueSpoolPage("song_1", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_1",
+                Score = 100_000,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(42, expectedPairs: expectedPairs);
+        Assert.True(glp.RecordLeaderboardScopeCoverage(
+            42,
+            [CoverageResult("song_1", "Solo_Guitar", entries: 1)],
+            expectedPairs).IsComplete);
+        Assert.True(glp.BuildPublishedScopeSourceCandidate(42, expectedPairs).IsComplete);
+        _metaFixture.Db.CompleteScrapeRun(42, 1, 1, 1, 100);
+        _metaFixture.Db.PublishScrapeRun(
+            42,
+            promoteCachedResponses: false,
+            expectedPublishedScopeCount: 1);
+        InsertScrapeLog(43, completed: false);
+        glp.StartSpoolWriter(43, _dataDir);
+        glp.EnqueueSpoolPage("song_new", "Solo_Guitar",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "acct_new",
+                Score = 110_000,
+                Rank = 1,
+                ApiRank = 1,
+                Source = "scrape",
+            },
+        ]);
+        await glp.FlushSpoolAsync();
+        glp.FinalizeShadowSnapshots(43, expectedPairs: [("song_new", "Solo_Guitar")]);
+        _metaFixture.Db.UpsertLeaderboardPopulation(
+            [("song_1", "Solo_Guitar", 750)]);
+
+        var repair = glp.BackfillCurrentPublishedScopeSources();
+
+        Assert.False(repair.Applied);
+        Assert.Equal(
+            1,
+            Assert.Single(glp.GetPublishedScopeSources(42)).ReportedTotalEntries);
     }
 
     [Fact]

@@ -29,14 +29,31 @@ public sealed class WorkerStatusPublisher
 
     public void PublishHeartbeat(string status = "running", string? message = null)
     {
+        var now = DateTime.UtcNow;
+        WorkerOperationInfo? currentOperation;
+        lock (_gate)
+        {
+            currentOperation = _currentOperation;
+            if (currentOperation is not null)
+            {
+                currentOperation = CopyOperation(
+                    currentOperation,
+                    updatedAtUtc: now,
+                    elapsedSeconds: (now - currentOperation.StartedAtUtc).TotalSeconds);
+                _currentOperation = currentOperation;
+                _activeOperations[currentOperation.OperationKey] = currentOperation;
+            }
+        }
+
         TryPublish(() => _metaDb.UpsertWorkerHeartbeat(
             ScraperWorkerKey,
             status,
             mode: "scraper",
             instanceId: _instanceId,
             startedAtUtc: _startedAtUtc,
-            heartbeatAtUtc: DateTime.UtcNow,
-            message));
+            heartbeatAtUtc: now,
+            message,
+            currentOperation));
     }
 
     public void MarkOffline(string? message = null)

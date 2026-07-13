@@ -39,6 +39,27 @@ public class PublicReadGateTests
     }
 
     [Fact]
+    public void MetaDatabase_PublicReadFreeze_without_explicit_id_pins_published_scrape()
+    {
+        using var fixture = new InMemoryMetaDatabase();
+        var metaDb = fixture.Db;
+        var publishedId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(publishedId, 1, 1, 1, 1);
+        metaDb.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+
+        metaDb.SetPublicReadFreeze(true, reason: "scrape");
+
+        var frozen = metaDb.GetPublicReadFreezeState();
+        Assert.True(frozen.IsFrozen);
+        Assert.Equal(publishedId, frozen.ScrapeId);
+
+        metaDb.SetPublicReadFreeze(true, reason: "post-process");
+        var postProcess = metaDb.GetPublicReadFreezeState();
+        Assert.Equal(frozen.FrozenAt, postProcess.FrozenAt);
+        Assert.Equal("post-process", postProcess.Reason);
+    }
+
+    [Fact]
     public void ResponseCache_UsesPublicReadGateFreezeState()
     {
         var metaDb = Substitute.For<IMetaDatabase>();

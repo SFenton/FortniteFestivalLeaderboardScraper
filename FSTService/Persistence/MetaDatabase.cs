@@ -165,7 +165,7 @@ public sealed class MetaDatabase : IMetaDatabase
                            OR fingerprint.entry_count::bigint <> source.row_count
                            OR fingerprint.content_fingerprint IS DISTINCT FROM source.content_fingerprint
                            OR fingerprint.coverage_fingerprint IS DISTINCT FROM source.coverage_fingerprint
-                           OR fingerprint.reported_total_entries IS DISTINCT FROM source.reported_total_entries
+                           OR source.reported_total_entries < fingerprint.reported_total_entries
                            OR fingerprint.reported_total_pages IS DISTINCT FROM source.reported_total_pages
                     )::int AS invalid_count
                 FROM leaderboard_published_scope_source source
@@ -270,8 +270,19 @@ public sealed class MetaDatabase : IMetaDatabase
                     @scrapeId, @reason, @now)
                 ON CONFLICT (id) DO UPDATE SET
                     public_reads_frozen = EXCLUDED.public_reads_frozen,
-                    public_reads_frozen_at = EXCLUDED.public_reads_frozen_at,
-                    public_reads_frozen_scrape_id = EXCLUDED.public_reads_frozen_scrape_id,
+                    public_reads_frozen_at = CASE
+                        WHEN scrape_publication_state.public_reads_frozen
+                         AND EXCLUDED.public_reads_frozen
+                            THEN scrape_publication_state.public_reads_frozen_at
+                        ELSE EXCLUDED.public_reads_frozen_at
+                    END,
+                    public_reads_frozen_scrape_id = CASE
+                        WHEN EXCLUDED.public_reads_frozen
+                            THEN COALESCE(
+                                EXCLUDED.public_reads_frozen_scrape_id,
+                                scrape_publication_state.published_scrape_id)
+                        ELSE NULL
+                    END,
                     public_reads_frozen_reason = EXCLUDED.public_reads_frozen_reason,
                     updated_at = EXCLUDED.updated_at
                 """;
@@ -379,16 +390,24 @@ public sealed class MetaDatabase : IMetaDatabase
     private static ScrapeRunInfo? ReadScrapeRunInfo(NpgsqlDataReader r)
     {
         if (!r.Read()) return null;
+        return ReadScrapeRunInfo(r, 0);
+    }
+
+    private static ScrapeRunInfo? ReadScrapeRunInfo(NpgsqlDataReader r, int startOrdinal)
+    {
+        if (r.IsDBNull(startOrdinal))
+            return null;
+
         return new ScrapeRunInfo
         {
-            Id = Convert.ToInt64(r.GetValue(0)),
-            StartedAt = r.GetDateTime(1).ToString("o"),
-            CompletedAt = r.IsDBNull(2) ? null : r.GetDateTime(2).ToString("o"),
-            SongsScraped = r.IsDBNull(3) ? 0 : r.GetInt32(3),
-            TotalEntries = r.IsDBNull(4) ? 0 : r.GetInt32(4),
-            TotalRequests = r.IsDBNull(5) ? 0 : r.GetInt32(5),
-            TotalBytes = r.IsDBNull(6) ? 0 : r.GetInt64(6),
-            EpicReportedOver100Pages = !r.IsDBNull(7) && r.GetBoolean(7),
+            Id = Convert.ToInt64(r.GetValue(startOrdinal)),
+            StartedAt = r.GetDateTime(startOrdinal + 1).ToString("o"),
+            CompletedAt = r.IsDBNull(startOrdinal + 2) ? null : r.GetDateTime(startOrdinal + 2).ToString("o"),
+            SongsScraped = r.IsDBNull(startOrdinal + 3) ? 0 : r.GetInt32(startOrdinal + 3),
+            TotalEntries = r.IsDBNull(startOrdinal + 4) ? 0 : r.GetInt32(startOrdinal + 4),
+            TotalRequests = r.IsDBNull(startOrdinal + 5) ? 0 : r.GetInt32(startOrdinal + 5),
+            TotalBytes = r.IsDBNull(startOrdinal + 6) ? 0 : r.GetInt64(startOrdinal + 6),
+            EpicReportedOver100Pages = !r.IsDBNull(startOrdinal + 7) && r.GetBoolean(startOrdinal + 7),
         };
     }
 
@@ -396,7 +415,24 @@ public sealed class MetaDatabase : IMetaDatabase
     {
         using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT epic_reported_over_100_pages FROM scrape_log WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1";
+        cmd.CommandText = """
+            SELECT COALESCE(
+                (
+                    SELECT scrape.epic_reported_over_100_pages
+                    FROM scrape_publication_state publication
+                    JOIN scrape_log scrape ON scrape.id = publication.published_scrape_id
+                    WHERE publication.id = TRUE
+                      AND scrape.completed_at IS NOT NULL
+                ),
+                (
+                    SELECT scrape.epic_reported_over_100_pages
+                    FROM scrape_log scrape
+                    WHERE scrape.completed_at IS NOT NULL
+                    ORDER BY scrape.id DESC
+                    LIMIT 1
+                )
+            )
+            """;
         var result = cmd.ExecuteScalar();
         return result is bool value && value;
     }
@@ -442,7 +478,8 @@ public sealed class MetaDatabase : IMetaDatabase
     // ── Worker status ────────────────────────────────────────────────
 
     public void UpsertWorkerHeartbeat(string workerKey, string status, string mode, string instanceId,
-        DateTime startedAtUtc, DateTime heartbeatAtUtc, string? message = null)
+        DateTime startedAtUtc, DateTime heartbeatAtUtc, string? message = null,
+        WorkerOperationInfo? currentOperation = null)
     {
         if (string.IsNullOrWhiteSpace(workerKey))
             throw new ArgumentException("Worker key is required.", nameof(workerKey));
@@ -453,9 +490,9 @@ public sealed class MetaDatabase : IMetaDatabase
             """
             INSERT INTO service_worker_status (
                 worker_key, status, mode, instance_id, started_at, last_heartbeat_at,
-                last_status_change_at, message, updated_at)
+                last_status_change_at, message, current_operation_json, updated_at)
             VALUES (@workerKey, @status, @mode, @instanceId, @startedAt, @heartbeatAt,
-                @changedAt, @message, @updatedAt)
+                @changedAt, @message, @currentOperation, @updatedAt)
             ON CONFLICT (worker_key) DO UPDATE SET
                 status = EXCLUDED.status,
                 mode = EXCLUDED.mode,
@@ -470,6 +507,11 @@ public sealed class MetaDatabase : IMetaDatabase
                     ELSE service_worker_status.last_status_change_at
                 END,
                 message = COALESCE(EXCLUDED.message, service_worker_status.message),
+                current_operation_json = CASE
+                    WHEN service_worker_status.instance_id IS DISTINCT FROM EXCLUDED.instance_id
+                        THEN EXCLUDED.current_operation_json
+                    ELSE COALESCE(EXCLUDED.current_operation_json, service_worker_status.current_operation_json)
+                END,
                 updated_at = EXCLUDED.updated_at
             """;
         cmd.Parameters.AddWithValue("workerKey", workerKey);
@@ -480,6 +522,7 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.Parameters.AddWithValue("heartbeatAt", NormalizeUtc(heartbeatAtUtc));
         cmd.Parameters.AddWithValue("changedAt", NormalizeUtc(heartbeatAtUtc));
         cmd.Parameters.AddWithValue("message", (object?)message ?? DBNull.Value);
+        AddJsonbParameter(cmd, "currentOperation", currentOperation);
         cmd.Parameters.AddWithValue("updatedAt", NormalizeUtc(heartbeatAtUtc));
         cmd.ExecuteNonQuery();
     }
@@ -553,6 +596,112 @@ public sealed class MetaDatabase : IMetaDatabase
             Message = reader.IsDBNull(7) ? null : reader.GetString(7),
             CurrentOperation = DeserializeOperation(reader, 8),
             LastOperation = DeserializeOperation(reader, 9),
+        };
+    }
+
+    public ServiceRuntimeState GetServiceRuntimeState(string workerKey)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            WITH latest_scrape AS (
+                SELECT id, started_at, completed_at, songs_scraped, total_entries,
+                       total_requests, total_bytes, epic_reported_over_100_pages
+                FROM scrape_log
+                ORDER BY id DESC
+                LIMIT 1
+            ),
+            publication AS (
+                SELECT published_scrape_id, published_at, public_reads_frozen,
+                       public_reads_frozen_at, public_reads_frozen_scrape_id,
+                       public_reads_frozen_reason
+                FROM scrape_publication_state
+                WHERE id = TRUE
+            ),
+            published_scrape AS (
+                SELECT scrape.id, scrape.started_at, scrape.completed_at, scrape.songs_scraped,
+                       scrape.total_entries, scrape.total_requests, scrape.total_bytes,
+                       scrape.epic_reported_over_100_pages
+                FROM publication
+                JOIN scrape_log scrape ON scrape.id = publication.published_scrape_id
+                WHERE scrape.completed_at IS NOT NULL
+                UNION ALL
+                SELECT scrape.id, scrape.started_at, scrape.completed_at, scrape.songs_scraped,
+                       scrape.total_entries, scrape.total_requests, scrape.total_bytes,
+                       scrape.epic_reported_over_100_pages
+                FROM scrape_log scrape
+                WHERE scrape.completed_at IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM publication
+                      WHERE published_scrape_id IS NOT NULL
+                  )
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            SELECT
+                latest.id, latest.started_at, latest.completed_at, latest.songs_scraped,
+                latest.total_entries, latest.total_requests, latest.total_bytes,
+                latest.epic_reported_over_100_pages,
+                published.id, published.started_at, published.completed_at, published.songs_scraped,
+                published.total_entries, published.total_requests, published.total_bytes,
+                published.epic_reported_over_100_pages,
+                publication.published_at,
+                COALESCE(publication.public_reads_frozen, FALSE),
+                publication.public_reads_frozen_at,
+                CASE
+                    WHEN COALESCE(publication.public_reads_frozen, FALSE)
+                    THEN COALESCE(publication.public_reads_frozen_scrape_id, published.id)
+                    ELSE NULL
+                END,
+                publication.public_reads_frozen_reason,
+                worker.worker_key, worker.status, worker.mode, worker.instance_id, worker.started_at,
+                worker.last_heartbeat_at, worker.last_status_change_at, worker.message,
+                worker.current_operation_json, worker.last_operation_json
+            FROM (SELECT TRUE) singleton
+            LEFT JOIN latest_scrape latest ON TRUE
+            LEFT JOIN publication ON TRUE
+            LEFT JOIN published_scrape published ON TRUE
+            LEFT JOIN service_worker_status worker ON worker.worker_key = @workerKey
+            """;
+        cmd.Parameters.AddWithValue("workerKey", workerKey);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return new ServiceRuntimeState();
+
+        var frozen = reader.GetBoolean(17);
+        WorkerStatusInfo? workerStatus = null;
+        if (!reader.IsDBNull(21))
+        {
+            workerStatus = new WorkerStatusInfo
+            {
+                WorkerKey = reader.GetString(21),
+                Status = reader.GetString(22),
+                Mode = reader.IsDBNull(23) ? null : reader.GetString(23),
+                InstanceId = reader.IsDBNull(24) ? null : reader.GetString(24),
+                StartedAtUtc = GetNullableUtc(reader, 25),
+                LastHeartbeatAtUtc = GetNullableUtc(reader, 26),
+                LastStatusChangeAtUtc = GetUtc(reader, 27),
+                Message = reader.IsDBNull(28) ? null : reader.GetString(28),
+                CurrentOperation = DeserializeOperation(reader, 29),
+                LastOperation = DeserializeOperation(reader, 30),
+            };
+        }
+
+        return new ServiceRuntimeState
+        {
+            LatestScrape = ReadScrapeRunInfo(reader, 0),
+            PublishedScrape = ReadScrapeRunInfo(reader, 8),
+            PublishedAtUtc = GetNullableUtc(reader, 16),
+            PublicReadFreeze = frozen
+                ? new PublicReadFreezeState(
+                    true,
+                    GetNullableUtc(reader, 18),
+                    reader.IsDBNull(19) ? null : Convert.ToInt64(reader.GetValue(19)),
+                    reader.IsDBNull(20) ? null : reader.GetString(20))
+                : PublicReadFreezeState.NotFrozen,
+            WorkerStatus = workerStatus,
         };
     }
 

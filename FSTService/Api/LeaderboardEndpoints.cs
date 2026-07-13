@@ -379,7 +379,7 @@ public static partial class ApiEndpoints
 
             var (entries, dbCount) = result.Value;
             var useFilteredRank = maxScore.HasValue;
-            var pop = metaDb.GetLeaderboardPopulation(songId, instrument);
+            var pop = persistence.GetCurrentStateLeaderboardPopulation(songId, instrument);
             var totalEntries = Math.Max(pop > 0 ? (int)pop : 0, dbCount);
             var showLeaderboardEntryTotals = metaDb.ShouldShowLeaderboardEntryTotals();
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));

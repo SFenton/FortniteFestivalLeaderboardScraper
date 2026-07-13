@@ -58,6 +58,23 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Leaderboard_entry_total_visibility_remains_on_published_scrape()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 100, 50_000, 200, 1_000_000, epicReportedOver100Pages: false);
+        Db.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+
+        var candidateId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(candidateId, 100, 50_000, 200, 1_000_000, epicReportedOver100Pages: true);
+
+        Assert.False(Db.ShouldShowLeaderboardEntryTotals());
+
+        Db.PublishScrapeRun(candidateId, promoteCachedResponses: false);
+
+        Assert.True(Db.ShouldShowLeaderboardEntryTotals());
+    }
+
+    [Fact]
     public void ReplaceComboLeaderboard_replaces_rows_via_bulk_staging()
     {
         const string comboId = "test-combo";
@@ -176,6 +193,85 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal("Computing Band Trios Rankings", status.LastOperation.OperationLabel);
         Assert.Equal("completed", status.LastOperation.Status);
         Assert.NotNull(status.LastOperation.EndedAtUtc);
+    }
+
+    [Fact]
+    public void WorkerHeartbeat_refreshes_current_operation_timestamp()
+    {
+        var startedAt = DateTime.UtcNow.AddMinutes(-5);
+        var originalUpdate = startedAt.AddMinutes(1);
+        var heartbeatAt = DateTime.UtcNow;
+        var current = new WorkerOperationInfo
+        {
+            OperationKey = "scrape.post_process",
+            OperationLabel = "Post-processing leaderboard update",
+            Status = "running",
+            Phase = "PostScrapeEnrichment",
+            StartedAtUtc = startedAt,
+            UpdatedAtUtc = originalUpdate,
+        };
+
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "instance-refresh",
+            startedAt,
+            heartbeatAt,
+            currentOperation: new WorkerOperationInfo
+            {
+                OperationKey = current.OperationKey,
+                OperationLabel = current.OperationLabel,
+                Status = current.Status,
+                Phase = current.Phase,
+                StartedAtUtc = current.StartedAtUtc,
+                UpdatedAtUtc = heartbeatAt,
+                ElapsedSeconds = (heartbeatAt - startedAt).TotalSeconds,
+            });
+
+        var status = Db.GetWorkerStatus(WorkerStatusPublisher.ScraperWorkerKey);
+
+        Assert.NotNull(status?.CurrentOperation);
+        Assert.Equal(heartbeatAt, status.CurrentOperation.UpdatedAtUtc, TimeSpan.FromMilliseconds(10));
+        Assert.True(status.CurrentOperation.ElapsedSeconds >= 299);
+    }
+
+    [Fact]
+    public void ServiceRuntimeState_returns_published_active_freeze_and_worker_atomically()
+    {
+        var publishedId = Db.StartScrapeRun();
+        Db.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        Db.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+        var activeId = Db.StartScrapeRun();
+        Db.SetPublicReadFreeze(true, reason: "scrape");
+
+        var now = DateTime.UtcNow;
+        Db.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "runtime-state-instance",
+            now.AddMinutes(-1),
+            now,
+            currentOperation: new WorkerOperationInfo
+            {
+                OperationKey = "scrape.leaderboards",
+                OperationLabel = "Scraping leaderboard scores",
+                Status = "running",
+                Phase = "Scraping",
+                SubOperation = "fetching_leaderboards",
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now,
+            });
+
+        var runtime = Db.GetServiceRuntimeState(WorkerStatusPublisher.ScraperWorkerKey);
+
+        Assert.Equal(activeId, runtime.LatestScrape?.Id);
+        Assert.Equal(publishedId, runtime.PublishedScrape?.Id);
+        Assert.True(runtime.PublicReadFreeze.IsFrozen);
+        Assert.Equal(publishedId, runtime.PublicReadFreeze.ScrapeId);
+        Assert.Equal("scrape", runtime.PublicReadFreeze.Reason);
+        Assert.Equal("scrape.leaderboards", runtime.WorkerStatus?.CurrentOperation?.OperationKey);
     }
 
     [Fact]

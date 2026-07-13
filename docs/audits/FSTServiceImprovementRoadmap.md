@@ -233,6 +233,40 @@ and old cache artifacts.
 - Rollback is `Features__UsePublishedScopeSources=false`; schema and mappings
   remain diagnostic-only.
 
+**SERVICE follow-through execution evidence - accepted 2026-07-13**
+
+- Enabled readers now build from one shared current-publication source CTE;
+  their enabled SQL contains no active-snapshot branch.
+- Projection fast paths require source and projection-generation parity in the
+  same query. Stale/mixed projections fall back to the mapped physical source
+  plus overlay instead of returning candidate rows.
+- The per-route reported total and `PlayerDataExportService` use the same
+  published resolver. A canary exposed a capped raw mapping total
+  (`10,042` versus the published route floor `374,853`); the repaired candidate
+  snapshots/repairs the population floor only at a clean publication boundary.
+  The prior active resolver remains available only when
+  `Features__UsePublishedScopeSources=false`.
+- A forced service restart while scrape `1232` was frozen on published `1231`
+  returned the exact baseline leaderboard fingerprint. Published solo workbook
+  sections also matched byte-normalized baseline content exactly.
+- The first frozen full export exposed a pre-existing unbounded published-band
+  scan. An identity prefilter was rejected because it omitted known teams; the
+  accepted indexed `band_members` prefilter returned HTTP `200` in `1.163s`
+  while preserving the published solo workbook fingerprint.
+- On the same published scrape `1235`, rollback image
+  `fstservice:pg1-0f3a37f2` and the candidate returned exact route, solo-export,
+  and full-export fingerprints. Matched latency was `14.1ms -> 17.4ms` for the
+  sample route and `0.765s -> 0.827s` for the export.
+- Focused validation passed `356/356` PostgreSQL/unit/API tests, including
+  older physical sources, mixed source IDs, explicit empty scopes, overlays,
+  generation mismatch, failed in-progress state, forced frozen cold misses,
+  export contents, and status transitions.
+- The complete accepted scrape `1235` published `6,138/6,138` mappings:
+  `6,096` snapshots, `42` explicit empty scopes, `39,578,699` physical rows,
+  and zero incomplete/missing publication metadata.
+- Production evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/service-0.1-0.2-published-status-20260711T143501Z`.
+
 ### SERVICE-0.2 - Correct service status semantics
 
 **Evidence**
@@ -252,6 +286,38 @@ and old cache artifacts.
 
 - Service status and PostgreSQL state never disagree on active/frozen/published
   scrape IDs.
+
+**Execution evidence - accepted 2026-07-13**
+
+- `/api/service-info` reads latest scrape, published scrape, freeze state, and
+  durable worker activity from one PostgreSQL statement.
+- The response now exposes active/published IDs, published/frozen timestamps,
+  frozen scrape/reason, network/post-process/publication phases, and
+  `failed`/`stalled` states without reporting idle during active work.
+- Worker heartbeats refresh long-operation timestamps; failed passes retain a
+  failed `scrape.pass` operation and release public reads back to the prior
+  published generation.
+- Next schedule derives from publication or failed-pass completion and is
+  suppressed while active, frozen, stalled, offline, stale, or already overdue.
+- Live transitions reported `Scraping`/`scrape`, `PostScrapeEnrichment`/
+  `post-process`, `Publishing`/`publish`, and post-publication `Finalizing`
+  without an idle or stale-schedule contradiction. The frozen timestamp stayed
+  fixed and `frozenScrapeId` remained `1231` until atomic promotion to `1235`.
+- Scrape `1232` failed closed on `16` incomplete scopes and scrape `1234` on
+  `3`; both retained published `1231`, unfroze safely, and reported `failed`.
+  Scrape `1233` isolated a worker legacy-path performance regression; service
+  safety checks were scoped back to published mode before the accepted retry.
+- All `604` one-minute monitor ticks for accepted scrape `1235` kept
+  `/readyz`, festivalweb shell, and `/api/service-info` healthy. Rankings phase
+  time was `17,032,363ms -> 17,926,147ms` (`+5.25%`); peak Postgres/worker
+  memory was `15.20/8.41GiB`.
+- Repeated failed provider-coverage windows and their rollback evidence reduced
+  free space to `114,964,156,416` bytes (`3.82` projected days). Scraping
+  remains capacity-guard allowed, but storage/reclaim work is now the immediate
+  operational dependency.
+- CI-equivalent line coverage is `94.24%`. The full run had `1,950/1,953`
+  passing: two known pre-existing fixtures and one load-sensitive timeout that
+  passed immediately in isolation. Settings status tests passed `56/56`.
 
 ### SERVICE-0.3 - Protect or remove token-backed diagnostics
 

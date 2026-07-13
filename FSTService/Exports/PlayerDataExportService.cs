@@ -73,7 +73,7 @@ public sealed class PlayerDataExportService
     private PlayerExportSnapshot LoadExportSnapshot(string accountId, bool usePublishedSnapshot)
     {
         var displayName = _metaDb.GetDisplayName(accountId);
-        var soloScores = usePublishedSnapshot
+        var soloScores = _persistence.UsePublishedScopeSources || usePublishedSnapshot
             ? LoadPublishedSoloScores(accountId)
             : _persistence.GetCurrentStatePlayerProfile(accountId).ToList();
         var soloScoreHistory = _metaDb.GetScoreHistory(accountId, int.MaxValue)
@@ -356,54 +356,28 @@ public sealed class PlayerDataExportService
 
     internal List<PlayerScoreDto> LoadPublishedSoloScores(string accountId)
     {
+        if (_persistence.UsePublishedScopeSources)
+            return LoadMappedPublishedSoloScores(accountId);
+
         using var conn = _dataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
-        var sourceJoin = _persistence.UsePublishedScopeSources
-            ? """
-                JOIN leaderboard_published_scope_source source
-                  ON source.song_id = snapshot.song_id
-                 AND source.instrument = snapshot.instrument
-                 AND source.scope_kind = 'alltime'
-                 AND source.source_kind = 'snapshot'
-                 AND source.source_snapshot_id = snapshot.snapshot_id
-                 AND source.is_complete
-                JOIN scrape_publication_state publication
-                  ON publication.id = TRUE
-                 AND publication.published_scrape_id = source.published_scrape_id
-                """
-            : """
-                JOIN leaderboard_snapshot_state state
-                  ON state.song_id = snapshot.song_id
-                 AND state.instrument = snapshot.instrument
-                 AND state.active_snapshot_id = snapshot.snapshot_id
-                 AND state.is_finalized = TRUE
-                """;
-        var overlayJoin = _persistence.UsePublishedScopeSources
-            ? """
-                 JOIN leaderboard_published_scope_source source
-                   ON source.song_id = overlay.song_id
-                  AND source.instrument = overlay.instrument
-                  AND source.scope_kind = 'alltime'
-                  AND source.is_complete
-                 JOIN scrape_publication_state publication
-                   ON publication.id = TRUE
-                  AND publication.published_scrape_id = source.published_scrape_id
-                 """
-            : string.Empty;
-        cmd.CommandText = $"""
+        cmd.CommandText = """
             WITH base_rows AS (
                 SELECT snapshot.song_id, snapshot.instrument, snapshot.account_id, snapshot.score, snapshot.accuracy,
                        snapshot.is_full_combo, snapshot.stars, snapshot.season, snapshot.difficulty, snapshot.percentile::DOUBLE PRECISION,
                        snapshot.end_time, snapshot.rank, snapshot.api_rank, 1 AS origin_precedence, 0 AS source_priority
                 FROM leaderboard_entries_snapshot snapshot
-                {sourceJoin}
+                JOIN leaderboard_snapshot_state state
+                  ON state.song_id = snapshot.song_id
+                 AND state.instrument = snapshot.instrument
+                 AND state.active_snapshot_id = snapshot.snapshot_id
+                 AND state.is_finalized = TRUE
                 WHERE snapshot.account_id = @accountId
                 UNION ALL
                 SELECT overlay.song_id, overlay.instrument, overlay.account_id, overlay.score, overlay.accuracy,
                        overlay.is_full_combo, overlay.stars, overlay.season, overlay.difficulty, overlay.percentile::DOUBLE PRECISION,
                        overlay.end_time, overlay.rank, overlay.api_rank, 0 AS origin_precedence, overlay.source_priority
                 FROM leaderboard_entries_overlay overlay
-                {overlayJoin}
                 WHERE overlay.account_id = @accountId
             ), resolved_rows AS (
                 SELECT DISTINCT ON (song_id, instrument, account_id)
@@ -419,7 +393,54 @@ public sealed class PlayerDataExportService
             """;
         cmd.CommandTimeout = 0;
         cmd.Parameters.AddWithValue("accountId", accountId);
+        return ReadSoloScores(cmd);
+    }
 
+    private List<PlayerScoreDto> LoadMappedPublishedSoloScores(string accountId)
+    {
+        using var conn = _dataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH {PublishedSoloScopeSql.CurrentSourcesCte},
+            base_rows AS (
+                SELECT snapshot.song_id, snapshot.instrument, snapshot.account_id, snapshot.score, snapshot.accuracy,
+                       snapshot.is_full_combo, snapshot.stars, snapshot.season, snapshot.difficulty, snapshot.percentile::DOUBLE PRECISION,
+                       snapshot.end_time, snapshot.rank, snapshot.api_rank, 1 AS origin_precedence, 0 AS source_priority
+                FROM leaderboard_entries_snapshot snapshot
+                JOIN published_sources source
+                  ON source.song_id = snapshot.song_id
+                 AND source.instrument = snapshot.instrument
+                 AND source.source_kind = 'snapshot'
+                 AND source.source_snapshot_id = snapshot.snapshot_id
+                WHERE snapshot.account_id = @accountId
+                UNION ALL
+                SELECT overlay.song_id, overlay.instrument, overlay.account_id, overlay.score, overlay.accuracy,
+                       overlay.is_full_combo, overlay.stars, overlay.season, overlay.difficulty, overlay.percentile::DOUBLE PRECISION,
+                       overlay.end_time, overlay.rank, overlay.api_rank, 0 AS origin_precedence, overlay.source_priority
+                FROM leaderboard_entries_overlay overlay
+                JOIN published_sources source
+                  ON source.song_id = overlay.song_id
+                 AND source.instrument = overlay.instrument
+                WHERE overlay.account_id = @accountId
+            ), resolved_rows AS (
+                SELECT DISTINCT ON (song_id, instrument, account_id)
+                       song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty,
+                       percentile, end_time, rank, api_rank
+                FROM base_rows
+                ORDER BY song_id, instrument, account_id, origin_precedence ASC, source_priority DESC
+            )
+            SELECT song_id, instrument, score, accuracy, is_full_combo, stars, season, difficulty,
+                   percentile, end_time, rank, api_rank
+            FROM resolved_rows
+            ORDER BY instrument, song_id
+            """;
+        cmd.CommandTimeout = 0;
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        return ReadSoloScores(cmd);
+    }
+
+    private static List<PlayerScoreDto> ReadSoloScores(NpgsqlCommand cmd)
+    {
         var rows = new List<PlayerScoreDto>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -589,7 +610,18 @@ public sealed class PlayerDataExportService
     {
         using var conn = _dataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        var accountPrefilter = accountId is null
+            ? string.Empty
+            : """
+                JOIN (
+                    SELECT DISTINCT membership.band_type, membership.team_key
+                    FROM band_members membership
+                    WHERE membership.account_id = @accountId
+                ) membership
+                  ON membership.band_type = cble.band_type
+                 AND membership.team_key = cble.team_key
+                """;
+        cmd.CommandText = $"""
             SELECT DISTINCT ON (cble.song_id, cble.band_type, cble.team_key, cble.entry_instrument_combo)
                    cble.song_id, cble.band_type, cble.team_key, cble.entry_instrument_combo, cble.entry_combo_id,
                    cble.team_members, cble.member_account_ids, cble.member_instrument_ids, cble.member_scores,
@@ -603,6 +635,7 @@ public sealed class PlayerDataExportService
              AND scope.ranking_scope = cble.ranking_scope
              AND scope.scope_combo_id = cble.scope_combo_id
              AND scope.published_generation = cble.projection_generation
+            {accountPrefilter}
             WHERE (@accountId IS NULL OR @accountId = ANY(cble.team_members))
               AND (@bandType IS NULL OR cble.band_type = @bandType)
               AND (@teamKey IS NULL OR cble.team_key = @teamKey)

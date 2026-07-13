@@ -1349,8 +1349,15 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             publishedFingerprintCount = reader.GetInt32(5);
         }
 
+        if (existingMappingCount > 0
+            && publishedFingerprintCount == existingMappingCount)
+        {
+            expectedScopeCount = existingMappingCount;
+        }
+
         if (existingMappingCount == expectedScopeCount && expectedScopeCount > 0)
         {
+            var applied = false;
             if (publishedFingerprintCount != expectedScopeCount)
             {
                 if (frozen || !cleanBoundary)
@@ -1364,14 +1371,26 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 }
 
                 MarkPublishedScopeFingerprints(conn, publishedScrapeId.Value, expectedScopeCount);
+                applied = true;
+            }
+
+            var repairedPopulationCount = 0;
+            if (cleanBoundary)
+            {
+                repairedPopulationCount = RepairPublishedScopePopulationTotals(
+                    conn,
+                    publishedScrapeId.Value);
+                applied |= repairedPopulationCount > 0;
             }
 
             return new PublishedScopeSourceBackfillResult(
                 publishedScrapeId,
                 expectedScopeCount,
                 existingMappingCount,
-                false,
-                "already-complete");
+                applied,
+                repairedPopulationCount > 0
+                    ? $"already-complete-population-repaired:{repairedPopulationCount}"
+                    : "already-complete");
         }
 
         if (existingMappingCount > 0)
@@ -1655,6 +1674,31 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         }
     }
 
+    private static int RepairPublishedScopePopulationTotals(
+        NpgsqlConnection conn,
+        long publishedScrapeId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE leaderboard_published_scope_source source
+            SET reported_total_entries = GREATEST(
+                    source.reported_total_entries,
+                    population.total_entries::bigint,
+                    source.row_count),
+                validated_at = @now
+            FROM leaderboard_population population
+            WHERE source.published_scrape_id = @publishedScrapeId
+              AND source.scope_kind = 'alltime'
+              AND source.source_kind = 'snapshot'
+              AND population.song_id = source.song_id
+              AND population.instrument = source.instrument
+              AND population.total_entries::bigint > source.reported_total_entries
+            """;
+        cmd.Parameters.AddWithValue("publishedScrapeId", publishedScrapeId);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        return cmd.ExecuteNonQuery();
+    }
+
     public PublishedScopeSourceBuildResult BuildPublishedScopeSourceCandidate(
         long scrapeId,
         IEnumerable<(string SongId, string Instrument)> expectedPairs)
@@ -1705,7 +1749,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     fingerprint.entry_count::bigint AS row_count,
                     fingerprint.content_fingerprint,
                     fingerprint.coverage_fingerprint,
-                    fingerprint.reported_total_entries,
+                    CASE
+                        WHEN fingerprint.entry_count = 0 THEN 0::bigint
+                        ELSE GREATEST(
+                            fingerprint.reported_total_entries,
+                            COALESCE(population.total_entries::bigint, 0),
+                            fingerprint.entry_count::bigint)
+                    END AS reported_total_entries,
                     fingerprint.reported_total_pages,
                     fingerprint.is_complete,
                     physical.row_count AS physical_row_count,
@@ -1721,6 +1771,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                  AND fingerprint.instrument = expected.instrument
                  AND fingerprint.scope_kind = 'alltime'
                  AND fingerprint.last_seen_scrape_id = @scrapeId
+                LEFT JOIN leaderboard_population population
+                  ON population.song_id = expected.song_id
+                 AND population.instrument = expected.instrument
                 LEFT JOIN LATERAL (
                     SELECT COUNT(*)::bigint AS row_count
                     FROM leaderboard_entries_snapshot snapshot
@@ -3461,33 +3514,31 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             ? "AND source.instrument = ANY(@instruments)"
             : string.Empty;
         cmd.CommandText = $"""
-            WITH publication AS (
-                SELECT published_scrape_id
-                FROM scrape_publication_state
-                WHERE id = TRUE
-            ), published_sources AS (
-                SELECT
-                    source.song_id,
-                    source.instrument,
-                    source.source_kind,
-                    source.source_snapshot_id,
-                    source.source_scrape_id,
-                    COALESCE(source.source_snapshot_id, source.source_scrape_id) AS projection_source_snapshot_id
-                FROM leaderboard_published_scope_source source
-                JOIN publication
-                  ON publication.published_scrape_id = source.published_scrape_id
-                WHERE source.scope_kind = 'alltime'
-                  AND source.is_complete
+            WITH {PublishedSoloScopeSql.CurrentSourcesCte},
+            eligible_sources AS (
+                SELECT source.*
+                FROM published_sources source
+                WHERE TRUE
                   {songFilter}
                   {instrumentFilter}
             ), ready_projection_sources AS (
-                SELECT source.*
-                FROM published_sources source
+                SELECT source.*, scope.projection_generation
+                FROM eligible_sources source
                 JOIN solo_current_projection_scope scope
                   ON scope.song_id = source.song_id
                  AND scope.instrument = source.instrument
                  AND scope.status = 'ready'
                  AND scope.source_snapshot_id IS NOT DISTINCT FROM source.projection_source_snapshot_id
+                 AND (
+                     scope.row_count = 0
+                     OR EXISTS (
+                         SELECT 1
+                         FROM current_leaderboard_entries projection
+                         WHERE projection.song_id = scope.song_id
+                           AND projection.instrument = scope.instrument
+                           AND projection.projection_generation = scope.projection_generation
+                     )
+                 )
             ), projected_rows AS (
                 SELECT
                     projection.account_id,
@@ -3507,10 +3558,11 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 JOIN ready_projection_sources source
                   ON source.song_id = projection.song_id
                  AND source.instrument = projection.instrument
+                 AND source.projection_generation = projection.projection_generation
                 WHERE projection.account_id = ANY(@accountIds)
             ), fallback_sources AS (
                 SELECT source.*
-                FROM published_sources source
+                FROM eligible_sources source
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM ready_projection_sources ready
@@ -3724,26 +3776,18 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             .ToArray();
 
         var publishedSourceCtes = UsePublishedScopeSources
-            ? """
-                publication AS (
-                    SELECT published_scrape_id
-                    FROM scrape_publication_state
-                    WHERE id = TRUE
-                ),
-                published_sources AS (
+            ? $"""
+                {PublishedSoloScopeSql.CurrentSourcesCte},
+                eligible_sources AS (
                     SELECT source.song_id, source.instrument, source.source_kind, source.source_snapshot_id
-                    FROM leaderboard_published_scope_source source
-                    JOIN publication
-                      ON publication.published_scrape_id = source.published_scrape_id
-                    WHERE source.scope_kind = 'alltime'
-                      AND source.is_complete
-                      AND source.instrument = ANY(@instruments)
+                    FROM published_sources source
+                    WHERE source.instrument = ANY(@instruments)
                 ),
                 candidate_scores AS (
                     SELECT snapshot.account_id, snapshot.song_id, snapshot.instrument, snapshot.score,
                            1 AS origin_precedence, 0 AS source_priority
                     FROM leaderboard_entries_snapshot snapshot
-                    JOIN published_sources source
+                    JOIN eligible_sources source
                       ON source.song_id = snapshot.song_id
                      AND source.instrument = snapshot.instrument
                      AND source.source_kind = 'snapshot'
@@ -3753,7 +3797,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     SELECT overlay.account_id, overlay.song_id, overlay.instrument, overlay.score,
                            0 AS origin_precedence, overlay.source_priority
                     FROM leaderboard_entries_overlay overlay
-                    JOIN published_sources source
+                    JOIN eligible_sources source
                       ON source.song_id = overlay.song_id
                      AND source.instrument = overlay.instrument
                     WHERE overlay.account_id = ANY(@allAccountIds)
@@ -5625,20 +5669,37 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         using var conn = _pgDataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
+            WITH {PublishedSoloScopeSql.CurrentSourcesCte}
             SELECT source.song_id, source.instrument, source.reported_total_entries
-            FROM leaderboard_published_scope_source source
-            JOIN scrape_publication_state publication
-              ON publication.id = TRUE
-             AND publication.published_scrape_id = source.published_scrape_id
-            WHERE source.scope_kind = 'alltime'
-              AND source.is_complete
+            FROM published_sources source
             """;
         var result = new Dictionary<(string SongId, string Instrument), long>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             result[(reader.GetString(0), reader.GetString(1))] = reader.GetInt64(2);
         return result;
+    }
+
+    public long GetCurrentStateLeaderboardPopulation(string songId, string instrument)
+    {
+        if (!UsePublishedScopeSources)
+            return _metaDb.GetLeaderboardPopulation(songId, instrument);
+
+        using var conn = _pgDataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            WITH {PublishedSoloScopeSql.CurrentSourcesCte}
+            SELECT source.reported_total_entries
+            FROM published_sources source
+            WHERE source.song_id = @songId
+              AND source.instrument = @instrument
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        var value = cmd.ExecuteScalar();
+        return value is null or DBNull ? 0 : Convert.ToInt64(value);
     }
 
     /// <summary>

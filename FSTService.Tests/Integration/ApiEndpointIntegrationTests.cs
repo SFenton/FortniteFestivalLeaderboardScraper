@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Reflection;
+using System.IO.Compression;
 using System.Text.Json;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
@@ -225,9 +226,11 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.TryGetProperty("lastCompletedUpdate", out _));
-        Assert.Equal("idle", json.GetProperty("currentUpdate").GetProperty("status").GetString());
+        var updateStatus = json.GetProperty("currentUpdate").GetProperty("status").GetString();
+        Assert.Contains(updateStatus, new[] { "idle", "updating", "failed", "stalled" });
         Assert.True(json.TryGetProperty("workerStatus", out _));
-        Assert.True(json.TryGetProperty("nextScheduledUpdateAt", out _));
+        if (updateStatus is "idle" or "failed")
+            Assert.True(json.TryGetProperty("nextScheduledUpdateAt", out _));
     }
 
     [Fact]
@@ -362,6 +365,319 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         {
             tracker.EndPass();
         }
+    }
+
+    [Fact]
+    public async Task ApiServiceInfo_TracksDurableScrapePostProcessPublicationAndIdleTransitions()
+    {
+        using var factory = _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
+        var metaDb = factory.Services.GetRequiredService<MetaDatabase>();
+        var now = DateTime.UtcNow;
+
+        var publishedId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        metaDb.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+        var candidateId = metaDb.StartScrapeRun();
+        metaDb.SetPublicReadFreeze(true, reason: "scrape");
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "service-info-transition",
+            now.AddMinutes(-1),
+            now);
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                OperationKey = "scrape.leaderboards",
+                OperationLabel = "Scraping leaderboard scores",
+                Status = "running",
+                Phase = "Scraping",
+                SubOperation = "fetching_leaderboards",
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now,
+            },
+            updatedAtUtc: now);
+
+        var scrapeJson = await (await client.GetAsync("/api/service-info")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("updating", scrapeJson.GetProperty("currentUpdate").GetProperty("status").GetString());
+        Assert.Equal(candidateId, scrapeJson.GetProperty("activeScrapeId").GetInt64());
+        Assert.Equal(publishedId, scrapeJson.GetProperty("publishedScrapeId").GetInt64());
+        Assert.True(scrapeJson.GetProperty("publication").GetProperty("publicReadsFrozen").GetBoolean());
+        Assert.Equal(publishedId, scrapeJson.GetProperty("publication").GetProperty("frozenScrapeId").GetInt64());
+        Assert.Equal("scrape", scrapeJson.GetProperty("publication").GetProperty("freezeReason").GetString());
+        Assert.False(scrapeJson.TryGetProperty("nextScheduledUpdateAt", out _));
+
+        metaDb.SetPublicReadFreeze(true, reason: "post-process");
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                OperationKey = "scrape.post_process",
+                OperationLabel = "Post-processing leaderboard update",
+                Status = "running",
+                Phase = "PostScrapeEnrichment",
+                SubOperation = "enriching_parallel_tail",
+                StartedAtUtc = now,
+                UpdatedAtUtc = now.AddSeconds(1),
+            },
+            updatedAtUtc: now.AddSeconds(1));
+
+        var postProcessJson = await (await client.GetAsync("/api/service-info")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("PostScrapeEnrichment", postProcessJson.GetProperty("currentUpdate").GetProperty("phase").GetString());
+        Assert.Equal("post-process", postProcessJson.GetProperty("publication").GetProperty("freezeReason").GetString());
+
+        metaDb.CompleteScrapeRun(candidateId, 1, 20, 2, 200);
+        metaDb.SetPublicReadFreeze(true, reason: "publish");
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                OperationKey = "scrape.publication",
+                OperationLabel = "Publishing leaderboard update",
+                Status = "running",
+                Phase = "Publishing",
+                SubOperation = "committing_publication",
+                StartedAtUtc = now.AddSeconds(2),
+                UpdatedAtUtc = now.AddSeconds(3),
+            },
+            updatedAtUtc: now.AddSeconds(3));
+
+        var publishingJson = await (await client.GetAsync("/api/service-info")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("updating", publishingJson.GetProperty("currentUpdate").GetProperty("status").GetString());
+        Assert.Equal("Publishing", publishingJson.GetProperty("currentUpdate").GetProperty("phase").GetString());
+        Assert.Equal(candidateId, publishingJson.GetProperty("activeScrapeId").GetInt64());
+        Assert.Equal(publishedId, publishingJson.GetProperty("publishedScrapeId").GetInt64());
+
+        metaDb.PublishScrapeRun(candidateId, promoteCachedResponses: false);
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            new WorkerOperationInfo
+            {
+                OperationKey = "scrape.pass",
+                OperationLabel = "Running leaderboard update",
+                Status = "running",
+                Phase = "Finalizing",
+                SubOperation = "post_publication",
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = now.AddSeconds(4),
+            },
+            updatedAtUtc: now.AddSeconds(4));
+
+        var finalizingJson = await (await client.GetAsync("/api/service-info")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("updating", finalizingJson.GetProperty("currentUpdate").GetProperty("status").GetString());
+        Assert.Equal("Finalizing", finalizingJson.GetProperty("currentUpdate").GetProperty("phase").GetString());
+        Assert.Equal(candidateId, finalizingJson.GetProperty("activeScrapeId").GetInt64());
+        Assert.Equal(candidateId, finalizingJson.GetProperty("publishedScrapeId").GetInt64());
+        Assert.False(finalizingJson.GetProperty("publication").GetProperty("publicReadsFrozen").GetBoolean());
+
+        var passEndedAt = DateTime.UtcNow;
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            null,
+            new WorkerOperationInfo
+            {
+                OperationKey = "scrape.pass",
+                OperationLabel = "Running leaderboard update",
+                Status = "completed",
+                Phase = "Publishing",
+                StartedAtUtc = now.AddMinutes(-1),
+                UpdatedAtUtc = passEndedAt,
+                EndedAtUtc = passEndedAt,
+            },
+            updatedAtUtc: passEndedAt);
+
+        var idleJson = await (await client.GetAsync("/api/service-info")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("idle", idleJson.GetProperty("currentUpdate").GetProperty("status").GetString());
+        Assert.False(idleJson.TryGetProperty("activeScrapeId", out _));
+        Assert.Equal(candidateId, idleJson.GetProperty("publishedScrapeId").GetInt64());
+        Assert.False(idleJson.GetProperty("publication").GetProperty("publicReadsFrozen").GetBoolean());
+        Assert.Equal(candidateId, idleJson.GetProperty("lastCompletedUpdate").GetProperty("scrapeId").GetInt64());
+        Assert.True(DateTimeOffset.Parse(idleJson.GetProperty("nextScheduledUpdateAt").GetString()!) > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task ApiServiceInfo_ReportsFailedIncompleteScrapeWithoutClaimingIdle()
+    {
+        using var factory = _factory.WithWebHostBuilder(_ => { });
+        using var client = factory.CreateClient();
+        var metaDb = factory.Services.GetRequiredService<MetaDatabase>();
+        var now = DateTime.UtcNow;
+
+        var publishedId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(publishedId, 1, 10, 1, 100);
+        metaDb.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+        var failedId = metaDb.StartScrapeRun();
+        metaDb.UpsertWorkerHeartbeat(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            "running",
+            "scraper",
+            "service-info-failure",
+            now.AddMinutes(-2),
+            now);
+        metaDb.UpdateWorkerActivity(
+            WorkerStatusPublisher.ScraperWorkerKey,
+            null,
+            new WorkerOperationInfo
+            {
+                OperationKey = "scrape.pass",
+                OperationLabel = "Running leaderboard update",
+                Status = "failed",
+                Phase = "Scraping",
+                Detail = "candidate failed",
+                StartedAtUtc = now.AddMinutes(-2),
+                UpdatedAtUtc = now,
+                EndedAtUtc = now,
+            },
+            updatedAtUtc: now);
+
+        var json = await (await client.GetAsync("/api/service-info")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal("failed", json.GetProperty("currentUpdate").GetProperty("status").GetString());
+        Assert.Equal(failedId, json.GetProperty("activeScrapeId").GetInt64());
+        Assert.Equal(publishedId, json.GetProperty("publishedScrapeId").GetInt64());
+        Assert.Equal("candidate failed", json.GetProperty("currentUpdate").GetProperty("detail").GetString());
+        Assert.False(json.GetProperty("publication").GetProperty("publicReadsFrozen").GetBoolean());
+        Assert.True(DateTimeOffset.Parse(json.GetProperty("nextScheduledUpdateAt").GetString()!) > DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task PublishedResolver_ForcedFrozenColdMissAndExportIgnoreActiveProjectionAndSnapshot()
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.PostConfigure<FeatureOptions>(options => options.UsePublishedScopeSources = true);
+            });
+        });
+        using var client = factory.CreateClient();
+        var services = factory.Services;
+        var metaDb = services.GetRequiredService<MetaDatabase>();
+        var dataSource = services.GetRequiredService<NpgsqlDataSource>();
+        var sourceId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(sourceId, 1, 1, 1, 1);
+        var publishedId = metaDb.StartScrapeRun();
+        metaDb.CompleteScrapeRun(publishedId, 2, 2, 2, 2);
+        metaDb.PublishScrapeRun(publishedId, promoteCachedResponses: false);
+        var activeId = metaDb.StartScrapeRun();
+
+        using (var conn = dataSource.OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO songs (song_id, title, artist, lead_diff)
+                VALUES
+                    ('service_published_song', 'Published Song', 'Artist', 3),
+                    ('service_empty_song', 'Empty Song', 'Artist', 3)
+                ON CONFLICT (song_id) DO UPDATE SET title = EXCLUDED.title;
+
+                INSERT INTO leaderboard_entries_snapshot (
+                    snapshot_id, song_id, instrument, account_id, score, rank, api_rank, source,
+                    first_seen_at, last_updated_at)
+                VALUES
+                    (@sourceId, 'service_published_song', 'Solo_Guitar', 'acct_published', 100000, 1, 1, 'scrape', now(), now()),
+                    (@activeId, 'service_published_song', 'Solo_Guitar', 'acct_published', 900000, 1, 1, 'scrape', now(), now()),
+                    (@activeId, 'service_empty_song', 'Solo_Guitar', 'acct_active_leak', 800000, 1, 1, 'scrape', now(), now());
+
+                INSERT INTO leaderboard_snapshot_state (
+                    song_id, instrument, active_snapshot_id, scrape_id, is_finalized, updated_at)
+                VALUES
+                    ('service_published_song', 'Solo_Guitar', @activeId, @activeId, TRUE, now()),
+                    ('service_empty_song', 'Solo_Guitar', @activeId, @activeId, TRUE, now())
+                ON CONFLICT (song_id, instrument) DO UPDATE SET
+                    active_snapshot_id = EXCLUDED.active_snapshot_id,
+                    scrape_id = EXCLUDED.scrape_id,
+                    is_finalized = TRUE,
+                    updated_at = EXCLUDED.updated_at;
+
+                INSERT INTO leaderboard_entries_overlay (
+                    song_id, instrument, account_id, score, rank, api_rank, source,
+                    first_seen_at, last_updated_at, source_priority, overlay_reason)
+                VALUES
+                    ('service_published_song', 'Solo_Guitar', 'acct_overlay', 110000, 1, 1, 'refresh', now(), now(), 200, 'refresh'),
+                    ('service_empty_song', 'Solo_Guitar', 'acct_empty_overlay', 50000, 1, 1, 'refresh', now(), now(), 200, 'refresh');
+
+                INSERT INTO solo_current_projection_scope (
+                    song_id, instrument, projection_generation, row_count, source_snapshot_id, status, updated_at)
+                VALUES
+                    ('service_published_song', 'Solo_Guitar', 2, 1, @activeId, 'ready', now()),
+                    ('service_empty_song', 'Solo_Guitar', 2, 1, @activeId, 'ready', now())
+                ON CONFLICT (song_id, instrument) DO UPDATE SET
+                    projection_generation = EXCLUDED.projection_generation,
+                    row_count = EXCLUDED.row_count,
+                    source_snapshot_id = EXCLUDED.source_snapshot_id,
+                    status = EXCLUDED.status,
+                    updated_at = EXCLUDED.updated_at;
+
+                INSERT INTO current_leaderboard_entries (
+                    song_id, instrument, account_id, score, rank, api_rank, source,
+                    first_seen_at, last_updated_at, projection_generation, computed_at)
+                VALUES
+                    ('service_published_song', 'Solo_Guitar', 'acct_published', 900000, 1, 1, 'projection', now(), now(), 2, now()),
+                    ('service_empty_song', 'Solo_Guitar', 'acct_active_leak', 800000, 1, 1, 'projection', now(), now(), 2, now())
+                ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
+                    score = EXCLUDED.score,
+                    rank = EXCLUDED.rank,
+                    api_rank = EXCLUDED.api_rank,
+                    projection_generation = EXCLUDED.projection_generation,
+                    computed_at = EXCLUDED.computed_at;
+
+                INSERT INTO leaderboard_population (song_id, instrument, total_entries, updated_at)
+                VALUES
+                    ('service_published_song', 'Solo_Guitar', 999, now()),
+                    ('service_empty_song', 'Solo_Guitar', 999, now())
+                ON CONFLICT (song_id, instrument) DO UPDATE SET
+                    total_entries = EXCLUDED.total_entries,
+                    updated_at = EXCLUDED.updated_at;
+
+                INSERT INTO leaderboard_published_scope_source (
+                    published_scrape_id, song_id, instrument, scope_kind, source_kind,
+                    source_snapshot_id, source_scrape_id, row_count, content_fingerprint,
+                    coverage_fingerprint, reported_total_entries, reported_total_pages,
+                    is_complete, created_at, validated_at)
+                VALUES
+                    (@publishedId, 'service_published_song', 'Solo_Guitar', 'alltime', 'snapshot',
+                     @sourceId, @sourceId, 1, md5('published'), md5('published-coverage'), 1, 1, TRUE, now(), now()),
+                    (@publishedId, 'service_empty_song', 'Solo_Guitar', 'alltime', 'empty',
+                     NULL, @publishedId, 0, md5('empty'), md5('empty-coverage'), 0, 0, TRUE, now(), now());
+                """;
+            cmd.Parameters.AddWithValue("sourceId", sourceId);
+            cmd.Parameters.AddWithValue("publishedId", publishedId);
+            cmd.Parameters.AddWithValue("activeId", activeId);
+            cmd.ExecuteNonQuery();
+        }
+
+        metaDb.SetPublicReadFreeze(true, reason: "scrape");
+        services.GetRequiredService<PublicReadGateService>().Invalidate();
+
+        var board = await (await client.GetAsync("/api/leaderboard/service_published_song/Solo_Guitar")).Content.ReadFromJsonAsync<JsonElement>();
+        var boardScores = board.GetProperty("entries").EnumerateArray().Select(entry => entry.GetProperty("score").GetInt32()).ToArray();
+        Assert.Equal([110_000, 100_000], boardScores);
+        Assert.Equal(2, board.GetProperty("totalEntries").GetInt32());
+        Assert.DoesNotContain(900_000, boardScores);
+
+        var emptyBoard = await (await client.GetAsync("/api/leaderboard/service_empty_song/Solo_Guitar")).Content.ReadFromJsonAsync<JsonElement>();
+        var emptyEntries = emptyBoard.GetProperty("entries").EnumerateArray().ToArray();
+        Assert.Single(emptyEntries);
+        Assert.Equal("acct_empty_overlay", emptyEntries[0].GetProperty("accountId").GetString());
+        Assert.Equal(1, emptyBoard.GetProperty("totalEntries").GetInt32());
+
+        var exportResponse = await client.GetAsync("/api/player/acct_published/export");
+        Assert.Equal(HttpStatusCode.OK, exportResponse.StatusCode);
+        var workbookXml = await ReadExportWorkbookXmlAsync(exportResponse);
+        Assert.Contains("100000", workbookXml);
+        Assert.DoesNotContain("900000", workbookXml);
+
+        metaDb.SetPublicReadFreeze(false);
+        services.GetRequiredService<PublicReadGateService>().Invalidate();
+        var unfrozenExportResponse = await client.GetAsync("/api/player/acct_published/export");
+        Assert.Equal(HttpStatusCode.OK, unfrozenExportResponse.StatusCode);
+        var unfrozenWorkbookXml = await ReadExportWorkbookXmlAsync(unfrozenExportResponse);
+        Assert.Contains("100000", unfrozenWorkbookXml);
+        Assert.DoesNotContain("900000", unfrozenWorkbookXml);
     }
 
     // ─── Songs ──────────────────────────────────────────────────
@@ -3064,6 +3380,29 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
 
         throw new TimeoutException($"Timed out waiting for precomputed cache key {cacheKey}.");
+    }
+
+    private static async Task<string> ReadExportWorkbookXmlAsync(HttpResponseMessage response)
+    {
+        var exportBytes = await response.Content.ReadAsByteArrayAsync();
+        using var outerArchive = new ZipArchive(new MemoryStream(exportBytes), ZipArchiveMode.Read);
+        var workbookEntry = outerArchive.Entries.Single(
+            entry => entry.Name.Contains("-all-", StringComparison.OrdinalIgnoreCase));
+        using var workbookBytes = new MemoryStream();
+        using (var workbookStream = workbookEntry.Open())
+            await workbookStream.CopyToAsync(workbookBytes);
+
+        workbookBytes.Position = 0;
+        using var workbookArchive = new ZipArchive(workbookBytes, ZipArchiveMode.Read);
+        return string.Join(
+            '\n',
+            workbookArchive.Entries
+                .Where(entry => entry.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+                .Select(entry =>
+                {
+                    using var reader = new StreamReader(entry.Open());
+                    return reader.ReadToEnd();
+                }));
     }
 
     private static void InsertSnapshotState(NpgsqlDataSource dataSource, string songId, string instrument, long snapshotId)

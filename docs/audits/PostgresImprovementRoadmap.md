@@ -404,6 +404,35 @@ Cover:
 propagation, followed by PG-2 published-resolver query A/Bs. PG-4 physical
 snapshot write skipping was not enabled or combined with this phase.
 
+### PG-1 service-contract follow-through - accepted 2026-07-13
+
+- SERVICE-0.1 now consumes the accepted mapping through a shared SQL selector;
+  enabled reader SQL has no active-snapshot branch, and projection rows require
+  mapped source plus projection-generation parity.
+- Per-route totals and published solo exports delegate to that resolver.
+  Clean-boundary population floors are snapshotted into the mapping; this
+  repaired a diagnosed canary mismatch of `10,042` mapped versus `374,853`
+  published-route entries without consulting active scrape state. The
+  role-specific rollback flag still restores the prior active resolver.
+- SERVICE-0.2 reads scrape/publication/freeze/worker state in one statement and
+  reports durable network, post-process, publication, failure, freeze, and
+  schedule semantics.
+- Failed coverage windows `1232` (`16` incomplete scopes) and `1234` (`3`)
+  published nothing and retained `1231`. The accepted complete window `1235`
+  atomically promoted `6,138` mappings (`6,096` snapshot, `42` empty),
+  `39,578,699` physical rows, and zero incomplete/missing metadata.
+- Matched rollback/candidate reads on published `1235` had exact route,
+  published-solo-export, and full-export fingerprints. Rankings phase time was
+  `+5.25%`; all `604` one-minute accepted-window health ticks passed.
+- Final free space was `114,964,156,416` bytes (`3.82` projected days);
+  capacity/reclaim work is the immediate dependency before optional PG-2
+  build/query experiments.
+- Focused PostgreSQL/unit/API validation passed `356/356`; CI-equivalent line
+  coverage is `94.24%`. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/service-0.1-0.2-published-status-20260711T143501Z`.
+- This follow-through does not enable PG-2 query optimization or PG-4 snapshot
+  write skipping.
+
 ## Phase PG-2: Run matched query A/Bs
 
 **Decision:** Accepted evaluation program  

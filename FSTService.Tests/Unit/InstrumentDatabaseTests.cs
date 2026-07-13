@@ -370,6 +370,26 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void Published_read_rejects_projection_generation_mismatch_and_uses_mapped_snapshot()
+    {
+        InsertScrape(40);
+        InsertScrape(42);
+        InsertSnapshot(40, "song_generation", "acct_player", 100_000);
+        InsertSnapshot(42, "song_generation", "acct_player", 900_000);
+        SetActiveSnapshot("song_generation", 42);
+        SetPublishedScrape(42);
+        InsertPublishedSource(42, "song_generation", "snapshot", 40, 40, 1);
+        InsertProjectionScope("song_generation", sourceSnapshotId: 40, generation: 2);
+        InsertProjectionEntry("song_generation", "acct_player", 900_000, "active-projection", generation: 1);
+        Db.UsePublishedScopeSources = true;
+
+        var board = Db.GetCurrentStateLeaderboard("song_generation");
+
+        var entry = Assert.Single(board);
+        Assert.Equal(100_000, entry.Score);
+    }
+
+    [Fact]
     public void GetCurrentStateLeaderboard_falls_back_to_live_rows_without_snapshot_state()
     {
         Db.UpsertEntries("song_1",
@@ -1796,7 +1816,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
-    private void InsertProjectionScope(string songId, long? sourceSnapshotId)
+    private void InsertProjectionScope(string songId, long? sourceSnapshotId, long generation = 1, long rowCount = 1)
     {
         var logger = Substitute.For<ILogger<SoloCurrentProjectionBuilder>>();
         var builder = new SoloCurrentProjectionBuilder(_fixture.DataSource, logger);
@@ -1807,7 +1827,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
         cmd.CommandText = """
             INSERT INTO solo_current_projection_scope
             (song_id, instrument, projection_generation, row_count, source_snapshot_id, status, error_message, last_rebuilt_at, updated_at)
-            VALUES (@songId, @instrument, 1, 1, @sourceSnapshotId, 'ready', NULL, @now, @now)
+            VALUES (@songId, @instrument, @generation, @rowCount, @sourceSnapshotId, 'ready', NULL, @now, @now)
             ON CONFLICT (song_id, instrument) DO UPDATE SET
                 projection_generation = EXCLUDED.projection_generation,
                 row_count = EXCLUDED.row_count,
@@ -1819,12 +1839,14 @@ public sealed class InstrumentDatabaseTests : IDisposable
             """;
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", Db.Instrument);
+        cmd.Parameters.AddWithValue("generation", generation);
+        cmd.Parameters.AddWithValue("rowCount", rowCount);
         cmd.Parameters.AddWithValue("sourceSnapshotId", sourceSnapshotId.HasValue ? sourceSnapshotId.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }
 
-    private void InsertProjectionEntry(string songId, string accountId, int score, string source)
+    private void InsertProjectionEntry(string songId, string accountId, int score, string source, long generation = 1)
     {
         using var conn = _fixture.DataSource.OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1834,17 +1856,19 @@ public sealed class InstrumentDatabaseTests : IDisposable
              api_rank, source, difficulty, end_time, first_seen_at, last_updated_at, projection_generation, computed_at)
             VALUES
             (@songId, @instrument, @accountId, @score, 95, false, 5, 3, 99.0, 1,
-             1, @source, 3, '2025-01-15T12:00:00Z', @now, @now, 1, @now)
+             1, @source, 3, '2025-01-15T12:00:00Z', @now, @now, @generation, @now)
             ON CONFLICT (song_id, instrument, account_id) DO UPDATE SET
                 score = EXCLUDED.score,
                 source = EXCLUDED.source,
-                last_updated_at = EXCLUDED.last_updated_at
+                last_updated_at = EXCLUDED.last_updated_at,
+                projection_generation = EXCLUDED.projection_generation
             """;
         cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", Db.Instrument);
         cmd.Parameters.AddWithValue("accountId", accountId);
         cmd.Parameters.AddWithValue("score", score);
         cmd.Parameters.AddWithValue("source", source);
+        cmd.Parameters.AddWithValue("generation", generation);
         cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
     }
