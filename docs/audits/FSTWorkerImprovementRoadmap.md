@@ -135,6 +135,23 @@ guard for guard-aware images.
 Evidence:
 `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/proxy-recovery-20260713T171754Z`.
 
+**First full-scrape retry - rejected safely, bounded repair accepted in code**
+
+- Guarded run-once scrape `1243` used the exact 25-exit / 400-RPS recovered
+  pool and kept `/readyz`, the festivalweb shell, and `/api/service-info`
+  healthy.
+- The run completed zero scopes because all `150/150` observed
+  `events-discovery` sends were CDN-blocked before leaderboard work began.
+  This narrowed the gap to an endpoint omitted from the earlier matched
+  leaderboard canaries; it did not invalidate their leaderboard-page parity.
+- The worker was stopped, scrape `1243` was marked failed, public reads were
+  unfrozen on published `1236`, and zero scope manifests or writer failures
+  were left behind.
+- Season-window discovery now has a 45-second deadline before using persisted
+  season windows (or existing bounded probing when no cache exists). The repair
+  adds no direct/AirVPN fallback and does not change the 25-exit pool, DOP, or
+  400-RPS aggregate cap.
+
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A
 candidate through `--recreate-runonce`, verify the full public path, then

@@ -32,6 +32,14 @@ The inserted WORKER-0A recovery prerequisite established:
 No AirVPN fallback was promoted. Direct access was valid in the bounded
 canaries but is not part of the effective production pool.
 
+The first guarded full-scrape retry exposed an endpoint-specific gap in that
+qualification: the 25 exits had qualified against leaderboard pages, but all
+observed `events-discovery` requests were CDN-blocked. Season-window discovery
+now has a 45-second deadline and falls back to the already persisted
+season-window cache (or existing bounded probing when no cache exists). This
+does not add direct access, AirVPN fallback, a new exit, or a higher request
+budget.
+
 ### Fail-closed worker deployment
 
 `Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,

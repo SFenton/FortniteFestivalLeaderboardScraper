@@ -46,7 +46,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
         try { Directory.Delete(_dataDir, true); } catch { }
     }
 
-    private (HistoryReconstructor recon, MockHttpMessageHandler scraperHandler, MockHttpMessageHandler eventsHandler) CreateReconstructor()
+    private (HistoryReconstructor recon, MockHttpMessageHandler scraperHandler, MockHttpMessageHandler eventsHandler) CreateReconstructor(
+        TimeSpan? seasonWindowDiscoveryTimeout = null)
     {
         var scraperHandler = new MockHttpMessageHandler();
         var scraperHttp = new HttpClient(scraperHandler);
@@ -57,7 +58,17 @@ public class HistoryReconstructorInstanceTests : IDisposable
         var eventsHandler = new MockHttpMessageHandler();
         var eventsHttp = new HttpClient(eventsHandler);
 
-        var recon = new HistoryReconstructor(scraper, _persistence, eventsHttp, progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _log);
+        var recon = new HistoryReconstructor(
+            scraper,
+            _persistence,
+            eventsHttp,
+            progress,
+            new UserSyncProgressTracker(
+                new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
+                Substitute.For<ILogger<UserSyncProgressTracker>>()),
+            _log,
+            proxyHealth: null,
+            seasonWindowDiscoveryTimeout: seasonWindowDiscoveryTimeout);
         return (recon, scraperHandler, eventsHandler);
     }
 
@@ -130,7 +141,22 @@ public class HistoryReconstructorInstanceTests : IDisposable
         Assert.Empty(scraperHandler.Requests);
     }
 
+    [Fact]
+    public async Task DiscoverSeasonWindowsAsync_ApiHangsWithCache_TimesOutAndReturnsCache()
+    {
+        var (recon, scraperHandler, eventsHandler) =
+            CreateReconstructor(TimeSpan.FromMilliseconds(25));
 
+        _metaDb.Db.UpsertSeasonWindow(1, "evt_1", "season_001");
+        _metaDb.Db.UpsertSeasonWindow(2, "evt_2", "season_002");
+        eventsHandler.EnqueueHang();
+
+        var result = await recon.DiscoverSeasonWindowsAsync("token", "caller");
+
+        Assert.Equal(2, result.Count);
+        Assert.Single(eventsHandler.Requests);
+        Assert.Empty(scraperHandler.Requests);
+    }
 
     [Fact]
     public async Task DiscoverSeasonWindowsAsync_ApiReturnsEvents_ParsesAndCaches()

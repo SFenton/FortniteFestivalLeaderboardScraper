@@ -27,6 +27,8 @@ namespace FSTService.Scraping;
 /// </summary>
 public class HistoryReconstructor
 {
+    private static readonly TimeSpan DefaultSeasonWindowDiscoveryTimeout = TimeSpan.FromSeconds(45);
+
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
@@ -35,6 +37,7 @@ public class HistoryReconstructor
     private readonly ScrapeProgressTracker _progress;
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly ILogger<HistoryReconstructor> _log;
+    private readonly TimeSpan _seasonWindowDiscoveryTimeout;
 
     public HistoryReconstructor(
         ILeaderboardQuerier scraper,
@@ -54,7 +57,8 @@ public class HistoryReconstructor
         ScrapeProgressTracker progress,
         UserSyncProgressTracker syncTracker,
         ILogger<HistoryReconstructor> log,
-        IProxyHealthReporter? proxyHealth)
+        IProxyHealthReporter? proxyHealth,
+        TimeSpan? seasonWindowDiscoveryTimeout = null)
     {
         _scraper = scraper;
         _persistence = persistence;
@@ -64,6 +68,9 @@ public class HistoryReconstructor
         _progress = progress;
         _syncTracker = syncTracker;
         _log = log;
+        _seasonWindowDiscoveryTimeout = seasonWindowDiscoveryTimeout is { } timeout && timeout > TimeSpan.Zero
+            ? timeout
+            : DefaultSeasonWindowDiscoveryTimeout;
     }
 
     // ─── Season Window Discovery ────────────────────────────────
@@ -86,7 +93,12 @@ public class HistoryReconstructor
 
         try
         {
-            var windows = await FetchSeasonWindowsFromApiAsync(accessToken, callerAccountId, ct);
+            using var discoveryCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            discoveryCts.CancelAfter(_seasonWindowDiscoveryTimeout);
+            var windows = await FetchSeasonWindowsFromApiAsync(
+                accessToken,
+                callerAccountId,
+                discoveryCts.Token);
             if (windows.Count > 0)
             {
                 foreach (var w in windows)
@@ -104,6 +116,12 @@ public class HistoryReconstructor
                     windows.Count, result.Count);
                 return result;
             }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "Events API season-window discovery exceeded {Timeout}; falling back to cached windows or bounded probing.",
+                _seasonWindowDiscoveryTimeout);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
