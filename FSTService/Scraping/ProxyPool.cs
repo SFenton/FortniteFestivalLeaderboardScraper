@@ -60,6 +60,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     private readonly int _perEndpointMaxRequestsPerSecond;
     private readonly int _perEndpointMaxConcurrentRequests;
     private readonly bool _disableConnectionReuse;
+    private readonly bool _useCurlTransport;
+    private readonly string _curlTempDirectory;
     private readonly object _lock = new();
     private int _activeIndex;
     private int _nextRoundRobinIndex;
@@ -94,6 +96,8 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
         _perEndpointMaxRequestsPerSecond = options.ProxyMaxRequestsPerSecondPerEndpoint;
         _perEndpointMaxConcurrentRequests = options.ProxyMaxConcurrentRequestsPerEndpoint;
         _disableConnectionReuse = options.ProxyDisableConnectionReuse;
+        _useCurlTransport = options.ProxyUseCurlTransport;
+        _curlTempDirectory = options.ProxyCurlTempDirectory;
 
         _endpoints = BuildEndpoints(options).ToList();
         if (_endpoints.Count > 0)
@@ -139,6 +143,10 @@ internal sealed class ProxyPool : IProxyHealthReporter, IProxyCdnBlockHandler, I
     internal int EndpointCount => _endpoints.Count;
 
     internal IReadOnlyList<string> EndpointNames => _endpoints.Select(e => e.Name).ToList();
+
+    internal bool UseCurlTransport => _useCurlTransport;
+
+    internal string CurlTempDirectory => _curlTempDirectory;
 
     internal void PrepareRequest(HttpRequestMessage request)
     {

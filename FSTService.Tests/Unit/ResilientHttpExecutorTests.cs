@@ -2,6 +2,7 @@ using System.Net;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -58,6 +59,45 @@ public sealed class ResilientHttpExecutorTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_ProxyCurlPrimary_UsesOverrideAndSkipsHttpClient()
+    {
+        var handler = new MockHttpMessageHandler();
+        using var http = new HttpClient(handler);
+        var options = new ScraperOptions
+        {
+            ProxyUrls = ["http://gluetun-1:8888"],
+            ContainerNames = ["gluetun-1"],
+            VpnProviders = ["Private Internet Access"],
+            ControlUrls = ["http://gluetun-1:8000"],
+            ProxyUseCurlTransport = true,
+            ProxyCurlTempDirectory = "/app/data/curl-transport",
+        };
+        using var pool = new ProxyPool(
+            options,
+            NullLogger<ProxyPool>.Instance);
+        var executor = new ResilientHttpExecutor(http, _log, pool);
+        executor.PrimaryCurlTransportOverride = (request, _, _) =>
+        {
+            Assert.True(request.Options.TryGetValue(
+                ProxyRequestState.EndpointProxyUri,
+                out var proxyUri));
+            Assert.Equal("gluetun-1", proxyUri.Host);
+            return Task.FromResult<HttpResponseMessage?>(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("""{"result":"ok"}"""),
+                });
+        };
+
+        using var response = await executor.SendAsync(
+            () => MakeEpicEventsRequest(),
+            label: "curl-primary");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]

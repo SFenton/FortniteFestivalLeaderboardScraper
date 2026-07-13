@@ -118,6 +118,17 @@ public sealed class ScraperOptions
     public bool ProxyDisableConnectionReuse { get; set; }
 
     /// <summary>
+    /// When true, proxy-routed Epic requests use the curl transport directly.
+    /// This keeps the production path aligned with proxy qualification canaries.
+    /// </summary>
+    public bool ProxyUseCurlTransport { get; set; }
+
+    /// <summary>
+    /// Same-drive scratch directory for curl request/response bodies.
+    /// </summary>
+    public string ProxyCurlTempDirectory { get; set; } = "";
+
+    /// <summary>
     /// When true, repeated proxy transport failures trigger a Docker restart for
     /// the aligned <see cref="ContainerNames"/> entry. CDN blocks still only
     /// cool down/fail over because they do not prove the VPN tunnel is broken.

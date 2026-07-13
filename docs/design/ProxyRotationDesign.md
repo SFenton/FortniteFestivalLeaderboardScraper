@@ -64,6 +64,13 @@ while the bounded .NET candidate still stalled with one request in flight per
 exit after reusing its proxy connections. `Connection: close` plus zero pooled
 connection lifetime makes the production transport match the qualified path.
 
+The final transport candidate uses curl as the primary proxy-routed Epic
+transport rather than only as a post-failure fallback. This exactly matches the
+qualified canary client while retaining the same proxy lease, per-exit rate,
+per-exit concurrency, cooldown, and global 400-RPS accounting. Request and
+response scratch files use `/app/data/curl-transport` on the FST drive and are
+deleted after each request.
+
 ### Fail-closed worker deployment
 
 `Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,

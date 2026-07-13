@@ -177,6 +177,11 @@ Evidence:
   request but still accumulated `1,532` timeouts. The next candidate disables
   proxy connection reuse so each .NET Epic request uses the same fresh-
   connection posture as the `125/125` canary rounds.
+- Fresh .NET connections did not remove the stall, while both default and
+  forced-HTTP/1.1 curl canaries remained `125/125` valid. The next bounded
+  candidate therefore uses curl as the primary proxy transport, keeps the same
+  lease/rate/concurrency/cooldown accounting, and stores transient bodies only
+  under `/app/data/curl-transport` on the FST drive.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A

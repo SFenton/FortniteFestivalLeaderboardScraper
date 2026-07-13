@@ -179,6 +179,7 @@ public sealed class ResilientHttpExecutor
     internal int MaxJitterMs { get; set; } = 500;
 
     internal Func<HttpRequestMessage, string?, CancellationToken, Task<HttpResponseMessage?>>? CdnBlockFallbackOverride { get; set; }
+    internal Func<HttpRequestMessage, string?, CancellationToken, Task<HttpResponseMessage?>>? PrimaryCurlTransportOverride { get; set; }
 
     private readonly HttpClient _http;
     private readonly ILogger _log;
@@ -210,13 +211,19 @@ public sealed class ResilientHttpExecutor
             string? label,
             TimeSpan timeout,
             ILogger log,
-            CancellationToken ct)
+            CancellationToken ct,
+            string? tempDirectory = null,
+            bool primaryTransport = false)
         {
             if (request.RequestUri is null)
                 return null;
 
-            var requestBodyPath = Path.Combine(Path.GetTempPath(), $"fst-curl-request-{Guid.NewGuid():N}.bin");
-            var responseBodyPath = Path.Combine(Path.GetTempPath(), $"fst-curl-response-{Guid.NewGuid():N}.bin");
+            var scratchRoot = string.IsNullOrWhiteSpace(tempDirectory)
+                ? Path.GetTempPath()
+                : Path.GetFullPath(tempDirectory);
+            Directory.CreateDirectory(scratchRoot);
+            var requestBodyPath = Path.Combine(scratchRoot, $"fst-curl-request-{Guid.NewGuid():N}.bin");
+            var responseBodyPath = Path.Combine(scratchRoot, $"fst-curl-response-{Guid.NewGuid():N}.bin");
             try
             {
                 if (request.Content is not null)
@@ -297,10 +304,20 @@ public sealed class ResilientHttpExecutor
                 if (lines.Length > 1 && !string.IsNullOrWhiteSpace(lines[1]))
                     response.Content.Headers.TryAddWithoutValidation("Content-Type", lines[1]);
 
-                log.LogWarning(
-                    "curl fallback returned {StatusCode} for {Operation} after .NET HTTP was CDN-blocked.",
-                    statusCode,
-                    label ?? "request");
+                if (primaryTransport)
+                {
+                    log.LogDebug(
+                        "curl primary transport returned {StatusCode} for {Operation}.",
+                        statusCode,
+                        label ?? "request");
+                }
+                else
+                {
+                    log.LogWarning(
+                        "curl fallback returned {StatusCode} for {Operation} after .NET HTTP was CDN-blocked.",
+                        statusCode,
+                        label ?? "request");
+                }
                 return response;
             }
             catch (Exception ex) when (ex is not OperationCanceledException and not HttpRequestException)
@@ -624,7 +641,33 @@ public sealed class ResilientHttpExecutor
             {
                 Interlocked.Increment(ref _totalHttpSends);
                 op.SetState(InflightState.Sending);
-                res = await _http.SendAsync(sentRequest, sendCts.Token);
+                if (_proxyHealth is ProxyPool { UseCurlTransport: true } proxyPool)
+                {
+                    using var proxyLease = await proxyPool.AcquireAsync(sendCts.Token)
+                        ?? throw new InvalidOperationException(
+                            "Curl proxy transport requires at least one configured endpoint.");
+                    sentRequest.Options.Set(ProxyRequestState.EndpointIndex, proxyLease.Index);
+                    sentRequest.Options.Set(ProxyRequestState.EndpointName, proxyLease.Name);
+                    sentRequest.Options.Set(ProxyRequestState.EndpointProxyUri, proxyLease.ProxyUri);
+                    proxyPool.PrepareRequest(sentRequest);
+
+                    res = PrimaryCurlTransportOverride is not null
+                        ? await PrimaryCurlTransportOverride(sentRequest, label, sendCts.Token)
+                            ?? throw new HttpRequestException("curl primary transport returned no response")
+                        : await CurlHttpFallback.SendAsync(
+                            sentRequest,
+                            label,
+                            _sendWallClockTimeout,
+                            _log,
+                            sendCts.Token,
+                            proxyPool.CurlTempDirectory,
+                            primaryTransport: true)
+                            ?? throw new HttpRequestException("curl primary transport returned no response");
+                }
+                else
+                {
+                    res = await _http.SendAsync(sentRequest, sendCts.Token);
+                }
             }
             catch (HttpRequestException ex)
             {
