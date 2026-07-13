@@ -3,7 +3,7 @@
 **Authoritative runtime:** PostgreSQL 17 in `fst-postgres`  
 **Production compose owner:** `/home/sfenton/Docker/FestivalServiceTracker`  
 **Production data root:** `/mnt/docker-storage/Docker/FestivalServiceTracker/pg-data`  
-**Last live inventory:** 2026-07-11 13:55 UTC
+**Last live inventory:** 2026-07-13 14:00 UTC
 
 This document defines FST PostgreSQL ownership, source-of-truth boundaries,
 publication behavior, retention, index posture, and restore paths. PostgreSQL
@@ -83,6 +83,13 @@ limits.
 The PG-1 decision sample had `247.2GB` free on `/mnt/docker-storage`, published
 scrape `1230`, public reads unfrozen, `6,129` complete published-source rows,
 and no ungranted locks. The per-scope map occupied `4.63MB`.
+
+After scrape `1236`, PG-3 retired the redundant non-constraint
+`ix_crh_latest` index from `composite_rank_history`. Database size fell from
+`3,784,729,548,467` to `3,763,839,399,603` bytes, and filesystem free space
+rose from `78,549,483,520` to `99,439,702,016` bytes. The exact index DDL is
+retained as rollback evidence; no table rows, constraints, publication state,
+or history data changed.
 
 ## Data ownership and restore class
 
@@ -287,6 +294,11 @@ named owner and bounded retention before cleanup. Zero current rows or zero
    proof.
 6. Date/range partitioning is preferred for future history retention only when
    the public history contract, range manifest, and rehydration path are proven.
+7. `composite_rank_history` intentionally has no `ix_crh_latest` secondary
+   index. The full latest-state snapshot job uses a parallel sequential
+   scan/sort plan at production scale, while the primary key preserves
+   identity and account-bounded date access. `ix_crh_retention_cutoff_account`
+   remains the owned date-first path for bounded retention.
 
 ## Publication and freeze sequence
 
@@ -331,6 +343,9 @@ cache and band-ranking publication work.
 - `tools/postgres-capacity-guard.sh` is required before broad scrape,
   post-process, optional build, or maintenance work. It records free space,
   DB/WAL size, scratch, publication state, locks, and active maintenance.
+- Use its `reclaim` action only for a proven space-releasing operation with
+  zero transient/scratch bytes. It still requires one full-scrape emergency
+  buffer and no active vacuum/index/rewrite/ungranted-lock conflict.
 - `VACUUM FULL`, broad table rewrites, large non-concurrent index builds, and
   unbounded `pg_repack` are prohibited at current headroom.
 - Archive/prune operations require exact object/range manifests, checksums,
@@ -413,6 +428,10 @@ tools/postgres-capacity-guard.sh \
   --output /mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/<session>/capacity-preflight.json
 ```
 
+For a proven zero-scratch index/table release, rerun the same guard with
+`--action-class reclaim`. A successful observation does not override a blocked
+reclaim, optional-build, maintenance, or rewrite class.
+
 Then verify:
 
 - production `docker compose ps`;
@@ -450,8 +469,10 @@ scope-total, and relation-size deltas for an A/B decision.
   durable service-status semantics.
 - **PG-2 / SERVICE-2:** bounded published reads, set-based API queries, and
   asynchronous cancellation-aware repositories.
-- **PG-3:** index/table owner cards, member fact ownership, observation-table
-  ownership, and nullable score-history uniqueness.
+- **PG-3:** retain public band-history and composite-retention indexes; the
+  redundant `ix_crh_latest` index was retired with exact plan/route/export
+  parity. Member facts, observation-table dual writes, and nullable
+  score-history uniqueness remain explicit owner decisions.
 - **PG-4 / WORKER-4:** semantic-change writes, unchanged physical source reuse,
   diff projections/rankings, and one atomic band publication.
 - **PG-5:** latest-state history design, explicit retention, and same-drive

@@ -23,7 +23,7 @@ action-specific same-drive headroom gates without changing production.
 
 Options:
   --action-class CLASS          observation, scrape, post-process,
-                                optional-build, maintenance, or rewrite
+                                optional-build, reclaim, maintenance, or rewrite
   --transient-build-bytes N     Estimated temporary bytes for the action
   --required-scratch-bytes N    Additional rewrite/repack scratch bytes
   --output FILE                 Also persist the JSON report to FILE
@@ -39,8 +39,12 @@ only with measured evidence.
 Exit codes:
   0  Action is allowed (possibly with a seven-day capacity alert)
   2  Optional build deferred by the headroom gate
-  3  Rewrite/maintenance action rejected by scratch or maintenance-conflict gate
+  3  Reclaim/rewrite/maintenance action rejected by its safety gate
   4  Scrape/post-process rejected below one full-scrape emergency headroom
+
+The reclaim class is only for a proven space-releasing action with zero
+transient-build and required-scratch bytes. It still requires one full-scrape
+emergency buffer and no active vacuum/index/rewrite/lock conflict.
 EOF
 }
 
@@ -100,12 +104,18 @@ do
 done
 
 case "$ACTION_CLASS" in
-    observation|scrape|post-process|optional-build|maintenance|rewrite) ;;
+    observation|scrape|post-process|optional-build|reclaim|maintenance|rewrite) ;;
     *)
         printf 'ERROR: unsupported action class: %s\n' "$ACTION_CLASS" >&2
         exit 64
         ;;
 esac
+
+if [[ "$ACTION_CLASS" == "reclaim" ]] \
+    && (( TRANSIENT_BUILD_BYTES != 0 || REQUIRED_SCRATCH_BYTES != 0 )); then
+    printf 'ERROR: reclaim requires zero transient-build and required-scratch bytes\n' >&2
+    exit 64
+fi
 
 if [[ ! -d "$COMPOSE_DIR" ]]; then
     printf 'ERROR: production compose directory does not exist: %s\n' "$COMPOSE_DIR" >&2
@@ -255,6 +265,7 @@ maintenance_conflict = (
 capacity_alert = free_bytes < minimum_headroom_bytes
 scrape_allowed = free_bytes >= emergency_required_bytes
 optional_build_allowed = free_bytes >= optional_required_bytes
+reclaim_allowed = scrape_allowed and not maintenance_conflict
 rewrite_allowed = free_bytes >= rewrite_required_bytes and not maintenance_conflict
 reasons = []
 exit_code = 0
@@ -274,6 +285,15 @@ if action_class in {"scrape", "post-process"} and not scrape_allowed:
 elif action_class == "optional-build" and not optional_build_allowed:
     exit_code = 2
     reasons.append(f"optional build deferred; requires {optional_required_bytes} bytes")
+elif action_class == "reclaim" and not reclaim_allowed:
+    exit_code = 3
+    if not scrape_allowed:
+        reasons.append(
+            f"reclaim requires at least one estimated full-scrape growth window "
+            f"({emergency_required_bytes} bytes)"
+        )
+    if maintenance_conflict:
+        reasons.append("maintenance conflict detected from vacuum/index/rewrite/lock activity")
 elif action_class in {"maintenance", "rewrite"} and not rewrite_allowed:
     exit_code = 3
     if free_bytes < rewrite_required_bytes:
@@ -323,6 +343,7 @@ report = {
         "capacityAlert": capacity_alert,
         "scrapeAllowed": scrape_allowed,
         "optionalBuildAllowed": optional_build_allowed,
+        "reclaimAllowed": reclaim_allowed,
         "rewriteAllowed": rewrite_allowed,
     },
     "databaseState": {

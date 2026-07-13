@@ -138,6 +138,50 @@ public class DatabaseInitializerTests : IDisposable
             reader.GetFieldValue<string[]>(2));
     }
 
+    [Fact]
+    public async Task EnsureSchemaAsync_does_not_recreate_retired_composite_history_latest_index()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT to_regclass('public.ix_crh_latest') IS NULL";
+
+        Assert.True((bool)cmd.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public async Task Retired_composite_history_latest_index_maintenance_sql_is_valid()
+    {
+        await DatabaseInitializer.EnsureSchemaAsync(_metaFixture.DataSource);
+
+        using var conn = _metaFixture.DataSource.OpenConnection();
+        using (var create = conn.CreateCommand())
+        {
+            create.CommandText = """
+                CREATE INDEX CONCURRENTLY ix_crh_latest
+                    ON public.composite_rank_history USING btree (account_id, snapshot_date DESC)
+                """;
+            create.ExecuteNonQuery();
+        }
+
+        using var verify = conn.CreateCommand();
+        verify.CommandText = "SELECT pg_get_indexdef('public.ix_crh_latest'::regclass)";
+
+        Assert.Equal(
+            "CREATE INDEX ix_crh_latest ON public.composite_rank_history USING btree (account_id, snapshot_date DESC)",
+            verify.ExecuteScalar());
+
+        using (var drop = conn.CreateCommand())
+        {
+            drop.CommandText = "DROP INDEX CONCURRENTLY public.ix_crh_latest";
+            drop.ExecuteNonQuery();
+        }
+
+        verify.CommandText = "SELECT to_regclass('public.ix_crh_latest') IS NULL";
+        Assert.True((bool)verify.ExecuteScalar()!);
+    }
+
     private sealed class NoOpHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(

@@ -552,6 +552,46 @@ Manifest the 1,074 known excess rows and design `NULLS NOT DISTINCT`, a partial
 unique index, or a generated key. Actual row cleanup and constraint promotion
 move to PG-7 after backup/restore and live-scrape parity.
 
+### PG-3 urgent low-scratch reclaim - accepted 2026-07-13
+
+- Scrape `1236` completed, published, and unfroze cleanly with `6,138`
+  published scopes (`6,096` snapshot, `42` empty), `39,588,650` published
+  rows, zero incomplete scopes, and zero failed phase-timing rows.
+- Refreshed owner cards rejected the `44-122 GB` band v2 team/date child
+  indexes because bounded public history plans used them in `0.216-0.304 ms`.
+  The `23,266,508,800`-byte `ix_crh_retention_cutoff_account` index was also
+  retained because the bounded retention plan uses it for both cutoff and
+  newer-row probes. Zero scans before the 365-day cutoff was not treated as
+  proof of redundancy.
+- `ix_crh_latest` was accepted as the one-object reclaim candidate. It was a
+  non-constraint `20,890,148,864`-byte index with only 11 small scans in the
+  statistics window. The production composite snapshot job selected a
+  parallel sequential scan/sort plan instead; forcing the index cost 16.75x
+  more, and a transactional drop/rollback produced the identical chosen plan.
+- After the worker was held and post-publish autovacuum cleared,
+  `DROP INDEX CONCURRENTLY public.ix_crh_latest` completed in `0.18 s`.
+  Database size fell by exactly `20,890,148,864` bytes and filesystem free
+  space rose from `78,549,483,520` to `99,439,702,016` bytes. The capacity
+  guard horizon improved from `2.61` to `3.31` days; the recent four-window
+  pressure model improved from `1.49` to `1.89` days.
+- Pre/post scrape totals, stable route bodies, leaderboard, normalized solo
+  export, all three sampled band-history responses, composite ranking page and
+  account responses, and all representative plans were exact matches. No
+  invalid indexes, ungranted locks, temp files, or public-path regressions
+  remained.
+- Startup schema no longer recreates the retired index. Targeted tests execute
+  the exact concurrent recreate and drop SQL and pass `6/6`. Rollback remains
+  `CREATE INDEX CONCURRENTLY ix_crh_latest ON
+  public.composite_rank_history USING btree (account_id, snapshot_date DESC)`.
+- `player_score_observations` remains intact. It is about `11.69 GB` and
+  approximately `96.89%` band-member observations; current evidence showed
+  1,971 insert statements and no production reader. PG-3 classifies it as a
+  duplicate audit/observation candidate for a future dual-write A/B and PG-7
+  manifest/archive decision, not data deletion in this phase.
+- Normal scraping was restored as scrape `1237`, with public reads frozen
+  safely on published `1236`. Evidence:
+  `/mnt/docker-storage/Docker/FestivalServiceTracker/fst-data/autonomous-artifacts/postgres-capacity-reclaim-20260713T072827Z`.
+
 ## Phase PG-4: Make scrape writes proportional to semantic changes
 
 **Decision:** Experimental until live-scrape parity  

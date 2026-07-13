@@ -1433,10 +1433,6 @@ public static class DatabaseInitializer
             PRIMARY KEY (account_id, snapshot_date)
         );
 
-        -- Efficient change-detection: latest composite snapshot per account
-        CREATE INDEX IF NOT EXISTS ix_crh_latest
-            ON composite_rank_history (account_id, snapshot_date DESC);
-
         -- =====================================================================
         -- COMBO LEADERBOARD (from fst-meta.db)
         -- =====================================================================

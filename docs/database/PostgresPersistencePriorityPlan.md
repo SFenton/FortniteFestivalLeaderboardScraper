@@ -5,16 +5,19 @@ This plan records the approved direction for improving FST Postgres persistence 
 ## Current production state
 
 - Production compose ownership: `/home/sfenton/Docker/FestivalServiceTracker`.
-- Active API service: `fstservice` is healthy and was redeployed from local image `fstservice:sticky-rank-history-tracking` after Phase J.
-- Active worker: `fstworker` is healthy and scraping run `1222` after emergency reclaim restored headroom.
+- `fstservice`, `festivalweb`, `fst-postgres`, and `fstworker` are healthy on
+  the SERVICE-0.1/0.2 `824415e9` images/code path.
+- Scrape `1236` published `6,138` complete scopes and `39,588,650` rows with
+  public reads unfrozen before maintenance. Normal scraping was restored as
+  scrape `1237`, with reads frozen safely on published `1236`.
 - Scrapes should proceed normally. `fstworker`, `fstservice`, and `festivalweb` may be restarted or temporarily taken down for maintenance, but must be redeployed/recovered as soon as possible to preserve the user experience.
-- Current published scrape: `1214`.
-- Public reads: frozen to published scrape `1214` after the Phase B safety correction.
-- Experimental logical shadow tables from Phase 6/7 were truncated after approval to reclaim space.
-- The failed/incomplete eval scrape `1218` was removed from `scrape_log` after approval.
-- The failed/incomplete eval scrape `1221` filled the FST drive during post-scrape work and remains unpublished/incomplete; the worker was stopped before emergency reclaim and restarted afterward as scrape `1222`.
-- The unused derived `band_read_*` projection tables were quarantined, public-route validated, then dropped in the emergency reclaim, restoring `/mnt/docker-storage` from 44 MB free / 100% used to about 435 GB free / 89% used.
-- Band ranking write mode defaults are now `ComboBatched` in repo config and the active production compose/.env defaults; optional band-song ranking projection rebuilds default to disabled with stale-projection fallback. Worker runtime now skips startup schema initialization because `fstservice` owns schema initialization.
+- PG-3 dropped only `public.ix_crh_latest`, reclaiming exactly
+  `20,890,148,864` database bytes. Free space rose from `78,549,483,520` to
+  `99,439,702,016` bytes; the guard horizon improved from `2.61` to `3.31`
+  days. Optional builds and rewrites remain blocked below seven-day headroom.
+- Public band-history team/date indexes and
+  `ix_crh_retention_cutoff_account` remain because live plans proved their
+  route/job ownership.
 - All FST database/storage/reclaim work must remain on the 4 TB FST drive. Do not use alternate drives for data, scratch, migration, export, or repack workspace unless SFenton explicitly overrides this rule later.
 
 ## Capacity preflight guard
@@ -31,7 +34,9 @@ tools/postgres-capacity-guard.sh \
 Use `--action-class scrape` or `post-process` for critical pipeline work,
 `optional-build` for work that must defer below the seven-day threshold, and
 `maintenance` or `rewrite` with `--required-scratch-bytes` for actions that
-must fail closed without exact scratch. The guard:
+must fail closed without exact scratch. Use `reclaim` only for a proven
+space-releasing action with zero transient and required scratch bytes. The
+guard:
 
 - verifies the active Postgres data mount is under `/mnt/docker-storage`;
 - records filesystem free/used bytes, database size, WAL-directory size,
@@ -40,7 +45,9 @@ must fail closed without exact scratch. The guard:
 - defaults to measured roadmap assumptions of 14 GiB growth per full scrape,
   two full scrapes per day, and a seven-day alert/defer threshold;
 - blocks optional builds or rewrites that cannot preserve that headroom and
-  blocks critical scrape/post-process work below one full-scrape growth window.
+  blocks critical scrape/post-process work below one full-scrape growth window;
+- blocks `reclaim` below that emergency window or while vacuum, index build,
+  rewrite, or ungranted-lock conflicts exist.
 
 Override growth/rate thresholds only with measured evidence. A successful
 observation with a capacity alert is evidence, not permission for an optional
@@ -100,7 +107,8 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | Phase 7 logical write metrics | Complete | Implemented, deployed, committed as `2ac02445`; production metrics captured from failed scrape `1218`. |
 | Experimental logical shadow cleanup | Complete | Approved cleanup truncated experimental logical shadow tables and removed incomplete scrape `1218`. |
 | Database architecture evaluation | Complete | Read-only code review and production probes completed on 2026-07-06. |
-| History index owner cards | Complete | Read-only owner cards for `band_team_rank_history_*_v2` indexes completed on 2026-07-06; no index or data mutation performed. |
+| History/index owner cards | Complete | Refreshed band v2, composite history, observation, dirty-work, and latest-state owner cards on 2026-07-13. Public team/date and retention indexes were retained from plan/caller proof. |
+| PG-3 `ix_crh_latest` reclaim | Accepted | After scrape `1236` publish/unfreeze and worker hold, dropped one non-constraint index concurrently in 0.18 s. Reclaimed `20,890,148,864` database bytes with exact route/export/history/ranking/plan parity and tested recreate DDL. |
 | Band rank-history retention policy draft | Complete | Semantics-first v2 retention options and parity gates documented on 2026-07-06. |
 | `band_read_*` quarantine parity package | Complete | Reversible, live-scrape A/B parity-gated quarantine package documented on 2026-07-06; no DDL executed. |
 | Phase 8 physical snapshot write skipping | Accepted behind feature flag | Added `SkipUnchangedPhysicalLeaderboardSnapshots` as a rollback-safe, default-off candidate that skips unchanged solo physical snapshot scopes and keeps snapshot state pinned to the prior active snapshot. Production rollout remains gated by live-scrape A/B parity and disk headroom. |
@@ -114,7 +122,7 @@ Normal scrapes/service operation may proceed. Destructive cleanup, irreversible 
 | Emergency `band_read_*` reclaim | Complete | At 44 MB free / 100% disk, stopped `fstworker`, froze public reads to published `1214`, truncated rollback-safe logical shadow tables, quarantined/validated/dropped unused derived `band_read_*` tables, restored about 435 GB free, and restarted `fstworker` as scrape `1222`. |
 | Autonomous scrape rollout | Active operating policy | Scrapes should proceed normally; worker/service/web may be briefly taken down for maintenance and redeployed/recovered as soon as possible. |
 | Destructive retention/reclaim | Parity-gated auto-approval | Deletes, drops, rewrites, repacks, and moves are auto-approved after live-scrape A/B proves the new path has the same data as the old path and rollback/post-action validation are documented. |
-| Next implementation phase | Hard-gated by storage/parity readiness | Full worker scrape/eval, destructive maintenance, irreversible migrations, drop/truncate/repack/rewrite work, and active Postgres data movement remain blocked until storage headroom and live-scrape A/B data-parity gates are satisfied. |
+| Next implementation phase | Capacity-gated | Normal scrapes may proceed, but optional builds, rewrites, repacks, table deletion, and broad data movement remain blocked. Continue one-object owner proof or future-growth reduction; do not treat the accepted 20.89 GB reclaim as seven-day headroom. |
 
 ## Architecture evaluation evidence (2026-07-06)
 
@@ -682,6 +690,17 @@ Initial candidate families:
 | S2.4 Batch only after proof | Repeat for next index only after prior decision is accepted/rejected and committed. | No unprocessed index decisions. | Stop if public path or DB load degrades. |
 
 Decision tier: low-to-medium storage win, low data-risk, but must be one-object-at-a-time.
+
+Execution result (2026-07-13): accepted for `public.ix_crh_latest`.
+The production latest-state job chose an identical parallel sequential
+scan/sort plan before and transactionally without the index; a forced index
+plan cost 16.75x more. The concurrent drop reclaimed `20,890,148,864` bytes.
+Scrape `1236` totals, stable route fingerprints, normalized solo export, band
+history, composite rankings, and representative plans matched exactly.
+Startup schema no longer recreates the retired index, and exact concurrent
+recreate/drop SQL is covered by targeted tests. The lower-value partitioned
+band v2 snapshot lookup family remains a future one-family candidate rather
+than a second destructive batch in this phase.
 
 ### Phase S3: physical snapshot retention/source-of-truth package
 
