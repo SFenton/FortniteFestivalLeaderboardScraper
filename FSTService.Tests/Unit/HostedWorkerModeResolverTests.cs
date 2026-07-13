@@ -47,4 +47,24 @@ public class HostedWorkerModeResolverTests
 
         Assert.Equal(HostedWorkerMode.FrontendOnly, mode);
     }
+
+    [Theory]
+    [InlineData((int)HostedWorkerMode.FullWorker, false, true)]
+    [InlineData((int)HostedWorkerMode.FullWorker, true, false)]
+    [InlineData((int)HostedWorkerMode.RegistrationSyncWorker, true, true)]
+    [InlineData((int)HostedWorkerMode.ApiOnly, false, false)]
+    [InlineData((int)HostedWorkerMode.FrontendOnly, false, false)]
+    public void ShouldRunRegistrationBackfillWorker_IsolatesFullWorkerRunOnce(
+        int modeValue,
+        bool runOnceRequested,
+        bool expected)
+    {
+        var mode = (HostedWorkerMode)modeValue;
+
+        Assert.Equal(
+            expected,
+            HostedWorkerModeResolver.ShouldRunRegistrationBackfillWorker(
+                mode,
+                runOnceRequested));
+    }
 }

@@ -151,6 +151,15 @@ Evidence:
   season windows (or existing bounded probing when no cache exists). The repair
   adds no direct/AirVPN fallback and does not change the 25-exit pool, DOP, or
   400-RPS aggregate cap.
+- Retries `1244` and `1245` then isolated a separate run-once contaminant:
+  `RegistrationBackfillWorker` claimed one queued user and started V2 POST
+  lookups across `682` songs while the controlled scrape was beginning.
+  Scrape `1245` recorded `1,639/1,660` CDN-blocked sends and still had zero
+  manifests, staging rows, or completed scopes when it was stopped.
+- Full-worker run-once mode now omits the continuously polling registration
+  backfill hosted service. Normal scheduled workers and dedicated registration
+  sync workers retain it, and the scrape's explicit deferred registration-sync
+  phase remains available after core post-processing.
 
 **Next live A/B instruction:** keep the worker held, run the scrape capacity
 guard and proxy compose guard, deploy the accepted `b01d5c03` WORKER-0A

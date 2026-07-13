@@ -40,6 +40,13 @@ season-window cache (or existing bounded probing when no cache exists). This
 does not add direct access, AirVPN fallback, a new exit, or a higher request
 budget.
 
+Controlled `Scraper:RunOnce=true` full-scrape workers also omit the
+continuously polling `RegistrationBackfillWorker`. A live retry showed that one
+queued registration could otherwise start V2 POST lookups across the full song
+catalog while the candidate scrape was establishing its network path, causing
+endpoint-wide CDN blocks before any core scope completed. Normal scheduled and
+dedicated registration-sync workers retain that service.
+
 ### Fail-closed worker deployment
 
 `Scraper:ExpectedProxyEndpointCount` makes `ProxyPool` reject missing,
